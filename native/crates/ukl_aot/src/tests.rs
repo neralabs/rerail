@@ -61,9 +61,9 @@ fn the_strided_nearest_is_the_scalar_one() {
 fn the_kernels_rust_nearest_is_the_scalar_one() {
     for f in forests() {
         // Groups of 20 and 36 threads end in part of a chunk; the cells' end is a chunk's middle in most forests.
-        for block in [20, 32, 36, 64, 256] {
+        for (block, k) in [20, 32, 36, 64, 256].into_iter().flat_map(|b| [(b, crate::nearest_jump_w8::nearest_jump_w8 as crate::Kernel), (b, crate::nearest_jump_w32::nearest_jump_w32)]) {
             let mut state = f.start.clone();
-            let most = unsafe { crate::nearest_run(crate::nearest_jump_w8::nearest_jump_w8, &mut state, args(&f), block) };
+            let most = unsafe { crate::nearest_run(k, &mut state, args(&f), block) };
             assert_eq!(state, f.want, "{} nodes, {} sets, groups of {block}", f.nodes, f.sets);
             let moved = f.start.iter().zip(&f.want).any(|(a, b)| a != b);
             assert!(most <= f.nodes && (most > 0) == moved, "{} nodes, {} sets: {most} steps", f.nodes, f.sets);
@@ -97,8 +97,10 @@ fn the_kernels_rust_mix_is_the_scalar_one() {
         for rounds in [0, 1, 5] {
             let want: Vec<u32> = input.iter().map(|&x| scalar::mix(x, rounds)).collect();
             for block in [8, 20, 32, 36, 256] {
-                let got = unsafe { crate::mix_run(crate::mix_lanes_w8::mix_lanes_w8, input, rounds, block) };
-                assert_eq!(got, want, "{} values, {rounds} rounds, groups of {block}", input.len());
+                for (w, k) in [(8, crate::mix_lanes_w8::mix_lanes_w8 as crate::Kernel), (32, crate::mix_lanes_w32::mix_lanes_w32)] {
+                    let got = unsafe { crate::mix_run(k, input, rounds, block) };
+                    assert_eq!(got, want, "{} values, {rounds} rounds, groups of {block}, {w} lanes", input.len());
+                }
             }
         }
     }
@@ -140,16 +142,21 @@ fn the_kernels_rust_parent_is_the_hosts() {
     for d in crate::parent::documents(&lang) {
         let want = crate::parent::scalar(&d);
         let steps = crate::parent::scalar_steps(&d);
+        let widths: [(u32, [crate::Kernel; 4]); 2] = [
+            (8, [crate::parent_group_w8::parent_group_w8, crate::parent_back_w8::parent_back_w8, crate::parent_step_w8::parent_step_w8, crate::parent_link_w8::parent_link_w8]),
+            (32, [crate::parent_group_w32::parent_group_w32, crate::parent_back_w32::parent_back_w32, crate::parent_step_w32::parent_step_w32, crate::parent_link_w32::parent_link_w32]),
+        ];
         for block in [8, 20, 32, 36, 256] {
-            let group = unsafe { crate::parent::run(crate::parent_group_w8::parent_group_w8, &d, block) };
-            let back = unsafe { crate::parent::run_back(crate::parent_back_w8::parent_back_w8, &d, block) };
-            let made = unsafe { crate::parent::run_step(crate::parent_step_w8::parent_step_w8, &d, block) };
-            assert!(made == steps, "step: {}, groups of {block}: not the host's steps", d.name);
-            let two = unsafe { crate::parent::run_two(crate::parent_step_w8::parent_step_w8, crate::parent_link_w8::parent_link_w8, &d, block) }
-                .unwrap_or_else(|e| panic!("two: {}, groups of {block}: {e}", d.name));
-            for (name, got) in [("two", two), ("group", group), ("back", back)] {
-                if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
-                    panic!("{name}: {} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+            for (w, [group, back, step, link]) in widths {
+                let group = unsafe { crate::parent::run(group, &d, block) };
+                let back = unsafe { crate::parent::run_back(back, &d, block) };
+                let made = unsafe { crate::parent::run_step(step, &d, block) };
+                assert!(made == steps, "step: {}, groups of {block}, {w} lanes: not the host's steps", d.name);
+                let two = unsafe { crate::parent::run_two(step, link, &d, block) }.unwrap_or_else(|e| panic!("two: {}, groups of {block}, {w} lanes: {e}", d.name));
+                for (name, got) in [("two", two), ("group", group), ("back", back)] {
+                    if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
+                        panic!("{name}: {} ({} nodes), groups of {block}, {w} lanes: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+                    }
                 }
             }
         }
@@ -166,10 +173,12 @@ fn a_chain_past_seven_links_is_a_corrupt_tape() {
     // Node 0 the root, 1 its child, 2 to 9 each linked to the node before: node 8 is 7 links from 1, node 9 is 8.
     let steps: Vec<u32> = [NONE, 0].into_iter().chain((2..10).map(|i| LINKED | (i - 1))).collect();
     for block in [8, 20, 256] {
-        let ok = unsafe { run_link(crate::parent_link_w8::parent_link_w8, &steps[..9], block) };
-        assert_eq!(ok, Ok(vec![NONE, 0, 0, 0, 0, 0, 0, 0, 0]), "groups of {block}");
-        let bad = unsafe { run_link(crate::parent_link_w8::parent_link_w8, &steps, block) };
-        assert_eq!(bad, Err(Corrupt { node: 9 }), "groups of {block}");
+        for link in [crate::parent_link_w8::parent_link_w8 as crate::Kernel, crate::parent_link_w32::parent_link_w32] {
+            let ok = unsafe { run_link(link, &steps[..9], block) };
+            assert_eq!(ok, Ok(vec![NONE, 0, 0, 0, 0, 0, 0, 0, 0]), "groups of {block}");
+            let bad = unsafe { run_link(link, &steps, block) };
+            assert_eq!(bad, Err(Corrupt { node: 9 }), "groups of {block}");
+        }
     }
 }
 
@@ -260,9 +269,11 @@ fn the_kernels_rust_wide_is_the_scalar_one() {
                 }
             }
             for block in [8, 20, 32, 36, 256] {
-                let got = unsafe { crate::wide_run(crate::wide_lanes_w8::wide_lanes_w8, a, b, c, k, block) };
-                for row in 0..crate::WIDE_ROWS {
-                    assert_eq!(got[row * len..(row + 1) * len], want[row * len..(row + 1) * len], "row {row}, {len} values, k {k:#x}, groups of {block}");
+                for (w, kernel) in [(8, crate::wide_lanes_w8::wide_lanes_w8 as crate::Kernel), (32, crate::wide_lanes_w32::wide_lanes_w32)] {
+                    let got = unsafe { crate::wide_run(kernel, a, b, c, k, block) };
+                    for row in 0..crate::WIDE_ROWS {
+                        assert_eq!(got[row * len..(row + 1) * len], want[row * len..(row + 1) * len], "row {row}, {len} values, k {k:#x}, groups of {block}, {w} lanes");
+                    }
                 }
             }
         }
@@ -280,9 +291,11 @@ fn the_label_passes_parents_are_the_hosts() {
     let all: Vec<&crate::parent::Doc> = docs.iter().collect();
     for batch in docs.iter().map(|d| vec![d]).chain([all]) {
         let b = crate::label::Batch::new(&batch);
-        let got = unsafe { crate::label::run_parents(crate::label_parents_w8::label_parents_w8, &b) };
-        for (d, got) in batch.iter().zip(got) {
-            assert!(got == crate::parent::scalar(d), "{}: not the host's parents ({} files)", d.name, batch.len());
+        for (w, k) in [(8, crate::label_parents_w8::label_parents_w8 as crate::Kernel), (32, crate::label_parents_w32::label_parents_w32)] {
+            let got = unsafe { crate::label::run_parents(k, &b) };
+            for (d, got) in batch.iter().zip(got) {
+                assert!(got == crate::parent::scalar(d), "{}: not the host's parents ({} files, {w} lanes)", d.name, batch.len());
+            }
         }
     }
 }
@@ -365,6 +378,9 @@ fn the_label_passes_leaves_are_the_cpu_devices() {
         let again = unsafe { crate::label::run_leaves(rerail_ukl_rust::label_leaves_w8::label_leaves_w8, &b, &tests) };
         let apart: Vec<(usize, u32, u32, u32)> = (0..got.len()).filter(|&i| got[i] != want[i] || again[i] != got[i]).map(|i| (i, got[i], again[i], want[i])).take(8).collect();
         assert!(apart.is_empty(), "{}: not the CPU device's leaves ({} nodes, {words} words; at, Rust, Rust again, c++: {apart:?})", d.name, d.nodes());
+        let w32 = unsafe { crate::label::run_leaves(crate::label_leaves_w32::label_leaves_w32, &b, &tests) };
+        let apart: Vec<(usize, u32, u32)> = (0..got.len()).filter(|&i| w32[i] != want[i]).map(|i| (i, w32[i], want[i])).take(8).collect();
+        assert!(apart.is_empty(), "{}: the Rust of 32 lanes is not the CPU device's leaves (at, Rust, c++: {apart:?})", d.name);
         alone.push((got, words));
     }
     // All in one batch, each where it lies: each file's words its own leaves.

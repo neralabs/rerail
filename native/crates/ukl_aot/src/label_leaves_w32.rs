@@ -1,0 +1,4081 @@
+//! `label_leaves` at 32 lanes (8 NEON registers), written by rerail-ukl-vec's Rust (`rs.rs`) from its vector tape: do
+//! not edit; `UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec _kernels_rust_is` writes it again.
+
+#![allow(unused, unused_mut, unused_parens, unused_unsafe, unreachable_code, non_snake_case, clippy::all, unsafe_op_in_unsafe_fn)]
+
+use crate::Launch;
+use core::arch::aarch64::*;
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
+
+/// Lane `j`'s index in its register's `j`: `[0, 1, 2, 3]`, then `[4, 5, 6, 7]`, ...: a chunk's lanes.
+const LANE: [[u32; 4]; 8] = [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23], [24, 25, 26, 27], [28, 29, 30, 31]];
+
+/// The program's constant memory, which its `__constant` variables are.
+static DATA: [u8; 4133] = [16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 110, 111, 100, 101, 67, 111, 117, 110, 116, 44, 119, 111, 114, 100, 115, 44, 114, 101, 115, 117, 108, 116, 65, 114, 101, 110, 97, 44, 116, 97, 115, 107, 67, 111, 117, 110, 116, 44, 105, 116, 101, 109, 67, 111, 117, 110, 116, 44, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 44, 114, 111, 117, 110, 100, 44, 102, 105, 110, 105, 115, 104, 44, 114, 101, 99, 117, 114, 115, 105, 118, 101, 44, 108, 97, 115, 116, 76, 101, 118, 101, 108, 44, 102, 105, 108, 101, 67, 111, 117, 110, 116, 44, 115, 116, 101, 112, 115, 44, 112, 114, 111, 102, 105, 108, 101, 44, 113, 117, 101, 117, 101, 44, 98, 117, 100, 103, 101, 116, 44, 108, 97, 110, 101, 115, 44, 102, 114, 97, 109, 101, 115, 0, 0, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 44, 32, 34, 91, 50, 32, 43, 32, 108, 97, 98, 101, 108, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 115, 99, 114, 97, 116, 99, 104, 44, 32, 34, 91, 114, 111, 119, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 108, 97, 103, 115, 44, 32, 34, 91, 54, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 79, 112, 44, 32, 111, 112, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 99, 111, 117, 110, 116, 115, 44, 32, 34, 91, 115, 108, 111, 116, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 110, 111, 100, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 83, 116, 97, 116, 117, 115, 44, 32, 115, 116, 97, 116, 117, 115, 101, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 115, 107, 67, 111, 117, 110, 116, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 105, 100, 44, 0, 0, 0, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 108, 97, 103, 115, 44, 32, 34, 91, 54, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 44, 32, 34, 91, 50, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 105, 100, 44, 0, 0, 0, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 68, 111, 99, 86, 105, 101, 119, 44, 32, 100, 111, 99, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 102, 105, 108, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 44, 32, 34, 91, 50, 32, 43, 32, 108, 97, 98, 101, 108, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 77, 105, 99, 114, 111, 80, 97, 115, 115, 44, 32, 112, 97, 115, 115, 101, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 119, 111, 114, 100, 115, 44, 32, 34, 91, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 105, 116, 101, 109, 115, 44, 32, 34, 91, 114, 111, 111, 116, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 115, 99, 114, 97, 116, 99, 104, 44, 32, 34, 91, 114, 111, 119, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 108, 97, 103, 115, 44, 32, 34, 91, 54, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 101, 120, 116, 115, 44, 32, 34, 91, 116, 101, 120, 116, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 99, 111, 117, 110, 116, 115, 44, 32, 34, 91, 115, 108, 111, 116, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 110, 111, 100, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 77, 105, 99, 114, 111, 70, 114, 97, 109, 101, 44, 32, 115, 116, 97, 99, 107, 115, 44, 32, 34, 91, 116, 104, 114, 101, 97, 100, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 102, 114, 97, 109, 101, 115, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 113, 115, 108, 111, 116, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 113, 117, 101, 117, 101, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 113, 99, 111, 110, 116, 114, 111, 108, 44, 32, 34, 91, 53, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 113, 105, 116, 101, 109, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 113, 117, 101, 117, 101, 32, 42, 32, 50, 48, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 119, 115, 116, 97, 116, 115, 44, 32, 34, 91, 51, 32, 42, 32, 112, 97, 115, 115, 101, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 56, 95, 116, 44, 32, 99, 104, 117, 110, 107, 44, 32, 34, 91, 98, 108, 111, 99, 107, 93, 34, 44, 32, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 105, 100, 44, 32, 44, 32, 71, 83, 90, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 103, 114, 105, 100, 44, 32, 44, 32, 76, 65, 78, 69, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 97, 110, 101, 44, 0, 0, 0, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 68, 111, 99, 86, 105, 101, 119, 44, 32, 100, 111, 99, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 102, 105, 108, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 44, 32, 34, 91, 50, 32, 43, 32, 108, 97, 98, 101, 108, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 77, 105, 99, 114, 111, 80, 97, 115, 115, 44, 32, 112, 97, 115, 115, 101, 115, 44, 32, 34, 91, 112, 97, 115, 115, 101, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 119, 111, 114, 100, 115, 44, 32, 34, 91, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 105, 116, 101, 109, 115, 44, 32, 34, 91, 114, 111, 111, 116, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 115, 99, 114, 97, 116, 99, 104, 44, 32, 34, 91, 114, 111, 119, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 108, 97, 103, 115, 44, 32, 34, 91, 54, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 101, 120, 116, 115, 44, 32, 34, 91, 116, 101, 120, 116, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 99, 111, 117, 110, 116, 115, 44, 32, 34, 91, 115, 108, 111, 116, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 110, 111, 100, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 71, 114, 111, 117, 112, 76, 101, 118, 101, 108, 44, 32, 108, 101, 118, 101, 108, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 79, 112, 44, 32, 111, 112, 115, 44, 32, 34, 91, 111, 112, 115, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 77, 105, 99, 114, 111, 70, 114, 97, 109, 101, 44, 32, 115, 116, 97, 99, 107, 115, 44, 32, 34, 91, 116, 104, 114, 101, 97, 100, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 102, 114, 97, 109, 101, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 56, 95, 116, 44, 32, 99, 104, 117, 110, 107, 44, 32, 34, 91, 98, 108, 111, 99, 107, 93, 34, 44, 32, 83, 72, 65, 82, 69, 68, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 99, 104, 97, 110, 103, 101, 100, 44, 32, 49, 44, 32, 84, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 105, 108, 101, 44, 32, 44, 32, 76, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 97, 110, 101, 44, 32, 44, 32, 76, 83, 90, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 119, 105, 100, 116, 104, 44, 32, 44, 32, 76, 65, 78, 69, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 115, 105, 109, 100, 76, 97, 110, 101, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 68, 111, 99, 86, 105, 101, 119, 44, 32, 100, 111, 99, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 102, 105, 108, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 44, 32, 34, 91, 50, 32, 43, 32, 108, 97, 98, 101, 108, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 82, 111, 111, 116, 80, 97, 115, 115, 44, 32, 112, 97, 115, 115, 101, 115, 44, 32, 34, 91, 112, 97, 115, 115, 101, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 119, 111, 114, 100, 115, 44, 32, 34, 91, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 82, 111, 111, 116, 73, 116, 101, 109, 44, 32, 105, 116, 101, 109, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 105, 116, 101, 109, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 101, 120, 116, 115, 44, 32, 34, 91, 116, 101, 120, 116, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 114, 101, 99, 111, 114, 100, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 32, 42, 32, 50, 48, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 99, 117, 114, 115, 111, 114, 44, 32, 34, 91, 50, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 97, 105, 108, 117, 114, 101, 115, 44, 32, 34, 91, 112, 97, 115, 115, 101, 115, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 82, 111, 111, 116, 70, 114, 97, 109, 101, 44, 32, 115, 116, 97, 99, 107, 115, 44, 32, 34, 91, 116, 104, 114, 101, 97, 100, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 102, 114, 97, 109, 101, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 56, 95, 116, 44, 32, 99, 104, 117, 110, 107, 44, 32, 34, 91, 98, 108, 111, 99, 107, 93, 34, 44, 32, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 105, 100, 44, 32, 44, 32, 71, 83, 90, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 103, 114, 105, 100, 44, 0, 0, 0, 0, 0, 0, 0, 0, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 68, 111, 99, 86, 105, 101, 119, 44, 32, 100, 111, 99, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 102, 105, 108, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 101, 115, 116, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 101, 97, 118, 101, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 116, 97, 114, 103, 101, 116, 67, 111, 117, 110, 116, 32, 42, 32, 115, 104, 97, 112, 101, 46, 114, 101, 99, 117, 114, 115, 105, 118, 101, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 56, 95, 116, 44, 32, 99, 104, 117, 110, 107, 44, 32, 34, 91, 98, 108, 111, 99, 107, 93, 34, 44, 32, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 105, 100, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 68, 111, 99, 86, 105, 101, 119, 44, 32, 100, 111, 99, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 102, 105, 108, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 112, 97, 114, 101, 110, 116, 115, 44, 32, 34, 91, 51, 50, 32, 42, 32, 115, 104, 97, 112, 101, 46, 114, 101, 99, 117, 114, 115, 105, 118, 101, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 56, 95, 116, 44, 32, 99, 104, 117, 110, 107, 44, 32, 34, 91, 98, 108, 111, 99, 107, 93, 34, 44, 32, 83, 72, 65, 82, 69, 68, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 117, 112, 44, 32, 50, 48, 52, 56, 44, 32, 83, 72, 65, 82, 69, 68, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 115, 44, 32, 50, 53, 55, 44, 32, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 103, 105, 100, 44, 32, 44, 32, 84, 71, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 98, 108, 111, 99, 107, 44, 32, 44, 32, 76, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 97, 110, 101, 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 68, 111, 99, 86, 105, 101, 119, 44, 32, 100, 111, 99, 115, 44, 32, 34, 91, 115, 104, 97, 112, 101, 46, 102, 105, 108, 101, 67, 111, 117, 110, 116, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 104, 101, 97, 100, 44, 32, 34, 91, 50, 32, 43, 32, 108, 97, 98, 101, 108, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 70, 111, 114, 109, 117, 108, 97, 44, 32, 102, 111, 114, 109, 117, 108, 97, 115, 44, 32, 34, 91, 102, 111, 114, 109, 117, 108, 97, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 119, 111, 114, 100, 115, 44, 32, 34, 91, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 114, 111, 111, 116, 115, 44, 32, 34, 91, 114, 117, 108, 101, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 115, 99, 114, 97, 116, 99, 104, 44, 32, 34, 91, 102, 111, 114, 109, 117, 108, 97, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 113, 117, 101, 117, 101, 93, 34, 44, 32, 65, 82, 71, 83, 44, 32, 83, 104, 97, 112, 101, 44, 32, 115, 104, 97, 112, 101, 44, 32, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 101, 97, 118, 101, 115, 44, 32, 34, 91, 108, 101, 97, 118, 101, 115, 32, 42, 32, 115, 104, 97, 112, 101, 46, 114, 101, 99, 117, 114, 115, 105, 118, 101, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 112, 114, 111, 103, 114, 97, 109, 44, 32, 34, 91, 112, 114, 111, 103, 114, 97, 109, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 70, 111, 114, 109, 117, 108, 97, 84, 97, 114, 103, 101, 116, 44, 32, 116, 97, 114, 103, 101, 116, 115, 44, 32, 34, 91, 116, 97, 114, 103, 101, 116, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 97, 98, 101, 108, 83, 99, 114, 97, 116, 99, 104, 44, 32, 34, 91, 114, 111, 119, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 114, 117, 108, 101, 115, 44, 32, 34, 91, 114, 117, 108, 101, 115, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 101, 120, 116, 115, 44, 32, 34, 91, 116, 101, 120, 116, 115, 32, 42, 32, 119, 111, 114, 100, 115, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 102, 108, 97, 103, 115, 44, 32, 34, 91, 52, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 112, 97, 114, 101, 110, 116, 115, 44, 32, 34, 91, 51, 50, 32, 42, 32, 115, 104, 97, 112, 101, 46, 114, 101, 99, 117, 114, 115, 105, 118, 101, 93, 34, 44, 32, 82, 79, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 56, 95, 116, 44, 32, 99, 104, 117, 110, 107, 44, 32, 34, 91, 98, 108, 111, 99, 107, 93, 34, 44, 32, 82, 87, 66, 85, 70, 70, 69, 82, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 112, 104, 97, 115, 101, 113, 117, 101, 117, 101, 44, 32, 34, 91, 54, 32, 43, 32, 51, 32, 42, 32, 102, 111, 114, 109, 117, 108, 97, 115, 32, 43, 32, 99, 97, 112, 97, 99, 105, 116, 121, 93, 34, 44, 32, 83, 72, 65, 82, 69, 68, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 112, 97, 114, 116, 44, 32, 54, 52, 44, 32, 83, 72, 65, 82, 69, 68, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 116, 111, 111, 107, 44, 32, 50, 44, 32, 76, 73, 68, 48, 44, 32, 117, 105, 110, 116, 51, 50, 95, 116, 44, 32, 108, 97, 110, 101, 44, 0];
+
+/// Whether a lane of mask `k` is on: a comparison of its bits, which the compiler folds where it knows `k`.
+#[inline(always)]
+unsafe fn any(k: &[uint32x4_t; 8]) -> bool {
+    let mut x = k[0];
+    for r in 1..8 {
+        x = vorrq_u32(x, k[r]);
+    }
+    core::mem::transmute::<uint32x4_t, u128>(x) != 0
+}
+
+/// Whether every lane of mask `k` is on, the same way.
+#[inline(always)]
+unsafe fn all(k: &[uint32x4_t; 8]) -> bool {
+    let mut x = k[0];
+    for r in 1..8 {
+        x = vandq_u32(x, k[r]);
+    }
+    core::mem::transmute::<uint32x4_t, u128>(x) == u128::MAX
+}
+
+/// Mask `k`'s lanes as bits, lane `j` bit `j`.
+#[inline(always)]
+unsafe fn bits(k: &[uint32x4_t; 8]) -> u32 {
+    let w = vld1q_u32([1u32, 2, 4, 8].as_ptr());
+    let mut b = 0u32;
+    for r in 0..8 {
+        b |= vaddvq_u32(vandq_u32(k[r], w)) << (4 * r);
+    }
+    b
+}
+
+/// The largest and the least of the lanes of `a`; the largest of those mask `k` has on (0 for one off).
+#[inline(always)]
+unsafe fn maxv(a: &[uint32x4_t; 8]) -> u32 {
+    let mut m = a[0];
+    for r in 1..8 {
+        m = vmaxq_u32(m, a[r]);
+    }
+    vmaxvq_u32(m)
+}
+#[inline(always)]
+unsafe fn minv(a: &[uint32x4_t; 8]) -> u32 {
+    let mut m = a[0];
+    for r in 1..8 {
+        m = vminq_u32(m, a[r]);
+    }
+    vminvq_u32(m)
+}
+#[inline(always)]
+unsafe fn maxv_on(k: &[uint32x4_t; 8], a: &[uint32x4_t; 8]) -> u32 {
+    let mut m = vandq_u32(k[0], a[0]);
+    for r in 1..8 {
+        m = vmaxq_u32(m, vandq_u32(k[r], a[r]));
+    }
+    vmaxvq_u32(m)
+}
+
+/// Operations of one register NEON has as several: `!=`; a product's high half; a 64-bit value's high half of a sum
+/// (less its low half's carry) and of a difference (plus its borrow); and the order and the equality of 64-bit values
+/// of their halves (the high halves' order, signed or not, or where they are equal the low halves').
+#[inline(always)]
+unsafe fn vcneq_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+	vmvnq_u32(vceqq_u32(a, b))
+}
+#[inline(always)]
+unsafe fn vmulhiq_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+	vuzp2q_u32(vreinterpretq_u32_u64(vmull_u32(vget_low_u32(a), vget_low_u32(b))), vreinterpretq_u32_u64(vmull_high_u32(a, b)))
+}
+#[inline(always)]
+unsafe fn vadcq_u32(a: uint32x4_t, b: uint32x4_t, c: uint32x4_t) -> uint32x4_t {
+	vsubq_u32(vaddq_u32(a, b), c)
+}
+#[inline(always)]
+unsafe fn vsbcq_u32(a: uint32x4_t, b: uint32x4_t, c: uint32x4_t) -> uint32x4_t {
+	vaddq_u32(vsubq_u32(a, b), c)
+}
+#[inline(always)]
+unsafe fn vlt64q_u32(al: uint32x4_t, ah: uint32x4_t, bl: uint32x4_t, bh: uint32x4_t) -> uint32x4_t {
+	vorrq_u32(vcltq_u32(ah, bh), vandq_u32(vceqq_u32(ah, bh), vcltq_u32(al, bl)))
+}
+#[inline(always)]
+unsafe fn vlt64sq_u32(al: uint32x4_t, ah: uint32x4_t, bl: uint32x4_t, bh: uint32x4_t) -> uint32x4_t {
+	vorrq_u32(vcltq_s32(vreinterpretq_s32_u32(ah), vreinterpretq_s32_u32(bh)), vandq_u32(vceqq_u32(ah, bh), vcltq_u32(al, bl)))
+}
+#[inline(always)]
+unsafe fn veq64q_u32(al: uint32x4_t, ah: uint32x4_t, bl: uint32x4_t, bh: uint32x4_t) -> uint32x4_t {
+	vandq_u32(vceqq_u32(al, bl), vceqq_u32(ah, bh))
+}
+/// A 64-bit value in every lane: its halves.
+#[inline(always)]
+unsafe fn splat64(v: u64) -> [uint32x4_t; 16] {
+	core::array::from_fn(|r| vdupq_n_u32(if r < 8 { v as u32 } else { (v >> 32) as u32 }))
+}
+/// Lanes `f + j`.
+#[inline(always)]
+unsafe fn iota(f: u32) -> [uint32x4_t; 8] {
+	core::array::from_fn(|r| vaddq_u32(vdupq_n_u32(f), vld1q_u32(LANE[r].as_ptr())))
+}
+/// An array's first registers, and those from its 8th (a 64-bit value's halves).
+#[inline(always)]
+unsafe fn lo<const N: usize, const M: usize>(a: [uint32x4_t; M]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| a[r])
+}
+#[inline(always)]
+unsafe fn hi<const N: usize, const M: usize>(a: [uint32x4_t; M]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| a[r + 8])
+}
+/// Each register's operation, over the registers.
+#[inline(always)]
+unsafe fn cne_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vcneq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn mulhi_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vmulhiq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn adc_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vadcq_u32(a0[r], a1[r], a2[r]))
+}
+#[inline(always)]
+unsafe fn sbc_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vsbcq_u32(a0[r], a1[r], a2[r]))
+}
+#[inline(always)]
+unsafe fn lt64_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N], a3: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vlt64q_u32(a0[r], a1[r], a2[r], a3[r]))
+}
+#[inline(always)]
+unsafe fn lt64s_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N], a3: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vlt64sq_u32(a0[r], a1[r], a2[r], a3[r]))
+}
+#[inline(always)]
+unsafe fn eq64_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N], a3: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| veq64q_u32(a0[r], a1[r], a2[r], a3[r]))
+}
+#[inline(always)]
+unsafe fn and_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vandq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn orr_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vorrq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn eor_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| veorq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn bic_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vbicq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn mvn_r<const N: usize>(a0: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vmvnq_u32(a0[r]))
+}
+#[inline(always)]
+unsafe fn bsl_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vbslq_u32(a0[r], a1[r], a2[r]))
+}
+#[inline(always)]
+unsafe fn add_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vaddq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn sub_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vsubq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn mul_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vmulq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn mla_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N], a2: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vmlaq_u32(a0[r], a1[r], a2[r]))
+}
+#[inline(always)]
+unsafe fn max_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vmaxq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn min_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vminq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn ceq_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vceqq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn clt_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vcltq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn cle_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vcleq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn cgt_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vcgtq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn cge_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vcgeq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn tst_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vtstq_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn uzp1_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vuzp1q_u32(a0[r], a1[r]))
+}
+#[inline(always)]
+unsafe fn uzp2_r<const N: usize>(a0: [uint32x4_t; N], a1: [uint32x4_t; N]) -> [uint32x4_t; N] {
+	core::array::from_fn(|r| vuzp2q_u32(a0[r], a1[r]))
+}
+/// The lanes' indexes `a` where mask `k` is on, else the largest of those (a lane that does not run loads where one that does
+/// does).
+#[inline(always)]
+unsafe fn ix_on(k: [uint32x4_t; 8], a: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let s = vdupq_n_u32(maxv_on(&k, &a));
+	core::array::from_fn(|r| vbslq_u32(k[r], a[r], s))
+}
+#[inline(always)]
+unsafe fn ld_u8(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
+	let u = minv(&ix);
+	if u == maxv(&ix) {
+		return [vdupq_n_u32((b.add(u as usize * s) as *const u8).read_unaligned() as u32); 8];
+	}
+	let a = words8(ix);
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (b.add(a[j] as usize * s) as *const u8).read_unaligned();
+		g[j] = v as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ld_i8(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
+	let u = minv(&ix);
+	if u == maxv(&ix) {
+		return [vdupq_n_u32((b.add(u as usize * s) as *const i8).read_unaligned() as i32 as u32); 8];
+	}
+	let a = words8(ix);
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (b.add(a[j] as usize * s) as *const i8).read_unaligned();
+		g[j] = v as i32 as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ld_u16(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
+	let u = minv(&ix);
+	if u == maxv(&ix) {
+		return [vdupq_n_u32((b.add(u as usize * s) as *const u16).read_unaligned() as u32); 8];
+	}
+	let a = words8(ix);
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (b.add(a[j] as usize * s) as *const u16).read_unaligned();
+		g[j] = v as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ld_i16(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
+	let u = minv(&ix);
+	if u == maxv(&ix) {
+		return [vdupq_n_u32((b.add(u as usize * s) as *const i16).read_unaligned() as i32 as u32); 8];
+	}
+	let a = words8(ix);
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (b.add(a[j] as usize * s) as *const i16).read_unaligned();
+		g[j] = v as i32 as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ld_u32(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
+	let u = minv(&ix);
+	if u == maxv(&ix) {
+		return [vdupq_n_u32((b.add(u as usize * s) as *const u32).read_unaligned() as u32); 8];
+	}
+	let a = words8(ix);
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (b.add(a[j] as usize * s) as *const u32).read_unaligned();
+		g[j] = v as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ld_u64(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 16] {
+	let u = minv(&ix);
+	if u == maxv(&ix) {
+		let v = (b.add(u as usize * s) as *const u64).read_unaligned();
+		return core::array::from_fn(|r| vdupq_n_u32(if r < 8 { v as u32 } else { (v >> 32) as u32 }));
+	}
+	let a = words8(ix);
+	let mut g = [0u32; 64];
+	for j in 0..32 {
+		let v = (b.add(a[j] as usize * s) as *const u64).read_unaligned();
+		g[j] = v as u32;
+		g[32 + j] = (v >> 32) as u32;
+	}
+	regs16(g)
+}
+#[inline(always)]
+unsafe fn ldj_u8(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (at(j) as *const u8).read_unaligned();
+		g[j] = v as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn stj_u8(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+	let (m, x) = (words8(k), words8(v));
+	let mut z = 0u64;
+	let sink = core::hint::black_box(&raw mut z) as *mut u8;
+	for j in 0..32 {
+		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u8).write_unaligned(x[j] as u8);
+	}
+}
+#[inline(always)]
+unsafe fn stjf_u8(v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+	let x = words8(v);
+	for j in 0..32 {
+		(at(j) as *mut u8).write_unaligned(x[j] as u8);
+	}
+}
+#[inline(always)]
+unsafe fn ldj_i8(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (at(j) as *const i8).read_unaligned();
+		g[j] = v as i32 as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ldj_u16(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (at(j) as *const u16).read_unaligned();
+		g[j] = v as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn stj_u16(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+	let (m, x) = (words8(k), words8(v));
+	let mut z = 0u64;
+	let sink = core::hint::black_box(&raw mut z) as *mut u8;
+	for j in 0..32 {
+		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u16).write_unaligned(x[j] as u16);
+	}
+}
+#[inline(always)]
+unsafe fn stjf_u16(v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+	let x = words8(v);
+	for j in 0..32 {
+		(at(j) as *mut u16).write_unaligned(x[j] as u16);
+	}
+}
+#[inline(always)]
+unsafe fn ldj_i16(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (at(j) as *const i16).read_unaligned();
+		g[j] = v as i32 as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn ldj_u32(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+	let mut g = [0u32; 32];
+	for j in 0..32 {
+		let v = (at(j) as *const u32).read_unaligned();
+		g[j] = v as u32;
+	}
+	regs8(g)
+}
+#[inline(always)]
+unsafe fn stj_u32(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+	let (m, x) = (words8(k), words8(v));
+	let mut z = 0u64;
+	let sink = core::hint::black_box(&raw mut z) as *mut u8;
+	for j in 0..32 {
+		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u32).write_unaligned(x[j] as u32);
+	}
+}
+#[inline(always)]
+unsafe fn stjf_u32(v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+	let x = words8(v);
+	for j in 0..32 {
+		(at(j) as *mut u32).write_unaligned(x[j] as u32);
+	}
+}
+#[inline(always)]
+unsafe fn ldj_u64(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 16] {
+	let mut g = [0u32; 64];
+	for j in 0..32 {
+		let v = (at(j) as *const u64).read_unaligned();
+		g[j] = v as u32;
+		g[32 + j] = (v >> 32) as u32;
+	}
+	regs16(g)
+}
+#[inline(always)]
+unsafe fn stj_u64(k: [uint32x4_t; 8], v: [uint32x4_t; 16], at: impl Fn(usize) -> *mut u8) {
+	let (m, x) = (words8(k), words16(v));
+	let mut z = 0u64;
+	let sink = core::hint::black_box(&raw mut z) as *mut u8;
+	for j in 0..32 {
+		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u64).write_unaligned((x[32 + j] as u64) << 32 | x[j] as u64);
+	}
+}
+#[inline(always)]
+unsafe fn stjf_u64(v: [uint32x4_t; 16], at: impl Fn(usize) -> *mut u8) {
+	let x = words16(v);
+	for j in 0..32 {
+		(at(j) as *mut u64).write_unaligned((x[32 + j] as u64) << 32 | x[j] as u64);
+	}
+}
+/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's.
+#[inline(always)]
+unsafe fn addrs(lo: [uint32x4_t; 8], hi: [uint32x4_t; 8], k: [uint32x4_t; 8]) -> [usize; 32] {
+	let (l, h, b) = (words8(lo), words8(hi), bits(&k));
+	let f = b.trailing_zeros() as usize % 32;
+	core::array::from_fn(|j| {
+		let j = if b >> j & 1 != 0 { j } else { f };
+		((h[j] as u64) << 32 | l[j] as u64) as usize
+	})
+}
+#[inline(always)]
+unsafe fn bsl_w(k: [uint32x4_t; 8], a: [uint32x4_t; 16], b: [uint32x4_t; 16]) -> [uint32x4_t; 16] {
+	core::array::from_fn(|r| vbslq_u32(k[r % 8], a[r], b[r]))
+}
+#[inline(always)]
+unsafe fn cat_w(a: [uint32x4_t; 8], b: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	core::array::from_fn(|r| if r < 8 { a[r] } else { b[r - 8] })
+}
+/// Registers' lanes as words, and words as registers' lanes.
+#[inline(always)]
+unsafe fn words8(a: [uint32x4_t; 8]) -> [u32; 32] {
+    core::mem::transmute::<[uint32x4_t; 8], [u32; 32]>(a)
+}
+#[inline(always)]
+unsafe fn regs8(a: [u32; 32]) -> [uint32x4_t; 8] {
+    core::mem::transmute::<[u32; 32], [uint32x4_t; 8]>(a)
+}
+#[inline(always)]
+unsafe fn words16(a: [uint32x4_t; 16]) -> [u32; 64] {
+    core::mem::transmute::<[uint32x4_t; 16], [u32; 64]>(a)
+}
+#[inline(always)]
+unsafe fn regs16(a: [u32; 64]) -> [uint32x4_t; 16] {
+    core::mem::transmute::<[u32; 64], [uint32x4_t; 16]>(a)
+}
+
+/// `label_leaves_inner`.
+#[inline(always)]
+unsafe fn b0_r0r1r2sr4g_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg0: *const u8, arg1: *const u8, arg2: *const u8, x3: *const u8, arg4: *const u8) {
+	let gid0 = l.group[0] * l.block[0] + lid0;
+	let mut x15: [[uint32x4_t; 8]; 8] = [[vdupq_n_u32(0); 8]; 8];
+	let mut x6 = [vdupq_n_u32(0); 8];
+	let mut x7 = [vdupq_n_u32(0); 8];
+	let mut x8 = [vdupq_n_u32(0); 8];
+	let mut x9: u32 = 0;
+	let mut x10 = [vdupq_n_u32(0); 8];
+	let mut x11 = [vdupq_n_u32(0); 8];
+	let mut x12 = [vdupq_n_u32(0); 8];
+	let mut x13 = [vdupq_n_u32(0); 8];
+	let mut x14: u32 = 0;
+	let mut x16: u32 = 0;
+	let mut x17: u32 = 0;
+	let mut x18 = [vdupq_n_u32(0); 8];
+	let mut x19 = [vdupq_n_u32(0); 16];
+	let mut x20: u32 = 0;
+	let mut x21: u32 = 0;
+	let mut x22: u32 = 0;
+	let mut x23: u32 = 0;
+	let mut x24: u32 = 0;
+	let mut x25 = [vdupq_n_u32(0); 8];
+	let mut x26: u32 = 0;
+	let mut x27: u32 = 0;
+	let mut x28 = [vdupq_n_u32(0); 8];
+	let mut x29 = [vdupq_n_u32(0); 8];
+	let mut x30 = [vdupq_n_u32(0); 8];
+	let mut x31 = [vdupq_n_u32(0); 8];
+	let mut x32: u32 = 0;
+	let mut x33: u32 = 0;
+	let mut live = k;
+	if (((x3.wrapping_add(40u64 as usize) as *const u32).read_unaligned()) == (0u32)) {
+		return;
+	}
+	let t0 = [vdupq_n_u32(0u32); 8];
+	x6 = t0;
+	let t1 = [vdupq_n_u32((x3.wrapping_add(40u64 as usize) as *const u32).read_unaligned()); 8];
+	x7 = t1;
+	let mut t2 = live;
+	loop {
+		let t3 = bits(&t2);
+		if t3.count_ones() <= 2 {
+			let mut t4 = t3;
+			while t4 != 0 {
+				let j = t4.trailing_zeros() as usize;
+				t4 &= t4 - 1;
+				let t5 = words8(x6);
+				let mut x6_j: u32 = t5[j];
+				let t6 = words8(x7);
+				let mut x7_j: u32 = t6[j];
+				let t7 = words8(x8);
+				let mut x8_j: u32 = t7[j];
+				loop {
+					if !((((x7_j).wrapping_sub(x6_j)) > (1u32))) { break; }
+					x8_j = ((x6_j).wrapping_add(x7_j)).checked_div(2u32).unwrap_or(0);
+					if (((((arg0.wrapping_add((((x8_j) as u64)).wrapping_mul(128u64) as usize).wrapping_add(8u64 as usize) as *const u32).read_unaligned()).checked_div(32u32).unwrap_or(0)).wrapping_add((2u32).wrapping_mul(x8_j))) <= ((gid0).wrapping_add(j as u32))) {
+						x6_j = x8_j;
+					} else {
+						x7_j = x8_j;
+					}
+				}
+				let mut t8 = words8(x6);
+				t8[j] = x6_j as u32;
+				x6 = regs8(t8);
+				let mut t9 = words8(x7);
+				t9[j] = x7_j as u32;
+				x7 = regs8(t9);
+				let mut t10 = words8(x8);
+				t10[j] = x8_j as u32;
+				x8 = regs8(t10);
+			}
+			break;
+		}
+		// Lanes part: each its own rounds.
+		let t11 = sub_r(x7, x6);
+		let t12 = [vdupq_n_u32(1u32); 8];
+		let t13 = cgt_r(t11, t12);
+		t2 = and_r(t2, t13);
+		if !(any(&t2)) { break; }
+		let t14 = add_r(x6, x7);
+		let t15: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t14[r], vdupq_n_s32(-1)));
+		x8 = t15;
+		let t16 = ix_on(t2, x8);
+		let t17 = ld_u32((arg0).wrapping_add((8u64) as usize) as *const u8, t16, 128);
+		let t18: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t17[r], vdupq_n_s32(-5)));
+		let t19 = [vdupq_n_u32(2u32); 8];
+		let t20 = mul_r(t19, x8);
+		let t21 = add_r(t18, t20);
+		let t22 = iota(gid0);
+		let t23 = cle_r(t21, t22);
+		let t24 = and_r(t2, t23);
+		{
+			x6 = bsl_r(t24, x8, x6);
+		}
+		let t25 = bic_r(t2, t23);
+		{
+			x7 = bsl_r(t25, x8, x7);
+		}
+	}
+	let t26 = ix_on(live, x6);
+	let t27 = ld_u32((arg0).wrapping_add((8u64) as usize) as *const u8, t26, 128);
+	let t28: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t27[r], vdupq_n_s32(-5)));
+	let t29 = [vdupq_n_u32(2u32); 8];
+	let t30 = mul_r(t29, x6);
+	let t31 = add_r(t28, t30);
+	x10 = t31;
+	let t32 = iota(gid0);
+	let t33 = clt_r(t32, x10);
+	let t34 = and_r(live, t33);
+	{
+		live = bic_r(live, t34);
+	}
+	if any(&live) {
+		let t35 = sub_r(t32, x10);
+		x11 = t35;
+		let t36 = ix_on(live, x6);
+		let t37 = ld_u32((arg0).wrapping_add((4u64) as usize) as *const u8, t36, 128);
+		x12 = t37;
+		let t38 = [vdupq_n_u32(32u32); 8];
+		let t39 = mul_r(x11, t38);
+		let t40 = cge_r(t39, x12);
+		let t41 = and_r(live, t40);
+		{
+			live = bic_r(live, t41);
+		}
+		if any(&live) {
+			let t42 = mul_r(x11, t38);
+			let t43 = sub_r(x12, t42);
+			let t44 = b1_sl_p(l, lid0, live, 32u32, t43);
+			x13 = t44;
+			x14 = 0u32;
+			let mut t45 = live;
+			let mut t46 = [vdupq_n_u32(0); 8];
+			loop {
+				// Lanes part: each its own rounds.
+				let t47 = [vdupq_n_u32(if ((x14) < ((x3.wrapping_add(20u64 as usize) as *const u32).read_unaligned())) { u32::MAX } else { 0 }); 8];
+				t45 = core::array::from_fn(|r| vandq_u32(vbicq_u32(t45[r], t46[r]), t47[r]));
+				if !(any(&t45)) { break; }
+				x16 = 0u32;
+				loop {
+					// Rounds of one condition: every lane goes on.
+					if !(((x16) < (8u32))) { break; }
+					let t48 = ((((x16) as u64)).wrapping_mul(4u64)) as usize / 4;
+					x15[t48] = bsl_r(t45, t0, x15[t48]);
+					let t49 = x16;
+					x16 = (x16).wrapping_add(1u32);
+				}
+				x17 = 0u32;
+				let mut t50 = t45;
+				let mut t51 = [vdupq_n_u32(0); 8];
+				loop {
+					// Lanes part: each its own rounds.
+					let t52 = [vdupq_n_u32(x17); 8];
+					let t53 = clt_r(t52, x13);
+					t50 = core::array::from_fn(|r| vandq_u32(vbicq_u32(t50[r], t51[r]), t53[r]));
+					if !(any(&t50)) { break; }
+					let t54 = mul_r(x11, t38);
+					let t55 = [vdupq_n_u32(x17); 8];
+					let t56 = add_r(t54, t55);
+					x18 = t56;
+					let t57 = b2_r4al128r0l_p(l, lid0, t50, arg4, arg0, x6, x18);
+					x19 = t57;
+					let t58: [uint32x4_t; 8] = lo(x19);
+					let t59: [uint32x4_t; 8] = hi(x19);
+					let t60 = addrs(t58, t59, t50);
+					x20 = 0u32;
+					't61: loop {
+						// Rounds of one condition: every lane goes on.
+						if !(((x20) < (8u32))) { break; }
+						x21 = (x14).wrapping_add(x20);
+						if ((x21) >= ((x3.wrapping_add(20u64 as usize) as *const u32).read_unaligned())) {
+							break 't61;
+						}
+						let t62 = and_r(t50, live);
+						if any(&t62) {
+							x22 = (arg1.wrapping_add((((x21) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+							x23 = ((x22) & (255u32));
+							x24 = (x22).wrapping_shr((8u32) as u32);
+							if ((x23) == (1u32)) {
+								let mut t63 = [vdupq_n_u32(0); 8];
+								t63 = ldj_u16(|j| (t60[j] as *const u8) as *const u8);
+								let t64 = [vdupq_n_u32(x24); 8];
+								let t65 = ceq_r(t63, t64);
+								x25 = bsl_r(t62, t65, x25);
+							} else {
+								if ((x23) == (2u32)) {
+									let t66: u64 = 2u64;
+									let t67 = [vdupq_n_u32((t66) as u32); 8];
+									let t68 = add_r(lo(x19), t67);
+									let t69 = clt_r(t68, lo(x19));
+									let t70: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(x19[(r + 8)], vdupq_n_u32(0), t69[r]));
+									let t71 = cat_w(lo(t68), t70);
+									let t72: [usize; 32] = core::array::from_fn(|j| t60[j].wrapping_add((2u64) as u64 as usize));
+									let mut t73 = [vdupq_n_u32(0); 8];
+									t73 = ldj_u16(|j| (t72[j] as *const u8) as *const u8);
+									let t74 = [vdupq_n_u32(x24); 8];
+									let t75 = ceq_r(t73, t74);
+									x25 = bsl_r(t62, t75, x25);
+								} else {
+									if ((x23) == (3u32)) {
+										x26 = ((x24) & (255u32));
+										x27 = (x24).wrapping_shr((8u32) as u32);
+										let t76: u64 = 4u64;
+										let t77 = [vdupq_n_u32((t76) as u32); 8];
+										let t78 = add_r(lo(x19), t77);
+										let t79 = clt_r(t78, lo(x19));
+										let t80: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(x19[(r + 8)], vdupq_n_u32(0), t79[r]));
+										let t81 = cat_w(lo(t78), t80);
+										let t82: [usize; 32] = core::array::from_fn(|j| t60[j].wrapping_add((4u64) as u64 as usize));
+										let mut t83 = [vdupq_n_u32(0); 8];
+										t83 = ldj_u8(|j| (t82[j] as *const u8) as *const u8);
+										let t84 = [vdupq_n_u32(x26); 8];
+										let t85 = and_r(t83, t84);
+										let t86 = [vdupq_n_u32(x26); 8];
+										let t87 = ceq_r(t85, t86);
+										let t88: u64 = 4u64;
+										let t89 = [vdupq_n_u32((t88) as u32); 8];
+										let t90 = add_r(lo(x19), t89);
+										let t91 = clt_r(t90, lo(x19));
+										let t92: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(x19[(r + 8)], vdupq_n_u32(0), t91[r]));
+										let t93 = cat_w(lo(t90), t92);
+										let t94: [usize; 32] = core::array::from_fn(|j| t60[j].wrapping_add((4u64) as u64 as usize));
+										let mut t95 = [vdupq_n_u32(0); 8];
+										t95 = ldj_u8(|j| (t94[j] as *const u8) as *const u8);
+										let t96 = [vdupq_n_u32(x27); 8];
+										let t97 = and_r(t95, t96);
+										let t98 = ceq_r(t97, t0);
+										let t99 = and_r(t87, t98);
+										x25 = bsl_r(t62, t99, x25);
+									} else {
+										if ((x23) == (18u32)) {
+											let t100 = b3_r4al128r0l_p(l, lid0, t62, arg4, arg0, x6, x18);
+											let t101 = [vdupq_n_u32(4294967295u32); 8];
+											let t102 = cne_r(t100, t101);
+											x25 = bsl_r(t62, t102, x25);
+										} else {
+											if ((x23) == (22u32)) {
+												let t103 = [vdupq_n_u32(if ((0i32) != 0) { u32::MAX } else { 0 }); 8];
+												x25 = bsl_r(t62, t103, x25);
+												let t104 = b4_r4al128r0l_p(l, lid0, t62, arg4, arg0, x6, x18);
+												x28 = bsl_r(t62, t104, x28);
+												let t105 = b5_r4al128r0ll_p(l, lid0, t62, arg4, arg0, x6, x18, x28);
+												x29 = bsl_r(t62, t105, x29);
+												let mut t106 = t62;
+												let mut t107 = [vdupq_n_u32(0); 8];
+												loop {
+													// Lanes part: each its own rounds.
+													let t108 = [vdupq_n_u32(4294967295u32); 8];
+													let t109 = cne_r(x29, t108);
+													t106 = core::array::from_fn(|r| vandq_u32(vbicq_u32(t106[r], t107[r]), t109[r]));
+													if !(any(&t106)) { break; }
+													let t110 = b6_r4al128r0l_p(l, lid0, t106, arg4, arg0, x6, x29);
+													let t111 = [vdupq_n_u32(1u32); 8];
+													let t112 = and_r(t110, t111);
+													let t113 = cne_r(t112, t0);
+													let t114 = and_r(t106, t113);
+													if any(&t114) {
+														let t115 = [vdupq_n_u32(if ((1i32) != 0) { u32::MAX } else { 0 }); 8];
+														x25 = bsl_r(t114, t115, x25);
+														t107 = orr_r(t107, t114);
+													}
+													let t116: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t106[r], live[r]), t107[r]));
+													let t117 = b5_r4al128r0ll_p(l, lid0, t116, arg4, arg0, x6, x29, x28);
+													x29 = bsl_r(t116, t117, x29);
+												}
+											} else {
+												if ((x23) == (21u32)) {
+													let t118 = [vdupq_n_u32(if ((0i32) != 0) { u32::MAX } else { 0 }); 8];
+													x25 = bsl_r(t62, t118, x25);
+													let t119 = b7_r4al128r0l_p(l, lid0, t62, arg4, arg0, x6, x18);
+													x30 = bsl_r(t62, t119, x30);
+													let t120 = b8_r4al128r0l_p(l, lid0, t62, arg4, arg0, x6, x18);
+													x31 = bsl_r(t62, t120, x31);
+													let mut t121 = t62;
+													let mut t122 = [vdupq_n_u32(0); 8];
+													loop {
+														// Lanes part: each its own rounds.
+														let t123 = [vdupq_n_u32(4294967295u32); 8];
+														let t124 = cne_r(x31, t123);
+														t121 = core::array::from_fn(|r| vandq_u32(vbicq_u32(t121[r], t122[r]), t124[r]));
+														if !(any(&t121)) { break; }
+														let t125 = b6_r4al128r0l_p(l, lid0, t121, arg4, arg0, x6, x31);
+														let t126 = [vdupq_n_u32(1u32); 8];
+														let t127 = and_r(t125, t126);
+														let t128 = cne_r(t127, t0);
+														let t129 = and_r(t121, t128);
+														if any(&t129) {
+															let t130 = [vdupq_n_u32(if ((1i32) != 0) { u32::MAX } else { 0 }); 8];
+															x25 = bsl_r(t129, t130, x25);
+															t122 = orr_r(t122, t129);
+														}
+														let t131: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t121[r], live[r]), t122[r]));
+														let t132 = b5_r4al128r0ll_p(l, lid0, t131, arg4, arg0, x6, x31, x30);
+														x31 = bsl_r(t131, t132, x31);
+													}
+												} else {
+													if ((x23) == (19u32)) {
+														let t133 = b9_r4al128r0l_p(l, lid0, t62, arg4, arg0, x6, x18);
+														let t134 = [vdupq_n_u32(1u32); 8];
+														let t135 = cgt_r(t133, t134);
+														x25 = bsl_r(t62, t135, x25);
+													} else {
+														let t136 = [vdupq_n_u32(if ((0i32) != 0) { u32::MAX } else { 0 }); 8];
+														x25 = bsl_r(t62, t136, x25);
+														x32 = 0u32;
+														let mut t137 = t62;
+														let mut t138 = [vdupq_n_u32(0); 8];
+														loop {
+															// Lanes part: each its own rounds.
+															let t139: u64 = 5u64;
+															let t140 = [vdupq_n_u32((t139) as u32); 8];
+															let t141 = add_r(lo(x19), t140);
+															let t142 = clt_r(t141, lo(x19));
+															let t143: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(x19[(r + 8)], vdupq_n_u32(0), t142[r]));
+															let t144 = cat_w(lo(t141), t143);
+															let t145: [usize; 32] = core::array::from_fn(|j| t60[j].wrapping_add((5u64) as u64 as usize));
+															let mut t146 = [vdupq_n_u32(0); 8];
+															t146 = ldj_u8(|j| (t145[j] as *const u8) as *const u8);
+															let t147 = [vdupq_n_u32(x32); 8];
+															let t148 = clt_r(t147, t146);
+															t137 = core::array::from_fn(|r| vandq_u32(vbicq_u32(t137[r], t138[r]), t148[r]));
+															if !(any(&t137)) { break; }
+															let t149: u64 = 8u64;
+															let t150 = [vdupq_n_u32((t149) as u32); 8];
+															let t151 = add_r(lo(x19), t150);
+															let t152 = clt_r(t151, lo(x19));
+															let t153: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(x19[(r + 8)], vdupq_n_u32(0), t152[r]));
+															let t154 = cat_w(lo(t151), t153);
+															let t155: [usize; 32] = core::array::from_fn(|j| t60[j].wrapping_add((8u64) as u64 as usize));
+															let t156: u64 = (((x32) as u64)).wrapping_mul(2u64);
+															let t157 = [vdupq_n_u32((t156) as u32); 8];
+															let t158 = [vdupq_n_u32(((t156) >> 32) as u32); 8];
+															let t159 = add_r(lo(t154), t157);
+															let t160 = clt_r(t159, lo(t154));
+															let t161 = adc_r(hi(t154), t158, t160);
+															let t162 = cat_w(lo(t159), t161);
+															let t163: [usize; 32] = core::array::from_fn(|j| t155[j].wrapping_add(((((x32) as u64)).wrapping_mul(2u64)) as u64 as usize));
+															let mut t164 = [vdupq_n_u32(0); 8];
+															t164 = ldj_u16(|j| (t163[j] as *const u8) as *const u8);
+															let t165 = [vdupq_n_u32(x24); 8];
+															let t166 = ceq_r(t164, t165);
+															let t167 = and_r(t137, t166);
+															if any(&t167) {
+																let t168 = [vdupq_n_u32(if ((1i32) != 0) { u32::MAX } else { 0 }); 8];
+																x25 = bsl_r(t167, t168, x25);
+																t138 = orr_r(t138, t167);
+															}
+															let t169: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t137[r], live[r]), t138[r]));
+															if any(&t169) {
+																let t170: u64 = 8u64;
+																let t171 = [vdupq_n_u32((t170) as u32); 8];
+																let t172 = add_r(lo(x19), t171);
+																let t173 = clt_r(t172, lo(x19));
+																let t174: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(x19[(r + 8)], vdupq_n_u32(0), t173[r]));
+																let t175 = cat_w(lo(t172), t174);
+																let t176: [usize; 32] = core::array::from_fn(|j| t60[j].wrapping_add((8u64) as u64 as usize));
+																let t177: u64 = (((x32) as u64)).wrapping_mul(2u64);
+																let t178 = [vdupq_n_u32((t177) as u32); 8];
+																let t179 = [vdupq_n_u32(((t177) >> 32) as u32); 8];
+																let t180 = add_r(lo(t175), t178);
+																let t181 = clt_r(t180, lo(t175));
+																let t182 = adc_r(hi(t175), t179, t181);
+																let t183 = cat_w(lo(t180), t182);
+																let t184: [usize; 32] = core::array::from_fn(|j| t176[j].wrapping_add(((((x32) as u64)).wrapping_mul(2u64)) as u64 as usize));
+																let mut t185 = [vdupq_n_u32(0); 8];
+																t185 = ldj_u16(|j| (t184[j] as *const u8) as *const u8);
+																let t186 = [vdupq_n_u32(x24); 8];
+																let t187 = cgt_r(t185, t186);
+																let t188 = and_r(t169, t187);
+																if any(&t188) {
+																	t138 = orr_r(t138, t188);
+																}
+															}
+															let t189: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t137[r], live[r]), t138[r]));
+															let t190 = x32;
+															x32 = (x32).wrapping_add(1u32);
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+							let t191 = and_r(t62, live);
+							if any(&t191) {
+								let t192 = ((((x20) as u64)).wrapping_mul(4u64)) as usize / 4;
+								let t193: [uint32x4_t; 8] = core::array::from_fn(|r| vshrq_n_u32::<31>(x25[r]));
+								let t194: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t193[r], vdupq_n_s32(((x17) & 31) as i32)));
+								let t195 = orr_r(x15[t192], t194);
+								x15[t192] = bsl_r(t191, t195, x15[t192]);
+							}
+						}
+						let t196 = x20;
+						x20 = (x20).wrapping_add(1u32);
+					}
+					let t197: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t50[r], live[r]), t51[r]));
+					let t198 = x17;
+					x17 = (x17).wrapping_add(1u32);
+				}
+				let t199: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t45[r], live[r]), t46[r]));
+				if any(&t199) {
+					x33 = 0u32;
+					loop {
+						// Rounds of one condition: every lane goes on.
+						let mut t200: bool = ((x33) < (8u32));
+						if t200 {
+							t200 = (((x14).wrapping_add(x33)) < ((x3.wrapping_add(20u64 as usize) as *const u32).read_unaligned()));
+						}
+						if !(t200) { break; }
+						let t201 = ((((x33) as u64)).wrapping_mul(4u64)) as usize / 4;
+						let t202 = [vdupq_n_u32(((x14).wrapping_add(x33)).wrapping_mul((x3.wrapping_add(32u64 as usize) as *const u32).read_unaligned())); 8];
+						let t203 = add_r(t202, x10);
+						let t204 = add_r(t203, x11);
+						let t205 = words8(t204);
+						stj_u32(t199, x15[t201], |j| (arg2 as *mut u32).add(t205[j] as usize) as *mut u8);
+						let t206 = x33;
+						x33 = (x33).wrapping_add(1u32);
+					}
+				}
+				let t207: [uint32x4_t; 8] = core::array::from_fn(|r| vbicq_u32(vandq_u32(t45[r], live[r]), t46[r]));
+				x14 = (x14).wrapping_add(8u32);
+			}
+		}
+	}
+}
+
+/// `ukl_min`.
+#[inline(always)]
+unsafe fn b1_sl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: u32, x1: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(x0); 8];
+	let t1 = clt_r(t0, x1);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	{
+		let t5 = [vdupq_n_u32(x0); 8];
+		t2 = bsl_r(t3, t5, t2);
+	}
+	{
+		t2 = bsl_r(t4, x1, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `tape_code`.
+#[inline(always)]
+unsafe fn b2_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	x3 = t0;
+	let t1: [uint32x4_t; 8] = lo(x3);
+	let t2: [uint32x4_t; 8] = hi(x3);
+	let t3 = addrs(t1, t2, live);
+	let t4 = ix_on(live, x1i);
+	let t5 = ld_u32((arg0).wrapping_add((84u64) as usize) as *const u8, t4, 128);
+	let t6: [uint32x4_t; 8] = core::array::from_fn(|r| vreinterpretq_u32_s32(vshrq_n_s32::<31>(vreinterpretq_s32_u32(t5[r]))));
+	let t7 = cat_w(lo(t5), lo(t6));
+	let t8: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x3[r], t7[r]));
+	let t9 = clt_r(t8, lo(x3));
+	let t10 = adc_r(hi(x3), hi(t7), t9);
+	let t11 = cat_w(lo(t8), t10);
+	let t12 = b11_lal128r0l_p(l, lid0, live, x3, arg0, x1i, x2);
+	let t13: [uint32x4_t; 8] = core::array::from_fn(|r| vmulq_u32(t12[r], vdupq_n_u32(24)));
+	let t14: [uint32x4_t; 8] = core::array::from_fn(|r| vmulhiq_u32(t12[r], vdupq_n_u32(24)));
+	let t15 = add_r(lo(t11), t13);
+	let t16 = clt_r(t15, lo(t11));
+	let t17 = adc_r(hi(t11), t14, t16);
+	let t18 = cat_w(lo(t15), t17);
+	res = t18;
+	return res;
+}
+
+/// `tape_next`.
+#[inline(always)]
+unsafe fn b3_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	let t1 = b12_lal128r0l_p(l, lid0, live, t0, arg0, x1i, x2);
+	res = t1;
+	return res;
+}
+
+/// `tape_siblings_end`.
+#[inline(always)]
+unsafe fn b4_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b13_r4al128r0l_p(l, lid0, live, arg4, arg0, x1i, x2);
+	x3 = t0;
+	let t1 = [vdupq_n_u32(4294967295u32); 8];
+	let t2 = ceq_r(x3, t1);
+	let mut t3 = [vdupq_n_u32(0); 8];
+	let t4 = and_r(live, t2);
+	let t5 = bic_r(live, t2);
+	{
+		let t6 = [vdupq_n_u32(0u32); 8];
+		t3 = bsl_r(t4, t6, t3);
+	}
+	if any(&t5) {
+		let t7: [uint32x4_t; 8];
+		let t8 = bits(&t5);
+		if t8.count_ones() <= 2 {
+			let t9 = words8(x1i);
+			let t10 = words8(x3);
+			let mut t11 = [0u32; 32];
+			let mut t12 = t8;
+			while t12 != 0 {
+				let j = t12.trailing_zeros() as usize;
+				t12 &= t12 - 1;
+				let t13 = [vdupq_n_u32(t10[j]); 8];
+				let t14 = b7_r4sl_p(l, lid0, [vdupq_n_u32(u32::MAX); 8], arg4, (arg0 as *const u8).wrapping_add(((t9[j]) as usize).wrapping_mul(128)), t13);
+				t11[j] = vgetq_lane_u32::<0>(t14[0]);
+			}
+			t7 = regs8(t11);
+		} else {
+			let t15 = b7_r4al128r0l_p(l, lid0, t5, arg4, arg0, x1i, x3);
+			t7 = t15;
+		}
+		t3 = bsl_r(t5, t7, t3);
+	}
+	res = t3;
+	return res;
+}
+
+/// `tape_next_in`.
+#[inline(always)]
+unsafe fn b5_r4al128r0ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	let t1 = b14_lal128r0ll_p(l, lid0, live, t0, arg0, x1i, x2, x3);
+	res = t1;
+	return res;
+}
+
+/// `tape_flags`.
+#[inline(always)]
+unsafe fn b6_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b2_r4al128r0l_p(l, lid0, live, arg4, arg0, x1i, x2);
+	let t1: u64 = 4u64;
+	let t2 = [vdupq_n_u32((t1) as u32); 8];
+	let t3 = add_r(lo(t0), t2);
+	let t4 = clt_r(t3, lo(t0));
+	let t5: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t0[(r + 8)], vdupq_n_u32(0), t4[r]));
+	let t6 = cat_w(lo(t3), t5);
+	let t7: [uint32x4_t; 8] = lo(t6);
+	let t8: [uint32x4_t; 8] = hi(t6);
+	let t9 = addrs(t7, t8, live);
+	let mut t10 = [vdupq_n_u32(0); 8];
+	t10 = ldj_u8(|j| (t9[j] as *const u8) as *const u8);
+	res = t10;
+	return res;
+}
+
+/// `tape_end_of`.
+#[inline(always)]
+unsafe fn b7_r4sl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4s_p(l, lid0, live, arg4, x1);
+	let t1 = b15_ssl_p(l, lid0, live, t0, x1, x2);
+	res = t1;
+	return res;
+}
+
+/// `tape_end_of`.
+#[inline(always)]
+unsafe fn b7_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	let t1 = b15_lal128r0l_p(l, lid0, live, t0, arg0, x1i, x2);
+	res = t1;
+	return res;
+}
+
+/// `tape_first_child`.
+#[inline(always)]
+unsafe fn b8_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	let t1 = b16_lal128r0l_p(l, lid0, live, t0, arg0, x1i, x2);
+	res = t1;
+	return res;
+}
+
+/// `tape_size`.
+#[inline(always)]
+unsafe fn b9_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	let t1 = b17_lal128r0l_p(l, lid0, live, t0, arg0, x1i, x2);
+	res = t1;
+	return res;
+}
+
+/// `tape_doc`.
+#[inline(always)]
+unsafe fn b10_r4s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, x1: *const u8) -> *const u8 {
+    let a0: u32 = (x1.wrapping_add(124u64 as usize) as *const u32).read_unaligned();
+    let a1: u32 = (x1 as *const u32).read_unaligned();
+	let mut live = k;
+	let mut res: *const u8 = core::ptr::null();
+	res = arg4.wrapping_add((((((((((a0) as u64)).wrapping_shl((32u64) as u32)) | (((a1) as u64)))) as i64)) as u64) as usize);
+	return res;
+}
+
+/// `tape_doc`.
+#[inline(always)]
+unsafe fn b10_r4al128r0_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = ix_on(live, x1i);
+	let t1 = ld_u32((arg0).wrapping_add((124u64) as usize) as *const u8, t0, 128);
+	let t2 = cat_w([vdupq_n_u32(0); 8], lo(t1));
+	let t3 = ix_on(live, x1i);
+	let t4 = ld_u32(arg0 as *const u8, t3, 128);
+	let t5 = orr_r(lo(t2), t4);
+	let t6 = cat_w(t5, hi(t2));
+	let t7 = cat_w(live, live);
+	let t8: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t6[r], t7[r]));
+	let t9: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t6[(r + 8)], t7[(r + 8)]));
+	let t10 = cat_w(t8, t9);
+	let t11: u64 = ((arg4) as usize as u64);
+	let t12 = [vdupq_n_u32((t11) as u32); 8];
+	let t13 = [vdupq_n_u32(((t11) >> 32) as u32); 8];
+	let t14 = add_r(t12, lo(t10));
+	let t15 = clt_r(t14, t12);
+	let t16 = adc_r(t13, hi(t10), t15);
+	let t17 = cat_w(lo(t14), t16);
+	res = t17;
+	return res;
+}
+
+/// `tape_number`.
+#[inline(always)]
+unsafe fn b11_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b18_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	res = t0;
+	return res;
+}
+
+/// `clif_tape_next`.
+#[inline(always)]
+unsafe fn b12_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x3 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x3, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b19_lal128r0l_p(l, lid0, t7, x0, arg0, x1i, x2);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b20_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `tape_parent`.
+#[inline(always)]
+unsafe fn b13_r4al128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg4: *const u8, arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b10_r4al128r0_p(l, lid0, live, arg4, arg0, x1i);
+	let t1 = b21_lal128r0l_p(l, lid0, live, t0, arg0, x1i, x2);
+	res = t1;
+	return res;
+}
+
+/// `clif_tape_next_in`.
+#[inline(always)]
+unsafe fn b14_lal128r0ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x4 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x4, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b22_lal128r0ll_p(l, lid0, t7, x0, arg0, x1i, x2, x3);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b23_lal128r0ll_p(l, lid0, live, x0, arg0, x1i, x2, x3);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_tape_end_of`.
+#[inline(always)]
+unsafe fn b15_ssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3: u32 = 0;
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: u32;
+	if t0 {
+		t1 = 16u32;
+	} else {
+		t1 = (x1.wrapping_add(((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	x3 = t1;
+	if ((x3) == (16u32)) {
+		let t2 = b24_ssl_p(l, lid0, live, x0, x1, x2);
+		res = t2;
+		return res;
+	}
+	if any(&live) {
+		let t3 = b25_ssl_p(l, lid0, live, x0, x1, x2);
+		res = bsl_r(live, t3, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_tape_end_of`.
+#[inline(always)]
+unsafe fn b15_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x3 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x3, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b24_lal128r0l_p(l, lid0, t7, x0, arg0, x1i, x2);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b25_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_tape_first_child`.
+#[inline(always)]
+unsafe fn b16_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x3 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x3, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b26_lal128r0l_p(l, lid0, t7, x0, arg0, x1i, x2);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b27_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_tape_size`.
+#[inline(always)]
+unsafe fn b17_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x3 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x3, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b28_lal128r0l_p(l, lid0, t7, x0, arg0, x1i, x2);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b29_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_tape_number`.
+#[inline(always)]
+unsafe fn b18_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x3 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x3, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b30_lal128r0l_p(l, lid0, t7, x0, arg0, x1i, x2);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b31_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_f16_next`.
+#[inline(always)]
+unsafe fn b19_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b32_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	x3 = t0;
+	let t1 = [vdupq_n_u32(4294967295u32); 8];
+	let t2 = ceq_r(x3, t1);
+	let mut t3 = [vdupq_n_u32(0); 8];
+	let t4 = and_r(live, t2);
+	let t5 = bic_r(live, t2);
+	{
+		t3 = bsl_r(t4, t1, t3);
+	}
+	if any(&t5) {
+		let t6 = b24_lal128r0l_p(l, lid0, t5, x0, arg0, x1i, x3);
+		let t7: [uint32x4_t; 8];
+		let t8 = bits(&t5);
+		if t8.count_ones() <= 2 {
+			let t9 = words16(x0);
+			let t10 = words8(x1i);
+			let t11 = words8(x2);
+			let t12 = words8(t6);
+			let mut t13 = [0u32; 32];
+			let mut t14 = t8;
+			while t14 != 0 {
+				let j = t14.trailing_zeros() as usize;
+				t14 &= t14 - 1;
+				let t15 = b22_ssss_f(l, lid0, (((t9[32 + j] as u64) << 32 | t9[j] as u64) as usize as *const u8), (arg0 as *const u8).wrapping_add(((t10[j]) as usize).wrapping_mul(128)), t11[j], t12[j]);
+				t13[j] = vgetq_lane_u32::<0>(t15[0]);
+			}
+			t7 = regs8(t13);
+		} else {
+			let t16 = b22_lal128r0ll_p(l, lid0, t5, x0, arg0, x1i, x2, t6);
+			t7 = t16;
+		}
+		t3 = bsl_r(t5, t7, t3);
+	}
+	res = t3;
+	return res;
+}
+
+/// `clif_f15_next`.
+#[inline(always)]
+unsafe fn b20_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b33_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	x3 = t0;
+	let t1 = [vdupq_n_u32(4294967295u32); 8];
+	let t2 = ceq_r(x3, t1);
+	let mut t3 = [vdupq_n_u32(0); 8];
+	let t4 = and_r(live, t2);
+	let t5 = bic_r(live, t2);
+	{
+		t3 = bsl_r(t4, t1, t3);
+	}
+	if any(&t5) {
+		let t6 = b25_lal128r0l_p(l, lid0, t5, x0, arg0, x1i, x3);
+		let t7: [uint32x4_t; 8];
+		let t8 = bits(&t5);
+		if t8.count_ones() <= 2 {
+			let t9 = words16(x0);
+			let t10 = words8(x1i);
+			let t11 = words8(x2);
+			let t12 = words8(t6);
+			let mut t13 = [0u32; 32];
+			let mut t14 = t8;
+			while t14 != 0 {
+				let j = t14.trailing_zeros() as usize;
+				t14 &= t14 - 1;
+				let t15 = b23_ssss_f(l, lid0, (((t9[32 + j] as u64) << 32 | t9[j] as u64) as usize as *const u8), (arg0 as *const u8).wrapping_add(((t10[j]) as usize).wrapping_mul(128)), t11[j], t12[j]);
+				t13[j] = t15;
+			}
+			t7 = regs8(t13);
+		} else {
+			let t16 = b23_lal128r0ll_p(l, lid0, t5, x0, arg0, x1i, x2, t6);
+			t7 = t16;
+		}
+		t3 = bsl_r(t5, t7, t3);
+	}
+	res = t3;
+	return res;
+}
+
+/// `clif_tape_parent`.
+#[inline(always)]
+unsafe fn b21_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((12u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((12u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	x3 = t1;
+	let t5 = [vdupq_n_u32(16u32); 8];
+	let t6 = ceq_r(x3, t5);
+	let t7 = and_r(live, t6);
+	if any(&t7) {
+		let t8 = b32_lal128r0l_p(l, lid0, t7, x0, arg0, x1i, x2);
+		res = bsl_r(t7, t8, res);
+		live = bic_r(live, t7);
+	}
+	if any(&live) {
+		let t9 = b33_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+		res = bsl_r(live, t9, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_f16_next_in`.
+#[inline(always)]
+unsafe fn b22_ssss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32, x3: u32) -> [uint32x4_t; 8] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b24_sss_f(l, lid0, x0, x1, x2);
+	x4 = t0;
+	let t1 = [vdupq_n_u32(x3); 8];
+	let t2 = clt_r(x4, t1);
+	let mut t3 = [vdupq_n_u32(0); 8];
+	let t4 = mvn_r(t2);
+	{
+		t3 = bsl_r(t2, x4, t3);
+	}
+	{
+		let t5 = [vdupq_n_u32(4294967295u32); 8];
+		t3 = bsl_r(t4, t5, t3);
+	}
+	res = t3;
+	return res;
+}
+
+/// `clif_f16_next_in`.
+#[inline(always)]
+unsafe fn b22_lal128r0ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b24_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	x4 = t0;
+	let t1 = clt_r(x4, x3);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	{
+		t2 = bsl_r(t3, x4, t2);
+	}
+	{
+		let t5 = [vdupq_n_u32(4294967295u32); 8];
+		t2 = bsl_r(t4, t5, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `clif_f15_next_in`.
+#[inline(always)]
+unsafe fn b23_ssss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32, x3: u32) -> u32 {
+	let mut x4: u32 = 0;
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0 = b25_sss_f(l, lid0, x0, x1, x2);
+	x4 = t0;
+	let t1: u32;
+	if ((x4) < (x3)) {
+		t1 = x4;
+	} else {
+		t1 = 4294967295u32;
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_next_in`.
+#[inline(always)]
+unsafe fn b23_lal128r0ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b25_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	x4 = t0;
+	let t1 = clt_r(x4, x3);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	{
+		t2 = bsl_r(t3, x4, t2);
+	}
+	{
+		let t5 = [vdupq_n_u32(4294967295u32); 8];
+		t2 = bsl_r(t4, t5, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `clif_f16_end_of`.
+#[inline(always)]
+unsafe fn b24_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> [uint32x4_t; 8] {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b28_sss_f(l, lid0, x0, x1, x2);
+	let t1 = b34_sssl_f(l, lid0, x0, x1, x2, t0);
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_end_of`.
+#[inline(always)]
+unsafe fn b24_ssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b28_ssl_p(l, lid0, live, x0, x1, x2);
+	let t1 = b34_ssll_p(l, lid0, live, x0, x1, x2, t0);
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_end_of`.
+#[inline(always)]
+unsafe fn b24_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b28_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	let t1 = b34_lal128r0ll_p(l, lid0, live, x0, arg0, x1i, x2, t0);
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_end_of`.
+#[inline(always)]
+unsafe fn b25_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0 = b29_sss_f(l, lid0, x0, x1, x2);
+	let t1 = b34_ssss_f(l, lid0, x0, x1, x2, t0);
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_end_of`.
+#[inline(always)]
+unsafe fn b25_ssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b29_ssl_p(l, lid0, live, x0, x1, x2);
+	let t1 = b34_ssll_p(l, lid0, live, x0, x1, x2, t0);
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_end_of`.
+#[inline(always)]
+unsafe fn b25_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b29_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	let t1 = b34_lal128r0ll_p(l, lid0, live, x0, arg0, x1i, x2, t0);
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_first_child`.
+#[inline(always)]
+unsafe fn b26_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b28_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	let t1 = [vdupq_n_u32(1u32); 8];
+	let t2 = cgt_r(t0, t1);
+	let mut t3 = [vdupq_n_u32(0); 8];
+	let t4 = and_r(live, t2);
+	let t5 = bic_r(live, t2);
+	{
+		let t6 = add_r(x2, t1);
+		t3 = bsl_r(t4, t6, t3);
+	}
+	{
+		let t7 = [vdupq_n_u32(4294967295u32); 8];
+		t3 = bsl_r(t5, t7, t3);
+	}
+	res = t3;
+	return res;
+}
+
+/// `clif_f15_first_child`.
+#[inline(always)]
+unsafe fn b27_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b29_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	let t1 = [vdupq_n_u32(1u32); 8];
+	let t2 = cgt_r(t0, t1);
+	let mut t3 = [vdupq_n_u32(0); 8];
+	let t4 = and_r(live, t2);
+	let t5 = bic_r(live, t2);
+	{
+		let t6 = add_r(x2, t1);
+		t3 = bsl_r(t4, t6, t3);
+	}
+	{
+		let t7 = [vdupq_n_u32(4294967295u32); 8];
+		t3 = bsl_r(t5, t7, t3);
+	}
+	res = t3;
+	return res;
+}
+
+/// `clif_f16_size`.
+#[inline(always)]
+unsafe fn b28_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b35_sss_f(l, lid0, x0, x1, x2);
+	x3 = t0;
+	let t1: u64 = 1u64;
+	let t2 = [vdupq_n_u32((t1) as u32); 8];
+	let t3 = and_r(lo(x3), t2);
+	let t4: u64 = 0u64;
+	let t5 = [vdupq_n_u32((t4) as u32); 8];
+	let t6 = ceq_r(t3, t5);
+	let t7 = mvn_r(t6);
+	let mut t8 = [vdupq_n_u32(0); 8];
+	let t9 = mvn_r(t7);
+	{
+		let t10 = [vdupq_n_u32(1u32); 8];
+		t8 = bsl_r(t7, t10, t8);
+	}
+	if any(&t9) {
+		let t11: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshrq_n_u32::<1>(x3[r]), vshlq_n_u32::<31>(x3[(r + 8)])));
+		let t12: [uint32x4_t; 8] = core::array::from_fn(|r| vshrq_n_u32::<1>(x3[(r + 8)]));
+		let t13 = cat_w(t11, t12);
+		let t14: [uint32x4_t; 8] = lo(t13);
+		let t15: [uint32x4_t; 8];
+		let t16 = bits(&t9);
+		if t16.count_ones() <= 2 {
+			let t17 = words8(t14);
+			let mut t18 = [0u32; 32];
+			let mut t19 = t16;
+			while t19 != 0 {
+				let j = t19.trailing_zeros() as usize;
+				t19 &= t19 - 1;
+				let t20 = b36_ss_f(l, lid0, t17[j], 1u32);
+				t18[j] = t20;
+			}
+			t15 = regs8(t18);
+		} else {
+			let t21 = b36_ls_p(l, lid0, t9, t14, 1u32);
+			t15 = t21;
+		}
+		t8 = bsl_r(t9, t15, t8);
+	}
+	res = t8;
+	return res;
+}
+
+/// `clif_f16_size`.
+#[inline(always)]
+unsafe fn b28_ssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b35_ssl_p(l, lid0, live, x0, x1, x2);
+	x3 = t0;
+	let t1: u64 = 1u64;
+	let t2 = [vdupq_n_u32((t1) as u32); 8];
+	let t3 = and_r(lo(x3), t2);
+	let t4: u64 = 0u64;
+	let t5 = [vdupq_n_u32((t4) as u32); 8];
+	let t6 = ceq_r(t3, t5);
+	let t7 = mvn_r(t6);
+	let mut t8 = [vdupq_n_u32(0); 8];
+	let t9 = and_r(live, t7);
+	let t10 = bic_r(live, t7);
+	{
+		let t11 = [vdupq_n_u32(1u32); 8];
+		t8 = bsl_r(t9, t11, t8);
+	}
+	if any(&t10) {
+		let t12: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshrq_n_u32::<1>(x3[r]), vshlq_n_u32::<31>(x3[(r + 8)])));
+		let t13: [uint32x4_t; 8] = core::array::from_fn(|r| vshrq_n_u32::<1>(x3[(r + 8)]));
+		let t14 = cat_w(t12, t13);
+		let t15: [uint32x4_t; 8] = lo(t14);
+		let t16: [uint32x4_t; 8];
+		let t17 = bits(&t10);
+		if t17.count_ones() <= 2 {
+			let t18 = words8(t15);
+			let mut t19 = [0u32; 32];
+			let mut t20 = t17;
+			while t20 != 0 {
+				let j = t20.trailing_zeros() as usize;
+				t20 &= t20 - 1;
+				let t21 = b36_ss_f(l, lid0, t18[j], 1u32);
+				t19[j] = t21;
+			}
+			t16 = regs8(t19);
+		} else {
+			let t22 = b36_ls_p(l, lid0, t10, t15, 1u32);
+			t16 = t22;
+		}
+		t8 = bsl_r(t10, t16, t8);
+	}
+	res = t8;
+	return res;
+}
+
+/// `clif_f16_size`.
+#[inline(always)]
+unsafe fn b28_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b35_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	x3 = t0;
+	let t1: u64 = 1u64;
+	let t2 = [vdupq_n_u32((t1) as u32); 8];
+	let t3 = and_r(lo(x3), t2);
+	let t4: u64 = 0u64;
+	let t5 = [vdupq_n_u32((t4) as u32); 8];
+	let t6 = ceq_r(t3, t5);
+	let t7 = mvn_r(t6);
+	let mut t8 = [vdupq_n_u32(0); 8];
+	let t9 = and_r(live, t7);
+	let t10 = bic_r(live, t7);
+	{
+		let t11 = [vdupq_n_u32(1u32); 8];
+		t8 = bsl_r(t9, t11, t8);
+	}
+	if any(&t10) {
+		let t12: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshrq_n_u32::<1>(x3[r]), vshlq_n_u32::<31>(x3[(r + 8)])));
+		let t13: [uint32x4_t; 8] = core::array::from_fn(|r| vshrq_n_u32::<1>(x3[(r + 8)]));
+		let t14 = cat_w(t12, t13);
+		let t15: [uint32x4_t; 8] = lo(t14);
+		let t16: [uint32x4_t; 8];
+		let t17 = bits(&t10);
+		if t17.count_ones() <= 2 {
+			let t18 = words8(t15);
+			let mut t19 = [0u32; 32];
+			let mut t20 = t17;
+			while t20 != 0 {
+				let j = t20.trailing_zeros() as usize;
+				t20 &= t20 - 1;
+				let t21 = b36_ss_f(l, lid0, t18[j], 1u32);
+				t19[j] = t21;
+			}
+			t16 = regs8(t19);
+		} else {
+			let t22 = b36_ls_p(l, lid0, t10, t15, 1u32);
+			t16 = t22;
+		}
+		t8 = bsl_r(t10, t16, t8);
+	}
+	res = t8;
+	return res;
+}
+
+/// `clif_f15_size`.
+#[inline(always)]
+unsafe fn b29_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0 = b38_sss_f(l, lid0, x0, x1, 1u32);
+	let t1 = b39_sss_f(l, lid0, x0, x1, 0u32);
+	let t2 = b37_ssss_f(l, lid0, x0, t0, t1, x2);
+	let t3 = b36_ss_f(l, lid0, t2, 1u32);
+	res = t3;
+	return res;
+}
+
+/// `clif_f15_size`.
+#[inline(always)]
+unsafe fn b29_ssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b38_sss_p(l, lid0, live, x0, x1, 1u32);
+	let t1 = b39_sss_p(l, lid0, live, x0, x1, 0u32);
+	let t2 = b37_sssl_p(l, lid0, live, x0, t0, t1, x2);
+	let t3 = b36_ls_p(l, lid0, live, t2, 1u32);
+	res = t3;
+	return res;
+}
+
+/// `clif_f15_size`.
+#[inline(always)]
+unsafe fn b29_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b38_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 1u32);
+	let t1 = b39_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 0u32);
+	let t2 = b37_llll_p(l, lid0, live, x0, t0, t1, x2);
+	let t3 = b36_ls_p(l, lid0, live, t2, 1u32);
+	res = t3;
+	return res;
+}
+
+/// `clif_f16_number`.
+#[inline(always)]
+unsafe fn b30_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x2[r], vnegq_s32(vdupq_n_s32(((10u32) & 31) as i32))));
+	let t1 = b41_lal128r0sl_p(l, lid0, live, x0, arg0, x1i, 0u32, t0);
+	let t2 = [vdupq_n_u32(1023u32); 8];
+	let t3 = and_r(x2, t2);
+	let t4 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, t1, t3, 1u32);
+	let t5: [uint32x4_t; 8] = lo(t4);
+	x3 = t5;
+	let t6 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 76u32);
+	x4 = t6;
+	let t7 = clt_r(x3, x4);
+	let t8 = and_r(live, t7);
+	{
+		res = bsl_r(t8, x3, res);
+		live = bic_r(live, t8);
+	}
+	if any(&live) {
+		let t9 = b43_lal128r0sl_p(l, lid0, live, x0, arg0, x1i, 0u32, x2);
+		let t10: [uint32x4_t; 8] = lo(t9);
+		x5 = t10;
+		let t11 = sub_r(x3, x4);
+		let t12 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 80u32);
+		let t13 = mul_r(t11, t12);
+		let t14 = add_r(x4, t13);
+		let t15 = add_r(t14, x5);
+		res = bsl_r(live, t15, res);
+		live = bic_r(live, live);
+	}
+	res
+}
+
+/// `clif_f15_number`.
+#[inline(always)]
+unsafe fn b31_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b38_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 0u32);
+	let t1 = [vdupq_n_u32(2u32); 8];
+	let t2 = mul_r(x2, t1);
+	let t3 = b44_llls_p(l, lid0, live, x0, t0, t2, 2u32);
+	let t4: [uint32x4_t; 8] = lo(t3);
+	res = t4;
+	return res;
+}
+
+/// `clif_f16_parent`.
+#[inline(always)]
+unsafe fn b32_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b45_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x2);
+	x3 = t0;
+	let mut t1 = live;
+	loop {
+		// Lanes part: each its own rounds.
+		let t2: u64 = (1u64).wrapping_shl((32u64) as u32);
+		let t3 = [vdupq_n_u32((t2) as u32); 8];
+		let t4 = [vdupq_n_u32(((t2) >> 32) as u32); 8];
+		let t5 = and_r(lo(x3), t3);
+		let t6 = and_r(hi(x3), t4);
+		let t7 = cat_w(t5, t6);
+		let t8: u64 = 0u64;
+		let t9 = [vdupq_n_u32((t8) as u32); 8];
+		let t10: [uint32x4_t; 8] = core::array::from_fn(|r| veq64q_u32(t7[r], t7[(r + 8)], t9[r], vdupq_n_u32(0)));
+		let t11 = mvn_r(t10);
+		t1 = and_r(t1, t11);
+		if !(any(&t1)) { break; }
+		let t12: [uint32x4_t; 8] = lo(x3);
+		let t13 = b45_lal128r0l_p(l, lid0, t1, x0, arg0, x1i, t12);
+		x3 = bsl_w(t1, t13, x3);
+	}
+	let t14: [uint32x4_t; 8] = lo(x3);
+	res = t14;
+	return res;
+}
+
+/// `clif_f15_parent`.
+#[inline(always)]
+unsafe fn b33_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut x4: u32 = 0;
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut x6 = [vdupq_n_u32(0); 8];
+	let mut x7 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(0u32); 8];
+	let t1 = ceq_r(x2, t0);
+	let t2 = and_r(live, t1);
+	{
+		let t3 = [vdupq_n_u32(4294967295u32); 8];
+		res = bsl_r(t2, t3, res);
+		live = bic_r(live, t2);
+	}
+	if any(&live) {
+		x3 = x2;
+		x4 = 0u32;
+		let mut t4 = live;
+		loop {
+			// Lanes part: each its own rounds.
+			let t5 = cne_r(x3, t0);
+			let t6 = [vdupq_n_u32(if ((x4) < (64u32)) { u32::MAX } else { 0 }); 8];
+			let t7 = and_r(t5, t6);
+			t4 = and_r(t4, t7);
+			if !(any(&t4)) { break; }
+			let t8 = [vdupq_n_u32(1u32); 8];
+			let t9 = sub_r(x3, t8);
+			x3 = t9;
+			let t10 = b29_lal128r0l_p(l, lid0, t4, x0, arg0, x1i, x3);
+			let t11 = b34_lal128r0ll_p(l, lid0, t4, x0, arg0, x1i, x3, t10);
+			let t12 = cgt_r(t11, x2);
+			let t13 = and_r(t4, t12);
+			{
+				res = bsl_r(t13, x3, res);
+				live = bic_r(live, t13);
+			}
+			let t14 = and_r(t4, live);
+			let t15 = x4;
+			x4 = (x4).wrapping_add(1u32);
+			t4 = and_r(t4, live);
+		}
+		if any(&live) {
+			x5 = t0;
+			let mut t16 = live;
+			loop {
+				// Lanes part: each its own rounds.
+				let t17 = [vdupq_n_u32(if true { u32::MAX } else { 0 }); 8];
+				t16 = and_r(t16, t17);
+				if !(any(&t16)) { break; }
+				let t18 = [vdupq_n_u32(1u32); 8];
+				let t19 = add_r(x5, t18);
+				x6 = t19;
+				let t20 = b29_lal128r0l_p(l, lid0, t16, x0, arg0, x1i, x6);
+				let t21 = b34_lal128r0ll_p(l, lid0, t16, x0, arg0, x1i, x6, t20);
+				x7 = t21;
+				let mut t22 = t16;
+				loop {
+					// Lanes part: each its own rounds.
+					let t23 = cle_r(x7, x2);
+					t22 = and_r(t22, t23);
+					if !(any(&t22)) { break; }
+					x6 = bsl_r(t22, x7, x6);
+					let t24 = b29_lal128r0l_p(l, lid0, t22, x0, arg0, x1i, x6);
+					let t25 = b34_lal128r0ll_p(l, lid0, t22, x0, arg0, x1i, x6, t24);
+					x7 = bsl_r(t22, t25, x7);
+				}
+				let t26 = ceq_r(x6, x2);
+				let t27 = and_r(t16, t26);
+				{
+					res = bsl_r(t27, x5, res);
+					live = bic_r(live, t27);
+				}
+				let t28 = and_r(t16, live);
+				if any(&t28) {
+					x5 = x6;
+				}
+				let t29 = and_r(t16, live);
+				t16 = and_r(t16, live);
+			}
+		}
+	}
+	res
+}
+
+/// `clif_t_hop`.
+#[inline(always)]
+unsafe fn b34_ssss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32, x3: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0 = b36_ss_f(l, lid0, (x2).wrapping_add(x3), (x2).wrapping_add(1u32));
+	let mut t1: bool = ((16u32) != (0u32));
+	if t1 {
+		t1 = ((4u32) == (12u32));
+	}
+	let t2: u32;
+	if t1 {
+		t2 = 16u32;
+	} else {
+		t2 = (x1.wrapping_add(((((4u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	let t3 = b47_ss_f(l, lid0, t0, t2);
+	let t4 = b36_ss_f(l, lid0, t3, (x2).wrapping_add(1u32));
+	res = t4;
+	return res;
+}
+
+/// `clif_t_hop`.
+#[inline(always)]
+unsafe fn b34_sssl_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(x2); 8];
+	let t1 = add_r(t0, x3);
+	let t2 = b46_ls_f(l, lid0, t1, (x2).wrapping_add(1u32));
+	let mut t3: bool = ((16u32) != (0u32));
+	if t3 {
+		t3 = ((4u32) == (12u32));
+	}
+	let t4: u32;
+	if t3 {
+		t4 = 16u32;
+	} else {
+		t4 = (x1.wrapping_add(((((4u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	let t5 = b47_ls_f(l, lid0, t2, t4);
+	let t6 = b46_ls_f(l, lid0, t5, (x2).wrapping_add(1u32));
+	res = t6;
+	return res;
+}
+
+/// `clif_t_hop`.
+#[inline(always)]
+unsafe fn b34_ssll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = add_r(x2, x3);
+	let t1 = [vdupq_n_u32(1u32); 8];
+	let t2 = add_r(x2, t1);
+	let t3 = b46_ll_p(l, lid0, live, t0, t2);
+	let mut t4: bool = ((16u32) != (0u32));
+	if t4 {
+		t4 = ((4u32) == (12u32));
+	}
+	let t5: u32;
+	if t4 {
+		t5 = 16u32;
+	} else {
+		t5 = (x1.wrapping_add(((((4u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	let t6 = b47_ls_p(l, lid0, live, t3, t5);
+	let t7 = add_r(x2, t1);
+	let t8 = b46_ll_p(l, lid0, live, t6, t7);
+	res = t8;
+	return res;
+}
+
+/// `clif_t_hop`.
+#[inline(always)]
+unsafe fn b34_lal128r0ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = add_r(x2, x3);
+	let t1 = [vdupq_n_u32(1u32); 8];
+	let t2 = add_r(x2, t1);
+	let t3 = b46_ll_p(l, lid0, live, t0, t2);
+	let mut t4: bool = ((16u32) != (0u32));
+	if t4 {
+		t4 = ((4u32) == (12u32));
+	}
+	let t5: [uint32x4_t; 8];
+	if t4 {
+		let t6 = [vdupq_n_u32(16u32); 8];
+		t5 = t6;
+	} else {
+		let t7 = ix_on(live, x1i);
+		let t8 = ld_u32((arg0).wrapping_add((((((4u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t7, 128);
+		t5 = t8;
+	}
+	let t9 = b47_ll_p(l, lid0, live, t3, t5);
+	let t10 = add_r(x2, t1);
+	let t11 = b46_ll_p(l, lid0, live, t9, t10);
+	res = t11;
+	return res;
+}
+
+/// `clif_f16_slot`.
+#[inline(always)]
+unsafe fn b35_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> [uint32x4_t; 16] {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = splat64(((x0) as usize as u64));
+	let t1 = [vdupq_n_u32(x2); 8];
+	let t2 = b48_lssl_p(l, lid0, [vdupq_n_u32(u32::MAX); 8], t0, x1, 0u32, t1);
+	res = t2;
+	return res;
+}
+
+/// `clif_f16_slot`.
+#[inline(always)]
+unsafe fn b35_ssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = splat64(((x0) as usize as u64));
+	let t1 = b48_lssl_p(l, lid0, live, t0, x1, 0u32, x2);
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_slot`.
+#[inline(always)]
+unsafe fn b35_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b48_lal128r0sl_p(l, lid0, live, x0, arg0, x1i, 0u32, x2);
+	res = t0;
+	return res;
+}
+
+/// `ukl_max`.
+#[inline(always)]
+unsafe fn b36_ss_f(l: &Launch, lid0: u32, x0: u32, x1: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0: u32;
+	if ((x0) < (x1)) {
+		t0 = x1;
+	} else {
+		t0 = x0;
+	}
+	res = t0;
+	return res;
+}
+
+/// `ukl_max`.
+#[inline(always)]
+unsafe fn b36_ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 8], x1: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(x1); 8];
+	let t1 = clt_r(x0, t0);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	{
+		let t5 = [vdupq_n_u32(x1); 8];
+		t2 = bsl_r(t3, t5, t2);
+	}
+	{
+		t2 = bsl_r(t4, x0, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `clif_f15_cell`.
+#[inline(always)]
+unsafe fn b37_ssss_f(l: &Launch, lid0: u32, x0: *const u8, x1: u32, x2: u32, x3: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0: u32;
+	if ((x2) == (2u32)) {
+		let t1 = b44_ssss_f(l, lid0, x0, x1, (x3).wrapping_mul(2u32), 2u32);
+		t0 = ((t1) as u32);
+	} else {
+		let t2 = b44_ssss_f(l, lid0, x0, x1, (x3).wrapping_mul(4u32), 4u32);
+		t0 = ((t2) as u32);
+	}
+	res = t0;
+	return res;
+}
+
+/// `clif_f15_cell`.
+#[inline(always)]
+unsafe fn b37_sssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: u32, x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0: [uint32x4_t; 8];
+	if ((x2) == (2u32)) {
+		let t1 = [vdupq_n_u32(2u32); 8];
+		let t2 = mul_r(x3, t1);
+		let t3 = b44_ssls_p(l, lid0, live, x0, x1, t2, 2u32);
+		let t4: [uint32x4_t; 8] = lo(t3);
+		t0 = t4;
+	} else {
+		let t5 = [vdupq_n_u32(4u32); 8];
+		let t6 = mul_r(x3, t5);
+		let t7 = b44_ssls_p(l, lid0, live, x0, x1, t6, 4u32);
+		let t8: [uint32x4_t; 8] = lo(t7);
+		t0 = t8;
+	}
+	res = t0;
+	return res;
+}
+
+/// `clif_f15_cell`.
+#[inline(always)]
+unsafe fn b37_llll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(2u32); 8];
+	let t1 = ceq_r(x2, t0);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	if any(&t3) {
+		let t5 = mul_r(x3, t0);
+		let t6 = b44_llls_p(l, lid0, t3, x0, x1, t5, 2u32);
+		let t7: [uint32x4_t; 8] = lo(t6);
+		t2 = bsl_r(t3, t7, t2);
+	}
+	if any(&t4) {
+		let t8 = [vdupq_n_u32(4u32); 8];
+		let t9 = mul_r(x3, t8);
+		let t10 = b44_llls_p(l, lid0, t4, x0, x1, t9, 4u32);
+		let t11: [uint32x4_t; 8] = lo(t10);
+		t2 = bsl_r(t4, t11, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `clif_f15_column`.
+#[inline(always)]
+unsafe fn b38_sss_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: u32) -> u32 {
+	let mut live = k;
+	let mut res: u32 = 0;
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = (((20u32).wrapping_add((4u32).wrapping_mul(x2))) == (12u32));
+	}
+	let t1: u32;
+	if t0 {
+		t1 = 16u32;
+	} else {
+		t1 = (x1.wrapping_add((((((20u32).wrapping_add((4u32).wrapping_mul(x2))).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_column`.
+#[inline(always)]
+unsafe fn b38_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = (((20u32).wrapping_add((4u32).wrapping_mul(x2))) == (12u32));
+	}
+	let t1: u32;
+	if t0 {
+		t1 = 16u32;
+	} else {
+		t1 = (x1.wrapping_add((((((20u32).wrapping_add((4u32).wrapping_mul(x2))).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_column`.
+#[inline(always)]
+unsafe fn b38_lal128r0s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = (((20u32).wrapping_add((4u32).wrapping_mul(x2))) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add(((((((20u32).wrapping_add((4u32).wrapping_mul(x2))).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f15_width`.
+#[inline(always)]
+unsafe fn b39_sss_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: *const u8, x2: u32) -> u32 {
+	let mut live = k;
+	let mut res: u32 = 0;
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((16u32) == (12u32));
+	}
+	let t1: u32;
+	if t0 {
+		t1 = 16u32;
+	} else {
+		t1 = (x1.wrapping_add(((((16u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	res = (((t1).wrapping_shr(((4u32).wrapping_mul(x2)) as u32)) & (15u32));
+	return res;
+}
+
+/// `clif_f15_width`.
+#[inline(always)]
+unsafe fn b39_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: *const u8, x2: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((16u32) == (12u32));
+	}
+	let t1: u32;
+	if t0 {
+		t1 = 16u32;
+	} else {
+		t1 = (x1.wrapping_add(((((16u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	res = (((t1).wrapping_shr(((4u32).wrapping_mul(x2)) as u32)) & (15u32));
+	return res;
+}
+
+/// `clif_f15_width`.
+#[inline(always)]
+unsafe fn b39_lal128r0s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((16u32) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((16u32).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	let t5: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t1[r], vnegq_s32(vdupq_n_s32((((4u32).wrapping_mul(x2)) & 31) as i32))));
+	let t6 = [vdupq_n_u32(15u32); 8];
+	let t7 = and_r(t5, t6);
+	res = t7;
+	return res;
+}
+
+/// `clif_f16_ld`.
+#[inline(always)]
+unsafe fn b40_lssls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32, x3: [uint32x4_t; 8], x4: u32) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b44_lsls_p(l, lid0, live, x0, x2, x3, x4);
+	res = t0;
+	return res;
+}
+
+/// `clif_f16_ld`.
+#[inline(always)]
+unsafe fn b40_lslls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: [uint32x4_t; 8], x3: [uint32x4_t; 8], x4: u32) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b44_llls_p(l, lid0, live, x0, x2, x3, x4);
+	res = t0;
+	return res;
+}
+
+/// `clif_f16_ld`.
+#[inline(always)]
+unsafe fn b40_lal128r0lls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: [uint32x4_t; 8], x4: u32) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b44_llls_p(l, lid0, live, x0, x2, x3, x4);
+	res = t0;
+	return res;
+}
+
+/// `clif_f16_column`.
+#[inline(always)]
+unsafe fn b41_lssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b42_lss_p(l, lid0, live, x0, x1, 40u32);
+	let t1 = [vdupq_n_u32(t0); 8];
+	let t2 = mul_r(x3, t1);
+	let t3 = b49_lss_p(l, lid0, live, x0, x1, 0u32);
+	let t4 = [vdupq_n_u32(t3); 8];
+	let t5 = add_r(t2, t4);
+	x4 = t5;
+	if ((x2) == (0u32)) {
+		res = x4;
+		return res;
+	}
+	let t6 = b42_lss_p(l, lid0, live, x0, x1, 4u32);
+	let t7: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vdupq_n_s32(((10u32) & 31) as i32)));
+	let t8 = [vdupq_n_u32(t6); 8];
+	let t9 = sub_r(t8, t7);
+	let t10 = b47_ls_p(l, lid0, live, t9, 1024u32);
+	x5 = t10;
+	let t11 = b49_lss_p(l, lid0, live, x0, x1, x2);
+	let t12 = [vdupq_n_u32(t11); 8];
+	let t13 = mul_r(x5, t12);
+	let t14 = add_r(x4, t13);
+	res = t14;
+	return res;
+}
+
+/// `clif_f16_column`.
+#[inline(always)]
+unsafe fn b41_lal128r0sl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 40u32);
+	let t1 = mul_r(x3, t0);
+	let t2 = b49_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 0u32);
+	let t3 = add_r(t1, t2);
+	x4 = t3;
+	if ((x2) == (0u32)) {
+		res = x4;
+		return res;
+	}
+	let t4 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 4u32);
+	let t5: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vdupq_n_s32(((10u32) & 31) as i32)));
+	let t6 = sub_r(t4, t5);
+	let t7 = b47_ls_p(l, lid0, live, t6, 1024u32);
+	x5 = t7;
+	let t8 = b49_lal128r0s_p(l, lid0, live, x0, arg0, x1i, x2);
+	let t9 = mul_r(x5, t8);
+	let t10 = add_r(x4, t9);
+	res = t10;
+	return res;
+}
+
+/// `clif_f16_view`.
+#[inline(always)]
+unsafe fn b42_lss_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32) -> u32 {
+	let mut live = k;
+	let mut res: u32 = 0;
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((x2) == (12u32));
+	}
+	let t1: u32;
+	if t0 {
+		t1 = 16u32;
+	} else {
+		t1 = (x1.wrapping_add(((((x2).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned();
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_view`.
+#[inline(always)]
+unsafe fn b42_lal128r0s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let mut t0: bool = ((16u32) != (0u32));
+	if t0 {
+		t0 = ((x2) == (12u32));
+	}
+	let t1: [uint32x4_t; 8];
+	if t0 {
+		let t2 = [vdupq_n_u32(16u32); 8];
+		t1 = t2;
+	} else {
+		let t3 = ix_on(live, x1i);
+		let t4 = ld_u32((arg0).wrapping_add((((((x2).checked_div(4u32).unwrap_or(0)) as u64)).wrapping_mul(4u64)) as usize) as *const u8, t3, 128);
+		t1 = t4;
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_side`.
+#[inline(always)]
+unsafe fn b43_lssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut x4: u32 = 0;
+	let mut x5: u32 = 0;
+	let mut x6 = [vdupq_n_u32(0); 8];
+	let mut x7 = [vdupq_n_u32(0); 8];
+	let mut x8 = [vdupq_n_u32(0); 8];
+	let mut x9: u32 = 0;
+	let mut x10 = [vdupq_n_u32(0); 8];
+	let mut x11 = [vdupq_n_u32(0); 8];
+	let mut x12 = [vdupq_n_u32(0); 8];
+	let mut x13 = [vdupq_n_u32(0); 8];
+	let mut x14 = [vdupq_n_u32(0); 8];
+	let mut x15 = [vdupq_n_u32(0); 8];
+	let mut x16: u64 = 0;
+	let mut x17 = [vdupq_n_u32(0); 16];
+	let mut x18 = [vdupq_n_u32(0); 8];
+	let mut x19 = [vdupq_n_u32(0); 8];
+	let mut x20 = [vdupq_n_u32(0); 16];
+	let mut x21 = [vdupq_n_u32(0); 16];
+	let mut x22 = [vdupq_n_u32(0); 16];
+	let mut x23 = [vdupq_n_u32(0); 8];
+	let mut x24: u32 = 0;
+	let mut x25 = [vdupq_n_u32(0); 8];
+	let mut x26 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b42_lss_p(l, lid0, live, x0, x1, (44u32).wrapping_add((4u32).wrapping_mul(x2)));
+	x4 = t0;
+	let t1 = b42_lss_p(l, lid0, live, x0, x1, (60u32).wrapping_add((4u32).wrapping_mul(x2)));
+	x5 = t1;
+	let t2: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vnegq_s32(vdupq_n_s32(((10u32) & 31) as i32))));
+	x6 = t2;
+	let t3 = [vdupq_n_u32(4u32); 8];
+	let t4 = mul_r(x6, t3);
+	let t5 = b40_lssls_p(l, lid0, live, x0, x1, x5, t4, 4u32);
+	let t6: [uint32x4_t; 8] = lo(t5);
+	x7 = t6;
+	let t7 = mul_r(x6, t3);
+	let t8 = add_r(t7, t3);
+	let t9 = b40_lssls_p(l, lid0, live, x0, x1, x5, t8, 4u32);
+	let t10: [uint32x4_t; 8] = lo(t9);
+	x8 = t10;
+	let t11 = b42_lss_p(l, lid0, live, x0, x1, 4u32);
+	x9 = ((t11).wrapping_add(255u32)).wrapping_shr((8u32) as u32);
+	let t12 = mul_r(x6, t3);
+	let t13 = [vdupq_n_u32(x9); 8];
+	let t14 = sub_r(t13, t12);
+	let t15 = b1_sl_p(l, lid0, live, 4u32, t14);
+	x10 = t15;
+	let t16: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vnegq_s32(vdupq_n_s32(((8u32) & 31) as i32))));
+	let t17 = [vdupq_n_u32(3u32); 8];
+	let t18 = and_r(t16, t17);
+	x11 = t18;
+	let t19 = [vdupq_n_u32(0u32); 8];
+	let t20 = ceq_r(x11, t19);
+	let mut t21 = [vdupq_n_u32(0); 8];
+	let t22 = and_r(live, t20);
+	let t23 = bic_r(live, t20);
+	{
+		t21 = bsl_r(t22, t19, t21);
+	}
+	if any(&t23) {
+		let t24 = [vdupq_n_u32(1u32); 8];
+		let t25 = sub_r(x11, t24);
+		let t26 = [vdupq_n_u32(2u32); 8];
+		let t27 = mul_r(t26, t25);
+		let t28 = add_r(x7, t27);
+		let t29 = b47_ll_p(l, lid0, t23, t28, x8);
+		let t30 = b40_lssls_p(l, lid0, t23, x0, x1, x4, t29, 2u32);
+		let t31: [uint32x4_t; 8] = lo(t30);
+		t21 = bsl_r(t23, t31, t21);
+	}
+	x12 = t21;
+	let t32 = [vdupq_n_u32(2u32); 8];
+	let t33 = mul_r(t32, x11);
+	let t34 = add_r(x7, t33);
+	let t35 = b47_ll_p(l, lid0, live, t34, x8);
+	let t36 = b40_lssls_p(l, lid0, live, x0, x1, x4, t35, 2u32);
+	let t37: [uint32x4_t; 8] = lo(t36);
+	x13 = t37;
+	let t38 = mul_r(t32, x10);
+	let t39 = add_r(x7, t38);
+	x14 = t39;
+	let t40 = [vdupq_n_u32(255u32); 8];
+	let t41 = and_r(x3, t40);
+	x15 = t41;
+	x16 = 9259542123273814144u64;
+	let t42: u64 = 72340172838076673u64;
+	let t43 = [vdupq_n_u32((t42) as u32); 8];
+	let t44 = [vdupq_n_u32(((t42) >> 32) as u32); 8];
+	let t45 = mulhi_r(x15, t43);
+	let t46 = mul_r(x15, t43);
+	let t47 = mla_r(t45, x15, t44);
+	let t48 = cat_w(t46, t47);
+	x17 = t48;
+	x18 = x12;
+	x19 = x12;
+	let mut t49 = live;
+	loop {
+		// Lanes part: each its own rounds.
+		let t50 = clt_r(x19, x13);
+		t49 = and_r(t49, t50);
+		if !(any(&t49)) { break; }
+		let t51 = add_r(x14, x19);
+		let t52 = b47_ll_p(l, lid0, t49, t51, x8);
+		let t53 = b40_lssls_p(l, lid0, t49, x0, x1, x4, t52, 8u32);
+		x20 = t53;
+		let t54: u64 = x16;
+		let t55 = [vdupq_n_u32((t54) as u32); 8];
+		let t56 = [vdupq_n_u32(((t54) >> 32) as u32); 8];
+		let t57 = orr_r(lo(x20), t55);
+		let t58 = orr_r(hi(x20), t56);
+		let t59 = cat_w(t57, t58);
+		let t60: u64 = !(x16);
+		let t61 = [vdupq_n_u32((t60) as u32); 8];
+		let t62 = [vdupq_n_u32(((t60) >> 32) as u32); 8];
+		let t63 = and_r(lo(x17), t61);
+		let t64 = and_r(hi(x17), t62);
+		let t65 = cat_w(t63, t64);
+		let t66: [uint32x4_t; 8] = core::array::from_fn(|r| vcltq_u32(t59[r], t65[r]));
+		let t67: [uint32x4_t; 8] = core::array::from_fn(|r| vsubq_u32(t59[r], t65[r]));
+		let t68 = sbc_r(hi(t59), hi(t65), t66);
+		let t69 = cat_w(t67, t68);
+		x21 = t69;
+		let t70: [uint32x4_t; 16] = core::array::from_fn(|r| vmvnq_u32(x20[r]));
+		let t71: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t70[r], x17[r]));
+		let t72: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t70[(r + 8)], x17[(r + 8)]));
+		let t73 = cat_w(t71, t72);
+		let t74: [uint32x4_t; 8] = core::array::from_fn(|r| veorq_u32(x20[r], x17[r]));
+		let t75: [uint32x4_t; 8] = core::array::from_fn(|r| veorq_u32(x20[(r + 8)], x17[(r + 8)]));
+		let t76 = cat_w(t74, t75);
+		let t77 = mvn_r(t76);
+		let t78 = mvn_r(x21);
+		let t79: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t77[r], t78[r]));
+		let t80: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t77[(r + 8)], t78[(r + 8)]));
+		let t81 = cat_w(t79, t80);
+		let t82: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(t73[r], t81[r]));
+		let t83: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(t73[(r + 8)], t81[(r + 8)]));
+		let t84 = cat_w(t82, t83);
+		let t85: u64 = x16;
+		let t86 = [vdupq_n_u32((t85) as u32); 8];
+		let t87 = [vdupq_n_u32(((t85) >> 32) as u32); 8];
+		let t88 = and_r(t86, lo(t84));
+		let t89 = and_r(t87, hi(t84));
+		let t90 = cat_w(t88, t89);
+		x22 = t90;
+		let t91 = sub_r(x13, x19);
+		x23 = t91;
+		let t92 = [vdupq_n_u32(8u32); 8];
+		let t93 = cge_r(x23, t92);
+		let mut t94 = [vdupq_n_u32(0); 16];
+		let t95 = and_r(t49, t93);
+		let t96 = bic_r(t49, t93);
+		{
+			t94 = bsl_w(t95, x22, t94);
+		}
+		{
+			let t97 = mul_r(t92, x23);
+			let t98: u64 = 1u64;
+			let t99 = [vdupq_n_u32((t98) as u32); 8];
+			let t100: [uint32x4_t; 8] = lo(t97);
+			let t101: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t100[r], vdupq_n_u32(63)));
+			let t102: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t99[r], vreinterpretq_s32_u32(t101[r])));
+			let t103: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t99[r], vsubq_s32(vreinterpretq_s32_u32(t101[r]), vdupq_n_s32(32))));
+			let t104 = cat_w(t102, t103);
+			let t105: u64 = 1u64;
+			let t106 = [vdupq_n_u32((t105) as u32); 8];
+			let t107 = clt_r(lo(t104), t106);
+			let t108 = sub_r(lo(t104), t106);
+			let t109: [uint32x4_t; 8] = core::array::from_fn(|r| vsbcq_u32(t104[(r + 8)], vdupq_n_u32(0), t107[r]));
+			let t110 = cat_w(t108, t109);
+			let t111: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(x22[r], t110[r]));
+			let t112: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(x22[(r + 8)], t110[(r + 8)]));
+			let t113 = cat_w(t111, t112);
+			t94 = bsl_w(t96, t113, t94);
+		}
+		let t114 = b51_l_p(l, lid0, t49, t94);
+		let t115 = add_r(x18, t114);
+		x18 = bsl_r(t49, t115, x18);
+		let t116 = and_r(t49, live);
+		let t117 = add_r(x19, t92);
+		x19 = t117;
+	}
+	x12 = x18;
+	let t118 = b42_lss_p(l, lid0, live, x0, x1, 16u32);
+	x24 = (((t118).wrapping_shr((((((4u32).wrapping_mul(x2)).wrapping_add(16u32)) & (31u32))) as u32)) & (15u32));
+	let t119 = [vdupq_n_u32(1u32); 8];
+	let t120 = sub_r(x10, t119);
+	let t121 = mul_r(t32, t120);
+	let t122 = add_r(x7, t121);
+	let t123 = b47_ll_p(l, lid0, live, t122, x8);
+	let t124 = b40_lssls_p(l, lid0, live, x0, x1, x4, t123, 2u32);
+	let t125: [uint32x4_t; 8] = lo(t124);
+	x25 = t125;
+	let t126 = add_r(x14, x25);
+	let t127 = [vdupq_n_u32(x24); 8];
+	let t128 = mul_r(x12, t127);
+	let t129 = add_r(t126, t128);
+	let t130 = b47_ll_p(l, lid0, live, t129, x8);
+	x26 = t130;
+	let t131 = b40_lssls_p(l, lid0, live, x0, x1, x4, x26, 8u32);
+	let t132 = b52_s_p(l, lid0, live, x24);
+	let t133: u64 = t132;
+	let t134 = [vdupq_n_u32((t133) as u32); 8];
+	let t135 = [vdupq_n_u32(((t133) >> 32) as u32); 8];
+	let t136 = and_r(lo(t131), t134);
+	let t137 = and_r(hi(t131), t135);
+	let t138 = cat_w(t136, t137);
+	res = t138;
+	return res;
+}
+
+/// `clif_f16_side`.
+#[inline(always)]
+unsafe fn b43_lal128r0sl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut x6 = [vdupq_n_u32(0); 8];
+	let mut x7 = [vdupq_n_u32(0); 8];
+	let mut x8 = [vdupq_n_u32(0); 8];
+	let mut x9 = [vdupq_n_u32(0); 8];
+	let mut x10 = [vdupq_n_u32(0); 8];
+	let mut x11 = [vdupq_n_u32(0); 8];
+	let mut x12 = [vdupq_n_u32(0); 8];
+	let mut x13 = [vdupq_n_u32(0); 8];
+	let mut x14 = [vdupq_n_u32(0); 8];
+	let mut x15 = [vdupq_n_u32(0); 8];
+	let mut x16: u64 = 0;
+	let mut x17 = [vdupq_n_u32(0); 16];
+	let mut x18 = [vdupq_n_u32(0); 8];
+	let mut x19 = [vdupq_n_u32(0); 8];
+	let mut x20 = [vdupq_n_u32(0); 16];
+	let mut x21 = [vdupq_n_u32(0); 16];
+	let mut x22 = [vdupq_n_u32(0); 16];
+	let mut x23 = [vdupq_n_u32(0); 8];
+	let mut x24 = [vdupq_n_u32(0); 8];
+	let mut x25 = [vdupq_n_u32(0); 8];
+	let mut x26 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, (44u32).wrapping_add((4u32).wrapping_mul(x2)));
+	x4 = t0;
+	let t1 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, (60u32).wrapping_add((4u32).wrapping_mul(x2)));
+	x5 = t1;
+	let t2: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vnegq_s32(vdupq_n_s32(((10u32) & 31) as i32))));
+	x6 = t2;
+	let t3 = [vdupq_n_u32(4u32); 8];
+	let t4 = mul_r(x6, t3);
+	let t5 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, x5, t4, 4u32);
+	let t6: [uint32x4_t; 8] = lo(t5);
+	x7 = t6;
+	let t7 = mul_r(x6, t3);
+	let t8 = add_r(t7, t3);
+	let t9 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, x5, t8, 4u32);
+	let t10: [uint32x4_t; 8] = lo(t9);
+	x8 = t10;
+	let t11 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 4u32);
+	let t12 = [vdupq_n_u32(255u32); 8];
+	let t13 = add_r(t11, t12);
+	let t14: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t13[r], vnegq_s32(vdupq_n_s32(((8u32) & 31) as i32))));
+	x9 = t14;
+	let t15 = mul_r(x6, t3);
+	let t16 = sub_r(x9, t15);
+	let t17 = b1_sl_p(l, lid0, live, 4u32, t16);
+	x10 = t17;
+	let t18: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vnegq_s32(vdupq_n_s32(((8u32) & 31) as i32))));
+	let t19 = [vdupq_n_u32(3u32); 8];
+	let t20 = and_r(t18, t19);
+	x11 = t20;
+	let t21 = [vdupq_n_u32(0u32); 8];
+	let t22 = ceq_r(x11, t21);
+	let mut t23 = [vdupq_n_u32(0); 8];
+	let t24 = and_r(live, t22);
+	let t25 = bic_r(live, t22);
+	{
+		t23 = bsl_r(t24, t21, t23);
+	}
+	if any(&t25) {
+		let t26 = [vdupq_n_u32(1u32); 8];
+		let t27 = sub_r(x11, t26);
+		let t28 = [vdupq_n_u32(2u32); 8];
+		let t29 = mul_r(t28, t27);
+		let t30 = add_r(x7, t29);
+		let t31 = b47_ll_p(l, lid0, t25, t30, x8);
+		let t32 = b40_lal128r0lls_p(l, lid0, t25, x0, arg0, x1i, x4, t31, 2u32);
+		let t33: [uint32x4_t; 8] = lo(t32);
+		t23 = bsl_r(t25, t33, t23);
+	}
+	x12 = t23;
+	let t34 = [vdupq_n_u32(2u32); 8];
+	let t35 = mul_r(t34, x11);
+	let t36 = add_r(x7, t35);
+	let t37 = b47_ll_p(l, lid0, live, t36, x8);
+	let t38 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, x4, t37, 2u32);
+	let t39: [uint32x4_t; 8] = lo(t38);
+	x13 = t39;
+	let t40 = mul_r(t34, x10);
+	let t41 = add_r(x7, t40);
+	x14 = t41;
+	let t42 = and_r(x3, t12);
+	x15 = t42;
+	x16 = 9259542123273814144u64;
+	let t43: u64 = 72340172838076673u64;
+	let t44 = [vdupq_n_u32((t43) as u32); 8];
+	let t45 = [vdupq_n_u32(((t43) >> 32) as u32); 8];
+	let t46 = mulhi_r(x15, t44);
+	let t47 = mul_r(x15, t44);
+	let t48 = mla_r(t46, x15, t45);
+	let t49 = cat_w(t47, t48);
+	x17 = t49;
+	x18 = x12;
+	x19 = x12;
+	let mut t50 = live;
+	loop {
+		// Lanes part: each its own rounds.
+		let t51 = clt_r(x19, x13);
+		t50 = and_r(t50, t51);
+		if !(any(&t50)) { break; }
+		let t52 = add_r(x14, x19);
+		let t53 = b47_ll_p(l, lid0, t50, t52, x8);
+		let t54 = b40_lal128r0lls_p(l, lid0, t50, x0, arg0, x1i, x4, t53, 8u32);
+		x20 = t54;
+		let t55: u64 = x16;
+		let t56 = [vdupq_n_u32((t55) as u32); 8];
+		let t57 = [vdupq_n_u32(((t55) >> 32) as u32); 8];
+		let t58 = orr_r(lo(x20), t56);
+		let t59 = orr_r(hi(x20), t57);
+		let t60 = cat_w(t58, t59);
+		let t61: u64 = !(x16);
+		let t62 = [vdupq_n_u32((t61) as u32); 8];
+		let t63 = [vdupq_n_u32(((t61) >> 32) as u32); 8];
+		let t64 = and_r(lo(x17), t62);
+		let t65 = and_r(hi(x17), t63);
+		let t66 = cat_w(t64, t65);
+		let t67: [uint32x4_t; 8] = core::array::from_fn(|r| vcltq_u32(t60[r], t66[r]));
+		let t68: [uint32x4_t; 8] = core::array::from_fn(|r| vsubq_u32(t60[r], t66[r]));
+		let t69 = sbc_r(hi(t60), hi(t66), t67);
+		let t70 = cat_w(t68, t69);
+		x21 = t70;
+		let t71: [uint32x4_t; 16] = core::array::from_fn(|r| vmvnq_u32(x20[r]));
+		let t72: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t71[r], x17[r]));
+		let t73: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t71[(r + 8)], x17[(r + 8)]));
+		let t74 = cat_w(t72, t73);
+		let t75: [uint32x4_t; 8] = core::array::from_fn(|r| veorq_u32(x20[r], x17[r]));
+		let t76: [uint32x4_t; 8] = core::array::from_fn(|r| veorq_u32(x20[(r + 8)], x17[(r + 8)]));
+		let t77 = cat_w(t75, t76);
+		let t78 = mvn_r(t77);
+		let t79 = mvn_r(x21);
+		let t80: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t78[r], t79[r]));
+		let t81: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t78[(r + 8)], t79[(r + 8)]));
+		let t82 = cat_w(t80, t81);
+		let t83: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(t74[r], t82[r]));
+		let t84: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(t74[(r + 8)], t82[(r + 8)]));
+		let t85 = cat_w(t83, t84);
+		let t86: u64 = x16;
+		let t87 = [vdupq_n_u32((t86) as u32); 8];
+		let t88 = [vdupq_n_u32(((t86) >> 32) as u32); 8];
+		let t89 = and_r(t87, lo(t85));
+		let t90 = and_r(t88, hi(t85));
+		let t91 = cat_w(t89, t90);
+		x22 = t91;
+		let t92 = sub_r(x13, x19);
+		x23 = t92;
+		let t93 = [vdupq_n_u32(8u32); 8];
+		let t94 = cge_r(x23, t93);
+		let mut t95 = [vdupq_n_u32(0); 16];
+		let t96 = and_r(t50, t94);
+		let t97 = bic_r(t50, t94);
+		{
+			t95 = bsl_w(t96, x22, t95);
+		}
+		{
+			let t98 = mul_r(t93, x23);
+			let t99: u64 = 1u64;
+			let t100 = [vdupq_n_u32((t99) as u32); 8];
+			let t101: [uint32x4_t; 8] = lo(t98);
+			let t102: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t101[r], vdupq_n_u32(63)));
+			let t103: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t100[r], vreinterpretq_s32_u32(t102[r])));
+			let t104: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t100[r], vsubq_s32(vreinterpretq_s32_u32(t102[r]), vdupq_n_s32(32))));
+			let t105 = cat_w(t103, t104);
+			let t106: u64 = 1u64;
+			let t107 = [vdupq_n_u32((t106) as u32); 8];
+			let t108 = clt_r(lo(t105), t107);
+			let t109 = sub_r(lo(t105), t107);
+			let t110: [uint32x4_t; 8] = core::array::from_fn(|r| vsbcq_u32(t105[(r + 8)], vdupq_n_u32(0), t108[r]));
+			let t111 = cat_w(t109, t110);
+			let t112: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(x22[r], t111[r]));
+			let t113: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(x22[(r + 8)], t111[(r + 8)]));
+			let t114 = cat_w(t112, t113);
+			t95 = bsl_w(t97, t114, t95);
+		}
+		let t115 = b51_l_p(l, lid0, t50, t95);
+		let t116 = add_r(x18, t115);
+		x18 = bsl_r(t50, t116, x18);
+		let t117 = and_r(t50, live);
+		let t118 = add_r(x19, t93);
+		x19 = t118;
+	}
+	x12 = x18;
+	let t119 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 16u32);
+	let t120: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t119[r], vnegq_s32(vdupq_n_s32(((((((4u32).wrapping_mul(x2)).wrapping_add(16u32)) & (31u32))) & 31) as i32))));
+	let t121 = [vdupq_n_u32(15u32); 8];
+	let t122 = and_r(t120, t121);
+	x24 = t122;
+	let t123 = [vdupq_n_u32(1u32); 8];
+	let t124 = sub_r(x10, t123);
+	let t125 = mul_r(t34, t124);
+	let t126 = add_r(x7, t125);
+	let t127 = b47_ll_p(l, lid0, live, t126, x8);
+	let t128 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, x4, t127, 2u32);
+	let t129: [uint32x4_t; 8] = lo(t128);
+	x25 = t129;
+	let t130 = add_r(x14, x25);
+	let t131 = mul_r(x12, x24);
+	let t132 = add_r(t130, t131);
+	let t133 = b47_ll_p(l, lid0, live, t132, x8);
+	x26 = t133;
+	let t134 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, x4, x26, 8u32);
+	let t135 = b52_l_p(l, lid0, live, x24);
+	let t136: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t134[r], t135[r]));
+	let t137: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t134[(r + 8)], t135[(r + 8)]));
+	let t138 = cat_w(t136, t137);
+	res = t138;
+	return res;
+}
+
+/// `clif_t_ld`.
+#[inline(always)]
+unsafe fn b44_ssss_f(l: &Launch, lid0: u32, x0: *const u8, x1: u32, x2: u32, x3: u32) -> u64 {
+	let mut x4: u64 = 0;
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u64 = 0;
+	let t0 = b53_sss_f(l, lid0, x0, (((x1) as u64)).wrapping_add(((x2) as u64)), x3);
+	x4 = t0;
+	let t1: u64;
+	if ((x3) >= (8u32)) {
+		t1 = x4;
+	} else {
+		let t2 = b54_s_f(l, lid0, (8u32).wrapping_mul(x3));
+		t1 = ((x4) & (t2));
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_t_ld`.
+#[inline(always)]
+unsafe fn b44_ssls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1: u32, x2: [uint32x4_t; 8], x3: u32) -> [uint32x4_t; 16] {
+	let mut x4 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b53_sal1s_p(l, lid0, live, x0, ((((x1) as u64)) as usize as *const u8), x2, x3);
+	x4 = t0;
+	let t1: [uint32x4_t; 16];
+	if ((x3) >= (8u32)) {
+		t1 = x4;
+	} else {
+		let t2 = b54_s_p(l, lid0, live, (8u32).wrapping_mul(x3));
+		let t3: u64 = t2;
+		let t4 = [vdupq_n_u32((t3) as u32); 8];
+		let t5 = [vdupq_n_u32(((t3) >> 32) as u32); 8];
+		let t6 = and_r(lo(x4), t4);
+		let t7 = and_r(hi(x4), t5);
+		let t8 = cat_w(t6, t7);
+		t1 = t8;
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_t_ld`.
+#[inline(always)]
+unsafe fn b44_lsls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: u32, x2: [uint32x4_t; 8], x3: u32) -> [uint32x4_t; 16] {
+	let mut x4 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b53_lal1s_p(l, lid0, live, x0, ((((x1) as u64)) as usize as *const u8), x2, x3);
+	x4 = t0;
+	let t1: [uint32x4_t; 16];
+	if ((x3) >= (8u32)) {
+		t1 = x4;
+	} else {
+		let t2 = b54_s_p(l, lid0, live, (8u32).wrapping_mul(x3));
+		let t3: u64 = t2;
+		let t4 = [vdupq_n_u32((t3) as u32); 8];
+		let t5 = [vdupq_n_u32(((t3) >> 32) as u32); 8];
+		let t6 = and_r(lo(x4), t4);
+		let t7 = and_r(hi(x4), t5);
+		let t8 = cat_w(t6, t7);
+		t1 = t8;
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_t_ld`.
+#[inline(always)]
+unsafe fn b44_llls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: [uint32x4_t; 8], x2: [uint32x4_t; 8], x3: u32) -> [uint32x4_t; 16] {
+	let mut x4 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = add_r(x1, x2);
+	let t1 = clt_r(t0, x1);
+	let t2: [uint32x4_t; 8] = core::array::from_fn(|r| vshrq_n_u32::<31>(t1[r]));
+	let t3 = cat_w(lo(t0), t2);
+	let t4 = b53_lls_p(l, lid0, live, x0, t3, x3);
+	x4 = t4;
+	let t5: [uint32x4_t; 16];
+	if ((x3) >= (8u32)) {
+		t5 = x4;
+	} else {
+		let t6 = b54_s_p(l, lid0, live, (8u32).wrapping_mul(x3));
+		let t7: u64 = t6;
+		let t8 = [vdupq_n_u32((t7) as u32); 8];
+		let t9 = [vdupq_n_u32(((t7) >> 32) as u32); 8];
+		let t10 = and_r(lo(x4), t8);
+		let t11 = and_r(hi(x4), t9);
+		let t12 = cat_w(t10, t11);
+		t5 = t12;
+	}
+	res = t5;
+	return res;
+}
+
+/// `clif_f16_parent_step`.
+#[inline(always)]
+unsafe fn b45_lal128r0l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut x3 = [vdupq_n_u32(0); 8];
+	let mut x4 = [vdupq_n_u32(0); 16];
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut x6 = [vdupq_n_u32(0); 8];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = [vdupq_n_u32(0u32); 8];
+	let t1 = ceq_r(x2, t0);
+	let t2 = and_r(live, t1);
+	{
+		let t3 = splat64(4294967295u64);
+		res = bsl_w(t2, t3, res);
+		live = bic_r(live, t2);
+	}
+	if any(&live) {
+		let t4 = [vdupq_n_u32(1u32); 8];
+		let t5 = sub_r(x2, t4);
+		x3 = t5;
+		let t6 = b35_lal128r0l_p(l, lid0, live, x0, arg0, x1i, x3);
+		x4 = t6;
+		let t7: u64 = 1u64;
+		let t8 = [vdupq_n_u32((t7) as u32); 8];
+		let t9 = and_r(lo(x4), t8);
+		let t10: u64 = 0u64;
+		let t11 = [vdupq_n_u32((t10) as u32); 8];
+		let t12 = ceq_r(t9, t11);
+		let t13 = and_r(live, t12);
+		{
+			let t14 = cat_w(lo(x3), [vdupq_n_u32(0); 8]);
+			res = bsl_w(t13, t14, res);
+			live = bic_r(live, t13);
+		}
+		if any(&live) {
+			let t15: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshrq_n_u32::<2>(x4[r]), vshlq_n_u32::<30>(x4[(r + 8)])));
+			let t16: [uint32x4_t; 8] = core::array::from_fn(|r| vshrq_n_u32::<2>(x4[(r + 8)]));
+			let t17 = cat_w(t15, t16);
+			let t18: [uint32x4_t; 8] = lo(t17);
+			x5 = t18;
+			let t19 = sub_r(x5, t4);
+			let t20 = cge_r(t19, x2);
+			let t21 = and_r(live, t20);
+			{
+				let t22 = splat64(4294967295u64);
+				res = bsl_w(t21, t22, res);
+				live = bic_r(live, t21);
+			}
+			if any(&live) {
+				let t23 = sub_r(x2, x5);
+				x6 = t23;
+				let t24: u64 = 2u64;
+				let t25 = [vdupq_n_u32((t24) as u32); 8];
+				let t26 = and_r(lo(x4), t25);
+				let t27: u64 = 0u64;
+				let t28 = [vdupq_n_u32((t27) as u32); 8];
+				let t29 = ceq_r(t26, t28);
+				let t30 = mvn_r(t29);
+				let t31 = and_r(live, t30);
+				{
+					let t32 = cat_w(lo(x6), [vdupq_n_u32(0); 8]);
+					res = bsl_w(t31, t32, res);
+					live = bic_r(live, t31);
+				}
+				if any(&live) {
+					let t33 = ceq_r(x6, t0);
+					let t34 = and_r(live, t33);
+					{
+						let t35 = splat64(4294967295u64);
+						res = bsl_w(t34, t35, res);
+						live = bic_r(live, t34);
+					}
+					if any(&live) {
+						let t36: u64 = (1u64).wrapping_shl((32u64) as u32);
+						let t37 = [vdupq_n_u32((t36) as u32); 8];
+						let t38 = [vdupq_n_u32(((t36) >> 32) as u32); 8];
+						let t39 = orr_r(t37, x6);
+						let t40 = cat_w(t39, lo(t38));
+						res = bsl_w(live, t40, res);
+						live = bic_r(live, live);
+					}
+				}
+			}
+		}
+	}
+	res
+}
+
+
+/// `ukl_max`.
+#[inline(always)]
+unsafe fn b46_ls_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 8], x1: u32) -> [uint32x4_t; 8] {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(x1); 8];
+	let t1 = clt_r(x0, t0);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = mvn_r(t1);
+	{
+		let t4 = [vdupq_n_u32(x1); 8];
+		t2 = bsl_r(t1, t4, t2);
+	}
+	{
+		t2 = bsl_r(t3, x0, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `ukl_max`.
+#[inline(always)]
+unsafe fn b46_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 8], x1: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = clt_r(x0, x1);
+	let mut t1 = [vdupq_n_u32(0); 8];
+	let t2 = and_r(live, t0);
+	let t3 = bic_r(live, t0);
+	{
+		t1 = bsl_r(t2, x1, t1);
+	}
+	{
+		t1 = bsl_r(t3, x0, t1);
+	}
+	res = t1;
+	return res;
+}
+
+/// `ukl_min`.
+#[inline(always)]
+unsafe fn b47_ss_f(l: &Launch, lid0: u32, x0: u32, x1: u32) -> u32 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u32 = 0;
+	let t0: u32;
+	if ((x0) < (x1)) {
+		t0 = x0;
+	} else {
+		t0 = x1;
+	}
+	res = t0;
+	return res;
+}
+
+/// `ukl_min`.
+#[inline(always)]
+unsafe fn b47_ls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 8], x1: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(x1); 8];
+	let t1 = clt_r(x0, t0);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	{
+		t2 = bsl_r(t3, x0, t2);
+	}
+	{
+		let t5 = [vdupq_n_u32(x1); 8];
+		t2 = bsl_r(t4, t5, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `ukl_min`.
+#[inline(always)]
+unsafe fn b47_ls_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 8], x1: u32) -> [uint32x4_t; 8] {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = [vdupq_n_u32(x1); 8];
+	let t1 = clt_r(x0, t0);
+	let mut t2 = [vdupq_n_u32(0); 8];
+	let t3 = mvn_r(t1);
+	{
+		t2 = bsl_r(t1, x0, t2);
+	}
+	{
+		let t4 = [vdupq_n_u32(x1); 8];
+		t2 = bsl_r(t3, t4, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `ukl_min`.
+#[inline(always)]
+unsafe fn b47_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 8], x1: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = clt_r(x0, x1);
+	let mut t1 = [vdupq_n_u32(0); 8];
+	let t2 = and_r(live, t0);
+	let t3 = bic_r(live, t0);
+	{
+		t1 = bsl_r(t2, x0, t1);
+	}
+	{
+		t1 = bsl_r(t3, x1, t1);
+	}
+	res = t1;
+	return res;
+}
+
+/// `clif_f16_get`.
+#[inline(always)]
+unsafe fn b48_lssl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut x4: u32 = 0;
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut x6: u64 = 0;
+	let mut x7 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b55_lss_p(l, lid0, live, x0, x1, x2);
+	x4 = t0;
+	let t1: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vnegq_s32(vdupq_n_s32(((10u32) & 31) as i32))));
+	let t2 = b41_lssl_p(l, lid0, live, x0, x1, (1u32).wrapping_add(x2), t1);
+	x5 = t2;
+	let t3 = b52_s_p(l, lid0, live, x4);
+	x6 = t3;
+	let t4 = [vdupq_n_u32(1023u32); 8];
+	let t5 = and_r(x3, t4);
+	let t6 = [vdupq_n_u32(x4); 8];
+	let t7 = mul_r(t5, t6);
+	let t8 = b40_lslls_p(l, lid0, live, x0, x1, x5, t7, 8u32);
+	let t9: u64 = x6;
+	let t10 = [vdupq_n_u32((t9) as u32); 8];
+	let t11 = [vdupq_n_u32(((t9) >> 32) as u32); 8];
+	let t12 = and_r(lo(t8), t10);
+	let t13 = and_r(hi(t8), t11);
+	let t14 = cat_w(t12, t13);
+	x7 = t14;
+	let t15: u64 = x6;
+	let t16 = [vdupq_n_u32((t15) as u32); 8];
+	let t17 = [vdupq_n_u32(((t15) >> 32) as u32); 8];
+	let t18 = eq64_r(lo(x7), hi(x7), t16, t17);
+	let mut t19 = [vdupq_n_u32(0); 16];
+	let t20 = and_r(live, t18);
+	let t21 = bic_r(live, t18);
+	if any(&t20) {
+		let t22: [uint32x4_t; 16];
+		let t23 = bits(&t20);
+		if t23.count_ones() <= 2 {
+			let t24 = words16(x0);
+			let t25 = words8(x3);
+			let mut t26 = [0u32; 64];
+			let mut t27 = t23;
+			while t27 != 0 {
+				let j = t27.trailing_zeros() as usize;
+				t27 &= t27 - 1;
+				let t28 = splat64((((((t24[32 + j] as u64) << 32 | t24[j] as u64) as usize as *const u8)) as usize as u64));
+				let t29 = [vdupq_n_u32(t25[j]); 8];
+				let t30 = b43_lssl_p(l, lid0, [vdupq_n_u32(u32::MAX); 8], t28, x1, (x2).wrapping_add(1u32), t29);
+				t26[j] = vgetq_lane_u32::<0>(t30[0]);
+				t26[32 + j] = vgetq_lane_u32::<0>(t30[8]);
+			}
+			t22 = regs16(t26);
+		} else {
+			let t31 = b43_lssl_p(l, lid0, t20, x0, x1, (x2).wrapping_add(1u32), x3);
+			t22 = t31;
+		}
+		t19 = bsl_w(t20, t22, t19);
+	}
+	{
+		t19 = bsl_w(t21, x7, t19);
+	}
+	res = t19;
+	return res;
+}
+
+/// `clif_f16_get`.
+#[inline(always)]
+unsafe fn b48_lal128r0sl_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32, x3: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 8];
+	let mut x6 = [vdupq_n_u32(0); 16];
+	let mut x7 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = b55_lal128r0s_p(l, lid0, live, x0, arg0, x1i, x2);
+	x4 = t0;
+	let t1: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(x3[r], vnegq_s32(vdupq_n_s32(((10u32) & 31) as i32))));
+	let t2 = b41_lal128r0sl_p(l, lid0, live, x0, arg0, x1i, (1u32).wrapping_add(x2), t1);
+	x5 = t2;
+	let t3 = b52_l_p(l, lid0, live, x4);
+	x6 = t3;
+	let t4 = [vdupq_n_u32(1023u32); 8];
+	let t5 = and_r(x3, t4);
+	let t6 = mul_r(t5, x4);
+	let t7 = b40_lal128r0lls_p(l, lid0, live, x0, arg0, x1i, x5, t6, 8u32);
+	let t8: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t7[r], x6[r]));
+	let t9: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t7[(r + 8)], x6[(r + 8)]));
+	let t10 = cat_w(t8, t9);
+	x7 = t10;
+	let t11: [uint32x4_t; 8] = core::array::from_fn(|r| veq64q_u32(x7[r], x7[(r + 8)], x6[r], x6[(r + 8)]));
+	let mut t12 = [vdupq_n_u32(0); 16];
+	let t13 = and_r(live, t11);
+	let t14 = bic_r(live, t11);
+	if any(&t13) {
+		let t15: [uint32x4_t; 16];
+		let t16 = bits(&t13);
+		if t16.count_ones() <= 2 {
+			let t17 = words16(x0);
+			let t18 = words8(x1i);
+			let t19 = words8(x3);
+			let mut t20 = [0u32; 64];
+			let mut t21 = t16;
+			while t21 != 0 {
+				let j = t21.trailing_zeros() as usize;
+				t21 &= t21 - 1;
+				let t22 = splat64((((((t17[32 + j] as u64) << 32 | t17[j] as u64) as usize as *const u8)) as usize as u64));
+				let t23 = [vdupq_n_u32(t19[j]); 8];
+				let t24 = b43_lssl_p(l, lid0, [vdupq_n_u32(u32::MAX); 8], t22, (arg0 as *const u8).wrapping_add(((t18[j]) as usize).wrapping_mul(128)), (x2).wrapping_add(1u32), t23);
+				t20[j] = vgetq_lane_u32::<0>(t24[0]);
+				t20[32 + j] = vgetq_lane_u32::<0>(t24[8]);
+			}
+			t15 = regs16(t20);
+		} else {
+			let t25 = b43_lal128r0sl_p(l, lid0, t13, x0, arg0, x1i, (x2).wrapping_add(1u32), x3);
+			t15 = t25;
+		}
+		t12 = bsl_w(t13, t15, t12);
+	}
+	{
+		t12 = bsl_w(t14, x7, t12);
+	}
+	res = t12;
+	return res;
+}
+
+/// `clif_f16_columns`.
+#[inline(always)]
+unsafe fn b49_lss_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32) -> u32 {
+	let mut live = k;
+	let mut res: u32 = 0;
+	let t0 = b42_lss_p(l, lid0, live, x0, x1, (20u32).wrapping_add((4u32).wrapping_mul(x2)));
+	res = t0;
+	return res;
+}
+
+/// `clif_f16_columns`.
+#[inline(always)]
+unsafe fn b49_lal128r0s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, (20u32).wrapping_add((4u32).wrapping_mul(x2)));
+	res = t0;
+	return res;
+}
+
+
+/// `ukl_popcount64`.
+#[inline(always)]
+unsafe fn b51_l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16]) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(vpaddlq_u16(vpaddlq_u8(vcntq_u8(vreinterpretq_u8_u32(x0[r])))), vpaddlq_u16(vpaddlq_u8(vcntq_u8(vreinterpretq_u8_u32(x0[(r + 8)]))))));
+	res = t0;
+	return res;
+}
+
+/// `clif_t_mask`.
+#[inline(always)]
+unsafe fn b52_s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: u32) -> u64 {
+	let mut live = k;
+	let mut res: u64 = 0;
+	let t0: u64;
+	if ((x0) >= (8u32)) {
+		t0 = !(0u64);
+	} else {
+		t0 = ((1u64).wrapping_shl(((((x0).wrapping_mul(8u32)) as u64)) as u32)).wrapping_sub(1u64);
+	}
+	res = t0;
+	return res;
+}
+
+/// `clif_t_mask`.
+#[inline(always)]
+unsafe fn b52_l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 8]) -> [uint32x4_t; 16] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	let t0 = [vdupq_n_u32(8u32); 8];
+	let t1 = cge_r(x0, t0);
+	let mut t2 = [vdupq_n_u32(0); 16];
+	let t3 = and_r(live, t1);
+	let t4 = bic_r(live, t1);
+	{
+		let t5 = splat64(!(0u64));
+		t2 = bsl_w(t3, t5, t2);
+	}
+	{
+		let t6 = mul_r(x0, t0);
+		let t7: u64 = 1u64;
+		let t8 = [vdupq_n_u32((t7) as u32); 8];
+		let t9: [uint32x4_t; 8] = lo(t6);
+		let t10: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t9[r], vdupq_n_u32(63)));
+		let t11: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t8[r], vreinterpretq_s32_u32(t10[r])));
+		let t12: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t8[r], vsubq_s32(vreinterpretq_s32_u32(t10[r]), vdupq_n_s32(32))));
+		let t13 = cat_w(t11, t12);
+		let t14: u64 = 1u64;
+		let t15 = [vdupq_n_u32((t14) as u32); 8];
+		let t16 = clt_r(lo(t13), t15);
+		let t17 = sub_r(lo(t13), t15);
+		let t18: [uint32x4_t; 8] = core::array::from_fn(|r| vsbcq_u32(t13[(r + 8)], vdupq_n_u32(0), t16[r]));
+		let t19 = cat_w(t17, t18);
+		t2 = bsl_w(t4, t19, t2);
+	}
+	res = t2;
+	return res;
+}
+
+/// `ukl_ld_window`.
+#[inline(always)]
+unsafe fn b53_sss_f(l: &Launch, lid0: u32, x0: *const u8, x1: u64, x2: u32) -> u64 {
+	let mut x3: *const u8 = core::ptr::null();
+	let mut x4: u32 = 0;
+	let mut x5: u64 = 0;
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u64 = 0;
+	if ((x2) == (8u32)) {
+		res = (x0.wrapping_add(x1 as usize) as *const u64).read_unaligned();
+		return res;
+	}
+	if ((x2) == (4u32)) {
+		res = (((x0.wrapping_add(x1 as usize) as *const u32).read_unaligned()) as u64);
+		return res;
+	}
+	if ((x2) == (2u32)) {
+		res = (((x0.wrapping_add(x1 as usize) as *const u16).read_unaligned()) as u64);
+		return res;
+	}
+	if ((x2) == (1u32)) {
+		res = (((x0.wrapping_add(x1 as usize) as *const u8).read_unaligned()) as u64);
+		return res;
+	}
+	x3 = x0.wrapping_add(((x1) & (!(7u64))) as usize);
+	x4 = (((((x1) & (7u64))) as u32)).wrapping_mul(8u32);
+	x5 = ((x3 as *const u64).read_unaligned()).wrapping_shr((((x4) as u64)) as u32);
+	let mut t0: bool = ((x4) != (0u32));
+	if t0 {
+		t0 = (((x4).wrapping_add((x2).wrapping_mul(8u32))) > (64u32));
+	}
+	let t1: u64;
+	if t0 {
+		t1 = ((x5) | (((x3.wrapping_add((1u64).wrapping_mul(8u64) as usize) as *const u64).read_unaligned()).wrapping_shl(((((64u32).wrapping_sub(x4)) as u64)) as u32)));
+	} else {
+		t1 = x5;
+	}
+	res = t1;
+	return res;
+}
+
+/// `ukl_ld_window`.
+#[inline(always)]
+unsafe fn b53_sal1s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: *const u8, x1b: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 16] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	if ((x2) == (8u32)) {
+		let t0 = ix_on(live, x1i);
+		let t1 = ld_u64((x0).wrapping_add((x1b) as usize) as *const u8, t0, 1);
+		res = t1;
+		return res;
+	}
+	if ((x2) == (4u32)) {
+		let t2 = ix_on(live, x1i);
+		let t3 = ld_u32((x0).wrapping_add((x1b) as usize) as *const u8, t2, 1);
+		let t4 = cat_w(lo(t3), [vdupq_n_u32(0); 8]);
+		res = t4;
+		return res;
+	}
+	if ((x2) == (2u32)) {
+		let t5 = ix_on(live, x1i);
+		let t6 = ld_u16((x0).wrapping_add((x1b) as usize) as *const u8, t5, 1);
+		let t7 = cat_w(lo(t6), [vdupq_n_u32(0); 8]);
+		res = t7;
+		return res;
+	}
+	if ((x2) == (1u32)) {
+		let t8 = ix_on(live, x1i);
+		let t9 = ld_u8((x0).wrapping_add((x1b) as usize) as *const u8, t8, 1);
+		let t10 = cat_w(lo(t9), [vdupq_n_u32(0); 8]);
+		res = t10;
+		return res;
+	}
+	let t11: [uint32x4_t; 8] = lo(x1i);
+	let t12: u64 = ((x1b) as usize as u64);
+	let t13 = [vdupq_n_u32((t12) as u32); 8];
+	let t14 = [vdupq_n_u32(((t12) >> 32) as u32); 8];
+	let t15 = add_r(t13, t11);
+	let t16 = clt_r(t15, t13);
+	let t17: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t14[r], vdupq_n_u32(0), t16[r]));
+	let t18 = cat_w(lo(t15), t17);
+	let t19: u64 = !(7u64);
+	let t20 = [vdupq_n_u32((t19) as u32); 8];
+	let t21 = [vdupq_n_u32(((t19) >> 32) as u32); 8];
+	let t22 = and_r(lo(t18), t20);
+	let t23 = and_r(hi(t18), t21);
+	let t24 = cat_w(t22, t23);
+	let t25 = cat_w(live, live);
+	let t26: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t24[r], t25[r]));
+	let t27: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t24[(r + 8)], t25[(r + 8)]));
+	let t28 = cat_w(t26, t27);
+	let t29: u64 = ((x0) as usize as u64);
+	let t30 = [vdupq_n_u32((t29) as u32); 8];
+	let t31 = [vdupq_n_u32(((t29) >> 32) as u32); 8];
+	let t32 = add_r(t30, lo(t28));
+	let t33 = clt_r(t32, t30);
+	let t34 = adc_r(t31, hi(t28), t33);
+	let t35 = cat_w(lo(t32), t34);
+	x3 = t35;
+	let t36: [uint32x4_t; 8] = lo(x3);
+	let t37: [uint32x4_t; 8] = hi(x3);
+	let t38 = addrs(t36, t37, live);
+	let t39: [uint32x4_t; 8] = lo(x1i);
+	let t40: u64 = ((x1b) as usize as u64);
+	let t41 = [vdupq_n_u32((t40) as u32); 8];
+	let t42 = [vdupq_n_u32(((t40) >> 32) as u32); 8];
+	let t43 = add_r(t41, t39);
+	let t44 = clt_r(t43, t41);
+	let t45: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t42[r], vdupq_n_u32(0), t44[r]));
+	let t46 = cat_w(lo(t43), t45);
+	let t47: u64 = 7u64;
+	let t48 = [vdupq_n_u32((t47) as u32); 8];
+	let t49 = and_r(lo(t46), t48);
+	let t50 = [vdupq_n_u32(8u32); 8];
+	let t51 = mul_r(t49, t50);
+	x4 = t51;
+	let mut t52 = [vdupq_n_u32(0); 16];
+	t52 = ldj_u64(|j| (t38[j] as *const u8) as *const u8);
+	let t53: [uint32x4_t; 8] = lo(x4);
+	let t54: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t53[r], vdupq_n_u32(63)));
+	let t55: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshlq_u32(t52[r], vnegq_s32(vreinterpretq_s32_u32(t54[r]))), vshlq_u32(t52[(r + 8)], vsubq_s32(vdupq_n_s32(32), vreinterpretq_s32_u32(t54[r])))));
+	let t56: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t52[(r + 8)], vnegq_s32(vreinterpretq_s32_u32(t54[r]))));
+	let t57 = cat_w(t55, t56);
+	x5 = t57;
+	let t58 = [vdupq_n_u32(0u32); 8];
+	let t59 = cne_r(x4, t58);
+	let t60 = [vdupq_n_u32((x2).wrapping_mul(8u32)); 8];
+	let t61 = add_r(x4, t60);
+	let t62 = [vdupq_n_u32(64u32); 8];
+	let t63 = cgt_r(t61, t62);
+	let t64 = and_r(t59, t63);
+	let mut t65 = [vdupq_n_u32(0); 16];
+	let t66 = and_r(live, t64);
+	let t67 = bic_r(live, t64);
+	{
+		let t68: u64 = (1u64).wrapping_mul(8u64);
+		let t69 = [vdupq_n_u32((t68) as u32); 8];
+		let t70 = [vdupq_n_u32(((t68) >> 32) as u32); 8];
+		let t71 = add_r(lo(x3), t69);
+		let t72 = clt_r(t71, lo(x3));
+		let t73 = adc_r(hi(x3), t70, t72);
+		let t74 = cat_w(lo(t71), t73);
+		let t75: [usize; 32] = core::array::from_fn(|j| t38[j].wrapping_add(((1u64).wrapping_mul(8u64)) as u64 as usize));
+		let mut t76 = [vdupq_n_u32(0); 16];
+		t76 = ldj_u64(|j| (t75[j] as *const u8) as *const u8);
+		let t77 = sub_r(t62, x4);
+		let t78: [uint32x4_t; 8] = lo(t77);
+		let t79: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t78[r], vdupq_n_u32(63)));
+		let t80: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t76[r], vreinterpretq_s32_u32(t79[r])));
+		let t81: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshlq_u32(t76[(r + 8)], vreinterpretq_s32_u32(t79[r])), vshlq_u32(t76[r], vsubq_s32(vreinterpretq_s32_u32(t79[r]), vdupq_n_s32(32)))));
+		let t82 = cat_w(t80, t81);
+		let t83: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(x5[r], t82[r]));
+		let t84: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(x5[(r + 8)], t82[(r + 8)]));
+		let t85 = cat_w(t83, t84);
+		t65 = bsl_w(t66, t85, t65);
+	}
+	{
+		t65 = bsl_w(t67, x5, t65);
+	}
+	res = t65;
+	return res;
+}
+
+/// `ukl_ld_window`.
+#[inline(always)]
+unsafe fn b53_lls_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: [uint32x4_t; 16], x2: u32) -> [uint32x4_t; 16] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	if ((x2) == (8u32)) {
+		let t0: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], x1[r]));
+		let t1 = clt_r(t0, lo(x0));
+		let t2 = adc_r(hi(x0), hi(x1), t1);
+		let t3 = cat_w(lo(t0), t2);
+		let t4: [uint32x4_t; 8] = lo(t3);
+		let t5: [uint32x4_t; 8] = hi(t3);
+		let t6 = addrs(t4, t5, live);
+		let mut t7 = [vdupq_n_u32(0); 16];
+		t7 = ldj_u64(|j| (t6[j] as *const u8) as *const u8);
+		res = t7;
+		return res;
+	}
+	if ((x2) == (4u32)) {
+		let t8: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], x1[r]));
+		let t9 = clt_r(t8, lo(x0));
+		let t10 = adc_r(hi(x0), hi(x1), t9);
+		let t11 = cat_w(lo(t8), t10);
+		let t12: [uint32x4_t; 8] = lo(t11);
+		let t13: [uint32x4_t; 8] = hi(t11);
+		let t14 = addrs(t12, t13, live);
+		let mut t15 = [vdupq_n_u32(0); 8];
+		t15 = ldj_u32(|j| (t14[j] as *const u8) as *const u8);
+		let t16 = cat_w(lo(t15), [vdupq_n_u32(0); 8]);
+		res = t16;
+		return res;
+	}
+	if ((x2) == (2u32)) {
+		let t17: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], x1[r]));
+		let t18 = clt_r(t17, lo(x0));
+		let t19 = adc_r(hi(x0), hi(x1), t18);
+		let t20 = cat_w(lo(t17), t19);
+		let t21: [uint32x4_t; 8] = lo(t20);
+		let t22: [uint32x4_t; 8] = hi(t20);
+		let t23 = addrs(t21, t22, live);
+		let mut t24 = [vdupq_n_u32(0); 8];
+		t24 = ldj_u16(|j| (t23[j] as *const u8) as *const u8);
+		let t25 = cat_w(lo(t24), [vdupq_n_u32(0); 8]);
+		res = t25;
+		return res;
+	}
+	if ((x2) == (1u32)) {
+		let t26: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], x1[r]));
+		let t27 = clt_r(t26, lo(x0));
+		let t28 = adc_r(hi(x0), hi(x1), t27);
+		let t29 = cat_w(lo(t26), t28);
+		let t30: [uint32x4_t; 8] = lo(t29);
+		let t31: [uint32x4_t; 8] = hi(t29);
+		let t32 = addrs(t30, t31, live);
+		let mut t33 = [vdupq_n_u32(0); 8];
+		t33 = ldj_u8(|j| (t32[j] as *const u8) as *const u8);
+		let t34 = cat_w(lo(t33), [vdupq_n_u32(0); 8]);
+		res = t34;
+		return res;
+	}
+	let t35: u64 = !(7u64);
+	let t36 = [vdupq_n_u32((t35) as u32); 8];
+	let t37 = [vdupq_n_u32(((t35) >> 32) as u32); 8];
+	let t38 = and_r(lo(x1), t36);
+	let t39 = and_r(hi(x1), t37);
+	let t40 = cat_w(t38, t39);
+	let t41: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], t40[r]));
+	let t42 = clt_r(t41, lo(x0));
+	let t43 = adc_r(hi(x0), hi(t40), t42);
+	let t44 = cat_w(lo(t41), t43);
+	x3 = t44;
+	let t45: [uint32x4_t; 8] = lo(x3);
+	let t46: [uint32x4_t; 8] = hi(x3);
+	let t47 = addrs(t45, t46, live);
+	let t48: u64 = 7u64;
+	let t49 = [vdupq_n_u32((t48) as u32); 8];
+	let t50 = and_r(lo(x1), t49);
+	let t51 = [vdupq_n_u32(8u32); 8];
+	let t52 = mul_r(t50, t51);
+	x4 = t52;
+	let mut t53 = [vdupq_n_u32(0); 16];
+	t53 = ldj_u64(|j| (t47[j] as *const u8) as *const u8);
+	let t54: [uint32x4_t; 8] = lo(x4);
+	let t55: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t54[r], vdupq_n_u32(63)));
+	let t56: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshlq_u32(t53[r], vnegq_s32(vreinterpretq_s32_u32(t55[r]))), vshlq_u32(t53[(r + 8)], vsubq_s32(vdupq_n_s32(32), vreinterpretq_s32_u32(t55[r])))));
+	let t57: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t53[(r + 8)], vnegq_s32(vreinterpretq_s32_u32(t55[r]))));
+	let t58 = cat_w(t56, t57);
+	x5 = t58;
+	let t59 = [vdupq_n_u32(0u32); 8];
+	let t60 = cne_r(x4, t59);
+	let t61 = [vdupq_n_u32((x2).wrapping_mul(8u32)); 8];
+	let t62 = add_r(x4, t61);
+	let t63 = [vdupq_n_u32(64u32); 8];
+	let t64 = cgt_r(t62, t63);
+	let t65 = and_r(t60, t64);
+	let mut t66 = [vdupq_n_u32(0); 16];
+	let t67 = and_r(live, t65);
+	let t68 = bic_r(live, t65);
+	{
+		let t69: u64 = (1u64).wrapping_mul(8u64);
+		let t70 = [vdupq_n_u32((t69) as u32); 8];
+		let t71 = [vdupq_n_u32(((t69) >> 32) as u32); 8];
+		let t72 = add_r(lo(x3), t70);
+		let t73 = clt_r(t72, lo(x3));
+		let t74 = adc_r(hi(x3), t71, t73);
+		let t75 = cat_w(lo(t72), t74);
+		let t76: [usize; 32] = core::array::from_fn(|j| t47[j].wrapping_add(((1u64).wrapping_mul(8u64)) as u64 as usize));
+		let mut t77 = [vdupq_n_u32(0); 16];
+		t77 = ldj_u64(|j| (t76[j] as *const u8) as *const u8);
+		let t78 = sub_r(t63, x4);
+		let t79: [uint32x4_t; 8] = lo(t78);
+		let t80: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t79[r], vdupq_n_u32(63)));
+		let t81: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t77[r], vreinterpretq_s32_u32(t80[r])));
+		let t82: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshlq_u32(t77[(r + 8)], vreinterpretq_s32_u32(t80[r])), vshlq_u32(t77[r], vsubq_s32(vreinterpretq_s32_u32(t80[r]), vdupq_n_s32(32)))));
+		let t83 = cat_w(t81, t82);
+		let t84: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(x5[r], t83[r]));
+		let t85: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(x5[(r + 8)], t83[(r + 8)]));
+		let t86 = cat_w(t84, t85);
+		t66 = bsl_w(t67, t86, t66);
+	}
+	{
+		t66 = bsl_w(t68, x5, t66);
+	}
+	res = t66;
+	return res;
+}
+
+/// `ukl_ld_window`.
+#[inline(always)]
+unsafe fn b53_lal1s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1b: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 16] {
+	let mut x3 = [vdupq_n_u32(0); 16];
+	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x5 = [vdupq_n_u32(0); 16];
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 16];
+	if ((x2) == (8u32)) {
+		let t0: [uint32x4_t; 8] = lo(x1i);
+		let t1: u64 = ((x1b) as usize as u64);
+		let t2 = [vdupq_n_u32((t1) as u32); 8];
+		let t3 = [vdupq_n_u32(((t1) >> 32) as u32); 8];
+		let t4 = add_r(t2, t0);
+		let t5 = clt_r(t4, t2);
+		let t6: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t3[r], vdupq_n_u32(0), t5[r]));
+		let t7 = cat_w(lo(t4), t6);
+		let t8: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], t7[r]));
+		let t9 = clt_r(t8, lo(x0));
+		let t10 = adc_r(hi(x0), hi(t7), t9);
+		let t11 = cat_w(lo(t8), t10);
+		let t12: [uint32x4_t; 8] = lo(t11);
+		let t13: [uint32x4_t; 8] = hi(t11);
+		let t14 = addrs(t12, t13, live);
+		let mut t15 = [vdupq_n_u32(0); 16];
+		t15 = ldj_u64(|j| (t14[j] as *const u8) as *const u8);
+		res = t15;
+		return res;
+	}
+	if ((x2) == (4u32)) {
+		let t16: [uint32x4_t; 8] = lo(x1i);
+		let t17: u64 = ((x1b) as usize as u64);
+		let t18 = [vdupq_n_u32((t17) as u32); 8];
+		let t19 = [vdupq_n_u32(((t17) >> 32) as u32); 8];
+		let t20 = add_r(t18, t16);
+		let t21 = clt_r(t20, t18);
+		let t22: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t19[r], vdupq_n_u32(0), t21[r]));
+		let t23 = cat_w(lo(t20), t22);
+		let t24: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], t23[r]));
+		let t25 = clt_r(t24, lo(x0));
+		let t26 = adc_r(hi(x0), hi(t23), t25);
+		let t27 = cat_w(lo(t24), t26);
+		let t28: [uint32x4_t; 8] = lo(t27);
+		let t29: [uint32x4_t; 8] = hi(t27);
+		let t30 = addrs(t28, t29, live);
+		let mut t31 = [vdupq_n_u32(0); 8];
+		t31 = ldj_u32(|j| (t30[j] as *const u8) as *const u8);
+		let t32 = cat_w(lo(t31), [vdupq_n_u32(0); 8]);
+		res = t32;
+		return res;
+	}
+	if ((x2) == (2u32)) {
+		let t33: [uint32x4_t; 8] = lo(x1i);
+		let t34: u64 = ((x1b) as usize as u64);
+		let t35 = [vdupq_n_u32((t34) as u32); 8];
+		let t36 = [vdupq_n_u32(((t34) >> 32) as u32); 8];
+		let t37 = add_r(t35, t33);
+		let t38 = clt_r(t37, t35);
+		let t39: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t36[r], vdupq_n_u32(0), t38[r]));
+		let t40 = cat_w(lo(t37), t39);
+		let t41: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], t40[r]));
+		let t42 = clt_r(t41, lo(x0));
+		let t43 = adc_r(hi(x0), hi(t40), t42);
+		let t44 = cat_w(lo(t41), t43);
+		let t45: [uint32x4_t; 8] = lo(t44);
+		let t46: [uint32x4_t; 8] = hi(t44);
+		let t47 = addrs(t45, t46, live);
+		let mut t48 = [vdupq_n_u32(0); 8];
+		t48 = ldj_u16(|j| (t47[j] as *const u8) as *const u8);
+		let t49 = cat_w(lo(t48), [vdupq_n_u32(0); 8]);
+		res = t49;
+		return res;
+	}
+	if ((x2) == (1u32)) {
+		let t50: [uint32x4_t; 8] = lo(x1i);
+		let t51: u64 = ((x1b) as usize as u64);
+		let t52 = [vdupq_n_u32((t51) as u32); 8];
+		let t53 = [vdupq_n_u32(((t51) >> 32) as u32); 8];
+		let t54 = add_r(t52, t50);
+		let t55 = clt_r(t54, t52);
+		let t56: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t53[r], vdupq_n_u32(0), t55[r]));
+		let t57 = cat_w(lo(t54), t56);
+		let t58: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], t57[r]));
+		let t59 = clt_r(t58, lo(x0));
+		let t60 = adc_r(hi(x0), hi(t57), t59);
+		let t61 = cat_w(lo(t58), t60);
+		let t62: [uint32x4_t; 8] = lo(t61);
+		let t63: [uint32x4_t; 8] = hi(t61);
+		let t64 = addrs(t62, t63, live);
+		let mut t65 = [vdupq_n_u32(0); 8];
+		t65 = ldj_u8(|j| (t64[j] as *const u8) as *const u8);
+		let t66 = cat_w(lo(t65), [vdupq_n_u32(0); 8]);
+		res = t66;
+		return res;
+	}
+	let t67: [uint32x4_t; 8] = lo(x1i);
+	let t68: u64 = ((x1b) as usize as u64);
+	let t69 = [vdupq_n_u32((t68) as u32); 8];
+	let t70 = [vdupq_n_u32(((t68) >> 32) as u32); 8];
+	let t71 = add_r(t69, t67);
+	let t72 = clt_r(t71, t69);
+	let t73: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t70[r], vdupq_n_u32(0), t72[r]));
+	let t74 = cat_w(lo(t71), t73);
+	let t75: u64 = !(7u64);
+	let t76 = [vdupq_n_u32((t75) as u32); 8];
+	let t77 = [vdupq_n_u32(((t75) >> 32) as u32); 8];
+	let t78 = and_r(lo(t74), t76);
+	let t79 = and_r(hi(t74), t77);
+	let t80 = cat_w(t78, t79);
+	let t81: [uint32x4_t; 8] = core::array::from_fn(|r| vaddq_u32(x0[r], t80[r]));
+	let t82 = clt_r(t81, lo(x0));
+	let t83 = adc_r(hi(x0), hi(t80), t82);
+	let t84 = cat_w(lo(t81), t83);
+	x3 = t84;
+	let t85: [uint32x4_t; 8] = lo(x3);
+	let t86: [uint32x4_t; 8] = hi(x3);
+	let t87 = addrs(t85, t86, live);
+	let t88: [uint32x4_t; 8] = lo(x1i);
+	let t89: u64 = ((x1b) as usize as u64);
+	let t90 = [vdupq_n_u32((t89) as u32); 8];
+	let t91 = [vdupq_n_u32(((t89) >> 32) as u32); 8];
+	let t92 = add_r(t90, t88);
+	let t93 = clt_r(t92, t90);
+	let t94: [uint32x4_t; 8] = core::array::from_fn(|r| vadcq_u32(t91[r], vdupq_n_u32(0), t93[r]));
+	let t95 = cat_w(lo(t92), t94);
+	let t96: u64 = 7u64;
+	let t97 = [vdupq_n_u32((t96) as u32); 8];
+	let t98 = and_r(lo(t95), t97);
+	let t99 = [vdupq_n_u32(8u32); 8];
+	let t100 = mul_r(t98, t99);
+	x4 = t100;
+	let mut t101 = [vdupq_n_u32(0); 16];
+	t101 = ldj_u64(|j| (t87[j] as *const u8) as *const u8);
+	let t102: [uint32x4_t; 8] = lo(x4);
+	let t103: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t102[r], vdupq_n_u32(63)));
+	let t104: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshlq_u32(t101[r], vnegq_s32(vreinterpretq_s32_u32(t103[r]))), vshlq_u32(t101[(r + 8)], vsubq_s32(vdupq_n_s32(32), vreinterpretq_s32_u32(t103[r])))));
+	let t105: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t101[(r + 8)], vnegq_s32(vreinterpretq_s32_u32(t103[r]))));
+	let t106 = cat_w(t104, t105);
+	x5 = t106;
+	let t107 = [vdupq_n_u32(0u32); 8];
+	let t108 = cne_r(x4, t107);
+	let t109 = [vdupq_n_u32((x2).wrapping_mul(8u32)); 8];
+	let t110 = add_r(x4, t109);
+	let t111 = [vdupq_n_u32(64u32); 8];
+	let t112 = cgt_r(t110, t111);
+	let t113 = and_r(t108, t112);
+	let mut t114 = [vdupq_n_u32(0); 16];
+	let t115 = and_r(live, t113);
+	let t116 = bic_r(live, t113);
+	{
+		let t117: u64 = (1u64).wrapping_mul(8u64);
+		let t118 = [vdupq_n_u32((t117) as u32); 8];
+		let t119 = [vdupq_n_u32(((t117) >> 32) as u32); 8];
+		let t120 = add_r(lo(x3), t118);
+		let t121 = clt_r(t120, lo(x3));
+		let t122 = adc_r(hi(x3), t119, t121);
+		let t123 = cat_w(lo(t120), t122);
+		let t124: [usize; 32] = core::array::from_fn(|j| t87[j].wrapping_add(((1u64).wrapping_mul(8u64)) as u64 as usize));
+		let mut t125 = [vdupq_n_u32(0); 16];
+		t125 = ldj_u64(|j| (t124[j] as *const u8) as *const u8);
+		let t126 = sub_r(t111, x4);
+		let t127: [uint32x4_t; 8] = lo(t126);
+		let t128: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(t127[r], vdupq_n_u32(63)));
+		let t129: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t125[r], vreinterpretq_s32_u32(t128[r])));
+		let t130: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(vshlq_u32(t125[(r + 8)], vreinterpretq_s32_u32(t128[r])), vshlq_u32(t125[r], vsubq_s32(vreinterpretq_s32_u32(t128[r]), vdupq_n_s32(32)))));
+		let t131 = cat_w(t129, t130);
+		let t132: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(x5[r], t131[r]));
+		let t133: [uint32x4_t; 8] = core::array::from_fn(|r| vorrq_u32(x5[(r + 8)], t131[(r + 8)]));
+		let t134 = cat_w(t132, t133);
+		t114 = bsl_w(t115, t134, t114);
+	}
+	{
+		t114 = bsl_w(t116, x5, t114);
+	}
+	res = t114;
+	return res;
+}
+
+/// `ukl_mask64`.
+#[inline(always)]
+unsafe fn b54_s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: u32) -> u64 {
+	let mut live = k;
+	let mut res: u64 = 0;
+	let t0: u64;
+	if ((x0) >= (64u32)) {
+		t0 = !(0u64);
+	} else {
+		t0 = ((1u64).wrapping_shl((((x0) as u64)) as u32)).wrapping_sub(1u64);
+	}
+	res = t0;
+	return res;
+}
+
+/// `ukl_mask64`.
+#[inline(always)]
+unsafe fn b54_s_f(l: &Launch, lid0: u32, x0: u32) -> u64 {
+	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut res: u64 = 0;
+	let t0: u64;
+	if ((x0) >= (64u32)) {
+		t0 = !(0u64);
+	} else {
+		t0 = ((1u64).wrapping_shl((((x0) as u64)) as u32)).wrapping_sub(1u64);
+	}
+	res = t0;
+	return res;
+}
+
+/// `clif_f16_width`.
+#[inline(always)]
+unsafe fn b55_lss_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], x1: *const u8, x2: u32) -> u32 {
+	let mut live = k;
+	let mut res: u32 = 0;
+	let t0 = b42_lss_p(l, lid0, live, x0, x1, 16u32);
+	res = (((t0).wrapping_shr(((4u32).wrapping_mul(x2)) as u32)) & (15u32));
+	return res;
+}
+
+/// `clif_f16_width`.
+#[inline(always)]
+unsafe fn b55_lal128r0s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], x0: [uint32x4_t; 16], arg0: *const u8, x1i: [uint32x4_t; 8], x2: u32) -> [uint32x4_t; 8] {
+	let mut live = k;
+	let mut res = [vdupq_n_u32(0); 8];
+	let t0 = b42_lal128r0s_p(l, lid0, live, x0, arg0, x1i, 16u32);
+	let t1: [uint32x4_t; 8] = core::array::from_fn(|r| vshlq_u32(t0[r], vnegq_s32(vdupq_n_s32((((4u32).wrapping_mul(x2)) & 31) as i32))));
+	let t2 = [vdupq_n_u32(15u32); 8];
+	let t3 = and_r(t1, t2);
+	res = t3;
+	return res;
+}
+
+/// The group `l.group`'s threads, 32 at a time: `argv[j]` the address of argument `j`'s bytes (a buffer's address,
+/// a value's bytes).
+///
+/// # Safety
+///
+/// `argv` holds the kernel's arguments, its buffers as large as it reads and writes; `l` is a 1-D group's launch.
+pub unsafe fn label_leaves_w32(argv: *const *const u8, l: &Launch) {
+	let n = l.block[0] * l.block[1] * l.block[2];
+	let arg0: *const u8 = (*argv.add(0) as *const *const u8).read_unaligned();
+	let arg1: *const u8 = (*argv.add(1) as *const *const u8).read_unaligned();
+	let arg2: *const u8 = (*argv.add(2) as *const *const u8).read_unaligned();
+	let x3: *const u8 = *argv.add(3);
+	let arg4: *const u8 = (*argv.add(4) as *const *const u8).read_unaligned();
+	let arg5: *const u8 = (*argv.add(5) as *const *const u8).read_unaligned();
+	let x6: u32 = (*argv.add(6) as *const u32).read_unaligned();
+	let mut t1542: bool = !(arg5).is_null();
+	if t1542 {
+		let mut t1543: bool = ((l.group[0]) >= ((arg5.wrapping_add((((x6) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
+		if !t1543 {
+			t1543 = ((l.group[1]) >= ((arg5.wrapping_add(((((x6).wrapping_add(1u32)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
+		}
+		let mut t1544: bool = t1543;
+		if !t1544 {
+			t1544 = ((l.group[2]) >= ((arg5.wrapping_add(((((x6).wrapping_add(2u32)) as u64)).wrapping_mul(4u64) as usize) as *const u32).read_unaligned()));
+		}
+		t1542 = t1544;
+	}
+	if t1542 {
+		return;
+	}
+	let mut lid0 = 0u32;
+	while lid0 + 32 <= n {
+		let mut live = [vdupq_n_u32(u32::MAX); 8];
+		let gid0 = l.group[0] * l.block[0] + lid0;
+		'chunk: {
+			b0_r0r1r2sr4g_p(l, lid0, [vdupq_n_u32(u32::MAX); 8], arg0, arg1, arg2, x3, arg4);
+		}
+		lid0 += 32;
+	}
+	if lid0 < n {
+		// Lanes part: the group's last threads, those under `n`.
+		let t1545: [uint32x4_t; 8] = core::array::from_fn(|r| vcltq_u32(vaddq_u32(vdupq_n_u32(lid0), vld1q_u32(LANE[r].as_ptr())), vdupq_n_u32(n)));
+		let mut live = t1545;
+		let gid0 = l.group[0] * l.block[0] + lid0;
+		'chunk: {
+			b0_r0r1r2sr4g_p(l, lid0, live, arg0, arg1, arg2, x3, arg4);
+		}
+	}
+}

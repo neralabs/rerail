@@ -1396,7 +1396,7 @@ fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
     // (2) The bounds check decided for a chunk at once.
     assert!(lines.iter().any(|l| l.contains("as u64 + 7")), "`cell >= args.cells` not decided for the chunk:\n{rust}");
     // (3) Mask tests of the mask's bits.
-    assert!(rust.contains("fn any(") && !rust.contains("vminvq_u32(") && !rust.contains("vmaxvq_u32(vorrq_u32"), "mask tests by reductions:\n{rust}");
+    assert!(rust.contains("fn any(") && !own_code(&rust).contains("minv(&") && !own_code(&rust).contains("vmaxvq_u32(vorrq_u32"), "mask tests by reductions:\n{rust}");
     // (4) No variable set by a mask's select; `steps` counted by its mask.
     let selected: Vec<&&str> = lines.iter().filter(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vbslq_u32(") }).collect();
     assert!(selected.is_empty(), "variables set by a select: {selected:?}\n{rust}");
@@ -1566,7 +1566,7 @@ fn a_store_of_lanes_values_at_one_address_is_the_last_running_lanes() {
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("race").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
     let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}", e.0));
-    let stores = rust.lines().filter(|l| l.contains(".write_unaligned(")).count();
+    let stores = own_code(&rust).lines().filter(|l| l.contains(".write_unaligned(")).count();
     assert!(stores == 2 && rust.matches(".leading_zeros() as usize;").count() == 2 && !rust.contains("if vgetq_lane_u32::<"), "not one store of the last running lane's:\n{rust}");
 }
 
@@ -1649,7 +1649,7 @@ fn the_label_parents_kernels_rust_is_the_checked_in_one() {
         assert!(rust[first..].lines().nth(1).is_some_and(|l| l.trim() == "// Rounds of one condition: every lane goes on."), "phase {phase}'s rounds are each lane's");
     }
     assert!(rust.contains(".add(1 * t") && rust.contains("vst1q_lane_u32::<1>(core::hint::select_unpredictable("), "no lanes a stride apart");
-    assert!(rust.contains("== vmaxvq_u32("), "no load of one index for all lanes");
+    assert!(rust.contains("== maxv(&"), "no load of one index for all lanes");
     assert!(!rust.contains("x[j] as u32).checked_div("), "a division of each lane's");
     let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_rust/src/label_parents_w8.rs");
     if std::env::var_os("UKL_RS_WRITE").is_some() {
@@ -1687,4 +1687,44 @@ fn the_label_leaves_kernels_rust_is_the_checked_in_one() {
     }
     let kept = std::fs::read_to_string(at).unwrap_or_default();
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
+}
+
+/// A kernel's Rust past its prelude (`rs.rs`' functions every kernel has): its functions' and its own code.
+fn own_code(rust: &str) -> &str {
+    let at = rust.lines().scan(0, |at, l| {
+        let here = *at;
+        *at += l.len() + 1;
+        Some((here, l))
+    });
+    let first = at.filter(|(_, l)| l.strip_prefix("unsafe fn b").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())) || l.starts_with("pub unsafe fn")).map(|(k, _)| k).next();
+    &rust[first.unwrap_or(0)..]
+}
+
+/// The kernels checked in at 8 lanes, at 32 too (`rerail-ukl-aot`'s `*_w32`, whose tests run them as they run those):
+/// the Rust of more than two registers, its operations written once over them (`roll`, the prelude's functions) and
+/// its lanes' loads and stores loops (`ldj_u32`, `stj_u32`). `UKL_RS_WRITE=1` writes them again.
+#[test]
+fn the_kernels_rust_at_32_lanes_is_the_checked_in_one() {
+    let mut sources = vec![
+        ("nearest_jump", super::source("/<kernels>/nearest.uglykl", include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl"), &[]).unwrap()),
+        ("mix_lanes", super::source("/<kernels>/mix.uglykl", include_str!("../../ukl_aot/kernels/mix.uglykl"), &[]).unwrap()),
+        ("wide_lanes", super::source("/<kernels>/wide.uglykl", include_str!("../../ukl_aot/kernels/wide.uglykl"), &[]).unwrap()),
+    ];
+    for kernel in ["parent_group", "parent_back", "parent_step", "parent_link"] {
+        sources.push((kernel, super::source("/<kernels>/f16_parent.uglykl", include_str!("../../ukl_aot/kernels/f16_parent.uglykl"), &[]).unwrap()));
+    }
+    sources.push(("label_parents", label_passes_source()));
+    sources.push(("label_leaves", label_passes_source()));
+    for (kernel, src) in sources {
+        let tape = super::c_tape(&src).unwrap();
+        let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+        let k = super::vector::vectorize(&p, p.kernel(kernel).unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+        let rust = super::rs::kernel(&p, &k, 32).unwrap_or_else(|e| panic!("{kernel}: {}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+        let at = format!("{}/../ukl_aot/src/{kernel}_w32.rs", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("UKL_RS_WRITE").is_some() {
+            std::fs::write(&at, &rust).unwrap();
+        }
+        let kept = std::fs::read_to_string(&at).unwrap_or_default();
+        assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
+    }
 }

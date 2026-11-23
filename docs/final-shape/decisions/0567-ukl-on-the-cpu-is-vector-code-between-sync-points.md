@@ -849,6 +849,40 @@ reads now 79 calls). The largest: `row_text_one` 210 KB, `txt_of` 174 KB (2 inst
 `ukl_radix_scatter_tile_u32_prog` 134 KB (2). Not compiled yet. Next: the instances (one per shape where shapes
 differ little), then the text of each (declarations, splats, masks).
 
+### The instances and their text (the user's: "please address these", 2026-11-23)
+
+`join_run`'s Rust, 2.53 MB to 694 KB (17,020 lines), in these steps (each its size after):
+
+1. **Instances of one text, once** (2.33 MB). A function's instances are keyed by what a call knows of its arguments
+   (`Em::inst`), and some of that changes nothing written. The module's last pass (`merge_instances`) writes once each
+   set whose text is one but for its temporaries' numbers and its callees (each merged too, to a fixed point).
+2. **A lane's loads and stores as loops** (1.70 MB). A gather, a scatter, a strided store: a loop over the lanes of
+   their words, not 32 lines of `vgetq_lane_u32` (`lane_words`).
+3. **Operations over the registers, once** (1.23 MB, then 1.11 MB). `roll` takes a list whose elements are one
+   expression but for a constant offset from the register's index (`x[r]` and `x[r + 8]`, a 64-bit value's
+   halves); the prelude has each NEON operation of whole registers over a kernel's arrays (`and_r(a, b)` for
+   `from_fn(|r| vandq_u32(a[r], b[r]))`), its reductions (`maxv`, `minv`, `maxv_on`), and its words of registers
+   (`words8`, `regs8`); indentation is a tab.
+4. **Large functions written once** (959 KB). A function the source declares a call, or of more than 400 nodes
+   (`vector::JOIN_NODES`), has one body for its calls, not one per context (`vector::joins`), at a call where
+   neither it nor its caller reaches a sync point: a context is what shows a group's lanes reach one together, and
+   a callee's result of one value what keeps its caller's control so. Its instances' shapes are joined in its Rust
+   (`Em::joined`): a value's parameter each lane's where calls differ, the instance of a mask where any call's lanes
+   part.
+5. **Names and types** (854 KB). Temporaries are numbered in each function; a `let`'s type is left out where its
+   value says it (`untyped`); a function that does not read the thread's id does not compute it.
+6. **The lanes' accesses as the prelude's functions** (699 KB): an element of each lane's index (`ld_u32(b, ix, s)`,
+   one load where the indexes are one), a running lane's index for one that is not (`ix_on`), a load or a store at
+   each lane's address (`ldj_u32(|j| ...)`, `stj_u32(k, v, |j| ...)`), each lane's 64-bit address (`addrs`), and the
+   operations of one register NEON has as several (`vmulhiq_u32`, `vlt64q_u32`, `veq64q_u32`, `vadcq_u32`) or a
+   64-bit splat (`splat64`), which roll as NEON's do.
+
+Every kernel checked in at 8 lanes is now also checked in at 32 (`rerail-ukl-aot`'s `*_w32`,
+`the_kernels_rust_at_32_lanes_is_the_checked_in_one`), and its tests run both against the same answers (the scalar
+kernels', the host's parents, the CPU device's c++ build's leaves): the Rust of more than two registers, which only
+`join_run` had, is run. Writing them found an operation reading a 64-bit value's low half as an array of the
+result's registers; such an operand is `lo(x)` (`Em::wide`).
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

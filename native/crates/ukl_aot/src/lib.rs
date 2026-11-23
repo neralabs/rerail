@@ -30,6 +30,26 @@ pub mod parent_link_w8;
 pub mod parent_step_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod wide_lanes_w8;
+/// The same kernels at 32 lanes (rerail-ukl-vec's `the_kernels_rust_at_32_lanes_is_the_checked_in_one`): its Rust of more
+/// than two registers, which its tests run as they run those of 8.
+#[cfg(target_arch = "aarch64")]
+pub mod label_leaves_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod label_parents_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod mix_lanes_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod nearest_jump_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod parent_back_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod parent_group_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod parent_link_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod parent_step_w32;
+#[cfg(target_arch = "aarch64")]
+pub mod wide_lanes_w32;
 pub mod counts;
 pub mod label;
 pub mod parent;
