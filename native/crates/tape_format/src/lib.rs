@@ -859,6 +859,11 @@ impl<L: Layout> Writer<L> {
             self.close(at, end);
             return at;
         }
+        self.leaf_here(key, start, end)
+    }
+
+    #[inline(always)]
+    fn leaf_here(&mut self, key: u32, start: u32, end: u32) -> usize {
         let at = self.push(key, start);
         let tail = end.wrapping_sub(start);
         if tail >= self.wide_from {
@@ -881,6 +886,11 @@ impl<L: Layout> Writer<L> {
             }
             return;
         }
+        self.field_here(node, mask, field);
+    }
+
+    #[inline(always)]
+    fn field_here(&mut self, node: usize, mask: u32, field: u32) {
         let c = self.cell(node);
         let k = self.keys[c];
         if k & mask == 0 {
@@ -899,6 +909,11 @@ impl<L: Layout> Writer<L> {
             self.close(node, e);
             return k;
         }
+        self.close_from_here(node, end)
+    }
+
+    #[inline(always)]
+    fn close_from_here(&mut self, node: usize, end: u32) -> u32 {
         let c = self.cell(node);
         let (k, s) = (self.keys[c], self.starts[c]);
         self.close_at(node, end.max(s), self.n);
@@ -917,11 +932,86 @@ impl<L: Layout> Writer<L> {
             self.insert(at, key | (k & mask), start);
             return;
         }
+        self.wrap_here(at, mask, bits, key);
+    }
+
+    #[inline(always)]
+    fn wrap_here(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
         let c = self.cell(at);
         let (k, start) = (self.keys[c], self.starts[c]);
         self.uncode_from(at);
         self.keys[c] = k & !mask | bits;
         self.insert_node(at, key | (k & mask), start);
+    }
+
+    /// Whether the tape holds no chain and has passed no node on: a parse to an image or the columns that opens no
+    /// chain (tier 2's), whose calls are then the `plain_` ones.
+    fn plain(&self) -> bool {
+        self.chain_at == usize::MAX && self.chains.is_empty() && self.base == 0
+    }
+
+    /// `key`, on a tape with no chain held and no node passed on (`plain`): neither checked.
+    #[inline(always)]
+    pub fn plain_key(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.keys[node]
+    }
+
+    /// `start`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_start(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.starts[node]
+    }
+
+    /// `set_key`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_set_key(&mut self, node: usize, key: u32) {
+        debug_assert!(self.plain());
+        self.uncode_from(node);
+        self.keys[node] = key;
+    }
+
+    /// `set_start`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_set_start(&mut self, node: usize, start: u32) {
+        debug_assert!(self.plain() && self.is_open(node));
+        self.starts[node] = start;
+    }
+
+    /// `close`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_close(&mut self, node: usize, end: u32) {
+        debug_assert!(self.plain());
+        self.close_at(node, end, self.n);
+    }
+
+    /// `push_leaf`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_leaf(&mut self, key: u32, start: u32, end: u32) -> usize {
+        debug_assert!(self.plain());
+        self.leaf_here(key, start, end)
+    }
+
+    /// `set_field`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_field(&mut self, node: usize, mask: u32, field: u32) {
+        debug_assert!(self.plain());
+        self.field_here(node, mask, field);
+    }
+
+    /// `close_from`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_close_from(&mut self, node: usize, end: u32) -> u32 {
+        debug_assert!(self.plain());
+        self.close_from_here(node, end)
+    }
+
+    /// `wrap`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_wrap(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        debug_assert!(self.plain());
+        self.wrap_here(at, mask, bits, key);
     }
 
     /// `node`'s key changed (a field set after it was made, a kind found later).
@@ -1759,7 +1849,9 @@ mod tests {
     #[test]
     fn a_leaf_at_once_and_a_field_are_the_calls_they_join() {
         let src = vec![b' '; 200_000];
-        let build = |joined: bool| {
+        // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
+        let build = |way: u8| {
+            let joined = way > 0;
             let mut w = Widths::guess(src.len());
             loop {
                 let mut o = Writer::new(1, w, 8);
@@ -1767,7 +1859,9 @@ mod tests {
                 for i in 0..40u32 {
                     let (s, e) = (10 * i, if i % 7 == 3 { 10 * i + 70_000 } else { 10 * i + 3 });
                     let k = key(2 + (i % 3) as u16, if i % 5 == 0 { 3 } else { 0 }, 0);
-                    let x = if joined {
+                    let x = if way == 2 {
+                        o.plain_leaf(k, s, e)
+                    } else if joined {
                         o.push_leaf(k, s, e)
                     } else {
                         let x = o.push(k, s);
@@ -1775,7 +1869,9 @@ mod tests {
                         x
                     };
                     let field = u32::from(1 + (i % 4) as u16) << 10;
-                    if joined {
+                    if way == 2 {
+                        o.plain_field(x, 0x3f << 10, field);
+                    } else if joined {
                         o.set_field(x, 0x3f << 10, field);
                     } else if o.key(x) >> 10 & 0x3f == 0 {
                         let k = o.key(x);
@@ -1785,7 +1881,10 @@ mod tests {
                     if i % 3 == 1 {
                         let wk = key(9, 0, 0);
                         let end = if i % 2 == 0 { e + 4 } else { s };
-                        if joined {
+                        if way == 2 {
+                            o.plain_wrap(x, 0x3f << 10, 5 << 10, wk);
+                            let _ = o.plain_close_from(x, end);
+                        } else if joined {
                             o.wrap(x, 0x3f << 10, 5 << 10, wk);
                             let _ = o.close_from(x, end);
                         } else {
@@ -1806,7 +1905,8 @@ mod tests {
                 }
             }
         };
-        assert_eq!(build(false), build(true));
+        assert_eq!(build(0), build(1));
+        assert_eq!(build(0), build(2));
     }
 
     /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.

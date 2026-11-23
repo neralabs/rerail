@@ -831,7 +831,7 @@ impl<'a, L: Layout> P<'a, L> {
         if let Some((kind, Some(s))) = self.lost {
             self.lost = None;
             let at = self.w.push(u32::from(kind) | 1 << 16, s);
-            self.w.close(at, s);
+            self.w.plain_close(at, s);
         }
         while self.pend < self.i {
             let j = self.pend;
@@ -839,7 +839,7 @@ impl<'a, L: Layout> P<'a, L> {
             let c = self.recs[j].code;
             if is_extra(c) && !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
-                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
+                self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
             }
         }
     }
@@ -877,7 +877,7 @@ impl<'a, L: Layout> P<'a, L> {
             self.pend += 1;
             if is_extra(c) && !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
-                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
+                self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
                 self.last_end = self.last_end.max(e);
             }
         }
@@ -957,7 +957,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         self.flush();
         let (s, e) = self.bump()?;
-        let at = self.w.push_leaf(u32::from(kind) | u32::from(field) << 10, s, e);
+        let at = self.w.plain_leaf(u32::from(kind) | u32::from(field) << 10, s, e);
         self.set_made(at as u32);
         Ok(())
     }
@@ -991,12 +991,12 @@ impl<'a, L: Layout> P<'a, L> {
         if !ok || at == NONE || at as usize + 1 != self.w.len() {
             return self.refuse();
         }
-        let (s, key) = (self.w.start(at as usize), self.w.key(at as usize));
+        let (s, key) = (self.w.plain_start(at as usize), self.w.plain_key(at as usize));
         // The comments between are its text.
         self.pend = self.i;
         let (_, e) = self.bump()?;
         self.w.truncate(at as usize);
-        let at = self.w.push_leaf(key & !0x3ff | u32::from(kind), s, e);
+        let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
         self.set_made(at as u32);
         Ok(())
     }
@@ -1017,13 +1017,13 @@ impl<'a, L: Layout> P<'a, L> {
         let first = if whole && !padded {
             0
         } else if self.w.len() > 1 {
-            self.w.start(1)
+            self.w.plain_start(1)
         } else {
             self.src.len() as u32
         };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
-        self.w.set_start(0, first);
-        self.w.close(0, end);
+        self.w.plain_set_start(0, first);
+        self.w.plain_close(0, end);
         Ok(())
     }
 
@@ -1041,7 +1041,7 @@ impl<'a, L: Layout> P<'a, L> {
     fn close(&mut self) -> R {
         let at = self.levels.pop().expect("a node open").0 as usize;
         // Closed before the refusal: a refused file's tape is not read.
-        if self.w.close_from(at, self.last_end) & 0x3ff == u32::from(UNSET) {
+        if self.w.plain_close_from(at, self.last_end) & 0x3ff == u32::from(UNSET) {
             return self.refuse();
         }
         self.set_made(at as u32);
@@ -1054,14 +1054,14 @@ impl<'a, L: Layout> P<'a, L> {
         if at == NONE {
             return;
         }
-        self.w.set_field(at as usize, 0x3f << 10, u32::from(field) << 10);
+        self.w.plain_field(at as usize, 0x3f << 10, u32::from(field) << 10);
     }
 
     /// The node open, a `kind` now.
     fn retag(&mut self, kind: u16) {
         let at = self.levels.last().expect("a node open").0 as usize;
-        let k = self.w.key(at);
-        self.w.set_key(at, k & !0x3ff | u32::from(kind));
+        let k = self.w.plain_key(at);
+        self.w.plain_set_key(at, k & !0x3ff | u32::from(kind));
     }
 
     /// A node of `kind` put over the node made last at this level, open: it takes that node's
@@ -1072,7 +1072,7 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         let at = at as usize;
-        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
+        self.w.plain_wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
         self.levels.push((at as u32, at as u32 + 1));
         Ok(())
     }
@@ -1080,8 +1080,8 @@ impl<'a, L: Layout> P<'a, L> {
     /// The node a wrap moved (the wrap's first child) a `kind` now.
     fn retype_moved(&mut self, kind: u16) {
         let at = self.levels.last().expect("a wrap open").0 as usize + 1;
-        let k = self.w.key(at);
-        self.w.set_key(at, k & !0x3ff | u32::from(kind));
+        let k = self.w.plain_key(at);
+        self.w.plain_set_key(at, k & !0x3ff | u32::from(kind));
     }
 
     /// The node made last at this level and the nodes inside it read again: `way` gives each
@@ -1099,7 +1099,7 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         // The nodes as they are, then written again in preorder.
-        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();
+        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.end(i), self.w.size(i) as usize)).collect();
         self.w.truncate(at);
         let mut i = 0;
         while i < nodes.len() {
@@ -1134,7 +1134,7 @@ impl<'a, L: Layout> P<'a, L> {
                 while j < i + size {
                     j = self.reread_node(nodes, j, Some(None), |_| None, |f| f)?;
                 }
-                self.w.close(at, e);
+                self.w.plain_close(at, e);
                 Ok(j)
             }
             Some(None) => {
@@ -1150,7 +1150,7 @@ impl<'a, L: Layout> P<'a, L> {
                 while j < i + size {
                     j = self.reread_node(nodes, j, root, way, field)?;
                 }
-                self.w.close(at, e);
+                self.w.plain_close(at, e);
                 Ok(j)
             }
         }

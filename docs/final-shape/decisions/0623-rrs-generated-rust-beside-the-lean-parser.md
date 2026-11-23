@@ -426,3 +426,20 @@ one `tk(…, F)`: the node made last after a leaf is that leaf, and its field is
 tier 2 went from 41.1–41.4 ms to 40.2–40.6 ms (spark1, at a load of 9, could not tell them apart).
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## Tier 2's writer calls check for no chain and no passed node (done)
+
+Every call of the writer tier 2 made still checked whether its node was a held chain's (`chain_at`) or passed on to a
+format-16 target (`base`): `key`, `start`, `set_key`, `close`, and the joined calls once each. Tier 2 opens no chain
+and writes an image or the columns, never format 16, so neither case can arise. The writer now has `plain_` calls for
+such a tape (`plain_key`, `plain_start`, `plain_set_key`, `plain_set_start`, `plain_close`, `plain_leaf`,
+`plain_field`, `plain_close_from`, `plain_wrap`). They check neither, read a node's cell at its index, and assert both
+in a test build (`Writer::plain`). The checked calls share their bodies. A pass at the end of tier 2's code
+(`plain_writer`) makes every such call the plain one. The writer's test builds the same tape the three ways: the calls,
+the joined calls, the plain ones.
+
+Side by side on spark1 (at a load of 21), three rounds in turns, tier 2 went from 34.6–34.7 ms to 29.9–31.6 ms. The
+checks were cheap branches, but each kept the writer's fields read through the loop. Kotlin's file uses the plain calls
+the same way.
+
+`rr_parser`'s 52 library tests, `kotlin_parser`'s 70 and `rerail-tape-format`'s 43 pass.

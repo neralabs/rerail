@@ -1685,8 +1685,27 @@ impl<'a> G<'a> {
         }
         let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
         let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, finished by `finish` (the\n/// image, or the columns, as the grammar's lean parser finishes), or the byte it was refused at.\npub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        // Nearly every file is parsed at the narrow widths, fixed in the parser's code, as the lean parser's.\n        let at = if widths == Narrow::WIDTHS {{ parse_at(src, lx, Narrow, finish)? }} else {{ parse_at(src, lx, widths, finish)? }};\n        match at {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}\n\n/// `parse` at `layout`'s widths: the tape `finish` makes of the writer, or the widths to parse at again; or the byte\n/// it was refused at.\nfn parse_at<L: Layout, F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, layout: L, finish: &mut F) -> R<Result<F::Out, rerail_tape_format::Redo>> {{\n    let mut p = P::new(src, lx, layout)?;\n    p.{entry}()?;\n    Ok(finish.finish(p.w))\n}}");
-        Ok(leaf_fields(&out))
+        Ok(plain_writer(&leaf_fields(&out)))
     }
+}
+
+/// `code` with its writer's calls the plain ones (`Writer::plain_key` and the rest): tier 2 opens no chain and writes an
+/// image or the columns, never format 16, so no call need check for a chain held or a node passed on (the writer
+/// asserts both in a test build).
+fn plain_writer(code: &str) -> String {
+    [
+        ("self.w.key(", "self.w.plain_key("),
+        ("self.w.start(", "self.w.plain_start("),
+        ("self.w.set_key(", "self.w.plain_set_key("),
+        ("self.w.set_start(", "self.w.plain_set_start("),
+        ("self.w.close(", "self.w.plain_close("),
+        ("self.w.push_leaf(", "self.w.plain_leaf("),
+        ("self.w.set_field(", "self.w.plain_field("),
+        ("self.w.close_from(", "self.w.plain_close_from("),
+        ("self.w.wrap(", "self.w.plain_wrap("),
+    ]
+    .iter()
+    .fold(code.to_owned(), |c, (a, b)| c.replace(a, b))
 }
 
 /// `code` with each leaf given its field as it is written: a leaf (`tk`, `word_leaf`) of no field, then the field set
