@@ -107,8 +107,9 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
         kept += edited.memo_kept.0;
         edits.push((tail, rows));
     }
-    // Each edit's rows are a full run's, each over a corpus of its own.
-    for (k, (tail, rows)) in edits.into_iter().enumerate() {
+    // Each edit's rows are a full run's, each over a corpus of its own (the last edit's alone by default, `fresh_tier`).
+    let n = edits.len();
+    for (k, (tail, rows)) in edits.into_iter().enumerate().filter(|(k, _)| super::fresh_tier::compared(*k, n)) {
         let c = format!("{}{tail}", FILES[2].1);
         let fresh = corpus(&format!("outputs-alone-fresh-{k}"), &format!("{marker} fresh {k}"), &[FILES[0], FILES[1], ("c.py", &c)]);
         let (_, expected) = run(&fresh, &program, OUTPUTS);

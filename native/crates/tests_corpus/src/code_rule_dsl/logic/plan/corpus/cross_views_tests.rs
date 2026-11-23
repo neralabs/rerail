@@ -152,10 +152,12 @@ fn r3_an_edit_reads_the_changed_files_old_and_new_rows() {
         ("b.py", "from a import f\nfrom a import k\n\ndef g(y):\n    return f(y)\n"),
         ("a.py", "def k():\n    pass\n"),
     ];
-    for (file, body) in edits {
+    for (i, (file, body)) in edits.iter().enumerate() {
         c.write(file, body);
         let (_, rows) = c.run();
-        assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+        if super::fresh_tier::compared(i, edits.len()) {
+            assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+        }
     }
 }
 
