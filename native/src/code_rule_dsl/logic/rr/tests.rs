@@ -293,6 +293,15 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
+    // A file another includes (`lib/git/messages.rerail`, which `git.rerail` includes, reading its `git_message`) is
+    // a part of that file's program, not one of its own: what it reads is checked declared there.
+    let included: BTreeSet<PathBuf> = rr_files()
+        .into_iter()
+        .flat_map(|f| {
+            let own = f.canonical().unwrap();
+            program(&f).unwrap().0.into_iter().map(|(p, _)| p).filter(move |p| *p != own)
+        })
+        .collect();
     for f in rr_files() {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
@@ -307,7 +316,9 @@ fn rule_syntax_files_pass_check_rr() {
         let all: Vec<&from_tape::Stmt> = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
         // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
-        problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
+        if !included.contains(&f.canonical().unwrap()) {
+            problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
+        }
     }
     assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
 }
