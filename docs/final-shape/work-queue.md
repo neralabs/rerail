@@ -10554,3 +10554,18 @@ hand; the feeder's is that change as the fork made it, with its own test, and `r
 so both files are the feeder's. No architectural clash.
 
 Checks: no engine code changed; `farm.py` parses and `build` passes `sh -n`.
+
+### Q502. Roll-up 76 (Go-C-and-C-support c30524e3dd onto Pulling-it-all-together): what the merge chose
+
+Go-C-and-C-support: decision 0613, macro expansions as memoized requests run in waves (pieces claimed from a queue,
+teams by measured work, arguments as references run by continuations), and 0588's span look. Two conflicts:
+- **The decisions index**: both added rows (0612 the hub's, 0613 the feeder's); both kept.
+- **`pp_arena`'s split test**: the hub's side counts 9 units 5 deep (0576's two-call tape reads); the feeder's makes
+  the look for a `(` (`lp_next_is_lparen`) a unit, 10 deep 7. Neither changed `ukl::split`: a barrier-free
+  `UKL_ONCE` function under 8 KB with its helpers stays in its callers' units, and over the hub's smaller tape reads
+  this one is under it. The feeder's requirement (its e9b46b3ea3) is that it is called, never inlined (inlined it
+  crashed the M3's back end); kept local it is still `noinline`, so that holds. The test asserts it is a unit or
+  kept local, and the merged split's counts, 9 and 5. Its Metal run, local and noinline rather than its own
+  library, is the feeder's to confirm on a farm Mac as it merges the hub. No architectural clash.
+
+Relax: the engine checks clean; `rerail-metal`'s `pp_arena` tests (9) pass (source splitting, no device).

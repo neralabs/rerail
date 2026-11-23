@@ -183,7 +183,7 @@ These are about equal: inside a run, the time is each unit's own chain, not how 
 a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for the last run; for each 1,024:
 20 to 25 ms), since each barrier then costs more. The chain:
 
-- **Its longest serial piece.** The GB10's 4.5 ms run holds one piece of 1,070 steps (libtiff's `tif_ojpeg.c`,
+- **Its longest serial piece.** The GB10's 4.5 ms run holds one piece of 1,070 steps (libtiff's `tif_getimage.c`,
   top tokens 7268..7306) taking 1.9 ms: 1.8 µs a step, each step's lookups dependent loads.
 - **Its barriers.** The largest unit (51k nodes) passes 235 barriers, its P1 iterating 4 times, against 52 for a
   unit with no `#if` left to settle.
@@ -204,7 +204,7 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
     nearly always another frame's: 10 hits of 386). Collecting from a list a lane an entry (46 looks took 10
     entries: its spans hold the delimiters).
 
-  The slowest piece is now another one (libtiff's `tif_ojpeg.c`, top tokens 7872..7984): 387 steps (from
+  The slowest piece is now another one (libtiff's `tif_getimage.c`, top tokens 7872..7984): 387 steps (from
   1,173) and 1.42 ms. Of that, 224 look aheads take 514 µs (2.3 µs each, one lookup's chain), 138 main steps
   take 433 µs (12 of them macros), and 243 collecting steps take 217 µs. The corpus's first round's run is 3.50
   ms (from 4.45). The look aheads' chain is measured next (below, "A step's cost").
