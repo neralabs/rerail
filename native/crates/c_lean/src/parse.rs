@@ -218,7 +218,7 @@ struct Mark {
 
 /// `src` parsed.
 pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
-    parse_from(src, None, dialect, &mut Writer::<Widths>::finish_columns)
+    parse_from(src, None, dialect, &mut crate::sink(dialect)).map(crate::written)
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
@@ -229,7 +229,7 @@ pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>)
 /// `src` parsed from the tokens `given` (ending in `Eof`), which are `src`'s: the lexer is not run.
 pub fn parse_tokens(src: &[u8], given: &[Tok], dialect: Dialect) -> R<Tape> {
     debug_assert!(given.last().is_some_and(|t| t.kind == T::Eof));
-    parse_from(src, Some(given), dialect, &mut Writer::<Widths>::finish_columns)
+    parse_from(src, Some(given), dialect, &mut crate::sink(dialect)).map(crate::written)
 }
 
 fn parse_from<Out>(src: &[u8], given: Option<&[Tok]>, dialect: Dialect, finish: &mut dyn Sink<Out>) -> R<Out> {

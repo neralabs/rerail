@@ -303,6 +303,64 @@ pub struct Sixteen {
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
 }
 
+/// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
+/// tools) gives for each key, numbered in its language's table by these names (`f16::Lang::number_named`, `Named`).
+#[derive(Clone, Copy, Debug)]
+pub struct KeyNames {
+    pub kind: &'static str,
+    pub named: bool,
+    /// `""`: no field.
+    pub field: &'static str,
+    pub flags: u8,
+    pub classes: &'static [&'static str],
+}
+
+/// A lean parser's own sink (decision 0626): the tape in format 16 in its language's table (tag `tag`), each key
+/// numbered by its names (`name`), the language's line `terminators`. What the parser's crate writes its tapes with,
+/// without the grammar; the engine gives its own (its ids from the grammar), whose tapes are the same.
+pub struct Named {
+    target: Result<Sixteen, String>,
+}
+
+impl Named {
+    pub fn new(tag: u8, terminators: newlines::Terminators, name: impl Fn(u32) -> Option<KeyNames> + Send + Sync + 'static) -> Self {
+        let target = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table")).map(|lang| Sixteen {
+            lang,
+            terminators,
+            tag,
+            z: false,
+            blocks: true,
+            number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
+        });
+        Named { target }
+    }
+}
+
+impl Sink<Result<f16::Finished, String>> for Named {
+    fn target(&self) -> Target {
+        self.target.clone().map_or(Target::F15, Target::F16)
+    }
+    fn finish(&mut self, mut w: Writer) -> Result<Result<f16::Finished, String>, Redo> {
+        if let Err(e) = &self.target {
+            return Ok(Err(e.clone()));
+        }
+        w.finish_16()
+    }
+}
+
+impl Finish for Named {
+    type Out = Result<f16::Finished, String>;
+    fn target(&self) -> Target {
+        self.target.clone().map_or(Target::F15, Target::F16)
+    }
+    fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
+        if let Err(e) = &self.target {
+            return Ok(Err(e.clone()));
+        }
+        w.finish_16()
+    }
+}
+
 /// What a lean parser's writer writes to and is finished into: its target, given when the writer is made
 /// (`Writer::to`), and its finish. A closure is a sink for format 15.
 pub trait Sink<Out> {

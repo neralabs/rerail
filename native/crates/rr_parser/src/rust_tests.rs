@@ -59,7 +59,7 @@ fn columns_nodes(t: &rerail_tape_format::Columns) -> Nodes {
 /// node that differs.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
-    let ours = rerail_rr_aot::parse(text.as_bytes()).ok().map(|t| columns_nodes(&t));
+    let ours = rerail_rr_aot::parse(text.as_bytes(), &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).ok().map(|t| columns_nodes(&t));
     match (theirs, ours) {
         (None, None) => None,
         (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),

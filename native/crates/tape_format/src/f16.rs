@@ -43,6 +43,97 @@ pub struct Lang {
     kind_field: Vec<(u16, u16)>,
     /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
     presence_words: (usize, usize),
+    /// The grammar's names of its ids (`Names`): what a parser without the grammar numbers its nodes by.
+    names: Names,
+}
+
+/// A language's names, as its grammar has them (decision 0626): each kind id a node can have (a public symbol) with
+/// its name and whether it is named, each name's lookup (the id a node of that name has), and each field id's name. A parser that names its kinds and fields as the grammar does numbers its
+/// nodes by them (`kind_of`, `field_of`), as tree-sitter's `id_for_node_kind` and `field_id_for_name` do; a tape is
+/// shown by them (`tape::plain_text`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Names {
+    /// Each kind id a lookup gives, with its own name and namedness.
+    pub kinds: Vec<(u16, bool, String)>,
+    /// Each name and namedness with the id a node of it has: (namedness, name, id). Not always the id of that name
+    /// (Scala's `(` is id 40, named `arguments`, whose own lookup is 351).
+    pub lookups: Vec<(bool, String, u16)>,
+    pub fields: Vec<(u16, String)>,
+    /// Each supertype id the codes name as a class, with its name: a hidden symbol, no node's kind.
+    pub classes: Vec<(u16, String)>,
+}
+
+impl Names {
+    /// The id a node named `name` (`named`) has: tree-sitter's `id_for_node_kind`. `ERROR` is `ERROR_CODE`.
+    pub fn kind_of(&self, name: &str, named: bool) -> Option<u16> {
+        if named && name == "ERROR" {
+            return Some(crate::ERROR_CODE);
+        }
+        self.lookups.iter().find(|(n, s, _)| *n == named && s == name).map(|a| a.2)
+    }
+    /// The supertype named `name`: the first id of that name the codes name as a class.
+    pub fn class_of(&self, name: &str) -> Option<u16> {
+        self.classes.iter().find(|(_, s)| s == name).map(|c| c.0)
+    }
+    /// Field `name`'s id (0: no field).
+    pub fn field_of(&self, name: &str) -> Option<u16> {
+        if name.is_empty() {
+            return Some(0);
+        }
+        self.fields.iter().find(|(_, s)| s == name).map(|f| f.0)
+    }
+    /// Kind `id`'s name (`ERROR_CODE`: `ERROR`). The rows are by id: a search.
+    pub fn kind_name(&self, id: u16) -> Option<&str> {
+        if id == crate::ERROR_CODE {
+            return Some("ERROR");
+        }
+        let kind = self.kinds.binary_search_by_key(&id, |k| k.0).ok().map(|k| self.kinds[k].2.as_str());
+        kind.or_else(|| self.classes.binary_search_by_key(&id, |c| c.0).ok().map(|c| self.classes[c].1.as_str()))
+    }
+    /// Whether kind `id` is named (`ERROR`, a supertype: named).
+    pub fn kind_named(&self, id: u16) -> bool {
+        self.kinds.binary_search_by_key(&id, |k| k.0).map_or(true, |k| self.kinds[k].1)
+    }
+    pub fn field_name(&self, id: u16) -> Option<&str> {
+        self.fields.binary_search_by_key(&id, |f| f.0).ok().map(|f| self.fields[f].1.as_str())
+    }
+}
+
+/// A name in a table's text: `\\`, `\n`, `\r`, `\t` and `\0` escaped (C's and Go's tokens hold a newline and a NUL).
+fn escaped(name: &str) -> String {
+    let mut s = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '\\' => s.push_str("\\\\"),
+            '\n' => s.push_str("\\n"),
+            '\r' => s.push_str("\\r"),
+            '\t' => s.push_str("\\t"),
+            '\0' => s.push_str("\\0"),
+            c => s.push(c),
+        }
+    }
+    s
+}
+
+/// `escaped`'s inverse; `None` for an escape it does not write.
+fn unescaped(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        out.push(match chars.next()? {
+            '\\' => '\\',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '0' => '\0',
+            _ => return None,
+        });
+    }
+    Some(out)
 }
 
 impl Lang {
@@ -62,7 +153,31 @@ impl Lang {
         let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
         let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
         let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words, names: Names::default() })
+    }
+
+    /// The language with its grammar's names (`Names`).
+    pub fn with_names(mut self, names: Names) -> Self {
+        self.names = names;
+        self
+    }
+
+    pub fn names(&self) -> &Names {
+        &self.names
+    }
+
+    /// The number of a node named as the grammar names it (`crate::KeyNames`): its kind's id by its name (with
+    /// that name as its alias where the id is named otherwise: Scala's `(`), its field's, its classes' ascending.
+    /// `None` where the language lacks a name or the table the code.
+    pub fn number_named(&self, k: &crate::KeyNames) -> Option<u32> {
+        let n = &self.names;
+        let kind = n.kind_of(k.kind, k.named)?;
+        let own = n.kind_named(kind) == k.named && n.kind_name(kind) == Some(k.kind);
+        let alias = (!own && kind != crate::ERROR_CODE).then(|| (k.kind.to_owned(), k.named));
+        let mut classes = k.classes.iter().map(|c| n.class_of(c)).collect::<Option<Vec<u16>>>()?;
+        classes.sort_unstable();
+        classes.dedup();
+        self.number(&Entry { kind, field: n.field_of(k.field)?, flags: k.flags, alias, classes })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
@@ -86,7 +201,8 @@ impl Lang {
 
     /// The choices as text, as the lab writes them and the crate ships them (`tables/<tag>.tsv`): the revision, the
     /// widths, then each code in number order: kind, field, flags, alias (`-`, or `named:name`), classes (`-`, or
-    /// ids joined by commas).
+    /// ids joined by commas); then the names (`Names`): `kind id named name`, `lookup named name id`, `field id name`,
+    /// `class id name`, each name escaped.
     pub fn to_text(&self, comment: &str) -> String {
         let mut out = String::new();
         for line in comment.lines() {
@@ -100,12 +216,24 @@ impl Lang {
             let classes = if e.classes.is_empty() { "-".to_owned() } else { e.classes.iter().map(u16::to_string).collect::<Vec<_>>().join(",") };
             out.push_str(&format!("code\t{}\t{}\t{}\t{alias}\t{classes}\n", e.kind, e.field, e.flags));
         }
+        for (id, named, name) in &self.names.kinds {
+            out.push_str(&format!("kind\t{id}\t{}\t{}\n", u8::from(*named), escaped(name)));
+        }
+        for (named, name, id) in &self.names.lookups {
+            out.push_str(&format!("lookup\t{}\t{}\t{id}\n", u8::from(*named), escaped(name)));
+        }
+        for (id, name) in &self.names.fields {
+            out.push_str(&format!("field\t{id}\t{}\n", escaped(name)));
+        }
+        for (id, name) in &self.names.classes {
+            out.push_str(&format!("class\t{id}\t{}\n", escaped(name)));
+        }
         out
     }
 
     /// The choices from their text (`to_text`).
     pub fn from_text(text: &str) -> Result<Self, String> {
-        let (mut revision, mut widths, mut entries) = (None, None, Vec::new());
+        let (mut revision, mut widths, mut entries, mut names) = (None, None, Vec::new(), Names::default());
         for (k, line) in text.lines().enumerate() {
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -127,10 +255,14 @@ impl Lang {
                     let classes = if c[5] == "-" { Vec::new() } else { c[5].split(',').map(|x| x.parse::<u16>().map_err(|_| bad())).collect::<Result<_, _>>()? };
                     entries.push(Entry { kind: num(c[1])? as u16, field: num(c[2])? as u16, flags: num(c[3])? as u8, alias, classes });
                 }
+                "kind" if c.len() == 4 => names.kinds.push((num(c[1])? as u16, c[2] == "1", unescaped(c[3]).ok_or_else(bad)?)),
+                "lookup" if c.len() == 4 => names.lookups.push((c[1] == "1", unescaped(c[2]).ok_or_else(bad)?, num(c[3])? as u16)),
+                "field" if c.len() == 3 => names.fields.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
+                "class" if c.len() == 3 => names.classes.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
                 _ => return Err(bad()),
             }
         }
-        Lang::new(CodeTable::new(entries), widths.ok_or("no widths")?, revision.ok_or("no revision")?)
+        Ok(Lang::new(CodeTable::new(entries), widths.ok_or("no widths")?, revision.ok_or("no revision")?)?.with_names(names))
     }
 }
 
@@ -739,6 +871,48 @@ pub struct Finished {
 }
 
 impl Written {
+    /// The nodes.
+    pub fn len(&self) -> usize {
+        match self {
+            Written::F16(t) => t.len(),
+            Written::F16Z(z) => z.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Its language's tape tag.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Written::F16(t) => t.tag(),
+            Written::F16Z(z) => z.tag(),
+        }
+    }
+
+    /// The tape's bytes, as held (16z's compressed).
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Written::F16(t) => t.as_bytes(),
+            Written::F16Z(z) => z.as_bytes(),
+        }
+    }
+
+    /// The tape as plain text in its own language's table and names (its tag's, `lang`).
+    pub fn text(&self) -> Result<String, String> {
+        let tag = self.tag();
+        self.plain_text(lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?)
+    }
+
+    /// The tape as plain text (`tape::plain_text`), read in place by `lang`, whose names it is shown by.
+    pub fn plain_text(&self, lang: &Lang) -> Result<String, String> {
+        Ok(match self {
+            Written::F16(t) => crate::tape::plain_text(&t.reader(lang)?, lang.names()),
+            Written::F16Z(z) => crate::tape::plain_text(&z.reader(lang)?, lang.names()),
+        })
+    }
+
     /// Its home's bytes: the tape, then its presence.
     /// Its bytes, where it owns them (a writer's tape, not a placed one): for the writer to write the next tape in
     /// (`ops::Writer::recycle`).
@@ -2739,7 +2913,24 @@ mod tests {
             let back = Lang::from_text(&l.to_text("again")).unwrap();
             assert_eq!(back.table().entries(), l.table().entries(), "tag {tag}");
             assert_eq!((back.widths, back.revision, back.cut), (l.widths, l.revision, l.cut), "tag {tag}");
+            assert_eq!(back.names(), l.names(), "tag {tag}");
+            // Every code is named (a tape is shown by its names, `tape::plain_text`), and its kind's name (its alias's,
+            // where it has one) looks it up.
+            let n = l.names();
+            assert!(n.kinds.is_sorted_by_key(|k| k.0) && n.fields.is_sorted_by_key(|f| f.0) && n.classes.is_sorted_by_key(|c| c.0), "tag {tag}: names by id");
+            for e in l.table().entries() {
+                let kind = n.kind_name(e.kind).unwrap_or_else(|| panic!("tag {tag}: kind {} has no name", e.kind));
+                let (kind, named) = match &e.alias {
+                    Some((alias, named)) => (alias.as_str(), *named),
+                    None => (kind, n.kind_named(e.kind)),
+                };
+                assert_eq!(n.kind_of(kind, named), Some(e.kind), "tag {tag}: {kind:?} looks up another id");
+                assert!(n.field_name(e.field).is_some() || e.field == 0, "tag {tag}: field {} has no name", e.field);
+                assert!(e.classes.iter().all(|&c| n.kind_name(c).is_some_and(|name| n.class_of(name).is_some())), "tag {tag}: a class of {e:?} has no name");
+            }
         }
+        assert_eq!(lang(26).unwrap().names().kind_of("(", false), Some(40), "Scala's `(` is its `arguments`'s alias");
+        assert_eq!(lang(1).unwrap().names().kind_of("ERROR", true), Some(crate::ERROR_CODE));
         assert!(lang(255).is_none());
     }
 

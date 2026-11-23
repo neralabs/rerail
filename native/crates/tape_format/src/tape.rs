@@ -814,3 +814,31 @@ pub(crate) mod tests {
         assert_eq!(spans, nodes.iter().map(|&(_, s, e, _)| (u64::from(s), u64::from(e))).collect::<Vec<_>>());
     }
 }
+
+/// A tape as plain text, the oracles' form (the engine's `python_tape_plain`, each lean parser's `tape_text`): a node
+/// a line, indented by depth, its kind's name, its field's (`name:`), its flags, its classes' names in its code's
+/// order (`{a,b}`), and its span. Names are the language's (`f16::Names`); `?` for an id it does not name.
+pub fn plain_text<T: Tape>(t: &T, names: &crate::f16::Names) -> String {
+    let mut out = String::new();
+    let mut open: Vec<usize> = Vec::new();
+    let entries = t.table().entries();
+    for i in 0..t.len() {
+        while open.last().is_some_and(|&end| end <= i) {
+            open.pop();
+        }
+        let e = &entries[t.code(i) as usize];
+        let classes: Vec<&str> = e.classes.iter().map(|&c| names.kind_name(c).unwrap_or("?")).collect();
+        out.push_str(&format!(
+            "{}{}{}{}{} [{}..{}]\n",
+            "  ".repeat(open.len()),
+            names.kind_name(e.kind).unwrap_or("?"),
+            if e.field == 0 { String::new() } else { format!(" {}:", names.field_name(e.field).unwrap_or("?")) },
+            if e.flags == 0 { String::new() } else { format!(" flags={}", e.flags) },
+            if classes.is_empty() { String::new() } else { format!(" {{{}}}", classes.join(",")) },
+            t.start(i),
+            t.end(i),
+        ));
+        open.push(t.subtree_end(i));
+    }
+    out
+}

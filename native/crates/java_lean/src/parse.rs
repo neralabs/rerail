@@ -256,7 +256,7 @@ struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
-    parse_into(src, &mut Writer::<Widths>::finish_columns)
+    parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).

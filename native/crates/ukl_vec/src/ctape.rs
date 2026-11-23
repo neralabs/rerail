@@ -1,69 +1,67 @@
-//! The C tape (tree-sitter-c's, `rerail-c-lean`'s columns) read in place: a node's kind, field, span, text and
-//! children, by its index in preorder.
+//! The C tape (tree-sitter-c's, `rerail-c-lean`'s format 16 tape) read in place: a node's kind, field, span, text
+//! and children, by its index in preorder, named by its language's table (decision 0626).
 
-use rerail_c_lean::{FIELDS, KINDS, Tape, unkey};
-use rerail_tape_format::{CHECKPOINT_STRIDE, TAIL_FROM_START};
+use rerail_c_lean::Tape;
+use rerail_tape_format::f16::{F16, Lang, Written, lang};
+use rerail_tape_format::tape::{Entry, Tape as _};
 
 /// The C tape and the text it was parsed from.
 pub struct C<'t> {
-    tape: &'t Tape,
+    tape: F16<'t>,
+    lang: &'static Lang,
     src: &'t [u8],
-    n: usize,
 }
 
 impl<'t> C<'t> {
+    /// `tape`, a C or C++ tape `rerail-c-lean` wrote (format 16, its language's table).
     pub fn new(tape: &'t Tape, src: &'t [u8]) -> Self {
-        C { tape, src, n: tape.code.len() / 2 }
+        let Written::F16(t) = &tape.tape else { panic!("rerail-c-lean writes format 16") };
+        let lang = lang(t.tag()).expect("C's table");
+        C { tape: t.reader(lang).expect("a tape rerail-c-lean wrote"), lang, src }
     }
 
     pub fn len(&self) -> usize {
-        self.n
+        self.tape.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.n == 0
+        self.tape.is_empty()
     }
 
-    fn cell(column: &[u8], width: u8, i: usize) -> u32 {
-        let w = usize::from(width & 0x7f);
-        let b = &column[i * w..i * w + w];
-        if w == 2 { u32::from(u16::from_le_bytes([b[0], b[1]])) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
-    }
-
-    fn key(&self, i: usize) -> (u16, u8, bool) {
-        let code = u16::from_le_bytes([self.tape.code[2 * i], self.tape.code[2 * i + 1]]);
-        let (kind, field, _, extra) = unkey(self.tape.keys[usize::from(code)]);
-        (kind, field, extra)
+    fn entry(&self, i: usize) -> &'static Entry {
+        &self.lang.table().entries()[self.tape.code(i) as usize]
     }
 
     /// Node `i`'s kind, as tree-sitter-c names it (`binary_expression`, `+`).
     pub fn kind(&self, i: usize) -> &'static str {
-        KINDS[usize::from(self.key(i).0)].0
+        let e = self.entry(i);
+        match &e.alias {
+            Some((name, _)) => name,
+            None => self.lang.names().kind_name(e.kind).unwrap_or("?"),
+        }
     }
 
     /// Node `i`'s field in its parent (`""`: none).
     pub fn field(&self, i: usize) -> &'static str {
-        FIELDS[usize::from(self.key(i).1)]
+        self.lang.names().field_name(self.entry(i).field).unwrap_or("")
     }
 
     /// Whether node `i` is an extra (a comment).
     pub fn extra(&self, i: usize) -> bool {
-        self.key(i).2
+        self.entry(i).flags & rerail_tape_format::CODE_EXTRA != 0
     }
 
     /// Node `i`'s subtree, itself counted.
     pub fn size(&self, i: usize) -> usize {
-        (Self::cell(&self.tape.size, self.tape.widths[0], i) as usize).max(1)
+        self.tape.subtree_end(i) - i
     }
 
     pub fn start(&self, i: usize) -> usize {
-        let b = i / CHECKPOINT_STRIDE;
-        (u32::from_le_bytes(self.tape.base[4 * b..4 * b + 4].try_into().expect("a base")) + Self::cell(&self.tape.off, self.tape.widths[1], i)) as usize
+        self.tape.start(i) as usize
     }
 
     pub fn end(&self, i: usize) -> usize {
-        let from = if self.tape.widths[2] & TAIL_FROM_START != 0 { self.start(i) } else { self.start(i + self.size(i) - 1) };
-        from + Self::cell(&self.tape.tail, self.tape.widths[2], i) as usize
+        self.tape.end(i) as usize
     }
 
     /// Node `i`'s text.
@@ -86,7 +84,8 @@ impl<'t> C<'t> {
 
     /// Whether node `i` is a named node (not punctuation or a keyword's token).
     pub fn named(&self, i: usize) -> bool {
-        KINDS[usize::from(self.key(i).0)].1
+        let e = self.entry(i);
+        e.alias.as_ref().map_or_else(|| self.lang.names().kind_named(e.kind), |a| a.1)
     }
 
     /// Node `i`'s named children.

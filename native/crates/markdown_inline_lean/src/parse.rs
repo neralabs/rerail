@@ -375,7 +375,7 @@ struct P<'a> {
 }
 
 pub fn parse(src: &[u8]) -> R<Tape> {
-    parse_into(src, &mut Writer::<Widths>::finish_columns)
+    parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
@@ -1260,7 +1260,7 @@ impl<'a> P<'a> {
     /// store them.
     #[cfg(test)]
     fn write(&self, v: &V) -> R<Tape> {
-        self.write_into(v, &mut Writer::<Widths>::finish_columns)
+        self.write_into(v, &mut crate::sink()).map(crate::written)
     }
 
     /// [`write`](Self::write), the writer finished by `finish`.

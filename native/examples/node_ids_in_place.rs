@@ -67,16 +67,21 @@ fn main() {
     let lang = GrammarDialect::Python;
     let grammar = Grammar::new(lang).unwrap();
     let sources: Vec<Arc<String>> = files.iter().map(|p| Arc::new(std::fs::read_to_string(p).unwrap())).collect();
-    let images: Vec<TapeImage> = sources.iter().map(|s| TapeImage::parse(&grammar, s, &|| false).unwrap().unwrap().primary).collect();
+    let images_in = |format| -> Vec<TapeImage> {
+        rerail_facts::code_rule_dsl::tape::formats::as_run(format, || sources.iter().map(|s| TapeImage::parse(&grammar, s, &|| false).unwrap().unwrap().primary).collect())
+    };
+    let images = images_in(Format::F16);
     println!("{} files, {} bytes, {} tape nodes", files.len(), sources.iter().map(|s| s.len()).sum::<usize>(), images.iter().map(TapeImage::node_count).sum::<usize>());
     println!("{:<5} {:<26} {:>14} {:>14} {:>10}", "tape", "pass", "instructions", "cycles", "cpu ms");
     for format in Format::ALL {
+        // Each format's tapes made by a run of it, not converted.
+        let images = images_in(format);
         let facts: Vec<Arc<Facts>> = sources
             .iter()
             .zip(&images)
             .map(|(s, image)| {
                 let lines = Arc::new(image.lines(s, terminators(lang), false));
-                Arc::new(core::from_image(Arc::clone(s), &grammar, image.clone().in_format(format, s.as_bytes()), lines).unwrap())
+                Arc::new(core::from_image(Arc::clone(s), &grammar, image.clone(), lines).unwrap())
             })
             .collect();
         let dialect = Dialect::new(core::facts_tag(&facts[0])).unwrap();

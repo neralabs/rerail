@@ -28,7 +28,35 @@ mod scan;
 mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS};
-pub use rerail_tape_format::Columns as Tape;
+/// A tape this crate writes (`tape`): format 16 in its language's table, numbered by names (`sink`; decision 0626).
+pub type Tape = rerail_tape_format::f16::Finished;
+
+/// The language's tape tag.
+pub const TAPE_TAG: u8 = 23;
+
+/// The line terminators of the language's ecosystem (decision 0612).
+pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
+
+/// The crate's own sink (decision 0626): format 16, each key numbered in the language's table by its names, as the
+/// engine numbers it by the grammar's ids (`rerail_engine`'s `formats::lean`), so the tapes are the same.
+pub fn sink() -> rerail_tape_format::Named {
+    rerail_tape_format::Named::new(TAPE_TAG, TERMINATORS, |key| {
+        let (kind, field, class, extra) = unkey(key);
+        let (kind, named) = *KINDS.get(usize::from(kind))?;
+        Some(rerail_tape_format::KeyNames {
+            kind,
+            named,
+            field: FIELDS.get(usize::from(field)).copied()?,
+            flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 },
+            classes: if extra { &[] } else { CLASSES.get(usize::from(class)).copied()? },
+        })
+    })
+}
+
+/// `sink`'s tape: its tree is the language's (a code its table lacks is the parser's bug).
+pub(crate) fn written(t: Result<Tape, String>) -> Tape {
+    t.unwrap_or_else(|e| panic!("the parser's tree is no format 16 tape of its language's table: {e}"))
+}
 
 /// Why a text is left to tree-sitter: where the parser stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,31 +111,5 @@ pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) ->
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
 /// a line, indented by depth, its kind and span.
 pub fn tape_text(tape: &Tape) -> String {
-    use rerail_tape_format::TAIL_FROM_START;
-    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
-        let w = usize::from(width & 0x7f);
-        let b = &column[i * w..i * w + w];
-        if w == 2 { u32::from(u16::from_le_bytes([b[0], b[1]])) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
-    };
-    let n = tape.code.len() / 2;
-    let start = |i: usize| {
-        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
-        u32::from_le_bytes(tape.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&tape.off, tape.widths[1], i)
-    };
-    let mut out = String::new();
-    let mut open: Vec<usize> = Vec::new();
-    for i in 0..n {
-        while open.last().is_some_and(|&end| end <= i) {
-            open.pop();
-        }
-        let code = u16::from_le_bytes([tape.code[2 * i], tape.code[2 * i + 1]]);
-        let (kind, _, _, _) = unkey(tape.keys[usize::from(code)]);
-        let size = cell(&tape.size, tape.widths[0], i) as usize;
-        let s = start(i);
-        let from = if tape.widths[2] & TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
-        let end = from + cell(&tape.tail, tape.widths[2], i);
-        out.push_str(&format!("{}{} [{s}..{end}]\n", "  ".repeat(open.len()), KINDS[usize::from(kind)].0));
-        open.push(i + size);
-    }
-    out
+    tape.tape.text().unwrap_or_else(|e| panic!("a tape this crate wrote: {e}"))
 }

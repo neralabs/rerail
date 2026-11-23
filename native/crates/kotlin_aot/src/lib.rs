@@ -18,6 +18,7 @@ mod tier2;
 pub use tier1::{Lexed, lex};
 
 /// `src`'s tape, or the byte the parser refused it at (0: tier 1 sends it to tree-sitter).
-pub fn parse(src: &[u8]) -> Result<rerail_tape_format::Columns, u32> {
-    tier2::parse(src, &tier1::lex(src))
+/// The writer writes to `finish`'s target and is finished by it (decision 0434).
+pub fn parse<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, u32> {
+    tier2::parse(src, &tier1::lex(src), finish)
 }

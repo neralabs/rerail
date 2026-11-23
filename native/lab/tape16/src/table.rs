@@ -6,9 +6,11 @@
 //!   memberships. No corpus orders or bounds it (decision 0626): a file of any shape is written in format 16.
 //! - **The widths**: a byte each; a wider value is escaped to its side list.
 //! - **The revision**: the language's (`f16::revision`).
+//! - **The names** (`f16::Names`): each kind id a node can have with its name, the names that look up another id, and
+//!   each field's name, as `kinds.tsv` has them: what a parser without the grammar numbers its nodes by.
 
 use crate::gcodes::{Ids, Tuple};
-use rerail_tape_format::f16::Lang;
+use rerail_tape_format::f16::{Lang, Names};
 use rerail_tape_format::tape::{CodeTable, Entry};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -96,7 +98,8 @@ pub fn run(tag: u8, scratch: &Path, out: &Path) -> Result<Report, String> {
     }
     let mut table: Vec<Entry> = codes.into_iter().collect();
     table.sort_by(|a, b| (a.flags, a.kind, a.field, &a.classes).cmp(&(b.flags, b.kind, b.field, &b.classes)));
-    let lang = Lang::new(CodeTable::new(table), [1, 1, 1], crate::f16::revision(tag))?;
+    let names = names_of(of, &ids, &table);
+    let lang = Lang::new(CodeTable::new(table), [1, 1, 1], crate::f16::revision(tag))?.with_names(names);
     let comment = format!(
         "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3 and 0626. Written by the lab from the grammar:\n  tape16 table <tags…> (native/lab/tape16/src/table.rs)\n{} codes{}.",
         crate::capture::language(tag),
@@ -106,6 +109,35 @@ pub fn run(tag: u8, scratch: &Path, out: &Path) -> Result<Report, String> {
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     std::fs::write(out.join(format!("{tag}.tsv")), lang.to_text(&comment)).map_err(|e| e.to_string())?;
     Ok(Report { tag, codes: lang.table().len(), bound })
+}
+
+/// Language `of`'s names, as tree-sitter's lookups give them: each name and namedness with the id its lookup gives
+/// (its public symbol, `id_for_node_kind`), in id order of the names' first symbols; each id a lookup gives, with its
+/// own name; each field by id; each supertype id the codes name as a class (a hidden symbol, no node's kind), with
+/// its name.
+fn names_of(of: u8, ids: &Ids, table: &[Entry]) -> Names {
+    let mut names = Names::default();
+    let mut kinds: Vec<(u16, &(String, bool))> = ids.kinds.iter().filter(|((t, _), _)| *t == of).map(|((_, id), k)| (*id, k)).collect();
+    kinds.sort_unstable_by_key(|k| k.0);
+    let mut publics = BTreeSet::new();
+    for &(id, k) in &kinds {
+        let public = ids.public[&(of, id)];
+        if public == 0 {
+            continue;
+        }
+        let lookup = (k.1, k.0.clone(), public);
+        if !names.lookups.iter().any(|l| (l.0, &l.1) == (k.1, &k.0)) {
+            names.lookups.push(lookup);
+        }
+        publics.insert(public);
+    }
+    names.kinds = publics.into_iter().map(|id| (id, ids.kinds[&(of, id)].1, ids.kinds[&(of, id)].0.clone())).collect();
+    let mut fields: Vec<(u16, String)> = ids.fields.iter().filter(|((t, _), _)| *t == of).map(|((_, id), name)| (u16::from(*id), name.clone())).collect();
+    fields.sort_unstable();
+    names.fields = fields;
+    let classes: BTreeSet<u16> = table.iter().flat_map(|e| e.classes.iter().copied()).collect();
+    names.classes = classes.into_iter().map(|id| (id, ids.kinds[&(of, id)].0.clone())).collect();
+    names
 }
 
 /// `index.rs`: each written table's text by tag.

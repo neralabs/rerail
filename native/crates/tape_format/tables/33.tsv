@@ -53,3 +53,35 @@ code	13	0	4	-	-
 code	14	0	4	-	-
 code	15	0	4	-	-
 code	16	0	4	-	-
+kind	1	1	regex
+kind	2	1	alternation
+kind	3	1	concatenation
+kind	4	1	group
+kind	5	1	name
+kind	6	1	repetition
+kind	7	1	class
+kind	8	1	range
+kind	9	1	class_name
+kind	10	1	literal
+kind	11	1	dot
+kind	12	1	anchor
+kind	13	1	escape
+kind	14	1	flags
+kind	15	1	unsupported
+kind	16	1	error
+lookup	1	regex	1
+lookup	1	alternation	2
+lookup	1	concatenation	3
+lookup	1	group	4
+lookup	1	name	5
+lookup	1	repetition	6
+lookup	1	class	7
+lookup	1	range	8
+lookup	1	class_name	9
+lookup	1	literal	10
+lookup	1	dot	11
+lookup	1	anchor	12
+lookup	1	escape	13
+lookup	1	flags	14
+lookup	1	unsupported	15
+lookup	1	error	16

@@ -415,10 +415,10 @@ pub struct P<'a> {
 
 #[allow(dead_code)]
 impl<'a> P<'a> {
-    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
+    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths, target: rerail_tape_format::Target) -> R<Self> {
         let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), lost: None };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16).to(target, src), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), lost: None };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -6289,19 +6289,20 @@ impl P<'_> {
 }
 
 /// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.
-pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {
+/// The writer writes to `finish`'s target and is finished by it (decision 0434: format 16 as the parse goes).
+pub fn parse<T>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, u32> {
     // Where tier 1 sends the file to tree-sitter.
     if lx.refused {
         return Err(0);
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P::new(src, lx, widths)?;
+        let mut p = P::new(src, lx, widths, finish.target())?;
         p.source_file()?;
-        match p.w.finish_columns() {
+        match finish.finish(p.w) {
             Ok(c) => return Ok(c),
             Err(rerail_tape_format::Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(u32::MAX);
                 }
                 widths = w;

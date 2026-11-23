@@ -1435,3 +1435,408 @@ code	218	31	4	-	-
 code	218	31	4	-	119
 code	218	35	4	-	-
 code	218	35	4	-	119
+kind	1	1	identifier
+kind	3	0	;
+kind	4	0	
+kind	5	0	package
+kind	6	0	import
+kind	7	0	.
+kind	8	1	blank_identifier
+kind	9	0	(
+kind	10	0	)
+kind	11	0	const
+kind	12	0	,
+kind	13	0	=
+kind	14	0	var
+kind	15	0	func
+kind	16	0	[
+kind	17	0	]
+kind	18	0	...
+kind	19	0	type
+kind	20	0	*
+kind	21	0	struct
+kind	22	0	~
+kind	23	0	{
+kind	24	0	}
+kind	25	0	interface
+kind	26	0	|
+kind	27	0	map
+kind	28	0	chan
+kind	29	0	<-
+kind	30	0	:=
+kind	31	0	++
+kind	32	0	--
+kind	33	0	*=
+kind	34	0	/=
+kind	35	0	%=
+kind	36	0	<<=
+kind	37	0	>>=
+kind	38	0	&=
+kind	39	0	&^=
+kind	40	0	+=
+kind	41	0	-=
+kind	42	0	|=
+kind	43	0	^=
+kind	44	0	:
+kind	45	0	fallthrough
+kind	46	0	break
+kind	47	0	continue
+kind	48	0	goto
+kind	49	0	return
+kind	50	0	go
+kind	51	0	defer
+kind	52	0	if
+kind	53	0	else
+kind	54	0	for
+kind	55	0	range
+kind	56	0	switch
+kind	57	0	case
+kind	58	0	default
+kind	59	0	select
+kind	62	0	+
+kind	63	0	-
+kind	64	0	!
+kind	65	0	^
+kind	66	0	&
+kind	67	0	/
+kind	68	0	%
+kind	69	0	<<
+kind	70	0	>>
+kind	71	0	&^
+kind	72	0	==
+kind	73	0	!=
+kind	74	0	<
+kind	75	0	<=
+kind	76	0	>
+kind	77	0	>=
+kind	78	0	&&
+kind	79	0	||
+kind	80	0	`
+kind	81	1	raw_string_literal_content
+kind	82	0	"
+kind	83	1	interpreted_string_literal_content
+kind	85	1	escape_sequence
+kind	86	1	int_literal
+kind	87	1	float_literal
+kind	88	1	imaginary_literal
+kind	89	1	rune_literal
+kind	90	1	nil
+kind	91	1	true
+kind	92	1	false
+kind	93	1	iota
+kind	94	1	comment
+kind	95	1	source_file
+kind	96	1	package_clause
+kind	97	1	import_declaration
+kind	98	1	import_spec
+kind	99	1	dot
+kind	100	1	import_spec_list
+kind	102	1	const_declaration
+kind	103	1	const_spec
+kind	104	1	var_declaration
+kind	105	1	var_spec
+kind	106	1	var_spec_list
+kind	107	1	function_declaration
+kind	108	1	method_declaration
+kind	109	1	type_parameter_list
+kind	110	1	type_parameter_declaration
+kind	111	1	parameter_list
+kind	112	1	parameter_declaration
+kind	113	1	variadic_parameter_declaration
+kind	114	1	type_alias
+kind	115	1	type_declaration
+kind	116	1	type_spec
+kind	117	1	expression_list
+kind	118	1	parenthesized_type
+kind	120	1	generic_type
+kind	121	1	type_arguments
+kind	122	1	pointer_type
+kind	123	1	array_type
+kind	124	1	implicit_length_array_type
+kind	125	1	slice_type
+kind	126	1	struct_type
+kind	127	1	negated_type
+kind	128	1	field_declaration_list
+kind	129	1	field_declaration
+kind	130	1	interface_type
+kind	131	1	method_elem
+kind	132	1	type_elem
+kind	133	1	map_type
+kind	134	1	channel_type
+kind	135	1	function_type
+kind	136	1	block
+kind	137	1	statement_list
+kind	139	1	empty_statement
+kind	141	1	expression_statement
+kind	142	1	send_statement
+kind	143	1	receive_statement
+kind	144	1	inc_statement
+kind	145	1	dec_statement
+kind	146	1	assignment_statement
+kind	147	1	short_var_declaration
+kind	148	1	labeled_statement
+kind	150	1	fallthrough_statement
+kind	151	1	break_statement
+kind	152	1	continue_statement
+kind	153	1	goto_statement
+kind	154	1	return_statement
+kind	155	1	go_statement
+kind	156	1	defer_statement
+kind	157	1	if_statement
+kind	158	1	for_statement
+kind	159	1	for_clause
+kind	160	1	range_clause
+kind	161	1	expression_switch_statement
+kind	162	1	expression_case
+kind	163	1	default_case
+kind	164	1	type_switch_statement
+kind	166	1	type_case
+kind	167	1	select_statement
+kind	168	1	communication_case
+kind	170	1	parenthesized_expression
+kind	171	1	call_expression
+kind	172	1	variadic_argument
+kind	174	1	argument_list
+kind	175	1	selector_expression
+kind	176	1	index_expression
+kind	177	1	slice_expression
+kind	178	1	type_assertion_expression
+kind	179	1	type_conversion_expression
+kind	180	1	type_instantiation_expression
+kind	181	1	composite_literal
+kind	182	1	literal_value
+kind	183	1	literal_element
+kind	184	1	keyed_element
+kind	185	1	func_literal
+kind	186	1	unary_expression
+kind	187	1	binary_expression
+kind	188	1	qualified_type
+kind	189	1	raw_string_literal
+kind	190	1	interpreted_string_literal
+kind	214	1	field_identifier
+kind	215	1	label_name
+kind	216	1	package_identifier
+kind	217	1	type_constraint
+kind	218	1	type_identifier
+lookup	1	identifier	1
+lookup	0	;	3
+lookup	0		4
+lookup	0	package	5
+lookup	0	import	6
+lookup	0	.	7
+lookup	1	blank_identifier	8
+lookup	0	(	9
+lookup	0	)	10
+lookup	0	const	11
+lookup	0	,	12
+lookup	0	=	13
+lookup	0	var	14
+lookup	0	func	15
+lookup	0	[	16
+lookup	0	]	17
+lookup	0	...	18
+lookup	0	type	19
+lookup	0	*	20
+lookup	0	struct	21
+lookup	0	~	22
+lookup	0	{	23
+lookup	0	}	24
+lookup	0	interface	25
+lookup	0	|	26
+lookup	0	map	27
+lookup	0	chan	28
+lookup	0	<-	29
+lookup	0	:=	30
+lookup	0	++	31
+lookup	0	--	32
+lookup	0	*=	33
+lookup	0	/=	34
+lookup	0	%=	35
+lookup	0	<<=	36
+lookup	0	>>=	37
+lookup	0	&=	38
+lookup	0	&^=	39
+lookup	0	+=	40
+lookup	0	-=	41
+lookup	0	|=	42
+lookup	0	^=	43
+lookup	0	:	44
+lookup	0	fallthrough	45
+lookup	0	break	46
+lookup	0	continue	47
+lookup	0	goto	48
+lookup	0	return	49
+lookup	0	go	50
+lookup	0	defer	51
+lookup	0	if	52
+lookup	0	else	53
+lookup	0	for	54
+lookup	0	range	55
+lookup	0	switch	56
+lookup	0	case	57
+lookup	0	default	58
+lookup	0	select	59
+lookup	0	+	62
+lookup	0	-	63
+lookup	0	!	64
+lookup	0	^	65
+lookup	0	&	66
+lookup	0	/	67
+lookup	0	%	68
+lookup	0	<<	69
+lookup	0	>>	70
+lookup	0	&^	71
+lookup	0	==	72
+lookup	0	!=	73
+lookup	0	<	74
+lookup	0	<=	75
+lookup	0	>	76
+lookup	0	>=	77
+lookup	0	&&	78
+lookup	0	||	79
+lookup	0	`	80
+lookup	1	raw_string_literal_content	81
+lookup	0	"	82
+lookup	1	interpreted_string_literal_content	83
+lookup	1	escape_sequence	85
+lookup	1	int_literal	86
+lookup	1	float_literal	87
+lookup	1	imaginary_literal	88
+lookup	1	rune_literal	89
+lookup	1	nil	90
+lookup	1	true	91
+lookup	1	false	92
+lookup	1	iota	93
+lookup	1	comment	94
+lookup	1	source_file	95
+lookup	1	package_clause	96
+lookup	1	import_declaration	97
+lookup	1	import_spec	98
+lookup	1	dot	99
+lookup	1	import_spec_list	100
+lookup	1	const_declaration	102
+lookup	1	const_spec	103
+lookup	1	var_declaration	104
+lookup	1	var_spec	105
+lookup	1	var_spec_list	106
+lookup	1	function_declaration	107
+lookup	1	method_declaration	108
+lookup	1	type_parameter_list	109
+lookup	1	type_parameter_declaration	110
+lookup	1	parameter_list	111
+lookup	1	parameter_declaration	112
+lookup	1	variadic_parameter_declaration	113
+lookup	1	type_alias	114
+lookup	1	type_declaration	115
+lookup	1	type_spec	116
+lookup	1	expression_list	117
+lookup	1	parenthesized_type	118
+lookup	1	generic_type	120
+lookup	1	type_arguments	121
+lookup	1	pointer_type	122
+lookup	1	array_type	123
+lookup	1	implicit_length_array_type	124
+lookup	1	slice_type	125
+lookup	1	struct_type	126
+lookup	1	negated_type	127
+lookup	1	field_declaration_list	128
+lookup	1	field_declaration	129
+lookup	1	interface_type	130
+lookup	1	method_elem	131
+lookup	1	type_elem	132
+lookup	1	map_type	133
+lookup	1	channel_type	134
+lookup	1	function_type	135
+lookup	1	block	136
+lookup	1	statement_list	137
+lookup	1	empty_statement	139
+lookup	1	expression_statement	141
+lookup	1	send_statement	142
+lookup	1	receive_statement	143
+lookup	1	inc_statement	144
+lookup	1	dec_statement	145
+lookup	1	assignment_statement	146
+lookup	1	short_var_declaration	147
+lookup	1	labeled_statement	148
+lookup	1	fallthrough_statement	150
+lookup	1	break_statement	151
+lookup	1	continue_statement	152
+lookup	1	goto_statement	153
+lookup	1	return_statement	154
+lookup	1	go_statement	155
+lookup	1	defer_statement	156
+lookup	1	if_statement	157
+lookup	1	for_statement	158
+lookup	1	for_clause	159
+lookup	1	range_clause	160
+lookup	1	expression_switch_statement	161
+lookup	1	expression_case	162
+lookup	1	default_case	163
+lookup	1	type_switch_statement	164
+lookup	1	type_case	166
+lookup	1	select_statement	167
+lookup	1	communication_case	168
+lookup	1	parenthesized_expression	170
+lookup	1	call_expression	171
+lookup	1	variadic_argument	172
+lookup	1	argument_list	174
+lookup	1	selector_expression	175
+lookup	1	index_expression	176
+lookup	1	slice_expression	177
+lookup	1	type_assertion_expression	178
+lookup	1	type_conversion_expression	179
+lookup	1	type_instantiation_expression	180
+lookup	1	composite_literal	181
+lookup	1	literal_value	182
+lookup	1	literal_element	183
+lookup	1	keyed_element	184
+lookup	1	func_literal	185
+lookup	1	unary_expression	186
+lookup	1	binary_expression	187
+lookup	1	qualified_type	188
+lookup	1	raw_string_literal	189
+lookup	1	interpreted_string_literal	190
+lookup	1	field_identifier	214
+lookup	1	label_name	215
+lookup	1	package_identifier	216
+lookup	1	type_constraint	217
+lookup	1	type_identifier	218
+field	1	alias
+field	2	alternative
+field	3	arguments
+field	4	body
+field	5	capacity
+field	6	channel
+field	7	communication
+field	8	condition
+field	9	consequence
+field	10	element
+field	11	end
+field	12	field
+field	13	function
+field	14	index
+field	15	initializer
+field	16	key
+field	17	label
+field	18	left
+field	19	length
+field	20	name
+field	21	operand
+field	22	operator
+field	23	package
+field	24	parameters
+field	25	path
+field	26	receiver
+field	27	result
+field	28	right
+field	29	start
+field	30	tag
+field	31	type
+field	32	type_arguments
+field	33	type_parameters
+field	34	update
+field	35	value
+class	119	_simple_type
+class	138	_statement
+class	140	_simple_statement
+class	169	_expression

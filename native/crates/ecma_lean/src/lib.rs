@@ -29,7 +29,39 @@ mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
 pub use lex::Refusal;
-pub use rerail_tape_format::Columns as Tape;
+/// A tape this crate writes (`tape`): format 16 in its language's table, numbered by names (`sink`; decision 0626).
+pub type Tape = rerail_tape_format::f16::Finished;
+
+/// Each dialect's tape tag.
+pub const fn tape_tag(dialect: Dialect) -> u8 {
+    match dialect {
+        Dialect::JavaScript => 6, Dialect::TypeScript => 2, Dialect::Tsx => 3,
+    }
+}
+
+/// The line terminators of the language's ecosystem (decision 0612).
+pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Eslint;
+
+/// The crate's own sink (decision 0626): format 16, each key numbered in the language's table by its names, as the
+/// engine numbers it by the grammar's ids (`rerail_engine`'s `formats::lean`), so the tapes are the same.
+pub fn sink(dialect: Dialect) -> rerail_tape_format::Named {
+    rerail_tape_format::Named::new(tape_tag(dialect), TERMINATORS, |key| {
+        let (kind, field, class, extra) = unkey(key);
+        let (kind, named) = *KINDS.get(usize::from(kind))?;
+        Some(rerail_tape_format::KeyNames {
+            kind,
+            named,
+            field: FIELDS.get(usize::from(field)).copied()?,
+            flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 },
+            classes: if extra { &[] } else { CLASSES.get(usize::from(class)).copied()? },
+        })
+    })
+}
+
+/// `sink`'s tape: its tree is the language's (a code its table lacks is the parser's bug).
+pub(crate) fn written(t: Result<Tape, String>) -> Tape {
+    t.unwrap_or_else(|e| panic!("the parser's tree is no format 16 tape of its language's table: {e}"))
+}
 
 /// Which grammar the text is read by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,41 +147,7 @@ pub fn tape_from_into<T>(src: &[u8], dialect: Dialect, start: &str, finish: &mut
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
 /// a line, indented by depth, its kind, field, flags, supertypes and span.
 pub fn tape_text(tape: &Tape) -> String {
-    use rerail_tape_format::TAIL_FROM_START;
-    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
-        let w = usize::from(width & 0x7f);
-        let b = &column[i * w..i * w + w];
-        if w == 2 { u32::from(u16::from_le_bytes([b[0], b[1]])) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
-    };
-    let n = tape.code.len() / 2;
-    let start = |i: usize| {
-        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
-        u32::from_le_bytes(tape.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&tape.off, tape.widths[1], i)
-    };
-    let mut out = String::new();
-    let mut open: Vec<usize> = Vec::new();
-    for i in 0..n {
-        while open.last().is_some_and(|&end| end <= i) {
-            open.pop();
-        }
-        let code = u16::from_le_bytes([tape.code[2 * i], tape.code[2 * i + 1]]);
-        let (kind, field, class, extra) = unkey(tape.keys[usize::from(code)]);
-        let size = cell(&tape.size, tape.widths[0], i) as usize;
-        let s = start(i);
-        let from = if tape.widths[2] & TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
-        let end = from + cell(&tape.tail, tape.widths[2], i);
-        let classes = CLASSES[usize::from(class)];
-        out.push_str(&format!(
-            "{}{}{}{}{} [{s}..{end}]\n",
-            "  ".repeat(open.len()),
-            KINDS[usize::from(kind)].0,
-            if field == 0 { String::new() } else { format!(" {}:", FIELDS[usize::from(field)]) },
-            if extra { " flags=1".to_owned() } else { String::new() },
-            if classes.is_empty() { String::new() } else { format!(" {{{}}}", classes.join(",")) },
-        ));
-        open.push(i + size);
-    }
-    out
+    tape.tape.text().unwrap_or_else(|e| panic!("a tape this crate wrote: {e}"))
 }
 
 #[cfg(test)]
@@ -166,7 +164,7 @@ mod tests {
     }
 
     fn element(src: &str, start: &str) -> Result<Tape, Refusal> {
-        tape_from_into(src.as_bytes(), Dialect::JavaScript, start, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap()
+        tape_from_into(src.as_bytes(), Dialect::JavaScript, start, &mut sink(Dialect::JavaScript)).unwrap().map(written)
     }
 
     /// Decision 0466 R1: a JSX element alone is one root of its kind over the text less blanks, nothing above it.
@@ -210,7 +208,7 @@ mod tests {
         for (src, start) in [("<br />", "jsx_element"), ("<a></a>", "jsx_self_closing_element"), ("<a></a> x", "jsx_element"), ("<a></a><b></b>", "jsx_element"), ("// c\n<a></a>", "jsx_element"), ("<a></a> // c", "jsx_element"), ("x", "jsx_element"), ("", "jsx_element")] {
             assert!(element(src, start).is_err(), "{src:?} from {start}");
         }
-        assert!(tape_from_into(b"<a></a>", Dialect::TypeScript, "jsx_element", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap().is_err());
-        assert!(tape_from_into(b"<a></a>", Dialect::JavaScript, "statement", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).is_none());
+        assert!(tape_from_into(b"<a></a>", Dialect::TypeScript, "jsx_element", &mut sink(Dialect::TypeScript)).unwrap().is_err());
+        assert!(tape_from_into(b"<a></a>", Dialect::JavaScript, "statement", &mut sink(Dialect::JavaScript)).is_none());
     }
 }

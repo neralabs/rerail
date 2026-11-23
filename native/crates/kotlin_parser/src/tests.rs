@@ -59,7 +59,7 @@ fn rust_is_current() {
 
 /// `text`'s tape from the parser as Rust (`rerail_kotlin_aot`: tier 1, then tier 2), as text.
 fn aot_text(text: &str) -> Result<String, u32> {
-    let tape = rerail_kotlin_aot::parse(text.as_bytes())?;
+    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &mut lean::sink())?.unwrap_or_else(|e| panic!("kotlin_aot's tree is no format 16 tape of Kotlin's table: {e}"));
     Ok(lean::tape_text(&tape))
 }
 

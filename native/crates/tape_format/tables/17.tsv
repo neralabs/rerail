@@ -17,3 +17,11 @@ code	1	0	4	-	-
 code	2	0	4	-	-
 code	3	0	4	-	-
 code	4	0	4	-	-
+kind	1	1	directive
+kind	2	1	item
+kind	3	1	setting
+kind	4	1	description
+lookup	1	directive	1
+lookup	1	item	2
+lookup	1	setting	3
+lookup	1	description	4

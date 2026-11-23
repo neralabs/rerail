@@ -3328,8 +3328,8 @@ fn python_parse_costs() {
             Box::new(|f| rerail_python_lean::token_count(f.as_bytes()).unwrap_or(0)),
         ),
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -3858,8 +3858,8 @@ fn ecma_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4084,8 +4084,8 @@ fn rust_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4299,8 +4299,8 @@ fn java_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4493,8 +4493,8 @@ fn go_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4607,8 +4607,8 @@ fn cpp_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5294,8 +5294,8 @@ fn php_parse_costs() {
     type IndexStep<'a> = (&'static str, Box<dyn Fn(usize) -> usize + 'a>);
     let steps: Vec<IndexStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5402,8 +5402,8 @@ fn csharp_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5628,8 +5628,8 @@ fn html_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5835,8 +5835,8 @@ fn css_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6081,8 +6081,8 @@ fn sql_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6287,8 +6287,8 @@ fn markdown_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6576,8 +6576,8 @@ fn vue_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6824,9 +6824,9 @@ fn markdown_inline_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
+            "lean: the parser's tape",
             Box::new(|f| {
-                rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())
+                rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())
             }),
         ),
         (
