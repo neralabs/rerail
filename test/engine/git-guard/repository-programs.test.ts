@@ -720,6 +720,26 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(existsSync(marker)).toBe(false);
   }, 60_000);
 
+  it("a daemon whose Git is found gone as a blocking call asks its version keeps that answer for the Git found again", async () => {
+    const root = await folder();
+    const [one, two] = [join(root, "one"), join(root, "two")];
+    await Promise.all([mkdir(one), mkdir(two)]);
+    vi.stubEnv("PATH", [await olderGit(one, "2.53.0"), await olderGit(two, "2.53.0"), process.env.PATH ?? ""].join(delimiter));
+    vi.resetModules();
+    const git = await import("../../../src/engine/git.js");
+    git.gitLivesOn();
+    const { work, marker } = await checkoutWithDriver(root);
+    const first = join(one, "bin", "git");
+    expect(git.gitExecutable()).toBe(first);
+    // The Git kept is gone when the call asks its version: the Git found again answers it, and nothing runs meanwhile.
+    await rename(first, `${first}.away`);
+    const answers = [git.runGit(work, AUDIT_DIFF), git.runGit(work, AUDIT_DIFF)];
+
+    const asked = readFileSync(join(two, "bin", "ran"), "utf8").split("\n").filter(line => line.endsWith(" version"));
+    expect([git.gitExecutable(), asked.length, existsSync(marker)]).toEqual([join(two, "bin", "git"), 1, false]);
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+  }, 60_000);
+
   it("a config listing of 300 MiB, under Node's longest string, guards the call as a short one does", async () => {
     const root = await folder();
     const bin = await paddedGit(root, 300 * 1024 * 1024);

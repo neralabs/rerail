@@ -8,7 +8,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
+import { gitHead, gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
 import { looksOutsideFolder } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { unopenable, type Unopenable } from "../../support/platform/unopenable-file.js";
@@ -481,6 +481,22 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const printed = await runGitWithoutBlocking(work, ["ls-files", "-z"], { maxBuffer: 1 });
     expect([cached.status, readdirSync(trace)]).toEqual([0, [expect.any(String)]]);
     expect([printed.status, printed.error?.message]).toEqual([null, "Git printed more than maxBuffer (1 bytes) to stdout"]);
+  }, 60_000);
+
+  it("and start one Git for each call that reads no worktree file where the checkout's config defines a driver", async () => {
+    const root = await folder();
+    const work = withDriver(await repository(root, "work", { "top.txt": "top\n" }));
+    await runGitWithoutBlocking(work, AUDIT_DIFF);
+    const trace = join(root, "trace");
+    await mkdir(trace);
+    vi.stubEnv("GIT_TRACE2_EVENT", trace);
+
+    // A blocking call, one that does not block, and a read that does not block.
+    const answers = [runGit(work, ["rev-parse", "HEAD"]), await runGitWithoutBlocking(work, ["rev-parse", "HEAD"])];
+    const head = await gitHead(work);
+
+    vi.stubEnv("GIT_TRACE2_EVENT", undefined);
+    expect([answers.map(answer => answer.status), head === answers[0]?.stdout.trim(), readdirSync(trace).length]).toEqual([[0, 0], true, 3]);
   }, 60_000);
 
   // Each row: what is at a submodule's `.git`, made from that path; Git's message, which names the submodule by its path
@@ -1264,6 +1280,25 @@ describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `
 
     expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
     expect(answers).toEqual([[true, "sub\0"], [true, "sub\0"]]);
+  }, 60_000);
+
+  it("one holding a submodule of its own, whose config file is gone, and leave it out when nothing in it changed", async () => {
+    const root = await folder();
+    const leaf = await repository(root, "leaf", { "leaf.txt": "one\n" });
+    const middle = await repository(root, "middle", { "middle.txt": "one\n" });
+    git(middle, "submodule", "add", "--quiet", leaf, "leaf");
+    git(middle, "commit", "--quiet", "-m", "leaf");
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", middle, "sub");
+    git(work, "submodule", "update", "--quiet", "--init", "--recursive");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    // Its index records a submodule, so its config is listed, and the listing shows no entry of its own.
+    unlinkSync(join(work, ".git", "modules", "sub", "config"));
+
+    const answers = [await rerail(work, AUDIT_DIFF), await rerail(work, SCAN_DIFF)];
+
+    expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+    expect(answers).toEqual([[true, ""], [true, ""]]);
   }, 60_000);
 });
 
