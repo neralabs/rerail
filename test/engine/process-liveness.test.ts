@@ -224,7 +224,8 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
   });
 
   // PowerShell's own setting that loads only the modules a command names stands in for a computer with many modules: a
-  // cmdlet named alone is not found under it. The bound is the uninstall's, the stop's wait and its kill wait.
+  // cmdlet named alone is not found under it. The bound is the uninstall's, the stop's wait and its kill wait. The case
+  // gives that bound and the engine's first load in its worker room: on a loaded machine that load took 27 s.
   it.runIf(process.platform === "win32")("ends a process through PowerShell within the uninstall's bound while PowerShell loads only the modules a command names", async () => {
     const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
     vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) =>
@@ -238,7 +239,7 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
       child.kill();
       await closed;
     }
-  }, 30_000);
+  }, 60_000);
 
   // The end waits on the process's handle with no limit of its own; only a PowerShell or an end that hangs meets the
   // call's one bound, the stop's wait and its kill wait, and is ended there.
