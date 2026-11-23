@@ -3477,10 +3477,29 @@ impl Counts {
 
     /// Key `key`'s slot: where it is, or the empty one it would go in.
     fn slot(&self, key: u64) -> usize {
-        let bits = self.keys.len().trailing_zeros();
-        let mask = self.keys.len() - 1;
-        let mut i = (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - bits)) as usize;
-        while self.counts[i] != 0 && self.keys[i] != key {
+        Self::slot_in(&self.keys, &self.counts, key)
+    }
+
+    /// A key's hash, its slot the top bits: every bit of the key mixed into every bit of the hash (splitmix64's
+    /// finalizer). A multiply's top bits alone (Fibonacci hashing) clustered ids, a document's hash above a node's
+    /// number: a 296k-row histogram's inserts walked runs of thousands at 2^16 and 2^17 slots, 2.7 s of a run's 15.
+    #[inline]
+    fn mix(key: u64) -> u64 {
+        let mut x = key ^ (key >> 30);
+        x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+
+    /// `slot` in the table's two arrays, each taken once (a `BlockVec`'s read is checked against the GPU's queued
+    /// uses of its chunk: once a call, not twice a probe).
+    #[inline]
+    fn slot_in(keys: &[u64], counts: &[u32], key: u64) -> usize {
+        let bits = keys.len().trailing_zeros();
+        let mask = keys.len() - 1;
+        let mut i = (Self::mix(key) >> (64 - bits)) as usize;
+        while counts[i] != 0 && keys[i] != key {
             i = (i + 1) & mask;
         }
         i
@@ -3496,12 +3515,13 @@ impl Counts {
             }
             *self = next;
         }
-        let i = self.slot(key);
-        if self.counts[i] == 0 {
-            self.keys[i] = key;
+        let (keys, counts) = (&mut *self.keys, &mut *self.counts);
+        let i = Self::slot_in(keys, counts, key);
+        if counts[i] == 0 {
+            keys[i] = key;
             self.len += 1;
         }
-        self.counts[i] += u32::try_from(n).expect("a histogram counts at most HISTOGRAM_ROWS rows");
+        counts[i] += u32::try_from(n).expect("a histogram counts at most HISTOGRAM_ROWS rows");
     }
 
     /// Every count times `by`: a strided read's, scaled to the rows read past.
@@ -3526,6 +3546,25 @@ impl Counts {
     /// Each key and its count, in no order.
     pub fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
         self.keys.iter().zip(self.counts.iter()).filter(|(_, c)| **c != 0).map(|(&k, &c)| (k, c as u64 * self.scale))
+    }
+}
+
+#[cfg(test)]
+mod counts_tests {
+    use super::Counts;
+
+    /// Every bit of a key moves a slot's bits (the top 17, a table of 2^17 slots): flipped, each flips about half
+    /// of them. A multiply alone (Fibonacci hashing) moves only those at and above the bit: a key's high bits (a
+    /// document's hash) barely place it, and one session's 233k ids walked runs of 14,700 slots at 2^16.
+    #[test]
+    fn every_key_bit_moves_a_histograms_slot() {
+        let mut h = 0x2545_f491_4f6c_dd1du64;
+        let keys: Vec<u64> = (0..256).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; h }).collect();
+        for bit in 0..64 {
+            let flipped: u32 = keys.iter().map(|&k| ((Counts::mix(k) ^ Counts::mix(k ^ 1 << bit)) >> 47).count_ones()).sum();
+            let mean = f64::from(flipped) / keys.len() as f64;
+            assert!((6.5..=10.5).contains(&mean), "key bit {bit} flips {mean:.1} of a slot's 17 bits");
+        }
     }
 }
 
