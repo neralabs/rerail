@@ -10772,3 +10772,21 @@ next commit. Under the full suites' parallel load, three kotlin-parser tests (pa
 code tiered to O3 mid-run) and `rust_is_current` once failed, then passed alone, three together and in a second full
 run: not the merge's, and not chased further here (the kotlin suite runs past ten minutes under Relax, a test of it
 alone 99 s).
+
+### Q514. Roll-up 87 (Typing-support-final-shape afddb3a15d onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape (afddb3a15d): t33 steps 1–3 and K4: phase 1's run kept as a frame across processes and
+taken when every read is as it was, kept statistics read as kept, phase 0's graphs as facts, the corpus runs' tables
+written as kept facts too (stage 1, checked against the tables in test builds).
+- **`rr_root/…/corpus/phases.rs`**: the feeder's frame identity and frame read, with the hub's `lowered_entry`
+  (its program and its stored entry) for the feeder's `lowered`.
+- **`store/…/derivation.rs`, `object_segments.rs`, `prefilter.rs`**: the types roll-up 72 moved to `store_base` stay
+  there. The feeder's changes to them are made there: `ObjectBytes`' `Deref` `#[inline]`, and `TapePrefilter` without
+  `edges` (prefilter version 9). Its kept-facts derivation graph sits beside the re-export, and a closing brace both
+  sides' last items shared is removed.
+- **Fixed, the feeder's red test** `parallel_writers_and_a_collector_share_one_store` (red at its tip too): the
+  check of the corpus runs' kept form read the chain and the tables as separate statements, so a write another
+  handle committed between them showed the tables one write ahead. It reads both in one read transaction.
+
+Relax: the engine checks clean; rerail-store's corpus_runs 53/53 and the conflicted files' tests; the feeder's new
+tests (keptstats, the machine model, statkeep, phase 1's frame) pass.

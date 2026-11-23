@@ -100,9 +100,12 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
-/// exact set, an affix set, an automaton), equal patterns' plans shared by key.
+/// exact set, an affix set, an automaton), equal patterns' plans shared by key. One made again from a kept program's
+/// specs (`lazy`) lowers them where a string is first tested: a run that tests none (every stratum clean) lowers none.
 pub struct Matcher {
-    pub plans: Vec<Arc<Lowered>>,
+    op: String,
+    patterns: Vec<String>,
+    plans: std::sync::OnceLock<Vec<Arc<Lowered>>>,
 }
 
 /// The words of a phrase: runs of ASCII letters, digits and `_`.
@@ -119,6 +122,22 @@ fn word_regex(phrase: &str) -> Option<String> {
 impl Matcher {
     /// `op` (a test's name) over `patterns`. A pattern that does not parse is an error.
     pub fn new(op: &str, patterns: &[String]) -> Result<Self, String> {
+        let plans = Self::lowered(op, patterns)?;
+        Ok(Matcher { op: op.to_owned(), patterns: patterns.to_vec(), plans: std::sync::OnceLock::from(plans) })
+    }
+
+    /// `op` over `patterns` as a kept program's specs give them, checked when it was prepared (`new`): lowered at the
+    /// first `plans`. Patterns that no longer lower (another engine's text layer) match nothing.
+    pub fn lazy(op: &str, patterns: &[String]) -> Self {
+        Matcher { op: op.to_owned(), patterns: patterns.to_vec(), plans: std::sync::OnceLock::new() }
+    }
+
+    /// Each pattern's plan, equal ones once.
+    pub fn plans(&self) -> &[Arc<Lowered>] {
+        self.plans.get_or_init(|| Self::lowered(&self.op, &self.patterns).unwrap_or_default())
+    }
+
+    fn lowered(op: &str, patterns: &[String]) -> Result<Vec<Arc<Lowered>>, String> {
         let fold = op.starts_with('i') && TESTS.contains(&&op[1..]);
         let base = if fold { &op[1..] } else { op };
         let sources: Vec<Source> = match base {
@@ -139,13 +158,13 @@ impl Matcher {
                 plans.push(lowered);
             }
         }
-        Ok(Matcher { plans })
+        Ok(plans)
     }
 
     /// How the patterns are matched (EXPLAIN): each plan's production, with the rewrites that led to it.
     pub fn describe(&self) -> String {
         let mut by: BTreeMap<String, usize> = BTreeMap::new();
-        for p in &self.plans {
+        for p in self.plans() {
             let how = if p.rewrites.is_empty() { p.production.to_owned() } else { format!("{} after {}", p.production, p.rewrites.join(", ")) };
             *by.entry(how).or_default() += 1;
         }
@@ -155,7 +174,7 @@ impl Matcher {
 
     /// A pattern undecided (a backtracking one past its limits) does not match.
     pub fn is_match(&self, s: &str) -> bool {
-        self.plans.iter().any(|p| p.compiled().is_match(s.as_bytes()) == Some(true))
+        self.plans().iter().any(|p| p.compiled().is_match(s.as_bytes()) == Some(true))
     }
 }
 
@@ -231,6 +250,11 @@ pub struct Vocabulary {
     /// Every test's plans compiled together, once (decision 0075): shared by `again`, so a program kept for the
     /// process compiles them once, and every batch runs the same searchers.
     compiled: Arc<std::sync::OnceLock<Compiled>>,
+    /// Where this run's first test compiles them (`compiling_with`): the cache of groups of automata, and whether a
+    /// group neither kept nor cached is determinized. None: no cache, determinized.
+    how: Option<(Arc<dyn crate::code_rule_dsl::text::vocabulary::DfaCache + Send + Sync>, bool)>,
+    /// This run's first test: a run of tests compiled by an earlier run of the process names their groups in its cache.
+    named: std::sync::OnceLock<()>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -289,7 +313,7 @@ impl Vocabulary {
         let mut learned: Vec<(u32, Box<[u64]>)> = Vec::new();
         if !fresh.is_empty() {
             tested += fresh.len();
-            let compiled = self.compiled.get_or_init(|| self.compile_with(None, true));
+            let compiled = self.compiled();
             let terms: Vec<&[u8]> = fresh.iter().map(|(_, s)| s.as_bytes()).collect();
             let (hits, _undecided) = compiled.searchers.evaluate(&terms);
             let mut bits: Vec<Box<[u64]>> = vec![vec![0u64; words].into_boxed_slice(); fresh.len()];
@@ -321,7 +345,7 @@ impl Vocabulary {
             return symbols.iter().enumerate().filter(|(_, s)| passed.contains(&i64::from(**s))).map(|(i, _)| i).collect();
         }
         let (tested, t0) = (strings.len(), crate::code_rule_dsl::prof::thread_usage());
-        let compiled = self.compiled.get_or_init(|| self.compile_with(None, true));
+        let compiled = self.compiled();
         let terms: Vec<&[u8]> = strings.iter().map(|s| s.as_bytes()).collect();
         let (hits, _undecided) = compiled.searchers.evaluate(&terms);
         let mut out: Vec<usize> = hits.iter().enumerate().filter(|(p, _)| compiled.owner[*p] == k).flat_map(|(_, m)| m.iter().map(|&t| t as usize)).collect();
@@ -348,29 +372,51 @@ impl Vocabulary {
         }
     }
 
+    /// The keys of the groups of automata its tests compile to (`text::vocabulary::group_keys`): a function of its
+    /// tests, which a run keeps with its program so that it reads their images before its first wave.
+    pub fn group_keys(&self) -> Vec<String> {
+        let plans: Vec<&crate::code_rule_dsl::text::Plan> = self.tests.iter().flat_map(|(_, m)| m.plans().iter().map(|p| &p.plan)).collect();
+        crate::code_rule_dsl::text::vocabulary::group_keys(&plans)
+    }
+
     fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Compiled {
         let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
-            self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+            self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans().iter().map(move |p| (&p.plan, k))).unzip();
         Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache, dense), owner }
     }
 
-    /// Compiles every test's plans now, its groups of automata read from `cache` or kept in it (decision 0075), and
-    /// says what it did; `None` when they were compiled before (in this process). `dense`: a group neither kept nor
-    /// cached is determinized; otherwise it runs on the lazy DFA (`Searchers::new`).
-    pub fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
-        let mut made = None;
+    /// The same tests whose plans are compiled at the run's first test (none tested, none compiled: a warm run whose
+    /// strata are all clean, t33 K4), their groups of automata read from `cache` or kept in it (decision 0075).
+    /// `dense`: a group neither kept nor cached is determinized; otherwise it runs on the lazy DFA (`Searchers::new`).
+    pub fn compiling_with(mut self, cache: Arc<dyn crate::code_rule_dsl::text::vocabulary::DfaCache + Send + Sync>, dense: bool) -> Vocabulary {
+        self.how = Some((cache, dense));
+        self
+    }
+
+    /// Every test's plans, compiled at the first call of the process (decision 0075), as `compiling_with` said.
+    fn compiled(&self) -> &Compiled {
+        let (cache, dense) = match &self.how {
+            Some((cache, dense)) => (Some(&**cache as &dyn crate::code_rule_dsl::text::vocabulary::DfaCache), *dense),
+            None => (None, true),
+        };
+        let mut made = false;
         let compiled = self.compiled.get_or_init(|| {
+            made = true;
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
             let compiled = self.compile_with(cache, dense);
-            made = Some(compiled.searchers.compiling);
+            let c = compiled.searchers.compiling;
+            if c.read + c.built + c.lazy > 0 {
+                crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read (the bundle, the build's image store or this process), {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
+            }
             compiled
         });
         // Compiled before (another run of this process): its groups named in this run's cache, as compiling did.
-        if made.is_none()
-            && let Some(c) = cache
-        {
-            compiled.searchers.name_in(c);
-        }
-        made
+        self.named.get_or_init(|| {
+            if !made && let Some(c) = cache {
+                compiled.searchers.name_in(c);
+            }
+        });
+        compiled
     }
 
     /// A vocabulary of these tests (each relation and matcher), their specs, the regexes and the markers, nothing
@@ -384,6 +430,13 @@ impl Vocabulary {
     pub fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
         let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| Ok((rel.clone(), Arc::new(Matcher::new(op, pats)?)))).collect::<Result<_, String>>()?;
         Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
+    }
+
+    /// `from_specs` over a kept program's specs, checked when it was prepared: each test lowered where a string is
+    /// first tested, so a warm run whose strata are all clean compiles none (t33 K4).
+    pub fn from_kept_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Vocabulary {
+        let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| (rel.clone(), Arc::new(Matcher::lazy(op, pats)))).collect();
+        Vocabulary { tests, specs, ..Vocabulary::default() }
     }
 }
 

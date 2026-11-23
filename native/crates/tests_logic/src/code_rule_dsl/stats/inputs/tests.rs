@@ -75,11 +75,7 @@ fn statistics_rollback_a_failed_publication() {
     let lang = GrammarDialect::TypeScript;
     let identifier = lang.kinds().kind_id("identifier");
     put(&store, "target();", lang);
-    store
-        .candidate_transaction(true, |db| {
-            db.execute_batch("CREATE TRIGGER reject_value BEFORE INSERT ON term_postings WHEN NEW.term=(SELECT atom FROM atoms WHERE value='explode') BEGIN SELECT RAISE(ABORT,'publication failed'); END")
-        })
-        .unwrap();
+    store.reject_prefilter_term_for_test("explode");
     let source = "target(); explode();";
     let (doc, bytes) = document(source, lang);
     let grammar = i64::from(language::tape_tag(lang).unwrap());

@@ -284,6 +284,7 @@ impl TextNodes {
 }
 
 /// What the rules read of `text` (`logic::plan::text_demand::text_kind_demand`).
+#[derive(Debug, PartialEq)]
 pub struct TextDemand {
     /// The kinds whose text is read at any length.
     pub long: BTreeSet<String>,

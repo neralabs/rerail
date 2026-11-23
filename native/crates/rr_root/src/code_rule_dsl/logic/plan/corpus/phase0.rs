@@ -241,14 +241,14 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     if let Some(images) = &images {
         let at = crate::code_rule_dsl::logic::rr::image_store_path();
         let retained = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroRetained>();
-        for (seed, graph) in seeds.iter().zip(&found) {
-            if let Some(graph) = graph {
-                let key = images.key(seed);
-                if retained.0.lock().expect("phase 0's retained images").insert((at.clone(), key)) {
-                    crate::code_rule_dsl::logic::rr::retain_graph_image(images.store(), key, || images.encode(graph));
-                }
-            }
-        }
+        // Retained together: one read of the keys kept, their leases renewed together, and those not kept written
+        // as one record (`keep_graph_images`), so they lie in one segment.
+        let fresh: Vec<(crate::content_store::HashKey, &Graph)> = {
+            let mut held = retained.0.lock().expect("phase 0's retained images");
+            seeds.iter().zip(&found).filter_map(|(seed, graph)| Some((images.key(seed), graph.as_deref()?))).filter(|(key, _)| held.insert((at.clone(), *key))).collect()
+        };
+        let fresh: Vec<(crate::content_store::HashKey, &Graph)> = fresh.into_iter().filter(|(key, _)| !crate::code_rule_dsl::logic::rr::graph_shipped(*key)).collect();
+        crate::code_rule_dsl::logic::rr::retain_graph_facts(images.store(), fresh.iter().map(|(key, _)| images.store_key(key)).collect(), |i| images.facts(fresh[i].1));
     }
     let wanted: Vec<Seed> = {
         let mut w: Vec<Seed> = seeds.iter().zip(&found).filter(|(_, g)| g.is_none()).map(|(s, _)| s.clone()).collect();
@@ -262,7 +262,21 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let mut wanted = wanted;
     if !wanted.is_empty() && let Some(images) = &images {
         let mut accepted = HashMap::new();
-        let graphs: Vec<Option<Graph>> = wanted.iter().map(|seed| crate::code_rule_dsl::logic::rr::graph_image(images.store(), images.key(seed)).and_then(|b| images.decode(&b))).collect();
+        // The images in one read of the store, not one a seed.
+        let keys: Vec<crate::content_store::HashKey> = wanted.iter().map(|seed| images.key(seed)).collect();
+        // The engine's shipped graphs first (images), then the store's (kept facts, read together).
+        let mut graphs: Vec<Option<Graph>> = crate::code_rule_dsl::logic::rr::shipped_graph_images(&keys, |b| images.decode(b));
+        let rest: Vec<usize> = (0..keys.len()).filter(|&k| graphs[k].is_none()).collect();
+        if !rest.is_empty() {
+            let store_keys: Vec<crate::content_store::HashKey> = rest.iter().map(|&k| images.store_key(&keys[k])).collect();
+            let kept = crate::code_rule_dsl::logic::rr::graph_facts(images.store(), &store_keys);
+            // The graphs share the library's modules: each path and digest read once for all of them.
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the graphs, of their facts".into());
+            let mut read = Read::default();
+            for (k, facts) in rest.into_iter().zip(kept) {
+                graphs[k] = facts.and_then(|f| images.graph_of(&f, &mut read));
+            }
+        }
         let mut graphs = graphs.into_iter();
         let trace = std::env::var_os("RERAIL_PHASE0_TRACE").is_some();
         wanted.retain(|seed| {
@@ -336,15 +350,15 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             }
             result => result,
         }.map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
-        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok();
+        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of_in(seed, k, lib.as_deref())))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
         // process's. The image keeps the bootstrap run's plans (Q150), so this run and the next, which reads it, name
         // the same plans (`the_run_after_a_cold_one_writes_nothing`). Clearing them here as well (f7e047997, from
         // before images kept them) made the run that derived a graph name none and the run that read it name them.
         if let Some(images) = &images {
-            for (seed, g) in &made {
-                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store(), images.key(seed), images.encode(g));
-            }
+            crate::code_rule_dsl::logic::rr::export_graph_images(&made.iter().map(|(seed, g)| (images.key(seed), images.encode(g))).collect::<Vec<_>>());
+            crate::code_rule_dsl::logic::rr::keep_graph_facts(images.store(), made.iter().map(|(seed, g)| (images.store_key(&images.key(seed)), images.facts(g))).collect());
         }
         // A test store's template is filled in whichever test process asks first (`test_store`): its graphs are not
         // kept for the process, whose own runs then derived none, and prepared one program fewer than a process that
@@ -412,7 +426,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     if !named.is_empty() {
         whole.phases.insert(text_key(0), named);
     }
-    let graph = whole.of(seed, 0);
+    let graph = whole.of_in(seed, 0, Some(lib));
     crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert((Some(dirs.clone()), seed.clone()), Arc::new(graph));
     true
 }
@@ -568,7 +582,7 @@ pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
     dunce::canonicalize(super::phases::builtin_dir()).ok()
 }
 
-/// Graphs as images (`rr::graph_image`): keyed by the engine's build and the seed, their paths written relative to the
+/// Graphs as images (`rr::graph_images`): keyed by the engine's build and the seed, their paths written relative to the
 /// library and the phase programs' directory, so a bundle made where those stand elsewhere is read here too (each file
 /// is then checked by its digest, `Graph::holds`). The bootstrap run's plans are kept with it: a run that reads the
 /// graph names them in its manifest, as the run that derived it did, so a warm run's manifest is the cold run's and
@@ -624,6 +638,95 @@ impl Images {
         crate::content_store::HashKey::sha256(format!("rerail phase 0 graph image 1\0{}\0{seed}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
     }
 
+    /// The key a store keeps seed key `key`'s graph under, as kept facts (`rr::graph_facts`): the image's key is the
+    /// shipped bundle's.
+    fn store_key(&self, key: &crate::content_store::HashKey) -> crate::content_store::HashKey {
+        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 1\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
+    }
+
+    /// The graph as facts (t33 step 2), its paths as the image writes them (`rel`): `p0g_include(from, at, name,
+    /// path)`, `p0g_missing(from, at, name)`, `p0g_absent(path)`, `p0g_digest(path, sha256)`, `p0g_phase(from,
+    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, each relation's rows in the graph's order.
+    fn facts(&self, g: &Graph) -> crate::code_rule_dsl::logic::program_facts::Facts {
+        use crate::code_rule_dsl::logic::front::Value;
+        let s = |x: String| Value::Str(x.into());
+        let p = |p: &PathBuf| s(self.rel(&p.to_string_lossy()));
+        let hex = |d: &[u8; 32]| s(d.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        let mut f = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        let mut put = |rel: &str, row: Vec<Value>| f.entry(rel.to_owned()).or_default().push(row.into());
+        for (from, to) in &g.includes {
+            for (at, n, path) in to {
+                put("p0g_include", vec![s(self.rel(from)), Value::Int(*at), s(n.clone()), p(path)]);
+            }
+        }
+        for (from, at, n) in &g.missing {
+            put("p0g_missing", vec![s(self.rel(from)), Value::Int(*at), s(n.clone())]);
+        }
+        for path in &g.absent {
+            put("p0g_absent", vec![p(path)]);
+        }
+        for (path, d) in &g.digests {
+            put("p0g_digest", vec![p(path), hex(d)]);
+        }
+        for (from, to) in &g.phases {
+            for (ph, path) in to {
+                put("p0g_phase", vec![s(self.rel(from)), s(ph.clone()), p(path)]);
+            }
+        }
+        for (path, d) in &g.rules {
+            put("p0g_rule", vec![p(path), hex(d)]);
+        }
+        for d in &g.plans {
+            put("p0g_plan", vec![hex(d)]);
+        }
+        // A graph holds a row at least: every seed's graph names the modules it reached (`p0g_digest`).
+        f
+    }
+
+    /// The graph `facts` made, or none where a row does not read; `read` holds what earlier graphs of the call read.
+    fn graph_of(&self, f: &crate::code_rule_dsl::logic::program_facts::Facts, read: &mut Read) -> Option<Graph> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let text = |v: &Value| match v {
+            Value::Str(x) => Some(x.as_str().to_owned()),
+            _ => None,
+        };
+        let int = |v: &Value| match v {
+            Value::Int(i) => Some(*i),
+            _ => None,
+        };
+        let rows = |rel: &str| f.get(rel).into_iter().flatten();
+        let mut g = Graph::default();
+        for r in rows("p0g_include") {
+            let [a, b, c, d] = &r[..] else { return None };
+            g.includes.entry(read.from(self, a)?).or_default().push((int(b)?, text(c)?, read.path(self, d)?));
+        }
+        for r in rows("p0g_missing") {
+            let [a, b, c] = &r[..] else { return None };
+            g.missing.push((read.from(self, a)?, int(b)?, text(c)?));
+        }
+        for r in rows("p0g_absent") {
+            let [a] = &r[..] else { return None };
+            g.absent.push(read.path(self, a)?);
+        }
+        for r in rows("p0g_digest") {
+            let [a, b] = &r[..] else { return None };
+            g.digests.insert(read.path(self, a)?, read.digest(b)?);
+        }
+        for r in rows("p0g_phase") {
+            let [a, b, c] = &r[..] else { return None };
+            g.phases.entry(read.from(self, a)?).or_default().push((text(b)?, read.path(self, c)?));
+        }
+        for r in rows("p0g_rule") {
+            let [a, b] = &r[..] else { return None };
+            g.rules.insert(read.path(self, a)?, read.digest(b)?);
+        }
+        for r in rows("p0g_plan") {
+            let [a] = &r[..] else { return None };
+            g.plans.push(read.digest(a)?);
+        }
+        Some(g)
+    }
+
     fn encode(&self, g: &Graph) -> Vec<u8> {
         let p = |p: &PathBuf| self.rel(&p.to_string_lossy());
         let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -675,6 +778,62 @@ impl Images {
     }
 }
 
+/// What a call's graphs read of their facts (`Images::graph_of`), each text once: the paths, the includers and the
+/// digests, which the graphs of one library share.
+#[derive(Default)]
+struct Read {
+    paths: HashMap<String, Option<PathBuf>>,
+    froms: HashMap<String, String>,
+    digests: HashMap<String, Option<[u8; 32]>>,
+}
+
+impl Read {
+    fn text(v: &crate::code_rule_dsl::logic::front::Value) -> Option<&str> {
+        match v {
+            crate::code_rule_dsl::logic::front::Value::Str(x) => Some(x.as_str()),
+            _ => None,
+        }
+    }
+
+    fn path(&mut self, images: &Images, v: &crate::code_rule_dsl::logic::front::Value) -> Option<PathBuf> {
+        let s = Self::text(v)?;
+        if let Some(p) = self.paths.get(s) {
+            return p.clone();
+        }
+        let p = images.abs(s).map(PathBuf::from);
+        self.paths.insert(s.to_owned(), p.clone());
+        p
+    }
+
+    /// An includer: a path, or one that is no file ("text", "engine") as written.
+    fn from(&mut self, images: &Images, v: &crate::code_rule_dsl::logic::front::Value) -> Option<String> {
+        let s = Self::text(v)?;
+        if let Some(f) = self.froms.get(s) {
+            return Some(f.clone());
+        }
+        let f = images.abs(s).unwrap_or_else(|| s.to_owned());
+        self.froms.insert(s.to_owned(), f.clone());
+        Some(f)
+    }
+
+    fn digest(&mut self, v: &crate::code_rule_dsl::logic::front::Value) -> Option<[u8; 32]> {
+        let s = Self::text(v)?;
+        if let Some(d) = self.digests.get(s) {
+            return *d;
+        }
+        let unhex = |s: &str| -> Option<[u8; 32]> {
+            let mut out = [0u8; 32];
+            for (i, b) in out.iter_mut().enumerate() {
+                *b = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
+            }
+            Some(out)
+        };
+        let d = unhex(s);
+        self.digests.insert(s.to_owned(), d);
+        d
+    }
+}
+
 /// A text seed's key in phase 0's facts, by its place among the run's seeds.
 fn text_key(k: usize) -> String {
     format!("text:{k}")
@@ -692,11 +851,17 @@ impl Graph {
     /// modules ask (`p0_cand`). Taken whole, a text's graph held every seed's absent files and the implicit includes
     /// of the modules that were seeds too, and its digest depended on the run it was derived in.
     pub fn of(&self, seed: &Seed, k: usize) -> Graph {
+        self.of_in(seed, k, dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().as_deref())
+    }
+
+    /// `of`, the rule library `lib` (canonical, `Dirs::lib`) found once by a caller that makes many: found per graph,
+    /// each was a walk of the library's path (317 a warm run).
+    pub(in crate::code_rule_dsl) fn of_in(&self, seed: &Seed, k: usize, lib: Option<&std::path::Path>) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
+        let lib = lib.map(|l| l.to_string_lossy().into_owned());
         let mut candidates: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         let mut candidate = |from: &str, name: &str| {
             if let Some(l) = &lib {

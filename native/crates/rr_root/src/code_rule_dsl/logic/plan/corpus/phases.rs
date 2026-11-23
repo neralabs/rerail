@@ -396,6 +396,97 @@ pub struct PhaseRun {
     pub report: Report,
     /// Each export's rows.
     pub exports: Vec<(String, usize)>,
+    /// The phase's frame (`frame`): its key, and its facts where this run made them (the reader's run keeps them, and
+    /// names the frame either way, so collection keeps it while it keeps the run).
+    pub frame: Option<([u8; 32], Option<crate::code_rule_dsl::logic::program_facts::Facts>)>,
+}
+
+/// Phase 1's runs kept across processes (t33 K4): a frame a run of the phase, its exports' rows and what the run
+/// consulted with each one's digest (`Report::consulted`), under the phase's identity (its program, the files handed
+/// down, the run's settings, the engine). A later process whose run of the same identity finds every read as it was
+/// (`changes_of`, the observer's answers: the documents its imports loaded, the directories they listed, the files they
+/// found missing) takes the exports as kept and does not run the phase.
+///
+/// Kept facts of the store (`plan::kept_entry`), a partition a frame, held by a small source and the frames' plan,
+/// which the reader's run names in its manifest (`named`).
+pub mod frame {
+    use super::{Report, Value};
+    use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
+    use crate::code_rule_dsl::logic::program_facts::Facts;
+    use crate::content_store::{ContentStore, HashKey};
+    use sha2::{Digest as _, Sha256};
+    use std::collections::BTreeMap;
+
+    const ENTRIES: Entries = Entries::new("rerail.phase-frame");
+    /// `(kind, path, digest)`: a read of the run's (`Report::consulted`).
+    const READ: &str = "phase_read";
+    /// The run's plans, in hex: the reader's run names them as the run's (`Report::plans`).
+    const PLAN: &str = "phase_plan";
+    /// The program's parts `changes_of` reads (`Summary`), as their bytes.
+    const SUMMARY: &str = "phase_summary";
+    /// An export's rows are the relation of its name after this.
+    const EXPORT: &str = "phase_export.";
+
+    fn source_text(key: &[u8; 32]) -> String {
+        format!("rerail/phase-frame\0{}", crate::content_store::observe::hex(key))
+    }
+
+    /// The frames' plan: the build and the schema.
+    fn plan() -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.phase-frame/v1\0");
+        hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+        hash.finalize().into()
+    }
+
+    /// The small source and the plan the frame `key` is held by: the reader's run names both.
+    pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
+        (source_text(key), plan())
+    }
+
+    /// A run's frame, as kept: its exports' rows, what it consulted, its plans and its program's summary.
+    pub struct Kept {
+        pub rows: BTreeMap<String, Vec<Vec<Value>>>,
+        pub consulted: Vec<(String, String, String)>,
+        pub plans: Vec<[u8; 32]>,
+        pub summary: Vec<u8>,
+    }
+
+    /// The facts of a run's frame.
+    pub fn facts(rows: &BTreeMap<String, Vec<Vec<Value>>>, report: &Report, summary: &[u8]) -> Facts {
+        let s = |x: &str| Value::Str(x.to_owned().into());
+        let mut facts = Facts::new();
+        facts.insert(READ.to_owned(), report.consulted.iter().map(|(k, p, d)| vec![s(k), s(p), s(d)].into()).collect());
+        facts.insert(PLAN.to_owned(), report.plans.iter().map(|p| vec![s(&crate::content_store::observe::hex(p))].into()).collect());
+        facts.insert(SUMMARY.to_owned(), vec![vec![s(&String::from_utf8_lossy(summary))].into()]);
+        for (rel, rows) in rows {
+            facts.insert(format!("{EXPORT}{rel}"), rows.iter().map(|r| r.clone().into()).collect());
+        }
+        facts
+    }
+
+    /// Keeps the frame `key`'s `facts`, behind the run.
+    pub fn put(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
+        let holder = HashKey::sha256(source_text(key).as_bytes()).sha256_bytes().expect("a sha256 key");
+        ENTRIES.put(store, Entries::part(key), holder, Some(plan()), facts);
+    }
+
+    /// The frame `key`, as kept; `None` where the store keeps none, or one that does not read.
+    pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Kept> {
+        let facts = ENTRIES.get(store, Entries::part(key))?;
+        let text = |v: &Value| match v {
+            Value::Str(x) => Some(x.to_string()),
+            _ => None,
+        };
+        let consulted = facts.get(READ)?.iter().map(|r| match &r[..] {
+            [k, p, d] => Some((text(k)?, text(p)?, text(d)?)),
+            _ => None,
+        }).collect::<Option<Vec<_>>>()?;
+        let plans = facts.get(PLAN).into_iter().flatten().map(|r| r.first().and_then(text).and_then(|h| crate::content_store::observe::unhex(&h))).collect::<Option<Vec<_>>>()?;
+        let summary = text(facts.get(SUMMARY)?.first()?.first()?)?.into_bytes();
+        let rows = facts.iter().filter_map(|(rel, rows)| Some((rel.strip_prefix(EXPORT)?.to_owned(), rows.iter().map(|r| r.to_vec()).collect()))).collect();
+        Some(Kept { rows, consulted, plans, summary })
+    }
 }
 
 pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
@@ -471,7 +562,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
             }
             b.finish().map_err(Error::Plan)?.0
         };
-        let (upstream, upstream_runs) = self::facts(&*program, &super::shape::Shape::of(&program), root, modes, binding, chunk_nodes, typing, options)?;
+        let (upstream, upstream_runs) = self::facts(&*program, &crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(&program).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(&program))), root, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
@@ -486,7 +577,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &image)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
         let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
-        runs.push(PhaseRun { name, report, exports });
+        runs.push(PhaseRun { name, report, exports, frame: None });
     }
     Ok((facts, runs))
 }
@@ -591,8 +682,26 @@ pub fn sources(
     if let Some(found) = key.and_then(|k| Batch::get(&k)) {
         crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || "the batch's run of the same files, taken again".into());
         let (one, exports) = found;
-        return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports }));
+        return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports, frame: None }));
     }
+    // The phase's identity across processes (`frame`): the batch's key's parts and the engine.
+    let identity: [u8; 32] = {
+        use sha2::Digest as _;
+        let mut hash = sha2::Sha256::new();
+        hash.update(b"rerail.phase-frame/v1\0");
+        hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+        for part in [src.as_str(), label, &root.display().to_string(), modes, &format!("{binding:?}"), &chunk_nodes.to_string(), &format!("{typing:?}"), &options.to_string()] {
+            hash.update(part.as_bytes());
+            hash.update(b"\0");
+        }
+        for (p, m, g, c) in files {
+            for part in [p, m, g, c] {
+                hash.update(part.as_bytes());
+                hash.update(b"\0");
+            }
+        }
+        hash.finalize().into()
+    };
     let (program, entry) = lowered_entry(&src)?;
     let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{NAME}.rerail: no `.phase {NAME}`")))?;
     // Its documents are those it loads: it is given no file of its own, and its language is the run's. The program
@@ -620,6 +729,26 @@ pub fn sources(
     } else {
         options = serde_json::json!({ "inputFiles": [], "reuse": true });
     }
+    // Kept by an earlier process, and every read of its run as it was: its exports, the phase not run.
+    let store = if cfg!(feature = "tape-cache") { reading_store() } else { None };
+    if let Some(kept) = store.as_deref().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, read".into()); frame::get(store, &identity) }) {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, its reads checked".into());
+        let summary = super::Summary::decode(&kept.summary);
+        let changes = match summary {
+            Some(summary) => super::changes_of(&[], &[], Some(&handed), root, typing, &options, &kept.consulted, Some(summary))?,
+            None => None,
+        };
+        match changes {
+            Some(changed) if changed.is_empty() => {
+                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("kept: every one of its run's {} reads as it was, its exports taken, not run (t33 K4)", kept.consulted.len()));
+                let (one, exports) = one_of_rows(root, label, files, &declared, kept.rows);
+                let report = Report { consulted: kept.consulted, plans: kept.plans, ..Report::default() };
+                return Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame: Some((identity, None)) }));
+            }
+            Some(changed) => crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("its frame not taken: {} documents it read changed", changed.len())),
+            None => crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || "its frame not taken: a read of its run changed".to_owned()),
+        }
+    }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
     let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
     let paths = files.iter().filter_map(|(p, _, _, _)| {
@@ -641,6 +770,22 @@ pub fn sources(
         super::run_read_handing(&handed, Some(texts), root, Path::new(""), modes, binding, chunk_nodes, typing, &options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
     };
     let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &image)? };
+    // Its frame, for a later process: where the run consulted what it read (a run that read nothing it can name is
+    // not comparable, `changes_of`) and a store keeps it.
+    let frame = (store.is_some() && !report.consulted.is_empty())
+        .then(|| super::Summary::of(&[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
+        .flatten()
+        .map(|summary| (identity, Some(frame::facts(&rows, &report, &summary))));
+    let (one, exports) = one_of_rows(root, label, files, &declared, rows);
+    if let Some(k) = key {
+        Batch::put(k, (one.clone(), exports.clone()));
+    }
+    Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame }))
+}
+
+/// Phase 1's answer from its exports' rows: the files that became documents, in the order given, and the library
+/// documents, each once; with each export's row count.
+fn one_of_rows(root: &Path, label: &str, files: &[(String, String, String, String)], declared: &Declared, rows: BTreeMap<String, Vec<Vec<Value>>>) -> (PhaseOne, Vec<(String, usize)>) {
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
         // A path is text: an atom (decision 0270) is none.
@@ -660,11 +805,7 @@ pub fn sources(
     libraries.sort();
     libraries.dedup_by(|a, b| a.0 == b.0);
     let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
-    let one = PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows };
-    if let Some(k) = key {
-        Batch::put(k, (one.clone(), exports.clone()));
-    }
-    Ok((one, PhaseRun { name: NAME.to_owned(), report, exports }))
+    (PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows }, exports)
 }
 
 /// Whether phase program `program`'s fixed point, or an earlier phase's it reads, loads documents (a `load` rule,

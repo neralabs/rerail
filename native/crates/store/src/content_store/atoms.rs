@@ -854,6 +854,8 @@ impl Atoms {
         // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
         if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
             super::kept_facts::vtab::install(connection, Path::new(path))?;
+            // The prefilter's tables as its kept facts (t33 steps 6 and 7).
+            super::prefilter::vtab::install(connection, Path::new(path))?;
         }
         Ok(atoms)
     }
@@ -1621,6 +1623,15 @@ pub fn materialize_stored(connection: &Connection) -> StoreResult<()> {
     for (atom, value) in atoms.iter().enumerate() {
         insert.execute(rusqlite::params![atom as i64, value])?;
     }
+    Ok(())
+}
+
+/// The store's kept facts as the SQL tables of their names (`prefilter::vtab`: the derivation graph, the search
+/// index, the prefilter's) on `connection`, a plain connection to a store's file: for checks of what a store holds on
+/// disk, beside `materialize_stored`.
+pub fn install_kept_tables(connection: &Connection) -> StoreResult<()> {
+    let path = connection.path().filter(|path| !path.is_empty()).ok_or_else(|| StoreError::Invalid("a connection to no store's file".to_owned()))?;
+    super::prefilter::vtab::install(connection, Path::new(path))?;
     Ok(())
 }
 

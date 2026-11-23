@@ -17,19 +17,33 @@ pub type Matchers = [(String, String, Vec<String>)];
 /// The projection of the program `v`, reading `reads`, with its long text and anchors (`projection_of`, then
 /// `Projection::with_long_text_parts`).
 pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
-    let demand = text_kind_demand(v, matchers);
-    let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) };
-    projection_of(v, reads).with_long_text_parts(demand, anchors)
+    let demand = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text kinds demanded".into()); text_kind_demand(v, matchers) };
+    let spans = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into()); span_text_demand(v) };
+    projection_with(v, reads, matchers, demand, spans)
+}
+
+/// `projection`, with the text kinds demanded found by the caller (`text_kind_demand`'s, kept: `plan::kept_analyses`).
+/// `spans`: the spans and tokens whose text a rule reads (`span_text_demand`'s, kept as the text kinds are).
+pub fn projection_with(v: &Version, reads: BTreeSet<String>, matchers: &Matchers, demand: TextDemand, spans: (BTreeSet<SpanIn>, bool)) -> Projection {
+    let anchors = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the node anchors".into()); if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) } };
+    let p = projection_of_spans(v, reads, spans);
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the long text's parts".into());
+    p.with_long_text_parts(demand, anchors)
 }
 
 /// The projection of the program `v` reading `reads`, before its long text and anchors: `core.rerail`'s shape for a
 /// program that includes `core.rerail` (declares every relation it declares as an input), T's for one that declares its
 /// base relations itself (T's programs, the converter's, O74).
 pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
-    let (spans, token_text) = span_text_demand(v);
+    let spans = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into()); span_text_demand(v) };
+    projection_of_spans(v, reads, spans)
+}
+
+/// `projection_of`, with the spans whose text is read found by the caller (`span_text_demand`'s).
+pub fn projection_of_spans(v: &Version, reads: BTreeSet<String>, (spans, token_text): (BTreeSet<SpanIn>, bool)) -> Projection {
     let derived: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
     let outputs: BTreeSet<String> = v.output_names().into_iter().collect();
-    crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads);
+    { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's plan, for the profile".into()); crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads); }
     let core = crate::code_rule_dsl::facts::core::core_names();
     let core_shape = !core.is_empty() && core.iter().all(|r| v.declares(r));
     let partial: BTreeSet<String> = v
@@ -45,6 +59,7 @@ pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
     let rx_spans = v.rx_spans().expect("a version's spans are read");
     let ast_patterns = v.ast_patterns().expect("a version's patterns are read");
     let parts = ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: rx_spans.into_iter().collect(), ast_patterns: ast_patterns.into_iter().collect() };
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection, of its parts".into());
     Projection::of_parts(parts, reads)
 }
 
@@ -77,40 +92,31 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
 /// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
 /// own bounded ranges and do not demand the container text.
 pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
-    // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
+    let columns = span_columns(v);
+    let mut requested = 0;
+    for rule in v.rules() {
+        let vars = span_vars(v, &columns, rule);
+        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
+            if let Some(TermRef::Var(value)) = atom.args().next() {
+                requested |= vars.get(&value).copied().unwrap_or(0);
+            }
+        }
+    }
+    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
+}
+
+/// Each relation column that holds a span, by the spans it holds: bit 1 the source, 2 a line, 4 a token (the second
+/// column of the four token relations), carried by the rules that copy them (including variable equality), to a
+/// fixpoint.
+fn span_columns(v: &Version) -> HashMap<(&str, usize), u8> {
     let mut columns: HashMap<(&str, usize), u8> = [(("source", 1), 1), (("src_line", 2), 2)]
         .into_iter()
         .chain(["first_token", "last_token", "token_before", "token_after"].map(|rel| ((rel, 1), 4)))
         .collect();
-    let mut requested = 0;
     loop {
         let mut changed = false;
         for rule in v.rules() {
-            let mut vars: HashMap<Slot, u8> = HashMap::default();
-            for atom in rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()) {
-                let rel = v.rel_name(atom.rel());
-                for (column, term) in atom.args().enumerate() {
-                    if let TermRef::Var(value) = term {
-                        *vars.entry(value).or_default() |= columns.get(&(rel, column)).copied().unwrap_or(0);
-                    }
-                }
-            }
-            loop {
-                let mut aliases_changed = false;
-                for literal in rule.body() {
-                    if let Lit::Cmp { l: TermRef::Var(left), op: CmpOp::Eq, r: TermRef::Var(right) } = literal.view() {
-                        let mask = vars.get(&left).copied().unwrap_or(0) | vars.get(&right).copied().unwrap_or(0);
-                        for value in [left, right] {
-                            let entry = vars.entry(value).or_default();
-                            aliases_changed |= *entry != (*entry | mask);
-                            *entry |= mask;
-                        }
-                    }
-                }
-                if !aliases_changed {
-                    break;
-                }
-            }
+            let vars = span_vars(v, &columns, rule);
             let head = v.rel_name(rule.head().rel());
             for (column, term) in rule.head().args().enumerate() {
                 if let TermRef::Var(value) = term {
@@ -122,17 +128,41 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
                     }
                 }
             }
-            for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
-                if let Some(TermRef::Var(value)) = atom.args().next() {
-                    requested |= vars.get(&value).copied().unwrap_or(0);
+        }
+        if !changed {
+            return columns;
+        }
+    }
+}
+
+/// The spans each variable of `rule` holds (`span_columns`' bits): a positive atom's span column binds it, and an
+/// equality carries it.
+fn span_vars(v: &Version, columns: &HashMap<(&str, usize), u8>, rule: RuleRef<'_>) -> HashMap<Slot, u8> {
+    let mut vars: HashMap<Slot, u8> = HashMap::default();
+    for atom in rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()) {
+        let rel = v.rel_name(atom.rel());
+        for (column, term) in atom.args().enumerate() {
+            if let TermRef::Var(value) = term {
+                *vars.entry(value).or_default() |= columns.get(&(rel, column)).copied().unwrap_or(0);
+            }
+        }
+    }
+    loop {
+        let mut aliases_changed = false;
+        for literal in rule.body() {
+            if let Lit::Cmp { l: TermRef::Var(left), op: CmpOp::Eq, r: TermRef::Var(right) } = literal.view() {
+                let mask = vars.get(&left).copied().unwrap_or(0) | vars.get(&right).copied().unwrap_or(0);
+                for value in [left, right] {
+                    let entry = vars.entry(value).or_default();
+                    aliases_changed |= *entry != (*entry | mask);
+                    *entry |= mask;
                 }
             }
         }
-        if !changed {
-            break;
+        if !aliases_changed {
+            return vars;
         }
     }
-    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
 }
 
 /// A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
@@ -207,6 +237,110 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
     }
     kinds
 }
+
+/// `text_kind_demand`'s answer as rows, to keep with a run's kept plans (t33 K4): tagged `long`, `any`, `negated`,
+/// `read` (its sets', each tagged by its set; no `read` row: every node) and `wide`.
+/// `span_text_demand`'s answer as rows, for the store to keep (`plan::kept_analyses::kept_value`): `token` and
+/// whether a token's text is read, then a row a span (its place's name, and its kind, pattern and group as it has them).
+pub fn span_rows((spans, token_text): &(BTreeSet<SpanIn>, bool)) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let s = |x: &str| Value::Str(x.into());
+    let mut out: Vec<crate::code_rule_dsl::logic::program_image::manager::Row> = vec![vec![s("token"), Value::Int(i64::from(*token_text))]];
+    out.extend(spans.iter().map(|span| match span {
+        SpanIn::Source => vec![s("source")],
+        SpanIn::Line => vec![s("line")],
+        SpanIn::Comment => vec![s("comment")],
+        SpanIn::Kind(k) => vec![s("kind"), s(k)],
+        SpanIn::ChildOf(k) => vec![s("child_of"), s(k)],
+        SpanIn::Capture(p, g) => vec![s("capture"), s(p), s(g)],
+    }));
+    out
+}
+
+/// `span_rows`' answer back; `None` where a row is not one it writes.
+pub fn span_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<(BTreeSet<SpanIn>, bool)> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let text = |v: &Value| match v {
+        Value::Str(x) => Some(x.to_string()),
+        _ => None,
+    };
+    let (first, rest) = rows.split_first()?;
+    let token_text = match first.as_slice() {
+        [tag, Value::Int(t)] if text(tag)? == "token" => *t != 0,
+        _ => return None,
+    };
+    let mut spans = BTreeSet::new();
+    for row in rest {
+        let (tag, args) = row.split_first()?;
+        let args: Vec<String> = args.iter().map(text).collect::<Option<_>>()?;
+        spans.insert(match (text(tag)?.as_str(), args.as_slice()) {
+            ("source", []) => SpanIn::Source,
+            ("line", []) => SpanIn::Line,
+            ("comment", []) => SpanIn::Comment,
+            ("kind", [k]) => SpanIn::Kind(k.clone()),
+            ("child_of", [k]) => SpanIn::ChildOf(k.clone()),
+            ("capture", [p, g]) => SpanIn::Capture(p.clone(), g.clone()),
+            _ => return None,
+        });
+    }
+    Some((spans, token_text))
+}
+
+pub fn demand_rows(d: &TextDemand) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let s = |x: &str| Value::Str(x.into());
+    let mut out: Vec<crate::code_rule_dsl::logic::program_image::manager::Row> = vec![vec![s("negated"), Value::Int(d.negated_any as i64)]];
+    out.extend(d.long.iter().map(|k| vec![s("long"), s(k)]));
+    out.extend(d.any.iter().map(|&(r, p)| vec![s("any"), Value::Int(r as i64), Value::Int(p as i64)]));
+    if let Some(n) = &d.read {
+        out.push(vec![s("read")]);
+        for (set, names) in [("kind", &n.kinds), ("field", &n.fields), ("parent", &n.parents), ("parent field", &n.parent_fields), ("value", &n.values)] {
+            out.extend(names.iter().map(|x| vec![s("read"), s(set), s(x)]));
+        }
+    }
+    out.extend(d.wide.iter().map(|w| vec![s("wide"), s(w)]));
+    out
+}
+
+/// `demand_rows`' rows read back.
+pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<TextDemand> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let text = |v: &Value| match v {
+        Value::Str(x) => Some(x.to_string()),
+        _ => None,
+    };
+    let int = |v: &Value| match v {
+        Value::Int(x) => usize::try_from(*x).ok(),
+        _ => None,
+    };
+    let mut d = TextDemand { long: BTreeSet::new(), any: Vec::new(), negated_any: 0, read: None, wide: None };
+    for r in rows {
+        match (text(r.first()?)?.as_str(), &r[1..]) {
+            ("negated", [n]) => d.negated_any = int(n)?,
+            ("long", [k]) => {
+                d.long.insert(text(k)?);
+            }
+            ("any", [r, p]) => d.any.push((int(r)?, int(p)?)),
+            ("read", []) => d.read = Some(TextNodes { kinds: BTreeSet::new(), fields: BTreeSet::new(), parents: BTreeSet::new(), parent_fields: BTreeSet::new(), values: BTreeSet::new() }),
+            ("read", [set, x]) => {
+                let n = d.read.as_mut()?;
+                let names = match text(set)?.as_str() {
+                    "kind" => &mut n.kinds,
+                    "field" => &mut n.fields,
+                    "parent" => &mut n.parents,
+                    "parent field" => &mut n.parent_fields,
+                    "value" => &mut n.values,
+                    _ => return None,
+                };
+                names.insert(text(x)?);
+            }
+            ("wide", [w]) => d.wide = Some(text(w)?),
+            _ => return None,
+        }
+    }
+    Some(d)
+}
+
 
 /// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
 /// are followed through the relations' columns to a fixpoint: a column of a derived relation holds the kinds its
@@ -339,13 +473,11 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         })
         .collect();
     let twinned = |head: &str, var: &str| twins.contains(&(head, var));
-    // Whether `s` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
-    let span = |r: RuleRef<'_>, s: Slot| {
-        r.body().filter_map(|l| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) != "text").any(|a| {
-            let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
-            a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(x) if x == s) && types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span"))
-        })
-    };
+    // Whether `s` is a span (the source, a line or a token: `span_columns`): its text is a span's (`text_spans`), made
+    // at any length where a rule reads it, not a node's. (A declared `span` column lowers to `node`, so the type does
+    // not tell.)
+    let spans = span_columns(v);
+    let span = |r: RuleRef<'_>, s: Slot| span_vars(v, &spans, r).get(&s).is_some_and(|&m| m != 0);
     // A matcher capture's node: the kinds and fields its matcher gives it (`{"pattern": "$N", "field": "name"}`, or a
     // `kind` or `field` beside the pattern in an `all`). Columns past the root are the captures, in order. An
     // `inside`'s `field` is where the node it holds sits in that ancestor, not the ancestor's own.
@@ -463,6 +595,9 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
                 None if text.neg() => negated_any += 1,
                 None if twinned(head, name) => {}
+                // A span's text (the source's, a line's, a token's) is no node's: `rr_long_text_node` holds nodes only,
+                // so a twin of it reads nothing, and the span's text is made at any length where a rule reads it.
+                None if span(rule, s) => {}
                 None => any.push((ri, i)),
             }
         }

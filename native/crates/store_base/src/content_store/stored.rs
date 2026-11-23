@@ -76,6 +76,7 @@ pub enum ObjectBytes {
 
 impl std::ops::Deref for ObjectBytes {
     type Target = [u8];
+    #[inline]
     fn deref(&self) -> &[u8] {
         match self {
             ObjectBytes::Heap(b) => b,

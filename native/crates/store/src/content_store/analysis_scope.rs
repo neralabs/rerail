@@ -457,7 +457,7 @@ impl ContentStore {
     }
 
     /// Called with the exclusive collection lease held.
-    pub(super) fn discard_abandoned_analysis(tx: &rusqlite::Connection) -> rusqlite::Result<()> {
+    pub(super) fn discard_abandoned_analysis(tx: &rusqlite::Connection) -> StoreResult<()> {
         release_memberships(tx, "scope GLOB ?1", ["pending:*"])?;
         tx.execute_cached("DELETE FROM analysis_scope_pending", [])?;
         Ok(())
@@ -709,7 +709,7 @@ fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Opti
     }
 }
 
-fn release_memberships(tx: &rusqlite::Connection, predicate: &str, args: impl rusqlite::Params + Copy) -> rusqlite::Result<usize> {
+fn release_memberships(tx: &rusqlite::Connection, predicate: &str, args: impl rusqlite::Params + Copy) -> StoreResult<usize> {
             for table in ["analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
                 tx.execute_cached(&format!("INSERT OR IGNORE INTO analysis_scope_collect SELECT snapshot_id FROM {table} WHERE {predicate}"), args)?;
             }
@@ -720,12 +720,15 @@ fn release_memberships(tx: &rusqlite::Connection, predicate: &str, args: impl ru
                 "SELECT manifest_id FROM analysis_scope_manifest WHERE ({predicate})
                  EXCEPT SELECT manifest_id FROM analysis_scope_manifest WHERE NOT ({predicate})"
             );
+            let gone: Vec<i64> = tx.prepare_cached(&unowned)?.query_map(args, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
             tx.execute_cached(&format!("DELETE FROM corpus_manifest_plans WHERE manifest_id IN ({unowned})"), args)?;
             let manifests = tx.execute_cached(&format!("DELETE FROM corpus_manifests WHERE manifest_id IN ({unowned})"), args)?;
             let memberships = tx.execute_cached(&format!("DELETE FROM analysis_scope_manifest WHERE {predicate}"), args)?;
             if snapshots + workspaces + manifests > 0 {
                 tx.execute_cached("UPDATE corpus_state SET due=1 WHERE singleton=1", [])?;
                 tx.execute_cached("UPDATE corpus_decided SET time=0 WHERE singleton=1", [])?;
+                // The corpus runs' kept form, as the tables now are (`corpus_runs::kept`).
+                super::corpus_runs::kept::sync_at(tx, &super::corpus_runs::kept::Touch { manifests: gone, ..Default::default() })?;
             }
             Ok(snapshots + workspaces + manifests + memberships)
 }

@@ -141,10 +141,11 @@ impl Durable {
             let images = images.into_iter().map(|(d, (bytes, _))| (d, bytes)).collect();
             // And the plans of its rules (decision 0116 step 2), for this thread's run to take.
             let _span = super::super::profile::span(|| "kept plans, read from the store".into());
-            let (plans, ready) = read_plans(&s, &prepared).unwrap_or_default();
-            super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} versions' prepared plans read from the store", plans.len(), ready.len()));
+            let (plans, ready, analyses) = read_plans(&s, &prepared).unwrap_or_default();
+            super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans, {} versions' prepared plans and {} analyses read from the store", plans.len(), ready.len(), analyses.len()));
             super::take_stored_plans(Arc::new(plans));
             super::take_stored_prepared(ready);
+            super::take_stored_analyses(analyses);
             Arc::new((s, prepared, stored, images))
         });
         Durable { _side: crate::code_rule_dsl::logic::profile::bind(DurableSide(side)) }
@@ -164,20 +165,23 @@ impl Drop for Durable {
             let notes = super::joins::to_store().map(note_rows);
             // And the prepared plans (decision 0361 step 5, Q228), where the run made any.
             let ready = super::prepared_to_store();
+            // And the analyses of the versions planned (t33 K4), where the run computed any.
+            let analyses = super::analyses_to_store();
             let changed = super::plans_to_store();
             // A warm run changes none of them: which did, named.
-            if changed.is_some() || notes.is_some() || ready.is_some() {
-                super::super::profile::warm_fault("the kept plans changed", || format!("plans: {}, join notes: {}, prepared plans: {}", changed.as_ref().map_or(0, |p| p.len()), notes.as_ref().map_or(0, |n| n.0.len()), ready.as_ref().map_or(0, |r| r.len())));
+            if changed.is_some() || notes.is_some() || ready.is_some() || analyses.is_some() {
+                super::super::profile::warm_fault("the kept plans changed", || format!("plans: {}, join notes: {}, prepared plans: {}, analyses: {}", changed.as_ref().map_or(0, |p| p.len()), notes.as_ref().map_or(0, |n| n.0.len()), ready.as_ref().map_or(0, |r| r.len()), analyses.as_ref().map_or(0, |a| a.len())));
             }
-            let Some(plans) = changed.or_else(|| (notes.is_some() || ready.is_some()).then(super::stored_plans).flatten()) else { return };
+            let Some(plans) = changed.or_else(|| (notes.is_some() || ready.is_some() || analyses.is_some()).then(super::stored_plans).flatten()) else { return };
             let notes = notes.unwrap_or_default();
             let ready = super::prepared::store_rows(&ready.unwrap_or_else(super::prepared_held));
+            let analyses = super::kept_analyses::store_rows(&analyses.unwrap_or_else(super::analyses_held));
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
             let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
             super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} join notes queued for the store", rows.len(), notes.0.len()));
             // As kept facts behind the run, their atoms the store's (decision 0170); the small source holding them by
             // the store's writer.
-            keep_plans(store, &prepared, &plans_facts(&rows, &notes, &ready));
+            keep_plans(store, &prepared, &plans_facts(&rows, &notes, &ready, &analyses));
             store.record("the kept plans", vec![crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared])], &prepared, None, apply_plans);
         }
     }
@@ -347,6 +351,8 @@ const RAISED_REL: &str = "rr_join_raised";
 /// The prepared plans of the versions a run planned (decision 0361 step 5, Q228), in the same entry
 /// (`prepared::store_rows`).
 const PREPARED_REL: &str = "rr_prepared_plan";
+/// The analyses of the versions planned, by the version's identity (`kept_analyses`, t33 K4).
+const ANALYSES_REL: &str = "rr_kept_analysis";
 
 /// The join memo's notes and exact statistics read from `facts`, given to this process's memo.
 fn take_notes(facts: &Facts) {
@@ -394,28 +400,35 @@ pub fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
 }
 
 /// The plans kept under `prepared`: one read of the store.
-pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion)> {
-    if !held(store, prepared)? {
+pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion, super::kept_analyses::ByVersion)> {
+    if !{ let _s = super::super::profile::span(|| "whether the store holds them".into()); held(store, prepared)? } {
         return Ok(Default::default());
     }
-    let Some(facts) = PLANS.within(*prepared).get(store, 0) else { return Ok(Default::default()) };
-    take_notes(&facts);
+    // The plans' rows are numbers alone: each decoded from the block as it holds them, not through values (t33 K4:
+    // their values were most of a warm run's read of the entry).
+    let mut plans = super::StoredPlans::default();
+    let Some(facts) = ({
+        let _s = super::super::profile::span(|| "their entry, read".into());
+        PLANS.within(*prepared).get_numbers(store, 0, PLANS_REL, &mut |row| plans.extend(super::StoredPlan::of_row(row)))
+    }) else {
+        return Ok(Default::default());
+    };
+    { let _s = super::super::profile::span(|| "the join notes, taken".into()); take_notes(&facts); }
+    let _s = super::super::profile::span(|| "the plans, decoded".into());
     let ready: Vec<Vec<Value>> = facts.get(PREPARED_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
-    let plans = facts
-        .get(PLANS_REL)
-        .into_iter()
-        .flatten()
-        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
-        .collect();
-    Ok((plans, super::prepared::of_store_rows(&ready)))
+    let analyses: Vec<Vec<Value>> = facts.get(ANALYSES_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
+    Ok((plans, super::prepared::of_store_rows(&ready), super::kept_analyses::of_store_rows(&analyses)))
 }
 
 /// The kept plans' and join notes' facts entry, made on the run's side (decision 0306).
-pub fn plans_facts(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>]) -> Facts {
+pub fn plans_facts(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>], analyses: &[Vec<Value>]) -> Facts {
     let mut facts = Facts::new();
     facts.insert(PLANS_REL.to_owned(), rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     if !ready.is_empty() {
         facts.insert(PREPARED_REL.to_owned(), ready.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
+    }
+    if !analyses.is_empty() {
+        facts.insert(ANALYSES_REL.to_owned(), analyses.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     }
     if !notes.0.is_empty() {
         facts.insert(NOTES_REL.to_owned(), notes.0.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());

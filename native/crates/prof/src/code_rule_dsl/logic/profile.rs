@@ -3127,6 +3127,9 @@ pub struct Report {
     pub remaps: u32,
     /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
     pub room_remaps: u32,
+    /// Of the dispatches, views expanded into a device relation in the program's own pass (copy 0353 step 4,
+    /// `expand_view`): encoded before the program, they are no launch of its own, and go with the copy.
+    pub expanded: u32,
     pub taken: u64,
     pub launch_items: u64,
     /// Its programs: one a stratum (a wave's first stratum's report, its wave's).

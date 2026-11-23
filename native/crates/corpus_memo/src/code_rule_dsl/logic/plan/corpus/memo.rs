@@ -156,8 +156,9 @@ pub(in crate::code_rule_dsl) fn identities(
 /// prepared program keeps it (decision 0246 §4): a run adds the options, the earlier phases' rows and the projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Strata {
-    /// Each relation's strata identity, and the relations it reaches that may hold values (`identities`' leaves).
-    pub by_rel: BTreeMap<String, ([u8; 32], Vec<String>)>,
+    /// Each relation's strata identity, and the relations it reaches that may hold values (`identities`' leaves):
+    /// relations that reach the same leaves share them.
+    pub by_rel: BTreeMap<String, ([u8; 32], std::sync::Arc<[String]>)>,
 }
 
 /// `rels`' `Strata` in the file-local program `local`.
@@ -195,7 +196,7 @@ pub fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BT
         .iter()
         .filter_map(|rel| {
             let id = *ids.get(rel)?;
-            Some((rel.clone(), (id, reach.get(rel.as_str()).map(|l| l.iter().map(|r| (*r).to_owned()).collect()).unwrap_or_default())))
+            Some((rel.clone(), (id, reach.get(rel.as_str()).map(|l| l.iter().map(|r| (*r).to_owned()).collect()).unwrap_or_else(|| std::sync::Arc::from(Vec::new())))))
         })
         .collect();
     Ok(Strata { by_rel })
@@ -315,22 +316,14 @@ fn last_key(space: &[u8; 32]) -> [u8; 32] {
 /// of every file together (the kept statistics) is still of its entries: its run ended, or a run of it under way
 /// started from what an ended run of it kept (`set_under_way`). Of no other program's.
 pub fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
-    let b = store.stat_blob(last_key(space)).ok().flatten()?;
-    let whole: [u8; 32] = match b.len() {
-        32 => b.try_into().ok()?,
-        33 if b[32] == UNDER_WAY => b[..32].try_into().ok()?,
-        _ => return None,
-    };
+    let (whole, _) = super::keptstats::last(store, &last_key(space))?;
     (whole != [0; 32]).then_some(whole)
 }
-
-/// `last_program`'s mark of a run of `whole` under way that started from what an ended run of it kept.
-const UNDER_WAY: u8 = 1;
 
 /// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way that
 /// did not start from what is kept (another program's, or one after it): a run that stops leaves none of it valid.
 pub fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
-    store.queue_stat_blob(last_key(space), whole.unwrap_or([0; 32]).to_vec());
+    super::keptstats::put_last(store, &last_key(space), whole.unwrap_or([0; 32]), false);
 }
 
 /// Records a run of `whole` under way in `space`, one that started from what an ended run of `whole` kept: if it
@@ -338,9 +331,7 @@ pub fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u
 /// contents the kept statistics count are still in the memo (its newest `MEMO_CONTENTS` of a path); a content whose
 /// entry went gives the keeper up, as an entry dropped otherwise does.
 pub fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {
-    let mut b = whole.to_vec();
-    b.push(UNDER_WAY);
-    store.queue_stat_blob(last_key(space), b);
+    super::keptstats::put_last(store, &last_key(space), whole, true);
 }
 
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,

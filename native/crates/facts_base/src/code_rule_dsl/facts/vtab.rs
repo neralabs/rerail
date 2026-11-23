@@ -167,6 +167,11 @@ pub trait Source: Send + Sync {
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
+    /// Whether it has no row: `len() == 0` by default; a source that counts its rows by a walk (an axis) stops at the
+    /// first.
+    fn holds_none(&self) -> bool {
+        self.len() == 0
+    }
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
     /// place first (a view of a batch's documents) finds it once.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {

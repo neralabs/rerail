@@ -35,6 +35,52 @@ fn sizes(n: i64, bytes: u64) -> Sizes {
     s
 }
 
+/// The corpus runs' tables and their kept form agree through a root's life (the manifest tables' move, stage 1):
+/// runs recorded, moved and naming other plans, a plan's relations and hold, a keep decision that evicts and marks
+/// plans dead, and the passes that collect them. A store mirrored before (its tables but no kept form) is mirrored
+/// whole by its next write.
+#[test]
+fn the_corpus_runs_kept_form_agrees_with_their_tables() {
+    let (_path, store) = store("corpus-kept-mirror");
+    let agree = |what: &str| assert_eq!(store.corpus_kept_differences().unwrap(), Vec::<String>::new(), "{what}");
+    agree("a new store");
+    let root = "/virtual/mirror";
+    let sources: Vec<SourceId> = (1..=5).map(SourceId).collect();
+    for (i, plan) in [[1u8; 32], [2; 32], [3; 32]].into_iter().enumerate() {
+        store.record_corpus_run_naming(root, &sources[i..i + 3], 1, 1, plan, &[[9; 32]], 100 + i as i64).unwrap();
+        agree("a run recorded");
+    }
+    store.record_corpus_run_naming(root, &sources[2..5], 1, 1, [3; 32], &[[9; 32]], 110).unwrap();
+    agree("a run moved");
+    store.record_corpus_run_lane("/virtual/other", &sources[..1], 1, 2, [4; 32], &[], Some([7; 32]), 111).unwrap();
+    agree("a lane's run");
+    store.record_corpus_relations([3; 32], &[("rel_a".into(), "[\"x\"]".into()), ("rel_b".into(), "[]".into())]).unwrap();
+    agree("a plan's relations");
+    store.hold_corpus_plan([5; 32], "mirror-owner", 10_000).unwrap();
+    agree("a plan held");
+    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 1, backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    let kept = store.keep_corpus_runs(&policy, 200).unwrap();
+    assert!(kept.evicted > 0, "the decision evicts a manifest: {kept:?}");
+    agree("a keep decision");
+    for _ in 0..4 {
+        store.collect_corpus_pass(&policy, 200).unwrap();
+        agree("a collection pass");
+    }
+    store.sweep_memo(|| false).unwrap();
+    agree("a sweep");
+    // A store whose tables were written before the kept form: its next write mirrors every table.
+    store
+        .immediate_transaction(|t| {
+            let rows = super::super::kept_facts::chain_rows(t, &kept::space())?;
+            assert!(!rows.is_empty(), "the space is written");
+            t.execute("DELETE FROM facts_chain WHERE space=?1", [&kept::space()[..]])?;
+            Ok(())
+        })
+        .unwrap();
+    store.record_corpus_run_naming(root, &sources[..2], 1, 1, [6; 32], &[], 300).unwrap();
+    agree("a store mirrored whole by its next write");
+}
+
 #[test]
 fn source_ids_round_trip_as_delta_varints() {
     let ids = vec![1, 2, 130, 20_000, 1 << 40];

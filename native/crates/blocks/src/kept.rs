@@ -120,6 +120,19 @@ impl<'b> Kept<'b> {
     pub fn row(&self, i: usize) -> Vec<i64> {
         (0..self.rows.arity as usize).map(|c| self.rows.get(i, c)).collect()
     }
+
+    /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
+    /// not per cell as `row` resolves it, and the row read into one buffer the rows share.
+    pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
+        let cols: Vec<crate::packed::ColDec<'_>> = (0..self.rows.arity as usize).map(|c| self.rows.col(c).dec()).collect();
+        let mut row = vec![0i64; cols.len()];
+        for i in 0..self.rows.len() {
+            for (v, c) in row.iter_mut().zip(&cols) {
+                *v = c.get(i);
+            }
+            f(&row);
+        }
+    }
 }
 
 /// What reads a space's kept facts.
@@ -262,6 +275,20 @@ impl<B: Borrow<Block>> KeptFacts<B> {
         Some((self.key_of(e), self.entry(e)))
     }
 
+    /// The entries of `rel` under `ident`: their range, by one search of the name's bytes and the identity.
+    fn span(&self, rel: &str, ident: &[u8; 32]) -> (usize, usize) {
+        let (es, want) = (self.entries(), (rel.as_bytes(), ident));
+        let lo = es.partition_point(|e| (self.rel_bytes(e), &e.ident) < want);
+        (lo, lo + es[lo..].partition_point(|e| (self.rel_bytes(e), &e.ident) == want))
+    }
+
+    /// The entry of partition `part` among `span`'s (`span`), by its part alone.
+    fn find_in(&self, (lo, hi): (usize, usize), part: i64) -> Option<(FactKey<'_>, Found<'_>)> {
+        let es = &self.entries()[lo..hi];
+        let e = &es[es.binary_search_by_key(&part, |e| e.part).ok()?];
+        Some((self.key_of(e), self.entry(e)))
+    }
+
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
@@ -273,6 +300,11 @@ impl<B: Borrow<Block>> KeptFacts<B> {
 
     fn every(&self) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         self.entries().iter().map(move |e| (self.key_of(e), self.entry(e)))
+    }
+
+    /// The entries of partition `part`, in key order: the directory's entries tested by their part alone.
+    fn of_part(&self, part: i64) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
+        self.entries().iter().filter(move |e| e.part == part).map(move |e| (self.key_of(e), self.entry(e)))
     }
 }
 
@@ -383,6 +415,12 @@ impl<B: Borrow<Block>> KeptChain<'_, B> {
         out
     }
 
+    /// Every entry of partition `part`, across the files, each key's newest resolved, in key order: a partition's
+    /// read merges its own entries, not every one of the chain.
+    pub fn of_part(&self, part: i64) -> Vec<Kept<'_>> {
+        self.merged(move |f| f.of_part(part))
+    }
+
     /// The bytes of the files.
     pub fn bytes(&self) -> usize {
         self.files.iter().map(|f| f.bytes()).sum()
@@ -394,6 +432,21 @@ impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
     pub fn entry(&self, key: &FactKey) -> Option<Kept<'a>> {
         let files: &'a [KeptFacts<B>] = self.files;
         let mut found = files.iter().rev().filter_map(|f| f.find(key));
+        let (own, first) = found.next()?;
+        resolve(own, first, found.map(|(_, f)| f))
+    }
+
+    /// The entries of `rel` under `ident` in each file, oldest first (`entry_in`): a reader of many of one
+    /// relation's partitions searches its name once a file, then each part by its number.
+    pub fn spans(&self, rel: &str, ident: &[u8; 32]) -> Vec<(usize, usize)> {
+        self.files.iter().map(|f| f.span(rel, ident)).collect()
+    }
+
+    /// The entry of partition `part` among `spans` (`spans`, of these files): `entry` of the key they are of.
+    pub fn entry_in(&self, spans: &[(usize, usize)], part: i64) -> Option<Kept<'a>> {
+        let files: &'a [KeptFacts<B>] = self.files;
+        debug_assert_eq!(files.len(), spans.len(), "the spans of another chain");
+        let mut found = files.iter().zip(spans).rev().filter_map(|(f, s)| f.find_in(*s, part));
         let (own, first) = found.next()?;
         resolve(own, first, found.map(|(_, f)| f))
     }

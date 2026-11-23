@@ -1570,6 +1570,10 @@ pub struct RunPlans {
     /// plans, and those this run made, by the version's identity; and whether it made any.
     prepared: arc_swap::ArcSwap<prepared::ByVersion>,
     prepared_new: std::sync::atomic::AtomicBool,
+    /// The analyses of the versions the run asked them of (`kept_analyses`, t33 K4): the store's, read with the kept
+    /// plans, and those this run made, by key; and whether it made any.
+    analyses: arc_swap::ArcSwap<super::kept_analyses::ByVersion>,
+    analyses_new: std::sync::atomic::AtomicBool,
     /// The lines this run found heavy while they ran their prepared plan: searched from then on (`prepared_heavy`).
     prepared_searched: parking_lot::Mutex<HashSet<u128>>,
 }
@@ -1654,6 +1658,8 @@ impl RunPlans {
             orders: arc_swap::ArcSwap::from_pointee(orders),
             prepared: Default::default(),
             prepared_new: Default::default(),
+            analyses: Default::default(),
+            analyses_new: Default::default(),
             prepared_searched: Default::default(),
         }
     }
@@ -1888,6 +1894,46 @@ pub fn take_stored_prepared(stored: prepared::ByVersion) {
 /// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
 pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
     with_plans(|p| p.filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+}
+
+/// The rows the store kept of the analysis `key` names (`kept_analyses`).
+#[doc(hidden)]
+pub fn analysis_stored(key: &super::kept_analyses::Key) -> Option<Arc<Vec<super::super::program_image::manager::Row>>> {
+    with_plans(|p| p.and_then(|p| p.analyses.load().get(key).cloned()))
+}
+
+/// Keeps `rows`, the analysis `key` names as this run made it, for the store.
+#[doc(hidden)]
+pub fn analysis_made(key: super::kept_analyses::Key, rows: Arc<Vec<super::super::program_image::manager::Row>>) {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.analyses.rcu(|m| {
+                let mut m = super::kept_analyses::ByVersion::clone(m);
+                m.insert(key.clone(), Arc::clone(&rows));
+                m
+            });
+            p.analyses_new.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+/// Gives this thread's run the analyses the store kept (with `take_stored_plans`).
+pub fn take_stored_analyses(stored: super::kept_analyses::ByVersion) {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.analyses.store(Arc::new(stored));
+        }
+    });
+}
+
+/// This thread's run's kept analyses for the store, the stored with the made: `None` where it made none.
+pub fn analyses_to_store() -> Option<Arc<super::kept_analyses::ByVersion>> {
+    with_plans(|p| p.filter(|p| p.analyses_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.analyses.load_full()))
+}
+
+/// The kept analyses held for this thread's run, as read and made.
+pub fn analyses_held() -> Arc<super::kept_analyses::ByVersion> {
+    with_plans(|p| p.map(|p| p.analyses.load_full()).unwrap_or_default())
 }
 
 /// The prepared plans held for this thread's run, as read and made.

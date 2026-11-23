@@ -1441,6 +1441,9 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) launch_items: u64,
     /// Its programs launched (each once, then its relaunches and remaps).
     pub(in crate::code_rule_dsl) programs: u32,
+    /// Its views expanded into device relations (`expand_view`, copy 0353 step 4): dispatches of its passes before
+    /// a program, no launch of their own.
+    pub(in crate::code_rule_dsl) expanded: u32,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
@@ -2071,6 +2074,7 @@ impl Batch {
             let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
             let pass = self.pass()?;
             pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
+            self.done.expanded += 1;
         }
         Ok(())
     }

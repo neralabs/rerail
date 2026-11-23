@@ -34,15 +34,15 @@ impl Own {
     /// priced at one row a line). A constant tested of a relation that copies an input's columns (`kind(n, k) :-
     /// node(_, n, k, _, _)`, Q37) is counted at the input's column it copies (`constants_tested_in`): the input is
     /// what has statistics, and `kind`'s tests had none since `kind` became a view.
-    pub fn constants_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> BTreeMap<(String, String), BTreeSet<i64>> {
+    pub fn constants_of(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> BTreeMap<(String, String), BTreeSet<i64>> {
         let inputs: BTreeSet<&str> = v.inputs().map(|a| v.text(a)).collect();
         let mut out: BTreeMap<(String, String), BTreeSet<i64>> = BTreeMap::new();
-        for (rel, tested) in constants_tested_in(v) {
-            if !inputs.contains(rel) {
+        for (rel, tested) in &tested_constants(v).0 {
+            if !inputs.contains(rel.as_str()) {
                 continue;
             }
-            for (col, n) in tested {
-                out.entry((rel.to_owned(), super::super::sql_col(rel, col))).or_default().insert(n);
+            for &(col, n) in tested {
+                out.entry((rel.clone(), super::super::sql_col(rel, col))).or_default().insert(n);
             }
         }
         out
@@ -300,6 +300,25 @@ pub fn constants_tested_in(v: &crate::code_rule_dsl::logic::program_image::Versi
         }
     }
     tested_through(by, &projections)
+}
+
+/// `constants_tested_in`'s, held by the version (`manager::analysis`): the run asks it of the prepared program three
+/// times (its owned statistics' constants, the values tested, the exports' counts), each a walk of every rule.
+#[derive(Debug, Default, PartialEq)]
+pub struct TestedConstants(pub HashMap<String, BTreeSet<(usize, i64)>>);
+
+impl crate::code_rule_dsl::logic::program_image::manager::Analysis for TestedConstants {
+    const NAME: &'static str = "constants tested";
+    const READS: crate::code_rule_dsl::logic::program_image::manager::Reads = crate::code_rule_dsl::logic::program_image::manager::Reads::RULES;
+    fn compute(cx: &crate::code_rule_dsl::logic::program_image::manager::Cx<'_>) -> Result<TestedConstants, String> {
+        Ok(TestedConstants(constants_tested_in(cx.v()).into_iter().map(|(r, c)| (r.to_owned(), c)).collect()))
+    }
+}
+
+/// `v`'s constants tested (`constants_tested_in`), held by it.
+pub fn tested_constants(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Arc<TestedConstants> {
+    crate::code_rule_dsl::logic::program_image::manager::analysis::<TestedConstants>(v)
+        .unwrap_or_else(|_| Arc::new(TestedConstants(constants_tested_in(v).into_iter().map(|(r, c)| (r.to_owned(), c)).collect())))
 }
 
 /// The constants tested `by` relation, each also tested of the column a single-atom projection copies it from

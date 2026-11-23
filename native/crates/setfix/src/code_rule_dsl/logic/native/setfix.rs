@@ -4230,6 +4230,13 @@ impl View {
     fn len(&self) -> usize {
         self.ids().map_or(self.src.len(), <[u32]>::len)
     }
+    /// Whether it has no row: of a whole source, asked of the source (`Source::holds_none`), which need not count.
+    fn holds_none(&self) -> bool {
+        match &self.ids {
+            None => self.src.holds_none(),
+            Some(_) => self.len() == 0,
+        }
+    }
     /// The source's rows that pass every filter, through the source's index of one filtered column where it has one.
     fn filtered(&self) -> Vec<u32> {
         let src = &self.src;
@@ -5393,6 +5400,13 @@ impl InRel {
     }
     pub fn rows(&self) -> usize {
         self.len() - self.ndead
+    }
+    /// Whether it has no live row (`rows() == 0`), asked of a view without counting its rows (`Source::holds_none`).
+    pub fn holds_none(&self) -> bool {
+        match &self.view {
+            Some(v) if self.ndead == 0 => v.holds_none(),
+            _ => self.rows() == 0,
+        }
     }
     /// Whether none of its rows are in its table: a reader of it sees them all only in the engine.
     pub fn none_stored(&self) -> bool {
@@ -7454,7 +7468,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     }
                     Key::Slot(_) => None,
                 };
-                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(m.plans()));
                 steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::DocOf { out: o, n } => {
@@ -7474,7 +7488,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 let matcher = strings::Matcher::new(op, &patterns).ok().map(Arc::new);
                 // A set that does not compile matches nothing, as SQL's `str_test`.
                 let p = Key::Const(syms.id(&patterns.join(&strings::SET_SEP.to_string())));
-                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(m.plans()));
                 steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::In { a, want, set } => {

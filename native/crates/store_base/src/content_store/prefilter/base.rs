@@ -13,8 +13,6 @@ pub struct TapePrefilter {
     pub nodes: u32,
     /// (kind atom, count, sum of descendants, delta-varint postings), sorted by atom.
     pub kinds: Vec<(u32, u32, u64, Vec<u8>)>,
-    /// Direct edges: (parent kind atom, child kind atom, field, count), sorted.
-    pub edges: Vec<(u32, u32, u16, u32)>,
     /// Clean leaf terms: (kind atom, term) → preorders, ascending.
     pub postings: BTreeMap<(u32, String), Vec<u32>>,
     /// Per kind atom: the coverage flags and the number of unclean leaves.
