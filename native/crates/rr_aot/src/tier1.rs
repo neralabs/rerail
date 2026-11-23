@@ -14,9 +14,6 @@ pub struct Lexed {
     pub refused: bool,
 }
 
-/// Each byte's record kind, as a token's first byte.
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 5, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-
 /// `punct`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.
 fn pair_6(src: &[u8], s: usize) -> usize {
     let at = |i: usize| src.get(i).copied().unwrap_or(0);
@@ -496,10 +493,6 @@ rerail_simd8::dispatch! {
     fn stage1_best(src: &[u8]) -> Stage1 = stage1, on stage1_on;
 }
 
-/// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.
-static DISPATCH_LO: [u16; 16] = [0x1d04, 0xf01, 0xf20, 0xf40, 0xf00, 0xf01, 0xf01, 0xf00, 0xf01, 0xf01, 0xe03, 0x21b, 0x213, 0x21b, 0x21b, 0x680];
-static DISPATCH_HI: [u16; 16] = [0x0, 0x0, 0xe1, 0x102, 0x204, 0x408, 0x1200, 0x810, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0];
-
 /// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and
 /// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.
 #[inline(always)]
@@ -761,31 +754,21 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         if s >= n {
             break 'tokens;
         }
-        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
-        let c = src[s];
-        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
+        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).
+        let (pick, kind1) = TOKEN[usize::from(src[s])];
         let mut hits = 0u32;
         let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
-            let row = match group {
-                // `!%&()*+,-.:;<=>@[]^{|}~`
-                0 | 1 | 2 | 3 | 4 => 6,
-                // `"`
-                5 => 0,
-                // `#`
-                6 => 3,
+            let row = match pick {
+                p if usize::from(p) < 7 => usize::from(p),
                 // `/`
-                7 => if (((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f)))) || ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a))))) {
+                10 => if (((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f)))) || ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a))))) {
                     1
                 } else {
                     6
                 },
-                // `0123456789`
-                8 => 5,
-                // `ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz`
-                9 | 10 | 11 => 4,
                 // ```
-                12 => if ((((matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60))) || ((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60)))) || (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60))))) {
+                13 => if ((((matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60))) || ((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60)))) || (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60))))) {
                     2
                 } else {
                     usize::MAX
@@ -814,7 +797,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0)
                 }
 ,
                 1 => {
@@ -895,21 +878,21 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         break 'tokens;
                     };
                     let l = l.max(s);
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0)
                 }
 ,
                 3 => {
                     // `hash_word`: run word
                     let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
                     let l = l.max(s);
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0)
                 }
 ,
                 4 => {
                     // `identifier`: run word
                     let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
                     let l = l.max(s);
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0)
                 }
 ,
                 5 => {
@@ -927,7 +910,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0)
                 }
 ,
                 6 => {
@@ -937,7 +920,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     if l + 1 - s >= 1 && (!(matches!(src[s], 0x2d) && !((s + 1) < n && matches!(src[(s + 1)], 0x30..=0x39)))).then_some(s).is_none() {
                         hits |= 1 << 12;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0)
                 }
 ,
                 _ => {
@@ -1656,6 +1639,10 @@ unsafe fn w_m_ws<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     unsafe { cls_ws::<S>(src, n, p) }
 }
 
+
+/// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the
+/// byte picks one, else 7 and its group's index, whose tests pick it; `u8::MAX`, none.
+static TOKEN: [(u8, u8); 256] = [(255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (6, 0), (0, 4), (3, 1), (255, 0), (6, 0), (6, 0), (255, 0), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (10, 0), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (255, 0), (6, 0), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (6, 0), (255, 0), (6, 0), (6, 0), (4, 5), (13, 3), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (6, 0), (6, 0), (6, 0), (6, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0)];
 /// Each slot's word (`word_at`): its first 8 bytes, its length, its code, its bytes after the 8th.
 static WORDS: [(u64, usize, u32, &[u8]); 256] = [
     (0, 0, 0, &[]),

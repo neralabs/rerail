@@ -718,6 +718,9 @@ struct RowArm {
 struct Picks {
     open: String,
     rows: String,
+    /// Each byte's pick, for one load (`TOKEN`, decision 0623): its row where its group picks one with no test, else
+    /// the group's tests' arm (`rows.len() + group`), else none (`u8::MAX`); and the tested groups' arms. None past 254.
+    by_byte: Option<([u8; 256], String)>,
     /// Whether the rows are picked by the openers themselves: no `open`.
     fused: bool,
 }
@@ -3126,7 +3129,9 @@ impl Gen<'_> {
         let list = |t: &[u64; 16]| t.iter().map(|b| format!("{b:#x}")).collect::<Vec<_>>().join(", ");
         let tables = format!("/// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.\nstatic DISPATCH_LO: [{ty}; 16] = [{}];\nstatic DISPATCH_HI: [{ty}; 16] = [{}];\n\n", list(&lo), list(&hi));
         // Each group's openers and rows, as `at_start` reads them of its bytes.
-        let mut picks = Picks { open: String::new(), rows: String::new(), fused: true };
+        let mut picks = Picks { open: String::new(), rows: String::new(), by_byte: None, fused: true };
+        // Each group's chain, its fused chain, its bytes, how it is shown.
+        let mut per: Vec<(Vec<(String, String)>, Vec<(String, String)>, [bool; 256], String)> = Vec::new();
         let mut fused_rows = String::new();
         let mut chains: Vec<Vec<usize>> = Vec::new();
         // The regions opened where each row is picked: of a group's, those no row before it in the
@@ -3218,6 +3223,7 @@ impl Gen<'_> {
             if !ok {
                 picks.fused = false;
             }
+            let mut fkept: Vec<(String, String)> = Vec::new();
             if picks.fused {
                 let mut fchain: Vec<(String, String)> = Vec::new();
                 for (cond, k) in &open_chain {
@@ -3231,10 +3237,12 @@ impl Gen<'_> {
                     // Reached where no opener holds: `open == usize::MAX` is so.
                     fchain.extend(chain[code_from..].iter().map(|(t, v)| (if t.ends_with("open == usize::MAX") { t.replace("open == usize::MAX", "true") } else { t.clone() }, v.clone())));
                 }
+                fkept = fchain.clone();
                 if !fchain.is_empty() {
                     let _ = write!(fused_rows, "                // `{shown}`\n                {pats} => {},\n", if_chain(&fchain, "usize::MAX", "                "));
                 }
             }
+            per.push((chain.clone(), fkept, *b, shown.clone()));
             chains.push(chain.iter().map(|(_, v)| v.parse().unwrap_or(usize::MAX)).collect());
             if !chain.is_empty() {
                 let _ = write!(picks.rows, "                // `{shown}`\n                {pats} => {},\n", if_chain(&chain, "usize::MAX", "                "));
@@ -3242,6 +3250,31 @@ impl Gen<'_> {
         }
         if picks.fused {
             picks.rows = fused_rows;
+        }
+        // By byte: a group's row where its chain's first is no test, else its arm.
+        let tested = rows.len();
+        let mut by = [u8::MAX; 256];
+        let mut arms = String::new();
+        let mut fits = tested + per.len() < 255;
+        for (g, (chain, fchain, b, shown)) in per.iter().enumerate() {
+            let ch = if picks.fused { fchain } else { chain };
+            let v = match ch.first() {
+                None => continue,
+                Some((c, r)) if c == "true" => r.parse::<usize>().unwrap_or(usize::MAX),
+                Some(_) => {
+                    let _ = write!(arms, "                // `{shown}`\n                {} => {},\n", tested + g, if_chain(ch, "usize::MAX", "                "));
+                    tested + g
+                }
+            };
+            fits &= v < 255;
+            for c in 0..256 {
+                if b[c] {
+                    by[c] = v as u8;
+                }
+            }
+        }
+        if fits {
+            picks.by_byte = Some((by, arms));
         }
         Ok((tables, picks, chains, row_opens))
     }
@@ -5514,7 +5547,7 @@ impl Gen<'_> {
                 tests_of(&mut token_code, &mut token_read, &mut unread, test, *bit);
             }
         }
-        let _ = write!(open_code, "        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).\n        let c = src[s];\n        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();\n");
+        open_code.push_str(GROUP_LINE);
         if self.opens.is_some() && !picks.fused {
             let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the string the template is in (`template`) is one; of those whose opener may be the byte's.\n        let open = match group {{\n{}            _ => usize::MAX,\n        }};\n", picks.open);
         }
@@ -5924,6 +5957,14 @@ impl Gen<'_> {
         // A refusal in the token loop leaves both its loops.
         let tokens = |t: &str| t.replace("break;\n", "break 'tokens;\n");
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
+        // A token's row and record kind by one load (decision 0623 step 3, the lean lexer's `TOKEN`): its row where its first
+        // byte picks one, else the arm of its group's tests. Where the rows' pick makes no region of its own.
+        let token_form = picks.by_byte.as_ref().filter(|_| self.opens.is_none() || picks.fused).and_then(|(by, arms)| {
+            let head = format!("let row = match group {{\n{}                _ => usize::MAX,\n            }};", tokens(&picks.rows));
+            let pick = format!("let row = match pick {{\n                p if usize::from(p) < {} => usize::from(p),\n{}                _ => usize::MAX,\n            }};", row_arms.len(), tokens(arms));
+            let one = "        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).\n        let (pick, kind1) = TOKEN[usize::from(src[s])];\n";
+            (open_code.contains(GROUP_LINE) && branches.contains(&head)).then(|| (open_code.replacen(GROUP_LINE, one, 1), branches.replacen(&head, &pick, 1).replace("u32::from(KINDS[usize::from(src[s])])", "u32::from(kind1)"), *by))
+        });
         // The one pass with its masks read from the bytes where the loop reads them (decision 0623 step 1), as the lean
         // lexer's window: no stage 1, no mask of the whole file, and so no block to wait for. Where stage 1 tests
         // nothing of its own and every mask the loop reads has that form.
@@ -5936,7 +5977,11 @@ impl Gen<'_> {
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
                 let alone = readers(x.stmts).is_empty();
-                for t in [&open_code, &branches, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
+                let (open_t, branches_t) = match &token_form {
+                    Some((o, b, _)) => (o, b),
+                    None => (&open_code, &branches),
+                };
+                for t in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
                     let t = by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(t)))?;
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
@@ -6027,6 +6072,20 @@ impl Gen<'_> {
         }
         if let Some((_, _, code)) = &from_bytes {
             out.push_str(code);
+            if let Some((_, _, by)) = &token_form {
+                let row: Vec<String> = (0..256).map(|c| format!("({}, {})", by[c], x.kinds[c])).collect();
+                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the\n/// byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`, none.\nstatic TOKEN: [(u8, u8); 256] = [{}];\n", row_arms.len(), row.join(", "));
+                // The tables the one load replaces, where nothing else reads them.
+                if !out.contains("DISPATCH_LO[") {
+                    out = out.replacen(&tables, "", 1);
+                }
+                if !out.contains("KINDS[") {
+                    if let Some(at) = out.find("/// Each byte's record kind, as a token's first byte.\nconst KINDS") {
+                        let end = at + out[at..].find("];\n\n").map_or(0, |e| e + 4);
+                        out.replace_range(at..end, "");
+                    }
+                }
+            }
         }
         if let Some(t) = &word_table {
             out = out.replacen(&word_fn, "", 1);
@@ -6058,6 +6117,9 @@ impl Gen<'_> {
         Ok(out)
     }
 }
+
+/// The token loop's line that finds a token's first byte's group (`dispatch`).
+const GROUP_LINE: &str = "        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).\n        let c = src[s];\n        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();\n";
 
 /// Where the one pass's head goes, until its form is known.
 const LEX_HEAD: &str = "\u{0}lex_on's head\u{0}";

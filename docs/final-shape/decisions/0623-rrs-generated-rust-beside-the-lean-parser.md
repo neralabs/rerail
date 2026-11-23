@@ -1,7 +1,6 @@
 # 0623: `.rerail`'s generated Rust, read beside the lean parser
 
-Status: the comparison is made, and the order below is done but for step 3's second part (a common token as one table
-load). The item is the user's (2026-11-22): "please
+Status: the comparison is made, and the order below is done. The item is the user's (2026-11-22): "please
 figure out how JIT is faster than AOT, that should not ever be true".
 
 ## The question
@@ -243,3 +242,23 @@ nests brackets and JSON objects 128, 200, 3,000 and 100,000 deep, and checks the
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included. Kotlin's files
 are unchanged.
+
+## Step 3, second part: a token's row and kind by one load (done)
+
+Each token found its row in three steps. It took its first byte's group from two nibble tables (`DISPATCH_LO`,
+`DISPATCH_HI`, simdjson's `classify`), then matched the group to a row, then loaded its kind (`KINDS`). Lean reads a
+token's kind and length from one load (`TOKEN`).
+
+Now, where tier 1 reads the bytes and the rows' pick opens no region of its own, a token reads `TOKEN[c]` once:
+
+- its row, where the first byte picks one with no test (a word, a number, an operator, a string, `#`);
+- else the arm of its group's tests (`/`, which may open a comment, and the backtick);
+- and its record kind, which the rows used to load from `KINDS`.
+
+The dispatch keeps each byte's pick (`Picks::by_byte`), and the generator writes the table from it. The nibble tables
+and `KINDS` go where nothing else reads them, as in `.rerail`'s file. Kotlin's file is unchanged.
+
+A word's length is still its run of the block's word bits (`brun_last`), as lean's. An operator's is still `pair_6`'s
+test of its next byte. Lean reads an operator's length from the same load, by a block mask of pairs' first bytes.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included.
