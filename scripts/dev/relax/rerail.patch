@@ -167,6 +167,28 @@ index 695fd45e..a07f3ade 100644
          } else {
              "x86_64-unknown-linux-gnu"
          }
+diff --git a/libs/relax/base/src/vfs.rs b/libs/relax/base/src/vfs.rs
+index 0ee9ff6f..7c6b0e13 100644
+--- a/libs/relax/base/src/vfs.rs
++++ b/libs/relax/base/src/vfs.rs
+@@ -1355,6 +1355,17 @@ pub extern "C" fn relax_vfs_list(p: *const u8, n: usize, out: *mut *const u8, ou
+     }
+ }
+ 
++/// `text` (UTF-8) with each folder mount's paths in it as the disk names them ([`shown`]), held until
++/// `relax_vfs_release`; 0 when it names none (or is not UTF-8). For a program the run starts, which reads the disk,
++/// not the mounts (std process_unix.rs): a share's paths (`CARGO_MANIFEST_DIR`, `file!()`) are the mount's.
++pub extern "C" fn relax_vfs_shown(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64 {
++    let Ok(text) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(p, n) }) else { return 0 };
++    match shown(text) {
++        std::borrow::Cow::Owned(s) => hold(s.into_bytes(), out, out_len),
++        std::borrow::Cow::Borrowed(_) => 0,
++    }
++}
++
+ /// The mount table (`mounts_text`), held until `relax_vfs_release`.
+ pub extern "C" fn relax_vfs_mounts(out: *mut *const u8, out_len: *mut usize) -> u64 {
+     hold(mounts_text().into_bytes(), out, out_len)
 diff --git a/libs/relax/compiler/src/cache.rs b/libs/relax/compiler/src/cache.rs
 index a83c0c4f..f44a8d24 100644
 --- a/libs/relax/compiler/src/cache.rs
@@ -269,7 +291,7 @@ index 64fedf3a..2d5b07bf 100644
      use super::{Raw, MAX_FRAMES};
  
 diff --git a/libs/relax/compiler/src/jit.rs b/libs/relax/compiler/src/jit.rs
-index 1205bea4..34ac925a 100644
+index 1205bea4..8dc2944b 100644
 --- a/libs/relax/compiler/src/jit.rs
 +++ b/libs/relax/compiler/src/jit.rs
 @@ -5136,6 +5136,9 @@ unsafe fn materialize_fault() {
@@ -303,7 +325,15 @@ index 1205bea4..34ac925a 100644
              AF_OK => unmade.remove(&c),
              why => unmade.insert(c, why),
          };
-@@ -26983,6 +26991,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
+@@ -25865,6 +25873,7 @@ pub(crate) fn loader_symbol(name: &[u8]) -> Option<usize> {
+         b"relax_vfs_read" => Some(crate::vfs::relax_vfs_read as *const () as usize),
+         b"relax_vfs_list" => Some(crate::vfs::relax_vfs_list as *const () as usize),
+         b"relax_vfs_mounts" => Some(crate::vfs::relax_vfs_mounts as *const () as usize),
++        b"relax_vfs_shown" => Some(crate::vfs::relax_vfs_shown as *const () as usize),
+         b"relax_vfs_release" => Some(crate::vfs::relax_vfs_release as *const () as usize),
+         b"relax_vfs_edit" => Some(crate::vfs::relax_vfs_edit as *const () as usize),
+         b"relax_vfs_note" => Some(crate::reload::relax_vfs_note as *const () as usize),
+@@ -26983,6 +26992,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
      false
  }
  
@@ -331,7 +361,7 @@ index 1205bea4..34ac925a 100644
  fn prefront_slot_once(front: &FrontShared, id: u32) -> bool {
      match front.slot_keys.get(&id) {
          Some(FnKey::Closure(..)) => return prefront_closure(front, id),
-@@ -27039,6 +27068,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
+@@ -27039,6 +27069,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
  /// no front off the owner ("no body": prefront_twin takes an instance's body only), and the O3
  /// build of a hot caller that inlines it left it out (a large app: a view's draw closures, a text
  /// layout's closure, all unverified).
@@ -360,7 +390,7 @@ index 1205bea4..34ac925a 100644
  fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u32>) -> bool {
      let Some(key @ FnKey::Closure(cfile, _, parent)) = front.slot_keys.get(&id) else { return prefront_fail(AF_NOT_BODY) };
      let up = front.unit.load(Ordering::Relaxed);
-@@ -27052,8 +27103,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27052,8 +27104,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
      // from the disk cache): made again here, as lower_ahead_as makes an instance's. The closures of
      // a parent built long ago are what turns hot later (a benchmark's or a frame's callback): their
      // O3 builds bailed on this for the whole run and the closure ran baseline code
@@ -373,7 +403,7 @@ index 1205bea4..34ac925a 100644
          None => {
              let Some(FnKey::Inst(d, args)) = front.slot_keys.get(&parent) else {
                  prefront_fail(AF_NO_PARENT);
-@@ -27064,7 +27117,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27064,7 +27118,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
              let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::typeck::try_codegen_body(&u.prog, &u.tcx, d, &args)));
              let missing = !crate::program::take_missing().is_empty();
              match made {
@@ -382,7 +412,7 @@ index 1205bea4..34ac925a 100644
                  Err(p) if !p.is::<crate::preempt::NeedsUnit>() && !crate::preempt::is_cancelled(&*p) => std::panic::resume_unwind(p),
                  _ => {
                      prefront_fail(AF_NO_PARENT);
-@@ -27727,6 +27780,16 @@ pub struct FrontShared {
+@@ -27727,6 +27781,16 @@ pub struct FrontShared {
      /// inline const blocks' bytes): any thread's lowering reads it here, the tiers of one instance
      /// share one value. A source change bumps the epoch in the key, so nothing stale is read.
      body_consts: crate::conc::MemoMap<(u64, u32, u32, bool), (u64, u32)>,
@@ -399,7 +429,7 @@ index 1205bea4..34ac925a 100644
      /// Ahead checks are queued during startup and UI bursts.
      ahead_enabled: bool,
      /// bodies checked ahead after the first present: those no build took are dropped when a
-@@ -27802,6 +27865,7 @@ impl FrontShared {
+@@ -27802,6 +27866,7 @@ impl FrontShared {
              // helper's lowering of main raced the exit with its layout errors, limits/issue-55878)
              tls: crate::conc::MemoMap::with_bits(8),
              body_consts: crate::conc::MemoMap::with_bits(12),
@@ -529,6 +559,30 @@ index 781123aa..4760aaf3 100644
          let fs_base: rt_fn_ty!(fn() -> u64) = unsafe { std::mem::transmute(reader as usize) };
          let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
          let off = cell.wrapping_sub(fs_base()) as i64;
+diff --git a/libs/relax/compiler/src/sandbox/script.rs b/libs/relax/compiler/src/sandbox/script.rs
+index 9ec4e6a0..bde0f578 100644
+--- a/libs/relax/compiler/src/sandbox/script.rs
++++ b/libs/relax/compiler/src/sandbox/script.rs
+@@ -339,6 +339,7 @@ mod files {
+             "relax_vfs_release" => e!(sc_vfs_release),
+             "relax_vfs_edit" => e!(sc_vfs_edit),
+             "relax_vfs_mounts" => e!(sc_vfs_mounts),
++            "relax_vfs_shown" => e!(sc_vfs_shown),
+             "relax_vfs_note" => e!(sc_vfs_note),
+             _ => return None,
+         })
+@@ -992,6 +993,11 @@ mod files {
+         0
+     }
+ 
++    /// A confined script mounts no folders: its texts are the disk's already.
++    extern "C" fn sc_vfs_shown(_p: u64, _n: u64, _out: u64, _out_len: u64) -> u64 {
++        0
++    }
++
+     /// What the program looked at, for a live session: nothing of a confined script's is kept.
+     extern "C" fn sc_vfs_note(_p: u64, _n: u64, _kind: u32) {}
+ }
 diff --git a/libs/relax/compiler/src/sections.rs b/libs/relax/compiler/src/sections.rs
 index b317b895..9aac94b7 100644
 --- a/libs/relax/compiler/src/sections.rs
@@ -547,7 +601,7 @@ index b317b895..9aac94b7 100644
      }
      None
 diff --git a/libs/relax/compiler/std/core/arch/aarch64.rs b/libs/relax/compiler/std/core/arch/aarch64.rs
-index ba9071f3..ddd91404 100644
+index ba9071f3..88d9423b 100644
 --- a/libs/relax/compiler/std/core/arch/aarch64.rs
 +++ b/libs/relax/compiler/std/core/arch/aarch64.rs
 @@ -4299,6 +4299,37 @@ pub fn vqtbl1q_u8(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
@@ -588,6 +642,43 @@ index ba9071f3..ddd91404 100644
  #[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
  pub fn vqtbl4q_u8(a: uint8x16x4_t, b: uint8x16_t) -> uint8x16_t {
      let mut r = [0; 16];
+@@ -7608,3 +7639,36 @@ pub fn vzipq_u16(a: uint16x8_t, b: uint16x8_t) -> uint16x8x2_t {
+ pub fn vzipq_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4x2_t {
+     uint32x4x2_t(uint32x4_t([a.0[0], b.0[0], a.0[1], b.0[1]]), uint32x4_t([a.0[2], b.0[2], a.0[3], b.0[3]]))
+ }
++
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vmull_high_u32(a: uint32x4_t, b: uint32x4_t) -> uint64x2_t {
++    let mut r = [0; 2];
++    let mut i = 0;
++    while i < 2 {
++        r[i] = (a.0[i + 2] as u64) * (b.0[i + 2] as u64);
++        i += 1;
++    }
++    uint64x2_t(r)
++}
++
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vcntq_u8(a: uint8x16_t) -> uint8x16_t {
++    let mut r = [0; 16];
++    let mut i = 0;
++    while i < 16 {
++        r[i] = a.0[i].count_ones() as u8;
++        i += 1;
++    }
++    uint8x16_t(r)
++}
++
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vclzq_u32(a: uint32x4_t) -> uint32x4_t {
++    let mut r = [0; 4];
++    let mut i = 0;
++    while i < 4 {
++        r[i] = a.0[i].leading_zeros();
++        i += 1;
++    }
++    uint32x4_t(r)
++}
 diff --git a/libs/relax/compiler/std/core/iter/adapters.rs b/libs/relax/compiler/std/core/iter/adapters.rs
 index 445b1449..a99b59bc 100644
 --- a/libs/relax/compiler/std/core/iter/adapters.rs
@@ -710,6 +801,48 @@ index fda117d2..c16d9c1e 100644
          lower
      }
      fn is_empty(&self) -> bool {
+diff --git a/libs/relax/compiler/std/core/sync/atomic.rs b/libs/relax/compiler/std/core/sync/atomic.rs
+index f6cd792c..39da808b 100644
+--- a/libs/relax/compiler/std/core/sync/atomic.rs
++++ b/libs/relax/compiler/std/core/sync/atomic.rs
+@@ -112,6 +112,10 @@ impl<T: AtomicPrimitive> Atomic<T> {
+     pub const fn as_ptr(&self) -> *mut T {
+         self.v.get()
+     }
++    /// The atomic at `ptr`, which is aligned for it and valid for as long as `'a`, and touched by nothing but atomics.
++    pub const unsafe fn from_ptr<'a>(ptr: *mut T) -> &'a Atomic<T> {
++        unsafe { &*(ptr as *const Atomic<T>) }
++    }
+     pub fn load(&self, order: Ordering) -> T {
+         unsafe { ia::atomic_load(self.v.get() as *const T, load_order(order)) }
+     }
+diff --git a/libs/relax/compiler/std/std/fs_vfs.rs b/libs/relax/compiler/std/std/fs_vfs.rs
+index fc1eeacb..329f097d 100644
+--- a/libs/relax/compiler/std/std/fs_vfs.rs
++++ b/libs/relax/compiler/std/std/fs_vfs.rs
+@@ -16,6 +16,7 @@ extern "C" {
+     fn relax_vfs_read(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
+     fn relax_vfs_list(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
+     fn relax_vfs_mounts(out: *mut *const u8, out_len: *mut usize) -> u64;
++    fn relax_vfs_shown(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
+     fn relax_vfs_release(id: u64);
+     fn relax_vfs_edit(p: *const u8, n: usize, mode: u32, out: *mut *const u8, out_len: *mut usize) -> u64;
+     fn relax_vfs_note(p: *const u8, n: usize, kind: u32);
+@@ -185,6 +186,14 @@ pub(crate) fn list(path: &Path) -> io::Result<Vec<(Vec<u8>, bool)>> {
+     Ok(v.split(|c| *c == b'\n').filter(|l| l.len() > 2).map(|l| (l[2..].to_vec(), l[0] == b'd')).collect())
+ }
+ 
++/// `text` with the folder mounts' paths in it as the disk names them (compiler vfs.rs `shown`): what a program
++/// started from here is told (its name, its arguments), as it reads the disk, not the mounts (process_unix.rs).
++pub(crate) fn on_disk_text(text: &[u8]) -> Vec<u8> {
++    let (mut p, mut n) = (core::ptr::null(), 0usize);
++    let id = unsafe { relax_vfs_shown(text.as_ptr(), text.len(), &mut p, &mut n) };
++    take(id, p, n).unwrap_or_else(|| text.to_vec())
++}
++
+ /// The mount table, for a child started in a virtual folder (process.rs).
+ pub(crate) fn mounts() -> String {
+     let (mut p, mut n) = (core::ptr::null(), 0usize);
 diff --git a/libs/relax/compiler/std/std/os/linux.rs b/libs/relax/compiler/std/std/os/linux.rs
 index eb9e99f2..fff2cdde 100644
 --- a/libs/relax/compiler/std/std/os/linux.rs
@@ -800,6 +933,29 @@ index 2e0416b4..70db549e 100644
      let _ = PAYLOAD.try_with(|c| {
          if let Some(p) = c.take() {
              drop(unsafe { Box::from_raw(p.as_ptr()) });
+diff --git a/libs/relax/compiler/std/std/process_unix.rs b/libs/relax/compiler/std/std/process_unix.rs
+index ead66c4c..bf1c2292 100644
+--- a/libs/relax/compiler/std/std/process_unix.rs
++++ b/libs/relax/compiler/std/std/process_unix.rs
+@@ -647,13 +647,16 @@ impl Command {
+                 host.push((OsString::from("RELAX_EXEC_ORIGIN_EPOCH"), t0));
+             }
+         }
++        // Another program reads the disk, not this run's folder mounts: the paths it is given are the disk's (a
++        // share's `CARGO_MANIFEST_DIR` passed to a compiler). The program again keeps the mounts' (its stores' keys).
++        let told = |a: &OsStr| if self_exec.is_some() { a.as_encoded_bytes().to_vec() } else { crate::fs::vfs::on_disk_text(a.as_encoded_bytes()) };
+         let prog = match &self_exec {
+             Some(v) => cstring(v[0].as_encoded_bytes().to_vec())?,
+-            None => cstring(self.program.as_encoded_bytes().to_vec())?,
++            None => cstring(told(&self.program))?,
+         };
+         let mut argv_c = Vec::new();
+         for a in self_exec.as_ref().unwrap_or(&self.args) {
+-            argv_c.push(cstring(a.as_encoded_bytes().to_vec())?);
++            argv_c.push(cstring(told(a))?);
+         }
+         let mut argv: Vec<*const c_char> = Vec::new();
+         for a in &argv_c {
 diff --git a/libs/relax/compiler/std/std/relax/test.rs b/libs/relax/compiler/std/std/relax/test.rs
 index 920e21e6..3e20c3e4 100644
 --- a/libs/relax/compiler/std/std/relax/test.rs
