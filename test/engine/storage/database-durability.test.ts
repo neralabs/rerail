@@ -7,9 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { commitDurably, openRerailDatabase, openSqliteDatabase } from "../../../src/engine/storage/database.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
-// What the reference tells a person the store keeps through a power cut is what its writers' setting gives: SQLite's
-// `PRAGMA synchronous` of the open connection, 1 (NORMAL) when the last seconds of records may go, 2 (FULL) when every
-// commit waits for the disk. A change of the setting without the reference's sentence, or the other way round, fails.
+// The store's writers commit without waiting for the disk: SQLite's `PRAGMA synchronous` of the open connection is 1
+// (NORMAL), so a power cut can take the last seconds of records, which the reference tells a person; 2 (FULL) would make
+// every commit wait for the disk.
 const REFERENCE = fileURLToPath(new URL("../../../docs/reference.md", import.meta.url));
 const MAY_LOSE_THE_LAST_RECORDS = "a power cut or an operating system crash can take the last seconds of records";
 const NORMAL = 1;
@@ -27,19 +27,21 @@ async function databasePath(): Promise<string> {
 }
 
 describe("what the store keeps through a power cut", () => {
-  const promised = readFileSync(REFERENCE, "utf8").includes(MAY_LOSE_THE_LAST_RECORDS) ? NORMAL : FULL;
-
-  it("is what the reference says: every writer opens with the synchronous setting that keeps it", async () => {
+  it("opens every writer with the write-ahead log and NORMAL, so no commit waits for the disk", async () => {
     const path = await databasePath();
     for (const open of [() => openRerailDatabase(path), () => openSqliteDatabase(path)]) {
       const database = open();
       try {
         expect(database.$client.pragma("journal_mode", { simple: true })).toBe("wal");
-        expect(database.$client.pragma("synchronous", { simple: true })).toBe(promised);
+        expect(database.$client.pragma("synchronous", { simple: true })).toBe(NORMAL);
       } finally {
         database.$client.close();
       }
     }
+  });
+
+  it("is what the reference tells a person: a power cut can take the last seconds of records", () => {
+    expect(readFileSync(REFERENCE, "utf8"), "docs/reference.md").toContain(MAY_LOSE_THE_LAST_RECORDS);
   });
 
   // The rare commit a power cut must not take (the remote outbox's record of a batch it sends) waits for the disk alone:
@@ -49,9 +51,9 @@ describe("what the store keeps through a power cut", () => {
     const client = database.$client;
     try {
       expect(commitDurably(client, () => client.pragma("synchronous", { simple: true }))).toBe(FULL);
-      expect(client.pragma("synchronous", { simple: true })).toBe(promised);
+      expect(client.pragma("synchronous", { simple: true })).toBe(NORMAL);
       expect(() => commitDurably(client, () => { throw new Error("refused"); })).toThrow("refused");
-      expect(client.pragma("synchronous", { simple: true })).toBe(promised);
+      expect(client.pragma("synchronous", { simple: true })).toBe(NORMAL);
     } finally {
       client.close();
     }
@@ -63,7 +65,7 @@ describe("what the store keeps through a power cut", () => {
     const client = database.$client;
     try {
       expect(() => client.transaction(() => commitDurably(client, () => 1))()).toThrow("commitDurably must be called outside a transaction");
-      expect(client.pragma("synchronous", { simple: true })).toBe(promised);
+      expect(client.pragma("synchronous", { simple: true })).toBe(NORMAL);
     } finally {
       client.close();
     }
