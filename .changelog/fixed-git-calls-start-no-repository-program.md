@@ -1,1 +1,0 @@
-The audit's and `rerail scan`'s diff and the session walk no longer start a filter or signature program only a repository's config names, submodules included; your own drivers, such as Git LFS, still run. A file under such a driver may be listed as changed when only its timestamp changed and its program would have changed the bytes Git stores.
