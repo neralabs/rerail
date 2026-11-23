@@ -2494,8 +2494,6 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 9 => {
                     // `interpolation_expression_end`: read tail parts, to its closer
-                    here_1 = xs_2;
-                    here_2 = false;
                     if span_0.0 != usize::MAX && span_0.1 == usize::MAX && s >= span_0.0 {
                         let (l, c) = (span_0.0 - 1, s);
                         let _ = (l, c);
@@ -2593,8 +2591,6 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 10 => {
                     // `interpolation_expression_end`: read rtail parts, to its closer
-                    here_1 = xs_2;
-                    here_2 = false;
                     if span_0.0 != usize::MAX && span_0.1 == usize::MAX && s >= span_0.0 {
                         let (l, c) = (span_0.0 - 1, s);
                         let _ = (l, c);

@@ -5690,7 +5690,8 @@ impl Gen<'_> {
         for (p, arm) in row_arms.iter_mut().enumerate() {
             let opens = &row_opens[p];
             let mut code = String::new();
-            if picks.fused {
+            // A row that resumes a string's record goes on to the next token before the record reads `here`.
+            if picks.fused && arm.resume.is_none() {
                 for (j, a) in accs.iter().enumerate() {
                     if a.here != "false" {
                         let _ = writeln!(code, "            here_{j} = {};", fold_open(&a.here, opens));
