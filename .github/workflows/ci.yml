@@ -1316,10 +1316,13 @@ jobs:
   # which mounts `import_target`. The restore's (`git_workspace::`) are rerail-store's, the walk's
   # (`code_rule_dsl::module_graph::`) the engine's and, for its folder listing, rerail-lang-ecma's, and the warm index's
   # four the engine's. `discovers_current_repository_without_a_git_process` stays out: it fails on Windows on `main` as
-  # well. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim
-  # paths broke: its test runs here too. A debug build, as in the rust job, through its own compile cache. Its own job,
-  # beside build-windows and the shards rather than on one of them. Gated as the rust job is, and only when the change
-  # selects the engine's tests (`rust-engine`).
+  # well. So does `a_folder_git_does_not_ignore_that_this_account_may_not_list_still_stops_discovery`: it denies a
+  # folder's listing, which a token with the Backup privilege on, as this runner's administrator holds it, lists all the
+  # same (run on Windows 11 with that privilege kept, it fails, and the restore's, the walk's and the warm index's cases
+  # pass). The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here
+  # too. A debug build, as in the rust job, through its own compile cache. Its own job, beside build-windows and the
+  # shards rather than on one of them. Gated as the rust job is, and only when the change selects the engine's tests
+  # (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1384,6 +1387,7 @@ jobs:
           code_rule_dsl::workspace::context_tests::a_warm_index_reads_a_file_whose_change_time_moved_at_every_index
           code_rule_dsl::workspace::context_tests::a_warm_index_restores_a_file_whose_data_is_offline_with_no_read
           --skip git_workspace::tests::discovers_current_repository_without_a_git_process
+          --skip git_workspace::tests::a_folder_git_does_not_ignore_that_this_account_may_not_list_still_stops_discovery
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
