@@ -376,6 +376,58 @@ mod windows {
             std::fs::remove_dir_all(&folder).unwrap();
         }
 
+        /// The listing gives a file's times from its folder's entry for the name, which NTFS
+        /// refreshes only for the name a handle opened: a rewrite through another hard link at the
+        /// same length, with its modification time put back, moves the other name's change time
+        /// and leaves this name's stamp as it was.
+        #[test]
+        fn a_rewrite_through_another_hard_link_leaves_this_names_stamp() {
+            let folder = std::env::temp_dir().join(format!(
+                "rerail-listing-link-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&folder).unwrap();
+            let (this, other) = (folder.join("a.ts"), folder.join("b.ts"));
+            std::fs::write(&this, "'use server';\n").unwrap();
+            std::fs::hard_link(&this, &other).unwrap();
+            // Through the other name: both times an hour back, so the rewrite's change time differs
+            // from the one listed before it, whatever the clock's tick.
+            let written = SystemTime::now() - Duration::from_secs(3_600);
+            crate::git_workspace::backdate(&other, written);
+            let stamps = || {
+                let mut stamps = list(&folder)
+                    .unwrap()
+                    .map(|entry| {
+                        let entry = entry.unwrap();
+                        (entry.name(), entry.facts().unwrap().stamp().unwrap())
+                    })
+                    .collect::<Vec<_>>();
+                stamps.sort_by(|left, right| left.0.cmp(&right.0));
+                [stamps[0].1, stamps[1].1]
+            };
+            let before = stamps();
+
+            std::fs::write(&other, "'use client';\n").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&other)
+                .unwrap()
+                .set_modified(written)
+                .unwrap();
+            let after = stamps();
+            assert_ne!(
+                after[1].changed, before[1].changed,
+                "the other name's change time"
+            );
+            assert_eq!(after[1].modified, before[1].modified, "its time put back");
+            assert_eq!(after[0], before[0], "this name's stamp as it was");
+            std::fs::remove_dir_all(&folder).unwrap();
+        }
+
         /// A reparse point whose tag names another file (a junction, a symbolic link) is a link;
         /// one whose tag does not (a cloud file placeholder, its folder) is what its attributes
         /// say, as std's `FileType` reads them.

@@ -546,6 +546,11 @@ fn strip_outside_strings(text: &str, skip: impl Fn(&[u8], usize) -> Option<usize
 /// every write and every time set moves, and its file id, both read with its folder's listing
 /// (`listing`). That id is the listing's 64-bit one, which ReFS, whose ids are 128-bit, does not
 /// keep unique: there it tells a file a rename put in place only with the two times beside it.
+/// The listing gives the copy of the times that the folder's entry for the file's name holds,
+/// which NTFS refreshes only when the last handle to the file closes, and only for the name that
+/// handle opened: a rewrite through another hard link leaves this stamp as it was, and so does one
+/// whose writer still holds its handle, until it closes. `read_dir` gives its modification time
+/// and length from the same copy. A restore reads the file's own record (`git_workspace`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     modified: SystemTime,
