@@ -4395,6 +4395,30 @@ impl View {
             && (cols.len() == 1 || !self.src.looks_up_columns())
             && !(dc.is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k])))
     }
+    /// Whether a probe binding every key column `cols` (two or more, nothing else read) is a test of the source
+    /// (`tests_keys`): a whole view, no constants, each key read with the lead's matches.
+    fn keys_tested(&self, cols: &[usize]) -> bool {
+        self.eqs.is_empty() && self.ids.is_none() && (2..=READ).contains(&cols.len())
+    }
+    /// Whether some row of the view has values `key` in view columns `cols`: the source's matches by the lead column
+    /// read with the other key columns and compared as found, the first equal one ending it (a membership step's
+    /// probe, `exists`: no row of it read into the step). `None` where the source has no such read.
+    fn tests_keys(&self, cols: &[usize], key: &[i64], lead: usize, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        let (mut src, mut want, mut m) = ([0usize; READ], [0i64; READ], 0);
+        for (j, &c) in cols.iter().enumerate() {
+            if j != lead {
+                src[m] = self.cols[c];
+                want[m] = key[j];
+                m += 1;
+            }
+        }
+        let mut found = false;
+        // The other key's value, which the source may keep its matches to (checked here all the same).
+        cursor.also = (m == 1).then(|| (src[0], want[0]));
+        let read = self.src.lookup_read_at(self.cols[cols[lead]], key[lead], &src[..m], cursor, &mut |_, got| found |= got == &want[..m]);
+        cursor.also = None;
+        read.then_some(found)
+    }
     /// `find_read`'s read of probe `s`, each match given to `each` with its values of view columns `need` as the
     /// source finds it; `false` where the source has no such read (before any match).
     fn read_each(&self, s: &Stream<'_>, need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(u32, [i64; READ])) -> bool {
@@ -8128,6 +8152,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     _ if handed || keys.is_empty() => 0,
                     Src::In(rel, ix) if rel.view.is_some() && ix.runs(rel).is_none() => {
                         if ix.composite { ix.cols.iter().fold(0, |m, &c| m | 1 << c) }
+                        // A membership probe of a view by several columns, nothing else read: a test of the source
+                        // (`View::tests_keys`), every key compared there.
+                        else if ix.source && !ix.sorted && binds.is_empty() && tests.is_empty() && j.fused[i].is_none() && j.ranges[i].is_none()
+                            && rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) { ix.cols.iter().fold(0, |m, &c| m | 1 << c) }
                         else if ix.sorted || (ix.source && ix.cols.len() == 1) { 1 << ix.cols[ix.lead] }
                         else { 0 }
                     }

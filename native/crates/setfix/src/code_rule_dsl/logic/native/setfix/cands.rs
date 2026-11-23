@@ -168,6 +168,15 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 (Rows::Source(v), match v.src.sorted_range_at(c, k, &mut hints[0]) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
             }
             else if ix.source && let Some(v) = &rel.view {
+                // A membership step's test (`Step::Atom`'s `exact`: every key column, nothing read): whether a row has
+                // the key, compared in the source's read; else its rows by the lead, each key checked here.
+                // Only a join's step or a test asks so (`stream`): a fold's or a string join's need of 0 reads its rows.
+                if stream && need == 0 && v.keys_tested(&ix.cols) {
+                    let found = v.tests_keys(&ix.cols, key, ix.lead, &mut last.cursor).unwrap_or_else(|| {
+                        v.find_keyed(&ix.cols, key, ix.lead).into_iter().any(|r| ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k))
+                    });
+                    return (Rows::Source(v), Cands::Range(0, u32::from(found)));
+                }
                 let probed = match &mut last.memo {
                     Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Pending) && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
                     _ => {
@@ -285,6 +294,9 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
                 ix.cols.iter().fold(0, |m, &c| m | 1 << c)
             } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
                 1 << ix.cols[ix.lead]
+            } else if ix.source && tests.is_empty() && rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
+                // A view's test by several columns: the source's (`View::tests_keys`), every key compared there.
+                ix.cols.iter().fold(0, |m, &c| m | 1 << c)
             } else {
                 0
             }
