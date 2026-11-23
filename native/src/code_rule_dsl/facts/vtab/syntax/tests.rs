@@ -2519,6 +2519,48 @@ fn places_are_the_view_and_the_spans_rows_measured_in_a_block() {
     }
 }
 
+/// A place relation's keyed walk (`Places::for_rows_keyed`: the cross part's count of `docof` at the exports' nodes,
+/// decision 0458) gives the rows a per-row read finds at node and span keys alike, and at nodes alone makes no group
+/// of its batch: a span's id is never a node's (`granules::is_extra`). It made the whole batch before (ab200).
+#[test]
+fn a_places_keyed_walk_at_nodes_makes_no_span_row() {
+    let store = ContentStore::open(&temp("places-keyed")).unwrap();
+    let docs = || -> Vec<Document> { (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x,\n      {k})\n"))).collect() };
+    let reads = ["node", "line", "docof", "src_line", "source", "comment", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let walk = |s: &Arc<dyn Source>, keys: &rustc_hash::FxHashSet<i64>| {
+        let mut got: Vec<(usize, Vec<i64>)> = Vec::new();
+        let walked = s.for_rows_keyed(0, keys, &[0, 1], &mut |r, row| {
+            got.push((r, row.to_vec()));
+            true
+        });
+        got.sort();
+        walked.then_some(got)
+    };
+    // Node keys and span keys: the rows a per-row read finds.
+    let sources = shaped(&store, docs(), &projection).unwrap();
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap().1);
+    let (node, src_line) = (of("node"), of("src_line"));
+    for name in ["line", "docof"] {
+        let s = of(name);
+        let keys: rustc_hash::FxHashSet<i64> = (0..node.len()).step_by(2).map(|r| node.value(r, 1)).chain((0..src_line.len()).step_by(2).map(|r| src_line.value(r, 2))).collect();
+        assert!(keys.iter().any(|&k| granules::is_extra(k as u32)), "{name}: span keys among them");
+        let per_row: Vec<(usize, Vec<i64>)> = (0..s.len()).filter(|&r| keys.contains(&s.value(r, 0))).map(|r| (r, vec![s.value(r, 0), s.value(r, 1)])).collect();
+        let places = s.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some());
+        assert_eq!(walk(&s, &keys), Some(per_row), "{name} (places: {places}): the keyed walk at nodes and spans");
+    }
+    // Node keys alone: no group of the batch made.
+    let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut made: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
+    made.extend(views(&batch));
+    places::join(&mut made, &batch);
+    let docof = Arc::clone(&made.iter().find(|(n, _)| *n == "docof").unwrap().1);
+    let ids: rustc_hash::FxHashSet<i64> = (0..3).flat_map(|d| (0..4).map(move |i| ((d + 1) << 32) | i)).filter(|&k| !granules::is_extra(k as u32)).collect();
+    let places = docof.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some());
+    assert!(walk(&docof, &ids).is_some(), "the made docof (places: {places}) walked by key");
+    assert_eq!(batch.groups(), 0, "a walk at nodes made no span row");
+}
+
 /// Decision 0494: a place relation measured before its spans' rows are made counts the view on the tape and the spans
 /// on a sample of their documents (`view_and_sampled`): its statistics are had with no whole read, its rows' count as
 /// its rows give it, once made.

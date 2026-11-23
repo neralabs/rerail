@@ -667,6 +667,12 @@ impl Batch {
                 *at = Arc::new(if start == 0 { r.growable() } else { at.grown(r) });
                 ranges.push(start..Source::len(at.as_ref()));
             }
+            if rerail_prof::heap::on() {
+                let made = s.of.iter().filter(|g| g.is_some()).count() + need.len();
+                for (i, at) in s.rels.iter().enumerate() {
+                    note_source(self as *const Batch as usize, i, &self.rows.names[i], at, made, self.docs.len());
+                }
+            }
             let g = s.groups.len() as u32;
             for &i in &need {
                 s.of[i] = Some(g);
@@ -1607,4 +1613,40 @@ impl Source for TextTest {
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
     }
+}
+
+/// Under a heap profile, each batch's relations as they grow (`note_source`): what a batch's block of sources holds at
+/// the footprint's peak, by relation, with the spans its first and latest groups were made in and how many of its
+/// documents were. Each entry is the relation's latest (a group grows it into a new one), kept while anything holds it.
+#[derive(Default)]
+struct SourcesHeld(parking_lot::Mutex<HashMap<(usize, usize), SourceNote>>);
+
+struct SourceNote {
+    name: String,
+    rel: std::sync::Weak<Relation>,
+    first: u32,
+    last: u32,
+    made: usize,
+    docs: usize,
+}
+
+fn note_source(batch: usize, i: usize, name: &str, rel: &Arc<Relation>, made: usize, docs: usize) {
+    let held = profile::machine::<SourcesHeld>();
+    let mut m = held.0.lock();
+    m.retain(|_, n| n.rel.strong_count() > 0);
+    let span = rerail_prof::heap::span();
+    let e = m.entry((batch, i)).or_insert_with(|| SourceNote { name: name.to_owned(), rel: Arc::downgrade(rel), first: span, last: span, made, docs });
+    e.rel = Arc::downgrade(rel);
+    e.last = span;
+    e.made = made;
+}
+
+/// The batches' relations held now, the most bytes first: (bytes in their blocks, name, documents made, the batch's
+/// documents, the span of its first group, of its latest).
+pub fn sources_held() -> Vec<(usize, String, usize, usize, u32, u32)> {
+    let held = profile::machine::<SourcesHeld>();
+    let m = held.0.lock();
+    let mut out: Vec<_> = m.values().filter_map(|n| n.rel.upgrade().map(|r| (r.block_bytes(), n.name.clone(), n.made, n.docs, n.first, n.last))).filter(|e| e.0 > 0).collect();
+    out.sort_by_key(|e| std::cmp::Reverse(e.0));
+    out
 }

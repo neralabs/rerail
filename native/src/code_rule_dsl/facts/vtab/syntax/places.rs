@@ -85,8 +85,11 @@ impl Source for Places {
             self.spans.for_rows_in(range.start.saturating_sub(first)..range.end - first, columns, &mut |r, row| each(first + r, row));
         }
     }
-    /// The view's walk of the keyed rows, then the spans' (their own keyed walk, else every span row with a key: the
-    /// spans are few beside the nodes).
+    /// The view's walk of the keyed rows, then the spans': only at the keys that are `Extra` spans' ids (no node's is:
+    /// `granules::is_extra`), their own keyed walk, else the rows of those keys' documents, else every span row with a
+    /// key. A walk of every span row made the whole batch, every relation of every group: the cross part's count of
+    /// `docof` at the exports' nodes, 85 MB of the 300-file batch at the M3's peak (ab200), though no node it was asked
+    /// for is a span.
     fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
         let mut going = true;
         if !self.view.for_rows_keyed(column, keys, columns, &mut |r, row| {
@@ -99,13 +102,28 @@ impl Source for Places {
             return true;
         }
         let first = self.first();
-        if self.spans.for_rows_keyed(column, keys, columns, &mut |r, row| each(first + r, row)) {
+        let spans: rustc_hash::FxHashSet<i64> = keys.iter().copied().filter(|&k| super::granules::is_extra(k as u32)).collect();
+        if spans.is_empty() {
+            return true;
+        }
+        if self.spans.for_rows_keyed(column, &spans, columns, &mut |r, row| each(first + r, row)) {
             return true;
         }
         let mut all = columns.to_vec();
         all.push(column);
         let k = columns.len();
-        self.spans.for_rows_in(0..self.spans.len(), &all, &mut |r, row| !keys.contains(&row[k]) || each(first + r, &row[..k]));
+        let docs: BTreeSet<u32> = spans.iter().map(|&s| (s >> 32) as u32).collect();
+        if let Some(rows) = self.spans.rows_of_documents(&docs) {
+            let mut row = vec![0; all.len()];
+            for r in rows {
+                self.spans.row_at(r, &all, &mut row);
+                if spans.contains(&row[k]) && !each(first + r, &row[..k]) {
+                    break;
+                }
+            }
+            return true;
+        }
+        self.spans.for_rows_in(0..self.spans.len(), &all, &mut |r, row| !spans.contains(&row[k]) || each(first + r, &row[..k]));
         true
     }
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
@@ -165,7 +183,7 @@ impl Source for Places {
 
 /// `out`'s place relations made as `Extra`'s span rows (core.rerail's shape), each bound with the `Loc` view of its
 /// nodes before them: the batch makes no node's place as a row.
-pub(super) fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::Batch>) {
+pub fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::Batch>) {
     if batch.shape != super::Shape::Core {
         return;
     }

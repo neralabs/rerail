@@ -326,6 +326,23 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
         let types: Vec<String> = types.iter().take(4).map(|(b, n, t)| format!("{} MB in {n} {t}", b >> 20)).collect();
         out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", "))));
     }
+    // What lies in the batches' blocks of sources, by relation (`made::sources_held`): the span of its first group and
+    // of its latest, and the batch's documents made.
+    let sources = crate::code_rule_dsl::facts::vtab::syntax::made::sources_held();
+    let (mut small, mut small_n, all, n) = (0, 0, sources.iter().map(|s| s.0).sum::<usize>(), sources.len());
+    for (k, (bytes, name, made, docs, first, last)) in sources.into_iter().enumerate() {
+        if bytes >= 1 << 20 && k < 24 {
+            let last = if last == first { String::new() } else { format!("; its latest group in {}", crate::code_rule_dsl::logic::profile::short(&rerail_prof::heap::name(last), 160)) };
+            out.push((first, Life::Source as u8, bytes, 0, format!("  in a batch's block of sources: {name}, {made} of its {docs} documents made{last}")));
+        } else {
+            small += bytes;
+            small_n += 1;
+        }
+    }
+    if n > 0 {
+        let s = rerail_prof::heap::intern("the batches' relations, all of them");
+        out.push((s, Life::Source as u8, all, 0, format!("  in a batch's block of sources: {n} relations; {small_n} of them not listed, {} MB", small >> 20)));
+    }
     if rest > 0 {
         let s = rerail_prof::heap::intern("the open block's arrays of spans under 1 MB each");
         out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans")));

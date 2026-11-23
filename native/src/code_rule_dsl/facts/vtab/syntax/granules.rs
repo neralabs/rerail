@@ -113,6 +113,11 @@ pub fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
     (i < kind.capacity()).then(|| ((EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS) | (i % INDEX))
 }
 
+/// Whether an id's low bits (`id as u32`) are an `Extra` span's slot: no node's or position's ever is.
+pub fn is_extra(low: u32) -> bool {
+    (EXTRA_FIRST..EXTRA_FIRST + EXTRA_SLOTS).contains(&(low >> INDEX_BITS))
+}
+
 /// The comment number (from 1) of a `Comment` span's low bits, as `extra_low(ExtraSpan::Comment, i)` made them.
 pub fn comment_of(low: u32) -> Option<u32> {
     let first = EXTRA_FIRST + ExtraSpan::Comment.first();
