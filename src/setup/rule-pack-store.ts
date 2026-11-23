@@ -221,22 +221,12 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
     },
     async install(specs, options = {}) {
       if (specs.length === 0) return;
-      const install = (offline: boolean) =>
-        npm(["install", "--prefix", prefix, ...quiet, ...(offline ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
+      const install = async (offline: boolean) => {
+        await npm(["install", "--prefix", prefix, ...quiet, ...(offline ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
+      };
       // A tag or range must ask the registry whatever the caller wants.
-      const exact = specs.every(spec => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null);
-      if (options.preferOffline !== true || !exact) {
-        await install(false);
-        return;
-      }
-      try {
-        await install(true);
-      } catch (error) {
-        // The cached listing predates a version (#992): ask the registry. npm says so at once, so a stopped install is
-        // never tried again, and the packs lock's wait still covers a stopped install and its put-back.
-        if (!(error instanceof Error) || !NO_VERSION_UNDER_TAG.test(error.message)) throw error;
-        await install(false);
-      }
+      if (options.preferOffline === true && specs.every(isExactVersionSpec)) await installCacheFirst(install);
+      else await install(false);
     },
     async remove(packageNames) {
       if (packageNames.length === 0) return;
@@ -244,6 +234,23 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
       await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
     },
   };
+}
+
+/** Whether npm spec `spec` (`<name>@<version>`) names one exact version. */
+const isExactVersionSpec = (spec: string): boolean => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null;
+
+/**
+ * Runs `install` from npm's cache, and once more asking the registry when npm finds no such version: the cached listing
+ * predates it (#992). npm says so at once, so a stopped install is never tried again, and the packs lock's wait still
+ * covers a stopped install and its put-back.
+ */
+async function installCacheFirst(install: (offline: boolean) => Promise<void>): Promise<void> {
+  try {
+    await install(true);
+  } catch (error) {
+    if (!(error instanceof Error) || !NO_VERSION_UNDER_TAG.test(error.message)) throw error;
+    await install(false);
+  }
 }
 
 /** The update channel in the Rerail home's `update-state.json`: the dist-tag packs are fetched under. */
