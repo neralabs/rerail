@@ -11,7 +11,13 @@ pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
+/// The data-layer packs are disabled (`packs/data-layer/DISABLED.md`): their data is refused, so a test of them run by
+/// name stops saying why rather than running.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
+    assert!(
+        !relative.starts_with("packs/data-layer/"),
+        "{relative}: the data-layer packs are disabled and not run (packs/data-layer/DISABLED.md)"
+    );
     let path = crate::source_tree::native()
     .join("..")
     .join(relative);

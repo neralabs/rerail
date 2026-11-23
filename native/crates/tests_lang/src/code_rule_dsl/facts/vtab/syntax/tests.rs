@@ -1132,7 +1132,7 @@ fn definition_slots_stay_below_the_span_bit() {
 /// groups of every regex the data-layer pack's `match_all`, `match_group` and `rx_span` name over the source and each
 /// kind of line (an upper bound: one program with every pattern over every span kind).
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.

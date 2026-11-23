@@ -533,11 +533,8 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "true"
 
-      - uses: ./.github/actions/pack-test-data
-        with:
-          pack: data-layer
-          tool: lint
-          fetch: "true"
+      # The data-layer packs are disabled (packs/data-layer/DISABLED.md): their tests do not run, so their test data
+      # is not fetched.
 
   # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
   # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
@@ -801,10 +798,10 @@ jobs:
           dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The engine's tests, in the legs scripts/check/ci/native-test-legs.mjs names, each running the binaries the
-  # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Four read pack
+  # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Three read pack
   # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
-  # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
-  # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
+  # fixtures and eslint-plugin-vue's fixtures (the data-layer port's are not: its packs are disabled,
+  # packs/data-layer/DISABLED.md), restored from what the test-data job saved, so the job runs where that job does (the note
   # at the top). Each leg runs 3 to 8 minutes of tests; taking the binaries took 16 s to 4.4 minutes in 44383070532, so
   # the artifact holds only binaries with tests, packed with a long window (1.46 to 0.79 GB). The slowest leg, the
   # waves', is bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
@@ -856,11 +853,8 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "false"
 
-      - uses: ./.github/actions/pack-test-data
-        with:
-          pack: data-layer
-          tool: lint
-          fetch: "false"
+      # The data-layer packs are disabled (packs/data-layer/DISABLED.md): their tests do not run, so their test data
+      # is not fetched.
 
       # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
       - name: Set up uv
