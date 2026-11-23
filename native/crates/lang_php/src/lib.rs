@@ -833,8 +833,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_rules::code_rule_dsl::soundness;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     #[path = "suppress"]
     pub mod suppress {
         pub use rerail_rules::code_rule_dsl::suppress::*;

@@ -1378,3 +1378,21 @@ dropped the `--timings` runs (2026-11-22).
         is 34.
       - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files.
         Tests (Linux): atoms, store, store-base and run, 287; setfix's owner and stores' tests, 43.
+- **10c, facts-base's cost.** Only facts depends on facts-base, and every crate above reaches it through facts, so an
+  edit there rebuilds facts' users (60) whatever each reads. What can drop is the cost of its lines: the modules few
+  crates name move up into crates near those users, and what the core calls of them stays as a small interface below.
+  - **10c-1, the SQL profiler and admission ledger** (1.7k lines) are `rerail-sql-profile`, which setfix's waves'
+    owner and the executor (sessions-base, sessions) mount. An edit to them rebuilds 35 crates, from 60. The facts'
+    virtual tables only count (`frame`, `FrameEvent`): those counters, the index-build span, the `EXPLAIN` flag
+    and the timers (`clock`, `timing`) are rerail-prof's `sql_frame`, below facts-base. The profiler drives them
+    through `explain`, `counts`, `statement_started` and `statement_ended`, and re-exports them at their old
+    paths. The facades that re-exported the profiler and never used it drop it. Boot mounts it from sessions.
+    - The profiler's tests are `cfg(test)`: no crate read them under test-hooks.
+    - `facts::rows::SOURCES_HELD` is a `rerail_registry::Slot` that boot registers, not a `OnceLock`. This was
+      check_crate_dag's one finding.
+    - Then: facts-base 17.2k lines (from 19.0k), 60 above. rerail-sql-profile 1.7k lines, 35 above.
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files.
+      The repository's checks pass. Tests (Linux): the profiler's, the executor's profile and admission tests, 44;
+      boot's library, 61 of 74. Of the 13 failures, 11 need pack test data the host lacks, one is a Metal test on
+      Linux, and one predates the split (`revision_cli_reads_commit_metadata_without_its_tree`: the run's settings
+      read of `rerail.env` meets the missing root tree, which `6f1867702e` made an error).

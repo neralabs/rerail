@@ -1,16 +1,14 @@
 //! Complete executed-query trace. Callbacks only read SQLite counters; EXPLAIN runs later,
 //! outside callbacks and timed spans, while the connection's schema still exists.
 
-#[path = "sql/coverage.rs"]
+#[path = "sql_profile/coverage.rs"]
 pub mod coverage;
 #[allow(dead_code)]
-#[path = "sql/snapshot.rs"]
+#[path = "sql_profile/snapshot.rs"]
 pub mod snapshot;
-#[path = "sql/timing.rs"]
-pub mod timing;
 use rusqlite::{Connection, ffi};
 use serde_json::{Value, json};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_int, c_uint, c_void};
 use std::fs::{File, create_dir_all};
@@ -20,11 +18,11 @@ use std::sync::LazyLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime};
+// The counters a statement's callbacks add to, and the timers: rerail-prof's, below the facts' virtual tables that
+// count (crate split 10c). Their paths here are the ones the executor names.
+pub use rerail_prof::code_rule_dsl::sql_frame::{FrameEvent, IndexBuild, clock, explaining, frame, index_build, thread_cpu_ns, timing};
+use rerail_prof::code_rule_dsl::sql_frame as counters;
 use timing::{Started, Timing};
-// The SQL executor's planning and batches read the thread's CPU clock in every build.
-#[path = "clock.rs"]
-pub mod clock;
-pub use clock::thread_cpu_ns;
 
 /// `RERAIL_SQL_PROFILE_DIR`, read once a run.
 fn directory() -> Option<PathBuf> {
@@ -55,71 +53,6 @@ const STATUSES: [c_int; 4] = [
     ffi::SQLITE_STMTSTATUS_SORT,
     ffi::SQLITE_STMTSTATUS_AUTOINDEX,
 ];
-
-thread_local! {
-    static FRAME: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
-    static ACTIVE: Cell<usize> = const { Cell::new(0) };
-    static EXPLAINING: Cell<bool> = const { Cell::new(false) };
-}
-
-pub fn explaining() -> bool {
-    EXPLAINING.get()
-}
-
-struct Explanation(bool);
-impl Drop for Explanation {
-    fn drop(&mut self) {
-        EXPLAINING.set(self.0);
-    }
-}
-
-/// Cumulative callback counts, read at statement boundaries. No clocks in row callbacks.
-#[derive(Clone, Copy)]
-pub enum FrameEvent {
-    Scan,
-    Lookup,
-    Next,
-    Column,
-    Insert,
-    IndexBuild = 5,
-    IndexedRows,
-}
-
-#[inline]
-pub fn frame(event: FrameEvent, count: usize) {
-    if ACTIVE.get() != 0 {
-        FRAME.with(|counter| {
-            let mut values = counter.get();
-            values[event as usize] += count as u64;
-            counter.set(values);
-        });
-    }
-}
-
-/// Time only cache misses, including any scan-order preparation needed by the lookup.
-/// These spans are contained in SQL time; they must not be added to the CPU budget.
-pub fn index_build(rows: usize) -> IndexBuild {
-    let started = (ACTIVE.get() != 0).then(Started::now);
-    frame(FrameEvent::IndexBuild, 1);
-    frame(FrameEvent::IndexedRows, rows);
-    IndexBuild(started)
-}
-
-pub struct IndexBuild(Option<Started>);
-
-impl Drop for IndexBuild {
-    fn drop(&mut self) {
-        if let Some(started) = self.0 {
-            let elapsed = started.elapsed();
-            FRAME.with(|counter| {
-                let mut values = counter.get();
-                values[7] += elapsed.cpu;
-                values[8] += elapsed.wall;
-                counter.set(values);
-            });
-        }
-    }
-}
 
 const ORIGINS: [&str; 3] = ["engine", "sqliteInternal", "unknown"];
 
@@ -336,7 +269,7 @@ impl Profiler {
 
     /// Capture plans before their physical inputs are released, without rewriting the report.
     pub fn explain_pending(&self, connection: &Connection) {
-        let _explanation = Explanation(EXPLAINING.replace(true));
+        let _explanation = counters::explain();
         self.state.borrow_mut().enabled = false;
         {
             let pending: Vec<_> = self
@@ -611,10 +544,10 @@ unsafe extern "C" fn trace(
                         rows: 0,
                         query,
                         context,
-                        frame: FRAME.get(),
+                        frame: counters::counts(),
                     },
                 );
-                ACTIVE.set(ACTIVE.get() + 1);
+                counters::statement_started();
             }
             ffi::SQLITE_TRACE_ROW => {
                 if let Some(running) = state.running.get_mut(&key) {
@@ -629,7 +562,7 @@ unsafe extern "C" fn trace(
                 };
                 state.sql_completed += 1;
                 state.origin_completed[running.origin] += 1;
-                ACTIVE.set(ACTIVE.get().saturating_sub(1));
+                counters::statement_ended();
                 let elapsed = running.started.elapsed();
                 state.sql_time.add(elapsed);
                 let counters = STATUSES.map(|status| unsafe {
@@ -640,8 +573,7 @@ unsafe extern "C" fn trace(
                     .zip(running.counters)
                     .map(|(a, b)| a.saturating_sub(b))
                     .collect();
-                let frame: Vec<_> = FRAME
-                    .get()
+                let frame: Vec<_> = counters::counts()
                     .iter()
                     .zip(running.frame)
                     .map(|(a, b)| a.saturating_sub(b))
@@ -671,6 +603,6 @@ unsafe extern "C" fn trace(
     0
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
-#[path = "sql/tests.rs"]
+#[cfg(test)]
+#[path = "sql_profile/tests.rs"]
 pub mod tests;

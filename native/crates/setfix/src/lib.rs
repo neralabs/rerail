@@ -31,6 +31,8 @@ extern crate self as rerail_setfix;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_run::code_rule_dsl::*;
+    // The SQL profiler and admission ledger the waves' owner installs (rerail-sql-profile, crate split 10c).
+    pub use rerail_sql_profile::code_rule_dsl::{sql_admission, sql_profile};
     #[path = "logic"]
     pub mod logic {
         pub use rerail_run::code_rule_dsl::logic::*;

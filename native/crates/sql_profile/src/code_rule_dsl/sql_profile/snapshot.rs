@@ -6,7 +6,6 @@ use std::{
     ffi::CStr,
     path::{Path, PathBuf},
     sync::{
-        LazyLock,
         atomic::{AtomicUsize, Ordering},
     },
 };

@@ -6,19 +6,19 @@ use std::time::Instant;
 
 /// Time spent, in nanoseconds: wall-clock and the thread's CPU.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Timing {
-    pub(in crate::code_rule_dsl) wall: u64,
-    pub(in crate::code_rule_dsl) cpu: u64,
+pub struct Timing {
+    pub wall: u64,
+    pub cpu: u64,
 }
 
 impl Timing {
-    pub(in crate::code_rule_dsl) fn add(&mut self, other: Self) {
+    pub fn add(&mut self, other: Self) {
         self.wall += other.wall;
         self.cpu += other.cpu;
     }
 
     /// What was added from `before` to `self`.
-    pub(in crate::code_rule_dsl) fn since(self, before: Self) -> Self {
+    pub fn since(self, before: Self) -> Self {
         Self {
             wall: self.wall.saturating_sub(before.wall),
             cpu: self.cpu.saturating_sub(before.cpu),
@@ -28,13 +28,13 @@ impl Timing {
 
 /// When a timed span started, on this thread.
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Started {
+pub struct Started {
     wall: Instant,
     cpu: u64,
 }
 
 impl Started {
-    pub(in crate::code_rule_dsl) fn now() -> Self {
+    pub fn now() -> Self {
         Self {
             wall: Instant::now(),
             cpu: thread_cpu_nanos(),
@@ -42,7 +42,7 @@ impl Started {
     }
 
     /// The time since it started; the span must not leave its thread.
-    pub(in crate::code_rule_dsl) fn elapsed(&self) -> Timing {
+    pub fn elapsed(&self) -> Timing {
         Timing {
             wall: self.wall.elapsed().as_nanos() as u64,
             cpu: thread_cpu_nanos().saturating_sub(self.cpu),

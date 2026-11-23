@@ -2898,10 +2898,10 @@ pub mod code_rule_dsl {
     pub use rerail_workspace::code_rule_dsl::profile;
     // The same SQL diagnostics serve standalone execution and the workspace profiler.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_sessions::code_rule_dsl::sql_profile;
     pub mod sql_admission {
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_facts::code_rule_dsl::sql_admission::*;
+        pub use rerail_sessions::code_rule_dsl::sql_admission::*;
         #[allow(unused_imports)]
         use parking_lot::Mutex;
         #[allow(unused_imports)]

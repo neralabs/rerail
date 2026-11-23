@@ -81,9 +81,7 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub mod search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    #[path = "profile/sql.rs"]
-    pub mod sql_profile;
-    pub mod sql_admission;
+    pub use rerail_prof::code_rule_dsl::sql_frame;
     #[path = "stats"]
     pub mod stats {
         pub mod identity;
