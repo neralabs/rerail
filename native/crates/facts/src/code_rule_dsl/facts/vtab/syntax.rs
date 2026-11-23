@@ -2079,8 +2079,12 @@ impl Projected {
         self.each_child_node(local, |c, _| f(c));
     }
     /// `each_child`, with each child's tape node: `f(local id, tape node)`.
-    pub fn each_child_node(&self, local: u32, mut f: impl FnMut(u32, u32)) {
-        self.facts.each_child(self.node(local), |x| {
+    pub fn each_child_node(&self, local: u32, f: impl FnMut(u32, u32)) {
+        self.each_child_of_node(self.node(local), f);
+    }
+    /// `each_child_node` of the node whose tape node is `x`.
+    pub fn each_child_of_node(&self, x: u32, mut f: impl FnMut(u32, u32)) {
+        self.facts.each_child(x, |x| {
             let c = self.local_of_node(x);
             if c != NONE {
                 f(c, x);
@@ -4727,6 +4731,8 @@ impl Viewed {
         let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
         let cursor_also = cursor.also;
         let [doc_hint, granule] = &mut cursor.hint;
+        // Where the last probe's id was found (`ProbeCursor::near`): checked before use.
+        let [slot_hint, group_hint] = &mut cursor.near;
         let mut vals = [0i64; 8];
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
         // and depth where the probe knows them (a probe by parent: the hop's counter, one below the parent).
@@ -4752,14 +4758,14 @@ impl Viewed {
             each(row, &vals[..len]);
         };
         if column == self.own() {
-            if let Some((doc, local)) = b.node_near(value, doc_hint) {
+            if let Some((doc, local)) = b.node_nearer(value, doc_hint, slot_hint) {
                 emit(doc, local, NONE, Some(value), None, Known::default());
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
                 return false;
             }
-            if let Some((doc, local)) = b.node_near(value, doc_hint) {
+            if let Some((doc, local)) = b.node_nearer(value, doc_hint, slot_hint) {
                 // The children's place is the hop's counter and their depth the parent's and one, read once a probe
                 // where the plan reads it. Narrowed to anchors, a node's place counts the nodes under left-out ones too
                 // (`Projected::anchored`): there the place is read as before.
@@ -4783,7 +4789,7 @@ impl Viewed {
                     && !plan.ops[..len].contains(&IDX)
                 {
                     let known = if counted { Known { idx: None, depth: Some(depth), prev: None } } else { Known::default() };
-                    p.facts.each_child_field(p.node(local), |x, code| {
+                    p.facts.each_child_field(p.node_near(local, group_hint), |x, code| {
                         if i64::from(field_atom(p.tag, code)) == f {
                             let c = p.local_of_node(x);
                             if c != NONE {
@@ -4794,7 +4800,7 @@ impl Viewed {
                     return true;
                 }
                 let mut i = 0;
-                p.each_child_node(local, |c, x| {
+                p.each_child_of_node(p.node_near(local, group_hint), |c, x| {
                     if at.is_some_and(|a| a != i) || field.is_some_and(|f| i64::from(field_atom(p.tag, p.facts.field(x))) != f) {
                         i += 1;
                         return;
