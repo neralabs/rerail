@@ -1232,7 +1232,8 @@ fn one_launch(rep: &Report) {
     if rep.dispatches != 0 && rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::reserve_grows) {
         // A stratum is one program; a wave's first stratum's report holds the wave's, one a stratum.
         let one = rep.waved != 0 || rep.programs == 1;
-        let launches = rep.programs + rep.relaunches + rep.remaps;
+        // A view expanded for it (copy 0353 step 4) is a dispatch of its pass, not a launch.
+        let launches = rep.programs + rep.relaunches + rep.remaps + rep.expanded;
         let budget = rep.launch_items.max(1);
         let ok = one && rep.dispatches == launches && rep.reruns == 0 && u64::from(rep.relaunches) <= rep.taken / budget + rep.programs as u64;
         if std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some_and(|v| v == "log") {
@@ -2873,6 +2874,7 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.relaunches += done.relaunches;
     rep.remaps += done.remaps;
     rep.room_remaps += done.room_remaps;
+    rep.expanded += done.expanded;
     rep.taken += done.taken;
     rep.programs += done.programs;
     if done.launch_items != 0 {
