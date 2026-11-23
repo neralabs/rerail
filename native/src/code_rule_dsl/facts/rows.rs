@@ -80,11 +80,13 @@ pub const AXIS_KEYS: usize = 4;
 
 /// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
 /// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
-/// the device failed fails its takers' batches too).
+/// the device failed fails its takers' batches too). `taken`: a taker took it (set under the block's index lock), so
+/// its builder never gives its room back.
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
     pub done: rerail_accel::gpu::join::Submitted,
+    pub taken: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
