@@ -167,7 +167,7 @@ fn is_container_owner(kind: &str) -> bool {
 /// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
 /// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
 pub fn kind_flags(kind: &str) -> u8 {
-    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER) | (u8::from(super::core_rr::is_spread(kind)) * SPREAD)
+    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER) | (u8::from(super::core_rr::is_spread(kind)) * SPREAD) | (u8::from(super::core_rr::is_comment(kind)) * COMMENT)
 }
 pub const DEF: u8 = 1;
 pub const WRAPPER: u8 = 2;
@@ -175,6 +175,8 @@ pub const BODY: u8 = 4;
 pub const OWNER: u8 = 8;
 /// A spread element or argument (`core_rr::is_spread`): no granule's, the `spread` view's (`Item::Spread`).
 pub const SPREAD: u8 = 16;
+/// A comment (`core_rr::is_comment`): no lexeme (`ranks::Item::Lexeme`).
+pub const COMMENT: u8 = 32;
 
 /// Declarations named by what they bind.
 fn binds(kind: &str) -> bool {

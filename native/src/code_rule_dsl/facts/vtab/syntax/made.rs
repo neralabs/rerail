@@ -15,8 +15,9 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens (`op`'s
-/// rows) and spread nodes (`spread`'s), as its projection has them; the documents' table keeps them.
-pub type ViewCounts = [u32; 6];
+/// rows), spread nodes (`spread`'s) and the token order's places (`tokens`: with a token, one before, one after), as
+/// its projection has them; the documents' table keeps them.
+pub type ViewCounts = [u32; 9];
 
 /// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
 /// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
@@ -34,7 +35,8 @@ pub struct Kept {
 
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
-    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads()]
+    use super::tokens::TokRel;
+    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After)]
 }
 
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
@@ -281,7 +283,8 @@ impl Docs {
         // A guest's nodes have their places in its file: the file's lines, where the batch holds the file.
         let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::clone(&d.facts.lines))));
         let new_span = profile::span(|| "projected".into());
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        let token_order = core && super::tokens::VIEWS.iter().any(|r| projection.wants(r));
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), token_order, &self.context.block);
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
         drop(new_span);
@@ -378,6 +381,8 @@ pub(super) struct Offsets {
     pub(super) tokens: OnceLock<Vec<usize>>,
     pub(super) ends: OnceLock<Vec<usize>>,
     pub(super) spreads: OnceLock<Vec<usize>>,
+    /// `tokens::TokRel`'s, in its order.
+    pub(super) toks: [OnceLock<Vec<usize>>; 4],
 }
 
 /// What a group made: the rows `Batch::make_rows` made for some documents, before they are bound, each relation's

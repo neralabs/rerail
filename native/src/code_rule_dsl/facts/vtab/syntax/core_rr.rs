@@ -122,7 +122,7 @@ pub(super) fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<
     f.children(id).iter().copied().find(|&c| f.named(c) && dialect.name(f, c) == "identifier").map(|c| f.text(c))
 }
 
-pub(super) fn is_comment(kind: &str) -> bool {
+pub fn is_comment(kind: &str) -> bool {
     kind.contains("comment")
 }
 
@@ -493,10 +493,6 @@ pub(super) struct CoreRows {
     str_part: Vec<[i64; 5]>,
     str_part_start: Vec<[i64; 4]>,
     str_part_word: Vec<[i64; 5]>,
-    first_token: Vec<[i64; 2]>,
-    last_token: Vec<[i64; 2]>,
-    token_before: Vec<[i64; 2]>,
-    token_after: Vec<[i64; 2]>,
     structural_before: Vec<[i64; 2]>,
     structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
@@ -508,7 +504,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -761,7 +757,7 @@ impl CoreRows {
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
     /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
+    pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
@@ -805,37 +801,6 @@ impl CoreRows {
             }
         }
         drop(text_span);
-        let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
-        let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
-        // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
-        let mut toks: Vec<(u32, u32, i64)> = p.node_ids().filter_map(|(_, id, n)| {
-                let [a, b] = [f.start(id), f.end(id)];
-                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then_some((a, b, n))
-            })
-            .collect();
-        toks.extend(p.token_ids().map(|(l, _, n)| {
-            let [a, b] = p.span(l);
-            (a, b, n)
-        }));
-        toks.sort_unstable();
-        let starts: Vec<u32> = toks.iter().map(|t| t.0).collect();
-        let ends: Vec<u32> = toks.iter().map(|t| t.1).collect();
-        for ((_, [a, b]), (_, id)) in p.spans().zip(p.loc_ids()).take((p.len() + x.tokens) as usize) {
-            let first = starts.partition_point(|&s| s < a);
-            if first < toks.len() && toks[first].1 <= b {
-                let last = ends.partition_point(|&e| e <= b) - 1;
-                self.first_token.push([id, toks[first].2]);
-                self.last_token.push([id, toks[last].2]);
-            }
-            let k = ends.partition_point(|&e| e <= a);
-            if k > 0 && toks[k - 1].2 != id {
-                self.token_before.push([id, toks[k - 1].2]);
-            }
-            let j = starts.partition_point(|&s| s < b);
-            if j < toks.len() && toks[j].2 != id {
-                self.token_after.push([id, toks[j].2]);
-            }
-        }
     }
 
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
@@ -1024,10 +989,6 @@ impl CoreRows {
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
             ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
             ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
-            ("first_token", pair(&["n", "t"], &self.first_token)),
-            ("last_token", pair(&["n", "t"], &self.last_token)),
-            ("token_before", pair(&["x", "t"], &self.token_before)),
-            ("token_after", pair(&["x", "t"], &self.token_after)),
             ("structural_before", node_sym(&self.structural_before)),
             ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),

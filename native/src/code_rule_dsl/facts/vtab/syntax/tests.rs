@@ -2063,7 +2063,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 }
                 // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
                 let r = p.ranks();
-                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread] {
+                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes] {
                     let walked: Vec<(u32, u32)> = r.iter(item).collect();
                     assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
                     let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();
@@ -2292,6 +2292,8 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
         ("python", &many),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+        // Comments (no lexeme), a spread, a node with no token.
+        ("python", "# c\nx = f(1, *a)  # t\nif x:\n    pass\n\n# end\n"),
     ];
     let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
     for &(label, source) in cases {
@@ -2311,6 +2313,81 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
         }
     }
     out
+}
+
+/// The token order (`tokens`: `first_token`, `last_token`, `token_before`, `token_after`) read off the rank index is
+/// what core_rr made before: the lexemes sorted by span, and per place a search among their starts and ends.
+#[test]
+fn the_token_order_is_the_sorted_tokens() {
+    use super::tokens::TokRel;
+    let mut tried = 0;
+    // The small cases: the one past a granule's slot is the id reads' (`the_jits_id_reads_are_the_hosts`).
+    for (at, p, _) in id_read_cases() {
+        if p.len() == 0 || p.facts.len() > 10_000 {
+            continue;
+        }
+        let f = &*p.facts;
+        let dialect = Dialect::new(core::facts_tag(&p.facts)).unwrap();
+        let places = p.len() + p.ranks().count(Item::Token);
+        let span = |l: u32| {
+            let x = p.place_node(l);
+            [f.start(x), f.end(x)]
+        };
+        // core_rr's construction: the lexemes, sorted, and the searches.
+        let mut toks: Vec<(u32, u32, i64)> = (0..places)
+            .filter(|&l| {
+                let x = p.place_node(l);
+                l >= p.len() || f.children(x).is_empty() && f.end(x) > f.start(x) && !core_rr::is_comment(dialect.name(f, x))
+            })
+            .map(|l| {
+                let [a, b] = span(l);
+                (a, b, p.global(l))
+            })
+            .collect();
+        toks.sort_unstable();
+        let starts: Vec<u32> = toks.iter().map(|t| t.0).collect();
+        let ends: Vec<u32> = toks.iter().map(|t| t.1).collect();
+        let mut want: [BTreeMap<i64, i64>; 4] = Default::default();
+        for l in 0..places {
+            let ([a, b], id) = (span(l), p.global(l));
+            let first = starts.partition_point(|&s| s < a);
+            if first < toks.len() && toks[first].1 <= b {
+                let last = ends.partition_point(|&e| e <= b) - 1;
+                want[0].insert(id, toks[first].2);
+                want[1].insert(id, toks[last].2);
+            }
+            let k = ends.partition_point(|&e| e <= a);
+            if k > 0 && toks[k - 1].2 != id {
+                want[2].insert(id, toks[k - 1].2);
+            }
+            let j = starts.partition_point(|&s| s < b);
+            if j < toks.len() && toks[j].2 != id {
+                want[3].insert(id, toks[j].2);
+            }
+        }
+        // T's shape marks no token order: only core.rerail's reads it.
+        let marked = p.ranks().count(Item::Lexeme) > 0;
+        for (i, rel) in [TokRel::First, TokRel::Last, TokRel::Before, TokRel::After].into_iter().enumerate() {
+            // The view's rows, and each place's point read.
+            let rows: BTreeMap<i64, i64> = (0..p.token_rows(rel))
+                .map(|r| {
+                    let (l, _) = p.token_row(rel, r);
+                    assert_eq!(p.token_row_of(rel, l), Some(r), "{at}: {rel:?}'s row of place {l}");
+                    (p.global(l), p.token_of(rel, l))
+                })
+                .collect();
+            if !marked {
+                assert!(rows.is_empty(), "{at}");
+                continue;
+            }
+            assert_eq!(rows, want[i], "{at}: {rel:?}");
+            for l in 0..places {
+                assert_eq!(p.token_of(rel, l), want[i].get(&p.global(l)).copied().unwrap_or(-1), "{at}: {rel:?} at place {l}");
+            }
+            tried += want[i].len();
+        }
+    }
+    assert!(tried > 200, "{tried}");
 }
 
 /// Tape node `x`'s answers by the host's numbering reads (`Numbering::is`, …), as the probes lay them out: its bits,
@@ -2368,7 +2445,7 @@ fn the_jits_id_reads_are_the_hosts() {
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 4 * 3 * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
@@ -2443,7 +2520,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 4 * 3 * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on

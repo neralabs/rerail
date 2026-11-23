@@ -58,6 +58,7 @@ pub mod guests;
 pub mod granules;
 mod units;
 pub mod ranks;
+pub mod tokens;
 /// A batch's documents and rows, each made when first read (decision 0494).
 pub mod made;
 mod cells;
@@ -1549,12 +1550,12 @@ impl Projected {
     /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<crate::code_rule_dsl::lines::LineTable>)>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, shape == Shape::Core, &block)
     }
     /// `new`, narrowed to `anchors` (`narrowed`): the root and each outermost anchor's subtree.
     pub fn anchored(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, anchors: &BTreeSet<String>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), &block)
+        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), shape == Shape::Core, &block)
     }
 
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
@@ -1574,7 +1575,10 @@ impl Projected {
     /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
     /// siblings, and its node ids stay inside its phase.
     #[allow(clippy::too_many_arguments)]
-    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<crate::code_rule_dsl::lines::LineTable>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
+    /// `token_order`: its token order's items (`ranks::Marks::token_order`) are marked, where a program reads
+    /// `first_token`, `last_token`, `token_before` or `token_after` (`tokens::VIEWS`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<crate::code_rule_dsl::lines::LineTable>)>, anchors: Option<&BTreeSet<String>>, token_order: bool, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let (first, last) = match guest {
@@ -1671,6 +1675,13 @@ impl Projected {
                 }
                 open.push((id, false));
                 n += 1;
+            }
+            // The token order: the lexemes are the tokens and the named leaves with text that are no comment.
+            if let Some(dialect) = dialect.filter(|_| token_order && core_tokens) {
+                marks.token_order(
+                    |x| f.subtree_end(x) == x + 1 && f.end(x) > f.start(x) && dialect.granule_kind(dialect.code(f, x)) & granules::COMMENT == 0,
+                    |x| f.subtree_end(x),
+                );
             }
         });
         let tokens = ranks.count(Item::Token);
@@ -2370,6 +2381,9 @@ pub enum View {
     End,
     /// `spread(n)`: the spread nodes (`*args`, `...xs`; `Item::Spread`), in preorder, where a program reads it.
     Spread,
+    /// core.rerail's token order (`tokens`): a place's first or last token, the token before or after it, read off the
+    /// rank index, a row a place that has one, where a program reads it.
+    Tok(tokens::TokRel),
     /// `core.rerail`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`LineTable::place`), rows laid out over `Projected::locs`. A batch that makes
     /// one of them as rows (`Extra`, whose spans have places too) binds those rows instead (`Batch::made`).
@@ -3465,7 +3479,6 @@ impl Batch {
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
         // Asked once for the batch, not per node (a lookup in the program's set of read relations).
         let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
-        let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
         let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
@@ -3636,7 +3649,7 @@ impl Batch {
             // A text-only document has core.rerail's text rows too (its lines), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
-                c.document(p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_source_text, wants_line_text, guest.is_none(), projection);
+                c.document(p, &mut string, wants_text, wants_source_text, wants_line_text, guest.is_none(), projection);
                 drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests
@@ -3844,6 +3857,14 @@ impl Batch {
             View::Sibling => o.siblings.get_or_init(|| counted(&|c| if self.projection.wants("next_sibling") { c[siblings] as usize } else { 0 })),
             View::Loc(_) => o.locs.get_or_init(|| counted(&|c| c[locs] as usize)),
             View::Op => o.tokens.get_or_init(|| counted(&|c| c[4] as usize)),
+            View::Tok(rel) => o.toks[rel as usize].get_or_init(|| {
+                let at = 6 + match rel.rows() {
+                    Item::Leads => 0,
+                    Item::Follows => 1,
+                    _ => 2,
+                };
+                counted(&|c| if self.projection.wants(tokens::VIEWS[rel as usize]) { c[at] as usize } else { 0 })
+            }),
             View::Spread => o.spreads.get_or_init(|| counted(&|c| if self.projection.wants("spread") { c[5] as usize } else { 0 })),
             View::End => o.ends.get_or_init(|| counted(&|c| if self.projection.wants("end_point") { c[nodes] as usize } else { 0 })),
         }
@@ -3955,6 +3976,7 @@ impl Batch {
             View::Field => self.docs[doc].ranks().local(Item::Field, x).map(|r| r as usize),
             View::Sibling => self.docs[doc].ranks().local(Item::Sibling, x).map(|r| r as usize),
             View::Spread => self.docs[doc].ranks().local(Item::Spread, x).map(|r| r as usize),
+            View::Tok(rel) => self.docs[doc].token_row_of(rel, local).map(|r| r as usize),
             View::Op => self.docs[doc].ranks().local(Item::Token, x).map(|r| r as usize),
         }?;
         Some(self.offsets(view)[doc] + within)
@@ -4009,6 +4031,7 @@ impl Viewed {
             View::Op => &["n", "s"],
             View::End => &["n", "p"],
             View::Spread => &["n"],
+            View::Tok(rel) => rel.columns(),
             View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
             View::Loc(Place::Col) => &["n", "c"],
             View::Loc(Place::Docof) => &["n", "d"],
@@ -4019,7 +4042,7 @@ impl Viewed {
     fn own(&self) -> usize {
         match self.view {
             View::Node | View::Child | View::Sibling => 1,
-            View::Line | View::Depth | View::Order | View::Unit | View::End | View::Spread | View::Loc(_) => 0,
+            View::Line | View::Depth | View::Order | View::Unit | View::End | View::Spread | View::Tok(_) | View::Loc(_) => 0,
             View::Field | View::Core => 2,
             View::Tape => 0,
             // No column is a token's own: a lookup by `n` is by its node (`lookup_docs`).
@@ -4031,7 +4054,7 @@ impl Viewed {
         match self.view {
             View::Child | View::Field => Some(0),
             View::Tape => Some(1),
-            View::Node | View::Line | View::Core | View::Depth | View::Order | View::Sibling | View::Unit | View::Op | View::End | View::Spread | View::Loc(_) => None,
+            View::Node | View::Line | View::Core | View::Depth | View::Order | View::Sibling | View::Unit | View::Op | View::End | View::Spread | View::Tok(_) | View::Loc(_) => None,
         }
     }
 }
@@ -4455,7 +4478,7 @@ impl Viewed {
         let mut rows = Vec::new();
         for &v in values {
             if column == self.own() {
-                let found = if matches!(self.view, View::Loc(_)) { b.loc(v) } else { b.node(v) };
+                let found = if matches!(self.view, View::Loc(_) | View::Tok(_)) { b.loc(v) } else { b.node(v) };
                 rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
             } else if Some(column) == self.parent() {
                 if v == -1 && matches!(self.view, View::Tape) {
@@ -4545,6 +4568,7 @@ impl Viewed {
             (View::Unit, 1) => (UNIT, 0),
             (View::Op, 1) => (OP, NEED_X),
             (View::End, 1) => (ENDP, 0),
+            (View::Tok(rel), 1) => (TOKF + rel as u8, 0),
             _ => (ID, NEED_ID),
         }
     }
@@ -4573,6 +4597,7 @@ impl Viewed {
             UNIT => Self::unit_id(b, p, local),
             OP => b.op_atom(p.tag, b.dialects[p.tag].code(&p.facts, x)),
             ENDP => Self::end_id(p, local),
+            TOKF..=TOKA => p.token_of([tokens::TokRel::First, tokens::TokRel::Last, tokens::TokRel::Before, tokens::TokRel::After][usize::from(op - TOKF)], local),
             _ => n,
         }
     }
@@ -4587,7 +4612,7 @@ impl Viewed {
     /// probe did not bring, then fills each slot from its op.
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         use read_op::*;
-        if matches!(self.view, View::Field | View::Loc(_)) {
+        if matches!(self.view, View::Field | View::Loc(_) | View::Tok(_)) {
             return false;
         }
         if !cursor.plan.is_for(column, columns) {
@@ -4758,6 +4783,13 @@ impl Viewed {
             View::Sibling => visit(&mut row, 1, Some(Item::Sibling)),
             View::Spread => visit(&mut row, 0, Some(Item::Spread)),
             // The tokens in preorder, each with its node.
+            View::Tok(rel) => {
+                for i in 0..(p.token_rows(rel) as usize).min(n) {
+                    let (l, x) = p.token_row(rel, i as u32);
+                    let at = At { node: &|| x, n: &|| p.global(l), up: &|| -1, idx: &|| 0, depth: &|| 0, prev: &|| -1 };
+                    row(i, &|c| self.value_of(p, l, &at, c));
+                }
+            }
             View::Op => {
                 for (i, (x, l)) in p.token_order().into_iter().enumerate().take(n) {
                     let at = At { node: &|| x, n: &|| p.global(l), up: &|| Self::parent_id(p, l), idx: &|| 0, depth: &|| 0, prev: &|| -1 };
@@ -4887,6 +4919,7 @@ impl Viewed {
                 let x = p.ranks().select(Item::Token, i as u32).expect("a token row");
                 (p.facts.parent(x).map_or(0, |q| p.local_of_node(q)), x)
             }
+            View::Tok(rel) => p.token_row(rel, i as u32),
         }
     }
 
@@ -4915,6 +4948,7 @@ impl Viewed {
             (View::Sibling, 0) => (at.prev)(),
             (View::Unit, 1) => Self::unit_id(&self.batch, p, local),
             (View::End, 1) => Self::end_id(p, local),
+            (View::Tok(rel), 1) => p.token_of(rel, local),
             (View::Op, 1) => self.batch.op_atom(p.tag, self.batch.dialects[p.tag].code(&p.facts, id() as u32)),
             _ => (at.n)(),
         }
@@ -4941,6 +4975,9 @@ mod read_op {
     pub const UNIT: u8 = 15;
     pub const OP: u8 = 16;
     pub const ENDP: u8 = 17;
+    /// `tokens::TokRel`'s answers, in its order.
+    pub const TOKF: u8 = 18;
+    pub const TOKA: u8 = 21;
     /// The match's tape node, own id and parent's id.
     pub const NEED_X: u8 = 1;
     pub const NEED_ID: u8 = 2;
@@ -5010,6 +5047,10 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
             ("next_sibling", View::Sibling),
             ("end_point", View::End),
             ("spread", View::Spread),
+            ("first_token", View::Tok(tokens::TokRel::First)),
+            ("last_token", View::Tok(tokens::TokRel::Last)),
+            ("token_before", View::Tok(tokens::TokRel::Before)),
+            ("token_after", View::Tok(tokens::TokRel::After)),
         ]),
     }
     named

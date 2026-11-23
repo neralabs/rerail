@@ -2144,9 +2144,9 @@ pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, BaseCount>;
 
 const BASE_COUNTS: &str = "#base-counts";
 
-/// A counts row's words: key, digest (4), views' counts (6), facts' size (2), content (its kind, then 4 words: as the
+/// A counts row's words: key, digest (4), views' counts (9), facts' size (2), content (its kind, then 4 words: as the
 /// documents' table's; 2 for none; 3 for a host file's guest, then its host, file, 1 for its tree and its tape tag).
-const COUNTS_WIDTH: usize = 18;
+const COUNTS_WIDTH: usize = 21;
 
 /// The counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept (or kept in
 /// an earlier width, which a run counts again).
@@ -2161,27 +2161,27 @@ pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32
     let mut out = HashMap::with_capacity(entry.len());
     let small = |w: i64| u32::try_from(w).ok();
     for r in words.as_chunks::<COUNTS_WIDTH>().0 {
-        let (Some(key), [Some(a), Some(b), Some(c), Some(d), Some(t), Some(s)], [Some(nodes), Some(codes)]) = (small(r[0]), [r[5], r[6], r[7], r[8], r[9], r[10]].map(small), [r[11], r[12]].map(small)) else { continue };
+        let (Some(key), Some(counts), [Some(nodes), Some(codes)]) = (small(r[0]), <[i64; 9]>::try_from(&r[5..14]).unwrap().map(small).into_iter().collect::<Option<Vec<u32>>>(), [r[14], r[15]].map(small)) else { continue };
         let mut digest = [0u8; 32];
         for (i, w) in r[1..5].iter().enumerate() {
             digest[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
         }
-        let content = match r[13] {
-            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[14]))),
+        let content = match r[16] {
+            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[17]))),
             1 => {
                 let mut d = [0u8; 32];
-                for (i, w) in r[14..18].iter().enumerate() {
+                for (i, w) in r[17..21].iter().enumerate() {
                     d[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
                 }
                 Some(super::memo::Content::Unstored(d))
             }
             _ => None,
         };
-        let guest = (r[13] == 3).then(|| (small(r[14]), small(r[15]), u8::try_from(r[17]).ok())).and_then(|g| match g {
-            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[16] == 1, tag }),
+        let guest = (r[16] == 3).then(|| (small(r[17]), small(r[18]), u8::try_from(r[20]).ok())).and_then(|g| match g {
+            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[19] == 1, tag }),
             _ => None,
         });
-        out.insert(key, BaseCount { digest, counts: [a, b, c, d, t, s], size: [nodes, codes], content, guest });
+        out.insert(key, BaseCount { digest, counts: counts.try_into().unwrap(), size: [nodes, codes], content, guest });
     }
     Ok(out)
 }
