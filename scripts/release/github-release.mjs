@@ -7,7 +7,8 @@
 // pre-release flag and latest flag rewritten, so any run can be run again, and a promotion or a put-back (release.yml's
 // promote job or `latest` input, release-packs.yml's promote) rewrites the flags for `latest`. Promoted to `latest`, a
 // version's notes are everything since the last version stable users had (previousStable, sinceStableSection): its own
-// entries and those of each release candidate on `next` it passed over.
+// entries and those of each version it passed over that never reached `latest`: a candidate on `next`, or one that was
+// never published.
 //
 // Release mode names what a release run published, as dist-tags-check.mjs takes it, and reads the notes from the
 // checkout's changelog: the released commit when a release publishes, and main when it is promoted or put back, whose
@@ -119,7 +120,7 @@ const listed = (versions) => (versions.length === 1 ? versions[0] : `${versions.
 /**
  * The notes of `version` promoted to `latest` over `since`, the last version stable users had: what changed for them.
  * With no version between them, `version`'s own section (`read` as the Release reads it). Otherwise its lead (none when
- * the section only says no entries were written), a line naming the release candidates it brings that never reached
+ * the section only says no entries were written), a line naming the versions it brings that never reached
  * `latest`, and the entries of every version after `since` up to `version`, newest first: those under no type heading,
  * as a section lists them under its lead, then the rest grouped by change type (changeTypeSections). Each version
  * keeps its own section in the changelog: only the Release brings them together.
@@ -130,9 +131,9 @@ export function sinceStableSection(changelog, version, since, read = (section) =
   if (skipped.length === 0) return own;
   const entries = [version, ...skipped].flatMap((each) => typedEntries(read(changelogSection(changelog, each))));
   const lead = own === NO_CHANGELOG_ENTRIES ? "" : changelogLead(own);
-  const candidates = `${skipped.length === 1 ? "was a release candidate" : "were release candidates"} on \`next\` and never reached \`latest\``;
   const untyped = entries.filter(({ type }) => type === null).map(({ entry }) => entry);
-  return [lead, `This release also brings ${listed([...skipped].reverse())}, which ${candidates}.`, untyped.join("\n"), ...changeTypeSections(entries.filter(({ type }) => type !== null))]
+  // Only "never reached latest": a version passed over may have been a candidate on next, or never published at all.
+  return [lead, `This release also brings ${listed([...skipped].reverse())}, which never reached \`latest\`.`, untyped.join("\n"), ...changeTypeSections(entries.filter(({ type }) => type !== null))]
     .filter((part) => part !== "")
     .join("\n\n");
 }

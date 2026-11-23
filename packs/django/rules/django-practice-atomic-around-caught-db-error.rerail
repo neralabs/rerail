@@ -1,0 +1,101 @@
+.policy "django-practice-atomic-around-caught-db-error" revision 1
+.description "Inside transaction.atomic, catch a database error only around a nested atomic block, so the error rolls back that savepoint and not the whole transaction."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. After a DatabaseError (IntegrityError, OperationalError, ...) the transaction is
+// broken; catching it inside atomic hides that from Django, and the queries the code runs next fail or are rolled back
+// silently at the end of the block. The try sits in a `with transaction.atomic():` body or an `@transaction.atomic`
+// function, catches a django.db error, and its body writes through the ORM (or runs a queryset or cursor query)
+// outside any atomic block of its own (`atomic(savepoint=False)` makes no savepoint, so it does not count).
+//   with transaction.atomic():
+//       try:
+//           order.save()
+//       except IntegrityError:                    reported
+//           ...
+//       try:
+//           with transaction.atomic():
+//               order.save()
+//       except IntegrityError:                    not reported: the inner atomic is the savepoint
+//           ...
+//       try:
+//           order.save()
+//       except IntegrityError:                    not reported: the handler re-raises, so the block rolls back
+//           raise ValidationError(...)
+// Gaps: ATOMIC_REQUESTS and an atomic in a caller; writes in helpers the try body calls; atomic wrappers such as
+// `traced_atomic_transaction()`; a handler that raises inside a nested try/with/match counts as not raising.
+
+#include "lib/django.rerail"
+
+.violation CaughtDbErrorInAtomic(at: node, err: symbol) "This `except {err}` sits inside transaction.atomic, and its try body runs a database query with no savepoint (atomic block) of its own: after the error the transaction is broken, so later queries in the block fail or are silently rolled back. Wrap the try body in `with transaction.atomic():` so the error rolls back only that savepoint."
+// A handler that always re-raises (lib/django's py_reraising_handler) lets the error leave the atomic block and
+// roll it back.
+CaughtDbErrorInAtomic(x, e) :- kind(t, "try_statement"), dj_in_atomic(t, _), field(t, "body", b), child(t, x, _),
+    kind(x, "except_clause"), catches(x, q), split_dot(q, m, e), adb_error_module(m), adb_error(e),
+    adb_unguarded_db(b), !py_reraising_handler(x), !adb_savepoint(x), docof(t, d), !dj_test_doc(d).
+
+// adb_error: django.db's DatabaseError and its subclasses, as django.db and django.db.utils export them.
+.decl adb_error_module(m: symbol)
+adb_error_module("django.db"). adb_error_module("django.db.utils").
+.decl adb_error(x: symbol)
+adb_error("DatabaseError"). adb_error("IntegrityError"). adb_error("OperationalError"). adb_error("DataError").
+adb_error("ProgrammingError"). adb_error("InternalError").
+
+// adb_db_call(c): c writes through the ORM, runs a cursor query, or evaluates a queryset. Writes: `.save()` on any
+// receiver but the cache, `.delete()` with no positional argument (a row's or a queryset's, not `cache.delete(key)`),
+// `.create()`, `.bulk_create()`, `.bulk_update()`, and `.update()` on a queryset chain (`X.objects.filter(...)`,
+// `obj.rel.filter(...)`; a dict's update is no query); cursor `.execute()`/`.executemany()`. Queries: a queryset
+// method that returns no new queryset (so not a chain step such as `select_for_update()`), other than the self-guarding
+// get_or_create/update_or_create, which run in an atomic block of their own.
+.decl adb_any_write(m: symbol)
+adb_any_write("create"). adb_any_write("bulk_create"). adb_any_write("bulk_update"). adb_any_write("execute").
+adb_any_write("executemany").
+.decl adb_db_call(c: node)
+adb_db_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), adb_any_write(m).
+adb_db_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "save"), !adb_cache(o).
+adb_db_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "delete"), !adb_cache(o), !posarg(c, 0, _).
+adb_db_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "update"), unparen(o, q), adb_qs_chain(q).
+adb_db_call(c) :- dj_qs_call(c, m), !dj_qs(c), m != "get_or_create", m != "update_or_create".
+// adb_qs_chain(q): q is a queryset chain: from a manager (dj_qs), or a queryset method called on anything
+// (`order.lines.filter(...)`, `self.get_queryset().all()`).
+.decl adb_qs_chain(q: node)
+adb_qs_chain(q) :- dj_qs(q).
+adb_qs_chain(q) :- kind(q, "call"), field(q, "function", f), attr_of(f, _, m), dj_qs_method(m).
+// adb_cache(o): o is Django's cache (`cache`, `caches["x"]`, `django.core.cache.cache`).
+.decl adb_cache(o: node)
+adb_cache(o) :- sym_of(o, q), prefix("django.core.cache", q).
+adb_cache(o) :- kind(o, "subscript"), field(o, "value", v), sym_of(v, q), prefix("django.core.cache", q).
+
+// adb_unguarded_db(b): try body b runs a database call outside any atomic block nested in b.
+.decl adb_unguarded_db(b: node)
+adb_unguarded_db(b) :- kind(t, "try_statement"), field(t, "body", b), adb_db_call(c), within_stop(c, b, dj_region_stop),
+    !adb_guarded(c, b).
+.decl adb_guarded(c: node, b: node)
+adb_guarded(c, b) :- kind(t, "try_statement"), field(t, "body", b), adb_db_call(c), within(c, b),
+    dj_atomic_with(w, wb), within(w, b), within(c, wb), !adb_no_savepoint(w).
+// adb_no_savepoint(w): with-statement w opens `atomic(savepoint=False)`, which makes no savepoint to roll back to.
+.decl adb_no_savepoint(w: node)
+adb_no_savepoint(w) :- dj_atomic_with(w, wb), kind(e, "call"), within(e, w), !within(e, wb), dj_atomic(e),
+    call_arg(e, _, "savepoint", v), text(v, "False").
+
+// adb_savepoint(x): handler x rolls back by hand: `transaction.savepoint_rollback(sid)` or `set_rollback(True)`.
+.decl adb_savepoint(x: node)
+adb_savepoint(x) :- kind(x, "except_clause"), kind(c, "call"), within(c, x), field(c, "function", f), sym_of(f, q),
+    (q = "django.db.transaction.savepoint_rollback" ; q = "django.db.transaction.set_rollback").
+
+// The cases, `cases/django-practice-atomic-around-caught-db-error/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/services.py" from "../cases/django-practice-atomic-around-caught-db-error/shop/services.py"
+    .fixture "shop/tests/test_services.py" from "../cases/django-practice-atomic-around-caught-db-error/shop/tests/test_services.py"
+    .expect _ at "shop/services.py":15
+    .expect _ at "shop/services.py":25
+    .expect _ at "shop/services.py":33
+    .expect _ at "shop/services.py":37
+    .expect _ at "shop/services.py":45
+    .expect _ at "shop/services.py":146
+    .expect _ at "shop/services.py":186
+    .expect _ at "shop/services.py":208
+    .expect _ at "shop/services.py":223
+    .expect _ at "shop/services.py":232
+.end

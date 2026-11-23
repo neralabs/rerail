@@ -59,6 +59,9 @@ p0_from(f, at, n) :- p0_names(_, f, at, n).
 .decl p0_cand(from: symbol, at: number, name: symbol, rank: number, path: symbol)
 p0_cand(f, at, n, 1, c) :- p0_from(f, at, n), p0_lib(l), c = cat(l, "/", n).
 p0_cand(f, at, n, 2, c) :- p0_from(f, at, n), !p0_text(f), f != "engine", match("(?<dir>.*)/[^/]*", f), c = cat(dir, "/", n).
+// A Windows path (`D:\…`, `\\server\share\…`, as the engine names a file and a loaded module there) separates its
+// directories with `\`: its directory is what comes before the last `\`. A POSIX path starts with `/`, never matches.
+p0_cand(f, at, n, 2, c) :- p0_from(f, at, n), !p0_text(f), f != "engine", match("(?<dir>(?:[A-Za-z]:|\\\\)\\\\.*)\\\\[^\\\\]*", f), c = cat(dir, "/", n).
 
 // Each candidate's directory is listed, asked by the directory alone (`rr::lower`'s world demand).
 .decl p0_split(c: symbol, dir: symbol, base: symbol)

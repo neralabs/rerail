@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore } from "../../src/activation/device-keystore.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
+import { cmdletsWithoutModule, commandScript } from "../support/platform/powershell-commands.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
@@ -61,6 +62,18 @@ describe("Windows Credential Manager", () => {
     await store.remove("profile-a");
     expect(commands).toHaveLength(3);
     for (const command of commands) expect(command).toMatch(/^[A-Za-z]:\\.*\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u);
+  });
+
+  it("names the module of each cmdlet its script runs, so PowerShell reads no other installed module first", async () => {
+    const scripts: Array<string | undefined> = [];
+    const store = new SystemDeviceSecretStore("win32", async (_command, args) => {
+      scripts.push(commandScript(args));
+      return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+    });
+    expect(await store.read("profile-a")).toBeUndefined();
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toMatch(/\\Add-Type /u);
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual([]);
   });
 });
 
