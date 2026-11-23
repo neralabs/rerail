@@ -304,6 +304,11 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
     // automata, and the grammars they are built from, decide what a stored tape means.
     view_sources.push(manifest.join("crates/lang/src/code_rule_dsl/tape/tokens.rs"));
+    // A stored tape's line index holds its language's terminators (decision 0612): their definition is the tape's.
+    view_sources.push(manifest.join("crates/tape_format/src/newlines.rs"));
+    // A format 16 tape's codes are numbers in its language's table (decision 0626: the grammar's codes): a table
+    // written again makes the stored tapes again.
+    collect_sources(&manifest.join("crates/tape_format/tables"), &mut view_sources);
     view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/java/grammar.json"));
@@ -363,4 +368,11 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed={}", lock.display());
+    // The tape's sources outside `src` (the tables, the terminators, rr's syntax, the token grammars), whose bytes
+    // the grammar build id hashes.
+    for (path, _) in &view_sources {
+        if !path.starts_with("src/") {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
 }

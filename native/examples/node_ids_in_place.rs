@@ -11,7 +11,7 @@ extern crate rerail_engine;
 use rerail_facts::code_rule_dsl::facts::core::{self, Facts};
 use rerail_facts::code_rule_dsl::facts::vtab::syntax::{Dialect, Projected, Shape};
 use rerail_facts::code_rule_dsl::language::GrammarDialect;
-use rerail_facts::code_rule_dsl::lines::{LineTable, Terminators};
+use rerail_facts::code_rule_dsl::lines::terminators;
 use rerail_facts::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,7 +75,7 @@ fn main() {
             .iter()
             .zip(&images)
             .map(|(s, image)| {
-                let lines = Arc::new(LineTable::new(s, Terminators::of(lang)));
+                let lines = Arc::new(image.lines(s, terminators(lang), false));
                 Arc::new(core::from_image(Arc::clone(s), &grammar, image.clone().in_format(format, s.as_bytes()), lines).unwrap())
             })
             .collect();

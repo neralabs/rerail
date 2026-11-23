@@ -369,7 +369,7 @@ impl NoqaIndex {
             }
         }
         if let Some(Ok(directive)) = lex_inline(text) {
-            let range = lines.start(line)..lines.end(line);
+            let range = lines.start(line)..lines.end(line, source.as_bytes());
             self.lines.push(DirectiveLine {
                 includes_end: range.end == source.len(),
                 line: range,

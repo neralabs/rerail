@@ -1336,7 +1336,7 @@ fn oracle_differences(
             )
         })
         .collect::<BTreeSet<_>>();
-    let line = |start: usize| source[..start].matches('\n').count() + 1;
+    let line = |start: usize| crate::code_rule_dsl::lines::line_of(source, language, start);
     let mut differences = Vec::new();
     for (start, name) in ours.difference(&theirs) {
         differences.push(format!("only ours: `{name}` line {}", line(*start)));

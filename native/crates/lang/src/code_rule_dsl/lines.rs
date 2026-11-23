@@ -18,203 +18,142 @@ pub struct Span {
     pub start_line: usize,
 }
 
-/// The line terminators of a language's ecosystem: its compiler's, its linters' and its editors' (decision 0612), the one
-/// definition of a line (`LineTable`) and of every place on it. A `\n\r` is two of them wherever `\r` is one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Terminators {
-    /// ESLint's `\r\n|[\r\n  ]` (`astUtils.createGlobalLinebreakMatcher`), TypeScript's: ECMAScript's line
-    /// terminators. And a file of no language's.
-    Eslint,
-    /// `\r\n`, `\r` and `\n`: CPython's tokenizer and Ruff's (`ruff_source_file`), the JVM languages' lexers, PHP's,
-    /// clang's, Swift's, HTML's and CommonMark's, and the Language Server Protocol's.
-    Newlines,
-    /// `\n` alone, a `\r` before it left out of the line's text: rustc's (`SourceFile::lines`) and Go's (`go/token`),
-    /// which their linters report on. A lone `\r` stays inside a line.
-    Lf,
-    /// Roslyn's (`SyntaxFacts::IsNewLine`): `\r\n`, `\r`, `\n`, U+0085, U+2028 and U+2029.
-    Roslyn,
-    /// CSS Syntax's (§3.3, its preprocessing): `\r\n`, `\r`, `\n` and a form feed.
-    Css,
+/// The line terminators of a language's ecosystem, the tape's (`rerail_tape_format::newlines`, decision 0612).
+pub use rerail_tape_format::newlines::Terminators;
+
+/// The terminators a language's ecosystem ends a line at (`Adapter::TERMINATORS`, decision 0612).
+pub fn terminators(language: GrammarDialect) -> Terminators {
+    crate::code_rule_dsl::language::base(Family::of(language)).terminators()
 }
 
-impl Terminators {
-    /// The linter a language's ports follow (`Adapter::TERMINATORS`).
-    pub fn of(language: GrammarDialect) -> Self {
-        crate::code_rule_dsl::language::base(Family::of(language)).terminators()
-    }
-
-    /// The sets' number: `COUNT` of them.
-    pub const fn index(self) -> usize {
-        match self {
-            Self::Eslint => 0,
-            Self::Newlines => 1,
-            Self::Lf => 2,
-            Self::Roslyn => 3,
-            Self::Css => 4,
-        }
-    }
-    pub const COUNT: usize = 5;
+/// `terminators`, of a file that may have no language: one with none ends a line at ECMAScript's terminators (W's,
+/// decision 0612's table).
+pub fn terminators_of(language: Option<GrammarDialect>) -> Terminators {
+    language.map_or(Terminators::Eslint, terminators)
 }
 
-/// Where each line of a file starts, and where its text ends before its terminator: u32s, `[n, starts[n], ends[n]]`
-/// (decision 0353 step 4d). A loaded document's are placed (`placed`): in a slab's room beside its tape, where the
-/// views' reads on the device read them (`rerail_clif::view_reads`'s `lines_line`). Others hold their own.
+/// The line (from 1) of byte `byte` of the file at `path` (its language by its path, `terminators_of`): an oracle's
+/// line of a violation.
+pub fn line_at_path(path: &str, source: &str, byte: usize) -> usize {
+    let language = crate::code_rule_dsl::language::label_of_path(path).and_then(crate::code_rule_dsl::language::dialect_by_label);
+    LineTable::new(source, terminators_of(language)).line(byte) + 1
+}
+
+/// The line (from 1) of byte `byte` of a `language` file, by its lines (an oracle's line, a message's).
+pub fn line_of(source: &str, language: GrammarDialect, byte: usize) -> usize {
+    LineTable::new(source, terminators(language)).line(byte) + 1
+}
+
+/// A file's lines, read off its line index (`rerail_tape_format::newlines`, decision 0612): its tape's, where it has
+/// a format 16 tape (`of_tape`, shared with it), else one of its own (`new`), placed in a slab's room where the
+/// device reads tapes (`placed`). The index holds each terminator's last byte; a line's start is one past the one
+/// before it, and its text's end is that terminator's first byte, from the source's bytes (`end`). One read of a
+/// line, the tape's (`rerail_tape_format::reads::f16::line`), on the host, in the JIT and on the device.
 #[derive(Debug)]
 pub struct LineTable {
-    words: Words,
+    home: Index,
+    /// Where the index starts in `home`.
+    at: u32,
+    /// The source's length.
+    len: u32,
 }
 
+/// Where a document's line index is: its own (or placed), or its format 16 tape's.
 #[derive(Debug)]
-enum Words {
-    Own(Vec<u32>),
-    Placed(std::sync::Arc<dyn rerail_tape_format::home::Room>),
+enum Index {
+    Own(rerail_tape_format::home::Home),
+    F16(std::sync::Arc<rerail_tape_format::f16::Tape16>),
+    F16Z(std::sync::Arc<rerail_tape_format::f16::Tape16Z>),
 }
 
-/// Each terminator of `bytes` as `terminators` reads them, `(at, length)`, in order: a chunked search for their
-/// first bytes (`memchr`), never a byte at a time.
-fn terminators_of(bytes: &[u8], terminators: Terminators, mut each: impl FnMut(usize, usize)) {
-    let mut skip = usize::MAX;
-    let mut one = |at: usize| {
-        if at == skip {
-            return;
+impl std::ops::Deref for Index {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Index::Own(h) => h,
+            Index::F16(t) => t.extent(),
+            Index::F16Z(t) => t.extent(),
         }
-        let length = match bytes[at] {
-            // `\n` alone ends a line there: a `\r` before it is the terminator's, out of the line's text.
-            b'\n' if terminators == Terminators::Lf && at > 0 && bytes[at - 1] == b'\r' => {
-                each(at - 1, 2);
-                return;
-            }
-            b'\n' => 1,
-            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
-                skip = at + 1;
-                2
-            }
-            b'\r' => 1,
-            0x0C => 1,
-            // U+0085: C2 85.
-            0xC2 if bytes.get(at + 1) == Some(&0x85) => 2,
-            // U+2028 and U+2029: E2 80 A8 and E2 80 A9.
-            0xE2 if bytes.get(at + 1) == Some(&0x80) && matches!(bytes.get(at + 2), Some(0xA8 | 0xA9)) => 3,
-            _ => return,
-        };
-        each(at, length);
-    };
-    match terminators {
-        Terminators::Eslint => memchr::memchr3_iter(b'\n', b'\r', 0xE2, bytes).for_each(&mut one),
-        Terminators::Newlines => memchr::memchr2_iter(b'\n', b'\r', bytes).for_each(&mut one),
-        Terminators::Lf => memchr::memchr_iter(b'\n', bytes).for_each(&mut one),
-        Terminators::Css => memchr::memchr3_iter(b'\n', b'\r', 0x0C, bytes).for_each(&mut one),
-        // Four first bytes: two searches, merged in order.
-        Terminators::Roslyn => {
-            let mut wide = memchr::memchr_iter(0xC2, bytes).peekable();
-            for at in memchr::memchr3_iter(b'\n', b'\r', 0xE2, bytes) {
-                while let Some(c) = wide.next_if(|&c| c < at) {
-                    one(c);
-                }
-                one(at);
-            }
-            wide.for_each(&mut one);
+    }
+}
+
+impl Index {
+    fn home(&self) -> &rerail_tape_format::home::Home {
+        match self {
+            Index::Own(h) => h,
+            Index::F16(t) => t.home(),
+            Index::F16Z(t) => t.home(),
         }
     }
 }
 
 impl LineTable {
+    /// The lines of `source` that `terminators` end, in an index of their own.
     pub fn new(source: &str, terminators: Terminators) -> Self {
-        let bytes = source.as_bytes();
-        let mut n = 1;
-        terminators_of(bytes, terminators, |_, _| n += 1);
-        let mut words = vec![0u32; 1 + 2 * n];
-        Self::fill(&mut words, bytes, terminators, n);
-        Self { words: Words::Own(words) }
+        Self::own(source.as_bytes(), terminators, false)
     }
 
-    /// A loaded document's lines, in a slab's room where the device reads tapes (decision 0353 step 4d: the views'
-    /// reads find them there), else its own.
+    /// `new`, of bytes not known to be text (a template's).
+    pub fn of_bytes(source: &[u8], terminators: Terminators) -> Self {
+        Self::own(source, terminators, false)
+    }
+
+    /// `new`, its index in a slab's room where the device reads tapes (decision 0353 step 4d: the views' reads find
+    /// it there), else its own.
     pub fn placed(source: &str, terminators: Terminators) -> Self {
-        let bytes = source.as_bytes();
-        let mut n = 1;
-        terminators_of(bytes, terminators, |_, _| n += 1);
-        let len = 4 * (1 + 2 * n);
-        let home = crate::code_rule_dsl::tape::placed::place(len, |out| {
-            // SAFETY: the room is 16-byte aligned (`tape_room`), `len` bytes of it this fill's alone.
-            let (pre, words, _) = unsafe { out.align_to_mut::<u32>() };
-            assert!(pre.is_empty(), "a room is aligned");
-            Self::fill(words, bytes, terminators, n);
+        Self::own(source.as_bytes(), terminators, true)
+    }
+
+    fn own(bytes: &[u8], terminators: Terminators, placed: bool) -> Self {
+        use rerail_tape_format::newlines;
+        let len = u32::try_from(bytes.len()).expect("a file within 4 GB");
+        let mut ends = Vec::new();
+        terminators.each(bytes, |at, length| ends.push((at + length - 1) as u64));
+        let (u, m) = (u64::from(len), ends.len() as u64);
+        let fill = |out: &mut [u8]| {
+            out.fill(0);
+            newlines::index_in(out, u, m, ends.iter().copied());
             Ok(())
-        });
-        match home {
-            Ok(rerail_tape_format::home::Home::Placed(room)) => Self { words: Words::Placed(room) },
-            _ => Self::new(source, terminators),
-        }
+        };
+        let room = newlines::index_len(u, m) + 8;
+        let home = if placed {
+            crate::code_rule_dsl::tape::placed::place(room, fill).expect("an index's room")
+        } else {
+            let mut v = vec![0u8; room];
+            fill(&mut v).expect("an index");
+            rerail_tape_format::home::Home::Own(v)
+        };
+        Self { home: Index::Own(home), at: 0, len }
     }
 
-    /// `words` (`1 + 2 * n`): the count, the starts, the ends.
-    fn fill(words: &mut [u32], bytes: &[u8], terminators: Terminators, n: usize) {
-        let word = |at: usize| u32::try_from(at).expect("a file within 4 GB");
-        words[0] = word(n);
-        words[1] = 0;
-        let mut line = 0;
-        terminators_of(bytes, terminators, |at, length| {
-            words[1 + n + line] = word(at);
-            line += 1;
-            words[1 + line] = word(at + length);
-        });
-        words[1 + n + line] = word(bytes.len());
+    /// The lines of a document whose format 16 (or 16z) tape holds them, made with its language's terminators: the
+    /// tape's index, read where it lies in the tape (`Tape16::lines_at`), the tape held.
+    pub fn of_f16(t: &std::sync::Arc<rerail_tape_format::f16::Tape16>) -> Self {
+        Self { at: t.lines_at() as u32, len: t.source_len() as u32, home: Index::F16(t.clone()) }
+    }
+    pub fn of_f16z(t: &std::sync::Arc<rerail_tape_format::f16::Tape16Z>) -> Self {
+        Self { at: t.lines_at() as u32, len: t.source_len() as u32, home: Index::F16Z(t.clone()) }
     }
 
-    /// The words: `[n, starts[n], ends[n]]`.
-    pub fn words(&self) -> &[u32] {
-        match &self.words {
-            Words::Own(w) => w,
-            Words::Placed(room) => {
-                // SAFETY: the room holds the words `placed` wrote, at its 16-byte aligned start.
-                let (_, words, _) = unsafe { room.bytes().align_to::<u32>() };
-                words
-            }
-        }
+    /// The index's bytes.
+    pub fn index(&self) -> &[u8] {
+        let index = &self.home[self.at as usize..];
+        &index[..rerail_tape_format::newlines::len_of(index).expect("an index")]
     }
 
-    /// The room the words are in, if they are placed.
+    /// The room the index is in, if it is placed (its tape's, or its own).
     pub fn room(&self) -> Option<&std::sync::Arc<dyn rerail_tape_format::home::Room>> {
-        match &self.words {
-            Words::Own(_) => None,
-            Words::Placed(room) => Some(room),
-        }
+        self.home.home().room()
     }
 
-    fn n(&self) -> usize {
-        self.words()[0] as usize
-    }
-
-    /// Tree-sitter's rows (`TSPoint`): only `\n` ends one. A lone `\r`, U+2028 and U+2029 stay
-    /// inside a row, where the linters' lines end at them.
-    pub(crate) fn tree_sitter(source: &str) -> Self {
-        let bytes = source.as_bytes();
-        let n = 1 + memchr::memchr_iter(b'\n', bytes).count();
-        let mut words = vec![0u32; 1 + 2 * n];
-        words[0] = n as u32;
-        for (line, at) in memchr::memchr_iter(b'\n', bytes).enumerate() {
-            words[1 + n + line] = at as u32;
-            words[2 + line] = at as u32 + 1;
-        }
-        words[2 * n] = bytes.len() as u32;
-        Self { words: Words::Own(words) }
-    }
-
-    /// Byte offset of each line's first byte.
-    pub fn starts(&self) -> &[u32] {
-        let n = self.n();
-        &self.words()[1..1 + n]
-    }
-
-    fn ends(&self) -> &[u32] {
-        let n = self.n();
-        &self.words()[1 + n..1 + 2 * n]
+    /// The view the tape's reads of the index take: its start, in its home's bytes.
+    fn view(&self) -> rerail_clif::view::TapeView {
+        rerail_clif::view::TapeView { lines: self.at, source_len: self.len, ..Default::default() }
     }
 
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
     pub fn line(&self, byte: usize) -> usize {
-        self.starts().partition_point(|&start| start as usize <= byte) - 1
+        rerail_tape_format::reads::f16::line(&self.home, &self.view(), byte.min(self.len as usize) as u32) as usize
     }
 
     /// The 0-based line and byte column holding `byte`.
@@ -239,49 +178,55 @@ impl LineTable {
 
     #[cfg(feature = "code-rule-profile")]
     pub fn estimated_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + 4 * self.words().len()
+        std::mem::size_of::<Self>() + if let Index::Own(h) = &self.home { h.len() } else { 0 }
     }
 
     /// The first byte of `line`.
     pub fn start(&self, line: usize) -> usize {
-        self.starts()[line] as usize
+        rerail_tape_format::reads::f16::line_start(&self.home, &self.view(), line as u32) as usize
     }
 
-    /// Where `line`'s text ends: its terminator's first byte, or the file's end.
-    pub fn end(&self, line: usize) -> usize {
-        self.ends()[line] as usize
+    /// Each line's first byte, in order.
+    pub fn starts(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..self.count()).map(|l| self.start(l) as u32)
     }
 
-    /// Where the line after `line` starts, or the file's end on the last line (Ruff's
-    /// `full_line_end`).
+    /// Where `line`'s text ends in `source` (the file's): its terminator's first byte, or the file's end.
+    pub fn end(&self, line: usize, source: &[u8]) -> usize {
+        if line + 1 >= self.count() {
+            return self.len as usize;
+        }
+        let last = self.start(line + 1) - 1;
+        last + 1 - rerail_tape_format::newlines::length_ending_at(source, last)
+    }
+
+    /// Where the line after `line` starts, or the file's end on the last line (Ruff's `full_line_end`).
     pub fn full_end(&self, line: usize) -> usize {
-        self.starts()
-            .get(line + 1)
-            .map_or_else(|| self.end(line), |&s| s as usize)
+        if line + 1 < self.count() { self.start(line + 1) } else { self.len as usize }
     }
 
     /// The number of lines: one more than the terminators.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn len(&self) -> usize {
-        self.n()
+        self.count()
     }
 
     /// The number of lines: one more than the terminators, the empty line after a final one included (core.rerail's
     /// `src_line`).
     pub fn count(&self) -> usize {
-        self.n()
+        rerail_tape_format::newlines::count(self.index()).expect("an index") as usize + 1
     }
 
     /// The lines a linter counts in the file (core.rerail's `line_count`: ESLint's `max-lines`, pylint's
     /// `too-many-lines`): the empty line after a final terminator left out, so an empty file has none.
     pub fn counted(&self) -> usize {
-        let n = self.n();
-        n - usize::from(self.start(n - 1) == self.end(n - 1))
+        let n = self.count();
+        n - usize::from(self.start(n - 1) == self.len as usize)
     }
 
-    /// Line `l`'s text, `[start, end)`, from 1: its first byte and its terminator's.
-    pub fn text_of(&self, l: usize) -> [u32; 2] {
-        [self.starts()[l - 1], self.ends()[l - 1]]
+    /// Line `l`'s text in `source`, `[start, end)`, from 1: its first byte and its terminator's.
+    pub fn text_of(&self, l: usize, source: &[u8]) -> [u32; 2] {
+        [self.start(l - 1) as u32, self.end(l - 1, source) as u32]
     }
 
     /// A span's place, as core.rerail's `line`, `end_line` and `col` give it (one definition for every node, token
@@ -290,7 +235,7 @@ impl LineTable {
     pub fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
         let line = self.line(start as usize);
         let last = self.line(end as usize);
-        (line as u32 + 1, last as u32 + 1, start - self.starts()[line])
+        (line as u32 + 1, last as u32 + 1, start - self.start(line) as u32)
     }
 }
 
@@ -309,7 +254,7 @@ pub mod tests {
         assert_eq!(python.len(), 4);
         let texts = |table: &LineTable| {
             (0..table.len())
-                .map(|line| &source[table.start(line)..table.end(line)])
+                .map(|line| &source[table.start(line)..table.end(line, source.as_bytes())])
                 .collect::<Vec<_>>()
         };
         assert_eq!(texts(&eslint), ["a", "b", "c", "d", "e", "f"]);
@@ -324,10 +269,10 @@ pub mod tests {
         assert_eq!(eslint.full_end(0), 3);
         assert_eq!(eslint.full_end(5), source.len());
         let empty = LineTable::new("", Terminators::Newlines);
-        assert_eq!((empty.len(), empty.line(0), empty.end(0)), (1, 0, 0));
+        assert_eq!((empty.len(), empty.line(0), empty.end(0, b"")), (1, 0, 0));
         let trailing = LineTable::new("x\n", Terminators::Newlines);
         assert_eq!(
-            (trailing.len(), trailing.line(2), trailing.end(1)),
+            (trailing.len(), trailing.line(2), trailing.end(1, b"x\n")),
             (2, 1, 2)
         );
     }
@@ -340,7 +285,7 @@ pub mod tests {
         let source = "a\r\nb\rc\n\rd\u{85}e\u{2028}f\x0cg\n";
         let texts = |terminators: Terminators| {
             let table = LineTable::new(source, terminators);
-            (1..=table.count()).map(|l| table.text_of(l)).map(|[a, b]| &source[a as usize..b as usize]).collect::<Vec<_>>()
+            (1..=table.count()).map(|l| table.text_of(l, source.as_bytes())).map(|[a, b]| &source[a as usize..b as usize]).collect::<Vec<_>>()
         };
         assert_eq!(texts(Terminators::Lf), ["a", "b\rc", "\rd\u{85}e\u{2028}f\x0cg", ""]);
         assert_eq!(texts(Terminators::Newlines), ["a", "b", "c", "", "d\u{85}e\u{2028}f\x0cg", ""]);

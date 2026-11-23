@@ -1314,7 +1314,7 @@
             let path = format!("r{at}.py");
             let source = Arc::new((*source).to_owned());
             let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
-            let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::of(lang)));
+            let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
             Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect();
@@ -1528,6 +1528,36 @@
                             assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
                         }
                     }
+                }
+            }
+            // Where the program reads spans (Q216, `places::Places`): each place relation is the view's rows, then the
+            // spans' (`source`, `src_line`), read in place as one relation: the view through the views' reads, the
+            // spans' rows where they lie in their block. Copied out and indexed by id on the device, as a stage reads it.
+            let projection = |reads: &[&str]| Projection { shape: crate::code_rule_dsl::facts::vtab::syntax::Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+            let span_views = shaped(&store, make(), &projection(&["node", "line", "end_line", "col", "docof", "source", "src_line"])).unwrap();
+            let loc_views = shaped(&store, make(), &projection(&["node", "line", "end_line", "col", "docof"])).unwrap();
+            for name in ["line", "end_line", "col", "docof"] {
+                let src = &span_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                let views = loc_views.iter().find(|(n, _)| *n == name).unwrap().1.len();
+                let n = src.len();
+                assert!(n > views, "{name}: the spans' rows ({n}) past the view's ({views})");
+                let Some(d) = src.device_view() else {
+                    assert!(!device.has_addresses(), "{name}: read in place where buffers have addresses");
+                    continue;
+                };
+                assert_eq!(d.rows, n, "{name}: the view's rows and the spans'");
+                let (Some(v), Some(home)) = (d.in_place.clone(), d.home.clone()) else { panic!("{name}: read in place, its indexes' home with it") };
+                let placed = mj::DevRel::view_in(home, 2, n, v).unwrap();
+                let out = mj::DevRel::empty(2, n).unwrap();
+                let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
+                let mut batch = mj::Batch::new().expect("the device");
+                batch.copy_rows(mj::Rows::Rel(&placed), n, &[mj::Col::From(0), mj::Col::From(1)], mj::Rows::Rel(&out), 0).unwrap();
+                let index = batch.index(&placed, &[0]).unwrap();
+                batch.finish().unwrap();
+                assert!(index.built, "{name}: an index by id, built over the view's rows and the spans'");
+                for c in 0..2 {
+                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                    assert_eq!(out.column(c), &host[..], "{name}: column {c}, the view's rows then the spans', read in place");
                 }
             }
         }

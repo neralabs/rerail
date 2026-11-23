@@ -1463,7 +1463,7 @@ impl Locs {
     fn file_line(&self, l: u32) -> u32 {
         match &self.host {
             Some((lines, place)) => {
-                let at = self.lines.text_of((l as usize).clamp(1, self.lines.count()))[0];
+                let at = self.lines.start((l as usize).clamp(1, self.lines.count()) - 1) as u32;
                 lines.line(place.host([at, at])[0] as usize) as u32 + 1
             }
             None => l,
@@ -1846,7 +1846,7 @@ impl Projected {
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
-                    x.lines.text_of((i - x.tokens) as usize)
+                    x.lines.text_of((i - x.tokens) as usize, self.facts.source.as_bytes())
                 }
             }),
         }
@@ -2078,8 +2078,7 @@ impl KindRows {
 
 /// A span's id (core.rerail's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
 /// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
-/// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
-/// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
+/// is the whole source (`source`), `Line` `l` line `l` (`src_line`), `Comment` `k` the document's `k`-th comment from 1,
 /// in source order, of those no node is (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but
 /// keep Rust's `line_comment`, which is then the comment's id) and `Match` `i` the document's `i`th match or group of
 /// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
@@ -2432,7 +2431,8 @@ impl Extra {
         self.source || self.src_line || self.comment || self.rx_span
     }
 
-    /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
+    /// Whether `line` is made as rows rather than read off the node view: spans have lines too (in core.rerail's shape
+    /// the spans' alone, after the `Loc` view's rows: `places::Places`).
     fn line_rows(&self) -> bool {
         self.line && self.spans()
     }
@@ -2635,7 +2635,7 @@ impl Extra {
             lines_at.start = made.len();
             for l in 1..=lines.count() {
                 let sp = span(ExtraSpan::Line, l)?;
-                let [a, b] = lines.text_of(l).map(|at| at as usize);
+                let [a, b] = lines.text_of(l, source.as_bytes()).map(|at| at as usize);
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[a..b], self.line_text, text, string);
                 made.push((sp, a..b));

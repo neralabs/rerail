@@ -1,5 +1,5 @@
 //! A Go file's tape from the lean parser (`rerail_go_lean`): tree-sitter-go's tape,
-//! written as the parse goes, with nothing packed again (`TapeImage::written`). The tape is the one
+//! written as the parse goes, with nothing packed again (`formats::lean`: the run's format, written in one pass). The tape is the one
 //! tree-sitter-go's tree encodes to, node for node (`go_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-go
@@ -44,25 +44,20 @@ fn ids() -> &'static Ids {
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_go_lean::Refusal> {
-    let tape = rerail_go_lean::tape(source.as_bytes())?;
     let ids = ids();
-    let lacks = |what: &str, i: usize| format!("tree-sitter-go lacks the lean parser's {what} {i}");
-    let codes: Result<Vec<Code>, String> = tape
-        .keys
-        .iter()
-        .map(|&key| {
-            let (kind, field, class, extra) = rerail_go_lean::unkey(key);
-            let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
-            let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
-            let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
-            let mut code = Code::plain(kind, field, classes)?;
-            if extra {
-                code.flags |= CODE_EXTRA;
-            }
-            Ok(code)
-        })
-        .collect();
-    Ok(codes.and_then(|codes| TapeImage::written(tape.code, tape.size, tape.base, tape.off, tape.tail, tape.widths, codes, None, grammar, source, budget)))
+    let lacks = move |what: &str, i: usize| format!("tree-sitter-go lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
+        let (kind, field, class, extra) = rerail_go_lean::unkey(key);
+        let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
+        let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
+        let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
+        let mut code = Code::plain(kind, field, classes)?;
+        if extra {
+            code.flags |= CODE_EXTRA;
+        }
+        Ok(code)
+    };
+    rerail_go_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// Go's tree parser: the lean parser, standing in for tree-sitter-go where it reads the file.

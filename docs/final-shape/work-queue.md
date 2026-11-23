@@ -5687,7 +5687,7 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
 - **Also seen**: on the M3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
 
-### Q216. (Q123 on Native-and-GPU-strata until 2026-11-18; Q184 on oscar until 2026-11-18) Spans' places read by the `Loc` views (0353 step 3, row 7)
+### Q216. (Q123 on Native-and-GPU-strata until 2026-11-18; Q184 on oscar until 2026-11-18) Spans' places read by the `Loc` views (0353 step 3, row 7) — done 2026-11-22
 
 Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
 it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
@@ -5703,6 +5703,11 @@ place of the views: copies of tape answers. The views already cover the whole so
   `line` (its rows after the edited line moved) probe the lines of every document's diagnostics: 38 unchanged
   documents made, `line` by node 32 times and `visit_index` 4 (the profile's "a batch's documents made by a probe"),
   about 0.09 s of the edit's 4.0 s. The view reads a node's place off the tape and makes nothing.
+- **Done** (2026-11-22): in core.rerail's shape `Extra` makes place rows for its spans alone (`spans_only`). Each place
+  relation is bound as the `Loc` view's rows, then the spans' (`places::Placed`). A lookup by id goes to the side that
+  holds it (`granules::is_extra`), so a node's place is read off the tape. A span is a derived fact placed once where
+  it is made, so no byte ranges were written for the view. `a_span_reader_s_places_are_the_view_s_then_the_spans`
+  checks it; decision 0353's step 3 says what was built.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
@@ -6120,16 +6125,28 @@ native join it falls back to the planner's whole-rule order.
   swapped) and passes with it. The library test passed 10 runs of 10. `differences` now prints a request relation's
   readers by rule where the rows agree as sets.
 
-### Q210. (Q176 on cost-classifier-metal-rf) `rule_syntax_files_pass_check_rr` fails on `c/includes.rerail`: a negation in a cycle (Go-C-and-C-support's)
+### Q210. (Q176 on cost-classifier-metal-rf) `rule_syntax_files_pass_check_rr` fails on `c/includes.rerail`: a negation in a cycle (Go-C-and-C-support's) — done 2026-11-22
 
 - **Found** (2026-11-18, cost-classifier at f9bfb6e05, with no change of its own; the slow tier's test): `lib/c/includes.rerail`
   line 54, `c_inc_from depends on c_found_by through ! or an aggregate in a cycle`, and line 70, `c_resolved depends on
   c_inc_before` the same. The cycle is the include search: `c_found_by` ← `c_resolved` ← `c_inc_found` ← `c_inc_try`
   ← `c_inc_from` ← `!c_found_by` (an `#include_next` starts past the entry its file was found by). The file came with
   798c03170 (0327 mode (b)).
-- **Next**: Go-C-and-C-support's: whether the search is stratified by its phases (headers in phase 1) in a way
-  `check_rr` does not see, or the rules need a level (each include's depth) that breaks the cycle.
-- **Done when**: the test passes, by the rules or by the check reading what makes the cycle well-founded.
+- **Done** (2026-11-22, by the rules): no rule of the closure negates a relation of it. The first file found is a
+  walk along the configuration's search order (`c_clear`): a directive's search reaches an entry when every path
+  before it is no file (`c_inc_miss`, a negation of `dir_entry`, whose answer for a directory is whole). The order
+  (`c_order_after`, the next entry a name's form and shape look in) is computed below the closure, from the
+  configuration alone. An `#include_next` starts after each rank its file was entered at (`c_found_at`: 0 for a
+  unit, or a file found in its includer's own directory); before, rank 0 was taken only where no entry had found
+  the file, a negation of the closure. `c_includes_resolve_by_the_search_order`, the phase 1 header test and the
+  compile-commands test pass as before.
+- **Found with it**: `lib/git/messages.rerail` and `lib/git/selected-tree.rerail` read `git_message` and
+  `git_tree_entry` with no declaration in their own programs; `git.rerail` included the first before its
+  declarations, and the Git inventory's embedded program put the second after `git.rerail`'s text. Git's records are
+  now `lib/git/records.rerail`, which both include; `git.rerail` is the records and the messages, as before. The
+  test's bad policy in `failed_batch_reports_each_policy_in_argument_order` (`git_revision_cli`) read
+  `reference_edge` without `python/references.rerail` (decision 0483), so its `.references` was never read: it
+  includes it now. The check test, the 17 `git_revision_cli` tests and the slow library tests pass.
 
 ### Q211. (Q177 on cost-classifier-metal-rf) (done) A request relation dropped as unread kept its record (`programs_hidden_alone_keep_their_attribute_copies_declared`)
 
@@ -10176,6 +10193,26 @@ Each choice is read by both sides' invariants in `notes/roll-up-40-cuda-support.
     the costliest stratum.
   - Warm and an append are equal.
 
+### Q494. (Q491 on sync-integration-hub-tape until 2026-11-22) The four strata still rebuilt on ep2's edits (deferred by the user, 2026-11-22)
+
+- **Measured** (2026-11-22, ep2 on an M3, after 0563's two fixes): three edits each rebuild four small strata.
+  `later_dec`, `p255_start` and `p107_rr_agg7` take a few ms each, with 0 to 5 rows kept. `p255_rr_demand_agg_rr_agg5`
+  takes about 30 ms, 20 ms of it building 4 documents: its rebuild looks up `text`, which is made as rows (Q121),
+  not read in place. (The places' part of that, Q216, is done.)
+- **The user** (2026-11-22): "record them but you may leave them as-is for now".
+
+### Q495. (Q492 on sync-integration-hub-tape until 2026-11-22) `reproduces_sqlfluff_rf01_and_al05` and `vue::view::tests::corpus` need their packs' test data pulled from S3 (2026-11-22)
+
+- The test reads `packs/sql/upstream/sqlfluff/fixtures.expected.json`, which is not on this Mac or the farm's
+  hosts. No other worktree's copy matches this tree's `test-data.lock` (`139f92f2…`, 287 files: theirs hold 289,
+  671 or 676), and this Mac has no `aws` CLI, so only `npm run fixtures:pull` gets it. Until then, decision 0612's
+  change to that test's line oracle (`lines::line_of` in SQL's set) is unrun.
+- `vue::view::tests::corpus` reads `packs/vue/upstream/eslint-plugin-vue/fixtures`, missing the same way: the lock
+  is `8acc8d4d…`, 777 files, and the worktrees' copies hold 778, 958 or 963. These are the quick tier's only two
+  failures (2,976 of 2,979 passed on an M3, 2026-11-22, the third the text guard fixed in the same commit).
+- **The user** (2026-11-22): "record them but you may leave them as-is for now", and "I don't have the credentials
+  to get the fixtures".
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
@@ -10569,3 +10606,23 @@ teams by measured work, arguments as references run by continuations), and 0588'
   library, is the feeder's to confirm on a farm Mac as it merges the hub. No architectural clash.
 
 Relax: the engine checks clean; `rerail-metal`'s `pp_arena` tests (9) pass (source splitting, no device).
+
+### Q503. Roll-up 77 (sync-integration-hub-tape b4a1562740 onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape: decision 0612's one line index (every reader reads the tape's in place), 0626's format
+16 alone (format 15 out of the engine; every language's table from its grammar), Q210 and Q216. Conflicts:
+- **`v9np`** (format 15's module): the hub had only moved it (the crate split's one-line path fix); the feeder
+  removed it, so it goes.
+- **`build.rs`**: the feeder's view sources (the line terminators, the format 16 tables), `tokens.rs` at its crate's
+  path.
+- **The text guard's allowances**: the hub's paths. The feeder raised `coverage.rs`'s to 3 as "the sites there are";
+  the file, the same on both sides but for a path, has 2 (lines 376 and 487), and the guard wants the count exact:
+  2, as before.
+- **rr tests' comments on 0612**: the feeder's wording.
+
+One fault in the feeder's code: 6f5c722247 made `TapeDoc::line_table` a product read (`packed_batch`'s resident and
+copied lines) but left it `#[cfg(any(test, feature = "test-hooks"))]`, which only a build without test hooks shows
+(two E0599s in `relax check rerail-engine`): the gate goes. No architectural clash.
+
+Relax: the engine checks clean; the text guards, the two rr tests and rerail-lang's tape tests pass. rerail-tests-tape
+fails as it did before this merge (checked at f5bf47bb18): its own entry (Q504).

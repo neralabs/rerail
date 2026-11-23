@@ -9,5 +9,7 @@
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_adapters::code_rule_dsl::identifier;
+    // A file's lines, its language's (decision 0612): a syntax error's line and column.
+    pub use rerail_adapters::code_rule_dsl::{language, lines};
     pub mod cpython;
 }

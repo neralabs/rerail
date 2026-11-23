@@ -186,7 +186,7 @@ fn reported(path: &str, source: &str) -> Vec<String> {
         assert_eq!(result["failures"], json!([]), "{result}");
         for violation in result["violations"].as_array().expect("findings") {
             let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
-            let line = source[..start].matches('\n').count() + 1;
+            let line = crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, start);
             let column = start - source[..start].rfind('\n').map_or(0, |at| at + 1) + 1;
             found.push(format!("{code}:{line}:{column}"));
         }
@@ -226,7 +226,7 @@ fn reported_with_python_version(path: &str, source: &str, python_version: &str) 
         .iter()
         .map(|violation| {
             let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
-            let line = source[..start].matches('\n').count() + 1;
+            let line = crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, start);
             let column = start - source[..start].rfind('\n').map_or(0, |at| at + 1) + 1;
             format!("F821:{line}:{column}")
         })

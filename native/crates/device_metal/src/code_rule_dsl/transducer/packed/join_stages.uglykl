@@ -71,7 +71,7 @@ typedef JSPACE const int64_t* Longs;
 // A view's row `r`'s value in column `col` (decision 0353 step 4d): the document whose rows hold it (the
 // directory's search written once, `clif_dir_doc_of_row`, the caller's `memo` tried first and set to it), then the
 // view's read written once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
-UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col, UKL_PRIVATE uint32_t* memo) {
+UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col, UKL_PRIVATE uint32_t* memo) {
     UKL_GLOBAL const ViewRow* rows = view_rows(d);
     uint32_t k = kind - 1u;
     uint32_t lo = clif_dir_doc_of_row(view_block(d), d->at, k, r, *memo);
@@ -96,6 +96,27 @@ UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, u
         case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, i, col);
         default: return (int64_t)clif_view_order(c, e->entry, t, v, l, i, col);
     }
+}
+
+// A place relation where a program reads spans (Q216, `places::Places`): the `Loc` view's rows, then the places of
+// the spans the batch made, a relation in its block (`tail` its base, `at` its descriptor). `rows`: the view's.
+typedef struct {
+    UKL_GLOBAL const ViewDir* dir;
+    JSPACE const uint8_t* tail;
+    uint64_t at;
+    uint32_t rows;
+    uint32_t pad;
+} PlacedDir;
+UKL_STATIC_ASSERT(sizeof(PlacedDir) == 32, "PlacedDir: size");
+// A kind with this bit is a placed relation's: `d` is its `PlacedDir`, the rest of the kind its view's.
+#define VIEW_PLACED 16u
+
+// `kind`'s row `r` in column `col`: the view's read, or a placed relation's row, the view's or a span's where it lies.
+UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col, UKL_PRIVATE uint32_t* memo) {
+    if ((kind & VIEW_PLACED) == 0u) return vread_dir(kind, d, r, col, memo);
+    UKL_GLOBAL const PlacedDir* p = (UKL_GLOBAL const PlacedDir*)d;
+    if (r < p->rows) return vread_dir(kind & ~VIEW_PLACED, p->dir, r, col, memo);
+    return (int64_t)clif_rel_get(p->tail, p->at, r - p->rows, col);
 }
 
 // A key's hash, one value at a time: `rerail_blocks::key_hash`, the read written once (`clif_rel_key_mix`, decision

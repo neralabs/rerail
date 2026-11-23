@@ -303,10 +303,12 @@ impl Stage {
 /// `view_expand`, which makes each row as `Viewed::value_at` does, and the axes' solve (`chunk_views.uglykl`).
 fn chunk_views_source() -> String {
     format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         rerail_accel::gpu::join::COMMON,
         rerail_blocks::RELATION_READS,
         crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ukl(),
+        // The lines' reads (decision 0612), which place a span on the facts' line index.
+        "#include <ukl/reads/lines.h>\n",
         include_str!("chunk_views.uglykl")
     )
 }
@@ -365,7 +367,6 @@ fn view_source(format: u32) -> String {
 /// The format a run's views are of, as it stores its tapes (`Format::of_run`): the view kernels compiled ahead.
 pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
     match crate::code_rule_dsl::tape::formats::Format::of_run() {
-        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
         crate::code_rule_dsl::tape::formats::Format::F16 => 16,
         crate::code_rule_dsl::tape::formats::Format::F16Z => rerail_clif::view::F16Z_FORMAT,
     }

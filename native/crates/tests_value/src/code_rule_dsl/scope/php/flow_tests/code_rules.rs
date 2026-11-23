@@ -48,7 +48,7 @@ function f(bool $c, array $items) {
             .map(|violation| {
                 let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
                 let end = violation["span"]["endByte"].as_u64().expect("end") as usize;
-                let line = SOURCE[..start].matches('\n').count() + 1;
+                let line = crate::code_rule_dsl::lines::line_of(SOURCE, crate::code_rule_dsl::language::GrammarDialect::Php, start);
                 format!("{line}:{}", &SOURCE[start..end])
             })
             .collect()
@@ -168,7 +168,7 @@ function f(bool $c, array $items) {
             .iter()
             .map(|violation| {
                 let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
-                source[..start].matches('\n').count() + 1
+                crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Php, start)
             })
             .collect();
         assert_eq!(lines, [2, 4]);

@@ -482,7 +482,7 @@ fn batch_programs() -> Vec<Program> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
         let stmts = ::bitlex::syntax::parse(src).expect("parses");
         let text = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).text();
@@ -606,7 +606,7 @@ fn json_tier2_switches_on_the_first_byte_alone() {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
     let rows: Vec<&str> = text.lines().filter(|l| l.split_whitespace().nth(1) == Some("ROW")).collect();
@@ -622,7 +622,7 @@ fn json_fallbacks() -> Vec<u16> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
 }
@@ -1099,7 +1099,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(json).map_err(|e| format!("{e:?}"))?;
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let text = compiled.text();

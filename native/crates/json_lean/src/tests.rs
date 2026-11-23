@@ -246,7 +246,7 @@ fn three_parsers_phase_by_phase() {
         let numbers: Vec<u32> = seen.iter().map(|c| theirs.number(&entry(c)).expect("numbered")).collect();
         let mut w = Writer::empty();
         let mut simdjson_16 = |z: bool| {
-            w.begin(&theirs, f, 0, z, true, nodes);
+            w.begin(&theirs, f, rerail_tape_format::newlines::Terminators::Newlines, 0, z, true, nodes);
             rerail_simdjson::events_with(kernel, f, &KINDS, false, |_, words| {
                 for e in words.as_chunks::<3>().0 {
                     let number = numbers[(e[0] >> 8) as usize];
@@ -275,14 +275,14 @@ fn three_parsers_phase_by_phase() {
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let mut w = Writer::empty();
         let t2 = least(&mut || {
-            w.begin(&ours, f, 0, false, true, nodes);
+            w.begin(&ours, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, nodes);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut w).expect("parses");
             let t = w.finish().expect("finishes");
             w.recycle(std::hint::black_box(t).tape);
         });
         let mut bitlex = |z: bool| {
             let fp = rerail_json_aot::padded(f);
-            w.begin(&ours, f, 0, z, true, nodes);
+            w.begin(&ours, f, rerail_tape_format::newlines::Terminators::Newlines, 0, z, true, nodes);
             rerail_json_aot::parse(&fp, f.len(), &mut w).expect("parses");
             let t = w.finish().expect("finishes");
             w.recycle(std::hint::black_box(t).tape);

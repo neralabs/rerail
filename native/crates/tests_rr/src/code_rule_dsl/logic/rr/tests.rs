@@ -2325,7 +2325,7 @@ Subtree(n) :- kind(n, "module"), text(n, _).
     let mut lines: Vec<_> = rows.iter().filter(|row| row["code"] == "LINE")
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
-    // Every line, the empty one after the final newline too (decision 0612).
+    // The empty line after the final terminator is a line too (decision 0612).
     assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass"), (3, "")]);
     // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
     // `Subtree`); the source span and the lines are exact either way.
@@ -5505,7 +5505,7 @@ fn a_host_files_own_nodes_are_not_shown() {
     assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");
     // The run's own rule file (`g.rerail`) is a file of another grammar in its root too, shown as this one is.
     let lines: Vec<&Vec<String>> = lines.iter().filter(|r| r[0] == "rules/r.rerail").collect();
-    // Every line, the empty one after the final newline too (decision 0612).
+    // Every line, the empty one after the final terminator too (decision 0612: `src_line` is the lines `line` numbers).
     assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."], &["rules/r.rerail", "3", ""]], "the host file's lines and their text are shown");
 }
 
