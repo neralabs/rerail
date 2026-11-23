@@ -380,10 +380,11 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// On Metal both are call-free: their rare and once-only bodies (`UKL_COLD`, `UKL_ONCE`) inlined, not called. On the
 /// M3, an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
 /// every thread returned first (decision 0639). Inlined, the phase runs indirectly, as on every backend.
-fn program_pipes(format: u32) -> Result<[Arc<rerail_accel::gpu::join::Pipe>; 2], String> {
+fn program_pipes(format: u32) -> Result<[Arc<rerail_accel::gpu::join::Pipe>; 3], String> {
     let inline = if rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
     let source = || format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format));
-    Ok([pipeline(&format!("joinprog{format}"), "join_grid", source)?, pipeline(&format!("joinprog{format}"), "join_phase", source)?])
+    let name = format!("joinprog{format}");
+    Ok([pipeline(&name, "join_grid", source)?, pipeline(&name, "join_phase", source)?, pipeline(&name, "join_chain", source)?])
 }
 
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
@@ -2971,7 +2972,7 @@ impl Batch {
                     ScanData::At(a) => a,
                 };
                 let data = at(l.data);
-                ScanLevel { data, sums: l.sums.map_or(data, at), w: ScanWords { n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets), at: 0, sums_at: 0 } }
+                ScanLevel { data, sums: l.sums.map_or(data, at), w: ScanWords { n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets) | if l.small { 2 } else { 0 }, at: 0, sums_at: 0 } }
             })
             .collect();
         // Each in a buffer of its own (an empty one of a few bytes: a buffer is never empty).
@@ -3008,7 +3009,7 @@ impl Batch {
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? },
                         item_kinds: prog.items.iter().map(|i| i[0] >> 24).collect(), jumps: prog.jumps, last };
         let rounds = ProgramSizes::now().rounds.unwrap_or(STACK_ROUNDS_FIRST).max(1);
-        let r = Ran { ctl: Words::zeroed(16)?, slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, grids: None, kit };
+        let r = Ran { ctl: Words::zeroed(16)?, slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
         self.launch(r)
     }
 
@@ -3035,7 +3036,7 @@ impl Batch {
                 kit.retext(now);
             }
         }
-        let [grid, phase] = program_pipes(kit.format)?;
+        let [grid, phase, chain] = program_pipes(kit.format)?;
         if let Some(t) = &kit.top {
             let room = kit.reserved.as_ref().map_or(kit.counts.buffer.length() as usize, |a| a.mapped());
             t.set(1, u32::try_from(room / 16).map_err(|_| Error::BackendCapacity)?);
@@ -3078,15 +3079,35 @@ impl Batch {
         }
         let (mut at, mut n, mut rounds) = (r.at, 0usize, 0u32);
         let most = ProgramSizes::now().phases.unwrap_or(STACK_PHASES).clamp(1, STACK_PHASES);
+        let chained = chain_phases();
+        let mut left = 0u32;
         while let Some(q) = at {
             if n == most {
                 break;
             }
+            // A run of its phases in one group first (`join_chain`, decision 0647): up to `chained` along the walk,
+            // to a round's end at most; its phases' own dispatches after it pass over what it ran.
+            if left == 0 && chained > 0 {
+                let mut len = 1u32;
+                while len < chained && n + (len as usize) < most && !kit.jumps.iter().any(|j| j.0 == q + len - 1) && walk_next(&kit.jumps, kit.last, nphases, q + len - 1) == Some(q + len) {
+                    len += 1;
+                }
+                pass.run_bytes_at(&chain, &bufs, &args(q, 0, len, NONE), 1);
+                left = len;
+            }
+            left = left.saturating_sub(1);
             let slot = 3 * n as u32;
-            pass.run_bytes_at(&grid, &[(&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&r.ctl.buffer.buffer, 0), (&grids.buffer.buffer, 0)], &args(q, 0, 0, slot), 1);
             let [_, count, _, ns] = kit.phase_items[q as usize];
-            let most = if ns == 0 { count as usize } else { PHASE_GROUPS };
-            pass.run_bytes_indirect_at(&phase, &bufs, &args(q, 0, 0, slot), &grids.buffer.buffer, 4 * u64::from(slot), most);
+            if ns == 0 {
+                // Its groups its items, known: dispatched at once, its groups checking the program's flags themselves
+                // (decision 0647), its sequence (24 bits, under the flags' byte in `ctl[12]`) its own.
+                assert!(r.seq < 1 << 24, "a program's dispatches past its sequences' 2^24");
+                pass.run_bytes_at(&phase, &bufs, &args(q, 0, r.seq, NONE), count as usize);
+                r.seq += 1;
+            } else {
+                pass.run_bytes_at(&grid, &[(&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&r.ctl.buffer.buffer, 0), (&grids.buffer.buffer, 0)], &args(q, 0, 0, slot), 1);
+                pass.run_bytes_indirect_at(&phase, &bufs, &args(q, 0, 0, slot), &grids.buffer.buffer, 4 * u64::from(slot), PHASE_GROUPS);
+            }
             n += 1;
             at = walk_next(&kit.jumps, kit.last, nphases, q);
             if kit.jumps.iter().any(|j| j.0 == q) {
@@ -4065,7 +4086,7 @@ impl Program {
         let t0 = n.div_ceil(SCAN_TILE).max(1);
         let t1 = t0.div_ceil(SCAN_TILE).max(1);
         for (k, m) in [(0, n), (1, t0), (2, t1)] {
-            self.scans.push(ScanAt { data: if k == 0 { data } else { ScanData::Script }, sums: (k < 2).then_some(ScanData::Script), n: m as u32, offsets: k < 2 });
+            self.scans.push(ScanAt { data: if k == 0 { data } else { ScanData::Script }, sums: (k < 2).then_some(ScanData::Script), n: m as u32, offsets: k < 2, small: k == 0 && small_scans() });
         }
         first
     }
@@ -4080,11 +4101,19 @@ impl Program {
             p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per: SCAN_TILE as u32, plus: 0 }]);
             p.seg_late.push((p.segs.len() - 1, Late::Scan(first + level, n_word)));
         };
+        // Each pass's groups from a level's count, so that where the first level's values fit one tile, its sums'
+        // pass scanning them whole and emptying the levels after it (decision 0647), the four passes after it start
+        // none: the top level's one tile as its values' (one, or none), the first level's tiles as the second
+        // level's values (its tiles' sums, one a tile).
+        let level_items = |p: &mut Program, kind: u32, level: usize, items: usize, by: usize, per: usize| {
+            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per: per as u32, plus: 0 }]);
+            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + by, n_word)));
+        };
         tiles(self, PK_SCAN_SUMS, 0, t0);
         tiles(self, PK_SCAN_SUMS, 1, t1);
-        self.phase(vec![(PK_SCAN_TILES, (first + 2) as u32, 0)]);
+        level_items(self, PK_SCAN_TILES, 2, 1, 2, SCAN_TILE);
         tiles(self, PK_SCAN_TILES, 1, t1);
-        tiles(self, PK_SCAN_TILES, 0, t0);
+        level_items(self, PK_SCAN_TILES, 0, t0, 1, 1);
     }
 
     /// An exclusive scan of the `n` values at `data` in place, with their total after them, as phases: each level's
@@ -4108,7 +4137,7 @@ impl Program {
         let mut at = Vec::with_capacity(levels.len());
         for &(d, m, sums) in &levels {
             at.push(self.scans.len() as u32);
-            self.scans.push(ScanAt { data: d, sums: sums.map(|s| ScanData::At(s.0)), n: m as u32, offsets: sums.is_some() });
+            self.scans.push(ScanAt { data: d, sums: sums.map(|s| ScanData::At(s.0)), n: m as u32, offsets: sums.is_some(), small: false });
         }
         for (k, &(_, _, sums)) in levels.iter().enumerate() {
             if let Some((_, tiles)) = sums {
@@ -4224,6 +4253,9 @@ struct ScanAt {
     sums: Option<ScanData>,
     n: u32,
     offsets: bool,
+    /// The first of a sized scan's three levels (`scan_levels_sized`): where its values fit one tile, its sums' pass
+    /// scans them whole and empties the levels after it (`ScanWords::offsets` bit 2, decision 0647).
+    small: bool,
 }
 
 /// `join_stages.uglykl`'s `ScanLevel`, byte for byte.
@@ -4276,7 +4308,8 @@ const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
 
 /// A program launched (`Batch::run_program`, decision 0638): its control words; its parks' list (`slots`, a size
 /// script's items from 0) and the items to run first at its next launch (from `cap`, `list` of them); the phase its
-/// walk goes on from (none: done); its rounds a launch at most; and its last stack's grids, held until it ran.
+/// walk goes on from (none: done); its rounds a launch at most; the sequence of its next dispatch of a phase of no
+/// segments (`phase_begins`, from 1); and its last stack's grids, held until it ran.
 struct Ran {
     ctl: Words,
     slots: Words,
@@ -4284,12 +4317,24 @@ struct Ran {
     at: Option<u32>,
     list: u32,
     rounds: u32,
+    seq: u32,
     grids: Option<Words>,
     kit: Kit,
 }
 
 /// A stack's phases at most (decision 0638): its grids' room.
 const STACK_PHASES: usize = 1024;
+
+/// Whether a sized scan's first level that fits one tile is scanned whole by its sums' pass (decision 0647);
+/// `RERAIL_SMALL_SCANS=0` turns it off for a measure.
+fn small_scans() -> bool {
+    std::env::var("RERAIL_SMALL_SCANS").map_or(true, |v| v != "0")
+}
+
+/// A chain's phases at most (`join_chain`, decision 0647); `RERAIL_CHAIN_PHASES` sets it for a measure, 0 none.
+fn chain_phases() -> u32 {
+    std::env::var("RERAIL_CHAIN_PHASES").ok().and_then(|v| v.parse().ok()).unwrap_or(16)
+}
 
 /// A program's first stack's rounds, and its stacks' at most (decision 0638): each stack after the first twice the
 /// rounds of the one before, so a component of few rounds ends in its first launch, and one of many takes few.
