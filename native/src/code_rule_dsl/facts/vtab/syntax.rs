@@ -4333,8 +4333,9 @@ impl Source for Viewed {
         let mut out = Vec::new();
         for (doc, p) in self.batch.docs.iter().enumerate() {
             let base = offsets[doc];
-            self.each_row(p, offsets[doc + 1] - base, eqs.iter().map(|&(c, _)| c), |i, value| {
-                if eqs.iter().all(|&(c, v)| value(c) == v) {
+            let cols: Vec<usize> = eqs.iter().map(|&(c, _)| c).collect();
+            self.each_row(p, offsets[doc + 1] - base, &cols, |i, value| {
+                if eqs.iter().zip(value).all(|(&(_, v), &got)| got == v) {
                     out.push((base + i) as u32);
                 }
             });
@@ -4345,25 +4346,18 @@ impl Source for Viewed {
         let offsets = self.batch.offsets(self.view);
         out.reserve(self.len() * columns.len());
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            self.each_row(p, offsets[doc + 1] - offsets[doc], columns.iter().copied(), |_, value| out.extend(columns.iter().map(|&c| value(c))));
+            self.each_row(p, offsets[doc + 1] - offsets[doc], columns, |_, value| out.extend_from_slice(value));
         }
     }
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         let offsets = self.batch.offsets(self.view);
-        let mut row = vec![0i64; columns.len()];
         for (doc, p) in self.batch.docs.iter().enumerate() {
             let base = offsets[doc];
-            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied(), |i, value| {
-                for (o, &c) in row.iter_mut().zip(columns) {
-                    *o = value(c);
-                }
-                each(base + i, &row);
-            });
+            self.each_row(p, offsets[doc + 1] - base, columns, |i, value| each(base + i, value));
         }
     }
     fn for_rows_in(&self, range: std::ops::Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
         let offsets = self.batch.offsets(self.view);
-        let mut row = vec![0i64; columns.len()];
         let mut go = true;
         // The documents the range holds: from the one holding its first row.
         let first = offsets.partition_point(|&o| o <= range.start).saturating_sub(1);
@@ -4372,14 +4366,11 @@ impl Source for Viewed {
             if !go || base >= range.end {
                 break;
             }
-            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied(), |i, value| {
+            self.each_row(p, offsets[doc + 1] - base, columns, |i, value| {
                 if !go || !range.contains(&(base + i)) {
                     return;
                 }
-                for (o, &c) in row.iter_mut().zip(columns) {
-                    *o = value(c);
-                }
-                go = each(base + i, &row);
+                go = each(base + i, value);
             });
         }
     }
@@ -4391,7 +4382,8 @@ impl Source for Viewed {
         }
         let docs: rustc_hash::FxHashSet<i64> = keys.iter().map(|k| k >> 32).collect();
         let offsets = self.batch.offsets(self.view);
-        let mut row = vec![0i64; columns.len()];
+        // The columns read, then the key's.
+        let read: Vec<usize> = columns.iter().copied().chain([column]).collect();
         let mut go = true;
         for (doc, p) in self.batch.docs.iter().enumerate() {
             if !go {
@@ -4401,14 +4393,11 @@ impl Source for Viewed {
                 continue;
             }
             let base = offsets[doc];
-            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied().chain([column]), |i, value| {
-                if !go || !keys.contains(&value(column)) {
+            self.each_row(p, offsets[doc + 1] - base, &read, |i, value| {
+                if !go || !keys.contains(&value[columns.len()]) {
                     return;
                 }
-                for (o, &c) in row.iter_mut().zip(columns) {
-                    *o = value(c);
-                }
-                go = each(base + i, &row);
+                go = each(base + i, &value[..columns.len()]);
             });
         }
         true
@@ -4464,7 +4453,7 @@ impl Source for Viewed {
         let up = if needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
         let b = &*self.batch;
         for (o, &op) in out.iter_mut().zip(&ops[..columns.len()]) {
-            *o = Self::op_value(b, p, local, x, n, up, None, op);
+            *o = Self::op_value(b, p, local, x, n, up, Known::default(), op);
         }
     }
 }
@@ -4574,10 +4563,11 @@ impl Viewed {
     }
 
     /// Slot op `op` (`read_op`) of the match at `local` of `p`: its tape node `x`, own id `n` and parent's id `up` as
-    /// the plan's needs had them computed, and its place and depth where the probe knows them (`at`).
+    /// the plan's needs had them computed, and its place, depth and the sibling before where the walk or the probe
+    /// knows them (`known`).
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn op_value(b: &Batch, p: &Projected, local: u32, x: u32, n: i64, up: i64, at: Option<(u32, u32)>, op: u8) -> i64 {
+    fn op_value(b: &Batch, p: &Projected, local: u32, x: u32, n: i64, up: i64, known: Known, op: u8) -> i64 {
         use read_op::*;
         match op {
             FILE => i64::from(p.file),
@@ -4588,12 +4578,12 @@ impl Viewed {
             END => i64::from(p.facts.end(x)),
             LINE => i64::from(p.facts.start_line(x)),
             UP => up,
-            IDX => i64::from(at.map_or_else(|| p.idx(local as usize), |(i, _)| i)),
+            IDX => i64::from(known.idx.unwrap_or_else(|| p.idx(local as usize))),
             FIELD => i64::from(field_atom(p.tag, p.facts.field(x))),
             SIZE => i64::from(p.size(local as usize)),
-            DEPTH => i64::from(at.map_or_else(|| p.depth(local as usize), |(_, d)| d)),
+            DEPTH => i64::from(known.depth.unwrap_or_else(|| p.depth(local as usize))),
             ORDER => i64::from(p.key) << 32 | i64::from(p.order(local)),
-            PREV => Self::prev_id(p, local),
+            PREV => known.prev.unwrap_or_else(|| Self::prev_id(p, local)),
             UNIT => Self::unit_id(b, p, local),
             OP => b.op_atom(p.tag, b.dialects[p.tag].code(&p.facts, x)),
             ENDP => Self::end_id(p, local),
@@ -4630,7 +4620,7 @@ impl Viewed {
         let mut vals = [0i64; 8];
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
         // and depth where the probe knows them (a probe by parent: the hop's counter, one below the parent).
-        let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>, at: Option<(u32, u32)>| {
+        let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>, known: Known| {
             let row = if matches!(view, View::Op) { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) };
             let Some(row) = row else { return };
             let p = &b.docs[doc];
@@ -4646,13 +4636,13 @@ impl Viewed {
                 None => 0,
             };
             for (o, &op) in vals[..len].iter_mut().zip(&plan.ops) {
-                *o = Self::op_value(b, p, local, x, n, up, at, op);
+                *o = Self::op_value(b, p, local, x, n, up, known, op);
             }
             each(row, &vals[..len]);
         };
         if column == self.own() {
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
-                emit(doc, local, NONE, Some(value), None, None);
+                emit(doc, local, NONE, Some(value), None, Known::default());
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
@@ -4667,7 +4657,7 @@ impl Viewed {
                 let counted = !p.anchored;
                 let mut i = 0;
                 p.each_child_node(local, |c, x| {
-                    emit(doc, c, x, None, Some(value), counted.then_some((i, depth)));
+                    emit(doc, c, x, None, Some(value), if counted { Known { idx: Some(i), depth: Some(depth), prev: None } } else { Known::default() });
                     i += 1;
                 });
             }
@@ -4675,7 +4665,7 @@ impl Viewed {
             let Ok(t) = u32::try_from(value) else { return true };
             for (doc, p) in b.docs.iter().enumerate() {
                 if let Some(local) = p.ranks().local(Item::Node, t) {
-                    emit(doc, local, t, None, None, None);
+                    emit(doc, local, t, None, None, Known::default());
                 }
             }
         } else if matches!(self.view, View::Op) && column == 0 {
@@ -4684,7 +4674,7 @@ impl Viewed {
                 let p = &b.docs[doc];
                 p.facts.each_child(p.node(local), |x| {
                     if p.ranks().is(Item::Token, x) {
-                        emit(doc, local, x, Some(value), None, None);
+                        emit(doc, local, x, Some(value), None, Known::default());
                     }
                 });
             }
@@ -4692,12 +4682,12 @@ impl Viewed {
             // A unit's nodes, walked on the tape: each match with its local id.
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 let p = &b.docs[doc];
-                p.each_of_unit(&b.dialects[p.tag], local, |l| emit(doc, l, NONE, None, None, None));
+                p.each_of_unit(&b.dialects[p.tag], local, |l| emit(doc, l, NONE, None, None, Known::default()));
             }
         } else if matches!(self.view, View::Node) && column == 2 {
             // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
             for &[doc, local, x] in b.by_kind(value) {
-                emit(doc as usize, local, x, None, None, None);
+                emit(doc as usize, local, x, None, None, Known::default());
             }
         } else {
             return false;
@@ -4711,95 +4701,113 @@ impl Viewed {
 }
 
 impl Viewed {
-    /// Each of document `p`'s `n` rows in this view, in order: its index and its columns' reader. A view whose rows are
-    /// nodes visits them in order (`Projected::nodes`), so a row's tape node comes with it, not from a select a row;
-    /// where `columns` read the parent, the walk (`Projected::walk`) brings it too, not a tape parent read a row.
-    fn each_row(&self, p: &Projected, n: usize, columns: impl Iterator<Item = usize>, mut row: impl FnMut(usize, &dyn Fn(usize) -> i64)) {
-        let columns: Vec<usize> = columns.collect();
-        let walked = self.parent().is_some_and(|q| columns.contains(&q));
-        // A child's place and a node's depth are carried in the walk (decision 0353 step 3): no per-node array.
-        // So is a sibling before a node, where the walk's parents are the tape's (`Projected::anchored`).
-        let carried = columns.iter().any(|&c| matches!((self.view, c), (View::Child, 2) | (View::Tape, 3) | (View::Depth, 1)) || matches!((self.view, c), (View::Sibling, 0)) && !p.anchored);
-        // The ids' walk (`node_ids`) only when a column reads a row's or its parent's id.
-        let ids = walked || columns.iter().any(|&c| self.reads_id(c));
-        // `only`: the item a row's node must be (the `field` view's rows are the fielded nodes).
-        let visit = |row: &mut dyn FnMut(usize, &dyn Fn(usize) -> i64), skip: u32, only: Option<Item>| {
-            let mut i = 0;
-            let mut each = |l: u32, x: u32, at: &At<'_>| {
-                if l < skip || only.is_some_and(|item| !p.ranks().is(item, x)) {
-                    return;
+    /// Each of document `p`'s `n` rows in this view, in order: its index and its `columns`' values. The slots' ops and
+    /// the inputs they need are decided once (`read_op`); a row computes those inputs alone and fills the slots from
+    /// them (`op_value`), with no reader a column. A view whose rows are nodes visits them in order
+    /// (`Projected::nodes`), so a row's tape node comes with it; where the ops read the parent, a place, a depth or
+    /// the sibling before, the walk carries them too, not a read a row.
+    fn each_row(&self, p: &Projected, n: usize, columns: &[usize], mut row: impl FnMut(usize, &[i64])) {
+        use read_op::*;
+        let b = &*self.batch;
+        let mut vals = vec![0i64; columns.len()];
+        if let View::Loc(place) = self.view {
+            for ((i, (_, span)), (_, g)) in p.spans().enumerate().zip(p.loc_ids()).take(n) {
+                for (o, &c) in vals.iter_mut().zip(columns) {
+                    *o = Self::loc_value(p, place, g, span, c);
                 }
-                row(i, &|c| self.value_of(p, l, at, c));
-                i += 1;
-            };
-            if walked || carried {
-                // The open subtrees: each one's end on the tape, its id, its children so far and its last child's id. A
-                // parent's id, a child's place, a depth and the sibling before come from the walk, not a point read.
-                let mut open: Vec<(u32, i64, u32, i64)> = Vec::new();
-                let mut step = |l: u32, x: u32, n: i64| {
-                    while open.last().is_some_and(|&(end, _, _, _)| end <= x) {
-                        open.pop();
-                    }
-                    let depth = open.len() as u32;
-                    // A walk without ids carries none (no column reads one): `n` is 0 then.
-                    let (up, idx, prev) = match open.last_mut() {
-                        Some(o) => {
-                            o.2 += 1;
-                            let prev = o.3;
-                            o.3 = n;
-                            (o.1, o.2 - 1, prev)
-                        }
-                        None => (-1, 0, -1),
-                    };
-                    open.push((p.facts.subtree_end(x), n, 0, -1));
-                    let n = || if ids { n } else { p.global(l) };
-                    each(l, x, &At { node: &|| x, n: &n, up: &|| up, idx: &|| idx, depth: &|| depth, prev: &|| prev });
-                };
-                if ids {
-                    for (l, x, n) in p.node_ids() {
-                        step(l, x, n);
-                    }
-                } else {
-                    for (l, x) in p.nodes() {
-                        step(l, x, 0);
-                    }
-                }
-            } else if ids {
-                for (l, x, n) in p.node_ids() {
-                    each(l, x, &At { node: &|| x, n: &|| n, up: &|| Self::parent_id(p, l), idx: &|| p.idx(l as usize), depth: &|| p.depth(l as usize), prev: &|| Self::prev_id(p, l) });
-                }
-            } else {
-                for (l, x) in p.nodes() {
-                    each(l, x, &At { node: &|| x, n: &|| p.global(l), up: &|| Self::parent_id(p, l), idx: &|| p.idx(l as usize), depth: &|| p.depth(l as usize), prev: &|| Self::prev_id(p, l) });
-                }
+                row(i, &vals);
             }
+            return;
+        }
+        let mut ops = Vec::with_capacity(columns.len());
+        let mut needs = 0u8;
+        for &c in columns {
+            let (op, need) = Self::read_op(self.view, c);
+            ops.push(op);
+            needs |= need;
+        }
+        let mut fill = |i: usize, l: u32, x: u32, n: i64, up: i64, known: Known| {
+            for (o, &op) in vals.iter_mut().zip(&ops) {
+                *o = Self::op_value(b, p, l, x, n, up, known, op);
+            }
+            row(i, &vals);
         };
-        match self.view {
-            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End => visit(&mut row, 0, None),
-            View::Child => visit(&mut row, 1, None),
-            // The nodes below the root with a field, in order (`fielded`).
-            View::Field => visit(&mut row, 1, Some(Item::Field)),
-            // The nodes after a sibling.
-            View::Sibling => visit(&mut row, 1, Some(Item::Sibling)),
-            View::Spread => visit(&mut row, 0, Some(Item::Spread)),
-            // The tokens in preorder, each with its node.
+        let (only, skip) = match self.view {
+            View::Child => (None, 1),
+            // The nodes below the root with a field, in order (`fielded`); the nodes after a sibling; the spread nodes.
+            View::Field => (Some(Item::Field), 1),
+            View::Sibling => (Some(Item::Sibling), 1),
+            View::Spread => (Some(Item::Spread), 0),
             View::Tok(rel) => {
                 for i in 0..(p.token_rows(rel) as usize).min(n) {
                     let (l, x) = p.token_row(rel, i as u32);
-                    let at = At { node: &|| x, n: &|| p.global(l), up: &|| -1, idx: &|| 0, depth: &|| 0, prev: &|| -1 };
-                    row(i, &|c| self.value_of(p, l, &at, c));
+                    let id = if needs & NEED_ID != 0 { p.global(l) } else { 0 };
+                    fill(i, l, x, id, -1, Known::default());
                 }
+                return;
             }
+            // The tokens in preorder, each with its node.
             View::Op => {
                 for (i, (x, l)) in p.token_order().into_iter().enumerate().take(n) {
-                    let at = At { node: &|| x, n: &|| p.global(l), up: &|| Self::parent_id(p, l), idx: &|| 0, depth: &|| 0, prev: &|| -1 };
-                    row(i, &|c| self.value_of(p, l, &at, c));
+                    let id = if needs & NEED_ID != 0 { p.global(l) } else { 0 };
+                    let up = if needs & NEED_UP != 0 { Self::parent_id(p, l) } else { 0 };
+                    fill(i, l, x, id, up, Known::default());
+                }
+                return;
+            }
+            _ => (None, 0),
+        };
+        let mut i = 0;
+        let mut each = |l: u32, x: u32, n: i64, up: i64, known: Known| {
+            if l < skip || only.is_some_and(|item| !p.ranks().is(item, x)) {
+                return;
+            }
+            fill(i, l, x, n, up, known);
+            i += 1;
+        };
+        // A parent's id, a child's place, a depth and the sibling before are carried in the walk (decision 0353 step 3)
+        // where the ops read them; the sibling only where the walk's parents are the tape's (`Projected::anchored`).
+        let walked = needs & NEED_UP != 0;
+        let carried = ops.iter().any(|&o| matches!(o, IDX | DEPTH)) || ops.contains(&PREV) && !p.anchored;
+        let ids = walked || needs & NEED_ID != 0;
+        if walked || carried {
+            // The open subtrees: each one's end on the tape, its id, its children so far and its last child's id.
+            let mut open: Vec<(u32, i64, u32, i64)> = Vec::new();
+            let mut step = |l: u32, x: u32, n: i64| {
+                while open.last().is_some_and(|&(end, _, _, _)| end <= x) {
+                    open.pop();
+                }
+                let depth = open.len() as u32;
+                let (up, idx, prev) = match open.last_mut() {
+                    Some(o) => {
+                        o.2 += 1;
+                        let prev = o.3;
+                        o.3 = n;
+                        (o.1, o.2 - 1, prev)
+                    }
+                    None => (-1, 0, -1),
+                };
+                open.push((p.facts.subtree_end(x), n, 0, -1));
+                // A walk without ids carries none: then no op reads the parent's or the sibling's.
+                let known = Known { idx: Some(idx), depth: Some(depth), prev: ids.then_some(prev) };
+                each(l, x, n, up, known);
+            };
+            if ids {
+                for (l, x, n) in p.node_ids() {
+                    step(l, x, n);
+                }
+            } else {
+                for (l, x) in p.nodes() {
+                    step(l, x, 0);
                 }
             }
-            View::Loc(place) => {
-                for ((i, (_, span)), (_, g)) in p.spans().enumerate().zip(p.loc_ids()).take(n) {
-                    row(i, &|c| Self::loc_value(p, place, g, span, c));
-                }
+        } else if ids {
+            for (l, x, n) in p.node_ids() {
+                each(l, x, n, 0, Known::default());
+            }
+        } else {
+            for (l, x) in p.nodes() {
+                each(l, x, 0, 0, Known::default());
             }
         }
     }
@@ -4891,10 +4899,13 @@ impl Viewed {
                 _ => Self::loc_value(p, place, 0, p.span(local), column),
             };
         }
+        use read_op::*;
         let (local, x) = self.local_of_row(p, i);
-        let node = || if x != NONE { x } else { p.node(local) };
-        let at = At { node: &node, n: &|| p.global(local), up: &|| Self::parent_id(p, local), idx: &|| p.idx(local as usize), depth: &|| p.depth(local as usize), prev: &|| Self::prev_id(p, local) };
-        self.value_of(p, local, &at, column)
+        let (op, needs) = Self::read_op(self.view, column);
+        let x = if x == NONE && needs & (NEED_X | NEED_UP) != 0 { p.node(local) } else { x };
+        let n = if needs & NEED_ID != 0 { p.global(local) } else { 0 };
+        let up = if needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+        Self::op_value(&self.batch, p, local, x, n, up, Known::default(), op)
     }
 
     /// The local id of document `p`'s row `i` in this view, and its tape node where finding the row read it (the
@@ -4920,37 +4931,6 @@ impl Viewed {
                 (p.facts.parent(x).map_or(0, |q| p.local_of_node(q)), x)
             }
             View::Tok(rel) => p.token_row(rel, i as u32),
-        }
-    }
-
-    /// Column `column` of node `local`'s row in this view, what the column needs read through `at`: its tape node,
-    /// its id, its parent's id (`-1` above the root), its place among its parent's children and its depth. A scan's
-    /// walk carries the last three; a point read reads them off the tape.
-    fn value_of(&self, p: &Projected, local: u32, at: &At<'_>, column: usize) -> i64 {
-        let l = local as usize;
-        let id = || (at.node)() as usize;
-        let parent = at.up;
-        match (self.view, column) {
-            // A program's nodes are its file's (decision 0431 §4); `core` keeps to the document underneath.
-            (View::Node, 0) => i64::from(p.file),
-            (View::Core, 0) => i64::from(p.key),
-            (View::Core, 1) => id() as i64,
-            (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id() as u32),
-            (View::Node, 3) => i64::from(p.facts.start(id() as u32)),
-            (View::Node, 4) => i64::from(p.facts.end(id() as u32)),
-            (View::Line, 1) => i64::from(p.facts.start_line(id() as u32)),
-            (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
-            (View::Child, 2) => i64::from((at.idx)()),
-            (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field(id() as u32))),
-            (View::Tape, 2) => i64::from(p.size(l)),
-            (View::Tape, 3) | (View::Depth, 1) => i64::from((at.depth)()),
-            (View::Order, 1) => i64::from(p.key) << 32 | i64::from(p.order(local)),
-            (View::Sibling, 0) => (at.prev)(),
-            (View::Unit, 1) => Self::unit_id(&self.batch, p, local),
-            (View::End, 1) => Self::end_id(p, local),
-            (View::Tok(rel), 1) => p.token_of(rel, local),
-            (View::Op, 1) => self.batch.op_atom(p.tag, self.batch.dialects[p.tag].code(&p.facts, id() as u32)),
-            _ => (at.n)(),
         }
     }
 }
@@ -4984,15 +4964,13 @@ mod read_op {
     pub const NEED_UP: u8 = 4;
 }
 
-/// What a view's column reads of a node's row (`Viewed::value_of`), each read when the column asks.
-struct At<'a> {
-    node: &'a dyn Fn() -> u32,
-    n: &'a dyn Fn() -> i64,
-    up: &'a dyn Fn() -> i64,
-    idx: &'a dyn Fn() -> u32,
-    depth: &'a dyn Fn() -> u32,
-    /// The numbered sibling before it, by id (`next_sibling`'s `a`).
-    prev: &'a dyn Fn() -> i64,
+/// What a walk or a probe already has of a match (`Viewed::op_value`): its place among its parent's children, its depth
+/// and the numbered sibling before it, by id (`next_sibling`'s `a`); read off the tape where not.
+#[derive(Clone, Copy, Default)]
+struct Known {
+    idx: Option<u32>,
+    depth: Option<u32>,
+    prev: Option<i64>,
 }
 
 /// The field atom of field `code` in the dialect whose tape tag is `tag`.
