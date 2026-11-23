@@ -395,6 +395,16 @@ reaches no stratum), the kept part bound from its frames (345 relations), its ch
 combine named. Each is a few percent; together they are the gap. The way to close it is the one above: each made where
 a stratum first reads it, so a run that reaches none makes none of them.
 
+Cut since (2.67 G to 2.57 G): the cross part with nothing to run (no stratum the cut runs, none derived, no input
+changed) is not normalized, planned or walked. Its outputs are read where they are: a clean one from the kept part,
+one that is an input (a pack's violations, handed on through `rr_found_through`) where the run binds it
+(`plan::decode_bound`). A run whose outputs include any other (a view of an input, or any output of a run with no
+kept part, as the Git inventory's) still runs. The outputs of the warm runs, framed and not, are the cold run's (661
+relations). Next in line: the kept entries (`kept_entry::Entries::read`, seven users: the prepared pointer, the kept
+plans and choices, phase 0's graphs, the combine, phase frames, the parts) decode every row into values before a
+reader reads them, a copy decision 0353 forbids, and the largest single read left on the warm path; each reader
+reads its relations in place, as the kept plans' numbers already do (`get_numbers`).
+
 Phase 0's graph images (22 ms of opens: some 110 segment files, a segment a single-source record) are written as
 one record a call now; most calls keep one text's graph, so the small segments stay until the store's writer places
 a transaction's small sources in one segment.
