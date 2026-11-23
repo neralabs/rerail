@@ -650,10 +650,40 @@ Instructions (cycles) a node, `parent_bench`, profiling build, this Mac at load 
 | the host's scalar read | 104.7 (17.6) | 482.0 (94.9) | 132.1 (34.1) |
 | hand-written scan (`hand::parent_all_scan`) | 27.9 (4.5) | 73.5 (9.8) | 34.5 (9.6) |
 
-Left: a slot narrower than 8 bytes (the usual width) still gathers its windows (a table lookup over the chunk's
-bytes would read past the words the C reads, which only a 16z entry's slack allows); the link launch is now half of
-numbers' two; and a C stack slot two variables share (a loop's counter, then a later local) is one Rust variable,
-each lane's if either is.
+Then three more, each in the compiler or the library, none in a kernel:
+
+7. **A variable is its number in its function.** The C lowering gives variables of scopes apart one frame offset (a
+   loop's counter, then a later declaration), and rs.rs named its Rust variables by it: the two were one, each
+   lane's if either was. A `Local`'s word 3 is the variable's number (`vector::VAR_IN_FUNCTION`), and rs.rs keys
+   every variable by it. `wide.uglykl` declares a uniform width in the loop counter's slot again: one value.
+8. **Narrow slots.** Under `UKL_VEC` the window of a whole value's bytes (1, 2, 4 or 8) is one unaligned load of
+   those bytes alone (`memory.h`): only the words the aligned form touches, never past its last byte's. A lane's
+   consecutive slots are then a vector load of their elements under the stride's runtime test, as 8-byte ones
+   were. No table lookup across the chunk, which would read past the C's words. Widths 3, 5, 6, 7 (`ukl_ld_bits`)
+   take the word path. `wide.uglykl` row 27 reads every width, 1 to 8.
+9. **The link launch.** A round of a lanes loop costs as much for 1 running lane as for 8 (each address a
+   gather). Where at most 2 lanes go on, each one's rounds to the loop's end are Rust's rounds of one value
+   (`finish_scalar`): the lane's copies of the variables the loop reads, written back after. Only for a loop that
+   leaves by its condition, calls nothing, writes only variables, and reads no lane id, SIMD group, barrier or
+   atomic (a lane's rounds alone are then one interleaving of the threads'). A short circuit of one value and a
+   cheap right side of lanes (variables only, no call) is the two masks and-ed, not a branch. A store of lanes'
+   values at one address (C's race) is one store of the last running lane's value, not 8 tested ones.
+
+| now | records | numbers | random |
+|---|---|---|---|
+| the step | 26.9 | 53.0 | 30.1 |
+| the link | 22.8 | 55.2 | 26.1 |
+| two launches | 49.7 | 108.7 | 56.7 |
+| the host's scalar step | 54.2 | 86.4 | 57.9 |
+| `parent_group` | 77.8 | 134.8 | 84.0 |
+| `parent_back` | 82.5 | 166.7 | 93.0 |
+
+Instructions a node, this Mac at load 31–35 (cycles not compared at that load). Two launches now cost fewer
+instructions than the host's scalar step on records and random.
+
+Left: numbers' link (55 a node, half of its two). Its chains are long and many lanes run them together, so each
+round is a gather. Those rounds' indices are consecutive only among the running lanes, and a vector over them
+reads past every address the C proves valid.
 
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
