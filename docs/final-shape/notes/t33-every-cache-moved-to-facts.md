@@ -382,3 +382,18 @@ when no stratum that runs reads them (`Cut::idle`). Phase 1's nested run is 13 m
 part's views). The profile's spans now: prepare 55 (the prepared program's entry 30: what preparing found 15, the
 pointer 5, the kept plans 4; the memo's program 13), the cross part 24, the parse's own 19 (the kept statistics 8),
 the statistics 19 (the base rows measured 14), phase 1 17, the outputs written 3.
+
+Since (2026-11-23, load 4; counted in instructions, which a loaded machine does not move): the warm run without the
+cutoff 3.07 G, the cutoff's run 0.90 G. Phase 1's run is kept as a frame (`phases::frame`): its exports, what it
+consulted with each one's digest, its plans, under its identity (its program, the files handed down, the run's
+settings, the engine); a process whose run finds every read as it was (`changes_of`) takes the exports and does not
+run the phase (the combine 0.41 G to 0.17 G). The spans whose text is read are kept with the program, as the text
+kinds are; the memo's strata keep each set of leaves once (22,320 of the pointer's 60,174 rows were one a relation).
+A kept program's text tests are lowered where first tested (`Matcher::lazy`), but the run still compiles them
+before its waves: a compile reads the store's groups of automata, which is SQL (decision 0104), so they compile at
+the first test only once those images are read without SQL.
+
+What is left, by phase: prepare 0.87 G (the prepared program's entry, the memo's program, the text tests' compile,
+the cone of requests), the cross part 0.35 G, the parse before its waves 0.38 G (the kept statistics, each
+relation's sketches decoded, all of which the planner's totals read), the statistics 0.26 G (the kept inputs bound,
+which the cross part binds too).
