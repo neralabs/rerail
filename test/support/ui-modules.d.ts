@@ -261,6 +261,7 @@ declare module "*/ui/routes.js" {
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "logged" | "steered" | "declined";
     sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
+    section?: "about";
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
@@ -308,13 +309,16 @@ declare module "*/ui/settings-model.js" {
     tone: "on" | "warn" | "off" | "";
     command: { text: string; label: string } | null;
     problem?: string;
-    data?: { text: string; warn: boolean };
+    data?: { text: string; warn: boolean; fix: string | null };
   }
   export function agentStatus(agent: {
     id: string; name: string; found: boolean; connected: boolean; problem: string | null;
-    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string; fix: string | null };
   }): AgentStatus;
   export function installedLabel(ms: number | null | undefined): string | null;
+  export function releaseUrl(version: string): string;
+  export function isNewerVersion(a: string, b: string): boolean;
+  export function newerRelease(health: { version?: unknown; update?: { latest?: unknown; checkedAt?: unknown } | null } | null | undefined): string | null;
 }
 
 declare module "*/ui/render/rule-sheet-model.js" {

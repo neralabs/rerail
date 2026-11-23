@@ -446,11 +446,13 @@ function printRemoteStatus(home: string): void {
   }
 }
 
-/** For each connected coding agent, whether its tools can read Rerail's data on this computer. */
+/** For each connected coding agent, whether its tools can read Rerail's data on this computer, and the step that changes it where there is one. */
 async function printCodingAgentDataAccess(home: string): Promise<void> {
   for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
-    // Each sentence names its coding agent.
-    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+    // Each sentence names its coding agent, and its step follows it.
+    if (!agent.connected) continue;
+    process.stdout.write(`${agent.rerailData.why}\n`);
+    if (agent.rerailData.fix !== null) process.stdout.write(`${agent.rerailData.fix}\n`);
   }
 }
 
