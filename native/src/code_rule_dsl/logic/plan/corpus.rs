@@ -1324,14 +1324,14 @@ pub fn run_read(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options, None)
+    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
 /// Run a policy with in-memory evaluation tables and return its complete output image.
 pub fn run_policy_image(program: &Arc<crate::code_rule_dsl::logic::program_image::Version>, root: &Path, binding: Binding, options: &serde_json::Value) -> Result<(Report, Vec<u8>)> {
     let mut image = Vec::new();
     let report = run_read_handing(program, None, root, Path::new(""), "program", binding, 1 << 18,
-        &Typing::default(), options, Some(&mut image))?;
+        &Typing::default(), options, Some(&mut image), Default::default())?;
     Ok((report, image))
 }
 
