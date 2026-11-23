@@ -931,6 +931,31 @@ fn a_semicolon_after_a_line_break_is_the_lean_parsers() {
     ]);
 }
 
+/// A name with letters past ASCII (decision 0627), as the lean lexer's `name_end` reads one: Latin,
+/// Greek, Cyrillic, CJK, Hangul and kana, first and after ASCII, a function's, a class's, a call's,
+/// in a template (`$é`, `$aé`, `${é}`), after `as`; a `$` before a backtick (content).
+#[test]
+fn names_past_ascii_are_the_lean_parsers() {
+    same(&[
+        "val é = 1\n",
+        "val aé1 = 2\n",
+        "val ж = 1; val 中文 = 2; val 한 = 3; val カ = 4\n",
+        "fun é() = é.b()\n",
+        "class Ünïcode : Bäse()\n",
+        "val Ωμέγα = 1\n",
+        "val s = \"$é\"\n",
+        "val s = \"$aé\"\n",
+        "val x = \"${é}\"\n",
+        "val s = \"é €\"\n",
+        "val x = a as Lé\n",
+        "val c = 'é'\n",
+        "val s = \"$`a`\"\n",
+        "val s = \"x$`a b`y\"\n",
+        "val s = \"\"\"$`a`\"\"\"\n",
+        "val s = \"$`a`$b\"\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
@@ -946,6 +971,16 @@ fn what_the_grammar_does_not_read_is_refused() {
         "/* /* /* /* /* deep */ */ */ */ */\nval x = 1\n",
         "/*/**/*/\nval x = 1\n",
         "/* /* c\n",
+        // Past ASCII in code, what is no name's letter, or a name's touching a number or before
+        // an `@`: the lean parser refuses these too.
+        "val a×b = 1\n",
+        "val a = b·c\n",
+        "val x = 1é\n",
+        "val x = é@f\n",
+        // A template's name before a byte past ASCII no name's letter: the lean parser reads it,
+        // ending the name there; the masks of names read every byte past ASCII as a letter's.
+        "val s = \"$€\"\n",
+        "val s = \"$a€\"\n",
         // A `;` after a line break and a comment: the lean parser refuses it too.
         "val a = 1\n// c\n;val b = 2\n",
         "val a = 1\n/* c */\n;val b = 2\n",

@@ -70,11 +70,48 @@ class backslash = '\\'
 class dollar    = '$'
 class lbrace    = '{'
 class high      = 0x80..0xff
+# A letter past ASCII the lean lexer reads in a name (`letter`, `\p{L}` where it is sure): Latin-1
+# and Latin Extended, Greek, Cyrillic, kana, CJK and Hangul, each character's UTF-8 bytes. The
+# second (`u2_*`) and third (`u3_*`) bytes are each lead's that are letters.
+class cont      = 0x80..0xbf
+class u_c3      = 0xc3
+class u_c4      = 0xc4..0xc8 0xd0 0xd1 0xd3
+class u_c9      = 0xc9
+class u_cd      = 0xcd
+class u_ce      = 0xce
+class u_cf      = 0xcf
+class u_d2      = 0xd2
+class u2_c3     = 0x80..0x96 0x98..0xb6 0xb8..0xbf
+class u2_c9     = 0x80..0x8f
+class u2_cd     = 0xb0..0xb4 0xb6 0xb7 0xba..0xbd 0xbf
+class u2_ce     = 0x86 0x88..0x8a 0x8c 0x8e..0xa1 0xa3..0xbf
+class u2_cf     = 0x80..0xb5 0xb7..0xbf
+class u2_d2     = 0x80 0x81 0x8a..0xbf
+class u_e3      = 0xe3
+class u_e4      = 0xe4
+class u_e5      = 0xe5..0xe9 0xeb 0xec
+class u_ea      = 0xea
+class u_ed      = 0xed
+class u2_81     = 0x81
+class u2_82     = 0x82
+class u2_83     = 0x83
+class u2_b8     = 0xb8..0xbf
+class u2_b0     = 0xb0..0xbf
+class u2_ed     = 0x80..0x9d
+class u2_9e     = 0x9e
+class u3_81     = 0x81..0xbf
+class u3_82     = 0x80..0x96 0x9d..0x9f 0xa1..0xbf
+class u3_83     = 0x80..0xba 0xbc..0xbf
+class u3_9e     = 0x80..0xa3
 class punct     = '.' '*' '/' ';' ',' ':' '(' ')' '{' '}' '[' ']' '<' '>' '=' '+' '-' '!' '?' '&' '|' '%' '^' '~' '@' '#' '$' '\\'
 # The bytes a line may start with and go on the line before (the scanner's no semicolon).
 class goes_on   = ',' '.' ':' '*' '%' '>' '<' '=' '{' '[' '(' '?' '|' '&' '/'
 
 mask last_byte  = ~next(~empty)
+# The letters' lead bytes, then each of their bytes (`uni`).
+mask u_lead2    = u_c3 & next(u2_c3) | u_c4 & next(cont) | u_c9 & next(u2_c9) | u_cd & next(u2_cd) | u_ce & next(u2_ce) | u_cf & next(u2_cf) | u_d2 & next(u2_d2)
+mask u_lead3    = u_e3 & (next(u2_81) & next(u3_81, 2) | next(u2_82) & next(u3_82, 2) | next(u2_83) & next(u3_83, 2)) | u_e4 & next(u2_b8) & next(cont, 2) | u_e5 & next(cont) & next(cont, 2) | u_ea & next(u2_b0) & next(cont, 2) | u_ed & (next(u2_ed) & next(cont, 2) | next(u2_9e) & next(u3_9e, 2))
+mask uni        = u_lead2 | prev(u_lead2) | u_lead3 | prev(u_lead3) | prev(u_lead3, 2)
 
 # --- Regions -----------------------------------------------------------------------------------
 
@@ -144,14 +181,16 @@ mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail 
 # are not read.
 escape "a `\$` before a quote or a `$` in a raw string" when rbody & dollar & escaped(backslash) & next(dq | dollar)
 mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody
-mask s_word     = body & word
+mask s_word     = body & (word | high)
 mask s_dollar   = body & dollar & ~escaped(backslash)
-escape "a `$` before a backtick" when s_dollar & next(bt)
-# `$name`: the `$`, then the name to its last word byte.
-mask id_dollar  = s_dollar & next(alpha)
+# `$name`: the `$`, then the name to its last word byte. The lean parser starts a name at any
+# letter past ASCII, and its lexer refuses one it is not sure of: past ASCII, only `uni` is read,
+# so in a file read a name's byte past ASCII is a letter's (`high`, as in code).
+mask id_dollar  = s_dollar & next(alpha | high)
 mask id_last    = s_word & ~next(s_word)
+escape "a template's name with a byte past ASCII, not a name's letter" when fill(id_dollar, ~s_word) & high & ~uni
 # A `$` before no name: a content token of its own, the content after it another.
-mask lone       = s_dollar & ~next(alpha)
+mask lone       = s_dollar & ~next(alpha | high)
 
 # --- Characters --------------------------------------------------------------------------------
 
@@ -161,7 +200,10 @@ mask c_esc      = c_body & backslash & ~escaped(backslash)
 mask c_uesc     = c_esc & next(u_letter)
 # `\u` and four hex digits, as the lean lexer's `char_escape_end`: else refused.
 escape "a `\\u` without four hex digits" when prev(c_uesc, 2) & ~(hex_digit & next(hex_digit) & next(hex_digit, 2) & next(hex_digit, 3))
-escape "a byte above 0x7f outside a comment" when code & high
+# Past ASCII, only a name's letters (`uni`): the lean lexer refuses the rest outside a comment or
+# a string. So in a file read, a byte past ASCII in code is a letter's, and the masks of names
+# read `high`, one byte, for it.
+escape "a byte above 0x7f outside a comment, not a name's letter" when code & high & ~uni
 # A block comment nests (`nests`), as the lean lexer's `block_comment_end` counts its `/*` and
 # `*/`. Not read yet past 3 levels in it, nor with `*/*/` in it: a closer's `/` before an opener's
 # `*` closes there, which `block_end` (a `/` not two bytes after a `/*`) does not say.
@@ -170,8 +212,8 @@ escape "a `*/*/` in a block comment" when f_block & slash & prev(star) & prev(sl
 
 # --- Words -------------------------------------------------------------------------------------
 
-mask w          = code & word
-mask word_run       = fill(w & alpha & ~prev(w), ~w)
+mask w          = code & (word | high)
+mask word_run       = fill(w & (alpha | high) & ~prev(w), ~w)
 # A digit after a `.` is a fraction's, but after `..` a number's first (`1..2`).
 mask num_start  = w & digit & ~prev(w) & ~prev(dot & ~prev(dot))
 
@@ -204,11 +246,15 @@ mask b_last     = bx & ~next(bx)
 # rule asks (`sfx`, below), as the lean parser's `integer` does.
 mask int_last   = n_last & di | h_last | b_last
 # The suffix's first byte: a name starts there, though it touches the number.
-mask sfx_start  = w & alpha & prev(int_last)
+mask sfx_start  = w & (alpha | high) & prev(int_last)
 escape "a digit after a binary number" when w & digit & prev(int_last)
 escape "a word touching a real number" when n_last & ~di & next(w)
 escape "a number that ends in `_`" when (n_last | h_last | b_last) & underscore
 mask number     = fill(num_start, ~w) | nb
+# A name's letter past ASCII touching a number, or a name with one before an `@` (the lean
+# parser's name of such letters is never a label): the lean parser refuses them.
+escape "a name's letter past ASCII touching a number" when code & high & prev(number)
+escape "a name with a letter past ASCII before an `@`" when code & at_sign & prev(code & high)
 error "a byte no token takes" by tokens when code & ~ws & ~word_run & ~number & ~punct
 
 # A word ends here (no word byte after it) and starts here (none before it).
@@ -249,7 +295,7 @@ escape "a `;` after a line break and a comment" when code & semicolon & prev(fil
 # does (`as_open`, `as_split`). A blank, a comment or a `\r` after that `>`, which the lean
 # parser reads past to the next line: not read.
 mask as_kw      = kw_start & (text("as") | text("is")) & ~next(w, 2)
-mask as_run     = fill(prev(as_kw, 2), ~(code & (word | dot | text(" ") | text("?") | text("<") | text(">"))))
+mask as_run     = fill(prev(as_kw, 2), ~(code & (word | high | dot | text(" ") | text("?") | text("<") | text(">"))))
 mask as_dot     = fill(as_run & dot, ~as_run)
 mask as_lt      = fill(as_dot & text("<"), ~as_dot)
 escape "a blank, a comment or a `\r` after a type the lean parser may split" when (text(" ") | slash | text("\r")) & prev(as_lt) & prev(gt)
@@ -269,14 +315,14 @@ mask name_tok   = fill(word_start, ~w)
 mask name_more  = name_tok & ~word_start
 # What the token loop reads of the masks above at a token's start (decision 0552): the regions
 # open only at a token's start, so no start is in one, and the token before a start ends there.
-assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
+assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha | high
 assume "a number starts at a digit not after one `.`: a start is never in a word" at starts int_at = digit & ~(zero & (next(x_letter) | next(b_letter))) & ~prev(dot & ~prev(dot))
 assume "a `0x` starts a hex number at a start" at starts hex_at = zero & next(x_letter) & ~prev(dot & ~prev(dot))
 assume "a `0b` starts a binary number at a start" at starts bin_at = zero & next(b_letter) & ~prev(dot & ~prev(dot))
-assume "a `.` starts a real number before a digit, not after a word or a `.`" at starts dot_at = dot & next(digit) & ~prev(word) & ~prev(dot)
+assume "a `.` starts a real number before a digit, not after a word or a `.`" at starts dot_at = dot & next(digit) & ~prev(word | high) & ~prev(dot)
 assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct & ~(prev(two_start) | prev(two_start_three, 2)) & ~(dot & next(digit) & ~prev(word) & ~prev(dot))
 # A token's bytes after its start are code: the regions open only at a token's start.
-assume "a name runs over its word's bytes" in simple_identifier name_more = word
+assume "a name runs over its word's bytes" in simple_identifier name_more = word | high
 assume "a number's bytes are code" in integer_literal code = ~empty
 assume "a number's bytes are code" in real_literal code = ~empty
 assume "a number's bytes are code" in hex_literal code = ~empty

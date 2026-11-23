@@ -1707,6 +1707,33 @@ impl Gen<'_> {
         self.cubes(e, &mut memo).iter().any(|c| c.iter().all(|(o, b)| usize::try_from(rr + o).ok().and_then(|d| at.get(d)).is_none_or(|x| (0..256).any(|i| x[i] && b[i]))))
     }
 
+    /// The classes a mask of stage 1 reads, through the masks it names.
+    fn classes_read(&self, e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::Name(n) if self.class_bytes.contains_key(n) => {
+                out.insert(n.clone());
+            }
+            Expr::Name(n) => {
+                if let Some(d) = self.defs.get(n) {
+                    self.classes_read(d, out);
+                }
+            }
+            Expr::Not(a) => self.classes_read(a, out),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => {
+                self.classes_read(a, out);
+                self.classes_read(b, out);
+            }
+            Expr::Call(_, args) => {
+                for a in args {
+                    if let Arg::E(x) = a {
+                        self.classes_read(x, out);
+                    }
+                }
+            }
+            Expr::Empty | Expr::Test { .. } => {}
+        }
+    }
+
     /// The bytes' atoms: one byte of each set of bytes every class holds alike at.
     fn atoms(&self) -> Vec<u8> {
         let mut seen: HashMap<Vec<bool>, u8> = HashMap::new();
@@ -1780,8 +1807,17 @@ impl Gen<'_> {
         if rest.len() > 3 {
             return None;
         }
-        let pick = |set: &[bool; 256]| atoms.iter().copied().filter(|&a| set[usize::from(a)]).collect::<Vec<u8>>();
+        // `e` tells bytes apart only by the classes it reads: one byte of each of its atoms
+        // in each set (of `atoms`, every class's), not each of every class's.
+        let mut names = std::collections::BTreeSet::new();
+        self.classes_read(e, &mut names);
+        let sig = |b: u8| names.iter().map(|n| self.class_bytes[n][usize::from(b)]).collect::<Vec<bool>>();
+        let pick = |set: &[bool; 256]| {
+            let mut seen = std::collections::HashSet::new();
+            atoms.iter().copied().filter(|&a| set[usize::from(a)] && seen.insert(sig(a))).collect::<Vec<u8>>()
+        };
         let (ys, xs) = (pick(before), pick(here));
+        let atoms = &pick(&[true; 256]);
         for &y in &ys {
             for &x in &xs {
                 let mut n = vec![0usize; rest.len()];
