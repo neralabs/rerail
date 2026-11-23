@@ -3344,7 +3344,7 @@ fn run_observed_within(
     let input_atoms = store.atoms_handle();
     // The values the program tests, of any relation and column: per value, the totals count only those (and every
     // value of a column of few, `ValTotals`).
-    let tested_values: rustc_hash::FxHashSet<i64> = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the constants tested".into()); constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect() };
+    let tested_values: rustc_hash::FxHashSet<i64> = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the constants tested".into()); own::tested_constants(&prepared_placed.v).0.values().flatten().map(|&(_, v)| v).collect() };
     let mut totals = Totals::new(tested_values.clone());
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
     let (mut memo_hits, mut memo_unattributed) = (0usize, 0usize);
@@ -7593,14 +7593,23 @@ fn run_observed_within(
         }
         if hits_unmeasured || kept.is_some() || !unmeasured.is_empty() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the exports' statistics, kept or measured".into());
-            let tested = constants_tested_in(&prepared_placed.v);
+            // The constants the rules test, found where a kept column's counts are not few-valued (a warm run's
+            // columns are, and it walked every rule for them).
+            let tested = std::cell::OnceCell::new();
             let (mut from_kept, mut measured_held) = (0usize, Vec::<String>::new());
+            // Each export measured again forgotten at once: one pass over the measures, not one an export.
+            let again: std::collections::HashSet<&str> = split
+                .exports
+                .iter()
+                .filter(|rel| kept.as_ref().and_then(|m| m.get(*rel)).is_some_and(|r| r.rows() == exports.borrow().len(rel) as i64) || hits_unmeasured || unmeasured.contains(rel))
+                .map(String::as_str)
+                .collect();
+            totals.forget_all(&again);
             for rel in &split.exports {
                 let types: Vec<&str> = pf.types(rel);
                 let held = exports.borrow().len(rel);
                 match kept.as_ref().and_then(|m| m.get(rel)).filter(|r| r.rows() == held as i64) {
                     Some(r) => {
-                        totals.forget(rel);
                         totals.add(rel, held, &r.statistics(&|_| true));
                         // The planner prices a constant by its count (`const_freq`): a value column's counts as kept
                         // while few-valued, else those of the constants the rules test, counted in the rows held.
@@ -7608,7 +7617,7 @@ fn run_observed_within(
                         for c in (0..types.len()).filter(|c| types[*c] != "node") {
                             match r.exact(c) {
                                 Some(vals) => totals.consts.extend(vals.map(|(v, n)| (rel.clone(), format!("c{c}"), v, n))),
-                                None => count.extend(tested.get(rel.as_str()).into_iter().flatten().filter(|(tc, _)| *tc == c)),
+                                None => count.extend(tested.get_or_init(|| own::tested_constants(&prepared_placed.v)).0.get(rel.as_str()).into_iter().flatten().filter(|(tc, _)| *tc == c)),
                             }
                         }
                         if !count.is_empty() {
@@ -7622,7 +7631,6 @@ fn run_observed_within(
                     }
                     None if hits_unmeasured || unmeasured.contains(rel) => {
                         let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure export {rel}"));
-                        totals.forget(rel);
                         let src = exports.borrow_mut().source(rel, types.len());
                         totals.add_rows(rel, src.len(), src.as_ref(), &types);
                         // Why: the kept rows (or none kept) against those held.
@@ -9941,11 +9949,11 @@ impl Totals {
     fn new(tested: rustc_hash::FxHashSet<i64>) -> Self {
         Totals { tested: Arc::new(tested), ..Default::default() }
     }
-    /// Drops `rel`'s measurements (to measure it again).
-    fn forget(&mut self, rel: &str) {
-        self.rels.remove(rel);
-        self.vals.retain(|(r, _), _| r != rel);
-        self.consts.retain(|(r, ..)| r != rel);
+    /// Drops the measurements of `rels` (to measure them again), in one pass over each.
+    fn forget_all(&mut self, rels: &std::collections::HashSet<&str>) {
+        self.rels.retain(|r, _| !rels.contains(r.as_str()));
+        self.vals.retain(|(r, _), _| !rels.contains(r.as_str()));
+        self.consts.retain(|(r, ..)| !rels.contains(r.as_str()));
     }
     /// `from`'s measurements also under the name `to` (the same rows, measured once).
     fn alias(&mut self, from: &str, to: &str) {
