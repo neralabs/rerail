@@ -356,10 +356,10 @@ interface RuleActivityCounts {
  * evaluated, so neither is measured.
  */
 function catalogRuleActivity(
-  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  { id, kind, rule, notRun }: ReturnType<typeof activityRules>[number],
   counts: RuleActivityCounts,
 ): RuleActivity {
-  const { inactive } = inactiveOf(kind, rule);
+  const { inactive } = inactiveOf(kind, rule, notRun);
   const totals = kind === "conversation" ? undefined : counts.activity.get(id);
   return {
     measured: kind !== "conversation" && inactive === undefined,
@@ -550,7 +550,7 @@ export const operations: readonly Operation[] = [
             ...rest,
             ...(localSource === undefined ? {} : { installedFrom: localSource.kind }),
             ...(subject === undefined ? {} : { approval: { subject: { ...subject }, approved: approvals.has(approvalKey(subject)) } }),
-            rules: [...rules],
+            rules: rules.map(rule => ({ ...rule, ...inactiveOf(rule.kind, catalog.documents.get(rule.id)?.rule, catalog.notRun.get(rule.id)) })),
           };
         }),
         skipped: [...catalog.skipped],

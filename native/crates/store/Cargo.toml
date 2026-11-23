@@ -38,6 +38,10 @@ zstd = "=0.14.4"
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+# `Win32_System_LibraryLoader`: the module this code was loaded from (`source_tree`'s image), the addon and not node.exe.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-store = { path = ".", features = ["test-hooks"] }

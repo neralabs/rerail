@@ -22,6 +22,7 @@ import {
   rulePackPackageOf,
   rulePackPublisher,
   rulePackShortName,
+  rulesStartingOn,
   type NoFitExplanation,
   type RulePackLocalSource,
 } from "../engine/catalog/rule-packs.js";
@@ -129,6 +130,12 @@ function waitingNote(subject: RuleApprovalSubject | undefined, name: string, app
   return subject === undefined || approvals.has(approvalKey(subject)) ? "" : `  waiting for approval, runs in Log until then: rerail rules approve ${clean(name)}`;
 }
 
+/** The line under a pack whose rules `ids` this Rerail no longer runs: how many, which, and what runs them again. */
+function notRunNote(ids: readonly string[]): string {
+  const [count, they, them] = ids.length === 1 ? ["1 rule does", "it tests", "it"] : [`${ids.length} rules do`, "they test", "them"];
+  return `${count} not run on this Rerail: ${they} a token parsed files now leave out, and the pack's next version runs ${them} again: ${ids.map(clean).join(", ")}`;
+}
+
 /**
  * The packs installed in `home` and those left out, as `rerail packs list` prints them. A pack installed from a folder
  * or tarball says so, with its path: its name is whatever that folder's `package.json` says, published by no one. A
@@ -146,9 +153,12 @@ function installedLines(home: string): string[] {
       const name = pack.packageName === null ? pack.id : rulePackShortName(pack.packageName);
       const from = pack.localSource === undefined ? "" : `  (from the ${pack.localSource.kind} ${clean(pack.localSource.path)})`;
       const waiting = waitingNote(packSubject(catalog, pack), pack.packageName ?? pack.id, approvals);
+      const notRun = pack.rules.filter(rule => catalog.notRun.has(rule.id)).map(rule => rule.id);
+      const startOn = rulesStartingOn(pack, catalog.notRun);
       return [
-        `  ${clean(name)}@${clean(pack.version ?? "?")}  ${clean(pack.name)}: ${pack.rules.filter(rule => rule.on).length} of ${pack.rules.length} rules start on${from}`,
+        `  ${clean(name)}@${clean(pack.version ?? "?")}  ${clean(pack.name)}: ${startOn} of ${pack.rules.length} rules start on${from}`,
         ...(waiting === "" ? [] : [`  ${waiting}`]),
+        ...(notRun.length === 0 ? [] : [`    ${notRunNote(notRun)}`]),
       ];
     });
   for (const skipped of catalog.skipped) {

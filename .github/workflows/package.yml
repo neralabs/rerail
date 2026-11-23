@@ -269,6 +269,9 @@ jobs:
             cd "$smoke_directory"
             node --input-type=module --eval 'import { nativeHealth } from "@neralabs/rerail"; if (!nativeHealth().ok) process.exit(1);'
           )
+          # The installed package runs a .rerail rule file's tests from what it ships alone: the engine's typing programs
+          # and the .rerail rule library.
+          node scripts/check/ci/installed-rr-tests.mjs "$installed"
 
       - name: Upload release tarball
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

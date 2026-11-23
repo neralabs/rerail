@@ -81,6 +81,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/derived.rs", "SESSION_MEMO", Outermost, "a session's derived values between its runs: taken and put back by the outermost run"),
     ("src/code_rule_dsl/logic/lanes.rs", "DEFERRED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/lanes.rs", "DONE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
+    ("src/code_rule_dsl/logic/lanes.rs", "FENCES", Thread, "where each job running on this thread begins its part of this thread's device queue: a job's own, never carried to another thread"),
     ("src/code_rule_dsl/logic/lanes.rs", "FLUSHED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/lanes.rs", "LEVEL", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/lanes.rs", "QUEUED", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
