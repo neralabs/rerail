@@ -269,10 +269,20 @@ index 64fedf3a..2d5b07bf 100644
      use super::{Raw, MAX_FRAMES};
  
 diff --git a/libs/relax/compiler/src/jit.rs b/libs/relax/compiler/src/jit.rs
-index 1205bea4..db683e31 100644
+index 1205bea4..34ac925a 100644
 --- a/libs/relax/compiler/src/jit.rs
 +++ b/libs/relax/compiler/src/jit.rs
-@@ -8686,6 +8686,11 @@ impl Unit {
+@@ -5136,6 +5136,9 @@ unsafe fn materialize_fault() {
+     let pinfo = PanicInfo { kind: kind.to_string(), message: format!("{} at {:#x}", label, rec.addr), site: u64::MAX, frames, fault_addr: rec.addr, location: String::new() };
+     if fault_policy(&label, &pinfo, rec.guard_depth, rec.const_eval_depth) {
+         crate::inspect::flightrec::fault_dump(&format!("{} {}", kind, pinfo.message));
++        // the program's own handler first, as a rustc build runs it (progsig.rs `fatal_fault`)
++        #[cfg(unix)]
++        os::progsig::fatal_fault(rec.sig, rec.addr);
+         os::fault::die_by(rec.sig);
+     }
+     PANIC.with(|p| *p.borrow_mut() = Some(pinfo));
+@@ -8686,6 +8689,11 @@ impl Unit {
      }
  
      pub fn put_body(&mut self, id: u32, body: std::sync::Arc<Body>) {
@@ -284,7 +294,7 @@ index 1205bea4..db683e31 100644
          if let Some(old) = self.bodies.remove(&id) {
              if old.file != body.file {
                  self.old_bodies.insert((id, old.file), old);
-@@ -22727,7 +22732,7 @@ pub unsafe fn compile_tier1(up: *mut Unit, id: u32) -> bool {
+@@ -22727,7 +22735,7 @@ pub unsafe fn compile_tier1(up: *mut Unit, id: u32) -> bool {
          let _preemptible = crate::preempt::Preemptible::on();
          typeck_ahead(&front, d, args, 1, false, true);
          let _want = WantConsts::on();
@@ -293,7 +303,7 @@ index 1205bea4..db683e31 100644
              AF_OK => unmade.remove(&c),
              why => unmade.insert(c, why),
          };
-@@ -26983,6 +26988,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
+@@ -26983,6 +26991,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
      false
  }
  
@@ -321,7 +331,7 @@ index 1205bea4..db683e31 100644
  fn prefront_slot_once(front: &FrontShared, id: u32) -> bool {
      match front.slot_keys.get(&id) {
          Some(FnKey::Closure(..)) => return prefront_closure(front, id),
-@@ -27039,6 +27065,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
+@@ -27039,6 +27068,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
  /// no front off the owner ("no body": prefront_twin takes an instance's body only), and the O3
  /// build of a hot caller that inlines it left it out (a large app: a view's draw closures, a text
  /// layout's closure, all unverified).
@@ -350,7 +360,7 @@ index 1205bea4..db683e31 100644
  fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u32>) -> bool {
      let Some(key @ FnKey::Closure(cfile, _, parent)) = front.slot_keys.get(&id) else { return prefront_fail(AF_NOT_BODY) };
      let up = front.unit.load(Ordering::Relaxed);
-@@ -27052,8 +27100,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27052,8 +27103,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
      // from the disk cache): made again here, as lower_ahead_as makes an instance's. The closures of
      // a parent built long ago are what turns hot later (a benchmark's or a frame's callback): their
      // O3 builds bailed on this for the whole run and the closure ran baseline code
@@ -363,7 +373,7 @@ index 1205bea4..db683e31 100644
          None => {
              let Some(FnKey::Inst(d, args)) = front.slot_keys.get(&parent) else {
                  prefront_fail(AF_NO_PARENT);
-@@ -27064,7 +27114,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27064,7 +27117,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
              let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::typeck::try_codegen_body(&u.prog, &u.tcx, d, &args)));
              let missing = !crate::program::take_missing().is_empty();
              match made {
@@ -372,7 +382,7 @@ index 1205bea4..db683e31 100644
                  Err(p) if !p.is::<crate::preempt::NeedsUnit>() && !crate::preempt::is_cancelled(&*p) => std::panic::resume_unwind(p),
                  _ => {
                      prefront_fail(AF_NO_PARENT);
-@@ -27727,6 +27777,16 @@ pub struct FrontShared {
+@@ -27727,6 +27780,16 @@ pub struct FrontShared {
      /// inline const blocks' bytes): any thread's lowering reads it here, the tiers of one instance
      /// share one value. A source change bumps the epoch in the key, so nothing stale is read.
      body_consts: crate::conc::MemoMap<(u64, u32, u32, bool), (u64, u32)>,
@@ -389,7 +399,7 @@ index 1205bea4..db683e31 100644
      /// Ahead checks are queued during startup and UI bursts.
      ahead_enabled: bool,
      /// bodies checked ahead after the first present: those no build took are dropped when a
-@@ -27802,6 +27862,7 @@ impl FrontShared {
+@@ -27802,6 +27865,7 @@ impl FrontShared {
              // helper's lowering of main raced the exit with its layout errors, limits/issue-55878)
              tls: crate::conc::MemoMap::with_bits(8),
              body_consts: crate::conc::MemoMap::with_bits(12),
@@ -410,6 +420,21 @@ index 5e831c36..4dcb73ca 100644
          "x86_64-pc-windows-gnu" => ("", ".dll", ".exe", "lib", ".a", &["off"], false),
          "wasm32-unknown-unknown" | "wasm64-unknown-unknown" => ("", ".wasm", ".wasm", "lib", ".a", &["off"], true),
          t => return Err(format!("no target model for {t}")),
+diff --git a/libs/relax/compiler/src/modules.rs b/libs/relax/compiler/src/modules.rs
+index 765aa64e..015d6900 100644
+--- a/libs/relax/compiler/src/modules.rs
++++ b/libs/relax/compiler/src/modules.rs
+@@ -249,7 +249,9 @@ fn sandbox_syntax(prog: &crate::program::Program, krate: u32) -> Vec<String> {
+         for it in trees.iter().flat_map(|t| &t.items) {
+             for a in ast.list(it.attrs) {
+                 if a.toks.hi > a.toks.lo {
+-                    let n = tok(a.toks.lo);
++                    // `#[unsafe(no_mangle)]` and the like (edition 2024) name the attribute inside
++                    let lo = if a.toks.hi > a.toks.lo + 2 && tok(a.toks.lo) == b"unsafe" && tok(a.toks.lo + 1) == b"(" { a.toks.lo + 2 } else { a.toks.lo };
++                    let n = tok(lo);
+                     if matches!(n, b"no_mangle" | b"export_name" | b"link" | b"link_section" | b"used" | b"naked" | b"link_name") {
+                         out.push(format!("{}: `#[{}]` is not allowed in a sandboxed module -- remove it", at(f, it.lo), String::from_utf8_lossy(n)));
+                     }
 diff --git a/libs/relax/compiler/src/os/proc.rs b/libs/relax/compiler/src/os/proc.rs
 index 4f714be3..4bbe077a 100644
 --- a/libs/relax/compiler/src/os/proc.rs
@@ -430,6 +455,37 @@ index 4f714be3..4bbe077a 100644
              if let Ok(rd) = std::fs::read_dir(dir) {
                  for e in rd.flatten() {
                      let f = e.file_name().to_string_lossy().into_owned();
+diff --git a/libs/relax/compiler/src/os/progsig.rs b/libs/relax/compiler/src/os/progsig.rs
+index d7839315..b53679bf 100644
+--- a/libs/relax/compiler/src/os/progsig.rs
++++ b/libs/relax/compiler/src/os/progsig.rs
+@@ -591,6 +591,26 @@ pub(crate) unsafe fn chained(sig: i32, info: *mut u8, uc: *mut u8) -> bool {
+     deliver(sig, info, uc, true)
+ }
+ 
++/// jit.rs `materialize_fault`: a fault in program code the run ends by (contained, then fatal) goes to the program's
++/// handler for its signal first, as a rustc build's kernel would have run it: on the faulting thread (here at its
++/// recovery point, outside a compile), with a siginfo of the signal, a kernel code and the address, and no context
++/// (the fault's registers are gone). False: no program handler, or not a program thread. The caller ends the
++/// process by the signal after it either way.
++pub(crate) unsafe fn fatal_fault(sig: i32, addr: u64) -> bool {
++    #[cfg(target_vendor = "apple")]
++    const SI_ADDR: usize = 24;
++    #[cfg(not(target_vendor = "apple"))]
++    const SI_ADDR: usize = 16;
++    // siginfo_t: 128 bytes on Linux, 104 on Darwin
++    let mut info = [0u64; 16];
++    let p = info.as_mut_ptr() as *mut u8;
++    *(p as *mut i32) = sig;
++    // si_code 1: SEGV_MAPERR / BUS_ADRALN / ILL_ILLOPC / FPE_INTDIV, the kernel's own (`synchronous`)
++    *(p.add(8) as *mut i32) = 1;
++    *(p.add(SI_ADDR) as *mut u64) = addr;
++    deliver(sig, p, std::ptr::null_mut(), true)
++}
++
+ unsafe fn errno() -> *mut i32 {
+     #[cfg(target_os = "linux")]
+     return sys::__errno_location();
 diff --git a/libs/relax/compiler/src/os/tls.rs b/libs/relax/compiler/src/os/tls.rs
 index 781123aa..4760aaf3 100644
 --- a/libs/relax/compiler/src/os/tls.rs
@@ -474,6 +530,7 @@ index 781123aa..4760aaf3 100644
          let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
          let off = cell.wrapping_sub(fs_base()) as i64;
 diff --git a/libs/relax/compiler/src/sections.rs b/libs/relax/compiler/src/sections.rs
+index b317b895..9aac94b7 100644
 --- a/libs/relax/compiler/src/sections.rs
 +++ b/libs/relax/compiler/src/sections.rs
 @@ -45,8 +45,10 @@ pub(crate) struct Section {
@@ -482,13 +539,177 @@ diff --git a/libs/relax/compiler/src/sections.rs b/libs/relax/compiler/src/secti
      for a in f.ast.list(f.ast.item(item).attrs) {
 -        if a.toks.hi >= a.toks.lo + 3 && f.tok_text(a.toks.lo) == "link_section" && f.tok_text(a.toks.lo + 1) == "=" {
 -            return Some(crate::lit::unescape_str(f.tok_text(a.toks.lo + 2)));
-+        // Edition 2024 writes it `#[unsafe(link_section = "...")]`: the name is inside `unsafe(...)`.
-+        let lo = if a.toks.hi >= a.toks.lo + 2 && f.tok_text(a.toks.lo) == "unsafe" && f.tok_text(a.toks.lo + 1) == "(" { a.toks.lo + 2 } else { a.toks.lo };
++        // `#[unsafe(link_section = ..)]`, as edition 2024 requires it, as well as the bare form
++        let lo = if a.toks.hi > a.toks.lo + 1 && f.tok_text(a.toks.lo) == "unsafe" && f.tok_text(a.toks.lo + 1) == "(" { a.toks.lo + 2 } else { a.toks.lo };
 +        if a.toks.hi >= lo + 3 && f.tok_text(lo) == "link_section" && f.tok_text(lo + 1) == "=" {
 +            return Some(crate::lit::unescape_str(f.tok_text(lo + 2)));
          }
      }
      None
+diff --git a/libs/relax/compiler/std/core/arch/aarch64.rs b/libs/relax/compiler/std/core/arch/aarch64.rs
+index ba9071f3..ddd91404 100644
+--- a/libs/relax/compiler/std/core/arch/aarch64.rs
++++ b/libs/relax/compiler/std/core/arch/aarch64.rs
+@@ -4299,6 +4299,37 @@ pub fn vqtbl1q_u8(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+     }
+ }
+ 
++/// TBX: each lane of `c` indexes `b`; an index of 16 or more keeps `a`'s lane (TBL's gives 0).
++#[inline]
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vqtbx1q_u8(a: uint8x16_t, b: uint8x16_t, c: uint8x16_t) -> uint8x16_t {
++    let mut r = a.0;
++    let mut i = 0;
++    while i < 16 {
++        let index = c.0[i] as usize;
++        if index < 16 {
++            r[i] = b.0[index];
++        }
++        i += 1;
++    }
++    uint8x16_t(r)
++}
++
++#[inline]
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vqtbx1q_s8(a: int8x16_t, b: int8x16_t, c: uint8x16_t) -> int8x16_t {
++    let mut r = a.0;
++    let mut i = 0;
++    while i < 16 {
++        let index = c.0[i] as usize;
++        if index < 16 {
++            r[i] = b.0[index];
++        }
++        i += 1;
++    }
++    int8x16_t(r)
++}
++
+ #[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
+ pub fn vqtbl4q_u8(a: uint8x16x4_t, b: uint8x16_t) -> uint8x16_t {
+     let mut r = [0; 16];
+diff --git a/libs/relax/compiler/std/core/iter/adapters.rs b/libs/relax/compiler/std/core/iter/adapters.rs
+index 445b1449..a99b59bc 100644
+--- a/libs/relax/compiler/std/core/iter/adapters.rs
++++ b/libs/relax/compiler/std/core/iter/adapters.rs
+@@ -46,7 +46,11 @@ impl<B, I: DoubleEndedIterator, F: FnMut(I::Item) -> B> DoubleEndedIterator for
+     }
+ }
+ 
+-impl<B, I: ExactSizeIterator, F: FnMut(I::Item) -> B> ExactSizeIterator for Map<I, F> {}
++impl<B, I: ExactSizeIterator, F: FnMut(I::Item) -> B> ExactSizeIterator for Map<I, F> {
++    fn len(&self) -> usize {
++        self.iter.len()
++    }
++}
+ unsafe impl<B, I: super::TrustedLen, F: FnMut(I::Item) -> B> super::TrustedLen for Map<I, F> {}
+ impl<B, I: FusedIterator, F: FnMut(I::Item) -> B> FusedIterator for Map<I, F> {}
+ unsafe impl<I: TrustedRandomAccess, F> TrustedRandomAccess for Map<I, F> {}
+@@ -203,7 +207,11 @@ impl<I: ExactSizeIterator + DoubleEndedIterator> DoubleEndedIterator for Enumera
+     }
+ }
+ 
+-impl<I: ExactSizeIterator> ExactSizeIterator for Enumerate<I> {}
++impl<I: ExactSizeIterator> ExactSizeIterator for Enumerate<I> {
++    fn len(&self) -> usize {
++        self.iter.len()
++    }
++}
+ unsafe impl<I: super::TrustedLen> super::TrustedLen for Enumerate<I> {}
+ impl<I: FusedIterator> FusedIterator for Enumerate<I> {}
+ unsafe impl<I: TrustedRandomAccess> TrustedRandomAccess for Enumerate<I> {}
+@@ -544,7 +552,11 @@ impl<I: DoubleEndedIterator> DoubleEndedIterator for Rev<I> {
+     }
+ }
+ 
+-impl<I: DoubleEndedIterator + ExactSizeIterator> ExactSizeIterator for Rev<I> {}
++impl<I: DoubleEndedIterator + ExactSizeIterator> ExactSizeIterator for Rev<I> {
++    fn len(&self) -> usize {
++        self.iter.len()
++    }
++}
+ unsafe impl<I: super::TrustedLen + DoubleEndedIterator> super::TrustedLen for Rev<I> {}
+ impl<I: DoubleEndedIterator + FusedIterator> FusedIterator for Rev<I> {}
+ 
+@@ -985,7 +997,11 @@ impl<'a, T: 'a + Clone, I: DoubleEndedIterator<Item = &'a T>> DoubleEndedIterato
+     }
+ }
+ 
+-impl<'a, T: 'a + Clone, I: ExactSizeIterator<Item = &'a T>> ExactSizeIterator for Cloned<I> {}
++impl<'a, T: 'a + Clone, I: ExactSizeIterator<Item = &'a T>> ExactSizeIterator for Cloned<I> {
++    fn len(&self) -> usize {
++        self.it.len()
++    }
++}
+ unsafe impl<'a, T: 'a + Clone, I: super::TrustedLen<Item = &'a T>> super::TrustedLen for Cloned<I> {}
+ unsafe impl<I: TrustedRandomAccess> TrustedRandomAccess for Cloned<I> {}
+ unsafe impl<I: TrustedRandomAccessNoCoerce> TrustedRandomAccessNoCoerce for Cloned<I> {
+@@ -1033,7 +1049,11 @@ impl<'a, T: 'a + Copy, I: DoubleEndedIterator<Item = &'a T>> DoubleEndedIterator
+     }
+ }
+ 
+-impl<'a, T: 'a + Copy, I: ExactSizeIterator<Item = &'a T>> ExactSizeIterator for Copied<I> {}
++impl<'a, T: 'a + Copy, I: ExactSizeIterator<Item = &'a T>> ExactSizeIterator for Copied<I> {
++    fn len(&self) -> usize {
++        self.it.len()
++    }
++}
+ unsafe impl<'a, T: 'a + Copy, I: super::TrustedLen<Item = &'a T>> super::TrustedLen for Copied<I> {}
+ unsafe impl<I: TrustedRandomAccess> TrustedRandomAccess for Copied<I> {}
+ unsafe impl<I: TrustedRandomAccessNoCoerce> TrustedRandomAccessNoCoerce for Copied<I> {
+@@ -1584,7 +1604,11 @@ impl<I: DoubleEndedIterator> DoubleEndedIterator for Fuse<I> {
+     }
+ }
+ 
+-impl<I: ExactSizeIterator> ExactSizeIterator for Fuse<I> {}
++impl<I: ExactSizeIterator> ExactSizeIterator for Fuse<I> {
++    fn len(&self) -> usize {
++        self.iter.as_ref().map_or(0, I::len)
++    }
++}
+ impl<I: Iterator> FusedIterator for Fuse<I> {}
+ unsafe impl<I: TrustedRandomAccess> TrustedRandomAccess for Fuse<I> {}
+ unsafe impl<I: TrustedRandomAccessNoCoerce> TrustedRandomAccessNoCoerce for Fuse<I> {
+@@ -1623,7 +1647,11 @@ impl<I: DoubleEndedIterator, F: FnMut(&I::Item)> DoubleEndedIterator for Inspect
+     }
+ }
+ 
+-impl<I: ExactSizeIterator, F: FnMut(&I::Item)> ExactSizeIterator for Inspect<I, F> {}
++impl<I: ExactSizeIterator, F: FnMut(&I::Item)> ExactSizeIterator for Inspect<I, F> {
++    fn len(&self) -> usize {
++        self.iter.len()
++    }
++}
+ impl<I: FusedIterator, F: FnMut(&I::Item)> FusedIterator for Inspect<I, F> {}
+ 
+ #[derive(Clone, Debug)]
+diff --git a/libs/relax/compiler/std/core/iter/mod.rs b/libs/relax/compiler/std/core/iter/mod.rs
+index fda117d2..c16d9c1e 100644
+--- a/libs/relax/compiler/std/core/iter/mod.rs
++++ b/libs/relax/compiler/std/core/iter/mod.rs
+@@ -691,7 +691,11 @@ impl<'a, I: DoubleEndedIterator + ?Sized> DoubleEndedIterator for &'a mut I {
+     }
+ }
+ 
+-impl<'a, I: ExactSizeIterator + ?Sized> ExactSizeIterator for &'a mut I {}
++impl<'a, I: ExactSizeIterator + ?Sized> ExactSizeIterator for &'a mut I {
++    fn len(&self) -> usize {
++        (**self).len()
++    }
++}
+ unsafe impl<'a, I: TrustedLen + ?Sized> TrustedLen for &'a mut I {}
+ 
+ pub trait DoubleEndedIterator: Iterator {
+@@ -762,7 +766,8 @@ pub trait DoubleEndedIterator: Iterator {
+ 
+ pub trait ExactSizeIterator: Iterator {
+     fn len(&self) -> usize {
+-        let (lower, _upper) = self.size_hint();
++        let (lower, upper) = self.size_hint();
++        assert_eq!(upper, Some(lower));
+         lower
+     }
+     fn is_empty(&self) -> bool {
 diff --git a/libs/relax/compiler/std/std/os/linux.rs b/libs/relax/compiler/std/std/os/linux.rs
 index eb9e99f2..fff2cdde 100644
 --- a/libs/relax/compiler/std/std/os/linux.rs
@@ -658,36 +879,221 @@ index 00000000..a3a893dd
 +    let r = &v[..] as &[u16];
 +    println!("| {:?} {}", bytes, r.len());
 +}
-diff --git a/libs/relax/compiler/tests/link_section_constructors.rs b/libs/relax/compiler/tests/link_section_constructors.rs
---- a/libs/relax/compiler/tests/link_section_constructors.rs
-+++ b/libs/relax/compiler/tests/link_section_constructors.rs
-@@ -48,6 +48,17 @@ static CTOR_BC: [extern "C" fn(); 2] = [ctor_b, ctor_c];
- #[cfg_attr(windows, link_section = ".CRT$XCB")]
- static CTOR_EARLY: extern "C" fn() = ctor_early;
- 
-+// edition 2024's spelling, `unsafe(link_section = ...)`: a constructor too
-+static UNSAFE_FORM: AtomicU32 = AtomicU32::new(0);
-+extern "C" fn ctor_unsafe_form() {
-+    UNSAFE_FORM.fetch_add(1, Ordering::SeqCst);
-+}
-+#[used]
-+#[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
-+#[cfg_attr(all(not(target_vendor = "apple"), not(windows)), unsafe(link_section = ".init_array"))]
-+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
-+static CTOR_UNSAFE_FORM: extern "C" fn() = ctor_unsafe_form;
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/.gitignore b/libs/relax/compiler/tests/link_section_unsafe/.gitignore
+new file mode 100644
+index 00000000..633fc35b
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/.gitignore
+@@ -0,0 +1,3 @@
++target/
++target-relax/
++Cargo.lock
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/Cargo.toml b/libs/relax/compiler/tests/link_section_unsafe/Cargo.toml
+new file mode 100644
+index 00000000..51bdcf6c
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "link-section-unsafe"
++version = "0.1.0"
++edition = "2024"
++publish = false
 +
- #[test]
- fn a01_constructors_ran_before_the_tests() {
-     // each ran once, whatever the tests
-@@ -69,3 +80,8 @@ fn a02_main_state_is_theirs() {
-     A.fetch_add(100, Ordering::SeqCst);
-     println!("| a02: a kept {}", A.load(Ordering::SeqCst) > 100);
- }
++# its own workspace (no dependencies: runs offline anywhere)
++[workspace]
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/run.sh b/libs/relax/compiler/tests/link_section_unsafe/run.sh
+new file mode 100755
+index 00000000..915030ad
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/run.sh
+@@ -0,0 +1,13 @@
++#!/bin/bash
++# usage: run.sh <makepad binary>: the load hooks of an edition-2024 crate's test binary run under
++# `relax test` (#[unsafe(link_section = ..)]), and `relax check` reports no dead code for a private
++# #[unsafe(no_mangle)] fn. Prints "link_section_unsafe: ok" or "link_section_unsafe: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++export RELAX_CACHE=off
++TEST=$(cd "$H" && RELAX_STD=$H/../../std "$1" test link-section-unsafe --lib 2>&1)
++CHECK=$(cd "$H" && RELAX_STD=$H/../../std "$1" check link-section-unsafe 2>&1)
++if echo "$TEST" | grep -q "test result: ok. 1 passed" && ! echo "$CHECK" | grep -q "never used"; then
++  echo "link_section_unsafe: ok"
++else
++  echo "$TEST" | tail -5; echo "$CHECK" | grep -A3 "never used"; echo "link_section_unsafe: FAILED"; exit 1
++fi
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/src/lib.rs b/libs/relax/compiler/tests/link_section_unsafe/src/lib.rs
+new file mode 100644
+index 00000000..48984537
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/src/lib.rs
+@@ -0,0 +1,41 @@
++//! relax test fixture: a crate's own test binary registers at load (an init-array entry), as
++//! edition 2024 writes it: `#[used]` with `#[unsafe(link_section = ..)]`, behind `cfg_attr`, bare,
++//! and with the section's name from a macro. Edition 2024 rejects the bare `#[link_section]`, so
++//! a Relax that read only that form ran none of them. A private `#[unsafe(no_mangle)]` fn is kept
++//! alive (no dead_code warning), as rustc's.
++use std::sync::atomic::AtomicU32;
++pub static LOADED: AtomicU32 = AtomicU32::new(0);
++
++#[cfg(test)]
++mod plain {
++    extern "C" fn load() { super::LOADED.fetch_or(1, std::sync::atomic::Ordering::SeqCst); }
++    #[used]
++    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
++    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
++    static LOAD: extern "C" fn() = load;
++}
++
++#[cfg(all(test, target_vendor = "apple"))]
++mod direct {
++    extern "C" fn load() { super::LOADED.fetch_or(2, std::sync::atomic::Ordering::SeqCst); }
++    #[used]
++    #[unsafe(link_section = "__DATA,__mod_init_func")]
++    static LOAD: extern "C" fn() = load;
++}
++
++// the section's name from a macro, as a crate writes it for each target
++#[cfg(all(test, target_vendor = "apple"))]
++mod expanded {
++    extern "C" fn load() { super::LOADED.fetch_or(4, std::sync::atomic::Ordering::SeqCst); }
++    #[used]
++    #[unsafe(link_section = concat!("__DATA,", "__mod_init_func"))]
++    static LOAD: extern "C" fn() = load;
++}
 +
 +#[test]
-+fn a03_the_unsafe_spelling_runs() {
-+    println!("| a03: ran once {}", UNSAFE_FORM.load(Ordering::SeqCst) == 1);
++fn every_hook_ran_at_load() {
++    assert_eq!(LOADED.load(std::sync::atomic::Ordering::SeqCst), 7);
 +}
++
++#[unsafe(no_mangle)]
++extern "C" fn link_section_unsafe_exported() -> u32 { 7 }
+diff --git a/libs/relax/compiler/tests/neon_table_extend.rs b/libs/relax/compiler/tests/neon_table_extend.rs
+new file mode 100644
+index 00000000..4d7901ef
+--- /dev/null
++++ b/libs/relax/compiler/tests/neon_table_extend.rs
+@@ -0,0 +1,26 @@
++//! NEON's table lookup with extension (TBX, `vqtbx1q_u8` / `vqtbx1q_s8`): each lane of the index
++//! vector picks a byte of the table, and an index of 16 or more keeps the first operand's lane
++//! (TBL's `vqtbl1q_u8` gives 0 there). simdjson's arm64 stage 1 classifies whitespace with it. The
++//! expected lanes are rustc's on an M-series Mac.
++
++#[cfg(target_arch = "aarch64")]
++#[test]
++fn tbx_keeps_the_first_operand_past_the_table() {
++    use std::arch::aarch64::*;
++    let a: [u8; 16] = core::array::from_fn(|i| 100 + i as u8);
++    let t: [u8; 16] = core::array::from_fn(|i| 200 + i as u8);
++    let idx: [u8; 16] = [0, 15, 16, 255, 3, 17, 8, 128, 1, 2, 14, 31, 7, 9, 64, 5];
++    let mut out = [0u8; 16];
++    let mut outs = [0i8; 16];
++    let mut tbl = [0u8; 16];
++    unsafe {
++        let r = vqtbx1q_u8(vld1q_u8(a.as_ptr()), vld1q_u8(t.as_ptr()), vld1q_u8(idx.as_ptr()));
++        vst1q_u8(out.as_mut_ptr(), r);
++        let rs = vqtbx1q_s8(vreinterpretq_s8_u8(vld1q_u8(a.as_ptr())), vreinterpretq_s8_u8(vld1q_u8(t.as_ptr())), vld1q_u8(idx.as_ptr()));
++        vst1q_s8(outs.as_mut_ptr(), rs);
++        vst1q_u8(tbl.as_mut_ptr(), vqtbl1q_u8(vld1q_u8(t.as_ptr()), vld1q_u8(idx.as_ptr())));
++    }
++    assert_eq!(out, [200, 215, 102, 103, 203, 105, 208, 107, 201, 202, 214, 111, 207, 209, 114, 205]);
++    assert_eq!(outs, [-56, -41, 102, 103, -53, 105, -48, 107, -55, -54, -42, 111, -49, -47, 114, -51]);
++    assert_eq!(tbl, [200, 215, 0, 0, 203, 0, 208, 0, 201, 202, 214, 0, 207, 209, 0, 205]);
++}
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/.gitignore b/libs/relax/compiler/tests/substitute_smallvec_glob/.gitignore
+new file mode 100644
+index 00000000..633fc35b
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/.gitignore
+@@ -0,0 +1,3 @@
++target/
++target-relax/
++Cargo.lock
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/Cargo.toml b/libs/relax/compiler/tests/substitute_smallvec_glob/Cargo.toml
+new file mode 100644
+index 00000000..afdda0bf
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/Cargo.toml
+@@ -0,0 +1,3 @@
++[workspace]
++members = ["smallvec", "app"]
++resolver = "2"
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/app/Cargo.toml b/libs/relax/compiler/tests/substitute_smallvec_glob/app/Cargo.toml
+new file mode 100644
+index 00000000..26fe6f21
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/app/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "svg-app"
++version = "0.1.0"
++edition = "2021"
++publish = false
++
++[dependencies]
++smallvec = { path = "../smallvec", features = ["union"] }
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/app/src/main.rs b/libs/relax/compiler/tests/substitute_smallvec_glob/app/src/main.rs
+new file mode 100644
+index 00000000..b5f5f076
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/app/src/main.rs
+@@ -0,0 +1,14 @@
++// cranelift-codegen's machinst/abi.rs: a child module glob-imports its parent, which imports the
++// macro `smallvec!`; the child's own `use smallvec::smallvec` names the crate (type namespace)
++// and is no ambiguity with the glob's macro.
++mod machinst {
++    #[allow(unused_imports)]
++    use smallvec::{SmallVec, smallvec};
++    pub mod abi {
++        #[allow(unused_imports)]
++        use super::*;
++        use smallvec::smallvec;
++        pub fn len() -> usize { let v: smallvec::SmallVec<[u8; 4]> = smallvec![1, 2, 3, 4]; v.len() }
++    }
++}
++fn main() { println!("smallvec glob {}", machinst::abi::len()); }
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/run.sh b/libs/relax/compiler/tests/substitute_smallvec_glob/run.sh
+new file mode 100755
+index 00000000..edd396cf
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/run.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++# usage: run.sh <makepad binary>: under the smallvec Relax substitutes (std/substitutes.txt), whose
++# `smallvec!` is a built-in, a child module that glob-imports its parent's `use smallvec::smallvec`
++# and imports `smallvec::smallvec` itself (cranelift-codegen 0.125 machinst/abi.rs). The glob brings
++# a macro; the path's first segment is the crate (type namespace): no E0659, as rustc. Prints
++# "substitute_smallvec_glob: ok" or "substitute_smallvec_glob: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++export RELAX_CACHE=off
++OUT=$(cd "$H" && RELAX_STD=$H/../../std "$1" check svg-app 2>&1)
++if echo "$OUT" | grep -q " 0 errors"; then echo "substitute_smallvec_glob: ok"; else echo "$OUT" | tail -5; echo "substitute_smallvec_glob: FAILED"; exit 1; fi
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/smallvec/Cargo.toml b/libs/relax/compiler/tests/substitute_smallvec_glob/smallvec/Cargo.toml
+new file mode 100644
+index 00000000..b4b78b01
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/smallvec/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "smallvec"
++version = "1.15.1"
++edition = "2018"
++publish = false
++
++[features]
++union = []
+diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/smallvec/src/lib.rs b/libs/relax/compiler/tests/substitute_smallvec_glob/smallvec/src/lib.rs
+new file mode 100644
+index 00000000..ec8a3233
+--- /dev/null
++++ b/libs/relax/compiler/tests/substitute_smallvec_glob/smallvec/src/lib.rs
+@@ -0,0 +1,6 @@
++//! Stands in for smallvec 1 in this fixture's graph; under Relax the loader substitutes Relax's
++//! own (std/substitutes.txt), whose root has no `macro_rules! smallvec`. Under rustc this one is used.
++pub struct SmallVec<A>(pub A);
++impl<T, const N: usize> SmallVec<[T; N]> { pub fn len(&self) -> usize { N } }
++#[macro_export]
++macro_rules! smallvec { ($($x:expr),*) => { $crate::SmallVec([$($x),*]) } }
 diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
 index 20d9fcc4..2b518851 100644
 --- a/libs/relax/front/src/native.rs
@@ -801,6 +1207,53 @@ index 20d9fcc4..2b518851 100644
                  }
              }
          } else if *kind == "dep-info" {
+diff --git a/libs/relax/front/src/parser.rs b/libs/relax/front/src/parser.rs
+index 4abf5799..35201414 100644
+--- a/libs/relax/front/src/parser.rs
++++ b/libs/relax/front/src/parser.rs
+@@ -3023,7 +3023,11 @@ impl<'a> Parser<'a> {
+     fn expand_linkage_attrs(&mut self, attrs: &mut [Attr]) -> PResult<()> {
+         if self.cfg_out != 0 || self.macros.is_none() || !self.cfg_active(attrs) { return Ok(()); }
+         for attr in attrs {
+-            let (lo, hi) = (attr.toks.lo as usize, attr.toks.hi as usize);
++            let (mut lo, mut hi) = (attr.toks.lo as usize, attr.toks.hi as usize);
++            // `#[unsafe(link_section = ..)]` (edition 2024's form): the attribute inside the parentheses
++            let wrapped = hi > lo + 2 && self.toks.kind_at(lo) == T::KwUnsafe && self.toks.kind_at(lo + 1) == T::OpenParen
++                && self.toks.kind_at(hi - 1) == T::CloseParen;
++            if wrapped { lo += 2; hi -= 1; }
+             if hi <= lo + 3 || self.toks.kind_at(lo + 1) != T::Eq { continue; }
+             let name = String::from_utf8_lossy(self.tok_text(self.toks.at(lo))).into_owned();
+             if !matches!(name.as_str(), "link_name" | "export_name" | "link_section") { continue; }
+@@ -3034,9 +3038,11 @@ impl<'a> Parser<'a> {
+                 .map_err(|msg| PErr { pos: self.toks.at(lo).lo, msg })?;
+             if !string { return Err(PErr { pos: self.toks.at(lo).lo, msg: format!("`{name}` requires a string literal") }); }
+             let mut w = TokText::default();
++            if wrapped { w.word(T::KwUnsafe, "unsafe"); w.word(T::OpenParen, "("); }
+             w.word(T::Ident, &name);
+             w.word(T::Eq, "=");
+             w.word(T::Str, &format!("{text:?}"));
++            if wrapped { w.word(T::CloseParen, ")"); }
+             let start = self.expand_toks(&w.s, &w.toks, self.toks.at(lo).lo);
+             attr.toks = TokRange { lo: start as u32, hi: (self.toks.len() - 1) as u32 };
+         }
+diff --git a/libs/relax/front/src/program/rsim.rs b/libs/relax/front/src/program/rsim.rs
+index 622ac953..592374cc 100644
+--- a/libs/relax/front/src/program/rsim.rs
++++ b/libs/relax/front/src/program/rsim.rs
+@@ -658,6 +658,13 @@ impl<'a> Sim<'a> {
+         if let Some(set) = self.std_macro_module(m) {
+             if set.names().contains(&n) { return Some(self.builtin_macro(name, set == StdMacros::Std && n == "panic")); }
+         }
++        // the smallvec Relax provides (std/substitutes.txt) has no `macro_rules! smallvec`: its root's
++        // `smallvec!` is the built-in one (macros.rs `builtin_macro_path`), as the real crate's is its own
++        if n == "smallvec" && self.p.syms.str(self.p.crates[self.p.mods[m as usize].krate as usize].name) == "smallvec"
++            && self.p.crates[self.p.mods[m as usize].krate as usize].root_mod == m
++        {
++            return Some(self.builtin_macro(name, false));
++        }
+         // a registered proc macro name no import of the module's reach binds has no walk to find it
+         if self.proc_names.get_or_insert_with(|| crate::macro_reg::proc_macro_names().into_iter().collect()).contains(n) && !self.ext_procs(m).contains(n) {
+             #[cfg(debug_assertions)]
 diff --git a/libs/relax/front/src/unitgraph.rs b/libs/relax/front/src/unitgraph.rs
 index 84bcc71b..99b79aee 100644
 --- a/libs/relax/front/src/unitgraph.rs
@@ -1081,6 +1534,43 @@ index eeb69f2d..9be81c76 100644
      /// `UniversalRegions::closure_mapping`: the regions of the parent that the nested body's
      /// external universal regions (global first, then external) stand for. Those the nested body
      /// inherits are the parent's own universal regions; the others sit in the regions of the closure
+diff --git a/libs/relax/types/src/lint.rs b/libs/relax/types/src/lint.rs
+index 88bf32ae..44b5d5cc 100644
+--- a/libs/relax/types/src/lint.rs
++++ b/libs/relax/types/src/lint.rs
+@@ -656,6 +656,19 @@ pub fn attr_path(prog: &Program, file: u32, a: &Attr) -> Vec<u8> {
+     name
+ }
+ 
++/// `attr_path` of the attribute an `unsafe(..)` wraps (`#[unsafe(no_mangle)]`: `no_mangle`, as
++/// edition 2024 writes the unsafe attributes), else of the attribute itself.
++pub fn attr_inner_path(prog: &Program, file: u32, a: &Attr) -> Vec<u8> {
++    let p = prog.src(file);
++    let (lo, hi) = (a.toks.lo as usize, a.toks.hi as usize);
++    if hi > lo + 2 && crate::cfg::tok_str(p, lo) == b"unsafe" && crate::cfg::tok_str(p, lo + 1) == b"(" {
++        // (the wrapper's closing parenthesis left out)
++        let inner = Attr { toks: crate::ast::TokRange { lo: (lo + 2) as u32, hi: a.toks.hi - 1 }, ..*a };
++        return attr_path(prog, file, &inner);
++    }
++    attr_path(prog, file, a)
++}
++
+ /// An attribute's tokens joined by spaces (`crate_type = "lib"`).
+ pub fn attr_text(prog: &Program, file: u32, a: &Attr) -> String {
+     let p = prog.src(file);
+diff --git a/libs/relax/types/src/lint_dead.rs b/libs/relax/types/src/lint_dead.rs
+index 1e534f2d..dd65b8da 100644
+--- a/libs/relax/types/src/lint_dead.rs
++++ b/libs/relax/types/src/lint_dead.rs
+@@ -1107,7 +1107,7 @@ impl<'a> Dead<'a> {
+         let attrs = ast.list(ast.item(def.item).attrs);
+         let used_like = matches!(def.kind, DefKind::Fn | DefKind::Static | DefKind::AssocFn | DefKind::ForeignFn | DefKind::ForeignStatic)
+             && attrs.iter().any(|a| {
+-                let n = lint::attr_path(self.prog, def.file, a);
++                let n = lint::attr_inner_path(self.prog, def.file, a);
+                 n == b"no_mangle" || n == b"export_name" || n == b"used"
+             });
+         // rustc_builtin_macros global_allocator.rs: the expansion's allocator shims read the static
 diff --git a/libs/relax/types/src/typeck.rs b/libs/relax/types/src/typeck.rs
 index 15b36829..7d3de8d1 100644
 --- a/libs/relax/types/src/typeck.rs

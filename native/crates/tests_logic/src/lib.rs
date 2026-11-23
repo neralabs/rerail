@@ -33,7 +33,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     // The waves' tests (the owner's, the relational executor's, the schedule's), under the facade they were
@@ -62,7 +62,8 @@ pub mod code_rule_dsl {
                 #[cfg(test)]
                 pub mod tests;
             }
-            #[cfg_attr(test, path = "setfix")]
+            // rerail-setfix's directory: the lab's tests are its files (a path from here, which this crate's tree has).
+            #[cfg_attr(test, path = "../../../../../setfix/src/code_rule_dsl/logic/native/setfix")]
             pub mod setfix {
                 pub use rerail_boot::code_rule_dsl::logic::native::setfix::*;
                 // The lab's tests run strata on the Metal device (the transducer's), which the engine alone sees.
@@ -276,6 +277,7 @@ pub mod code_rule_dsl {
         }
     }
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
     // Typing's rounds run over T's facts in tests only until Phase 10 wires them.
     #[cfg_attr(test, path = "typing")]

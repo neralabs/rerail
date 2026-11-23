@@ -173,7 +173,7 @@ One repository holds everything: the core package at the root, rule packs under 
 language conformance fixtures under [`fixtures/`](fixtures/) (test data, never published).
 
 Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs install` once. The embedding model's weights
-(`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
+(`model/model.safetensors`) and the engine's Unicode names table (`native/crates/adapters/src/code_rule_dsl/value/names/names.bin`,
 compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
 the engine build nor the model works: `npm run build:native` and `rerail install --root` stop on a pointer, naming the
 file. In a checkout made without it, run `git lfs install && git lfs pull`.

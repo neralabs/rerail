@@ -26,7 +26,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: Unicode Character Database 15.1.0 (character names and name aliases)
-Files: native/src/code_rule_dsl/value/names/names.bin
+Files: native/crates/adapters/src/code_rule_dsl/value/names/names.bin
 Source: https://www.unicode.org/Public/15.1.0/ucd/ (UnicodeData.txt as CPython 3.13's unicodedata reads it, and NameAliases.txt)
 License: Unicode License v3
 
@@ -104,7 +104,7 @@ THE SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: Ruff's builtin and magic-global names per Python version
-Files: native/src/code_rule_dsl/scope/data/python_builtins.generated.json
+Files: native/crates/adapters/src/code_rule_dsl/scope/data/python_builtins.generated.json
 Source: ruff 0.16.9, crates/ruff_python_stdlib/src/builtins.rs (https://github.com/astral-sh/ruff)
 License: MIT
 
@@ -137,7 +137,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: typescript-eslint's TypeScript lib globals
-Files: native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json
+Files: native/crates/adapters/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json
 Source: @typescript-eslint/scope-manager 8.70.1, dist/lib (https://github.com/typescript-eslint/typescript-eslint),
   which typescript-eslint generates from TypeScript's lib.*.d.ts files (https://github.com/microsoft/TypeScript)
 License: MIT (typescript-eslint); Apache-2.0 (TypeScript)
@@ -231,7 +231,7 @@ END OF TERMS AND CONDITIONS
 ----------------------------------------------------------------------
 
 Ported code: ast-grep-config 0.45.3 string case conversions
-Files: native/src/code_rule_dsl/matcher/transform/string_case.rs
+Files: native/crates/matcher/src/code_rule_dsl/matcher/transform/string_case.rs
 Source: ast-grep-config 0.45.3, src/transform/string_case.rs (https://github.com/ast-grep/ast-grep)
 License: MIT
 
@@ -263,7 +263,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Ported code: oxc's oxlint 1.88.0 disable directives
-Files: native/src/code_rule_dsl/suppress/oxlint.rs
+Files: native/crates/lang_ecma/src/code_rule_dsl/suppress/oxlint.rs
 Source: oxc tag oxlint_v1.88.0, crates/oxc_linter/src/disable_directives.rs (https://github.com/oxc-project/oxc)
 License: MIT
 
@@ -297,8 +297,8 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Ported code and bundled data: Biome 2.5.15 suppression comments
-Files: native/src/code_rule_dsl/suppress/biome.rs,
-       native/src/code_rule_dsl/suppress/biome_registry.generated.rs,
+Files: native/crates/lang_ecma/src/code_rule_dsl/suppress/biome.rs,
+       native/crates/lang_ecma/src/code_rule_dsl/suppress/biome_registry.generated.rs,
        conformance/biome-same-sources.generated.ts
 Source: Biome tag @biomejs/biome@2.5.15, crates/biome_suppression/src/lib.rs,
         crates/biome_analyze/src/{lib.rs,suppressions.rs,matcher.rs,rule.rs},
@@ -340,7 +340,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: typescript-eslint's JSX character entity table
-Files: native/src/code_rule_dsl/value/ecma/entities.generated.rs
+Files: native/crates/lang_ecma/src/code_rule_dsl/value/ecma/entities.generated.rs
 Source: @typescript-eslint/typescript-estree 8.70.1, dist/jsx/xhtml-entities.js (https://github.com/typescript-eslint/typescript-eslint)
 License: MIT
 
@@ -373,7 +373,7 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Bundled data: eslint-utils' getStaticValue allowlists
-Files: native/src/code_rule_dsl/value/ecma/builtins.generated.rs
+Files: native/crates/lang_ecma/src/code_rule_dsl/value/ecma/builtins.generated.rs
 Source: @eslint-community/eslint-utils 4.10.1, index.mjs (https://github.com/eslint-community/eslint-utils)
 License: MIT
 
@@ -407,9 +407,10 @@ SOFTWARE.
 ----------------------------------------------------------------------
 
 Ported code: fortephp/forte 1.1.0, the Blade lexer, tree builder and directive registry
-Files: native/src/code_rule_dsl/blade/forte/ (a Rust port, method by method, of Forte's
+Files: native/crates/forte/src/code_rule_dsl/blade/forte/ and its tests in
+  native/crates/tests_value/src/code_rule_dsl/blade/forte/ (a Rust port, method by method, of Forte's
   src/Lexer, src/Parser, src/Support/ScanPrimitives.php and the AST reads in ast.rs), and
-  native/src/code_rule_dsl/blade/forte/directives/resources/*.json (Forte's
+  native/crates/forte/src/code_rule_dsl/blade/forte/directives/resources/*.json (Forte's
   resources/directives/*.json, byte-identical)
 Revision: v1.1.0, commit 9c9597d0b7080d16c25f53a940a0449ff1aab19b
 Source: https://github.com/fortephp/forte
@@ -500,10 +501,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Ported code and recorded data: node-semver 7.8.5, ranges and subset
-Files: native/src/code_rule_dsl/semver/mod.rs (a Rust port of classes/range.js,
+Files: native/crates/lang/src/code_rule_dsl/semver/mod.rs (a Rust port of classes/range.js,
   classes/comparator.js, classes/semver.js, internal/re.js, internal/constants.js,
   internal/identifiers.js and ranges/subset.js), and
-  native/src/code_rule_dsl/semver/subset_cases.json (node-semver's answers to
+  native/crates/lang/src/code_rule_dsl/semver/subset_cases.json (node-semver's answers to
   subset() and new Range(), recorded by scripts/generate/semver/semver-subset-cases.mjs)
 Revision: v7.8.5, commit 6e05b7637396ac66522cff8731f07cfe0ef49a29
 Source: https://github.com/npm/node-semver
@@ -533,9 +534,9 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ----------------------------------------------------------------------
 
 Ported code and recorded data: eslint-plugin-n 18.4.1 getNpmignore, ignore 5.3.2, globrex 0.1.2
-Files: native/src/code_rule_dsl/npm_ignore/mod.rs (a Rust port of eslint-plugin-n's
+Files: native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs (a Rust port of eslint-plugin-n's
   lib/util/get-npmignore.js, node-ignore's index.js and globrex's index.js), and
-  native/src/code_rule_dsl/npm_ignore/cases.json (their answers to getNpmignore().match()
+  native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/cases.json (their answers to getNpmignore().match()
   and ignore().ignores(), recorded by scripts/generate/npm-ignore/npm-ignore-cases.mjs)
 Revisions: eslint-plugin-n v18.4.1, commit f1d47aff402b9e009578f4b3155b84f7d8beef9b;
   ignore 5.3.2, commit cfd0fce1258fe87950d8ce3d18b345bf7d4ed780;
@@ -583,14 +584,14 @@ Copyright (c) 2015-2022 mldb.ai inc. Copyright (c) 2021-2022 Jeremy Barnes.
 Licensed under the Apache License, Version 2.0. Rerail's changes to these files are marked by the
 repository's history from the verbatim copy onward.
 Ported code: enhanced-resolve 5.26.0, get-tsconfig 4.14.3, eslint-plugin-n 18.4.1 ImportTarget
-Files: native/src/code_rule_dsl/import_target/resolver.rs and entrypoints.rs (a Rust port
+Files: native/crates/lang_ecma/src/code_rule_dsl/import_target/resolver.rs and entrypoints.rs (a Rust port
   of enhanced-resolve's synchronous resolver, its hooks and plugins, and
   lib/util/entrypoints.js), tsconfig.rs (a Rust port of get-tsconfig's getTsconfig and
   its extends resolution), mod.rs (a Rust port of eslint-plugin-n's lib/util/import-target.js
   and the helpers it and check-publish.js, check-extraneous.js and
   file-extension-in-import.js read), term.rs (its getModuleStyle and getStringIfConstant
   read of a target's style and name), and builtins.rs (the keys of eslint-plugin-n's
-  NodeBuiltinModules table); provenance in native/src/code_rule_dsl/import_target/UPSTREAM.md
+  NodeBuiltinModules table); provenance in native/crates/run/src/code_rule_dsl/import_target/UPSTREAM.md
 Revisions: enhanced-resolve v5.26.0, commit c65e40ac1b77a58d1bcbc883953974236991a833;
   get-tsconfig v4.14.3, commit b4e7751e408eeaf014974a7cb1ec2634914a4d6c;
   eslint-plugin-n v18.4.1, commit f1d47aff402b9e009578f4b3155b84f7d8beef9b

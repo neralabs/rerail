@@ -20,21 +20,21 @@
 .violation mutated(at: node, x: symbol) code "vue/no-mutating-props" "Unexpected mutation of \"{x}\" prop."
     suppress eslint "vue/no-mutating-props"
 // Script: `this.x` (or a `const vm = this`) inside a component that declares x.
-mutated(at, x) :- this_member(m, x), vmut_at(m, at, _, _).
+script_mutated_in(at, x) :- this_member(m, x), vmut_at(m, at, _, _).
 // Script: a variable of setup(props)'s parameter or of defineProps's result. The whole props object needs a member
 // mutated (`props.a++`); a destructured prop is also mutated by a call on it (`list.push(1)`, Object.assign(list, …)).
-mutated(at, x) :- prop_ref(r, ""), vmut_at(r, at, _, n), n != r, vmut_first(r, _, x).
-mutated(at, top) :- prop_ref(r, top), top != "", vmut_at(r, at, how, n), (n != r ; how = "call").
+script_mutated_in(at, x) :- prop_ref(r, ""), vmut_at(r, at, _, n), n != r, vmut_first(r, _, x).
+script_mutated_in(at, top) :- prop_ref(r, top), top != "", vmut_at(r, at, how, n), (n != r ; how = "call").
 // Template: `this.x` and free names; a name that is defineProps's result variable is the root props object.
-mutated(at, x) :- tcomp(d, _), vcode(a, g, _), docof(g, d), has(g, t, this_kind), this_prop(t, m, x),
+template_mutated_in(at, x) :- tcomp(d, _), vcode(a, g, _), docof(g, d), has(g, t, this_kind), this_prop(t, m, x),
     tprop(d, x), vmut_at(m, at, _, _).
-mutated(at, x) :- tfree(r, x, a), docof(a, d), tprop(d, x), !props_var(d, x), vmut_at(r, at, _, _).
-mutated(at, x) :- tfree(r, y, a), docof(a, d), props_var(d, y), vmut_at(r, at, _, _),
+template_mutated_in(at, x) :- tfree(r, x, a), docof(a, d), tprop(d, x), !props_var(d, x), vmut_at(r, at, _, _).
+template_mutated_in(at, x) :- tfree(r, y, a), docof(a, d), props_var(d, y), vmut_at(r, at, _, _),
     (vmut_object(m, r), static_prop(m, r, x) ; !static_parent(r), x = y).
-mutated(x, y) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), tprop(d, y), !props_var(d, y).
-mutated(x, z) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), props_var(d, y),
+template_mutated_in(x, y) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), tprop(d, y), !props_var(d, y).
+template_mutated_in(x, z) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), props_var(d, y),
     (second(x, m), vmut_first(n, m, z) ; !second(x, _), z = y).
-mutated(x, z) :- model(a, x), root(x, n), kind(n, "this"), second(x, m), this_prop(n, m, z), docof(a, d), tprop(d, z).
+template_mutated_in(x, z) :- model(a, x), root(x, n), kind(n, "this"), second(x, m), this_prop(n, m, z), docof(a, d), tprop(d, z).
 
 vmut_ask(m) :- this_member(m, _).
 vmut_ask(r) :- prop_ref(r, _).
@@ -139,3 +139,17 @@ down(x, o) :- down(x, n), (kind(n, "member_expression") ; kind(n, "subscript_exp
 root(x, n) :- down(x, n), !kind(n, "member_expression"), !kind(n, "subscript_expression").
 .decl second(x: node, m: node)
 second(x, m) :- root(x, n), down(x, m), field(m, "object", w), deparen(w, n).
+
+// The rules above read code: the scripts' in the context `script`, the template's in `expression`, each its own
+// instance over its nodes alone (decision 0597). The template's read the props the scripts declare from `script`, and
+// the host's modifiers. The host reports what both find, at each node's own bytes.
+.decl script_mutated_in(at: node, x: symbol)
+.decl template_mutated_in(at: node, x: symbol)
+.context script of vue roots vscript_root exports script_mutated_in, tcomp, tprop, props_var
+.context expression of vue roots vexpr_root exports template_mutated_in
+.from script tcomp, tprop, props_var for expression
+.from vue vmod for expression
+.from script script_mutated_in as script_mutated
+.from expression template_mutated_in as template_mutated
+mutated(at, x) :- script_mutated(at, x).
+mutated(at, x) :- template_mutated(at, x).

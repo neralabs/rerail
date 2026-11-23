@@ -79,9 +79,23 @@ pub fn grammar_codes(tag: u8) -> usize {
 /// revision. One number covers every choice a reader must share with the writer: the layout, the code table
 /// and its numbering, the widths, K and N, the dictionaries. 1–254 are revisions; 0 is never written (zeroed
 /// bytes are not a tape); 255 says the revision goes on in the next two bytes.
+/// The line terminators of tag `tag`'s language (decision 0612), as the engine's adapters name them: the tape's
+/// line index's.
+pub fn terminators(tag: u8) -> rerail_tape_format::newlines::Terminators {
+    use rerail_tape_format::newlines::Terminators;
+    match tag {
+        2 | 3 | 6 | 12 | 31 => Terminators::Eslint,
+        9 | 27 => Terminators::Lf,
+        19 => Terminators::Roslyn,
+        21 => Terminators::Css,
+        _ => Terminators::Newlines,
+    }
+}
+
+/// Every table's revision: 2 since the tables are the grammars' (decision 0626; 1 was ordered by captures).
 pub fn revision(tag: u8) -> u8 {
     let _ = tag;
-    1
+    2
 }
 pub const MARK_LONG: u8 = 255;
 

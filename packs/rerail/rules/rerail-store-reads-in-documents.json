@@ -6,11 +6,21 @@
   "description": "Read a stored file's source or tape only through the workspace document contract, not by calling the content store from other engine code.",
   "scope": {
     "include": [
-      "native/src/**/*.rs"
+      "native/src/**/*.rs",
+      "native/crates/*/src/code_rule_dsl/**/*.rs",
+      "native/crates/*/src/content_store/**/*.rs",
+      "native/crates/*/src/git_access/**/*.rs",
+      "native/crates/*/src/tree_watch/**/*.rs",
+      "native/crates/*/src/git_*.rs",
+      "native/crates/*/src/source_tree.rs",
+      "native/crates/*/src/threads.rs",
+      "native/crates/*/src/panic_boundary.rs"
     ],
     "exclude": [
       "native/src/content_store/**",
+      "native/crates/*/src/content_store/**",
       "native/src/*/workspace/documents.rs",
+      "native/crates/*/src/*/workspace/documents.rs",
       "**/tests.rs",
       "**/*_tests.rs",
       "**/test_support.rs",

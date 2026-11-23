@@ -482,7 +482,7 @@ fn batch_programs() -> Vec<Program> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
         let stmts = ::bitlex::syntax::parse(src).expect("parses");
         let text = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).text();
@@ -606,7 +606,7 @@ fn json_tier2_switches_on_the_first_byte_alone() {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
     let rows: Vec<&str> = text.lines().filter(|l| l.split_whitespace().nth(1) == Some("ROW")).collect();
@@ -622,7 +622,7 @@ fn json_fallbacks() -> Vec<u16> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
 }
@@ -954,13 +954,13 @@ fn only_the_compiler_reads_tier2s_states() {
     // The compiler crate's `grammar` and `bitlex_tier2`, its Bitlex compiler (`bitlex_masks`, which
     // hands the table to them), and this file, which names them.
     const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
-    // The engine's transducer and every crate beside it.
+    // Every crate: the engine's transducer is in its crates too.
     let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
-    let mut dirs = vec![native.join("src/code_rule_dsl/transducer"), native.join("crates")];
+    let mut dirs = vec![native.join("crates")];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).expect("reads the source") {
             let path = entry.expect("an entry").path();
@@ -1099,7 +1099,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(json).map_err(|e| format!("{e:?}"))?;
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let text = compiled.text();

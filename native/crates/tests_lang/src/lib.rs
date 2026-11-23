@@ -33,7 +33,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
@@ -60,7 +60,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
+            use crate::code_rule_dsl::tape::{self, FileImage, TapeDoc, TapeImage};
             #[allow(unused_imports)]
             use crate::code_rule_dsl::build_ids::grammar_version;
             #[allow(unused_imports)]
@@ -438,6 +438,7 @@ pub mod code_rule_dsl {
         use std::ops::Range;
     }
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
     pub mod vue {
         pub use rerail_boot::code_rule_dsl::vue::*;

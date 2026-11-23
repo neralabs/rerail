@@ -37,15 +37,15 @@
       "content": "fn f(doc: &dyn HostMapped, r: Range<usize>) {\n    let x = <SubTree as HostMapped>::host_span(doc, r);\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/tape.rs",
+      "path": "native/crates/lang/src/code_rule_dsl/tape.rs",
       "content": "fn errors(segments: &SegmentMap, rec: &Rec) {\n    let span = segments.host_span(rec.start as usize..rec.end as usize);\n    report(span);\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/vue/view.rs",
+      "path": "native/crates/lang_ecma/src/code_rule_dsl/vue/view.rs",
       "content": "impl View {\n    fn file_range(&self, node: &Node<'_, StrDoc<Vue>>) -> Range<usize> {\n        return self.segments.host_span(node.byte_range());\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/matcher/parse.rs",
+      "path": "native/crates/matcher/src/code_rule_dsl/matcher/parse.rs",
       "content": "fn exports(tree: &SubTree, found: &Found, out: &mut Vec<Range<usize>>) {\n    if let Some(range) = tree.host_range(found.node_id()) {\n        out.push(range);\n    }\n}\n"
     },
     {
@@ -53,11 +53,11 @@
       "content": "fn export(tree: &SubTree, span: Span, text: Option<String>) -> Option<(String, Range<usize>)> {\n    match text {\n        Some(text) => Some((text, tree.host_span(span.range))),\n        None => None,\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/demand/driver/catalog/sql_backend.rs",
+      "path": "native/crates/demand_catalog/src/code_rule_dsl/demand/driver/catalog/sql_backend.rs",
       "content": "fn rows(tree: &SubTree, candidate: &Candidate, failure: &mut Option<String>) -> Option<Range<usize>> {\n    let Some(range) = tree\n        .host_range(candidate.node_id())\n    else {\n        *failure = Some(\"parse-invalid-map\".to_owned());\n        return None;\n    };\n    Some(range)\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/literal/mod.rs",
+      "path": "native/crates/adapters/src/code_rule_dsl/literal/mod.rs",
       "content": "impl SubTree {\n    #[cfg_attr(not(test), allow(dead_code))]\n    /// The source range of the node with this id.\n    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {\n        let rec = self.nodes.get(self.index_of(node_id)?)?;\n        Some(self.map_range(rec.start as usize..rec.end as usize))\n    }\n}\n"
     }
   ],
@@ -75,7 +75,7 @@
       "content": "impl crate::code_rule_dsl::origin::Origin for HeredocTree {\n    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {\n        Some(FileRanges::one(self.spans.host_range(range)))\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/literal/php_string.rs",
+      "path": "native/crates/lang_php/src/code_rule_dsl/literal/php_string.rs",
       "content": "#[cfg(test)]\nmod tests {\n    #[test]\n    fn maps() {\n        let map = decode(\"'a'\");\n        assert_eq!(map.host_range(0..1), 1..2);\n    }\n}\n"
     },
     {
@@ -87,7 +87,7 @@
       "content": "pub(super) fn host_exports<D: Doc>(doc: &D) {}\n\npub(crate) fn host_errors(tape: &Tape) -> Vec<Range<usize>> {\n    let name = \"host_range\";\n    tape.errors(name)\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/matcher/format_args.rs",
+      "path": "native/crates/matcher/src/code_rule_dsl/matcher/format_args.rs",
       "content": "fn exports(tree: &SubTree, found: &Found, span: Range<usize>, out: &mut Vec<Range<usize>>) {\n    if let Some(range) = tree.of_node(found.node_id(), found.range()) {\n        out.push(range);\n    }\n    if let Some(range) = tree.of_range(span) {\n        out.push(range);\n    }\n}\n"
     },
     {
@@ -95,7 +95,7 @@
       "content": "fn place(link: Option<&Link>, range: Range<usize>) -> FileRanges {\n    match link {\n        Some(link) => link.segments.file_ranges(range).bridged(&link.host.source),\n        None => FileRanges::one(range),\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/compile/parse/m12b_tests.rs",
+      "path": "native/crates/tests_compile/src/code_rule_dsl/compile/parse/m12b_tests.rs",
       "content": "fn f(tree: &SubTree, found: &Found) {\n    let r = tree.host_range(found.node_id());\n}\n"
     }
   ]

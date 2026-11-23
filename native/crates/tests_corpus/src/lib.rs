@@ -33,7 +33,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
@@ -98,6 +98,18 @@ pub mod code_rule_dsl {
                     pub use rerail_boot::code_rule_dsl::logic::plan::corpus::session::*;
                     #[cfg(test)]
                     pub mod tests;
+                }
+                // The matchers' tests: they compile rules through the engine (`rule_api`).
+                pub mod matchers {
+                    pub use rerail_boot::code_rule_dsl::logic::plan::corpus::matchers::*;
+                    #[cfg(test)]
+                    pub mod tests;
+                    #[allow(unused_imports)]
+                    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
+                    #[allow(unused_imports)]
+                    use std::collections::{BTreeSet, HashMap};
+                    #[allow(unused_imports)]
+                    use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
                 }
                 // The corpus runner's tests: they parse files, so they run where the languages are registered.
                 #[cfg(test)]
@@ -175,6 +187,7 @@ pub mod code_rule_dsl {
         }
     }
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
 }
 
