@@ -73,8 +73,8 @@
         }
     }
 
-    /// A text's graph made of its modules' and phase programs' own (`composed`) is the one a run of `bootstrap.rerail`
-    /// over the text alone derives: its edges, its absent candidates (not those beside a module that a module names
+    /// A text's or a program file's graph made of its modules' and phase programs' own (`composed`) is the one a run
+    /// of `bootstrap.rerail` over it alone derives: its edges, its absent candidates (not those beside a module that a module names
     /// only as a file seed: its own `core.rerail`), and what its phases and its modules' phases reach. A phase that is no
     /// file is an absent candidate.
     #[test]
@@ -98,6 +98,30 @@
         }
         // A name that is no module of the library: its run derives it (and reports it).
         assert!(super::composed_here(&seed(&["no/such.rerail"], &[])).unwrap().is_none());
+        // A program file of the run's own (a test's, a policy): its includes placed by their first byte, its own
+        // `core.rerail` (none in T's shape), each name's candidate beside it absent, and the phases it names.
+        let dir = tempfile::tempdir().unwrap();
+        let files = [
+            ("two.rerail", "\n#include \"python/env.rerail\"\n// between\n#include \"core.rerail\"\n.decl x(s: symbol)\n"),
+            ("t.rerail", "#include \"python/env.rerail\"\n.decl doc(d: number, p: symbol, m: symbol)\n"),
+            ("phase.rerail", "#include \"core.rerail\"\n.decl values__x(s: symbol)\n.decl y(s: symbol)\ny(s) :- values__x(s).\n"),
+            ("none.rerail", ".decl z(s: symbol)\n"),
+        ];
+        for (name, text) in files {
+            let path = dir.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            let s = super::Seed::File(dunce::canonicalize(&path).unwrap());
+            let composed = super::composed_here(&s).unwrap().expect("its names are the library's modules");
+            let derived = super::derive(std::slice::from_ref(&s)).unwrap().of(&s, 0);
+            assert!(super::same_graph(&composed, &derived), "{name}: {}", composed.differences(&derived));
+        }
+        // A name whose file stands beside the program file: its run resolves it.
+        std::fs::write(dir.path().join("core.rerail"), ".decl w(s: symbol)\n").unwrap();
+        let beside = super::Seed::File(dunce::canonicalize(dir.path().join("none.rerail")).unwrap());
+        assert!(super::composed_here(&beside).unwrap().is_none());
+        // A module of the library is the library's run's to derive (the template's, with every module).
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        assert!(super::composed_here(&super::Seed::File(lib.join("python/env.rerail"))).unwrap().is_none());
     }
 
     /// A phase program's graph from a run shared with other file seeds is its own (`Graph::of`): its walk through the

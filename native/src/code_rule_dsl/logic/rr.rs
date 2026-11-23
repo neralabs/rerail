@@ -1415,6 +1415,22 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
     Ok(Some(phase0::Seed::Text { t_shape: t_shape(&statements), includes: names, phases: phases_named(&statements) }))
 }
 
+/// A program file's names, each with its place as `bootstrap.rerail` gives a loaded file's (`p0_names`: the include's
+/// first byte in the text, its `node`'s start), whether it is in T's shape (it declares `doc`: no `core.rerail` of its own), and
+/// the phase programs its declarations name: for phase 0's graph of the file made of its modules'
+/// (`phase0::composed`).
+pub(in crate::code_rule_dsl) fn includes_and_phases(src: &str) -> Result<(Vec<(i64, String)>, bool, Vec<String>), Error> {
+    let file = RrFile::read(src)?;
+    let statements = file.statements();
+    let mut names = Vec::new();
+    for st in &statements {
+        if let Some(S::Include(name)) = st.what() {
+            names.push((st.start() as i64, name));
+        }
+    }
+    Ok((names, t_shape(&statements), phases_named(&statements)))
+}
+
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
 /// `None` for a text that includes nothing.
 pub fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
