@@ -246,7 +246,8 @@ without hooks or network.
     that program would have mapped it to the index's bytes. The audit's and the scan's `git diff --name-only` run
     through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git starts no Git in a submodule for it,
     and Rerail asks each checked-out submodule Git's diff looks into (none marked assume-unchanged or skip-worktree)
-    through the same guard, all of them at once (at most one Git per processor), in the Git folder its `.git` named
+    through the same guard, all of them at once (at most one Git per processor in each call; a limit shared between
+    calls would let one call's queue spend another's time limit), in the Git folder its `.git` named
     when Rerail read it. Another `runGit` call that would look into
     submodules runs as it is, Git looking into them with their own drivers; Rerail makes none. Rerail
     first reads that folder in process as Git does before it starts a status there (a `HEAD` Git takes, `objects`
