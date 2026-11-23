@@ -2816,3 +2816,91 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     seen.sort();
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
+
+/// The tape's answers `tape_rows` serves are the rows `core_rr` and `tree` made (their making kept here as the
+/// reference): `rr_token_named` and the four token neighbours, read row by row, walked, and looked up by their own
+/// column (and `rr_token_named` by its parent), with no group of the batch made.
+#[test]
+fn tape_row_views_hold_the_rows_their_makers_made() {
+    use super::ranks::Item;
+    use super::tape_rows::{NAMED, TOKENS};
+    let store = ContentStore::open(&temp("tape-rows")).unwrap();
+    let docs: Vec<Document> = vec![
+        document(1, "m.py", "python", "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\"\"\"\n    x = a not in b\n    g(*a, f\"v{a}w\", 0xff)\n    return x\n"),
+        document(2, "bad.py", "python", "x = (\n"),
+        document(3, "e.py", "python", ""),
+        document(4, "w.py", "python", &format!("v = [{}]\n", (0..90).map(|i| i.to_string()).collect::<Vec<_>>().join(", "))),
+    ];
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let views: HashMap<&str, Arc<dyn Source>> = views(&batch).into_iter().collect();
+    // The makers' rows.
+    let mut want: HashMap<&str, BTreeSet<Vec<i64>>> = HashMap::new();
+    for d in 0..batch.docs.len() {
+        let p = &batch.docs[d];
+        let f = &*p.facts;
+        for (_, id, n) in p.node_ids() {
+            for (i, &c) in f.children(id).iter().enumerate() {
+                let at = p.local_of_node(c);
+                if f.named(c) && at != core::NONE {
+                    want.entry(NAMED).or_default().insert(vec![n, i as i64, p.global(at), i64::from(f.start(c)), i64::from(f.end(c))]);
+                }
+            }
+        }
+        let Some(dialect) = batch.dialects.get(p.tag) else { continue };
+        let mut toks: Vec<(u32, u32, i64)> = p
+            .node_ids()
+            .filter_map(|(_, id, n)| {
+                let [a, b] = [f.start(id), f.end(id)];
+                (f.children(id).is_empty() && b > a && !core_rr::is_comment(dialect.name(f, id))).then_some((a, b, n))
+            })
+            .collect();
+        toks.extend(p.token_ids().map(|(l, _, n)| {
+            let [a, b] = p.span(l);
+            (a, b, n)
+        }));
+        toks.sort_unstable();
+        let starts: Vec<u32> = toks.iter().map(|t| t.0).collect();
+        let ends: Vec<u32> = toks.iter().map(|t| t.1).collect();
+        for ((_, [a, b]), (_, id)) in p.spans().zip(p.loc_ids()).take((p.len() + p.ranks().count(Item::Token)) as usize) {
+            let first = starts.partition_point(|&s| s < a);
+            if first < toks.len() && toks[first].1 <= b {
+                let last = ends.partition_point(|&e| e <= b) - 1;
+                want.entry("first_token").or_default().insert(vec![id, toks[first].2]);
+                want.entry("last_token").or_default().insert(vec![id, toks[last].2]);
+            }
+            let k = ends.partition_point(|&e| e <= a);
+            if k > 0 && toks[k - 1].2 != id {
+                want.entry("token_before").or_default().insert(vec![id, toks[k - 1].2]);
+            }
+            let j = starts.partition_point(|&s| s < b);
+            if j < toks.len() && toks[j].2 != id {
+                want.entry("token_after").or_default().insert(vec![id, toks[j].2]);
+            }
+        }
+    }
+    for name in std::iter::once(NAMED).chain(TOKENS) {
+        let (s, want) = (&views[name], want.remove(name).unwrap_or_default());
+        assert!(want.len() > 3, "{name}: rows to compare");
+        let width = s.columns().len();
+        let all: Vec<usize> = (0..width).collect();
+        let read: Vec<Vec<i64>> = (0..s.len()).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect();
+        assert_eq!(read.iter().cloned().collect::<BTreeSet<_>>(), want, "{name}: its rows, read row by row");
+        assert_eq!(read.len(), want.len(), "{name}: no row twice");
+        let mut walked = Vec::new();
+        s.for_rows(&all, &mut |r, row| walked.push((r, row.to_vec())));
+        assert_eq!(walked, read.iter().cloned().enumerate().collect::<Vec<_>>(), "{name}: walked as read");
+        let keyed = |column: usize| {
+            for v in read.iter().map(|r| r[column]).collect::<BTreeSet<_>>() {
+                let got: Vec<usize> = s.lookup(column, &[v]).expect("looked up");
+                let per_row: Vec<usize> = (0..read.len()).filter(|&r| read[r][column] == v).collect();
+                assert_eq!(got, per_row, "{name}: looked up at {v} on column {column}");
+            }
+        };
+        keyed(if name == NAMED { 2 } else { 0 });
+        if name == NAMED {
+            keyed(0);
+        }
+    }
+    assert_eq!(batch.groups(), 0, "the views made no group");
+}

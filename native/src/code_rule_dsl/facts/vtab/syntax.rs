@@ -40,6 +40,7 @@ use cells::{Block, Cells};
 
 pub mod within;
 pub mod places;
+pub mod tape_rows;
 pub mod values;
 
 /// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
@@ -3403,7 +3404,6 @@ impl Batch {
         // Asked once for the batch, not per node (a lookup in the program's set of read relations).
         let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
         let wants_lf_lines = core && projection.wants("lf_line");
-        let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
         let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
@@ -3564,7 +3564,7 @@ impl Batch {
             // A text-only document has core.rerail's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
-                c.document(p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
+                c.document(p, dialect, &mut string, wants_text, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
                 drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests
@@ -4662,7 +4662,7 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
 
 /// Whether a batch of `shape` binds a view named `name`.
 pub fn has_view(shape: Shape, name: &str) -> bool {
-    named_views(shape).iter().any(|(n, _)| *n == name)
+    named_views(shape).iter().any(|(n, _)| *n == name) || tape_rows::served(shape).any(|n| n == name)
 }
 
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
@@ -4673,6 +4673,8 @@ pub fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));
     }
+    // The relations of the tape's answers no maker makes as rows (`tape_rows`): the token relations, `rr_token_named`.
+    out.extend(tape_rows::views(batch));
     for (at, families) in families().iter().enumerate() {
         for (family, &name) in families.names().iter().enumerate() {
             let empty = Relation::new(families.columns()[family]);

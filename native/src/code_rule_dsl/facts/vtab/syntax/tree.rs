@@ -36,14 +36,13 @@ pub(super) struct Tree {
     prev_token: bool,
     token: bool,
     /// `token` answered on request (decision 0174): its anonymous children's rows (`rr_token_anon`, their text their
-    /// kind) and its named children's by node (`rr_token_named(p, i, c, start, end)`, the text `node_text`'s).
+    /// kind). Its named children's (`rr_token_named`) are a view of the tape (`tape_rows::NamedChild`).
     token_parts: bool,
     visit_index: bool,
     op_ats: Vec<[i64; 3]>,
     prev_tokens: Vec<[i64; 2]>,
     tokens: Vec<[i64; 5]>,
     anon_tokens: Vec<[i64; 5]>,
-    named_tokens: Vec<[i64; 5]>,
     visit_indexes: Vec<[i64; 2]>,
 }
 
@@ -54,7 +53,7 @@ impl Tree {
             op_at: read("op_at"),
             prev_token: read("prev_token"),
             token: read("token"),
-            token_parts: read("rr_token_anon") || read("rr_token_named"),
+            token_parts: read("rr_token_anon"),
             visit_index: read("visit_index"),
             ..Self::default()
         }
@@ -86,10 +85,8 @@ impl Tree {
             for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
                     let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
-                    let at = p.local_of_node(c);
-                    if f.named(c) && at != NONE {
-                        self.named_tokens.push([n, i as i64, p.global(at), a, b]);
-                    } else {
+                    // A named child a node is: `rr_token_named`'s, a view (`tape_rows::NamedChild`).
+                    if !(f.named(c) && p.local_of_node(c) != NONE) {
                         // A named child no node is (a comment, a withheld node) keeps its text here.
                         let text = if f.named(c) { f.text(c) } else { dialect.name(f, c) };
                         self.anon_tokens.push([n, i as i64, string(text) as i64, a, b]);
@@ -136,7 +133,6 @@ impl Tree {
         }
         if self.token_parts {
             out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
-            out.push(("rr_token_named", relation(&["p", "i", "c", "start", "end_"], &mut self.named_tokens.iter().map(|r| r.to_vec()))));
         }
         if self.visit_index {
             out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.to_vec()))));
