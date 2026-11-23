@@ -1841,13 +1841,27 @@ pub fn default_store() -> &'static std::path::PathBuf {
 
 /// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
-/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`).
+/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`):
+/// looked for when this build's store there is new. Another build's files go stale when a new build comes, so its
+/// first store sweeps them; each run looked at every file there (510 in the images' directory, 18 ms a run).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
-    let _ = crate::content_store::prepare_cache_directory(&dir);
     let build = crate::code_rule_dsl::build_ids::engine();
     let build = &build[..build.len().min(16)];
+    let path = match key {
+        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
+        Some(key) => {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
+        }
+        None => dir.join(format!("{build}.sqlite")),
+    };
+    if path.exists() {
+        return path;
+    }
+    let _ = crate::content_store::prepare_cache_directory(&dir);
     let day = std::time::Duration::from_secs(24 * 3600);
     let old: Vec<String> = std::fs::read_dir(&dir)
         .into_iter()
@@ -1858,15 +1872,7 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
         .filter(|name| !name.starts_with(build))
         .collect();
     owner::remove_unowned(&dir, &old);
-    match key {
-        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
-        Some(key) => {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            key.hash(&mut h);
-            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
-        }
-        None => dir.join(format!("{build}.sqlite")),
-    }
+    path
 }
 
 /// The process's store, for what asks off a test's thread (a test's is its own, `test_store`): the machine's is
