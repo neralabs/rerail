@@ -87,20 +87,41 @@ impl std::ops::Index<usize> for Blocks {
 /// made from the last copies the shards of the keys it adds alone.
 const SHARDS: usize = 256;
 
-#[derive(Clone, Default)]
-struct Keys {
-    shards: Vec<Arc<FxHashMap<u32, Vec<usize>>>>,
+#[derive(Clone)]
+struct Keys<K = u32> {
+    shards: Vec<Arc<FxHashMap<K, Vec<usize>>>>,
 }
 
-impl Keys {
-    fn shard(k: u32) -> usize {
-        (k.wrapping_mul(0x9E37_79B9) >> 24) as usize % SHARDS
+impl<K> Default for Keys<K> {
+    fn default() -> Self {
+        Keys { shards: Vec::new() }
     }
-    fn get(&self, k: &u32) -> Option<&Vec<usize>> {
+}
+
+/// A key's shard: its bits mixed, so that keys that differ in their low bits alone (a document's nodes) spread.
+trait Shard: Copy + Eq + std::hash::Hash {
+    fn shard(self) -> usize;
+}
+impl Shard for u32 {
+    fn shard(self) -> usize {
+        (self.wrapping_mul(0x9E37_79B9) >> 24) as usize % SHARDS
+    }
+}
+impl Shard for i64 {
+    fn shard(self) -> usize {
+        ((self as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as usize % SHARDS
+    }
+}
+
+impl<K: Shard> Keys<K> {
+    fn shard(k: K) -> usize {
+        k.shard()
+    }
+    fn get(&self, k: &K) -> Option<&Vec<usize>> {
         self.shards.get(Self::shard(*k))?.get(k)
     }
     /// Part `i` holds rows of key `k`.
-    fn add(&mut self, k: u32, i: usize) {
+    fn add(&mut self, k: K, i: usize) {
         if self.shards.is_empty() {
             self.shards = (0..SHARDS).map(|_| Arc::default()).collect();
         }
@@ -118,6 +139,10 @@ struct Parts {
     list: Blocks,
     total: usize,
     by_key: Keys,
+    /// The parts that hold each node of a document not theirs (a host's node their rows name: `guest_of`'s string,
+    /// `host_node`'s host), by the node itself. Keyed by its document instead, a probe of any node of a file with
+    /// parsed strings asked every part of them (t50: `text` and `!guest_of` at 1.5–2.5 µs a probe).
+    hosted: Keys<i64>,
     /// The chunk's relation with every part's rows past its own, in one block relation, while every part is a
     /// [`Slice`] of it, each past the one before.
     whole: Option<Arc<super::Relation>>,
@@ -131,14 +156,17 @@ impl Parts {
         let p = &self.list[i];
         (row < p.start + p.src.len()).then(|| (p, row - p.start))
     }
-    /// The parts that may hold rows whose value is `v`: those that hold node ids of `v`'s key, or every part for a
-    /// value no key names (an atom, a number).
+    /// The parts that may hold rows whose value is `v`: those whose own nodes are of `v`'s key, and those whose rows
+    /// name node `v` of a document not theirs; every part for a value no key names (an atom, a number).
     fn of(&self, v: i64, each: &mut dyn FnMut(&Part)) {
         if !(1 << 32..).contains(&v) {
             self.list.iter().for_each(each);
             return;
         }
         for &i in self.by_key.get(&((v >> 32) as u32)).into_iter().flatten() {
+            each(&self.list[i]);
+        }
+        for &i in self.hosted.get(&v).into_iter().flatten() {
             each(&self.list[i]);
         }
     }
@@ -174,11 +202,13 @@ pub(super) struct Dir {
 }
 
 impl Values {
-    /// Value `keys[0]`'s sources: each relation's rows of it, a part of that relation from now on. `keys` are the
-    /// keys of the nodes its rows hold: its own, and its places' hosts'.
+    /// Values `own`'s sources: each relation's rows of them, a part of that relation from now on. `own` are the
+    /// values' keys; `hosts` the keys of the documents their places are in, whose nodes their rows name.
+    /// A part is found by its own keys, and by each node of another document its rows name (`hosted`), read off its
+    /// rows once here. A relation made on lookup has no rows yet: it is found by its hosts' keys too.
     /// The next `parts` is made from the last: a relation the value adds rows to is made again from its last (its
     /// last block of parts and the shards of the keys it adds copied, `Blocks`, `Keys`), the others shared.
-    pub fn add(&self, keys: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
+    pub fn add(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
         let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
         if let Some(b) = sources.iter().find_map(|(_, s)| s.python_batch()) {
@@ -197,8 +227,27 @@ impl Values {
             p.whole = slice.filter(|_| p.sliced).map(|sl| Arc::clone(&sl.whole));
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
-            for &k in keys {
+            for &k in own {
                 p.by_key.add(k, i);
+            }
+            if src.made_on_lookup() {
+                for &k in hosts {
+                    p.by_key.add(k, i);
+                }
+            } else {
+                let width = src.columns().len();
+                let mut named: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
+                for r in 0..src.len() {
+                    for c in 0..width {
+                        let v = src.value(r, c);
+                        if (1 << 32..).contains(&v) && !own.contains(&((v >> 32) as u32)) {
+                            named.insert(v);
+                        }
+                    }
+                }
+                for v in named {
+                    p.hosted.add(v, i);
+                }
             }
         }
         self.parts.store(Arc::new(parts));
@@ -695,6 +744,29 @@ mod tests {
         }
     }
 
+    /// A part is found by the host nodes its rows name, not by its host's document: a probe of another node of that
+    /// document asks no part (t50: every `text` probe of a file with parsed strings asked all of them).
+    #[test]
+    fn a_hosts_node_finds_only_the_parts_that_name_it() {
+        let values = Values::default();
+        let (host, a, b) = (5i64 << 32, 10i64 << 32, 11i64 << 32);
+        let rel = |rows: Vec<Vec<i64>>| Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut rows.into_iter())) as Arc<dyn Source>;
+        values.add(&[10], &[5], vec![("guest_of".to_owned(), rel(vec![vec![a | 1, host | 7], vec![a | 2, host | 7]]))]);
+        values.add(&[11], &[5], vec![("guest_of".to_owned(), rel(vec![vec![b | 1, host | 9]]))]);
+        let parts = values.parts.load().get("guest_of").cloned().expect("guest_of's parts");
+        let asked = |v: i64| {
+            let mut starts = Vec::new();
+            parts.of(v, &mut |p| starts.push(p.start));
+            starts
+        };
+        assert_eq!(asked(host | 7), vec![0], "the string its first part names");
+        assert_eq!(asked(host | 9), vec![2], "the string its second part names");
+        assert!(asked(host | 8).is_empty(), "a host node no part names");
+        assert_eq!(asked(a | 2), vec![0], "a value's own node");
+        assert_eq!(asked(b | 1), vec![2]);
+        assert!(values.source_of("guest_of", host | 8).is_none(), "a host's node is the batch's, not a value's");
+    }
+
     /// An add makes the next parts from the last without copying them (R7's snapshots, 0494 step 5): only the last
     /// block of a relation's parts and the shard of the keys it adds are written again, the rest shared. Copied whole,
     /// each add copied every part and key before it: on corpus0 × B-now, 7.6 s of the run's 90 s.
@@ -703,10 +775,10 @@ mod tests {
         let values = Values::default();
         let part = || vec![("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)];
         for k in 1..=200u32 {
-            values.add(&[k], part());
+            values.add(&[k], &[], part());
         }
         let before = values.parts.load().get("r").cloned().expect("r's parts");
-        values.add(&[201], part());
+        values.add(&[201], &[], part());
         let after = values.parts.load().get("r").cloned().expect("r's parts");
         let shared = |a: &[Arc<Vec<Part>>], b: &[Arc<Vec<Part>>]| a.iter().zip(b).filter(|(x, y)| Arc::ptr_eq(x, y)).count();
         assert_eq!(shared(&before.list.blocks, &after.list.blocks), before.list.blocks.len() - 1, "every block but the last shared");

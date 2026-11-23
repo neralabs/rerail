@@ -7189,7 +7189,7 @@ fn run_observed_within(
                 answered.push(asked.clone());
                 let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
                 let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+                values.add(&[key], &owner.into_iter().collect::<Vec<u32>>(), made_rows);
             }
         }
         let mut parse_answer = |req: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
@@ -7203,7 +7203,7 @@ fn run_observed_within(
             let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
             let mut given_rows: BTreeMap<String, Vec<Vec<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
             // The round's values, admitted together once each is made (`Grower::admit_many`): their documents, each
-            // once, and the keys of the nodes their rows hold.
+            // once, and the keys of the documents their places are in (`Values::add`).
             let (mut admit_keys, mut held_keys): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
             for row in rows {
                 // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
@@ -7243,10 +7243,10 @@ fn run_observed_within(
                 if !admit_keys.contains(&key) {
                     admit_keys.push(key);
                 }
-                for k in [Some(key), owner].into_iter().flatten() {
-                    if !held_keys.contains(&k) {
-                        held_keys.push(k);
-                    }
+                if let Some(k) = owner
+                    && !held_keys.contains(&k)
+                {
+                    held_keys.push(k);
                 }
             }
             if !admit_keys.is_empty() {
@@ -7261,7 +7261,7 @@ fn run_observed_within(
                     let width = p.columns().len();
                     given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
                 }
-                values.add(&held_keys, made_rows);
+                values.add(&admit_keys, &held_keys, made_rows);
             }
             Ok(std::mem::take(&mut given_rows).into_iter().collect())
         };

@@ -537,6 +537,25 @@ for 23 K rows, the index over `st_pos` built on its first probe) are gone, the o
 3.264 T instructions, user 293.5 → 284.8 s, peak 12.3 → 10.0 GB. The rows that differ are the ones listed below,
 unchanged.
 
+### The per-file growth: `pre_152` and `pre_227` asked every parsed string of their file (2026-11-23)
+
+`pre_152` (`nameref`'s split) and `pre_227` (`rf_read`'s) had grown about 2.9 s each against 0483. Their step
+clocks on `all` put it on two probes: `nameref`'s `text($n, $x)` at 1.5 µs a row (2,240 ms over 1.54 M; 0483's
+0.27 µs) and `rf_read`'s `!guest_of($i, _)` at 2.0 µs (2,627 ms over 1.29 M). s1000 showed the same, and its sample
+put 91% of `View::find_keyed` in `values::Layered::lookup`, most of that in `Parts::of`.
+
+The cause: a chunk's admitted tape values (decision 0431 §8) were found by their own document's key and by each
+host's key their places are in, so that a probe by a host node a value's rows name (`guest_of`'s string,
+`host_node`'s host) reaches it. Keyed by the host's document, every probe of any node of a file with parsed strings
+asked every value of that file, and since `admit_many` a value's part is a whole round's. Now a part is found by its
+own keys, and by each node of another document its rows name, read off its rows once when it is added
+(`Parts::hosted`). A relation made on lookup, with no rows when added, keeps the hosts' keys. The same narrowing ends
+a latent error: `Values::source_of` gave a host's node a value's batch, whose node reads find none.
+
+On `all` (m1max; against the sorted hash's run): rows unchanged; own CPU 168.8 → 155.1 s, instructions 1,884 →
+1,691 G; `pre_227` 4.21 → 1.66 s, `pre_152` 3.85 → 2.39 s (its `text` step 2,240 → 946 ms), `rf_named` 5.11 →
+2.86 s; peak 2,474 → 2,455 MB.
+
 ### Step 5, third part: a test's whole key by a sorted hash (2026-11-23)
 
 The user allowed the sorted hash for these probes, measured (2026-11-23, reversing 2026-11-21's decision for this
