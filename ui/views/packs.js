@@ -1,8 +1,10 @@
 /**
  * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
- * by kind, as a list or as cards; each added or not, with Add pack or a quiet Remove pack that asks first, its
- * question on a line of its own under the pack's text. A pack removed here reads Removed with Undo until the page is
- * left. A pack is added whole: its rules arrive as the pack starts them, opt-in ones off. The review
+ * by kind, as a list or as cards; once the recommendations are read, the packs Rerail suggests for this repository
+ * first, each with why, then the others. Each pack has its version and where it stands (Added, or Removed with Undo
+ * until the page is left) on a line under its name, and Add pack or a quiet Remove pack that asks first, its question
+ * on a line of its own under the pack's text. A pack is added whole: its rules arrive as the pack starts them, opt-in
+ * ones off. The review
  * (`#packs?review=1`, set-up's `#rule-packs?review=1`): the packs set-up picked for this repository, each with why
  * and a switch, then the others with Add pack. The person starts Rerail back in the terminal or coding agent.
  */
@@ -13,8 +15,8 @@ import { data, ui, isAttached, repoName, stateHere, isSetUp, keptPacks, runningC
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { commonActions, keepPack } from "../actions.js";
-import { catalogKinds, catalogPacks } from "../pack-model.js";
-import { packAction, packIcon, packKind, removePackControl } from "../render/pack-panel.js";
+import { catalogKinds, catalogPacks, suggestedReason, suggestedSplit } from "../pack-model.js";
+import { packAction, packIcon, packKind, removePackControl, suggestedBox } from "../render/pack-panel.js";
 
 export const needs = ["rules", "packs", "activity"];
 
@@ -41,11 +43,27 @@ function catalogState(pack) {
   return { status: null, action: packAction(pack, { quiet: true }) };
 }
 
-/** A pack as a card of the catalog's card view: its name and kind, where it stands, what it covers, and its action. */
+/** The line under a pack's name: its version, then where it stands here (Added, Removed); `null` when there is neither. */
+function statusLine(pack, status) {
+  const version = pack.version ? h("span.badge.pver", { title: `${pack.name} ${pack.version}, on this computer` }, `v${pack.version}`) : null;
+  return version || status ? h("span.pstate", null, version, status) : null;
+}
+
+/** "Why suggested", for a pack Rerail suggests for this repository with a reason. */
+function whyBox(pack) {
+  const reason = suggestedReason(data.recommendations, pack.id);
+  return reason ? suggestedBox("Why suggested", reason) : null;
+}
+
+/**
+ * A pack as a card of the catalog's card view: its name and kind, its status line, what it covers, why it is suggested,
+ * and its counts and action.
+ */
 const catalogCard = (pack, status, action, question) => h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-  h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
-    status ? h("span.pstatus", null, status) : null),
+  h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack)))),
+  statusLine(pack, status),
   h("span.sub", { title: pack.covers }, pack.covers),
+  whyBox(pack),
   question,
   h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
 
@@ -55,9 +73,9 @@ function catalogItem(pack) {
   const question = asking ? h("div.rmline", null, removePackControl(pack)) : null;
   if (ui.catView === "cards") return catalogCard(pack, status, action, question);
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
+    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), statusLine(pack, status), h("span.sub", { title: pack.covers }, pack.covers), whyBox(pack),
       h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),
-    asking ? null : h("div.pend", null, h("span.pstatus", null, status), action),
+    asking ? null : h("div.pend", null, action),
     question);
 }
 
@@ -77,8 +95,32 @@ function catalog() {
       h("div.rangectl.viewctl", { role: "group", "aria-label": "View" },
         h("button", { "data-act": "catview", "data-i": "list", "aria-pressed": String(ui.catView === "list") }, "List"),
         h("button", { "data-act": "catview", "data-i": "cards", "aria-pressed": String(ui.catView === "cards") }, "Cards"))),
-    ui.catView === "cards" ? h("div.cards", null, shown.map(catalogItem)) : h("div.list", null, shown.map(catalogItem)));
+    catalogBody(shown));
 }
+
+/** Packs as the view chosen shows them: cards or a list. */
+const packBox = packs => (ui.catView === "cards" ? h("div.cards", null, packs.map(catalogItem)) : h("div.list", null, packs.map(catalogItem)));
+
+/** A group's heading in the catalog: its title, its count, and one line. */
+const groupHead = (title, n, line) => h("div.ghead.grp", null, h("h3", null, title, h("span.n2", null, fmt(n))), h("p", null, line));
+
+/**
+ * The catalog's packs: one list until the recommendations are read and suggest a pack; then the packs suggested for
+ * this repository, then the others.
+ */
+function catalogBody(shown) {
+  const split = suggestedSplit(shown, data.recommendations);
+  if (split === null) return packBox(shown);
+  const repo = repoName() || "this repo", { suggested, others } = split;
+  return h("div.groups", null,
+    suggested.length ? [groupHead(`Suggested for ${repo}`, suggested.length, `Rerail picked these from what ${repo} is built with.`), packBox(suggested)] : null,
+    others.length ? [othersHead(repo, others.length, suggested.length > 0), packBox(others)] : null);
+}
+
+/** The other packs' heading; when the kind chosen has no suggested pack, its packs are simply the rule packs. */
+const othersHead = (repo, n, afterSuggested) => (afterSuggested
+  ? groupHead("Other rule packs", n, `Not matched to ${repo}. Add any you want.`)
+  : groupHead("Rule packs", n, "None of these is suggested for this kind of pack."));
 
 /* ---------- the review ---------- */
 
@@ -127,10 +169,13 @@ export function render(root) {
   setContent(root, sig, () => (view === "review" ? review() : catalog()));
 }
 
-/** The catalog opens on every kind; the review reads the repository for the packs set-up would pick, once per repository. */
+/**
+ * The catalog opens on every kind; both it and the review read the repository for the packs Rerail suggests, once per
+ * repository.
+ */
 export function enter() {
   if (ui.view === "packs") kind = "all";
-  if (ui.view !== "review" || ui.scope === null || data.recommendations !== null) return;
+  if (ui.scope === null || data.recommendations !== null) return;
   loadRecommendations().then(invalidate, error => toast(failed(`Couldn’t read ${repoName() || "this repo"} to pick rule packs`, error)));
 }
 

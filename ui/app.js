@@ -12,7 +12,7 @@ import { commonActions } from "./actions.js";
 import { afterPoll, closePanel, connectShell, hideToast, invalidate, loadTheme, startRouting, syncUrl } from "./shell.js";
 import { renderSheet, sheetActions } from "./sheet.js";
 import { VIEWS, currentNeeds, pageKey, pageModule } from "./views/index.js";
-import { closeRepoMenu, renderStatus, renderTopbar, repoMenuOpen, topbarActions, trackTopbarHeight } from "./frame/topbar.js";
+import { closeRepoMenu, closeUpdatePop, escapeUpdatePop, renderStatus, renderTopbar, repoMenuOpen, topbarActions, trackTopbarHeight, updatePopOpen } from "./frame/topbar.js";
 import { renderSidenav } from "./frame/sidenav.js";
 
 const $ = id => document.getElementById(id);
@@ -58,6 +58,7 @@ function regionActions(el) {
 
 document.addEventListener("click", e => {
   closeRepoMenu(e.target);
+  closeUpdatePop(e.target);
   const b = e.target.closest("[data-act]");
   if (!b || b.disabled) { if (ui.removeAsk !== null && !e.target.closest(".rmask")) { ui.removeAsk = null; invalidate(); } return; }
   if (b.closest("summary")) e.preventDefault(); // a button in a group heading must not fold it
@@ -74,7 +75,7 @@ document.addEventListener("click", e => {
 // Rows that open a pack are role=button divs: Enter and Space act like a click.
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    if (closeRepoMenu(null)) return;
+    if (closeRepoMenu(null) || escapeUpdatePop()) return;
     if (ui.panel !== null) closePanel();
     return;
   }
@@ -83,7 +84,7 @@ document.addEventListener("keydown", e => {
 
 document.addEventListener("input", e => { if (e.target.closest?.("#content")) pageModule().onInput?.(e.target); });
 document.addEventListener("change", e => { if (e.target.closest?.("#content")) pageModule().onChange?.(e.target); });
-window.addEventListener("resize", () => { pageModule().onResize?.(); if (repoMenuOpen()) invalidate(); });
+window.addEventListener("resize", () => { pageModule().onResize?.(); if (repoMenuOpen() || updatePopOpen()) invalidate(); });
 window.addEventListener("scroll", () => {
   const s = window.scrollY > 4 ? "1" : "";
   if (document.body.dataset.scrolled !== s) document.body.dataset.scrolled = s;
