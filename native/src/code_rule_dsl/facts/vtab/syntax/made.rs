@@ -404,6 +404,9 @@ pub(super) struct Made {
 }
 
 /// A group: documents whose rows were made together, and each relation's rows of them, a range of its block relation.
+/// The columns of a made relation a group indexes (`Group::index`).
+const INDEXED: usize = 8;
+
 pub(super) struct Group {
     pub(super) docs: Vec<usize>,
     /// Each relation's rows of the group, in `Rows::names`' order.
@@ -411,7 +414,8 @@ pub(super) struct Group {
     /// Per (relation, column) probed: the group's rows by their value there, made at the first probe (an index in
     /// its relation's block, decision 0353). A group's rows never change, so it stands. A probe without it walked the
     /// group's every row: a maintained join's probes of `docof`, one document's group each, were quadratic.
-    index: parking_lot::Mutex<HashMap<(usize, usize), Arc<rustc_hash::FxHashMap<i64, Vec<u32>>>>>,
+    /// One slot a (relation, column), `INDEXED` columns a relation, set once: a probe reads it with no lock.
+    index: Box<[std::sync::OnceLock<rustc_hash::FxHashMap<i64, Vec<u32>>>]>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
     /// groups' (decision 0616).
     strings: Option<Arc<[u32]>>,
@@ -419,19 +423,20 @@ pub(super) struct Group {
 
 impl Group {
     fn new(docs: Vec<usize>, ranges: Vec<Range<usize>>, strings: Option<Arc<[u32]>>) -> Self {
-        Group { docs, ranges, index: Default::default(), strings }
+        let index = (0..ranges.len() * INDEXED).map(|_| std::sync::OnceLock::new()).collect();
+        Group { docs, ranges, index, strings }
     }
 
     /// The group's rows of relation `rel` (held in `r`) whose `column` is a key of the index, made if it is not.
-    fn index(&self, rel: usize, column: usize, r: &Relation) -> Arc<rustc_hash::FxHashMap<i64, Vec<u32>>> {
-        let mut index = self.index.lock();
-        Arc::clone(index.entry((rel, column)).or_insert_with(|| {
+    fn index(&self, rel: usize, column: usize, r: &Relation) -> &rustc_hash::FxHashMap<i64, Vec<u32>> {
+        assert!(column < INDEXED, "a made relation of at most {INDEXED} columns");
+        self.index[rel * INDEXED + column].get_or_init(|| {
             let mut by: rustc_hash::FxHashMap<i64, Vec<u32>> = Default::default();
             for row in self.ranges[rel].clone() {
                 by.entry(Source::value(r, row, column)).or_default().push(row as u32);
             }
-            Arc::new(by)
-        }))
+            by
+        })
     }
 }
 
