@@ -215,9 +215,30 @@ pub enum Life {
 }
 
 /// The blocks a run's new relations go in outside a chunk, while they have room: one a `Life` (decision 0442: the
-/// run's, so no two runs' relations share a block).
+/// run's, so no two runs' relations share a block); and its vectors' (`Lanes`).
 #[derive(Default)]
-struct Open([Mutex<Option<Arc<Facts>>>; 4]);
+struct Open([Mutex<Option<Arc<Facts>>>; 4], Lanes);
+
+/// How many open blocks a `Life`'s vectors and structures with no home of their own spread over (`open_chunk`).
+const LANES: usize = 32;
+
+/// The open blocks of a `Life`'s vectors and structures with no home of their own (`open_chunk`): one a thread (by its
+/// id), so a thread's short-lived arrays (a lookup's rows, a join's keys) are taken and given back in a block no other
+/// thread takes them from, under a lock no other thread waits on. In one open block a `Life`, every thread's took its
+/// lock and its ledger's: on corpus0 × B-now, 90 s of the run's 168 s CPU in the system's lock waits. Two threads
+/// whose ids meet share one, as every thread did.
+#[derive(Default)]
+struct Lanes([[Mutex<Option<Arc<Facts>>>; LANES]; 4]);
+
+impl Lanes {
+    /// This thread's open block of `life`.
+    fn here(&self, life: Life) -> &Mutex<Option<Arc<Facts>>> {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        std::thread::current().id().hash(&mut h);
+        &self.0[life as usize][(h.finish() >> 7) as usize % LANES]
+    }
+}
 
 /// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
 /// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
@@ -374,6 +395,8 @@ pub fn held() -> [(usize, usize, usize); 3] {
 #[derive(Default)]
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
+    /// Its vectors' open blocks, one a thread (`Lanes`).
+    lanes: Lanes,
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
     /// The bytes written in its blocks given back (`Facts`'s drop), and in those held when it ended (`Written`).
     tally: Arc<std::sync::atomic::AtomicUsize>,
@@ -531,7 +554,7 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     impl Drop for Leave {
         fn drop(&mut self) {
             drop(self.0.take());
-            for open in &self.1.open {
+            for open in self.1.open.iter().chain(self.1.lanes.0.iter().flatten()) {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
             let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
@@ -628,14 +651,14 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     Ok(f)
 }
 
-/// A chunk of `need` bytes (aligned to `align`) in the open block of `life`'s relations (the chunk's, if a chunk's
-/// evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
+/// A chunk of `need` bytes (aligned to `align`) in this thread's open block of `life`'s vectors (`Lanes`; the chunk's,
+/// if a chunk's evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
 /// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
     let runs = open_blocks();
-    let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+    let mut open = chunk.as_ref().map_or(runs.1.here(life), |c| c.lanes.here(life)).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.admits(need)
         && let Some(c) = f.block.try_alloc_chunk_fit(need, align)

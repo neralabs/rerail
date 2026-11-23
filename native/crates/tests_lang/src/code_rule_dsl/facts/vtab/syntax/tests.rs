@@ -2047,7 +2047,8 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 let mut carried = 0;
                 let some = p.len().min(4_000);
                 for l in (0..some).chain((0..some).rev()).chain((p.len() - some..p.len()).step_by(7)) {
-                    for hint in [&mut carried, &mut 0, &mut u32::MAX, &mut (l / 3)] {
+                    let (mut fresh, mut out_of_range, mut near) = (0, u32::MAX, l / 3);
+                    for hint in [&mut carried, &mut fresh, &mut out_of_range, &mut near] {
                         assert_eq!(p.global_near(l, hint), p.global(l), "{label} {format:?} {shape:?}: the id of local {l} from a hint");
                     }
                 }
@@ -3348,11 +3349,35 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     };
     let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
     read(&sources);
-    let admitted = grower.admit(&store, file(3), &[], &tests, binding, &projection).unwrap();
+    let admitted = grower.admit(&store, vec![file(3)], &[], &tests, binding, &projection).unwrap();
     assert!(!admitted.iter().any(|(n, _)| n == "rr_ast_1_1"), "a value's sources hold no matchers' rows of their own");
     let mut seen = wave.0.lock().unwrap().clone();
     seen.sort();
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
+}
+
+/// One answer's values are admitted together (decision 0431 §8): one batch of them, whose sources hold every value's
+/// rows. Admitted one at a time, each paid a batch's fixed work: on corpus0 × B-now, 13,483 values made 40 GB of the
+/// run's peak.
+#[test]
+fn an_answer_s_values_are_admitted_as_one_batch() {
+    let store = ContentStore::open(&temp("admitted-together")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return x\n"));
+    let (_, mut grower) = Grower::start(&store, vec![file(1)], &[], &Matchers::default(), &tests, binding, &projection, &HashMap::new()).unwrap();
+    let admitted = grower.admit(&store, vec![file(3), file(4)], &[], &tests, binding, &projection).unwrap();
+    let batch = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the values' batch");
+    assert_eq!(batch.docs.keys().iter().copied().collect::<Vec<u32>>(), [3, 4], "one batch of both values");
+    let mut keys = BTreeSet::new();
+    for (_, s) in admitted.iter().filter(|(_, s)| !s.made_on_lookup()) {
+        let width = s.columns().len();
+        for r in 0..s.len() {
+            keys.extend((0..width).map(|c| s.value(r, c)).filter(|&v| v >= 1 << 32).map(|v| v >> 32));
+        }
+    }
+    assert!(keys.contains(&3) && keys.contains(&4), "both values' rows: {keys:?}");
 }
 
 /// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and

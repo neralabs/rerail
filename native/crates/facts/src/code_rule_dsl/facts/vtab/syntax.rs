@@ -3506,10 +3506,12 @@ impl Batch {
         let mut places: Vec<(&Projected, &Document, std::ops::Range<usize>, bool)> = Vec::new();
         for d in held.iter().map(Input::document) {
             let (Some(guest), Some((value, had, withheld))) = (d.guest.as_deref(), grown.values.get(&d.key)) else { continue };
+            // The value's projection in the batch it was admitted with: an answer's values are admitted together.
             if let Made::Tape { places: all } = &guest.made
                 && all.len() > *had
+                && let Some(at) = value.docs.position(d.key)
             {
-                places.push((&value.docs[0], d, *had..all.len(), *withheld));
+                places.push((&value.docs[at], d, *had..all.len(), *withheld));
             }
         }
         let made = batch.make_rows(&(0..batch.docs.len()).collect::<Vec<_>>(), false, &places)?;
@@ -5418,20 +5420,22 @@ impl Grower {
         Ok(finish(out, &batch, sets, projection, binding))
     }
 
-    /// The sources of tape value `document` alone, admitted inside the chunk's fixpoint (decision 0431 §8): projected
-    /// into the chunk's block, its hosts' lines and its strings the growth's, its rows its own, a part of each of the
-    /// chunk's sources (`values::Layered`). A document the batch holds (a value given a place more) has the rows of
-    /// those places alone.
+    /// The sources of tape values `documents`, admitted inside the chunk's fixpoint (decision 0431 §8): one answer's
+    /// values, made together as one batch of their own, projected into the chunk's block, their hosts' lines and their
+    /// strings the growth's, their rows a part of each of the chunk's sources (`values::Layered`). A document the batch
+    /// holds (a value given a place more) has the rows of those places alone. Admitted one at a time, each value paid
+    /// a batch's fixed work (its projection, text tests, axes and a copy of the parts' keys): on corpus0 × B-now, 13,483
+    /// values made 40 GB of the run's peak and 55 s of its CPU.
     pub fn admit(
         &mut self,
         store: &ContentStore,
-        document: Document,
+        documents: Vec<Document>,
         sets: &[(String, Vector<i64>)],
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         projection: &Projection,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        let (out, batch) = self.sources_of(store, vec![Input::from(document)], None, tests, binding, projection, &HashMap::new(), true)?;
+        let (out, batch) = self.sources_of(store, documents.into_iter().map(Input::from).collect(), None, tests, binding, projection, &HashMap::new(), true)?;
         Ok(finish(out, &batch, sets, projection, binding))
     }
 
