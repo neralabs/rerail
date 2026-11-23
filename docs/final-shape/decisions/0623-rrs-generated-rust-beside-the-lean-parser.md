@@ -579,3 +579,14 @@ shape. All tests pass.
 
 `rr_syntax`'s `lean_speed` example measures the lean lexer as `rr-aot-speed` measures tier 1 (the same files, wall
 time, least of `RR_ROUNDS`). On spark1: lean's lexer 13.5 ms, tier 1 21.7 ms; lean's parse 25.4 ms.
+
+## The dropped nodes no reading can reach go (done)
+
+A profile of the calls form on m3 put `shift_dead`'s loop among tier 2's hottest lines, though it runs only where the
+list of dropped nodes (`dead`) is not empty: the list only grew, so after a file's first `drop` every wrap walked all of
+it. A dropped node matters only while a reading may reach it, and a reading starts at a level's node made last, which
+only moves on. So `shift_dead` first drops the nodes before every open level's node made last (and those a reading took
+out), and the list is empty again once its statement is passed.
+
+Side by side on spark1 (load 6), three rounds in turns: tier 2 29.7–30.0 ms before, 28.0–28.7 ms after (lean's parse
+25.4 ms on the same clock). All tests pass.

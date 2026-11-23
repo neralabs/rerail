@@ -717,6 +717,10 @@ impl<'a, L: Layout> P<'a, L> {
     #[cold]
     #[inline(never)]
     fn shift_dead(&mut self, at: usize) {
+        // A dropped node no reading can reach again goes: a reading starts at a level's node made last, which only
+        // moves on, so one before every open level's is passed for good (and one a reading took out, `NONE`).
+        let bound = self.levels.iter().chain(std::iter::once(&self.top)).filter(|l| l.1 != NONE).fold(self.w.len() as u32, |b, l| b.min(l.1));
+        self.dead.retain(|&o| o != NONE && o >= bound);
         for o in &mut self.dead {
             if *o != NONE && *o as usize >= at {
                 *o += 1;
