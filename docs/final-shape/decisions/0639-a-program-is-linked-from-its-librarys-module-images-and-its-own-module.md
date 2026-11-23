@@ -24,9 +24,12 @@ This decision:
 - makes each module's lowering a request in phase 0, answered by the engine, its result kept in 0103's two-rule
   form.
 
-What stays Rust, and why, is decided by the spike: the walk over a module's clauses, the link, and the lowering's
-tail. Each of the three needs a rule run per program to be rules, and a rule run per program costs more than the
-lowering it would replace (§ Spike, E5).
+- names each helper a module makes by its content (or, for a helper no lowering merges, by its module), so that
+  linking modules is a union with nothing left to decide, written as rules, and run by the engine as a view over the
+  modules' images.
+
+What stays Rust: the walk over a module's clauses (the request's native step) and the lowering's tail, whose
+whole-program passes are 0246 §3's work.
 
 ## How a program is lowered today
 
@@ -153,31 +156,71 @@ link reads them anyway). A graph kept in the process but missing an image in the
 in the same process) is derived again in that store, which asks for the lowering. The lowering is never done
 anywhere else.
 
-### 4. The link
+### 4. Helpers are named by content, so the link has nothing to decide
 
-For a modular text, `Text::lower_version(true)` becomes:
+Today a helper is named by a counter (`fresh_name`: `rr_{stem}{next}`), and the link decides three things per program:
+- **Renumbering:** a module's helpers move up by the sum of the counts of the modules linked before it.
+- **Renaming clashing natives:** Python candidate natives that collide get a new serial.
+- **Merging:** a helper whose `once_key` equals an earlier module's is merged into it. The key is its `once` stem,
+  column types and rules as templates.
+
+Each depends on the program's set and order of modules.
+
+**Two tiers of names**, given when a module's walk ends (`lower::content_names`, spiked in E6). They are a rename of
+the module's version, kept in its image:
+- **A helper the walk may merge (`once`)** is named by its content: a Merkle digest of its `once` stem, its column
+  types and its rules' templates, sorted. Each helper it reads is named by its own name, and itself as `@self`. The
+  `once` stem matters: an aggregate's names its readers' heads (`agg h1,h2`), because demand narrows the helper by
+  its readers. Naming by the bare stem merged 17 of Python's helpers that the walk keeps apart (E6, first run).
+- **Any other helper** (`ctx`, `t`, `earlier`, `precedes`, `next_sibling`, `cover`, `up`, ...) is named by its module's
+  key and its local name. Today's lowering never merges these, and later passes may rewrite one for its reader. The
+  name is still free of the link's order: a module's key and its own walk fix it.
+- **Helpers that read each other in a cycle** take the second tier too. Naming a cycle by content is graph
+  canonization, and a wrong canonical form merges different helpers. There are none today (E6).
+- **Python candidate natives** take the first tier, by the native's content.
+
+The findings' counter (`PendingFindings::next`) and the `must`/`may` rule positions (offset by `appended`) are
+numbered by module the same way, so nothing in a module depends on what is linked before it.
+
+**The link is then a union, written as rules:**
+
+```
+linked_rule(t, r)   :- text_module(t, m), module_rule(m, r).
+linked_decl(t, d)   :- text_module(t, m), module_decl(m, d).
+linked_fact(t, f)   :- text_module(t, m), module_fact(m, f).
+...
+link_conflict(t, n) :- text_module(t, a), text_module(t, b), module_decl(a, n, c1), module_decl(b, n, c2), c1 != c2.
+```
+
+These rules run in the run that reads the program's graph, not in a run of their own. That is 0246 §2: linking makes
+the run's base. **The engine specializes the shape:** a union over a set of keys of relations kept in blocks is a view
+over the module images (0244), their string tables interned and their ids offset, with no row of the union produced.
+`link_conflict` (and the name checks of § Collisions) are the only rules that produce rows, and they are empty.
+
+**What the spike found of the fields** (`append_fields`, E7):
+- No library has a declaration, native or kind set two modules give different values, so "a later module's
+  replaces" never decides. It becomes the `link_conflict` error.
+- Each input is stated by one module, but for one input in four packs, and a few relations take facts from more than
+  one module (`extensible`, 0263).
+- Settings and demands come from several modules. Their lists are taken in the canonical order, which is per
+  module, so even an order that is read stays deterministic. T8 holds that no reader depends on it.
+
+**For a modular text,** `Text::lower_version(true)` becomes:
 1. `check_names` and `closed_program`, as now.
-2. The text's modules from its graph's plan rows, by rank, each read from its image by its `p0_module_lowered` digest.
-3. The text's own module: `lower_module_in_written(own, &modules)`.
-4. `link_library_versions(modules ++ [own])`, then `contexts::passes`.
+2. The text's own module lowered against its modules (`lower_module_in_written`), each read from its image by its
+   `p0_module_lowered` digest.
+3. The link's union, then the tail and `contexts::passes` over it.
 
-`link_versions` takes the modules by reference and clones only the first module's lowerer. `lower_library` (packs)
-takes its modules the same way, and `library_modules_with_files`' graph code (reach, groups, order, `module_key`)
-goes. A plain text keeps `lower_statements_version`, and `bootstrap.rerail` itself, lowered before phase 0 runs,
-keeps the whole lowering.
+A plain text keeps the whole lowering, and `bootstrap.rerail` itself, lowered before phase 0 runs, does too.
+`lower_library` (packs) takes the same union, and `library_modules_with_files`' graph code goes.
 
-**Why the link's decisions stay Rust here.** The link renumbers helpers (`made`: an offset that sums the `next` of the
-modules before it), renames Python candidate natives that clash, and merges helpers equal to an earlier module's
-(`once_key`: stem, column types and the helper's rules as templates, read through the renames so far). These are
-decisions per text, over the text's set of modules. As rules, they would need a rule run per text, which the composed
-path exists to avoid. A run of the plan's rules alone took 50–90 ms (E5), against the 25–30 ms the module path saves
-a program. The link is not left with decisions instead: making helper names content-addressed (named by their
-rules' digest, a self-reading helper by its module too) leaves the link a union with nothing to decide. That is a
-change to the lowering's naming, and so to every program's printed form, and is its own decision.
+**What the names change.** Every helper's name in every printed program changes once, so program identities change
+with them. That is the one-time cost the canonical order (§1) already has. Four test files name numbered helpers
+(22 literals). In exchange, an edit of one module no longer renumbers the helpers of every module linked after it,
+so their printed rules and digests stay the same (0225's incremental work).
 
 **Why the tail stays Rust.** The tail's whole-program questions (which core relations are read, which kind sets are
-read) have no per-text rule run at lowering time to be answered in. They belong to preparation's fact spaces (0246
-§3, 0225 §5).
+read) belong to preparation's fact spaces (0246 §3, 0225 §5).
 
 ### 5. The template holds every module
 
@@ -200,7 +243,13 @@ spark2, `RERAIL_THREADS=1`, over every pack and the engine's phase programs.
 | E4 | The images | Python: 63 modules, 1.31 MB, decoded in 3.3 ms; the other packs 0.09–0.66 MB |
 | E4 | Helpers that read themselves | 0–10 rules a pack: content-addressed names (§4) must name them by their module too |
 | E5 | The plan as rules (§1) against the Rust plan | modules, scopes and ranks equal, every pack; keys distinct, and the same with the facts stated in reverse |
-| E5 | A run of the plan's rules | 50–90 ms each |
+| E5 | A run of the plan's rules | 50–90 ms each, as a standalone corpus run through the tests' helper: mostly the run's fixed cost, so not a cost of rules inside an existing run |
+| E6 | Content-named modules united, against the content-named whole lowering | the same rules, every library (the second tier aside, whose names carry the module) |
+| E6 | Against today's link, helper names aside | the same rules and the same helper count in all 17 libraries (Python 204, python-main 79, phases 68, ...), with the `once` stem in the key. With the bare stem: 17 more merges in Python. The rules only the union shows differ from today's by variable names: one rule by template digest, which the union keeps once |
+| E6 | Helpers in cycles of more than one | none |
+| E7 | Fields two modules give different values | none, every library |
+| E7 | Shared inputs; relations with facts from several modules | one input in four packs; `cc_boundary`, `api_known`, `node_global`, `seen_ask` |
+| E4 | A module's image holds its file's path or name | no image does (some hold a stem that is also a word of the file, such as `annotation`) |
 
 The 7 inline failures fail the same without this change: `ruff-perf403` (refused at reading, open items),
 `eslint-curly`, `eslint-no-object-constructor` and `clippy-redundant-field-names` ("message: no column"),
@@ -210,22 +259,82 @@ The 7 inline failures fail the same without this change: `ruff-perf403` (refused
 What the spike leaves: the link, tail and passes are now most of a program's lowering (33 of 39 ms for Python). The tail runs
 over the whole library again for every program, so moving its questions per module (0246 §3) is the next lever.
 
+## Collisions
+
+A content name says "these are one". A collision makes two different things one, and the union then merges them
+silently. Each place a digest stands for content, what can collide, and what is done about it:
+
+1. **A digest's bits (helper names, module keys, rule identities).** The spike names helpers by 64 bits of SHA-256. In
+   a program of about 1,000 helpers, the chance of a collision is about 1,000² / 2⁶⁵, around 10⁻¹⁴. The image store
+   is shared across projects, so the population is every helper ever kept. **Done:** names carry 128 bits, keys and
+   rule identities 256. The union checks that a name means one thing: `helper_conflict(t, n)` holds where two modules
+   define `n` by different rule digests, and a non-empty conflict fails the run. That is a join over rows the images
+   hold, so a collision is an error, never a wrong answer.
+2. **Today's merge key is weaker than that.** `template_of` hashes each rule with `std::hash::DefaultHasher`: 64 bits,
+   whose algorithm the standard library may change between releases. A collision merges two different helpers today,
+   unchecked. Its keys are not kept across builds, so only the probability is the risk. **Done:** `once_key` takes
+   the SHA-256 template (`template_into`), and the walk's merge checks equal templates on a hit.
+3. **The encoding is ambiguous.** Two different rules could write the same bytes. Each node writes its kind, its size
+   and its value, and the names and texts end in `0xff`, which UTF-8 never holds. The key's stem and column types are
+   separated by `0xfe`. **Done:** the encoding is written down as length-prefixed fields, and a test round-trips a
+   template's bytes to its rule.
+4. **What the key leaves out.** A helper means its rules, its column types, and any field that names it: a native,
+   an answer, a tape column, a qualifier, a layout, a demand, a gate. The spike's key holds only the first two. Two
+   helpers with the same rules and different fields would merge. **Done:** the key holds every field row that names
+   the helper, and T7 holds that every field naming a relation is in the key.
+5. **A name in a rule means something else in another module.** A template names the relations a rule reads by name,
+   so two modules' helpers merge if they read different relations of one name. Names are global only while no two
+   modules declare one name differently. E7 found none, but nothing enforces it at the link. **Done:** `link_conflict`
+   (§4) fails the link. With it, a name is one relation, and naming by name is sound.
+6. **The same content meant to stay apart.** Equal rules are one relation, but a later pass may rewrite a helper for
+   its reader: aggregate demand narrows by readers, and `WidenCyclicContexts` widens a context. Merging two readers'
+   helpers would then narrow or widen both. **Done:** only `once` helpers are named by content, with the walk's `once`
+   stem (the readers' heads for an aggregate). Every other helper is named by its module. E6 shows this merges exactly
+   what the walk and today's link merge.
+7. **Cycles.** A helper's name reads the names of the helpers it reads, so a cycle has no first name. A self-reading
+   helper names itself `@self`, which is exact. A cycle of several would need a canonical form of a graph, and a wrong
+   one merges different helpers. **Done:** a cycle of several takes the second tier (its module's key). None exist
+   today.
+8. **A helper's rules added after it is made.** `once` records a helper's rule count when made, and today's merge
+   compares only those first rules, keeping the merged helper's later rules under the kept name. A reader of the kept
+   helper would then see rules another module added. The content name is taken over all of the helper's rules, at the
+   walk's end, so helpers with different later rules are two. No helper in the libraries has later rules: E6's merges
+   equal today's.
+9. **Module keys leave paths out.** Two files of the same bytes at different paths are one module. That is right only
+   while a module's image does not depend on its path. **Checked** (E4): no image holds its path or file name. T6
+   keeps it so.
+10. **Rule identities in the union.** The union keeps a rule once by its digest: its head's name and its template.
+    Two identical rules of two modules become one, as the tail's `DropRepeated` does today. A rule's place (its
+    file and line, for a finding's message) is not in its template. A duplicate's place is lost only where the rule
+    is the same everywhere, which is the case today too.
+11. **Names of the two tiers and the tail's helpers.** Content names (`rr_h_<stem>_<32 hex>`), module names
+    (`rr_m_<stem>_<32 hex>`) and the tail's counter names (`rr_<stem><n>`) are three disjoint forms. A printed program
+    read again declares its helpers, and lowering it makes the same content names: the same relation, not a clash.
+
 ## Tests, written before the code
 
-- **T1.** E1 as a test: for every pack program and every phase program, the module path prints as the whole lowering
-  of the same canonical list.
+- **T1.** E1 as a test: for every pack program and every phase program, the module path gives today's rules and
+  helper count, helper names aside.
 - **T2.** The corpus suite and the rr tests pass, and their outputs are today's.
 - **T3.** E5 as a test: phase 0's plan equals the plan over the library's files, and its keys do not change with the
   facts' order.
 - **T4.** A cold run of a Python program on a copy of the template asks for no module lowering (`p0_lower_ask`
   answered from kept results), and a store with one image dropped asks for that module alone.
 - **T5.** A reused bootstrap run whose module image is gone asks for the lowering again (§3, reuse).
+- **T6.** E6 as a test: content-named modules united equal today's link, helper names aside, with the same helper
+  count; no image holds its path.
+- **T7.** Every field that names a relation is in a helper's content key (Collisions 4), and two helpers differing
+  only in such a field get two names.
+- **T8.** `link_conflict` and `helper_conflict` fail a link built to clash, and are empty on every pack. The
+  suite's outputs do not change when the settings' and demands' module order is reversed.
 
 ## Steps
 
 1. §1 in `bootstrap.rerail` and the plan rows in `Graph` and its image (§2). T3.
 2. §3: the engine answer, its reuse check, and `Graph::holds` over images. T4, T5.
-3. §4: single programs onto the module path, `link_versions` by reference, `lower_library` onto the plan rows, and the
-   Rust plan removed. T1, T2.
-4. §5 checked by T4 on the template, and the template's fill time measured.
-5. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
+3. §4's names: `content_names` in the walk's end, `once_key` on SHA-256, the findings' and rule positions' counters
+   per module. T6, T7.
+4. §4's link: the union rules, the engine's view over module images, the conflicts. Single programs and
+   `lower_library` onto it, and `link_versions` and the Rust plan removed. T1, T2, T8.
+5. §5 checked by T4 on the template, and the template's fill time measured.
+6. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.

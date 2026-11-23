@@ -5971,6 +5971,14 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
                 println!("E3 {pack} {name}: the scope's order changes the image ({} bytes and {}): {}", ia.bytes().len(), ib.bytes().len(), differs(&printed(a.version()), &printed(b.version())));
             }
             bytes += ia.bytes().len();
+            for &i in members {
+                let file = dfs[i].file_name().unwrap().to_string_lossy().into_owned();
+                let stem = dfs[i].file_stem().unwrap().to_string_lossy().into_owned();
+                let has = |needle: &str| ia.bytes().windows(needle.len()).any(|w| w == needle.as_bytes());
+                if has(&dfs[i].display().to_string()) || has(&file) || (stem.len() > 6 && has(&stem)) {
+                    println!("E4 {pack} {}: its image holds its path, name or stem ({}, {}, {})", dfs[i].display(), has(&dfs[i].display().to_string()), has(&file), has(&stem));
+                }
+            }
             let t = Instant::now();
             let _ = module_image::decode(Arc::new(ia)).unwrap();
             decode_s += t.elapsed().as_secs_f64();
@@ -5986,5 +5994,120 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
         }
         println!("E3 {pack}: {same} modules one image under both scope orders, {other} not");
         println!("E4 {pack}: {} module images, {bytes} bytes; decoded in {decode_s:.4} s; {helpers_self} helper rules read their own head", built.len());
+        // E7: the fields `append_fields` merges in link order, over the modules (helpers aside): a key two modules give
+        // different values (where "a later module's replaces" decides), and the ordered lists more than one module adds to
+        // (where the link's order is the list's order).
+        {
+            let plain = |r: &String| !r.starts_with("rr_");
+            let mut conflicts: Vec<String> = Vec::new();
+            let mut cols: BTreeMap<String, (usize, Vec<(String, String)>)> = BTreeMap::new();
+            let mut natives: BTreeMap<String, usize> = BTreeMap::new();
+            let mut sets: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
+            let mut inputs_from: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+            let mut facts_from: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+            let mut settings_from: BTreeSet<usize> = BTreeSet::new();
+            let mut demand_from: BTreeSet<usize> = BTreeSet::new();
+            for (u, m) in built.iter().enumerate() {
+                let v = m.version();
+                for rel in v.declared_names().into_iter().filter(plain) {
+                    let c = v.columns_of(&rel).unwrap_or_default();
+                    match cols.get(&rel) {
+                        Some((w, d)) if *d != c => conflicts.push(format!("{rel} declared by modules {w} and {u} with other columns")),
+                        Some(_) => {}
+                        None => { cols.insert(rel, (u, c)); }
+                    }
+                }
+                for (rel, n) in v.natives() {
+                    if let Some(w) = natives.get(&rel) {
+                        if built[*w].version().natives().get(&rel) != Some(&n) {
+                            conflicts.push(format!("native {rel} of modules {w} and {u} differ"));
+                        }
+                    } else {
+                        natives.insert(rel, u);
+                    }
+                }
+                for (set, kinds) in v.kindsets() {
+                    match sets.get(&set) {
+                        Some((w, k)) if *k != kinds => conflicts.push(format!("kind set {set} of modules {w} and {u} differ")),
+                        Some(_) => {}
+                        None => { sets.insert(set, (u, kinds)); }
+                    }
+                }
+                for rel in v.input_names() {
+                    inputs_from.entry(rel).or_default().insert(u);
+                }
+                for rel in v.fact_names().into_iter().filter(|r| v.has_fact_rows(r)) {
+                    facts_from.entry(rel).or_default().insert(u);
+                }
+                if v.settings().is_ok_and(|s| !s.is_empty()) {
+                    settings_from.insert(u);
+                }
+                if !v.demand().is_empty() {
+                    demand_from.insert(u);
+                }
+            }
+            let shared_facts: Vec<&String> = facts_from.iter().filter(|(_, us)| us.len() > 1).map(|(r, _)| r).collect();
+            let shared_inputs = inputs_from.values().filter(|us| us.len() > 1).count();
+            println!(
+                "E7 {pack}: {} conflicts {:?}; inputs stated by more than one module {shared_inputs} of {}; relations with facts from more than one module {:?}; modules with settings {}, with demands {}",
+                conflicts.len(), conflicts.iter().take(5).collect::<Vec<_>>(), inputs_from.len(), shared_facts.iter().take(8).collect::<Vec<_>>(), settings_from.len(), demand_from.len()
+            );
+        }
+        // E6: helpers named by their content (`lower::content_names`), each module alone, then the modules' rules as a
+        // set (a link that only unites), against the whole lowering of the same list content-named, and against today's
+        // link (its renumbering and `once_key` merges).
+        let named = |m: &lower::Module, salt: &str| -> (Arc<Version>, Vec<Vec<String>>) {
+            let (names, cycles) = lower::content_names(m.version(), &m.parts().made, &m.parts().once, salt);
+            let rename: std::collections::HashMap<String, String> = names.into_iter().collect();
+            (lower::relinked(m.version(), &rename, &[]).unwrap(), cycles)
+        };
+        let whole_m = lower::lower_module_in_written(canonical.iter().flat_map(|(_, s)| s.iter().cloned()).collect(), &[]).unwrap();
+        let (w, w_cycles) = named(&whole_m, "whole");
+        let mut union: BTreeSet<(String, [u8; 32])> = BTreeSet::new();
+        let mut m_cycles = 0;
+        let mut module_rules = 0;
+        for (u, m) in built.iter().enumerate() {
+            let (v, c) = named(m, &format!("module {u}"));
+            m_cycles += c.len();
+            module_rules += v.rules().count();
+            union.extend(lower::rule_digests(&v));
+        }
+        let whole_rules = lower::rule_digests(&w);
+        // The helpers content names join that the walk kept apart: the whole lowering's, grouped by content name.
+        {
+            let (names, _) = lower::content_names(whole_m.version(), &whole_m.parts().made, &whole_m.parts().once, "whole");
+            let once: BTreeSet<String> = whole_m.parts().once.iter().map(|(n, _, _)| n.clone()).collect();
+            let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (old, new) in names {
+                groups.entry(new).or_default().push(old);
+            }
+            for (new, olds) in groups.into_iter().filter(|(_, o)| o.len() > 1) {
+                let reads_self = olds.iter().any(|h| whole_m.version().rules().any(|r| whole_m.version().rel_name(r.head().rel()) == h && whole_m.version().show_rule(r).split(":-").nth(1).is_some_and(|b| b.contains(&format!("{h}(")))));
+                let kinds: Vec<&str> = olds.iter().map(|h| if once.contains(h) { "merged by once_key" } else { "not a once helper" }).collect();
+                let rules: Vec<String> = whole_m.version().rules().filter(|r| olds.contains(&whole_m.version().rel_name(r.head().rel()).to_owned())).take(4).map(|r| whole_m.version().show_rule(r)).collect();
+                println!("E6 {pack}: {new} joins {olds:?} ({kinds:?}; reads itself: {reads_self}):\n      {}", rules.join("\n      ").chars().take(900).collect::<String>());
+            }
+        }
+        let today = lower::link_versions(built.clone()).unwrap();
+        let today_rules: usize = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).map(|v| v.rules().count()).sum();
+        let helpers = |rules: &BTreeSet<(String, [u8; 32])>| rules.iter().map(|(h, _)| h).filter(|h| h.starts_with("rr_")).collect::<BTreeSet<_>>().len();
+        let today_helpers: BTreeSet<String> = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).flat_map(|v| v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect::<Vec<_>>()).filter(|h| h.starts_with("rr_")).collect();
+        let whole_today_helpers: BTreeSet<String> = whole_m.version().rules().map(|r| whole_m.version().rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_")).collect();
+        let only = |a: &BTreeSet<(String, [u8; 32])>, b: &BTreeSet<(String, [u8; 32])>| a.difference(b).map(|(h, _)| h.clone()).collect::<BTreeSet<_>>().into_iter().take(6).collect::<Vec<_>>().join(", ");
+        let strip = |l: &str| -> String {
+            l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| if w.starts_with("rr_") { if w.len() > 17 && w.as_bytes()[w.len() - 17] == b'_' && w[w.len() - 16..].bytes().all(|b| b.is_ascii_hexdigit()) { w[..w.len() - 17].to_owned() } else { w.trim_end_matches(|c: char| c.is_ascii_digit()).to_owned() } } else { w.to_owned() }).collect::<Vec<_>>().join(" ")
+        };
+        let today_lines: BTreeSet<String> = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).flat_map(|v| v.rules().map(|r| strip(&v.show_rule(r))).collect::<Vec<_>>()).collect();
+        let content_lines: BTreeSet<String> = built.iter().enumerate().flat_map(|(u, m)| {
+            let (v, _) = named(m, &format!("module {u}"));
+            v.rules().map(|r| strip(&v.show_rule(r))).collect::<Vec<_>>()
+        }).collect();
+        println!("E6 {pack}: today's link against the content-named modules, helper names aside: {}", if today_lines == content_lines { "the same rules".to_owned() } else { format!("{} and {} lines; only today's: {:?}; only content's: {:?}", today_lines.len(), content_lines.len(), today_lines.difference(&content_lines).take(3).collect::<Vec<_>>(), content_lines.difference(&today_lines).take(3).collect::<Vec<_>>()) });
+        println!(
+            "E6 {pack}: content-named modules united: {} rules ({} written by the modules), {} helpers; content-named whole: {} rules, {} helpers; {}; today: link {} rules, {} helpers, whole {} helpers; cycles of helpers: modules {m_cycles}, whole {}",
+            union.len(), module_rules, helpers(&union), whole_rules.len(), helpers(&whole_rules),
+            if union == whole_rules { "the same rules".to_owned() } else { format!("other rules (only the united: {}; only the whole: {})", only(&union, &whole_rules), only(&whole_rules, &union)) },
+            today_rules, today_helpers.len(), whole_today_helpers.len(), w_cycles.len()
+        );
     }
 }

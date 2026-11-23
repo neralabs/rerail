@@ -521,6 +521,166 @@ fn once_key(v: &crate::code_rule_dsl::logic::program_image::Version, name: &str,
     (stem.to_owned(), cols, rules)
 }
 
+/// A rule's template (`template_of`) written into `h` byte for byte, each relation named as `named` says: its head's
+/// relation left out, as `template_of` leaves it.
+fn template_into(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, named: &dyn Fn(&str) -> String, h: &mut sha2::Sha256) {
+    use crate::code_rule_dsl::logic::program_image::{AtomId, RelId, kind};
+    use sha2::Digest;
+    let im = r.image();
+    let nodes = r.nodes();
+    for n in nodes.start + 1..nodes.end {
+        let (kd, size, val) = im.node(n);
+        h.update([kd]);
+        h.update(size.to_le_bytes());
+        match kd & kind::MASK {
+            kind::ATOM if n == nodes.start + 1 => h.update([0]),
+            kind::ATOM => h.update(named(v.rel_name(RelId(val))).as_bytes()),
+            kind::NEAREST => h.update(named(v.text(AtomId(val))).as_bytes()),
+            kind::INT if kd & kind::BIG != 0 => h.update(im.big(val).to_le_bytes()),
+            _ if kind::val_is_atom(kd) => h.update(v.text(AtomId(val)).as_bytes()),
+            _ => h.update(val.to_le_bytes()),
+        }
+        h.update([0xff]);
+    }
+}
+
+/// The relations rule `r`'s body reads, as `template_of` reads them (atoms and `nearest` sets).
+fn rule_reads(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> Vec<String> {
+    use crate::code_rule_dsl::logic::program_image::{AtomId, RelId, kind};
+    let im = r.image();
+    let nodes = r.nodes();
+    let mut out = Vec::new();
+    for n in nodes.start + 2..nodes.end {
+        let (kd, _, val) = im.node(n);
+        match kd & kind::MASK {
+            kind::ATOM => out.push(v.rel_name(RelId(val)).to_owned()),
+            kind::NEAREST => out.push(v.text(AtomId(val)).to_owned()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Spike of decision 0639: a name for each helper `made` lists in `v` (`rr_{stem}{n}`). A helper the walk may merge
+/// (`once`) is named by its content, a Merkle digest: its `once` stem (an aggregate's names its readers' heads), its
+/// column types and its rules' templates (sorted), each helper it reads named by its own name, itself `@self`. Any
+/// other helper, which no walk merges, is named by its module (`module_salt`) and its name there. Helpers that read
+/// each other (a cycle of more than one) are named by their module too: returned in the second list.
+pub fn content_names(v: &crate::code_rule_dsl::logic::program_image::Version, made: &[(String, usize)], once: &[(String, String, usize)], module_salt: &str) -> (std::collections::BTreeMap<String, String>, Vec<Vec<String>>) {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+    use sha2::Digest;
+    let stem_of: BTreeMap<String, String> = made.iter().map(|(s, n)| (format!("rr_{s}{n}"), s.clone())).collect();
+    let mut rules_of: BTreeMap<String, Vec<crate::code_rule_dsl::logic::program_image::RuleRef<'_>>> = stem_of.keys().map(|h| (h.clone(), Vec::new())).collect();
+    for r in v.rules() {
+        if let Some(rs) = rules_of.get_mut(v.rel_name(r.head().rel())) {
+            rs.push(r);
+        }
+    }
+    let reads: BTreeMap<String, BTreeSet<String>> = rules_of.iter().map(|(h, rs)| (h.clone(), rs.iter().flat_map(|&r| rule_reads(v, r)).filter(|x| stem_of.contains_key(x)).collect())).collect();
+    // Tarjan: each cycle after every cycle it reads.
+    struct T<'a> { reads: &'a BTreeMap<String, BTreeSet<String>>, index: BTreeMap<String, usize>, low: BTreeMap<String, usize>, stack: Vec<String>, on: BTreeSet<String>, out: Vec<Vec<String>> }
+    fn visit(t: &mut T<'_>, h: &str) {
+        let i = t.index.len();
+        t.index.insert(h.to_owned(), i);
+        t.low.insert(h.to_owned(), i);
+        t.stack.push(h.to_owned());
+        t.on.insert(h.to_owned());
+        for x in t.reads[h].clone() {
+            if !t.index.contains_key(&x) {
+                visit(t, &x);
+                let l = t.low[&x].min(t.low[h]);
+                t.low.insert(h.to_owned(), l);
+            } else if t.on.contains(&x) {
+                let l = t.index[&x].min(t.low[h]);
+                t.low.insert(h.to_owned(), l);
+            }
+        }
+        if t.low[h] == t.index[h] {
+            let mut c = Vec::new();
+            loop {
+                let x = t.stack.pop().expect("on the stack");
+                t.on.remove(&x);
+                let done = x == h;
+                c.push(x);
+                if done {
+                    break;
+                }
+            }
+            t.out.push(c);
+        }
+    }
+    let mut t = T { reads: &reads, index: BTreeMap::new(), low: BTreeMap::new(), stack: Vec::new(), on: BTreeSet::new(), out: Vec::new() };
+    for h in stem_of.keys() {
+        if !t.index.contains_key(h) {
+            visit(&mut t, h);
+        }
+    }
+    let once_stem: BTreeMap<&str, &str> = once.iter().map(|(n, s, _)| (n.as_str(), s.as_str())).collect();
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
+    let mut cycles = Vec::new();
+    for c in t.out {
+        let cyclic = c.len() > 1;
+        if cyclic {
+            cycles.push(c.clone());
+        }
+        for h in &c {
+            let named = |r: &str| -> String {
+                if r == h {
+                    "@self".to_owned()
+                } else if let Some(n) = names.get(r) {
+                    n.clone()
+                } else if c.iter().any(|m| m == r) {
+                    format!("@cycle:{r}")
+                } else {
+                    r.to_owned()
+                }
+            };
+            let mut templates: Vec<[u8; 32]> = rules_of[h].iter().map(|&r| {
+                let mut d = sha2::Sha256::new();
+                template_into(v, r, &named, &mut d);
+                d.finalize().into()
+            }).collect();
+            templates.sort();
+            let mut d = sha2::Sha256::new();
+            let Some(stem) = once_stem.get(h.as_str()) else {
+                d.update(module_salt.as_bytes());
+                d.update([0xfd]);
+                d.update(h.as_bytes());
+                let digest: [u8; 32] = d.finalize().into();
+                let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+                names.insert(h.clone(), format!("rr_{}_{hex}", stem_of[h]));
+                continue;
+            };
+            d.update(stem.as_bytes());
+            for (_, ty) in F::columns_of(v, h).unwrap_or_default() {
+                d.update([0xfe]);
+                d.update(ty.as_bytes());
+            }
+            for t in &templates {
+                d.update(t);
+            }
+            if cyclic {
+                d.update(module_salt.as_bytes());
+                d.update(h.as_bytes());
+            }
+            let digest: [u8; 32] = d.finalize().into();
+            let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+            names.insert(h.clone(), format!("rr_{}_{hex}", stem_of[h]));
+        }
+    }
+    (names, cycles)
+}
+
+/// Spike of decision 0639: each rule of `v` by its head's name and its template's digest, every relation by its name.
+pub fn rule_digests(v: &crate::code_rule_dsl::logic::program_image::Version) -> BTreeSet<(String, [u8; 32])> {
+    use sha2::Digest;
+    v.rules().map(|r| {
+        let mut d = sha2::Sha256::new();
+        template_into(v, r, &|x: &str| x.to_owned(), &mut d);
+        (v.rel_name(r.head().rel()).to_owned(), d.finalize().into())
+    }).collect()
+}
+
 /// The relations of the tool calls a run is given (`docs/rule-syntax/tool-calls.md`), core.rerail's: `tool_call(call,
 /// tool)` and `tool_input(call, key, value)`. A run's `toolCalls` option is their rows (`corpus::added`).
 pub const TOOL_CALLS: [&str; 2] = ["tool_call", "tool_input"];
