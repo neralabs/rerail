@@ -196,7 +196,7 @@ export function changesetNotes(changesets, name) {
 /**
  * What the pending `changesets` bump by a major on a pack below 1.0.0: `changeset version` would release it as 1.0.0,
  * which declares the pack stable, a step taken on purpose and not by a changeset. A minor, 0.1.x to 0.2.0, is how a
- * pack below 1.0.0 marks a release that breaks it for people upgrading (docs/pack-format.md, "Versioning and release").
+ * pack below 1.0.0 moves to the newer Rerail line it needs (docs/pack-format.md, "Versioning and release").
  */
 export function changesetBumpFailures(changesets, packs) {
   const versions = new Map(packs.map((pack) => [pack.name, pack.version]));

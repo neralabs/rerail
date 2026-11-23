@@ -4,7 +4,7 @@ Published packs under `packs/` are versioned with [changesets](https://github.co
 changes what a pack publishes (its `package.json`, `pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE` or
 `README.md`) adds one changeset, and CI fails it otherwise: run `npx changeset`, pick the pack, and choose the bump
 [docs/pack-format.md](../docs/pack-format.md#versioning-and-release) gives: below 1.0.0, `patch`, or `minor` for a change
-that breaks the pack for people upgrading (`npm test` refuses a `major`). The summary is
+that makes the pack need a newer Rerail line (`npm test` refuses a `major`). The summary is
 the pack's release note and goes out as it is on the pack's GitHub Release: say what changed for the person upgrading,
 in plain language, in a sentence or two (at most 60 words), and leave out commit hashes, ticket ids, pull request
 numbers and repository-internal maintenance; CI fails a pull request whose changeset says otherwise.

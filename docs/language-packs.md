@@ -567,8 +567,8 @@ npx vitest run test/engine/catalog/packs.test.ts -t "pack laravel"
 Add a changeset (`patch`, "Add the Laravel pack: …"), unless the pack starts private (`"private": true` in its
 `package.json`, no `publishConfig`): a private pack is never published and takes no changeset until it goes public
 ([package.json](pack-format.md#packagejson)). Every later change to a published pack adds one too;
-[versioning](pack-format.md#versioning-and-release) says which bump (below 1.0.0, `patch` unless it breaks the pack
-for people upgrading):
+[versioning](pack-format.md#versioning-and-release) says which bump (below 1.0.0, `patch` unless the pack now needs
+a newer Rerail line):
 
 ```sh
 npx changeset   # pick @neralabs/rerail-pack-laravel, choose the bump, write the summary; then rename it added-laravel-pack.md
