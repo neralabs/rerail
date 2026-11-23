@@ -51,6 +51,18 @@ mod tests {
         assert_eq!(super::nextest_share(), None, "a pool named is the run's own");
     }
 
+    /// A test binary allocates as the engine does, through jemalloc (`rerail_prof::heap::Sampled`): its thread's
+    /// counter of bytes allocated sees a Rust allocation. A test crate that declared no allocator ran on the system's.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    #[test]
+    fn a_test_binary_allocates_through_jemalloc() {
+        let allocated = || unsafe { tikv_jemalloc_ctl::raw::read::<u64>(b"thread.allocated\0") }.expect("jemalloc's thread counter");
+        let before = allocated();
+        let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
+        let after = allocated();
+        assert!(after - before >= bytes.len() as u64, "{} bytes counted by jemalloc for {} allocated", after - before, bytes.len());
+    }
+
     /// A store a test opens flushes nothing (`RERAIL_FLUSH=none`, unless the run names a mode): its connections'
     /// `synchronous` is `OFF`, which its blocks' write-backs follow.
     #[test]

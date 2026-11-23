@@ -168,3 +168,9 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
 }
+
+// The engine's allocator (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` declares it): without it the
+// test binary ran on the system allocator, which no build of the engine runs on.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;

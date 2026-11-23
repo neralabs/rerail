@@ -375,6 +375,26 @@ native/crates/transducer/src/lib.rs::LOAD	stays	code registered at load (an init
 native/crates/transducer_cpu/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/observe/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store its tests keep the observer's answers in)
 native/crates/store/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store with the observer)
+native/crates/tests_admission/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_anchors/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_calls/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_compile/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_conformance/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_corpus/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_cpu/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_demand/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_findings/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_lang/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_logic/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_matcher/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_resolve/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_rr/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_scope/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_sql/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_tape/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_transducer/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_value/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_workspace/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/src/content_store/observer_store/base.rs::STORE	stays	code a crate above registers at load (the content store, as the observer and git reach it)
 native/src/code_rule_dsl/logic/device.rs::DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate above registers at load
