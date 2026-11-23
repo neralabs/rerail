@@ -876,6 +876,32 @@ describe("the engine service's idle close", () => {
     }
   }, 30_000);
 
+  // Before, the open read the session's record only once it had made this process's waiting record writes, waiting on the
+  // daemon's thread until the oldest was 5 s old, then met the lock again where it records the checkout: 10 s, where
+  // `main` waited 5 s. That write still waits for the lock, on the thread, up to 5 s, as `main`'s does.
+  it("waits for another process's write lock once as a session opens, not first for another session's waiting records", async () => {
+    const { start, live, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    const sessions = new SqliteSessionStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      // Another session's record waits for the lock in this process.
+      sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
+      const asked = performance.now();
+      await start("b").catch(() => undefined);
+      expect(performance.now() - asked).toBeLessThan(7_500);
+      writer.exec("ROLLBACK");
+      // Once the lock is given back, the session's next event opens it.
+      await start("b");
+      expect(live("b")).toBe(true);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      sessions.close();
+    }
+  }, 30_000);
+
   // Before, the wait went on, a worker thread with its own connection watching the database's log, until the lock was
   // given back, though nothing was left for it to open. An event of the session cannot open it while the lock is held.
   it("stops a quiet session's wait for the write lock its open for a scan met once the session's end comes", async () => {

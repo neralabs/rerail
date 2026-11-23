@@ -604,6 +604,14 @@ export class SqliteSessionStore {
     return listSessions(this.#recorded(), { sessionId })[0];
   }
 
+  /**
+   * {@link session} as the database holds it on disk, this process's waiting record writes not made first: for a caller
+   * that must not wait for another process's write lock, and knows itself what this process recorded.
+   */
+  storedSession(sessionId: string): StoredSessionSummary | undefined {
+    return listSessions(this.#database, { sessionId })[0];
+  }
+
   linkWork(link: WorkLink, createdAt = Date.now()): void {
     this.#records.write(database => database
       .insert(workLinks)

@@ -1556,6 +1556,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
+   * When `sessionId` started as recorded, undefined when it never was: its row as it is on disk, else this runtime's
+   * record of it closed or suspended here (`#closedSessions`), whose row may still wait behind another process's write
+   * lock. The read makes none of this process's waiting record writes first, which would hold this thread, and so every
+   * session's hooks, for the lock until the oldest of them is 5 s old.
+   */
+  #recordedStart(sessionId: string): number | undefined {
+    return this.#sessionStore.storedSession(sessionId)?.startedAt ?? this.#closedSessions.get(sessionId)?.startedAt;
+  }
+
+  /**
    * The event's own work around the host router's: a call's record, a session end's settling of the calls still waiting
    * (no result comes after it), a result's edit check, a turn end's waits.
    */
@@ -2401,11 +2411,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
     // A session the engine service suspended goes on from where its walks stood (`SessionSuspension`).
     const suspension = this.#suspendedSessions?.get(session.sessionId);
-    // Before the read below, which makes this process's waiting record writes and may wait for the lock to do so.
+    // A resume for a scan stops here while another process holds the write lock, before any of the open's work.
     this.#failWhileWriteLockedForScan(session.sessionId);
-    const recordedSession = this.#sessionStore.session(session.sessionId);
-    const startedAt = recordedSession?.startedAt ?? this.#startTime(session.sessionId);
-    const ledger = await this.#openLedger(session, recordedSession === undefined);
+    const recordedStart = this.#recordedStart(session.sessionId);
+    const startedAt = recordedStart ?? this.#startTime(session.sessionId);
+    const ledger = await this.#openLedger(session, recordedStart === undefined);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
     const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
@@ -2495,7 +2505,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     const settings = { ...this.#auditSettings, ...auditSettings };
     opened.codeRuleOpening = true;
-    opened.rulesWait = rulesWaitOnReopen(recordedSession !== undefined, session.host);
+    opened.rulesWait = rulesWaitOnReopen(recordedStart !== undefined, session.host);
     opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger.entries, settings).then(open => {
       if (open === undefined) {
         retired = true;
