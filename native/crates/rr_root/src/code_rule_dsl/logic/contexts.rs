@@ -682,11 +682,18 @@ impl super::program_image::manager::ProgramPass for Passes {
     const NAME: &'static str = "0597's passes";
     fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let d = declared(v).map_err(|e| e.to_string())?;
-        let plan = plan(v, &d);
+        let d = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the settings read (declared)".to_owned());
+            declared(v).map_err(|e| e.to_string())?
+        };
+        let plan = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: what each pass makes its own (plan)".to_owned());
+            plan(v, &d)
+        };
         if !plan.work(&d) {
             return Ok(());
         }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the instances written (write)".to_owned());
         write(v, &d, &plan, w.derive()?).map_err(|e| e.to_string())
     }
 }
@@ -702,7 +709,12 @@ impl super::program_image::manager::ProgramPass for CrossingCycles {
         if d.contexts.is_empty() {
             return Ok(());
         }
-        refuse_crossing_cycles(v, &d).map_err(|e| e.to_string())?;
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the program's SCCs, none through two passes".to_owned());
+            refuse_crossing_cycles(v, &d).map_err(|e| e.to_string())?;
+        }
+        // Computed only in a profiled run (`profile::decision`), and spanned so, apart from the check.
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: rule 8's report (a profiled run's alone)".to_owned());
         crate::code_rule_dsl::logic::profile::decision("each made pass's relations by what they read (decision 0597 rule 8)", || {
             tape_local(v).iter().map(|(pass, (own, hosted))| format!("{pass}: {} read their tape alone ({}), {} a host's ({})", own.len(), own.iter().take(12).cloned().collect::<Vec<_>>().join(", "), hosted.len(), hosted.iter().take(12).cloned().collect::<Vec<_>>().join(", "))).collect::<Vec<_>>().join("; ")
         });

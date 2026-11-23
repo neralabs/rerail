@@ -246,7 +246,7 @@ read by `clock_gettime`: see below):
 | Step | ms | Reads | Where it goes |
 |---|---|---|---|
 | `check_given`: cycles, caches, answers | 5.0 | SCCs of the program; a cache's two rules; a request's answer | SCCs compose over modules: per module, and per program only through E8's relations. The cache and answer checks are per relation |
-| guest context passes (0597), crossing cycles | 4.5 | guest contexts | not yet classified |
+| guest context passes (0597), crossing cycles | 4.2 | the module declaring a context, and the scope's rules its exports reach | upward: at the module that declares the context (E11) |
 | sources on request (two rounds) | 3.2 | what the program reads | downward: per program, as rules |
 | aggregate demand | 2.8 | a helper's readers (in its module) and strata | per module; the strata check per program only through E8's relations |
 | `lower::link_versions` | 2.5 | every module | gone: the union view (§4) |
@@ -265,6 +265,17 @@ each span lost the time since the last update to its parent. The profile now rea
 `clock_gettime(CLOCK_THREAD_CPUTIME_ID)` on every Unix, as it did on macOS. The tail's own time is then 0.03 ms a
 run, and the passes' spans hold 3.502 s of the clock's 3.518 s. Linux profiles taken before charged part of each
 span's time to its parent.
+
+**The guest context passes (E11).** Python's per run: the instances written 2.0 ms, the plan 0.7, the program's SCCs
+0.7, the settings read twice 0.4, the passes' own 0.4; and 0.4 ms of rule 8's report, made only in a profiled run
+(`profile::decision`), left out of the table. The passes rewrite the whole program in every run whose library declares
+a context (72 of 76 Python programs, every Django and Python-main one), though none of those programs declares or
+completes one. A program's link holds its library's pass rules as the library's link alone makes them, but for 3
+(Python) and 6 (Django) that differ only by `order the nodes compared`'s counter (`$rr_ord28` for `$rr_ord26`), which
+this section names by content. Vue is the one pack whose programs declare passes (15 of 22): there the program's own
+module makes 921 instance rules and renames 185 of its own, from its rules and the scope's rules its exports reach.
+So the passes are upward: made once, at the module that declares the context, over its scope's kept rules; and the
+check for a cycle through two passes is the SCC check's, per module, and per program only through E8's relations.
 
 Each tail step is one of four kinds, and each kind has its place:
 - **Local** (a rule or a relation, with declarations): at module time, in the module's image.
@@ -312,6 +323,7 @@ spark2, `RERAIL_THREADS=1`, over every pack and the engine's phase programs.
 | E8 | Relations with different rules from more than one module | `php_dynamic`, `cc_decision`, `cc_name`, `layout_at`, `token_text_ask`, `rr_embed_req`, `rr_dir_req`, `rr_file_req`. The 73 `extensible` declarations add facts across modules far more than rules |
 | E9 | A module against its scope lowered without its rules | 170 of 213 the same image; the 43 others reuse a declaration the scope's lowering made (kind set helpers in 10 files, `tape` in 8, `rr_embed_req` in 3, `rr_dir_req`/`rr_file_req`, `rx_span`) |
 | E10 | The tail's `KindSets` pass against three `.rerail` rules over the same input's reads | the same sets taken out in all 17 libraries (django 10, Python 7, Vue 7, ...) |
+| E11 | The guest context passes: a program's link against its library's link alone | no program outside Vue declares or completes a pass; the library's pass rules the same, 9 (Python, Django) by an `rr_ord` counter alone; Vue's 15 programs with passes make them in their own module (921 instance rules, 185 renamed). Python: 4.2 ms a run, and 0.4 ms more of a profiled run's report |
 | — | The link and the tail per run, by span | `link_versions` 2.5 ms, the tail 28.5 ms (§6's table) |
 
 The 7 inline failures fail the same without this change: `ruff-perf403` (refused at reading, open items),
@@ -321,8 +333,8 @@ The 7 inline failures fail the same without this change: `ruff-perf403` (refused
 
 What the spike leaves: the link, tail and passes are most of a program's lowering (33 of 39 ms for Python). §6 places
 each step: the link goes with the union view, most of the tail moves to module time, and what stays per program is
-downward rules over the union's rows and the few relations E8 lists. Not yet known: what the guest context passes
-read.
+downward rules over the union's rows and the few relations E8 lists. E11 places the guest context passes at the
+module that declares the context.
 
 ## Collisions
 

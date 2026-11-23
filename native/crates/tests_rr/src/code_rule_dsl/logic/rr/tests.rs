@@ -5731,6 +5731,14 @@ fn spike_0639_programs_linked_from_modules() {
     let (mut equal, mut differ, mut same_lines, mut inline_err, mut module_err) = (0, 0, 0, 0, 0);
     let (mut t_inline, mut t_own, mut t_link, mut t_lib) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
     let mut shown = 0;
+    // E11: the guest context passes (0597) by module. Per library, its link alone: its rules as printed, the relations
+    // they head, and whether it declares a pass. Per pack: programs, those whose library declares passes, those whose
+    // own file declares one (`.context`, `.from`), library pass rules the program's link lacks, and the program's rules
+    // over its library's of each kind: a pass instance's (a completion), its own reading an instance (renamed), and one
+    // heading a relation the library's rules head (rules added across modules).
+    let mut e11_lib: HashMap<Vec<PathBuf>, (BTreeSet<String>, BTreeSet<String>, bool)> = HashMap::new();
+    let mut e11: BTreeMap<String, [usize; 7]> = BTreeMap::new();
+    let mut e11_shown = 0;
     for (((pack, path), src), m) in programs.iter().zip(&srcs).zip(found) {
         let Ok(Some(m)) = m else { continue };
         let at = Instant::now();
@@ -5785,6 +5793,42 @@ fn spike_0639_programs_linked_from_modules() {
         t_inline += inline_s;
         t_own += own_s;
         t_link += link_s;
+        {
+            use crate::code_rule_dsl::logic::passes_made::PREFIX;
+            let pass_rule = |v: &Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| v.rel_name(r.head().rel()).starts_with(PREFIX) || r.reads().any(|a| v.rel_name(a.rel()).starts_with(PREFIX));
+            let (lib_rules, lib_heads, lib_ctx) = e11_lib.entry(paths.clone()).or_insert_with(|| {
+                let v = super::link_library_versions(modules.clone()).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v)).unwrap();
+                let ctx = crate::code_rule_dsl::logic::contexts::declared(&v).is_ok_and(|d| !d.contexts.is_empty());
+                (v.rules().map(|r| v.show_rule(r)).collect(), v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(), ctx)
+            });
+            let own_decl = src.lines().any(|l| l.trim_start().starts_with(".context") || l.trim_start().starts_with(".from"));
+            let all: BTreeSet<String> = linked.rules().map(|r| linked.show_rule(r)).collect();
+            let lib_pass_missing = lib_rules.iter().filter(|t| t.contains(PREFIX) && !all.contains(*t)).count();
+            let (mut completion, mut renamed, mut across) = (0, 0, 0);
+            for r in linked.rules() {
+                let t = linked.show_rule(r);
+                if lib_rules.contains(&t) {
+                    continue;
+                }
+                let head = linked.rel_name(r.head().rel());
+                if head.starts_with(PREFIX) {
+                    completion += 1;
+                } else if pass_rule(&linked, r) {
+                    renamed += 1;
+                }
+                if lib_heads.contains(head) {
+                    across += 1;
+                    if e11_shown < 6 && (head.starts_with(PREFIX) || pass_rule(&linked, r)) {
+                        e11_shown += 1;
+                        println!("E11 {pack} {}: a pass rule across modules: {}", path.display(), t.chars().take(200).collect::<String>());
+                    }
+                }
+            }
+            let e = e11.entry(pack.clone()).or_default();
+            for (i, x) in [1, usize::from(*lib_ctx), usize::from(own_decl), lib_pass_missing, completion, renamed, across].into_iter().enumerate() {
+                e[i] += x;
+            }
+        }
         let (a, b) = (printed(&inline), printed(&linked));
         if a == b {
             equal += 1;
@@ -5797,6 +5841,9 @@ fn spike_0639_programs_linked_from_modules() {
                 println!("E1 {pack} {}: {d}", path.display());
             }
         }
+    }
+    for (pack, [n, lib_ctx, own_decl, missing, completion, renamed, across]) in &e11 {
+        println!("E11 {pack}: {n} programs, {lib_ctx} with passes in their library, {own_decl} declaring one; library pass rules a program's link lacks {missing}; the programs' rules over their library's: {completion} of a pass instance, {renamed} reading one, {across} heading a library relation");
     }
     println!("E1: {equal} print the same, {differ} differ ({same_lines} of them by order or numbers alone), {module_err} fail on the module path, {inline_err} fail inline");
     if profiling {
