@@ -58,7 +58,7 @@ const UNDECIDED: &[(&str, &[u64])] = &[
 
 /// The line (from 1) of a byte of `source`.
 fn line_of(source: &str, offset: usize) -> u64 {
-    source[..offset].matches('\n').count() as u64 + 1
+    crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Php, offset) as u64
 }
 
 /// A node a rule finds: the line (from 1) it starts on, its start byte, its source.

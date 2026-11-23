@@ -1,8 +1,7 @@
 //! A JSON file's tape from simdjson (`rerail_simdjson`, the C++ library): simdjson's stage 1, and a
-//! stage 2 of ours that validates the file as simdjson's does and writes the tape's columns in place
-//! (`rerail_simdjson::tape_with`), tree-sitter-json's nodes in preorder. Nothing is packed again
-//! (`TapeImage::written`). The tape is the one tree-sitter-json's tree encodes to, byte for byte
-//! (`json_tapes_from_simdjson_are_tree_sitters`).
+//! stage 2 of ours that validates the file as simdjson's does and gives tree-sitter-json's nodes in preorder, as
+//! events, to format 16's ops (`rerail_simdjson::events_with`, decision 0434). Nothing is packed again. The tape is
+//! the one tree-sitter-json's tree encodes to, byte for byte (`json_tapes_from_simdjson_are_tree_sitters`).
 //!
 //! JSON's implementations, registered with the parser router best first (`registrations`, decision
 //! 0148): a kernel for each CPU family (`rerail_simdjson::Kernel`: arm64; icelake, haswell, westmere),
@@ -10,7 +9,7 @@
 //! which run on any CPU simdjson does.
 //!
 //! simdjson reads strict JSON. A file the strict read refuses is read again as JSONC
-//! (`rerail_simdjson::tape_jsonc_with`, decision 0158): its comments blanked for stage 1 and written to
+//! (decision 0158): its comments blanked for stage 1 and written to
 //! the tape as tree-sitter-json places them (extras), and a trailing comma passed over, as TypeScript
 //! reads it (rerail reads source as it is written: permissive). A file still refused (a number past
 //! simdjson's range, nesting past 1,024, invalid JSON) goes to tree-sitter-json.
@@ -48,79 +47,35 @@ pub fn kinds() -> Option<&'static (rerail_simdjson::Kinds, u16)> {
         .as_ref()
 }
 
-/// `source`'s tape, as `route` writes it (a kernel, or with `None` simdjson's DOM parser and the index
-/// writer): `Err` where simdjson refuses the file; `Ok(Err)` where the tape cannot be made.
+/// `source`'s tape, as `route` writes it (a kernel, or with `None` simdjson's DOM parser and the index writer), in the
+/// run's format: `Err` where simdjson refuses the file; `Ok(Err)` where the tape cannot be made. The walk's events, a
+/// window at a time, go to format 16's ops, each code numbered in JSON's table once. The walk never edits a node it
+/// wrote, so each window is committed and 16z's blocks are compressed as they close. A file the strict read refuses
+/// is read again as JSONC.
 pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, Refusal> {
-    let Some((kinds, value)) = kinds() else {
-        return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
-    };
-    let src = source.as_bytes();
-    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0434).
-    if let Some(kernel) = route
-        && let Some(image) = encode_16(kernel, kinds, *value, source, budget)?
-    {
-        return Ok(image);
-    }
-    let t = match route {
-        Some(kernel) => match rerail_simdjson::tape_with(kernel, src, kinds) {
-            // Read again as JSONC (comments, trailing commas): a second read only of files the strict
-            // one refused.
-            Err(rerail_simdjson::Refusal::Simdjson(why)) => {
-                let t = rerail_simdjson::tape_jsonc_with(kernel, src, kinds).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
-                crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("refused as JSON ({why}): read as JSONC"));
-                t
-            }
-            t => t?,
-        },
-        None => rerail_simdjson::tape_from_index(src, kinds)?,
-    };
-    let codes: Result<Vec<Code>, String> = t
-        .codes
-        .iter()
-        .map(|&(kind, field, in_value)| {
-            let mut code = Code::plain(kind, field, if in_value { std::slice::from_ref(value) } else { &[] })?;
-            // A comment is an extra, as tree-sitter-json's are.
-            if kind == kinds.comment {
-                code.flags |= crate::code_rule_dsl::tape::CODE_EXTRA;
-            }
-            Ok(code)
-        })
-        .collect();
-    Ok(codes.and_then(|codes| TapeImage::written(t.code, t.size, t.base, t.off, t.tail, t.widths, codes, t.digest, grammar, source, budget)))
-}
-
-/// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`), as format 15's code table
-/// holds it (`encode_with`): a comment is an extra.
-fn code(kinds: &rerail_simdjson::Kinds, value: u16, kind: u16, field: u16, in_value: bool) -> Result<Code, String> {
-    let mut code = Code::plain(kind, field, if in_value { std::slice::from_ref(&value) } else { &[] })?;
-    if kind == kinds.comment {
-        code.flags |= crate::code_rule_dsl::tape::CODE_EXTRA;
-    }
-    Ok(code)
-}
-
-/// `source`'s tape in format 16 or 16z, where the run stores one (`None`: format 15's): the kernel's walk writes no
-/// column, and its events, a window at a time, go to format 16's ops, each code numbered in JSON's table once. The
-/// walk never edits a node it wrote, so each window is committed and 16z's blocks are compressed as they close. A
-/// file the strict read refuses is read again as JSONC, as `encode_with` reads it.
-fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, value: u16, source: &str, budget: &dyn Fn() -> bool) -> Result<Option<Result<TapeImage, String>>, Refusal> {
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::tape::formats;
     use crate::code_rule_dsl::tape::f16;
-    let Some((lang, tag, z)) = formats::run_16(GrammarDialect::Json) else { return Ok(None) };
+    let Some((kinds, value)) = kinds() else {
+        return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
+    };
+    let (lang, tag, z) = match formats::run_16(grammar.lang) {
+        Ok(l) => l,
+        Err(e) => return Ok(Err(e)),
+    };
     let src = source.as_bytes();
-    let walk = |jsonc: bool| -> Result<(f16::Writer, [u8; 32], Option<String>), Refusal> {
+    let walk = |jsonc: bool| -> Result<(f16::Writer, Option<[u8; 32]>, Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
-        let mut w = f16::Writer::new(lang, src, tag, z, true, src.len() / 8 + 16);
+        let mut w = f16::Writer::new(lang, src, crate::code_rule_dsl::lines::terminators(GrammarDialect::Json), tag, z, true, src.len() / 8 + 16);
         let mut numbers: Vec<u32> = Vec::new();
         let mut bad: Option<String> = None;
-        let digest = rerail_simdjson::events_with(kernel, src, kinds, jsonc, |codes, words| {
+        let on = |codes: &rerail_simdjson::Codes, words: &[u32]| {
             if bad.is_some() {
                 return;
             }
             while numbers.len() < codes.len() {
                 let (kind, field, in_value) = codes.get(numbers.len());
-                match code(kinds, value, kind, field, in_value).and_then(|c| lang.number(&c.entry()).ok_or_else(|| format!("code {:?} is not in JSON's table", c.entry()))) {
+                match code(kinds, *value, kind, field, in_value).and_then(|c| lang.number(&c.entry()).ok_or_else(|| format!("code {:?} is not in JSON's table", c.entry()))) {
                     Ok(n) => numbers.push(n),
                     Err(why) => {
                         bad = Some(why);
@@ -141,27 +96,40 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
                 }
             }
             w.commit();
-        })?;
+        };
+        // A kernel hashes the source as it reads it; the index writer does not (`written_16` hashes it).
+        let digest = match route {
+            Some(kernel) => Some(rerail_simdjson::events_with(kernel, src, kinds, jsonc, on)?),
+            None if jsonc => return Err(Refusal::Shape("the index writer reads strict JSON")),
+            None => {
+                rerail_simdjson::events_from_index(src, kinds, on)?;
+                None
+            }
+        };
         Ok((w, digest, bad))
     };
     let (mut w, digest, bad) = match walk(false) {
-        // Read again as JSONC (comments, trailing commas), as `encode_with` does.
-        Err(rerail_simdjson::Refusal::Simdjson(why)) => {
+        // Read again as JSONC (comments, trailing commas): a second read only of files the strict one refused.
+        Err(rerail_simdjson::Refusal::Simdjson(why)) if route.is_some() => {
             let t = walk(true).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
             crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("refused as JSON ({why}): read as JSONC"));
             t
         }
         t => t?,
     };
-    let why = match bad {
-        Some(why) => why,
-        None => match w.finish() {
-            Ok(f) => return Ok(Some(TapeImage::written_16(f, GrammarDialect::Json, source, Some(digest), budget))),
-            Err(why) => why,
-        },
-    };
-    formats::keeps_15(GrammarDialect::Json, tag, &why);
-    Ok(None)
+    if let Some(why) = bad {
+        return Ok(Err(why));
+    }
+    Ok(w.finish().and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, digest, budget)))
+}
+
+/// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`): a comment is an extra.
+fn code(kinds: &rerail_simdjson::Kinds, value: u16, kind: u16, field: u16, in_value: bool) -> Result<Code, String> {
+    let mut code = Code::plain(kind, field, if in_value { std::slice::from_ref(&value) } else { &[] })?;
+    if kind == kinds.comment {
+        code.flags |= crate::code_rule_dsl::tape::CODE_EXTRA;
+    }
+    Ok(code)
 }
 
 /// `source`'s tape by the fastest route this CPU runs (`encode_with`).
@@ -191,7 +159,7 @@ static DOM: Simdjson = Simdjson(None);
 
 /// JSON's implementations for the parser router, best first: each kernel in `Kernel::ALL`'s order
 /// (wider vectors first; the SHA-256 instructions before portable code), then the DOM parser and the
-/// index writer (with the source hashed after, by `TapeImage::written`). The router takes the first
+/// index writer (with the source hashed after, by `TapeImage::written_16`). The router takes the first
 /// this CPU runs.
 pub fn registrations() -> Vec<ParserImpl> {
     use crate::code_rule_dsl::language::GrammarDialect;

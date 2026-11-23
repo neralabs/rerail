@@ -85,6 +85,8 @@ pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
     pub done: rerail_accel::gpu::join::Submitted,
+    /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
+    pub lent: bool,
 }
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
@@ -124,8 +126,26 @@ impl Facts {
             let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
             let mut m = made.0.lock().unwrap_or_else(|e| e.into_inner());
             m.retain(|(e, _, _, _)| e.strong_count() > 0);
-            let maker = (life == Life::Device).then(made_by);
-            m.push((block.meter(), rerail_prof::heap::span(), life as u8, maker));
+            // A device run's own is named by its maker; the open block of a run's life by what it holds: every
+            // run-life array (indexes, a join's and a sort's scratch) its chunk or run makes from when it opened, not
+            // the span that opened it (157 MB "made in measure line" at the M3's 300-file peak, ab175, none of it the
+            // measure's).
+            let maker = match life {
+                Life::Device => Some(made_by()),
+                Life::Run if shared => Some(Arc::from("the open block of run-life arrays (indexes, joins' and sorts' scratch) made from then on")),
+                _ => None,
+            };
+            // The open run-life block is the chunk's, whichever span asked for its first array (a measure's, which
+            // freed its own when it ended): charged to the chunk, not to that span.
+            // So is a batch's open block of sources: every group of the batch is made in it, the first by whichever
+            // read wanted it (a measure's sample: "measure pkg/relations", 108 MB, none of it the measure's but its
+            // sample's documents).
+            let span = match life {
+                Life::Run if shared => rerail_prof::heap::intern("a chunk's open block of run-life arrays"),
+                Life::Source if shared => rerail_prof::heap::intern("a batch's open block of sources (its groups' relations, decision 0494)"),
+                _ => rerail_prof::heap::span(),
+            };
+            m.push((block.meter(), span, life as u8, maker));
             let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::BlocksBySpan>().0.set(held_by_span);
         }
         Facts { block: Arc::new(block), ix: Mutex::new(Vec::new()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
@@ -248,6 +268,30 @@ fn made_by() -> Arc<str> {
 
 /// The relations' blocks live now, by the span that made them and their `Life`: their bytes used (written up to
 /// their top, less what their free lists hold), most first. Empty unless heap sampling is on.
+/// Under a heap profile, the bytes of the chunks' open run-life blocks each span's arrays hold (`BlockVec::charged`):
+/// the open block is every array's, so the blocks' account names what lies in it.
+#[derive(Default)]
+struct OpenUse(Mutex<std::collections::HashMap<(u32, &'static str), (usize, usize)>>);
+
+/// `bytes` of a live array of `ty` charged to `span` (and one array more).
+fn open_use(span: u32, ty: &'static str, bytes: usize) -> (u32, &'static str, usize) {
+    let u = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
+    let mut m = u.0.lock().unwrap_or_else(|e| e.into_inner());
+    let e = m.entry((span, ty)).or_default();
+    e.0 += bytes;
+    e.1 += 1;
+    (span, ty, bytes)
+}
+
+fn open_given_back(span: u32, ty: &'static str, bytes: usize) {
+    let u = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
+    let mut m = u.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(b) = m.get_mut(&(span, ty)) {
+        b.0 = b.0.saturating_sub(bytes);
+        b.1 = b.1.saturating_sub(1);
+    }
+}
+
 pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
     let m = made.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -261,6 +305,48 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
         }
     }
     let mut out: Vec<(u32, u8, usize, usize, String)> = by.into_iter().map(|((s, l, w), (b, n))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()))).collect();
+    // What lies in the chunks' open run-life blocks, by the span whose arrays hold it (no blocks of its own).
+    let used = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
+    let used = used.0.lock().unwrap_or_else(|e| e.into_inner());
+    // By span (each its arrays' types, the most first), the spans under 1 MB as one row: every live array is in one.
+    let mut spans: std::collections::HashMap<u32, (usize, Vec<(usize, usize, &str)>)> = std::collections::HashMap::new();
+    for (&(s, ty), &(b, n)) in used.iter().filter(|(_, (b, _))| *b > 0) {
+        let e = spans.entry(s).or_default();
+        e.0 += b;
+        e.1.push((b, n, ty.rsplit("::").next().unwrap_or(ty)));
+    }
+    let (mut rest, mut rest_spans) = (0, 0);
+    for (s, (b, mut types)) in spans {
+        if b < 1 << 20 {
+            rest += b;
+            rest_spans += 1;
+            continue;
+        }
+        types.sort_by_key(|t| std::cmp::Reverse(t.0));
+        let types: Vec<String> = types.iter().take(4).map(|(b, n, t)| format!("{} MB in {n} {t}", b >> 20)).collect();
+        out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", "))));
+    }
+    // What lies in the batches' blocks of sources, by relation (`made::sources_held`): the span of its first group and
+    // of its latest, and the batch's documents made.
+    let sources = SOURCES_HELD.get().map_or_else(Vec::new, |held| held());
+    let (mut small, mut small_n, all, n) = (0, 0, sources.iter().map(|s| s.0).sum::<usize>(), sources.len());
+    for (k, (bytes, name, made, docs, first, last)) in sources.into_iter().enumerate() {
+        if bytes >= 1 << 20 && k < 24 {
+            let last = if last == first { String::new() } else { format!("; its latest group in {}", crate::code_rule_dsl::logic::profile::short(&rerail_prof::heap::name(last), 160)) };
+            out.push((first, Life::Source as u8, bytes, 0, format!("  in a batch's block of sources: {name}, {made} of its {docs} documents made{last}")));
+        } else {
+            small += bytes;
+            small_n += 1;
+        }
+    }
+    if n > 0 {
+        let s = rerail_prof::heap::intern("the batches' relations, all of them");
+        out.push((s, Life::Source as u8, all, 0, format!("  in a batch's block of sources: {n} relations; {small_n} of them not listed, {} MB", small >> 20)));
+    }
+    if rest > 0 {
+        let s = rerail_prof::heap::intern("the open block's arrays of spans under 1 MB each");
+        out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans")));
+    }
     out.sort_by_key(|o| std::cmp::Reverse(o.2));
     out
 }
@@ -507,6 +593,16 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
     let _ = BLOCK_DEVICE.set(device);
 }
 
+/// The batches' relations held now, the most bytes first (`syntax::made::sources_held`, above this crate, installed by
+/// `install_sources_held`): (bytes in their blocks, name, documents made, the batch's documents, the span of its first
+/// group, of its latest). None until one is installed.
+static SOURCES_HELD: std::sync::OnceLock<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> = std::sync::OnceLock::new();
+
+/// Installs what lists the batches' relations held (`syntax::made::sources_held`); the first one stays.
+pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32, u32)>) {
+    let _ = SOURCES_HELD.set(held);
+}
+
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
 /// evaluation runs, counted while it lives.
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
@@ -580,6 +676,9 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     /// Its block's ledger, beside the pointer: each read and write is checked against the GPU's queued uses of its
     /// chunk (decision 0487 R4), with no walk to the block.
     ledger: Option<Arc<rerail_blocks::ledger::Ledger>>,
+    /// Under a heap profile, the span its chunk of a chunk's open run-life block is charged to and its bytes
+    /// (`OpenUse`): given back with the chunk.
+    charged: Option<(u32, &'static str, usize)>,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -596,7 +695,7 @@ impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
-        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, region: None, owner: None, ledger: None, _t: std::marker::PhantomData }
+        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, region: None, owner: None, ledger: None, charged: None, _t: std::marker::PhantomData }
     }
 
     /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
@@ -611,7 +710,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let facts = owner.facts().clone();
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
         let ledger = Some(facts.block.ledger().clone());
-        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, region: None, owner: Some(owner.clone()), ledger, _t: std::marker::PhantomData }
+        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, region: None, owner: Some(owner.clone()), ledger, charged: None, _t: std::marker::PhantomData }
     }
 
     /// The chunk `into_chunk` handed on, its own again (no directory took it).
@@ -624,7 +723,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let cap = g.kept / size_of::<T>();
         // SAFETY: the chunk was this vector's (`into_chunk`), handed back whole: `kept` bytes, `cap` `T`s.
         let region = Some(unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, g.at, cap, g.kept, "a relation's array") });
-        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap, region, owner: None, ledger, _t: std::marker::PhantomData }
+        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap, region, owner: None, ledger, charged: None, _t: std::marker::PhantomData }
     }
 
     /// `n` items, those past its length `v`.
@@ -675,6 +774,12 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             _ => return Err(self),
         }
         let (at, kept) = self.region.take().expect("its own chunk").into_chunk();
+        // Handed on to a relation's directory, its bytes are that relation's now, kept while it lives.
+        // (Not given back when the relation frees it: an upper bound.)
+        if let Some((span, ty, bytes)) = self.charged.take() {
+            open_given_back(span, ty, bytes);
+            open_use(rerail_prof::heap::intern("indexes' orders handed to their relations (kept while they live)"), ty, bytes);
+        }
         let given = rerail_blocks::relation::Given { at, len: self.len, kept };
         // Handed on: nothing of it is given back here.
         self.facts = None;
@@ -730,6 +835,9 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let mut region = unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, at, cap, size, "a relation's array") };
         self.ptr = std::ptr::NonNull::new(region.as_mut_ptr()).expect("a block's chunk");
         self.region = Some(region);
+        if facts.shared && facts.life == Life::Run && rerail_prof::heap::on() {
+            self.charged = Some(open_use(rerail_prof::heap::span(), std::any::type_name::<T>(), size));
+        }
         self.ledger = Some(facts.block.ledger().clone());
         self.facts = Some(facts);
         self.at = at;
@@ -738,6 +846,9 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
 
     /// Its chunk given back: its region's last handle goes (a borrowed one's chunk is its owner's).
     fn free(&mut self) {
+        if let Some((span, ty, bytes)) = self.charged.take() {
+            open_given_back(span, ty, bytes);
+        }
         self.owner = None;
         self.region = None;
         self.facts = None;

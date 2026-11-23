@@ -6,13 +6,19 @@
 //! - A string a rule parses (`rr_embed_req(at, grammar)`: what a rule's `parsed(at, grammar, r)` or
 //!   `sub_tape(at, grammar, t)` asks for, from the literals that bind `at`, `rr::lower`): a tape value, admitted in
 //!   the program's fixpoint (`admit`, decision 0431 §8).
+//! - A program built on demand (the registry's `demand` embeddings, decision 0597: a Vue component's script and
+//!   template pieces): asked by a rule's `parsed(at, "vue-expression", g)` at its place, never at the file's load; the
+//!   host's pieces of that embedding are built at the first ask, and each is given at its place (`demanded`), a
+//!   program whose nodes are the file's, its grammar the name asked.
 //! - A tape operation's value (`@parse(g, x)`, `@splice`): made by the slice's rounds (`make`), at most [`DEPTH`].
 //!
 //! A string's text:
 //! - a string node, for any grammar: its contents. A plain one (no escapes, no `r` prefix) is a copied stretch of the
 //!   host, so its nodes have the file's lines and columns; an escaped one, or a concatenation of strings, is its
-//!   decoded value, and every node stands at the string. A bytes literal or an f-string gives no guest, as Ruff
-//!   parses neither as a type;
+//!   decoded value, and every node stands at the string. A bytes literal gives no guest. An f-string, in a language's
+//!   grammar (`sql`), is its template (decision 0597): its decoded text, each interpolation the marker `syntax::HOLE`
+//!   standing at its field; Python's `annotation` reads a str's value, and an f-string has none (Ruff parses no
+//!   f-string as a type);
 //! - any other node: its text, copied.
 //!
 //! A grammar name is a dialect label (`python`, `sql`, `typescript`, …) or `annotation`: Python's expression, parsed
@@ -147,6 +153,13 @@ fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::langua
     dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
 }
 
+/// The embedding built on demand (`GrammarDialect::demand_embeds`, decision 0597) a grammar name names for `host`: one
+/// of that id (`vue-expression`), or one that gives that dialect (`typescript`: a `.vue` file's `<script lang="ts">`).
+fn demand_embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::language::Via> {
+    let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
+    dialect.demand_embeds().iter().find(|&&(via, d)| via.id() == name || crate::code_rule_dsl::language::label(d) == Some(name)).map(|&(via, _)| via)
+}
+
 /// A grammar name's dialect label, and the fragment it parses (decision 0466: from a node kind, its tapes under its
 /// own tag): a fragment the registry declares (decision 0082), or a dialect's label, a whole text.
 fn grammar(name: &str) -> Option<(&'static str, Option<core::Fragment>)> {
@@ -164,15 +177,14 @@ fn tape_tag_of(label: &str, fragment: Option<core::Fragment>) -> Option<i64> {
 
 /// A document's key past every file's (`memo::doc_keys` gives files keys below `GUEST_KEYS`), with `key << 32`
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
-/// their ids. A code guest in the run's language takes `GUEST_KEYS..RUN_VALUE_KEYS`, which a policy shows; a
-/// tape value in it `RUN_VALUE_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decisions 0058 §1, 0512).
+/// their ids. A code guest in the run's language takes `GUEST_KEYS..HIDDEN_KEYS`, which a policy shows; every other
+/// document, a tape value among them, `HIDDEN_KEYS..2^31` (decisions 0058 §1, 0512, 0597).
 /// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0391):
 /// a SHA-256 of the range and the parts.
 fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
-    use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, GUEST_KEYS, HIDDEN_KEYS};
+    use crate::code_rule_dsl::facts::vtab::syntax::{GUEST_KEYS, HIDDEN_KEYS};
     let (base, end) = match range {
-        Range::Code => (GUEST_KEYS, RUN_VALUE_KEYS),
-        Range::RunValue => (RUN_VALUE_KEYS, HIDDEN_KEYS),
+        Range::Code => (GUEST_KEYS, HIDDEN_KEYS),
         Range::Hidden => (HIDDEN_KEYS, 1u32 << 31),
     };
     let span = end - base;
@@ -228,7 +240,6 @@ pub fn unsplit_host(d: &Document, host: &dyn Fn(&str) -> bool) -> bool {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Range {
     Code,
-    RunValue,
     Hidden,
 }
 
@@ -289,6 +300,23 @@ fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(St
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
 }
 
+/// The template of host node `local`, a string with an f-string among its parts, as its family's producer reads it
+/// (`syntax::template`): its text, each interpolation `syntax::HOLE`, a hole standing at its field. Read off the host's
+/// tape in place.
+fn template_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(String, Placement)> {
+    let (id, kind) = ids.node(local)?;
+    if !matches!(kind, "string" | "concatenated_string") {
+        return None;
+    }
+    let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
+    let doc = match host.tape.as_ref() {
+        Some((doc, _)) => doc.clone(),
+        None => crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(host.facts.tape.as_ref()?), Arc::clone(host.facts.grammar()?), Arc::clone(&host.facts.lines)),
+    };
+    let f = &*host.facts;
+    syntax::template(dialect, &doc, id, [f.start(id), f.end(id)])
+}
+
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
 /// the run's guest keys (the store's, decision 0391).
 #[derive(Default)]
@@ -316,6 +344,9 @@ pub struct Guests {
     /// made by an embedder from a file whose record is not known.
     pub programs_read: usize,
     pub programs_made: usize,
+    /// The programs built on demand (`GrammarDialect::demand_embeds`, decision 0597), by host and embedding: each at
+    /// its host node, taken when a rule asks for it there. A host's are built at the first ask, all at once.
+    demanded: HashMap<(u32, crate::code_rule_dsl::language::Via), Vec<(i64, Option<crate::code_rule_dsl::embed::Program>)>>,
 }
 
 /// A program to place in its file (`Guests::placed_program`): an embedder's, or one read off the file's record (decision
@@ -350,8 +381,6 @@ impl Held {
 pub enum Seen {
     /// Files and code in the run's language: a rule that names no guest.
     Code,
-    /// And annotations: a relation whose copies for them were folded into it (`combining::FoldOwn` widens its bound).
-    Annotations,
     /// Every guest: a rule enters one through a guest relation (`hiding::ENTRIES`, `READS`), or reads an AST
     /// matcher's literal.
     #[default]
@@ -362,7 +391,6 @@ impl Seen {
     fn sees(self, range: Range) -> bool {
         match range {
             Range::Code => true,
-            Range::RunValue => self >= Seen::Annotations,
             Range::Hidden => self == Seen::All,
         }
     }
@@ -390,27 +418,18 @@ pub fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> 
     Some(tags)
 }
 
-/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `RUN_VALUE_KEYS`):
-/// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
-pub fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
-    use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
-    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(RUN_VALUE_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(RUN_VALUE_KEYS) << 32))
-}
-
 /// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
-/// `hiding`): every other base read is bounded below `RUN_VALUE_KEYS`, or below `HIDDEN_KEYS` where an annotation's
-/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
-/// against the widened bound, and the other guests (other grammars, values) never.
+/// `hiding`): every other base read is bounded below `HIDDEN_KEYS`. So a program that reads no guest relation sees
+/// files and code guests alone, and the other guests (other grammars, values) never.
 pub fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
     use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let mut seen = Seen::Code;
+    let seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {
             match l.view() {
                 Lit::Atom(a) | Lit::Agg { atom: a, .. } if entry(v.rel_name(a.rel())) => return Seen::All,
                 Lit::Ast { .. } => return Seen::All,
-                Lit::Cmp { l, r, .. } if widened(l) || widened(r) => seen = Seen::Annotations,
                 _ => {}
             }
         }
@@ -537,12 +556,15 @@ impl Guests {
         if let Some(via) = embedding(host, grammar_name) {
             return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, |d| Got::New(Box::new(d))));
         }
+        if let Some(via) = demand_embedding(host, grammar_name) {
+            return Ok(self.demanded(host, at, via, grammar_name)?.map_or(Got::Not, |d| Got::New(Box::new(d))));
+        }
         let Some((label, fragment)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
-        // place. In the run's language it is in the run values' range (a type expression, Python's in a Python run);
-        // shown, a string the demand asked for only because its rule's inputs hold it (every string, for `type_ctx`)
-        // was code to every rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
-        let range = if label == self.run { Range::RunValue } else { Range::Hidden };
+        // place, and a context's rules read it (decision 0597). Shown, a string the demand asked for only because its
+        // rule's inputs hold it (every string, for `type_ctx`) was code to every rule: `"--host"` was `--host`, a
+        // doubled minus (B002 on 157 argparse lines).
+        let range = Range::Hidden;
         if !self.seen.sees(range) {
             self.unseen += 1;
             return Ok(Got::Not);
@@ -550,7 +572,10 @@ impl Guests {
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(Got::Not) };
-        let Some((text, place)) = host_text(host, ids, local) else { return Ok(Got::Not) };
+        // An f-string in a language's grammar (`sql`, not Python's `annotation`, which reads a str's value) is its
+        // template, its holes the marker (decision 0597).
+        let text = host_text(host, ids, local).or_else(|| if fragment.is_none() { template_text(host, ids, local) } else { None });
+        let Some((text, place)) = text else { return Ok(Got::Not) };
         self.tape_value(host, host_key, at, grammar_name, "fragment", label, fragment, text, place, range, parses)
     }
 
@@ -592,7 +617,31 @@ impl Guests {
     /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str) -> Result<Option<Document>, String> {
         let Some(program) = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false).into_iter().collect()).into_iter().next() else { return Ok(None) };
-        self.placed_program(host, Some(at), via, role, Held::made(program))
+        self.placed_program(host, Some(at), via, role, Held::made(program), None)
+    }
+
+    /// The program built on demand through `via` (decision 0597) at host node `at`, asked as `name`: the embedding's id
+    /// (`vue-expression`), or the dialect a program of it is (`typescript`), which its own must then be. The host's
+    /// programs of `via` are built at its first ask, each at the host node over its bytes (`Program::at`), and each is
+    /// made once, when asked: no reader of the file's programs sees one it did not ask for.
+    fn demanded(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, name: &str) -> Result<Option<Document>, String> {
+        let host_key = (at >> 32) as u32;
+        if !self.demanded.contains_key(&(host_key, via)) {
+            let programs = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build_all(root, source, &|| false));
+            let ids = self.numbering(host)?;
+            let narrow = |b: usize| u32::try_from(b).unwrap_or(u32::MAX);
+            let placed: Vec<_> = programs.into_iter().filter_map(|p| {
+                let bytes = p.at.as_ref().map(|r| [narrow(r.start), narrow(r.end)])?;
+                Some((ids.over(bytes)?, Some(p)))
+            }).collect();
+            self.demanded.insert((host_key, via), placed);
+        }
+        let label_is = |p: &crate::code_rule_dsl::embed::Program| via.id() == name || crate::code_rule_dsl::language::label(p.dialect) == Some(name);
+        let Some(program) = self.demanded.get_mut(&(host_key, via)).and_then(|ps| ps.iter_mut().find(|(a, p)| *a == at && p.as_ref().is_some_and(label_is))).and_then(|(_, p)| p.take()) else {
+            return Ok(None);
+        };
+        self.programs_made += 1;
+        self.placed_program(host, Some(at), via, "program", Held::made(program), Some(name))
     }
 
     /// The files' programs among `docs` (made with the batch, `programs`), as made: their places, under their grammar
@@ -628,7 +677,7 @@ impl Guests {
             if let Some(record) = host.facts.programs.as_ref() {
                 for image in record.iter() {
                     self.programs_read += 1;
-                    out.extend(self.placed_program(host, None, image.via, "program", Held::kept(image))?);
+                    out.extend(self.placed_program(host, None, image.via, "program", Held::kept(image), None)?);
                 }
                 continue;
             }
@@ -654,7 +703,7 @@ impl Guests {
                 };
                 for program in programs {
                     self.programs_made += 1;
-                    out.extend(self.placed_program(host, None, via, "program", Held::made(program))?);
+                    out.extend(self.placed_program(host, None, via, "program", Held::made(program), None)?);
                 }
             }
         }
@@ -662,8 +711,10 @@ impl Guests {
     }
 
     /// The document of `program`, which `via` built from `host`, at host node `at` (else the innermost node over its
-    /// bytes, and made once there); `None` where the run does not see it, or its text does not parse.
-    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: Held) -> Result<Option<Document>, String> {
+    /// bytes, and made once there); `None` where the run does not see it, or its text does not parse. Its grammar is
+    /// its dialect's label, or the name a rule asked for it by (`asked`: `vue-expression`, decision 0597), as its
+    /// `parsed` row says.
+    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: Held, asked: Option<&str>) -> Result<Option<Document>, String> {
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
         if !self.seen.sees(range) {
@@ -707,7 +758,7 @@ impl Guests {
             core: format!("{}#guest:{}:{at}", host.core, via.id()),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: asked.unwrap_or(label).to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             unpackaged: host.unpackaged,
             tape,
@@ -934,13 +985,13 @@ mod tests {
             .map(|i| format!("f{i}.py"))
             .find_map(|p| {
                 let [x, y, z] = parts(&p);
-                let k = first_key(&[&x, &y, &z], Range::RunValue).2;
+                let k = first_key(&[&x, &y, &z], Range::Hidden).2;
                 seen.insert(k, p.clone()).map(|q| (q, p))
             })
             .expect("a pair");
         let key = |g: &mut Guests, p: &str| {
             let [x, y, z] = parts(p);
-            g.key_for(&[&x, &y, &z], Range::RunValue, p)
+            g.key_for(&[&x, &y, &z], Range::Hidden, p)
         };
         let keys = GuestKeys::in_memory();
         let chunk = || Guests::new("python", syntax::Shape::default(), Arc::clone(&keys));

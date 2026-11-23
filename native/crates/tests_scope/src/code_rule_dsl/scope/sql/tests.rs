@@ -20,10 +20,9 @@
     type Finding = (String, String, u64, u64);
 
     fn position(source: &str, offset: usize) -> (u64, u64) {
-        let before = &source[..offset];
-        let line = before.matches('\n').count() as u64 + 1;
-        let column = before.rsplit('\n').next().unwrap().chars().count() as u64 + 1;
-        (line, column)
+        let lines = crate::code_rule_dsl::lines::LineTable::new(source, crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Sql));
+        let line = lines.line(offset);
+        (line as u64 + 1, source[lines.start(line)..offset].chars().count() as u64 + 1)
     }
 
     #[derive(Debug)]

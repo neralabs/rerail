@@ -107,7 +107,7 @@ fn php_bindings_and_occurrences_agree_with_php_parser() {
             expected.insert(sites[0].0, (name, sites, occurrences));
         }
         variables += expected.len();
-        let line = |start: u64| source[..start as usize].matches('\n').count() + 1;
+        let line = |start: u64| crate::code_rule_dsl::lines::line_of(&source, crate::code_rule_dsl::language::GrammarDialect::Php, start as usize);
         for (start, variable) in &expected {
             match rerail.get(start) {
                 Some(found) if found == variable => {}
@@ -261,7 +261,7 @@ fn php_flow_agrees_with_traced_runs() {
                 }
             }
         }
-        let line = |start: u64| source[..start as usize].matches('\n').count() + 1;
+        let line = |start: u64| crate::code_rule_dsl::lines::line_of(&source, crate::code_rule_dsl::language::GrammarDialect::Php, start as usize);
         let mut traced = BTreeSet::new();
         for record in records.as_array().expect("records") {
             bindings += 1;

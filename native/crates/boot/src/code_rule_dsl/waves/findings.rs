@@ -643,10 +643,9 @@ impl Layer {
             if !coverage.keys().any(|&(_, doc)| doc == document.key) {
                 continue;
             }
-            let starts = lines.starts();
-            for (l, &s) in starts.iter().enumerate() {
-                let e = starts.get(l + 1).map_or(source.len() + 1, |&e| e as usize);
-                insert("line_span", &[d, l as i64, s as i64, e as i64])?;
+            for l in 0..lines.count() {
+                let e = if l + 1 < lines.count() { lines.start(l + 1) } else { source.len() + 1 };
+                insert("line_span", &[d, l as i64, lines.start(l) as i64, e as i64])?;
             }
             if around {
                 for region in errors.regions() {
@@ -695,7 +694,7 @@ impl Layer {
                         insert("bandit", &[d, line as i64, test])?;
                     }
                 }
-                for l in 0..starts.len() {
+                for l in 0..lines.count() {
                     if let Some(&p) = commented.get(commented.partition_point(|&line| line < l)) {
                         insert("after", &[d, l as i64, p as i64])?;
                     }

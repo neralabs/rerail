@@ -20,7 +20,7 @@ use crate::lex::{Asi, AsiCtx, Lexer, R, Refusal, T, Tok, w};
 use crate::tw::{Mark, Node, Tw};
 #[allow(unused_imports)]
 use decl::Decl;
-use rerail_tape_format::{Redo, Widths};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 mod decl;
 mod expr;
@@ -59,6 +59,11 @@ pub(crate) struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<crate::Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.blocks.first_nul() {
         return Err(Refusal::Lex(at as u32));
@@ -75,7 +80,7 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             i: 0,
             // A byte-order mark: tree-sitter's lexer passes it.
             next: if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
-            t: Tw::new(widths, src.len() / 3 + 16),
+            t: Tw::new(widths, src.len() / 3 + 16, finish.target(), src),
             depth: 0,
             far: 0,
             stmt: true,
@@ -92,10 +97,10 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
                 r => r,
             });
         }
-        match p.t.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish.finish(p.t.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;

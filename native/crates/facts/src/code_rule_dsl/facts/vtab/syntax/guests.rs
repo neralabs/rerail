@@ -118,6 +118,11 @@ impl GuestRows {
         if guest_of {
             self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, g.at]));
         }
+        // A program's nodes stand at its host's bytes through its place (a Vue template's piece, decision 0597): a
+        // finding at one stands there, its own line and column in the file, as a tape value's does at its string.
+        if guest_place {
+            self.guest_places(p, docs, g.host, g.at, &g.place);
+        }
         // A decoded value stands at its node as a whole: its nodes have no host node of their own.
         if !host_nodes || matches!(g.place, Placement::At(_)) {
             return;

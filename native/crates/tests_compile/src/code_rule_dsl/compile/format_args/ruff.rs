@@ -232,7 +232,7 @@ fn ruff_format_rules_report_exactly_ruffs_ranges() {
                     ranges
                         .iter()
                         .map(|[start, end]| {
-                            let line = source[..*start as usize].matches('\n').count() + 1;
+                            let line = crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, *start as usize);
                             format!("{line}:{}", &source[*start as usize..*end as usize])
                         })
                         .collect::<Vec<_>>()

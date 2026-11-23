@@ -20,7 +20,7 @@
 use crate::kinds::{K, f};
 use crate::lex::{Extra, Lexer, NO_NL, R, Refusal, T, Tok, w};
 use crate::{Tape, key, unkey};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 mod decl;
 mod expr;
@@ -165,6 +165,11 @@ struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
+    parse_into(src, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.blocks.first_nul() {
         return Err(Refusal::Lex(at as u32));
@@ -181,7 +186,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
             extras: Vec::new(),
             e: 0,
             extra_at: u32::MAX,
-            w: Writer::new(0, widths, src.len() / 3 + 16),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             far: 0,
@@ -195,10 +200,10 @@ pub fn parse(src: &[u8]) -> R<Tape> {
                 r => r,
             });
         }
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish.finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -680,6 +685,8 @@ impl<'a> P<'a> {
             }
             self.toplevel()?;
             self.terminator(K::SourceFile, T::Eof)?;
+            // A top-level declaration is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
+            self.w.commit();
         }
         let t = self.tok();
         if t.word == u8::MAX {

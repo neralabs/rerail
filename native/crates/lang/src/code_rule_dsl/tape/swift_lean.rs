@@ -1,5 +1,5 @@
 //! A Swift file's tape from the lean parser (`rerail_swift_lean`): tree-sitter-swift's tape,
-//! written as the parse goes, with nothing packed again (`TapeImage::written`). The tape is the one
+//! written as the parse goes, with nothing packed again (`formats::lean`: the run's format, written in one pass). The tape is the one
 //! tree-sitter-swift's tree encodes to, node for node (`swift_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-swift
@@ -55,37 +55,22 @@ fn ids() -> &'static Ids {
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_swift_lean::Refusal> {
-    let tape = rerail_swift_lean::tape(source.as_bytes())?;
     let ids = ids();
-    let lacks = |what: &str, i: usize| format!("tree-sitter-swift lacks the lean parser's {what} {i}");
-    // The aliases by first use: the codes are numbered by first use, so in code order.
-    let mut aliases: Vec<(String, bool)> = Vec::new();
-    let codes: Result<Vec<Code>, String> = tape
-        .keys
-        .iter()
-        .map(|&key| {
-            let (kind, field, class, extra) = rerail_swift_lean::unkey(key);
-            let alias = &ids.aliases[usize::from(kind)];
-            let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
-            let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
-            let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
-            let mut code = Code::plain(kind, field, classes)?;
-            if extra {
-                code.flags |= CODE_EXTRA;
-            }
-            if let Some(alias) = alias {
-                let at = aliases.iter().position(|a| a == alias).unwrap_or_else(|| {
-                    aliases.push(alias.clone());
-                    aliases.len() - 1
-                });
-                code.alias = u16::try_from(at).map_err(|_| "too many contextual aliases")?;
-            }
-            Ok(code)
-        })
-        .collect();
-    Ok(codes.and_then(|codes| {
-        TapeImage::written(tape.code, tape.size, tape.base, tape.off, tape.tail, tape.widths, codes, None, grammar, source, budget)?.with_kind_aliases(aliases)
-    }))
+    let lacks = move |what: &str, i: usize| format!("tree-sitter-swift lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
+        let (kind, field, class, extra) = rerail_swift_lean::unkey(key);
+        let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
+        let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
+        let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
+        let mut code = Code::plain(kind, field, classes)?;
+        if extra {
+            code.flags |= CODE_EXTRA;
+        }
+        Ok(code)
+    };
+    // A kind named otherwise than its public symbol is a contextual alias, as tree-sitter's encoding names it.
+    let alias_of = move |key: u32| ids.aliases[usize::from(rerail_swift_lean::unkey(key).0)].clone();
+    rerail_swift_lean::tape_into(source.as_bytes(), &mut super::formats::lean_aliased(grammar, source, budget, code_of, alias_of))
 }
 
 /// Swift's tree parser: the lean parser, standing in for tree-sitter-swift where it reads the file.

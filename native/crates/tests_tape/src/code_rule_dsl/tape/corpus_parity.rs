@@ -717,7 +717,7 @@ fn persisted_python_and_typescript_corpora_match_native() {
             GrammarDialect::TypeScript
         }
     });
-    let report = json!({"tapeFormat":TAPE_FORMAT_VERSION,"python":python,"typescript":typescript});
+    let report = json!({"tapeFormat":super::formats::stored_version(),"python":python,"typescript":typescript});
     fs::write(&output, serde_json::to_vec_pretty(&report).unwrap()).expect("write parity report");
     assert!(
         report["python"]["differences"]
@@ -1170,7 +1170,7 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
     }
     let report = json!({
         "benchmark": format!("{} worktree persisted-tape oracle parity", corpus.name),
-        "tapeFormat": TAPE_FORMAT_VERSION,
+        "tapeFormat": super::formats::stored_version(),
         "executor": "this worktree: ast-grep over TapeDoc",
         "oracle": "native Tree-sitter node records for every node; native Tree-sitter QueryCursor for kind queries; native tree-backed ast-grep for structural patterns",
         "scope": format!("Full node-record parity, a generated kind-query bridge and {} structural ast-grep patterns. Not full harvested .scm corpus parity. No FTS filtering, SQL composition, or output publication.", corpus.patterns.len()),

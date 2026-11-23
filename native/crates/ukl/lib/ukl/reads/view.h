@@ -5,6 +5,7 @@
 #include <ukl/clif.h>
 #include <ukl/reads/tape_z.h>
 #include <ukl/reads/ids.h>
+#include <ukl/reads/lines.h>
 #include <ukl/backend.h>
 typedef struct ViewRow {
     uint64_t entry;
@@ -75,8 +76,6 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, file) == 100, "ViewDoc.file");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, delta) == 104, "ViewDoc.delta");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, within_lo) == 112, "ViewDoc.within_lo");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, within_hi) == 116, "ViewDoc.within_hi");
-UKL_INLINE uint32_t clif_lines_line(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
-UKL_INLINE uint32_t clif_lines_word(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_COLD uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
@@ -94,51 +93,6 @@ UKL_COLD uint32_t clif_view_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOB
 UKL_COLD uint64_t clif_view_tape(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_INLINE uint64_t clif_view_depth(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_INLINE uint64_t clif_view_order(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
-UKL_INLINE uint32_t clif_lines_line(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
- uint64_t v0=0;
- uint32_t v1=0;
- uint32_t v4=0;
- uint32_t v5=0;
- uint32_t v6=0;
- v0=a0;
- v1=a1;
- uint32_t v2=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+v0)));
- uint32_t v3=((uint32_t)(0ul));
- {uint32_t t0=v3;uint32_t t1=v2;v4=t0;v5=t1;}
- while(true){
-  uint8_t v7=((uint8_t)((uint32_t)(v4)<(uint32_t)(v5)));
-  if(v7!=0){
-   uint32_t v8=v4+v5;
-   uint32_t v9=((uint32_t)((uint32_t)(v8)>>(((uint32_t)(1))&31u)));
-   uint64_t v10=v0+((uint64_t)(4ul));
-   uint64_t v11=((uint64_t)(v9));
-   uint64_t v12=v11*((uint64_t)(4ul));
-   uint64_t v13=v10+v12;
-   uint32_t v14=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+v13)));
-   uint8_t v15=((uint8_t)((uint32_t)(v14)<=(uint32_t)(v1)));
-   uint32_t v16=v9+((uint32_t)(1ul));
-   uint32_t v17=v15!=0?v16:v4;
-   uint32_t v18=v15!=0?v5:v9;
-   {uint32_t t0=v17;uint32_t t1=v18;v4=t0;v5=t1;}
-   continue;
-  }else{
-   {uint32_t t0=v4;v6=t0;}
-   break;
-  }
- }
- return v6;
-}
-UKL_INLINE uint32_t clif_lines_word(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
- uint64_t v0=0;
- uint32_t v1=0;
- v0=a0;
- v1=a1;
- uint64_t v2=((uint64_t)(v1));
- uint64_t v3=v2*((uint64_t)(4ul));
- uint64_t v4=v0+v3;
- uint32_t v5=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+v4)));
- return v5;
-}
 UKL_INLINE uint64_t clif_view_core(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint64_t v0=0;
  uint64_t v1=0;

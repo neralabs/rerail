@@ -1,5 +1,4 @@
     use super::*;
-    use crate::code_rule_dsl::lines::Terminators;
 
     #[test]
     fn nosec_comments_parse_as_bandit_parses_them() {
@@ -35,7 +34,7 @@
     fn read(source: &str) -> (NosecIndex, LineTable) {
         let lines = LineTable::new(
             source,
-            Terminators::of(crate::code_rule_dsl::language::GrammarDialect::Python),
+            crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Python),
         );
         let mut index = NosecIndex::default();
         for (at, _) in source.match_indices('#') {
@@ -43,7 +42,7 @@
             if index.lines.contains_key(&line) {
                 continue;
             }
-            let end = lines.end(line);
+            let end = lines.end(line, source.as_bytes());
             index.lines.insert(line, parse(&source[at..end]));
         }
         (index, lines)
@@ -57,7 +56,7 @@
     fn nosec_suppresses_on_the_reported_line_and_the_nodes_lines() {
         let source = "a = 1  # nosec\nb = 2  # nosec B101\nc = 3  # nosec B102\nd = 4  # comment\ncall(\n    x,  # nosec B602\n)\ne = 5\n";
         let (index, lines) = read(source);
-        let line = |n: usize| (lines.start(n), lines.end(n));
+        let line = |n: usize| (lines.start(n), lines.end(n, source.as_bytes()));
         let at = |n: usize| lines.start(n);
         // Bare: every test.
         assert!(index.suppresses(&codes(&["B101"]), at(0), line(0), &lines));
@@ -68,13 +67,13 @@
         assert!(!index.suppresses(&codes(&["B101"]), at(3), line(3), &lines));
         assert!(!index.suppresses(&codes(&["B101"]), at(7), line(7), &lines));
         // A node spanning lines 4 to 6: the first `# nosec` among its lines counts.
-        let call = (lines.start(4), lines.end(6));
+        let call = (lines.start(4), lines.end(6, source.as_bytes()));
         assert!(index.suppresses(&codes(&["B602"]), at(4), call, &lines));
         assert!(!index.suppresses(&codes(&["B603"]), at(4), call, &lines));
         // The reported line's tests join the node's.
         let both = "x = f(  # nosec B101\n    y)  # nosec B102\n";
         let (index, lines) = read(both);
-        let node = (lines.start(0), lines.end(1));
+        let node = (lines.start(0), lines.end(1, source.as_bytes()));
         assert!(index.suppresses(&codes(&["B101"]), lines.start(1), node, &lines));
         assert!(index.suppresses(&codes(&["B102"]), lines.start(1), node, &lines));
         assert!(!index.suppresses(&codes(&["B103"]), lines.start(1), node, &lines));
@@ -82,7 +81,7 @@
         // names tests, so it is no longer blanket.
         let mixed = "x = f(  # nosec B101\n    y)  # nosec\n";
         let (index, lines) = read(mixed);
-        let node = (lines.start(0), lines.end(1));
+        let node = (lines.start(0), lines.end(1, source.as_bytes()));
         assert!(!index.suppresses(&codes(&["B102"]), lines.start(1), node, &lines));
     }
 

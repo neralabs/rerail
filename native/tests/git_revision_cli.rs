@@ -328,7 +328,8 @@ fn failed_batch_reports_each_policy_in_argument_order() {
                 failed_run["error"]
                     .as_str()
                     .unwrap()
-                    .contains("unknownParameter")
+                    .contains("unknownParameter"),
+                "{failed_run}"
             );
             assert!(good_run.get("error").is_none());
         }

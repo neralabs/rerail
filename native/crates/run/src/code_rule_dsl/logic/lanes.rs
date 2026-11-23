@@ -182,7 +182,9 @@ pub mod wave {
 
     /// `rerail_accel::exec::set_job_scope`'s entry and exit: every pool job runs in a wave scope of its own.
     pub fn install_job_scope() {
-        rerail_accel::exec::set_job_scope(|| Box::new(enter()), |s| s.downcast::<Scope>().expect("a wave scope").exit());
+        // The scope is moved out of its box before `exit` (which takes it by value): Relax dropped a box's contents
+        // again after a by-value call on it (`boxed.exit()`), so every job's queued launches were dropped twice.
+        rerail_accel::exec::set_job_scope(|| Box::new(enter()), |s| { let scope: Scope = *s.downcast::<Scope>().expect("a wave scope"); scope.exit() });
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the

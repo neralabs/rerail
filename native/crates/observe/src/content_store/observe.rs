@@ -11,7 +11,7 @@
 //! An answer is reused while the path's stat is the one recorded with it, by one `stat` call, and is otherwise
 //! computed again. A stat is dev, inode, size, mtime and ctime, all in nanoseconds; ctime changes on any write, so a
 //! write that restores the size and mtime (`touch -r`) is still seen. An answer is trusted only when the path last
-//! changed at least [`RACY_NS`] before the answer was recorded (git's racy rule): a file written in the same tick as
+//! changed at least [`racy_ns`] before the answer was recorded (git's racy rule): a file written in the same tick as
 //! its recording may have changed after it. A directory's listing is reused while the directory's own stat is the
 //! same: adding, removing or renaming an entry changes the directory's mtime.
 //!
@@ -36,6 +36,8 @@
 #[allow(unused_imports)]
 use crate::git_workspace::snapshot as source;
 use crate::content_store::Cached as _;
+use crate::content_store::racy_ns;
+#[cfg(test)]
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
@@ -132,9 +134,10 @@ impl Entry {
         self.stat == *now && !self.racy()
     }
 
-    /// Whether it was recorded inside the racy window: the path changed less than [`RACY_NS`] before.
+    /// Whether it was recorded inside the racy window: the path changed less than [`racy_ns`] before.
     fn racy(&self) -> bool {
-        self.stat.mtime_ns >= self.recorded_ns - RACY_NS || self.stat.ctime_ns >= self.recorded_ns - RACY_NS
+        let window = racy_ns();
+        self.stat.mtime_ns >= self.recorded_ns - window || self.stat.ctime_ns >= self.recorded_ns - window
     }
 }
 
@@ -1641,7 +1644,7 @@ impl Observer {
         let mut waiting = Vec::new();
         for path in std::mem::take(&mut self.racy) {
             let Some(e) = self.entries.get(&path).filter(|e| e.racy()).cloned() else { continue };
-            if e.stat.mtime_ns.max(e.stat.ctime_ns) >= now - RACY_NS {
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) >= now - racy_ns() {
                 waiting.push(path);
                 continue;
             }
@@ -1674,7 +1677,7 @@ impl Observer {
             _ => return false,
         };
         if digest == e.digest && Self::own_stat(path).is_some_and(|(_, s)| s == e.stat) {
-            if e.stat.mtime_ns.max(e.stat.ctime_ns) < now - RACY_NS {
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) < now - racy_ns() {
                 self.remember(path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
             }
             return true;

@@ -1121,9 +1121,9 @@ pub struct Pipeline<'s> {
 /// is needed. The record is by place among a relation's
 /// rules, which a pass that adds, drops or reorders rules shifts: the pipeline states it again at its end.
 ///
-/// A pass that renames readers states the record itself: one that merges or folds relations (`MergeIdentical`,
-/// hiding's `FoldOwn`) has a request of a merged reader serve the relation it was merged into, and one that inlines
-/// relations into their readers has a request of an inlined relation serve those readers. A copy of a request rule
+/// A pass that renames readers states the record itself: one that merges relations (`MergeIdentical`) has a request
+/// of a merged reader serve the relation it was merged into, and one that inlines relations into their readers has a
+/// request of an inlined relation serve those readers. A copy of a request rule
 /// under another name is no request rule, but reads what its source reads: where its source is a reader, so is it (a
 /// guest's copy of a reader, read in its place, asks what the reader asked).
 #[derive(Clone, Debug)]

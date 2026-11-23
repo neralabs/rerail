@@ -355,6 +355,17 @@ impl World {
         Some(loaded)
     }
 
+    /// A loaded document as the run's record names it (`consulted`): under a Git snapshot's root, by its path from the
+    /// root, which `observation` joins to the root again. A snapshot's view is another path in each named analysis's
+    /// run (its invocation's), so a load named by its absolute path was never found by the next run, which then
+    /// evaluated again. Elsewhere, and for a document beyond the root, its absolute path.
+    fn load_name(&self, path: &str) -> String {
+        if crate::git_workspace::snapshot::contains(&self.root) && let Ok(under) = Path::new(path).strip_prefix(&self.root) {
+            return super::slashed(under);
+        }
+        path.to_owned()
+    }
+
     /// Whether `path` is under the corpus root: a file of the run's own tree, which the budget does not bound.
     fn own(&self, path: &str) -> bool {
         self.roots.first().is_some_and(|r| Path::new(path).starts_with(r))
@@ -431,7 +442,7 @@ impl World {
             out.push(("digest".to_owned(), asked.clone(), d.clone()));
         }
         for path in self.loads.keys() {
-            out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
+            out.push(("load".to_owned(), self.load_name(path), bytes_digest(Path::new(path))));
         }
         for asked in &self.refused {
             out.push(("refused".to_owned(), asked.clone(), self.probe(asked)));
@@ -459,7 +470,7 @@ impl World {
             "dir" => listing_digest(&self.dir(path)),
             "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
             "git_file_storage" => crate::git_workspace::snapshot::file_stamp(&self.allowed(path)?)?,
-            "load" => bytes_digest(Path::new(path)),
+            "load" => bytes_digest(&self.root.join(path)),
             "refused" => self.probe(path),
             super::analysis_history::REQUEST => {
                 let (kind, key) = serde_json::from_str::<(String, String)>(path).ok()?;

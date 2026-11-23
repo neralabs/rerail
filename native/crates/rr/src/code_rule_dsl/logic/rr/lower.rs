@@ -5257,7 +5257,7 @@ impl Lowerer {
             _ => return None,
         };
         let t = over?;
-        if std::env::var("RERAIL_ASOF").is_ok_and(|v| v == "off") {
+        if crate::code_rule_dsl::logic::profile::var("RERAIL_ASOF").is_ok_and(|v| v == "off") {
             return None;
         }
         // `t < r` for a max (`r > t` the same), `t > r` for a min; `<=` and `>=` not strict.

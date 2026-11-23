@@ -22,8 +22,12 @@ unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), used_after(e, id
 used(id) :- tbind(_, id).
 .decl ignored(x: symbol)
 ignored(x) :- tvar(_, x, _, _), option("ignorePattern", p), match(cat(".*(?:", p, ").*"), x).
-// used_after(e, id, k): a variable of the same kind, declared after id on e, is used.
+// used_after(e, id, k): a variable of the same kind, declared after id on e, is used. After is by source bytes
+// (`earlier` is CPython's visit order, made for Python documents only), which the context `expression` reads: the
+// identifiers are its nodes (decision 0597).
 .decl used_after(e: node, id: node, k: symbol)
-used_after(e, id, k) :- tvar(e, _, id, k), tvar(e, _, j, k), earlier(id, j), used(j).
+used_after(e, id, k) :- tvar(e, _, id, k), tvar(e, _, j, k), node(_, id, _, s, _), node(_, j, _, t, _), s < t, used(j).
+.context expression of vue roots vexpr_root exports used_after
+.from expression used_after
 .decl tag_use(e: node, x: symbol)
 tag_use(e, x) :- tvar(e, x, _, _), has(e, c, vel_kind), vel_name(c, x).

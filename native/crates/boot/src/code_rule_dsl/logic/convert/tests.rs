@@ -895,9 +895,9 @@ fn api_events() -> Vec<Event> {
     for name in ["batch-09-complete-api.json", "batch-10-complete-api.json.gz", "batch-10-file-contract-regressions.json", "batch-10-repair-regressions.json"] {
         let path = port().join(name);
         let bytes = if name.ends_with(".gz") {
-            let output = std::process::Command::new("gzip").arg("-dc").arg(&path).output().unwrap();
-            assert!(output.status.success(), "gzip -dc {}", path.display());
-            output.stdout
+            let mut out = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(std::fs::File::open(&path).unwrap()), &mut out).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            out
         } else {
             std::fs::read(&path).unwrap()
         };

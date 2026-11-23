@@ -163,6 +163,18 @@ pub fn install_languages(tests: bool) {
         (language::Via::Pattern, &embed::rule_pattern::RulePattern),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueScript, &embed::vue_code::SCRIPT),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueExpression, &embed::vue_code::EXPRESSION),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueStatements, &embed::vue_code::STATEMENTS),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueParams, &embed::vue_code::PARAMS),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueForAlias, &embed::vue_code::FOR_ALIAS),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueForSource, &embed::vue_code::FOR_SOURCE),
         #[cfg(any(test, feature = "test-hooks"))]
         (language::Via::TestScript, &embed::TestScript),
     ]);
@@ -229,6 +241,8 @@ pub fn install_languages(tests: bool) {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
+    // The batches' relations held, for the heap report's spans (`rows`, below the batches' crate).
+    facts::rows::install_sources_held(facts::vtab::syntax::made::sources_held);
     // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
     #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
     facts::rows::install_heap_net(heap_net);

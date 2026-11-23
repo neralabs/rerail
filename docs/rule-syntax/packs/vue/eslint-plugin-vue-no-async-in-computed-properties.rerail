@@ -18,8 +18,8 @@
 // component when the file has none.
 .violation async_computed(at: node, msg: symbol) code "vue/no-async-in-computed-properties" "{msg}"
     suppress eslint "vue/no-async-in-computed-properties"
-async_computed(at, m) :- getter(f, x), op(f, "async"), report_at(f, at), says("async", x, m).
-async_computed(n, m) :- getter(f, x), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
+async_computed_in(at, m) :- getter(f, x), op(f, "async"), report_at(f, at), says("async", x, m).
+async_computed_in(n, m) :- getter(f, x), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
 
 // getter(f, x): x is the computed's name, "" for a computed() getter.
 .decl getter(f: node, x: symbol)
@@ -80,3 +80,10 @@ composition("await", "Remove this await from the computed getter and load the va
 composition("new", "Remove this Promise from the computed getter and resolve the value in a watcher or function instead.").
 composition("promise", "Move the async work out of this computed into a watcher or function, and have the getter return a value synchronously.").
 composition("timed", "Move this timer out of the computed getter into a watcher or function; the computed must return its value right away.").
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl async_computed_in(at: node, msg: symbol)
+.context script of vue roots vscript_root exports async_computed_in
+.from script async_computed_in
+async_computed(at, msg) :- async_computed_in(at, msg).

@@ -262,6 +262,8 @@ rerail-rir = { path = "../rir" }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 tempfile = "=3.27.0"
+# The convert tests' gzipped port records (`batch-10-complete-api.json.gz`), decoded in the test process.
+flate2 = "=1.1.11"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
 # Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).

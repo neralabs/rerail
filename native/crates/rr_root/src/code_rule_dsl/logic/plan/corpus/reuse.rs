@@ -46,7 +46,10 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
     "RERAIL_FRAMES_TRACE",
     // The memory ceiling (decision 0462): a run past it is stopped and keeps nothing; one under it outputs the same.
-    "RERAIL_MEMORY_MAX_MB"];
+    "RERAIL_MEMORY_MAX_MB",
+    // The observer's racy window (`content_store::racy_ns`): which answers a run trusts by their stat, never what it
+    // outputs.
+    "RERAIL_RACY_MS"];
 
 /// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
 pub fn measures_only(name: &str) -> bool {
@@ -56,11 +59,8 @@ pub fn measures_only(name: &str) -> bool {
 /// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
 /// the run's key.
 fn switches() -> Vec<u8> {
-    let mut switches: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !measures_only(k))
-        .collect();
-    switches.sort();
+    // The process's and those the run's context sets for its runs (`profile::vars`, a test's `switches::set`), by name.
+    let switches: Vec<(String, String)> = crate::code_rule_dsl::logic::profile::vars().into_iter().filter(|(k, _)| !measures_only(k)).collect();
     let mut out = Vec::new();
     for (k, v) in switches {
         out.extend_from_slice(k.as_bytes());
@@ -90,7 +90,12 @@ fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, optio
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    // A Git snapshot's root by what it is of (its repository's facts and the selected object), not by its view's path,
+    // which a named analysis makes again each run (`snapshot::run_identity`).
+    match crate::git_workspace::snapshot::run_identity(root) {
+        Some(identity) => h.update(identity.as_bytes()),
+        None => h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes()),
+    }
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -279,9 +284,6 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
 pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
-    if crate::git_workspace::snapshot::contains(root) {
-        return Ok(None);
-    }
     // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
     // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
     // warm run evaluated again (each begins an analysis run).
@@ -395,9 +397,6 @@ fn miss(why: &str) {
 }
 
 pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
-    if crate::git_workspace::snapshot::contains(root) {
-        return Ok(());
-    }
     let programs = given.programs;
     // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
     // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its

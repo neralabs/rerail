@@ -199,7 +199,7 @@ fn differences_in(
         let (start, end) = (*start as usize, *end as usize);
         format!(
             "{}:{}",
-            source[..start].matches('\n').count() + 1,
+            crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, start),
             &source[start..end]
         )
     };
@@ -418,7 +418,7 @@ fn f821_reads_names_under_nfkc() {
         .iter()
         .map(|[start, end]| {
             let (start, end) = (*start as usize, *end as usize);
-            let line = source[..start].matches('\n').count() + 1;
+            let line = crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, start);
             let column = source[..start]
                 .rsplit('\n')
                 .next()

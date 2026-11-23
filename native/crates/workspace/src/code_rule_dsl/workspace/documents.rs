@@ -531,9 +531,10 @@ fn hash_text(hash: HashKey) -> String {
 
 fn tape_doc(document: &Document) -> Result<tape::TapeDoc> {
     let grammar = tape::Grammar::new(document.language).map_err(invalid)?;
-    let lines = Arc::new(LineTable::new(
+    let lines = Arc::new(document.image.primary.lines(
         &document.source,
-        Terminators::of(document.language),
+        crate::code_rule_dsl::lines::terminators(document.language),
+        false,
     ));
     tape::TapeDoc::restore_with_lines(
         Arc::clone(&document.source),
@@ -607,7 +608,7 @@ pub(super) fn resolve(state: &mut WorkspaceState, reference: &NodeReference) -> 
         .kind_name(doc.transducer_kind(reference.ordinal))
         .unwrap_or("")
         .to_owned();
-    let lines = LineTable::new(&document.source, Terminators::of(document.language));
+    let lines = LineTable::new(&document.source, crate::code_rule_dsl::lines::terminators(document.language));
     Ok(json!({
         "path": reference.path,
         "ordinal": reference.ordinal,

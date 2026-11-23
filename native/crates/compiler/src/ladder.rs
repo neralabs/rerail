@@ -547,7 +547,7 @@ pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks:
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+        let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     phase("bitlex compile");
@@ -571,7 +571,7 @@ pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> 
     let ids = Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
@@ -581,7 +581,7 @@ pub fn compile_error(source: &str) -> Option<String> {
     let ids = Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).err()
 }
 

@@ -134,11 +134,13 @@ impl Names {
     }
 }
 
-/// A `.pass` setting (`NAME of HOST roots REL exports R, … [reads R, …]`) with its roots and reads renamed.
+/// A `.pass` setting (`NAME of HOST roots REL [holes REL] exports R, … [reads R, …]`) with its roots, holes and reads
+/// renamed.
 fn renamed_pass(text: &str, rename: &dyn Fn(&str) -> String) -> String {
     let words = crate::code_rule_dsl::logic::passes_made::words(text);
     let reads = words.iter().position(|w| w == "reads").unwrap_or(words.len());
-    let out: Vec<String> = words.iter().enumerate().map(|(i, w)| if (i == 4 && words.get(3).is_some_and(|r| r == "roots")) || (i > reads && w != ",") { rename(w) } else { w.clone() }).collect();
+    let named = |i: usize| (i == 4 && words.get(3).is_some_and(|r| r == "roots")) || (i == 6 && words.get(5).is_some_and(|h| h == "holes"));
+    let out: Vec<String> = words.iter().enumerate().map(|(i, w)| if named(i) || (i > reads && w != ",") { rename(w) } else { w.clone() }).collect();
     out.join(" ").replace(" , ", ", ")
 }
 

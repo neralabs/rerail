@@ -3,13 +3,11 @@
 //!
 //! A run's documents are, by key (`syntax::GUEST_KEYS`, `syntax::HIDDEN_KEYS`):
 //! - files, `1..2^30`, a file read for its programs among them (its text, decision 0512);
-//! - programs in the run's language (a `<script>` in an HTML file, a JSON object in a rule file), `2^30..2^30 + 2^28`:
+//! - programs in the run's language (a `<script>` in an HTML file, a JSON object in a rule file), `2^30..2^30 + 2^29`:
 //!   shown (decision 0523: always);
-//! - tape values in the run's language (a string a rule parses in it: a type expression, Python's string annotations
-//!   in a Python run), `..2^30 + 2^29` (`syntax::RUN_VALUE_KEYS`): not shown to a rule that does not name them, but
-//!   kept in a relation they reach once its copies for them are folded into it (`combining::FoldOwn`);
 //! - every other document (a guest in another grammar, a file's own tree in another grammar, a value `@parse` or
-//!   `@splice` made), up to `2^31`: never shown.
+//!   `@splice` made, Python's string annotations among them), up to `2^31`: never shown. A context's rules read a
+//!   value's nodes (decision 0597), from its roots.
 //!
 //! A node's id is its document's key `<< 32` and its index, so "shown" is one bound on a location value.
 //!
@@ -52,7 +50,7 @@ pub fn dialect_label(grammar: &str) -> &str {
 
 /// The bound of a program's shown documents: files, and the run language's code guests (decision 0523: `.guests` is
 /// retired; what a run reads of other languages' files is `.embedded`'s).
-pub const BOUND: u32 = crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
+pub const BOUND: u32 = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS;
 
 /// What the analysis knows of a variable: scoped, and its grammar (`Some("")` when two disagree). `definite`: it is
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
@@ -70,7 +68,8 @@ impl Fact {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
-        // Two grammars join to none known (`""`).
+        // Two grammars join to their kinds' grammar where they share it (`vue-expression` and `vue-statements`, a Vue
+        // template's pieces, are TypeScript's, decision 0597), else to none known (`""`).
         match (&self.grammar, &other.grammar) {
             (_, None) => {}
             (None, Some(b)) => {
@@ -78,6 +77,11 @@ impl Fact {
                 changed = true;
             }
             (Some(a), Some(b)) if a == b || a.is_empty() => {}
+            (Some(a), Some(b)) if !b.is_empty() && dialect_label(a) == dialect_label(b) => {
+                let label = dialect_label(a).to_owned();
+                changed |= *a != label;
+                self.grammar = Some(label);
+            }
             (Some(_), Some(_)) => {
                 self.grammar = Some(String::new());
                 changed = true;

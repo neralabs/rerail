@@ -465,7 +465,7 @@ fn differences(root: &std::path::Path) -> Vec<String> {
             let (start, end) = (*start as usize, *end as usize);
             format!(
                 "{}:{}",
-                source[..start].matches('\n').count() + 1,
+                crate::code_rule_dsl::lines::line_of(&source, crate::code_rule_dsl::language::GrammarDialect::JavaScript, start),
                 &source[start..end]
             )
         };

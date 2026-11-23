@@ -3224,6 +3224,7 @@ dependencies = [
  "bitlex",
  "rerail-bitlex",
  "rerail-compiler",
+ "rerail-tape-format",
  "rustc-hash",
  "sha2 0.11.1",
 ]
@@ -3262,6 +3263,7 @@ dependencies = [
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
+ "flate2",
  "foldhash",
  "gix",
  "globset",
@@ -3597,6 +3599,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-context",
  "rerail-cpu-block",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3880,6 +3883,7 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-rules",
  "rerail-store",
+ "rerail-tape-format",
  "rerail-transducer",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -5560,6 +5564,7 @@ version = "0.1.0"
 dependencies = [
  "rerail-compiler",
  "rerail-rir",
+ "rerail-tape-format",
 ]
 
 [[package]]
