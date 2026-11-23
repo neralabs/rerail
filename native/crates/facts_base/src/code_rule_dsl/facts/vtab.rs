@@ -1548,6 +1548,11 @@ struct ColumnIndex {
 /// Rows a fence entry stands for (0.125 bytes a row).
 const FENCE: usize = 64;
 impl Relation {
+    /// The bytes its rows' chunks hold in their block (none before its first read writes them there).
+    pub fn block_bytes(&self) -> usize {
+        self.cells.get().map_or(0, super::rows::Rows::capacity_bytes)
+    }
+
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
         Self {

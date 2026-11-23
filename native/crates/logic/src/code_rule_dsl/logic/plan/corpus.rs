@@ -5193,7 +5193,7 @@ fn run_observed_within(
             let key = (mix.clone(), rel.clone());
             let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
             let measured = match once {
-                Some((first, measured)) if first > 0 => scaled_statistics(&measured, first, source.estimated_len()),
+                Some((first, measured)) if first > 0 => syntax::scaled_statistics(&measured, first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
@@ -9890,32 +9890,40 @@ struct ValTotals {
     few: Option<HashMap<i64, i64>>,
     /// The tested values' rows.
     tested: HashMap<i64, i64>,
-    /// Its values sketched, for `ndv` and `sq` once `few` is dropped.
-    moments: super::sketch::Moments,
+    /// Its values sketched, for `ndv` and `sq` once `few` is dropped: made then, of `few`'s counts. A column of few
+    /// values (most) needs none, and each sketch is kilobytes on the heap (the export's totals held 7.6 MB of them at
+    /// the M3's 300-file peak, one a value column from its first value).
+    moments: Option<Box<super::sketch::Moments>>,
     /// Whether `few` was dropped (a column starts with every value counted).
     many: bool,
 }
 
 impl ValTotals {
     fn add(&mut self, tested: &rustc_hash::FxHashSet<i64>, v: i64, n: i64) {
-        self.moments.add(v, n);
         if tested.contains(&v) {
             *self.tested.entry(v).or_default() += n;
         }
-        if !self.many {
-            let few = self.few.get_or_insert_with(HashMap::new);
-            *few.entry(v).or_default() += n;
-            if few.len() as i64 > super::SMALL_NDV {
-                self.few = None;
-                self.many = true;
+        if self.many {
+            self.moments.get_or_insert_with(Default::default).add(v, n);
+            return;
+        }
+        let few = self.few.get_or_insert_with(HashMap::new);
+        *few.entry(v).or_default() += n;
+        if few.len() as i64 > super::SMALL_NDV {
+            // Past `few`: its counts sketched, as each value's would have been when added.
+            let mut m: Box<super::sketch::Moments> = Box::default();
+            for (&v, &n) in self.few.take().iter().flatten() {
+                m.add(v, n);
             }
+            self.moments = Some(m);
+            self.many = true;
         }
     }
     /// (ndv, sq): exact while the column has few values, else the sketch's.
     fn moments(&self) -> (i64, i64) {
         match &self.few {
             Some(few) => (few.len() as i64, few.values().map(|n| n * n).sum()),
-            None => (self.moments.ndv().round() as i64, self.moments.sq().round() as i64),
+            None => self.moments.as_ref().map_or((0, 0), |m| (m.ndv().round() as i64, m.sq().round() as i64)),
         }
     }
 }
@@ -10017,24 +10025,20 @@ fn column_moments(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize
 }
 
 /// Column `c`'s values in runs, by one sort of (value, document): `f(v, n, per_doc)` for each distinct value v, with
-/// its row count and its row count in each document it occurs in. No hash map per cell.
+/// its row count and its row count in each document it occurs in. No hash map per cell; the pairs in an array in the
+/// run's blocks, none on the heap (an export's totals sorted a heap vector of every row's: 7.6 MB of `local/export
+/// to cross/totals` at the M3's 300-file peak).
 fn value_runs(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, doc: &dyn Fn(usize) -> i64, mut f: impl FnMut(i64, i64, &[i64])) {
-    let mut pairs: Vec<(i64, i64)> = (0..rows.len()).map(|r| (rows.value(r, c), doc(r))).collect();
+    use crate::code_rule_dsl::facts::rows::BlockVec;
+    let mut pairs: BlockVec<[i64; 2]> = BlockVec::from_iter_in(None, (0..rows.len()).map(|r| [rows.value(r, c), doc(r)]));
     pairs.sort_unstable();
-    let mut per_doc = Vec::new();
-    let mut at = 0;
-    while at < pairs.len() {
-        let v = pairs[at].0;
-        let end = at + pairs[at..].partition_point(|p| p.0 == v);
-        per_doc.clear();
-        let mut d = at;
-        while d < end {
-            let de = d + pairs[d..end].partition_point(|p| p.1 == pairs[d].1);
-            per_doc.push((de - d) as i64);
-            d = de;
+    let mut per_doc: BlockVec<i64> = BlockVec::new();
+    for value in pairs.chunk_by(|a, b| a[0] == b[0]) {
+        per_doc.resize(0, 0);
+        for d in value.chunk_by(|a, b| a[1] == b[1]) {
+            per_doc.push(d.len() as i64);
         }
-        f(v, (end - at) as i64, &per_doc);
-        at = end;
+        f(value[0][0], value.len() as i64, &per_doc);
     }
 }
 
@@ -10237,30 +10241,6 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
     (out, unpackaged)
 }
 
-/// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
-/// `rows`. A key column stays a key; a column with many values (over one row in 16 distinct: node ids, strings) gains
-/// values in proportion, one with few (kinds, field names) keeps them and its postings grow. `sq` keeps the postings'
-/// sizes against the values, and `sqd` grows with the documents, whose postings keep their sizes.
-fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, rows: usize) -> Vec<(String, i64, i64, i64, i64)> {
-    let r = rows as f64 / first as f64;
-    let n = rows as i64;
-    measured
-        .iter()
-        .map(|(name, m_rows, ndv, sq, sqd)| {
-            if n == 0 {
-                return (name.clone(), 0, 0, 0, 0);
-            }
-            if ndv == m_rows {
-                return (name.clone(), n, n, n, n);
-            }
-            let ndv_scaled = if ndv * 16 > *m_rows { (*ndv as f64 * r).round() as i64 } else { *ndv }.clamp(1, n);
-            let sq_scaled = (*sq as f64 * r * r * (*ndv as f64 / ndv_scaled as f64)).round() as i64;
-            let sqd_scaled = (*sqd as f64 * r).round() as i64;
-            (name.clone(), n, ndv_scaled, sq_scaled.max(n), sqd_scaled.max(n))
-        })
-        .collect()
-}
-
 #[doc(hidden)]
 pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64, i64, i64)> {
     if let Some(known) = source.statistics() { return known; }
@@ -10282,7 +10262,7 @@ pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source
     let sample = Rows { columns: names, values };
     let measured = syntax::measured(&sample);
     crate::code_rule_dsl::logic::profile::decision("statistics sample", || format!("{count} of {rows} rows (limit {STAT_SAMPLE_ROWS})"));
-    if count == rows { measured } else { scaled_statistics(&measured, count, rows) }
+    if count == rows { measured } else { syntax::scaled_statistics(&measured, count, rows) }
 }
 
 /// `sampled_statistics` of `rel`'s columns its layout does not answer (decision 0361 item 5): an answered column's
@@ -10309,7 +10289,7 @@ pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_ds
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (count * open.len()) as u64);
         let sample = Rows { columns: open.iter().map(|&c| names[c].clone()).collect(), values };
         let measured = syntax::measured(&sample);
-        let measured = if count == rows { measured } else { scaled_statistics(&measured, count, rows) };
+        let measured = if count == rows { measured } else { syntax::scaled_statistics(&measured, count, rows) };
         counted = open.iter().copied().zip(measured).collect();
     }
     names

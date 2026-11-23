@@ -40,6 +40,7 @@ use rerail_tape_format::tape::{CodeSet, Tape, nearest_all};
 use rerail_tape_format::with_tape;
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
+use crate::code_rule_dsl::facts::rows::BlockVec;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use crate::code_rule_dsl::facts::nearest::Binding;
@@ -100,13 +101,23 @@ impl Pairs {
     }
 }
 
+/// A node row's run not made yet (`Within::made`).
+const UNMADE: u32 = u32::MAX;
+
+/// The run of `row`'s rows made on a side, if it is.
+fn made_run(slots: &BlockVec<[u32; 2]>, row: u32) -> Option<(u32, u32)> {
+    slots.get(row as usize).filter(|r| r[0] != UNMADE).map(|r| (r[0], r[1]))
+}
+
 pub struct Within {
     batch: Arc<Batch>,
     mode: Mode,
     /// Per side, each row: inner node row << 32 | outer node row (rows of the batch's `node`).
     chunks: [[OnceLock<Pairs>; CHUNKS]; 2],
-    /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`).
-    made: Mutex<([usize; 2], [FxHashMap<u32, (u32, u32)>; 2])>,
+    /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`): `[start, len]`,
+    /// `UNMADE` where none is made yet. In the run's blocks, one slot a node row (decision 0353: a scan of every node's
+    /// containers held a map of them on the heap, 13 MB at the M3's 300-file peak, ab175).
+    made: Mutex<([usize; 2], [BlockVec<[u32; 2]>; 2])>,
     /// Every node's containers made (a scan): the rows they span.
     all: OnceLock<usize>,
     /// Per document, its nodes of zero width (locals).
@@ -182,7 +193,7 @@ impl Within {
         Within {
             mode,
             chunks: std::array::from_fn(|_| std::array::from_fn(|_| OnceLock::new())),
-            made: Mutex::new(([0, 0], [FxHashMap::default(), FxHashMap::default()])),
+            made: Mutex::new(([0, 0], [BlockVec::new(), BlockVec::new()])),
             all: OnceLock::new(),
             zero: OnceLock::new(),
             shape: OnceLock::new(),
@@ -753,14 +764,14 @@ impl Within {
 
     /// The rows of node row `row` as inner (`side` 0) or outer (1), made on the first lookup.
     fn rows(&self, side: usize, row: u32) -> (u32, u32) {
-        if let Some(&run) = self.made.lock().1[side].get(&row) {
+        if let Some(run) = made_run(&self.made.lock().1[side], row) {
             return run;
         }
         let (doc, local) = self.at(row);
         let base = self.batch.nodes()[doc] as u32;
         let others = if side == 0 { self.containers(doc, local) } else { self.contained(doc, local) };
         let mut made = self.made.lock();
-        if let Some(&run) = made.1[side].get(&row) {
+        if let Some(run) = made_run(&made.1[side], row) {
             return run;
         }
         let start = made.0[side];
@@ -776,7 +787,12 @@ impl Within {
             self.len.store(made.0[0], Ordering::Release);
         }
         let run = ((start + if side == 0 { self.looked_up() } else { OUTER }) as u32, others.len() as u32);
-        made.1[side].insert(row, run);
+        let slots = &mut made.1[side];
+        if slots.len() <= row as usize {
+            let all = self.batch.nodes().last().copied().unwrap_or(0).max(row as usize + 1);
+            slots.resize(all, [UNMADE, 0]);
+        }
+        slots[row as usize] = [run.0, run.1];
         run
     }
 

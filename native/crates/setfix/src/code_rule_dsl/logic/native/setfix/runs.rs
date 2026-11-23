@@ -990,30 +990,56 @@ fn on_pool() -> bool {
     crate::threads::max() > 1 && INLINE.with(|c| c.get() == 0)
 }
 
+/// What a sort or a merge works in: its keys and its merge's second buffer, in the run's blocks (`BlockVec`,
+/// decision 0353: a join's scratch is the run's memory, not the heap's), or a caller's vector it sorts in place.
+pub(super) trait Scratch<T: Copy>: std::ops::DerefMut<Target = [T]> + Sized {
+    /// `n` items, each `v`.
+    fn filled(n: usize, v: T) -> Self;
+}
+
+impl<T: Copy> Scratch<T> for Vec<T> {
+    fn filled(n: usize, v: T) -> Self {
+        vec![v; n]
+    }
+}
+
+impl<T: rerail_blocks::Pod + Copy> Scratch<T> for BlockVec<T> {
+    fn filled(n: usize, v: T) -> Self {
+        let mut b = BlockVec::with_capacity_in(None, n);
+        b.resize(n, v);
+        b
+    }
+}
+
 /// `v`, sorted pieces one after another (`bounds`: each piece's start, then the end), merged into one sorted
 /// sequence: adjacent pieces two at a time, a pass at a time, through one buffer of `v`'s length, `le(a, b)` saying
 /// `a` may come before `b` (ties keep the left piece's first). Each item moves about log(pieces) times; one piece
 /// moves nothing (decision 0187: rows known sorted are merged, not sorted again). From `PAR_ROWS` items, on the pool
 /// (`merge_pieces_par`).
-pub(super) fn merge_pieces<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+pub(super) fn merge_pieces<T: Copy + Send + Sync, V: Scratch<T>>(v: &mut V, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
     if v.len() >= PAR_ROWS && on_pool() {
         return merge_pieces_par(v, bounds, le);
     }
-    let mut buf: Vec<T> = Vec::new();
+    if bounds.len() <= 2 || v.is_empty() {
+        return;
+    }
+    let mut buf = V::filled(v.len(), v[0]);
     while bounds.len() > 2 {
-        buf.clear();
-        buf.reserve(v.len());
         let mut next = vec![0];
         let mut p = 0;
+        let mut o = 0;
         while p + 1 < bounds.len() {
             let (a, b) = (bounds[p], bounds[p + 1]);
             let c = if p + 2 < bounds.len() { bounds[p + 2] } else { b };
             let (mut i, mut j) = (a, b);
             while i < b && j < c {
-                if le(v[i], v[j]) { buf.push(v[i]); i += 1 } else { buf.push(v[j]); j += 1 }
+                if le(v[i], v[j]) { buf[o] = v[i]; i += 1 } else { buf[o] = v[j]; j += 1 }
+                o += 1;
             }
-            buf.extend_from_slice(&v[i..b]);
-            buf.extend_from_slice(&v[j..c]);
+            buf[o..o + b - i].copy_from_slice(&v[i..b]);
+            o += b - i;
+            buf[o..o + c - j].copy_from_slice(&v[j..c]);
+            o += c - j;
             next.push(c);
             p += 2;
         }
@@ -1047,10 +1073,13 @@ fn co_rank<T: Copy>(x: &[T], y: &[T], t: usize, le: &impl Fn(T, T) -> bool) -> u
 /// `merge_pieces` on the pool (decision 0294): each level's merges cut into parts by their outputs' places, each
 /// part's inputs found by where its first and last outputs come from (`co_rank`), so a level spreads over the
 /// threads whatever its pieces' sizes, its last one merge as well. The same order as one thread's.
-fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
+fn merge_pieces_par<T: Copy + Send + Sync, V: Scratch<T>>(v: &mut V, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
     let n = v.len();
+    if bounds.len() <= 2 || n == 0 {
+        return;
+    }
     let all = crate::threads::max() * PARTS_PER_THREAD;
-    let mut buf: Vec<T> = v.clone();
+    let mut buf = V::filled(n, v[0]);
     while bounds.len() > 2 {
         // (a, b, c, t0, t1): pieces `a..b` and `b..c` merged, its outputs `t0..t1` (from `a`), in output order.
         let mut parts: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
@@ -1087,7 +1116,7 @@ fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize
 
 /// `v.sort_unstable()`, on the pool from `PAR_ROWS` items (decision 0294): parts sorted at once, then merged
 /// (`merge_pieces`). Distinct keys (the packed sorts' hold their id) come out as one thread sorts them.
-fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
+fn sort_unstable_par<T: Ord + Copy + Send + Sync, V: Scratch<T>>(v: &mut V) {
     let n = v.len();
     let threads = crate::threads::max();
     if n < PAR_ROWS || !on_pool() {
@@ -1106,7 +1135,7 @@ fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
 
 /// `v` sorted, where the pieces `known` (position ranges, in order) are sorted already: the stretches between them
 /// sorted by `sort` (each alone), then every piece merged (`merge_pieces`). The positions taken as known.
-pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool + Sync) -> usize {
+pub(super) fn sort_pieces<V: Scratch<u32>>(v: &mut V, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool + Sync) -> usize {
     let n = v.len();
     let mut bounds = vec![0];
     let (mut at, mut taken) = (0, 0);
@@ -1188,7 +1217,7 @@ fn bits(span: u64) -> u32 {
 /// value's bits with the sign flipped, so the fields order as the signed values do; `nf` a row, beside ids of `wid`
 /// bits.
 struct Held {
-    f: Vec<u64>,
+    f: BlockVec<u64>,
     nf: usize,
     wid: u32,
 }
@@ -1197,7 +1226,7 @@ impl Held {
     fn of(ids: &[u32], tagged: bool, nv: usize, val: &impl Fn(u32, usize) -> i64) -> Held {
         let nf = usize::from(tagged) + nv;
         let flip = |v: i64| (v as u64) ^ (1 << 63);
-        let mut f: Vec<u64> = Vec::with_capacity(ids.len() * nf);
+        let mut f: BlockVec<u64> = BlockVec::with_capacity_in(None, ids.len() * nf);
         let mut top = 0u32;
         for &id in ids {
             top = top.max(id);
@@ -1236,14 +1265,45 @@ fn sort_one_value(ids: &mut [u32], held: Held) -> bool {
 /// the order has more columns, and the tags (when tagged) put in `out`; `false` past 128 bits.
 fn sort_fields(ids: &mut [u32], held: Held, tagged: bool, ncols: usize, cmp: &impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) -> bool {
     let Some(layout) = Layout::of(&held) else { return false };
-    let keys = sort_by_keys(ids, held.f, &layout, ncols > 2 || tagged);
-    if ncols > 2 {
-        order_ties(ids, &keys, layout.wid, cmp);
-    }
-    if tagged {
-        out.extend(keys.iter().map(|&k| layout.first(k) as u16));
+    match sort_by_keys(ids, held.f, &layout, ncols > 2 || tagged) {
+        Keys::Narrow(keys) => tie_and_tag(ids, &keys, &layout, tagged, ncols, cmp, out),
+        Keys::Wide(keys) => tie_and_tag(ids, &keys, &layout, tagged, ncols, cmp, out),
     }
     true
+}
+
+/// Sorted keys' ties ordered by `cmp` when the order has more columns than they hold, and their tags put in `out`.
+fn tie_and_tag<K: Key>(ids: &mut [u32], keys: &[K], layout: &Layout, tagged: bool, ncols: usize, cmp: &impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) {
+    if ncols > 2 {
+        order_ties(ids, keys, layout.wid, cmp);
+    }
+    if tagged {
+        out.extend(keys.iter().map(|&k| layout.first(k.wide()) as u16));
+    }
+}
+
+/// A packed key as a sort holds it: in a u64 when its fields fit one, else a u128's high and low words (which order
+/// as the u128 does), each in the run's blocks.
+trait Key: Copy + Ord + Send + Sync + rerail_blocks::Pod {
+    fn wide(self) -> u128;
+}
+
+impl Key for u64 {
+    fn wide(self) -> u128 {
+        u128::from(self)
+    }
+}
+
+impl Key for [u64; 2] {
+    fn wide(self) -> u128 {
+        u128::from(self[0]) << 64 | u128::from(self[1])
+    }
+}
+
+/// A sort's packed keys, kept for its ties and tags (`sort_fields`).
+enum Keys {
+    Narrow(BlockVec<u64>),
+    Wide(BlockVec<[u64; 2]>),
 }
 
 /// Each field's least and greatest value in `f`, rows of `nf`.
@@ -1320,17 +1380,17 @@ impl Layout {
 
 /// `ids` sorted by their keys (`layout`'s, of `f`'s rows in turn), each in a u64 when the fields fit one: the sorted
 /// keys, kept when `keep`.
-fn sort_by_keys(ids: &mut [u32], f: Vec<u64>, layout: &Layout, keep: bool) -> Vec<u128> {
+fn sort_by_keys(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout, keep: bool) -> Keys {
     if layout.total > 64 {
-        return sort_wide(ids, f, layout);
+        return Keys::Wide(sort_wide(ids, f, layout));
     }
     let narrow = sort_narrow(ids, f, layout);
-    if keep { narrow.into_iter().map(u128::from).collect() } else { Vec::new() }
+    Keys::Narrow(if keep { narrow } else { BlockVec::new() })
 }
 
 /// `sort_by_keys` with keys of at most 64 bits.
-fn sort_narrow(ids: &mut [u32], f: Vec<u64>, layout: &Layout) -> Vec<u64> {
-    let mut narrow: Vec<u64> = f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id) as u64).collect();
+fn sort_narrow(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout) -> BlockVec<u64> {
+    let mut narrow: BlockVec<u64> = BlockVec::from_iter_in(None, f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id) as u64));
     drop(f);
     sort_unstable_par(&mut narrow);
     let mask = layout.id_mask();
@@ -1341,24 +1401,27 @@ fn sort_narrow(ids: &mut [u32], f: Vec<u64>, layout: &Layout) -> Vec<u64> {
 }
 
 /// `sort_by_keys` with keys of more than 64 bits.
-fn sort_wide(ids: &mut [u32], f: Vec<u64>, layout: &Layout) -> Vec<u128> {
-    let mut keys: Vec<u128> = f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id)).collect();
+fn sort_wide(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout) -> BlockVec<[u64; 2]> {
+    let mut keys: BlockVec<[u64; 2]> = BlockVec::from_iter_in(None, f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| {
+        let k = layout.pack(row, id);
+        [(k >> 64) as u64, k as u64]
+    }));
     drop(f);
     sort_unstable_par(&mut keys);
     let mask = layout.id_mask();
-    for (slot, k) in ids.iter_mut().zip(&keys) {
-        *slot = (k & mask) as u32;
+    for (slot, k) in ids.iter_mut().zip(keys.iter()) {
+        *slot = (k.wide() & mask) as u32;
     }
     keys
 }
 
 /// The stretches of sorted `keys` equal in every held field (all but the id's low `wid` bits): their `ids` ordered by
 /// `cmp`.
-fn order_ties(ids: &mut [u32], keys: &[u128], wid: u32, cmp: &impl Fn(u32, u32) -> Ordering) {
+fn order_ties<K: Key>(ids: &mut [u32], keys: &[K], wid: u32, cmp: &impl Fn(u32, u32) -> Ordering) {
     let mut at = 0;
     while at < keys.len() {
         let mut end = at + 1;
-        while end < keys.len() && keys[end] >> wid == keys[at] >> wid {
+        while end < keys.len() && keys[end].wide() >> wid == keys[at].wide() >> wid {
             end += 1;
         }
         if end - at > 1 {
@@ -1370,22 +1433,22 @@ fn order_ties(ids: &mut [u32], keys: &[u128], wid: u32, cmp: &impl Fn(u32, u32) 
 
 /// `sort_keyed` by 24-byte tuples of the tag, the first two values and the id.
 fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) {
-    let mut keys: Vec<(u16, i64, i64, u32)> = ids
-        .iter()
-        .map(|&id| {
-            let v0 = if ncols > 0 { val(id, 0) } else { 0 };
-            (if tagged { tag(v0) } else { 0 }, v0, if ncols > 1 { val(id, 1) } else { 0 }, id)
-        })
-        .collect();
+    // The tag, the first two values' bits with the sign flipped (so they order as the signed values do) and the id,
+    // in the run's blocks.
+    let flip = |v: i64| (v as u64) ^ (1 << 63);
+    let mut keys: BlockVec<[u64; 4]> = BlockVec::from_iter_in(None, ids.iter().map(|&id| {
+        let v0 = if ncols > 0 { val(id, 0) } else { 0 };
+        [u64::from(if tagged { tag(v0) } else { 0 }), flip(v0), flip(if ncols > 1 { val(id, 1) } else { 0 }), u64::from(id)]
+    }));
     sort_unstable_par(&mut keys);
-    for (slot, key) in ids.iter_mut().zip(&keys) {
-        *slot = key.3;
+    for (slot, key) in ids.iter_mut().zip(keys.iter()) {
+        *slot = key[3] as u32;
     }
     if ncols > 2 {
         let mut at = 0;
         while at < keys.len() {
             let mut end = at + 1;
-            while end < keys.len() && keys[end].0 == keys[at].0 && keys[end].1 == keys[at].1 && keys[end].2 == keys[at].2 {
+            while end < keys.len() && keys[end][..3] == keys[at][..3] {
                 end += 1;
             }
             if end - at > 1 {
@@ -1395,7 +1458,7 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
         }
     }
     if tagged {
-        out.extend(keys.iter().map(|k| k.0));
+        out.extend(keys.iter().map(|k| k[0] as u16));
     }
 }
 
@@ -1450,7 +1513,7 @@ impl Index {
         if !self.printed {
             return Run::of(data, k, &self.cols, lo..hi);
         }
-        let by_row: Vec<u8> = (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))).collect();
+        let by_row: BlockVec<u8> = BlockVec::from_iter_in(None, (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))));
         let mut run = Run::of(data, k, &self.cols, lo..hi);
         run.prints = BlockVec::from_iter_in(data.home().as_ref(), run.ids.iter().map(|id| by_row[(id - lo) as usize]));
         run

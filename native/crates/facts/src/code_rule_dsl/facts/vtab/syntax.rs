@@ -462,18 +462,23 @@ impl Source for LongTexts {
     fn len(&self) -> usize {
         self.nodes.len()
     }
-    /// The nodes' estimate, made of no rows (`Source::estimated_len`'s default is `len`, which makes them).
+    /// Its rows, made of none (`Source::estimated_len`'s default is `len`, which makes them): counted on the tape, or
+    /// for a batch whose documents' counts were given (`Batch::lazy`), the counts' estimate, which projects none. The
+    /// relation's own estimate makes every document's rows where no count was given (`MadeRows::estimated_len`): the
+    /// planner's measure made the whole group that way (36 MB of node rows at the M3's 300-file peak, ab160).
     fn estimated_len(&self) -> usize {
-        self.nodes.estimated_len()
+        if self.batch.lazy() { self.nodes.estimated_len() } else { self.tape_len() }
     }
     /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
     /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
     /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        if let Some(known) = self.nodes.statistics() {
+        // The made rows' own, once made; before, counted on the tape (the nodes' sampled statistics make documents).
+        let made = self.nodes.as_any().and_then(|a| a.downcast_ref::<made::MadeRows>()).is_none_or(made::MadeRows::is_done);
+        if made && let Some(known) = self.nodes.statistics() {
             return Some(known);
         }
-        let n = self.tape_len() as i64;
+        let n = self.estimated_len() as i64;
         Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
@@ -513,7 +518,7 @@ pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<
         .iter()
         .enumerate()
         .filter(|(rel, name)| *rel >= rows.relations || !batch.projection.derived.contains(name.as_str()))
-        .map(|(rel, name)| (name.as_str(), rows.statics.get(rel).copied(), as_source(name, Arc::new(made::MadeRows { batch: Arc::clone(batch), rel }), batch)))
+        .map(|(rel, name)| (name.as_str(), rows.statics.get(rel).copied(), as_source(name, Arc::new(made::MadeRows { batch: Arc::clone(batch), rel, sampled: OnceLock::new() }), batch)))
         .collect()
 }
 
@@ -4919,6 +4924,30 @@ pub fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
         return known;
     }
     measured(source)
+}
+
+/// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
+/// `rows`. A key column stays a key; a column with many values (over one row in 16 distinct: node ids, strings) gains
+/// values in proportion, one with few (kinds, field names) keeps them and its postings grow. `sq` keeps the postings'
+/// sizes against the values, and `sqd` grows with the documents, whose postings keep their sizes.
+pub fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, rows: usize) -> Vec<(String, i64, i64, i64, i64)> {
+    let r = rows as f64 / first as f64;
+    let n = rows as i64;
+    measured
+        .iter()
+        .map(|(name, m_rows, ndv, sq, sqd)| {
+            if n == 0 {
+                return (name.clone(), 0, 0, 0, 0);
+            }
+            if ndv == m_rows {
+                return (name.clone(), n, n, n, n);
+            }
+            let ndv_scaled = if ndv * 16 > *m_rows { (*ndv as f64 * r).round() as i64 } else { *ndv }.clamp(1, n);
+            let sq_scaled = (*sq as f64 * r * r * (*ndv as f64 / ndv_scaled as f64)).round() as i64;
+            let sqd_scaled = (*sqd as f64 * r).round() as i64;
+            (name.clone(), n, ndv_scaled, sq_scaled.max(n), sqd_scaled.max(n))
+        })
+        .collect()
 }
 
 /// `statistics`, measured from the rows (a source that keeps its own calls this once).

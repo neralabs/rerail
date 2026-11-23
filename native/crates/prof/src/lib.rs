@@ -493,7 +493,6 @@ pub mod heap {
     pub static DROPPED: AtomicU64 = AtomicU64::new(0);
 
     thread_local! {
-        static SPAN: Cell<u32> = const { Cell::new(0) };
         static LEFT: Cell<i64> = const { Cell::new(INTERVAL as i64) };
         /// This thread's number for samples taken with no span open (`THREAD`), 0 until its first.
         static THREAD_IX: Cell<u32> = const { Cell::new(0) };
@@ -582,14 +581,15 @@ pub mod heap {
         }
     }
 
-    /// The span this thread's allocations are charged to (`intern`'s id; 0 none).
+    /// The span this thread's allocations are charged to (`intern`'s id; 0 none): `rerail_context`'s `HEAP_SPAN`,
+    /// carried with a job to the thread that runs it.
     pub fn set_span(id: u32) {
-        let _ = SPAN.try_with(|s| s.set(id));
+        rerail_context::set_heap_span(id);
     }
 
     /// The span this thread's allocations are charged to now (0 none): a refused device lease's (Q203).
     pub fn span() -> u32 {
-        SPAN.try_with(Cell::get).unwrap_or(0)
+        rerail_context::heap_span()
     }
 
     fn slot(ptr: usize) -> usize {
@@ -633,7 +633,7 @@ pub mod heap {
             }
         }
         // With no span open, charged to the thread: "(no span open)" alone named none of 494 MB at a 300-file peak.
-        let span = match SPAN.try_with(Cell::get).unwrap_or(0) {
+        let span = match rerail_context::heap_span() {
             0 => THREAD | thread_ix(),
             s => s,
         } | by;

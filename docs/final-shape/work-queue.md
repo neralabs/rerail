@@ -10627,3 +10627,48 @@ copied lines) but left it `#[cfg(any(test, feature = "test-hooks"))]`, which onl
 Relax: the engine checks clean; the text guards, the two rr tests and rerail-lang's tape tests pass. rerail-tests-tape
 failed as it did before this merge (checked at f5bf47bb18), from two Relax gaps, fixed in d8ffdccc9d: std's
 `ExactSizeIterator::len` and a fatal fault's program handler (scripts/dev/relax/README.md, changes 13 and 14).
+
+### Q504. Relax: std ExactSizeIterator::len and a fatal fault program handler, as rustc (the tape tests roll-up 77 found red)
+
+Done in d8ffdccc9d. rerail-tests-tape was red on the hub under Relax: 10 tape tests (`NoContent` for every pattern
+built over tree-sitter's tree) and the watchdog's fault test. Two gaps in Relax, fixed in the fork (rerail branch
+0e3de688 and ce53d4c9; scripts/dev/relax/README.md, changes 13 and 14):
+- **std's `ExactSizeIterator::len`**: Relax's adapters took `len` from `size_hint`, where rustc's core forwards it
+  (`Map`, `Enumerate`, `Rev`, `Cloned`, `Copied`, `Fuse`, `Inspect`, `&mut I`). ast-grep's `NodeWalker` implements
+  `len` alone, so `children().len()` read 0. The default now asserts `size_hint` is exact, as rustc's does, and the
+  vendored walker has an exact `size_hint` (native/vendor/ast-grep-core-0.51.0/PATCHES.md).
+- **A fatal fault's program handler**: a contained fault the run ends by went straight to the default action; the
+  program's own `SIGSEGV` handler (the watchdog's, naming the tests running) now runs first, as under rustc.
+Relax: rerail-tests-tape 111 passed.
+
+### Q505. Roll-up 78 (benchmarks-on-integration 85db055ca0 onto Pulling-it-all-together): what the merge chose
+
+benchmarks-on-integration (85db055ca0): the heap's spans charged across threads (`rerail_context::HEAP_SPAN`), a
+batch's sources and run-life arrays accounted, the planner's statistics with no row on the heap (`places`'
+statistics from their arrays, `value_runs` in the run's blocks, sketches only past `few`), and B023's device-index
+race (a probe binds its builder's buffer and waits for a taken build). Conflicts:
+- **Moved files** (`places.rs`, `run_state.rs`, `metal_join.rs`): the feeder's edits applied at their crates' paths.
+- **`run_state`'s ledger**: prof's `SPAN` out, `rerail_context`'s `HEAP_SPAN` in, as Carried.
+- **`granules::is_extra`**: both sides added it; `EXTRA_FIRST + EXTRA_SLOTS` is `SPAN_FIRST` by definition, so ours
+  stands.
+- **`places`**: both sides' methods (ours' lookups, the feeder's `statistics`).
+- **`exec.rs`**: the job's heap span around the submission and ours' launch-budget abort, both.
+- **`corpus.rs`**: the feeder's "the source's own, whole" arm is already ours' (`base_counted` asks
+  `Source::statistics` before counting); `scaled_statistics` is `syntax`'s (the feeder moved it); the corpus
+  listing stays where the crate split put it (rr_root's `corpus/base.rs`).
+- **`metal_join.rs`**: ours' gated and live builds with the feeder's race fix. A build keeps its builder's buffer; a
+  probe of this batch's build binds it, one committed is waited for, as another batch's (`lent`); a live relation's
+  index is never found or taken and is built again each round; a build is skipped at finish when gated and stopped,
+  or live, after the lent bookkeeping.
+- **`rows.rs`'s heap report** read `syntax::made::sources_held`, above facts_base since the crate split: a hook,
+  installed by boot (`install_sources_held`), as the crate's other upward reads are.
+
+No architectural clash. Relax: the engine and rerail-device-metal's tests check clean; run_state's ledger tests, the
+feeder's syntax tests (6) and the two cross-views tests it changed pass. The Metal tests (B023's among them) are
+farm-only.
+
+Found while testing, older than this merge: since the crate split, rerail-logic's own test binary runs the rule
+library without the languages, embedders and parsers boot installs (`install_languages`), so each `.rr` document's
+build there fails, caught (144 per fresh build id). Roll-up 77 moved where it fails (the Rr base 0612's line table
+asks for), not whether. How a crate below boot gets the engine's installs for its tests is the crate split's to
+decide; nothing here changes it.

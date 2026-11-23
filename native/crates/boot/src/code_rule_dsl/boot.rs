@@ -229,6 +229,8 @@ pub fn install_languages(tests: bool) {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
+    // The batches' relations held, for the heap report's spans (`rows`, below the batches' crate).
+    facts::rows::install_sources_held(facts::vtab::syntax::made::sources_held);
     // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
     #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
     facts::rows::install_heap_net(heap_net);

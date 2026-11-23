@@ -2030,6 +2030,12 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner)
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    // Its relations' rows had before the wave is borrowed: the encode reads their lengths inside it (`resident`), and a
+    // relation the planner measured on a sample (decision 0494's `MadeRows::sampled`) makes its documents then, on the
+    // pool, whose jobs enter wave scopes of their own on this thread (`lanes::wave::enter`: the borrow held, a panic).
+    // Before its room is reserved, too: made holding it, the batch's blocks kept other strata short (ab190:
+    // `ruff_safe_operand` refused, 193 MB short, 1.1 s on the CPU).
+    made_before_encoding(rules);
     // Its tables' room, reserved whole before anything is encoded: a wait for it holds no command buffer (0386).
     let _room = admitted(rules, &mut rep)?;
     use crate::code_rule_dsl::logic::lanes::wave::with_open;
@@ -2158,6 +2164,28 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
 }
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
+/// Each relation the rules' stages read, made as `resident` reads it (`len`, and a view's source's), outside the wave.
+fn made_before_encoding(rules: &[(&Plan, &JoinRule, usize)]) {
+    let made = |rel: &Arc<InRel>| {
+        if let Some(v) = &rel.view {
+            v.src.len();
+        }
+        rel.len();
+    };
+    for (plan, _, _) in rules {
+        for s in &plan.stages {
+            match &s.kind {
+                Kind::Atom { rel, .. } => made(rel),
+                Kind::Witness { rel, rest, .. } => {
+                    made(rel);
+                    rest.iter().for_each(|(r, _, _)| made(r));
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
     // A lease past the Metal budget is refused here (decision 0126): the stratum then runs on the CPU, named.
     rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names))
