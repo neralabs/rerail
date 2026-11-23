@@ -300,3 +300,13 @@ known to end, so the optimizer kept every scan. Now the call passes `self.n` (no
 not read it. On spark2 tier 2 went from 42.9 ms to 41.0 ms. Kotlin's file changes the same way.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## A mark asks its token's word before its cache (done)
+
+At each token taken, `open_mark` tests the marks no rule takes. Each test went through the mark's once-a-token cache
+(`held`: a bit set in `known`, the answer stored in `holds`) and then compared the token's word. Lean tests the word.
+Now a mark whose every definition's run starts with words (`.`, `@`, `(`) asks first whether the token is one of them
+(`matches!(self.word(), w::DOT_13) && …`). Only those tokens reach the cache, and the answer is the same. On spark2
+tier 2 went from 41.0 ms to 37.5 ms. Kotlin's file gets the same guards.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

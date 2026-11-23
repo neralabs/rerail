@@ -1012,6 +1012,20 @@ impl<'a> G<'a> {
         self.reads.set(self.reads.get() | 1 << b);
     }
 
+    /// The words a run's first token must be, where its first element tests only words (`.` or `@`): else none.
+    fn first_words(&self, seq: &[Vec<TokenElem>]) -> Option<Vec<String>> {
+        let mut ws = Vec::new();
+        for x in seq.first()? {
+            match x {
+                TokenElem::Word(w) => ws.push(format!("w::{}", self.word_const(self.word_of(&String::from_utf8_lossy(w))?))),
+                // A further test of the token only narrows the words.
+                TokenElem::Without(_) | TokenElem::With(_) | TokenElem::Starting(_) => {}
+                _ => return None,
+            }
+        }
+        (!ws.is_empty()).then_some(ws)
+    }
+
     /// The token before the token a run starts at, as its first function's `prev`: found (a scan back over the extras)
     /// only where the run's first element reads it, a `(C)*` with an ending; else none (`self.n`), as no element reads it.
     fn run_prev(seq: &[Vec<TokenElem>]) -> &'static str {
@@ -1157,8 +1171,14 @@ impl<'a> G<'a> {
             let n = ident(&m.name);
             let defs: Vec<(usize, &Mark)> = self.x.marks.iter().enumerate().filter(|(_, x)| x.name == m.name).collect();
             let mut holds = Vec::new();
+            // The words the token must be for any definition to hold: a guard before the mark's cache (`held`).
+            let mut firsts: Option<Vec<String>> = Some(Vec::new());
             for (d, (_, def)) in defs.iter().enumerate() {
                 let mut c = Vec::new();
+                match (def.tokens.and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
+                    (Some(ws), Some(all)) => all.extend(ws),
+                    _ => firsts = None,
+                }
                 if let Some((before, seq)) = def.tokens {
                     let pat = format!("pat_{n}_{d}");
                     self.run(seq, &pat, &mut fns)?;
@@ -1199,7 +1219,15 @@ impl<'a> G<'a> {
                 }
                 holds.push(format!("({})", c.join(" && ")));
             }
-            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    fn m_{n}(&mut self) -> bool {{\n        self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
+            let guard = match firsts {
+                Some(mut ws) if !ws.is_empty() => {
+                    ws.sort();
+                    ws.dedup();
+                    format!("matches!(self.word(), {}) && ", ws.join(" | "))
+                }
+                _ => String::new(),
+            };
+            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
             // Taken: `refuses taken` asked; the extras before its bit settled; `drops` asked.
             let qs = |f: fn(&Mark<'a>) -> &'a [::bitlex::syntax::GapPattern]| -> Vec<::bitlex::syntax::GapPattern> { defs.iter().flat_map(|(_, d)| f(d).iter().cloned()).collect() };
             let mut take = String::new();

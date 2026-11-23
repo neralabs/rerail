@@ -6287,7 +6287,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `fix_on` holds at the token, not taken there; once a token (`held`).
     fn m_fix_on(&mut self) -> bool {
-        self.taken >> 2 & 1 == 0 && self.held(2, Self::h_fix_on)
+        matches!(self.word(), w::FIX_40) && self.taken >> 2 & 1 == 0 && self.held(2, Self::h_fix_on)
     }
 
     fn h_fix_on(&self) -> bool {
@@ -6311,7 +6311,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `suppress_on` holds at the token, not taken there; once a token (`held`).
     fn m_suppress_on(&mut self) -> bool {
-        self.taken >> 3 & 1 == 0 && self.held(3, Self::h_suppress_on)
+        matches!(self.word(), w::SUPPRESS_42) && self.taken >> 3 & 1 == 0 && self.held(3, Self::h_suppress_on)
     }
 
     fn h_suppress_on(&self) -> bool {
@@ -6335,7 +6335,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `options_on` holds at the token, not taken there; once a token (`held`).
     fn m_options_on(&mut self) -> bool {
-        self.taken >> 4 & 1 == 0 && self.held(4, Self::h_options_on)
+        matches!(self.word(), w::OPTIONS_44) && self.taken >> 4 & 1 == 0 && self.held(4, Self::h_options_on)
     }
 
     fn h_options_on(&self) -> bool {
@@ -6359,7 +6359,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `over_on` holds at the token, not taken there; once a token (`held`).
     fn m_over_on(&mut self) -> bool {
-        self.taken >> 5 & 1 == 0 && self.held(5, Self::h_over_on)
+        matches!(self.word(), w::OVER_43) && self.taken >> 5 & 1 == 0 && self.held(5, Self::h_over_on)
     }
 
     fn h_over_on(&self) -> bool {
@@ -6383,7 +6383,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `policy_on` holds at the token, not taken there; once a token (`held`).
     fn m_policy_on(&mut self) -> bool {
-        self.taken >> 6 & 1 == 0 && self.held(6, Self::h_policy_on)
+        matches!(self.word(), w::POLICY_53) && self.taken >> 6 & 1 == 0 && self.held(6, Self::h_policy_on)
     }
 
     fn h_policy_on(&self) -> bool {
@@ -6407,7 +6407,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `one_name` holds at the token, not taken there; once a token (`held`).
     fn m_one_name(&mut self) -> bool {
-        self.taken >> 7 & 1 == 0 && self.held(7, Self::h_one_name)
+        matches!(self.word(), w::LBRACE_20) && self.taken >> 7 & 1 == 0 && self.held(7, Self::h_one_name)
     }
 
     fn h_one_name(&self) -> bool {
@@ -6431,7 +6431,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `empty_parens` holds at the token, not taken there; once a token (`held`).
     fn m_empty_parens(&mut self) -> bool {
-        self.taken >> 8 & 1 == 0 && self.held(8, Self::h_empty_parens)
+        matches!(self.word(), w::LPAREN_10) && self.taken >> 8 & 1 == 0 && self.held(8, Self::h_empty_parens)
     }
 
     fn h_empty_parens(&self) -> bool {
@@ -6455,7 +6455,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `no_value` holds at the token, not taken there; once a token (`held`).
     fn m_no_value(&mut self) -> bool {
-        self.taken >> 9 & 1 == 0 && self.held(9, Self::h_no_value)
+        matches!(self.word(), w::LPAREN_10) && self.taken >> 9 & 1 == 0 && self.held(9, Self::h_no_value)
     }
 
     fn h_no_value(&self) -> bool {
@@ -6503,7 +6503,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `end_on` holds at the token, not taken there; once a token (`held`).
     fn m_end_on(&mut self) -> bool {
-        self.taken >> 11 & 1 == 0 && self.held(11, Self::h_end_on)
+        matches!(self.word(), w::DOT_13) && self.taken >> 11 & 1 == 0 && self.held(11, Self::h_end_on)
     }
 
     fn h_end_on(&self) -> bool {
@@ -6551,7 +6551,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `fn_uncalled` holds at the token, not taken there; once a token (`held`).
     fn m_fn_uncalled(&mut self) -> bool {
-        self.taken >> 13 & 1 == 0 && self.held(13, Self::h_fn_uncalled)
+        matches!(self.word(), w::AT_23) && self.taken >> 13 & 1 == 0 && self.held(13, Self::h_fn_uncalled)
     }
 
     fn h_fn_uncalled(&self) -> bool {
@@ -6575,7 +6575,7 @@ impl<L: Layout> P<'_, L> {
 
     /// Mark `io_bare` holds at the token, not taken there; once a token (`held`).
     fn m_io_bare(&mut self) -> bool {
-        self.taken >> 14 & 1 == 0 && self.held(14, Self::h_io_bare)
+        matches!(self.word(), w::DOT_13) && self.taken >> 14 & 1 == 0 && self.held(14, Self::h_io_bare)
     }
 
     fn h_io_bare(&self) -> bool {
