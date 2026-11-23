@@ -40,7 +40,7 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
-  startingDaemonNotice,
+  startingDaemonNoticeTo,
   STOP_ANSWERS,
   stopDaemon,
   type DaemonLookup,
@@ -1031,8 +1031,7 @@ async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: numbe
  * process launched, still in its start.
  */
 async function startActiveDaemon(home: string, packageRoot: string, port: number | undefined): Promise<DaemonState> {
-  const onWaiting = (pid: number): void => void process.stderr.write(`${startingDaemonNotice(pid, home)}\n`);
-  return (await startDaemon({ home, packageRoot, onWaiting }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;
+  return (await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */

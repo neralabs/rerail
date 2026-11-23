@@ -1069,15 +1069,18 @@ async function foundStarting(home: string, machine: DaemonMachine): Promise<Comi
 async function startLookup(home: string, machine: DaemonMachine): Promise<DaemonLookup | ComingUp> {
   const before = await foundStarting(home, machine);
   if (before !== undefined) return before;
-  const unrecorded = (at: string, on: DaemonMachine): boolean => homeDaemonRuns(at, on) && daemonComingUp(at, on) === undefined;
-  const lookup = await lookupHomeDaemon(home, machine, PROBE_TIMEOUT_MS, holderNotRecorded, unrecorded);
+  const holderWaits = (at: string, on: DaemonMachine): boolean => homeDaemonRuns(at, on) && daemonComingUp(at, on) === undefined;
+  const lookup = await lookupHomeDaemon(home, machine, PROBE_TIMEOUT_MS, holderNotRecorded, holderWaits);
   if (lookup.status === "running") return lookup;
   return (await foundStarting(home, machine)) ?? lookup;
 }
 
-/** What a start says while it waits for the daemon `pid` of `home`, still in its start. */
-export function startingDaemonNotice(pid: number, home: string): string {
-  return `Rerail daemon (pid ${pid}) is still starting; this start waits for it to answer. See ${join(home, DAEMON_LOG_FILE)}`;
+/**
+ * The `onWaiting` of a start in `home` that a person runs: it says on stderr that the start waits for the daemon `pid`,
+ * still in its start. `rerail daemon start` and set-up both pass it, so they say the same.
+ */
+export function startingDaemonNoticeTo(home: string): (pid: number) => void {
+  return pid => void process.stderr.write(`Rerail daemon (pid ${pid}) is still starting; this start waits for it to answer. See ${join(home, DAEMON_LOG_FILE)}\n`);
 }
 
 /**
