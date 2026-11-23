@@ -39,6 +39,9 @@ pub(super) struct Bytes<'a> {
     /// The window functions that read one window's escapes (`escaped_step` of a mask), by name, and that mask: each has
     /// a twin (`e_NAME`) given the window's escaped bytes, so tests read in one window loop find them once (`fuse_tests`).
     pub(super) escapes: HashMap<String, String>,
+    /// The bytes each such mask holds, where it is a class (`escapes`' masks): a row whose first byte none of them may be
+    /// starts no escape, so its region's end and tests read in one loop from its opener (`fuse_read`).
+    pub(super) escape_bytes: HashMap<String, [bool; 256]>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -62,7 +65,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new() }
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -231,6 +234,14 @@ impl<'a> Bytes<'a> {
                     self.code,
                     "/// `{f}` given its window's escaped bytes (`escaped`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn e_{m}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {{\n    {twin}\n}}\n\n"
                 );
+                // The class's bytes, where the escapes are of one class.
+                if let Some(c) = of.strip_prefix("unsafe { cls_").and_then(|c| c.strip_suffix("::<S>(src, n, p) }"))
+                    && let Some((name, rs)) = self.classes.iter().find(|(name, _)| ident(name) == c)
+                {
+                    let _ = name;
+                    let held: [bool; 256] = std::array::from_fn(|b| rs.iter().any(|&(lo, hi)| lo as usize <= b && b <= hi as usize));
+                    self.escape_bytes.insert(of.clone(), held);
+                }
                 self.escapes.insert(f.clone(), of);
             }
         }
@@ -585,6 +596,69 @@ fn ident(n: &str) -> String {
 /// `code` with each run of a token's tests over the same bytes (`if wcount_in(n, s, l, w_A) >= 1 { … }`, one after
 /// another, comments between) read in one window loop (`wany_in`), as the lean lexer reads a string once: the tests'
 /// classes are then loaded once a window, not once a test.
+/// `code` (the rows' match) with each row's region end and its tests over the region (`wfirst_bit` from the opener's
+/// next byte, then `wany_in` of its tests from the opener) read in one window loop from the opener (`wfirst_any`), as the
+/// lean lexer reads a string once (`string_end`). Where the row's first bytes (`firsts`, by row) start no escape of the
+/// end's mask, so the escapes from the opener are those from the byte after it.
+pub(super) fn fuse_read(code: &str, firsts: &[[bool; 256]], escapes: &HashMap<String, String>, escape_bytes: &HashMap<String, [bool; 256]>) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::new();
+    let mut row: Option<usize> = None;
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        if let Some(k) = l.strip_prefix("                ").and_then(|t| t.strip_suffix(" => {")).and_then(|t| t.parse::<usize>().ok()) {
+            row = Some(k);
+        }
+        let fused = (|| -> Option<(String, usize)> {
+            let first = firsts.get(row?)?;
+            let ind = l.len() - l.trim_start().len();
+            let pad = " ".repeat(ind);
+            let f = l.trim_start().strip_prefix("let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { ")?.strip_suffix("::<S>(src, n, p, esc) }) {")?;
+            (lines.get(i + 1)? == &format!("{pad}    Some(c) => c + 0,")).then_some(())?;
+            // The `None` arm, to the match's end.
+            let close = (i + 2..lines.len()).find(|&j| lines[j] == format!("{pad}}};"))?;
+            let none: Vec<&str> = lines[i + 2..close].to_vec();
+            (lines.get(close + 1)? == &format!("{pad}let l = l.max(s);")).then_some(())?;
+            let mut j = close + 2;
+            while lines.get(j)?.trim_start().starts_with("//") {
+                j += 1;
+            }
+            let rest = lines[j].trim_start().strip_prefix("let hit = wany_in(n, s, l, |p: isize, esc: &mut [u64; ")?;
+            let (_, rest) = rest.split_once("]| unsafe { let escaped = escaped_step(")?;
+            let (b, calls) = rest.split_once(", &mut esc[0]); [")?;
+            let calls = calls.strip_suffix("] });")?;
+            (escapes.get(f)? == b).then_some(())?;
+            let bytes = escape_bytes.get(b)?;
+            (!(0..256).any(|c| first[c] && bytes[c])).then_some(())?;
+            let e = f.strip_prefix("w_")?;
+            let mut t = String::new();
+            let _ = writeln!(t, "{pad}// The region's end and its tests in one window loop from its opener, the escapes found once a window, as the");
+            let _ = writeln!(t, "{pad}// lean lexer reads a string once: no first byte of the row starts an escape.");
+            let _ = writeln!(t, "{pad}let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe {{ let escaped = escaped_step({b}, esc); (e_{e}::<S>(src, n, p, escaped), [{calls}]) }}) {{");
+            let _ = writeln!(t, "{pad}    Some((c, hit)) => (c, hit),");
+            for x in &none {
+                let _ = writeln!(t, "{x}");
+            }
+            let _ = writeln!(t, "{pad}}};");
+            let _ = writeln!(t, "{pad}let l = l.max(s);");
+            Some((t, j + 1))
+        })();
+        match fused {
+            Some((t, next)) => {
+                out.push_str(&t);
+                i = next;
+            }
+            None => {
+                out.push_str(l);
+                out.push('\n');
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> String {
     let lines: Vec<&str> = code.lines().collect();
     // A test's head: its indent, its span and its window function.
@@ -762,6 +836,35 @@ fn escaped_step(bs: u64, carry: &mut u64) -> u64 {
     let escaped = escape_and_terminal ^ (bs | *carry);
     *carry = (escape_and_terminal & bs) >> 63;
     escaped
+}
+
+/// A region's end and its tests in one window loop from its opener `a` (`fuse_read`): the first byte after `a` the end
+/// holds, and whether each test holds in `a..=` that byte. `w` gives a window's end and tests, its escapes found once.
+#[inline(always)]
+fn wfirst_any<const K: usize>(n: usize, a: usize, mut w: impl FnMut(isize, &mut u64) -> (u64, [u64; K])) -> Option<(usize, [bool; K])> {
+    let mut esc = 0u64;
+    let mut any = [0u64; K];
+    let mut p = a as isize;
+    // The opener's byte is no end.
+    let mut opener = 1u64;
+    while p < n as isize {
+        let (end, t) = w(p, &mut esc);
+        let end = end & !opener;
+        opener = 0;
+        if end != 0 {
+            let k = end.trailing_zeros();
+            let keep = u64::MAX >> (63 - k);
+            for i in 0..K {
+                any[i] |= t[i] & keep;
+            }
+            return Some((p as usize + k as usize, any.map(|x| x != 0)));
+        }
+        for i in 0..K {
+            any[i] |= t[i];
+        }
+        p += 64;
+    }
+    None
 }
 
 /// The first byte at or after `from` a mask holds, its windows `w` from `from` on.

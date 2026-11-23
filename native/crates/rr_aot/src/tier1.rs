@@ -771,16 +771,16 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             match row {
                 0 => {
                     // `string`: read str
-                    let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_q::<S>(src, n, p, esc) }) {
-                        Some(c) => c + 0,
+                    // The region's end and its tests in one window loop from its opener, the escapes found once a window, as the
+                    // lean lexer reads a string once: no first byte of the row starts an escape.
+                    let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe { let escaped = escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc); (e_m_q::<S>(src, n, p, escaped), [e_m_str_bad::<S>(src, n, p, escaped), e_t12::<S>(src, n, p, escaped), e_t13::<S>(src, n, p, escaped)]) }) {
+                        Some((c, hit)) => (c, hit),
                         None => {
                             refused = true;
                             break 'tokens;
                         }
                     };
                     let l = l.max(s);
-                    // The token's tests of its bytes, in one window loop: their classes loaded once a window.
-                    let hit = wany_in(n, s, l, |p: isize, esc: &mut [u64; 3]| unsafe { let escaped = escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, &mut esc[0]); [e_m_str_bad::<S>(src, n, p, escaped), e_t12::<S>(src, n, p, escaped), e_t13::<S>(src, n, p, escaped)] });
                     if hit[0] {
                         hits |= 1 << 28;
                     }
@@ -1045,6 +1045,35 @@ fn escaped_step(bs: u64, carry: &mut u64) -> u64 {
     let escaped = escape_and_terminal ^ (bs | *carry);
     *carry = (escape_and_terminal & bs) >> 63;
     escaped
+}
+
+/// A region's end and its tests in one window loop from its opener `a` (`fuse_read`): the first byte after `a` the end
+/// holds, and whether each test holds in `a..=` that byte. `w` gives a window's end and tests, its escapes found once.
+#[inline(always)]
+fn wfirst_any<const K: usize>(n: usize, a: usize, mut w: impl FnMut(isize, &mut u64) -> (u64, [u64; K])) -> Option<(usize, [bool; K])> {
+    let mut esc = 0u64;
+    let mut any = [0u64; K];
+    let mut p = a as isize;
+    // The opener's byte is no end.
+    let mut opener = 1u64;
+    while p < n as isize {
+        let (end, t) = w(p, &mut esc);
+        let end = end & !opener;
+        opener = 0;
+        if end != 0 {
+            let k = end.trailing_zeros();
+            let keep = u64::MAX >> (63 - k);
+            for i in 0..K {
+                any[i] |= t[i] & keep;
+            }
+            return Some((p as usize + k as usize, any.map(|x| x != 0)));
+        }
+        for i in 0..K {
+            any[i] |= t[i];
+        }
+        p += 64;
+    }
+    None
 }
 
 /// The first byte at or after `from` a mask holds, its windows `w` from `from` on.

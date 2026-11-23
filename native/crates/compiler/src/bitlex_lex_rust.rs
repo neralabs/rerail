@@ -5990,6 +5990,7 @@ impl Gen<'_> {
             let (live, _, codes) = self.stage1_codes();
             let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
+            let firsts: Vec<[bool; 256]> = row_arms.iter().map(|a| a.first).collect();
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
                 // An operator's last byte by its bit in the block's pairs mask (`k_pairs_K`).
@@ -6006,6 +6007,8 @@ impl Gen<'_> {
                     }
                     pieces.push(t);
                 }
+                // A row's region end and its tests in one window loop, where its first bytes start no escape.
+                pieces[1] = bytes::fuse_read(&pieces[1], &firsts, &by.escapes, &by.escape_bytes);
                 let starts = by.starts(&skip)?;
                 // The pairs masks the loop reads: of the block's classes, as its other masks (`Bytes::pairs`).
                 by.pairs = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).cloned().collect();

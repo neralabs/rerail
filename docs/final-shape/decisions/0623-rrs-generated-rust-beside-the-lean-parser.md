@@ -647,3 +647,24 @@ passes each escape once.
 
 Fewer instructions in tier 1 alone (m3, in turns); on spark1 at load 9.5 tier 1 21.2–21.3 ms against lean's lexer
 14.5–14.6 ms in the same rounds (the ratio as before, the host busier). All tests pass.
+
+## A string's end and its tests in one window loop (done)
+
+A string was read twice: its end found from the byte after its quote (`wfirst_bit`), then its tests over its bytes
+from the quote (`wany_in`). Now a row whose first bytes start no escape of its end's mask (`Bytes::escape_bytes`: the
+escapes are of one class, and none of the row's first bytes is in it) reads both in one window loop from its opener
+(`wfirst_any`, made by `fuse_read`): the escapes found once a window, the opener's byte no end, the tests kept to the
+end's byte. The escapes from the opener are then those from the byte after it, so the end is the same byte. As the lean
+lexer's `string_end`, which finds a string's end and its `\u` in one pass.
+
+Side by side on spark1 (load 3.4), three rounds in turns: tier 1 20.6 ms before, 20.0 ms after. In the full run, tier 1
+19.4–20.0 ms, lean's lexer 13.6 ms; tier 2 26.8–27.8 ms, lean's parse 25.4–25.7 ms. All tests pass.
+
+### Where tier 1's work is now (counted, m3)
+
+Tier 1 alone (`RR_ONLY=lex`) with the work the grammar asks beyond lean's lexer taken out (for the count only): its
+words, the token marks tier 2 reads, a string's tests. Without all three, tier 1 retires as many instructions as lean's
+lexer, which still finds its words. So the loop's core (the blocks, the starts, the rows, the runs, the record) is at
+lean's count, and the rest of the gap is that work: the marks most (each grammar token's `tested` bits, the number's
+and the operator's tests), then the words (the hash of a word run, as lean's), then a string's tests (lean's tests only
+a `\u`).
