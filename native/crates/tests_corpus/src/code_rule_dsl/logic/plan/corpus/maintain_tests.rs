@@ -605,3 +605,55 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
     s.run();
     views(&s, "session/session.sqlite", "a session's edit");
 }
+
+/// Decision 0094 §8, the incremental layout-invariance gate: a move costs about the moved definitions. t22's move,
+/// in small: a definition many files call goes to a module of its own (`_moved_0.py`), its old module re-exporting it
+/// where it was, so no importer changes. Answers are a fresh run's (R10). Its work is set against an edit of the same
+/// definition in place, a statement added to its body: the move touches two files where that edit touches one, so
+/// no stratum may be derived again that the edit kept, and it maintains at most a few times the edit's strata.
+///
+/// It fails today, for two causes, as on corpus0's `conform` package (95 files, 8 definitions moved; t22's scripts in
+/// `docs/rule-syntax/site/bench/layout-invariance`), where the move derived 62 strata again and its cross part took
+/// 1.8 times a cold run's:
+/// - The move changes the import graph, so the reach indexes over it (`rr_cx_reach`, `rr_cx_sees`,
+///   `rr_in_annotation_0_anc`) are made again. Made in place (decision 0119), they keep no rows of the last run to set
+///   the new ones against (`m.kept` is none), so none has a delta (`no_delta`), and every reader derives again,
+///   `changed without a version`: here 2 and 14 strata, on corpus0 3 and 15.
+/// - The moved files' deltas are wider than the moved definitions, so strata are past θ (0090 §4) that the edit in
+///   place keeps under it: here 14 against the edit's 1, on corpus0 44 (1.7 M rows of change queued).
+///
+/// Met by a reach index's delta when it is made in place, and deltas by definition (0090 §2 and step 6, 0092):
+/// edit-cost's work (0094 §8).
+#[test]
+#[ignore = "0094 §8: a reach index made in place has no delta, and a move's deltas are wider than its definitions (edit-cost)"]
+fn a_moved_definition_costs_about_itself() {
+    let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_cx.rerail")).unwrap();
+    let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";
+    let mut files: Vec<(String, String)> = vec![("pkg/__init__.py".into(), String::new()), ("pkg/helpers.py".into(), helpers.into())];
+    // Callers of `parse`, and modules of their own that call one another, so the move is a small part of the corpus.
+    for i in 0..12 {
+        files.push((format!("pkg/use{i}.py"), format!("from pkg.helpers import parse, Reader\n\n\ndef run{i}(s):\n    r = Reader()\n    return parse(r.read(s))\n")));
+    }
+    for i in 0..12 {
+        files.push((format!("pkg/own{i}.py"), format!("from pkg.own{} import step{}\n\n\nclass Box{i}:\n    def get(self):\n        return step{}(1)\n\n\ndef step{i}(x):\n    return Box{i}().get() if x else x\n", (i + 1) % 12, (i + 1) % 12, (i + 1) % 12)));
+    }
+    let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    let mut s = Session::new("move", &program, &["call_target", "call_open", "type_of"], &refs);
+    // The test's relations are small: 0090 §4's floor (1,024 rows) lowered, as R4's tests do, so a delta wider than
+    // the move is seen past θ here as on corpus0. Taken after the session, which holds the maintain tests one at a time.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
+    s.run();
+    s.write("pkg/helpers.py", &helpers.replace("    n = int(s)\n", "    n = int(s)\n    n = n + 0\n"));
+    let edit = s.edit("a statement added to parse");
+    s.write("pkg/helpers.py", helpers);
+    s.edit("the statement taken out again");
+    let moved_def = "def parse(s):\n    n = int(s)\n    return n\n";
+    s.write("pkg/_moved_0.py", moved_def);
+    s.write("pkg/helpers.py", &helpers.replace(moved_def, "from pkg._moved_0 import parse\n"));
+    let moved = s.edit("parse moved to a module of its own");
+    let again = |r: &Ran| r.report.cross_again.iter().map(|(w, n)| (*w, *n)).collect::<BTreeMap<&str, usize>>();
+    let report = format!("edit in place: again {:?}, maintained {:?}; move: again {:?}, maintained {:?}", again(&edit), edit.report.cross_maintained, again(&moved), moved.report.cross_maintained);
+    let more: Vec<&str> = again(&moved).keys().filter(|w| !again(&edit).contains_key(**w)).copied().collect();
+    assert!(more.is_empty() && moved.report.cross_maintained.2 <= edit.report.cross_maintained.2, "0094 §8: the move derived strata again that the edit kept ({more:?}): {report}");
+    assert!(moved.report.cross_maintained.0 <= 3 * edit.report.cross_maintained.0.max(1), "0094 §8: the move maintained past 3 times the edit's strata: {report}");
+}

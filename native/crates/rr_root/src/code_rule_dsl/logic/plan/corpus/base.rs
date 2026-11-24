@@ -160,9 +160,6 @@ pub struct Report {
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
     pub cross_changed: Vec<String>,
     pub cross_again: BTreeMap<&'static str, usize>,
-    /// With `RERAIL_CROSS_DELTA_COUNTS`: rows over-deleted, inserted and held by the maintained relations, the rows of
-    /// the deltas of their inputs, and the rows truly deleted and inserted.
-    pub cross_delta_counts: [usize; 6],
     /// What the run consulted, as (what, path, digest): each workspace document's bytes, and what its requests read
     /// (`world::World::consulted`). A run whose consulted things are as they were derives the same (`unchanged`).
     pub consulted: Vec<(String, String, String)>,

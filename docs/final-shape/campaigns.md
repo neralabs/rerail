@@ -344,8 +344,9 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 - 0116 and 0115: derived frames written by document granule.
 - 0117 step 5: a reached stratum's component kept with the session.
 - 0225 §4, §5, §7 (§7 is 0246 stage 3), 0328 (the image as a pass's output), 0132 (bulk planning).
+- 0094 §8's gate (`a_moved_definition_costs_about_itself`, ignored): a reach index made in place (0119) gets a delta against its last run's rows, so its readers are maintained, not derived again `without a version`; and a move's deltas are its definitions', not its files' (step 6 above), so no stratum passes θ that an edit of the definition in place keeps under it.
 
-**Closes when.** The edit check shows no stratum reading past its delta, on ep2 and on the fixture.
+**Closes when.** The edit check shows no stratum reading past its delta, on ep2 and on the fixture; 0094 §8's gate passes, its `ignore` removed.
 
 **Your words:**
 
@@ -845,9 +846,9 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 **To apply it everywhere:**
 
 - Done 2026-11-23: the last `shared` statics are gone (0442): the regex table, the store slots and the embedding models are the caller's object's, the Node environment has an object of its own for the runtime's calls, and the Git opens' map stays the process's, with its reason.
-- 0094's incremental layout-invariance gate (§8): a moved definition costs about itself. §5's searches are 0144's demand rules and §6 is t24's record, both built.
+- Done 2026-11-23: 0094's incremental layout-invariance gate (§8) is a test, `a_moved_definition_costs_about_itself`, measured on corpus0's `conform` package with t22's scripts (`docs/rule-syntax/site/bench/layout-invariance`). Answers hold across layouts; the work does not, and the test is ignored until edit-cost meets it. §5's searches are 0144's demand rules and §6 is t24's record, both built.
 
-**Closes when.** 0094's gate in the tests (no `shared` entry is left in `global-state.txt`).
+**Closes when.** Closed with the gate written (no `shared` entry is left in `global-state.txt`); edit-cost removes the gate's `ignore`.
 
 **Your words:**
 
@@ -859,7 +860,7 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 
 | Record | Left | Origin |
 |---|---|---|
-| [0094](decisions/0094-one-shape-phases-keys-libraries-scope.md) One shape for phases, keys, libraries and scope | the incremental layout-invariance gate (§8). §5's searches are 0144's demand rules (built); §6's stored answers and read record are t24's step 1 (built), keyed by the module graph since t25 | a |
+| [0094](decisions/0094-one-shape-phases-keys-libraries-scope.md) One shape for phases, keys, libraries and scope | the incremental layout-invariance gate (§8), written as a test (`a_moved_definition_costs_about_itself`, ignored until met) and measured; met by a reach index's delta when it is made in place and by … | a |
 
 **The assistant's own choices (c), and the goal each served:**
 

@@ -1853,7 +1853,7 @@ fn spike_o125_session_maintains_calls() {
         let (wall, got) = (t.elapsed().as_secs_f64(), outputs());
         // `O125_NO_FULL`: skip the full run (its profile would replace the session run's).
         if std::env::var_os("O125_NO_FULL").is_some() {
-            println!("o125 {what}: session {:.1} s CPU, {wall:.1} s wall; strata run {:?}, maintained {:?}; derived again {:?}; rows overdeleted, inserted, held {:?}", cpu(&r), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts);
+            println!("o125 {what}: session {:.1} s CPU, {wall:.1} s wall; strata run {:?}, maintained {:?}; derived again {:?}", cpu(&r), r.cross_strata, r.cross_maintained, r.cross_again);
             continue;
         }
         let f = session::full(run);
@@ -1863,7 +1863,6 @@ fn spike_o125_session_maintains_calls() {
             path.strip_prefix(&root).unwrap().display(), cpu(&r), cpu(&f), r.cross_strata, r.cross_maintained, r.memo
         );
         let ph = |r: &corpus::Report| r.phases.iter().filter(|p| p.1 + p.2 > 0.3).map(|p| format!("{} {:.1}", p.0, p.1 + p.2)).collect::<Vec<_>>().join(", ");
-        println!("  maintained rows: over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}", r.cross_delta_counts);
         println!("  phases: session [{}]; full [{}]", ph(&r), ph(&f));
         println!("  inputs changed ({}): {:?}; derived again: {:?}", r.cross_changed.len(), r.cross_changed.iter().take(30).collect::<Vec<_>>(), r.cross_again);
         if !same {
@@ -2013,8 +2012,8 @@ fn spike_o125_replay() {
         keep(step, "session");
         let got = outputs();
         let mut line = format!(
-            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s ({:.2} G instructions), local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
-            cpu(&r), phase(&r, "cross"), r.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
+            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s ({:.2} G instructions), local {:.1} s; strata {:?}, maintained {:?}, again {:?}; inputs changed {}",
+            cpu(&r), phase(&r, "cross"), r.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_changed.len()
         );
         // `O125_SAVE`: each step's outputs, `<dir>/NN.txt`, to compare two modes' runs without a full run each.
         if let Some(dir) = std::env::var_os("O125_SAVE").map(PathBuf::from) {

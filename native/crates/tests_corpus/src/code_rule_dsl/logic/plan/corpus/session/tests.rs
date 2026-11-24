@@ -521,6 +521,8 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
 /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
 /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
 /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
+/// The rows inserted were counted by the delete-and-rederive forms, gone with 0364 stage 6c; the maintain mode adds
+/// a row once, so the session's findings are checked against a full run's, with the stratum maintained.
 #[test]
 fn a_session_inserts_only_rows_new_against_the_survivors() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-ins");
@@ -550,17 +552,21 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     }
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let findings = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+        rows.sort();
+        rows
+    };
     let session = start(&base.join("session")).unwrap();
     run();
     std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
-    let switched = super::super::switches::set(&[("RERAIL_CROSS_DELTA_COUNTS", "1")]);
     let report = run();
-    drop(switched);
+    let got = findings();
+    full(run);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
-    let [_, inserted, _, _, _, new] = report.cross_delta_counts;
     assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
-    assert_eq!(inserted, new, "the insert rules carry only rows truly new (the edge a -> c), not reach's rows again");
+    assert_eq!(got, findings(), "the session's findings after the edge a -> c are a full run's");
 }
 
 /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's

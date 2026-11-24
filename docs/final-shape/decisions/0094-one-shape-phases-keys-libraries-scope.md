@@ -1,6 +1,8 @@
 # 0094: One shape for phases, keys, libraries and scope
 
-Status: partly built (audited 2026-11-23, corrected the same day). Left: the incremental layout-invariance gate (§8).
+Status: partly built (audited 2026-11-23, corrected the same day). Left: the incremental layout-invariance gate (§8),
+written as a test (`a_moved_definition_costs_about_itself`, ignored until met) and measured; met by a reach index's
+delta when it is made in place and by deltas by definition, edit-cost's work.
 §5's searches are 0144's demand rules (built); §6's stored answers and read record are t24's step 1 (built), keyed by
 the module graph since t25. Accepted (2026-11-08). A map, not a mechanism: it says which decision answers each question,
 settles where two disagreed, and keeps the numbers in one register.
@@ -343,6 +345,31 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
 - **Layout invariance, cold**: answers and work equal across layouts (t22's scripts). Holds today; a gate.
 - **Layout invariance, incremental**: a move costs about the moved definitions. Fails today (72.5 s for the cross
   part against 2.5 s warm); tracked as the target for P1–P3, not yet a gate.
+  - **Measured again (2026-11-23), and written as a test.** t22's move on corpus0's `conform` package (95 files;
+    8 definitions moved, the 8 that other files import by name most, since the Jedi recording is not at hand),
+    calls_cx, a farm M1 Max, profiling build. The scripts are `docs/rule-syntax/site/bench/layout-invariance`.
+    - Answers: `call_target` (1,279) and `call_open` (5,798) are equal across layouts once mapped back, warm and
+      cold. `type_of` differs in 158 rows, each a moved class's qualified name (`conform.conftest.RawSqlForTests`
+      against `conform._moved_3.RawSqlForTests`): the name a module gives it, which the move changes. Cold work is
+      equal across layouts (16–19 s CPU each).
+    - Work: warm with nothing changed, 0.1 s CPU. The move, warm on the original's store: 87 of 103 files from the
+      memo, as they should be, and 11.4 s CPU against a cold run's 16.2 s. Its cross part took 3.0 s against a cold
+      run's 1.7 s, and its statistics 1.2 s against 0.2 s. Of the program's 216 strata it maintained 123 and derived
+      62 again; 1.7 M rows of change were queued to the store.
+    - Two causes, by the 62 strata's reasons:
+      - 3 native operators' strata made again, and 15 readers of theirs. The move changes the import graph, so the
+        reach indexes over it (`rr_cx_reach`, `rr_cx_sees`, `rr_in_annotation_0_anc`, decision 0119) are made
+        again. Made in place, they keep no rows of the last run (`m.kept` is none in the level driver), so none
+        has a delta (`no_delta`), and each reader derives again: `rr_cx_reach changed without a version`
+        (10 strata), `rr_cx_sees` (4), `rr_in_annotation_0_anc` (1).
+      - 44 past the threshold (0090 §4): the moved files' deltas are their documents' rows, wider than the moved
+        definitions (0090's cause 2; per-definition deltas are its step 6 and 0092).
+    - The test (`maintain_tests::a_moved_definition_costs_about_itself`) is t22's move in small: calls_cx over 26
+      files, a definition 12 files call moved to `_moved_0.py` and re-exported, with θ's floor lowered as R4's tests
+      do. Its work is set against an edit of that definition in place, which derives 1 stratum again (past θ) and
+      maintains 68. The move derives 30 again, by corpus0's three reasons (2 native operators' strata, 14 reads
+      without a version, 14 past θ), and maintains 117. It is ignored until both causes are met; that change
+      removes the `ignore`.
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers

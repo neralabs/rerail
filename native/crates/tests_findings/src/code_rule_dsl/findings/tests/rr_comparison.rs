@@ -62,7 +62,6 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
             "memo":report.memo,"prepared":report.prepared,
             "crossStrata":report.cross_strata,"crossMaintained":report.cross_maintained,
             "crossChanged":report.cross_changed,"crossAgain":report.cross_again,
-            "crossDeltaCounts":report.cross_delta_counts,
             "typing":format!("{:?}",report.typing),
             "phaseRunCount":report.phase_runs.len(),
             "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
