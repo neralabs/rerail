@@ -2761,17 +2761,17 @@ fn define_query_admit(
 pub(super) fn define(
     module: &mut JITModule,
 ) -> Result<SchedulerFunctions, Box<cranelift_module::ModuleError>> {
-    let cursor_value = declare(module, "tempo_cursor_value", 3)?;
-    let cursor_equal = declare(module, "tempo_cursor_equal", 3)?;
-    let repeat_equal = declare(module, "tempo_repeat_equal", 3)?;
-    let capture_contains = declare(module, "tempo_capture_contains", 3)?;
-    let query_admit = declare(module, "tempo_query_admit", 3)?;
-    let exact_state_equal = declare(module, "tempo_exact_state_equal", 7)?;
-    let queue_insert = declare(module, "tempo_queue_insert", 3)?;
-    let queue_remove = declare(module, "tempo_queue_remove", 3)?;
-    let greedy_schedule = declare_i64(module, "tempo_greedy_schedule", 2)?;
-    let greedy_take = declare_i64(module, "tempo_greedy_take", 2)?;
-    let path_enqueue = declare(module, "tempo_path_enqueue", 6)?;
+    let cursor_value = declare(module, "rerail_cursor_value", 3)?;
+    let cursor_equal = declare(module, "rerail_cursor_equal", 3)?;
+    let repeat_equal = declare(module, "rerail_repeat_equal", 3)?;
+    let capture_contains = declare(module, "rerail_capture_contains", 3)?;
+    let query_admit = declare(module, "rerail_query_admit", 3)?;
+    let exact_state_equal = declare(module, "rerail_exact_state_equal", 7)?;
+    let queue_insert = declare(module, "rerail_queue_insert", 3)?;
+    let queue_remove = declare(module, "rerail_queue_remove", 3)?;
+    let greedy_schedule = declare_i64(module, "rerail_greedy_schedule", 2)?;
+    let greedy_take = declare_i64(module, "rerail_greedy_take", 2)?;
+    let path_enqueue = declare(module, "rerail_path_enqueue", 6)?;
     define_cursor_value(module, cursor_value)?;
     define_cursor_equal(module, cursor_equal, cursor_value)?;
     define_repeat_equal(module, repeat_equal)?;

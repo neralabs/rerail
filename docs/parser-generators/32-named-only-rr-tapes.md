@@ -169,7 +169,7 @@ That would go with a native call and `ret` (page 30).
 
 ## The two classes of token
 
-RER-131 splits tokens in two classes, by text:
+Decision 0161 splits tokens in two classes, by text:
 
 - a **delimiter** (brackets, `,` `;` `|` `<` `>`, quotes) is left out wherever its gap is implied;
 - any **other token** (keywords, operators, `:`, `.`, `=>`) is left out

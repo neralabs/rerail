@@ -24,7 +24,7 @@ mod generated_reads;
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
-/// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies
+/// named-only at rest, no stored source digest (decision 0161); 14: the tokens the grammar implies
 /// never written (`tokens::TokenGrammar::stored_children`); 15: a keyword or operator left out
 /// only where its kind always implies it (`tokens::kept`).
 pub const FORMAT_VERSION: u32 = 15;
