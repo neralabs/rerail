@@ -1324,6 +1324,7 @@ unsafe fn text_range(f: u32, x: &Txt, n0: i64, n1: i64) -> (u32, u32, bool) {
 // ---- The stages' functions, a thread a binding (or a candidate row). ----
 
 /// The buffers an item's job reaches (`Job`, its words placed in the arena where its size script placed them).
+mod dedup_lanes;
 mod stage_lanes;
 
 struct Bufs {
@@ -1589,90 +1590,6 @@ unsafe fn dedup_mask(totals: *const u32, d: &Dedup) -> u32 {
     let p = if two <= 16 { 16 } else { two.next_power_of_two() };
     (p - 1).min(d.mask as u64) as u32
 }
-
-unsafe fn row_hash(rd: Reads, d: &Dedup, t: *const i64, x: u32, mask: u32) -> u32 {
-    let h = d.cols[..d.ncols.min(16) as usize].iter().fold(KEY_SEED, |h, &c| rd.key_mix(h, col(t, c, d.cap, x)));
-    (h as u32) & mask
-}
-
-unsafe fn dedup_claim_one(rd: Reads, t: *const i64, totals: *const u32, p: *mut u32, d: &Dedup, x: u32) {
-    if x >= (*totals.add(d.in_slot as usize)).min(d.cap) {
-        return;
-    }
-    let mask = dedup_mask(totals, d);
-    let mut a = row_hash(rd, d, t, x, mask);
-    for _ in 0..=mask {
-        let place = at(p.add(a as usize));
-        match place.compare_exchange(NONE, x, SeqCst, SeqCst) {
-            Ok(_) => return,
-            Err(seen) if same_row(d, t, seen, x) => {
-                place.fetch_min(x, SeqCst);
-                return;
-            }
-            Err(_) => a = (a + 1) & mask,
-        }
-    }
-}
-
-/// Whether the relation holds row `x` (`Dedup::seen`): its map's place for the row's key, and on, to an empty one.
-unsafe fn dedup_held(rd: Reads, t: *const i64, r: *const u8, hb: *const u8, d: &Dedup, x: u32) -> bool {
-    let m = hb.add(d.h_at as usize) as *const u32;
-    let mut a = row_hash(rd, d, t, x, d.hmask);
-    for _ in 0..=d.hmask {
-        let y = *m.add(3 * a as usize);
-        if y == NONE {
-            return false;
-        }
-        if (0..d.ncols.min(16)).all(|c| rd.rel_get(r, d.r_at, y, c) as i64 == col(t, d.cols[c as usize], d.cap, x)) {
-            return true;
-        }
-        a = (a + 1) & d.hmask;
-    }
-    false
-}
-
-/// Row `id` of the relation placed in its map (`Dedup::seen`): a new row, so a place of its own.
-unsafe fn dedup_place(rd: Reads, t: *const i64, hb: *mut u8, d: &Dedup, x: u32, id: u32) {
-    let m = hb.add(d.h_at as usize) as *mut u32;
-    let mut a = row_hash(rd, d, t, x, d.hmask);
-    for _ in 0..=d.hmask {
-        if at(m.add(3 * a as usize)).compare_exchange(NONE, id, SeqCst, SeqCst).is_ok() {
-            return;
-        }
-        a = (a + 1) & d.hmask;
-    }
-}
-
-/// Row `x` (below the head's rows) kept: the first of its rows in the head's set.
-unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, d: &Dedup, mask: u32, x: u32) {
-    let mut a = row_hash(rd, d, t, x, mask);
-    let mut keep = 0;
-    for _ in 0..=mask {
-        let y = *p.add(a as usize);
-        if y == NONE {
-            break;
-        }
-        if y == x {
-            keep = 1;
-            break;
-        }
-        if same_row(d, t, y, x) {
-            break;
-        }
-        a = (a + 1) & mask;
-    }
-    *counts.add(x as usize) = keep;
-}
-
-/// `dedup_mark_one`, less the rows the relation holds (`Dedup::seen`).
-unsafe fn dedup_mark_held(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, r: *const u8, hb: *const u8, d: &Dedup, mask: u32, x: u32) {
-    dedup_mark_one(rd, t, p, counts, d, mask, x);
-    if d.seen != 0 && *counts.add(x as usize) != 0 && dedup_held(rd, t, r, hb, d, x) {
-        *counts.add(x as usize) = 0;
-    }
-}
-
-// ---- Indexes built on the device. ----
 
 unsafe fn ix_rows(rd: Reads, bb: *const u8, p: &IxP) -> u32 {
     if p.ncols & IX_LIVE == 0 {
@@ -2127,14 +2044,12 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn dedup_mark_range(rd: Reads, t: *const i64, totals: *const u32, p: *const u32, counts: *mut u32, r: *const u8, hb: *const u8, d: &Dedup, x0: u32, x1: u32) {
+unsafe fn dedup_mark_range(t: *const i64, totals: *const u32, p: *const u32, counts: *mut u32, r: *const u8, hb: *const u8, d: &Dedup, x0: u32, x1: u32) {
     let x1 = x1.min(d.cap.saturating_add(1));
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     fill_u32(counts, x0.max(n), x1, 0);
     let mask = dedup_mask(totals, d);
-    for x in x0..x1.min(n) {
-        dedup_mark_held(rd, t, p, counts, r, hb, d, mask, x);
-    }
+    dedup_lanes::dedup_mark_lanes::<{ stage_lanes::LANES }>(t, p, counts, r, hb, d, mask, x0.min(n), x1.min(n));
 }
 
 unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
@@ -2222,9 +2137,7 @@ unsafe fn dedup_scatter_range(rd: Reads, t: *const i64, totals: *mut u32, offset
             copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
         }
         if d.seen != 0 {
-            for i in 0..len {
-                dedup_place(rd, t, hb, d, x + i, had + a + i);
-            }
+            dedup_lanes::dedup_place_lanes::<{ stage_lanes::LANES }>(t, hb, d, x, len, had + a);
         }
     });
 }
@@ -2293,6 +2206,10 @@ unsafe fn ix_key_range(rd: Reads, bb: *const u8, out: *mut u32, places: *mut u32
     }
     for t in t..t1 {
         *places.add((eb + t) as usize) = eb + t;
+    }
+    if p.kind == 0 {
+        dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, out, p, kb, eb, t0, t1);
+        return;
     }
     for t in t0..t1 {
         *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(rd, bb, p, t));
@@ -2978,10 +2895,15 @@ impl Prog {
                 fill_u32(b.h, a, z, NONE)
             }
             PK_MAP => stage_map_range(&*j.s, b.o, j.totals, t0, t1),
+            PK_DEDUP_CLAIM => {
+                let d = &*j.dd;
+                let n = (*j.totals.add(d.in_slot as usize)).min(d.cap);
+                dedup_lanes::dedup_claim_lanes::<{ stage_lanes::LANES }>(b.l, b.h, d, dedup_mask(j.totals, d), t0.min(n), t1.min(n))
+            }
             PK_STAGE_COUNT => stage_count_range(&stage(j.s), j, b, t0, t1),
             PK_SCAN_COUNT => scan_count_range(&stage(j.s), j, b, t0, t1),
             PK_WITNESS_COUNT => witness_count_range(&stage(j.s), j, b, t0, t1),
-            PK_DEDUP_MARK => dedup_mark_range(rd, b.l, j.totals, b.h, b.c, j.s_, j.vc, &*j.dd, t0, t1),
+            PK_DEDUP_MARK => dedup_mark_range(b.l, j.totals, b.h, b.c, j.s_, j.vc, &*j.dd, t0, t1),
             PK_STAGE_SCATTER => stage_scatter_range(&stage(j.ws), j, b, t0, t1),
             PK_SCAN_SCATTER => scan_scatter_range(&stage(j.s), j, b, t0, t1),
             PK_ROW_SCATTER => row_scatter_range(&stage(j.s), j, b, t0, t1),
@@ -3005,7 +2927,6 @@ impl Prog {
         let rd = self.rd;
         let lat = || &*(j.p as *const LatP);
         match kind {
-            PK_DEDUP_CLAIM => dedup_claim_one(rd, b.l, j.totals, b.h, &*j.dd, t),
             PK_LAT_REHASH => lat_rehash_one(rd, j.s_, j.g, j.vc, lat(), t),
             PK_LAT_CLAIM => lat_claim_one(rd, b.l, b.la, j.cnt, lat(), t),
             PK_LAT_BEST => lat_best_one(rd, b.l, b.la, b.lt, b.h, b.v as *const u32, j.cnt, lat(), t),
