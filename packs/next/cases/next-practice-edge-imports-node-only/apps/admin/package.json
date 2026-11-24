@@ -1,0 +1,5 @@
+{
+  "name": "admin",
+  "private": true,
+  "dependencies": { "next": "^15.5.0", "next-auth": "5.0.0-beta.25", "bcrypt": "^5.1.1" }
+}

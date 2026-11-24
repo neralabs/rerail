@@ -1,0 +1,300 @@
+.policy "next-practice-request-api-in-cache-scope" revision 1
+.description "Don't read cookies(), headers(), connection() or searchParams inside a 'use cache' or unstable_cache scope, directly or through a helper; read them outside and pass the values in as arguments."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. A function cached with 'use cache' (or the callback of unstable_cache) runs once
+// for many requests, so Next.js forbids it to read the incoming request: cookies(), headers() and connection()
+// throw `next-request-in-use-cache`, and "the restriction follows the call stack", so a helper that reads them
+// fails the same way. On a dynamic route this passes `next build` and fails under `next start`.
+// A cache scope is a function whose own directive is "use cache" or "use cache: <handler>" (remote, a custom
+// handler), an exported function of a file whose top-level directive is one of those, or the function passed to
+// unstable_cache from next/cache (written inline, or a function it names). Code runs in the scope when it is in the
+// scope's body or a function nested in it, other than a nested 'use server' function, which runs in a later request.
+// It reports:
+//   - RequestInCache: a call of cookies() or headers() (next/headers) or connection() (next/server) that runs in a
+//     cache scope, or of an auth library's session read, which calls them inside node_modules: Auth.js's `auth()`
+//     (the one `export const { auth } = NextAuth(…)` makes), next-auth's `getServerSession()`, Clerk's `auth()` and
+//     `currentUser()` (@clerk/nextjs/server), Kinde's `getKindeServerSession()`;
+//   - RequestReached: a call, running in a cache scope, of a workspace function that runs such a call, itself or
+//     through further calls (resolved across files, through imports, re-exports and React's cache() wrapper);
+//   - SearchParamsInCache: the default export of an app/**/page file, cached with 'use cache', that reads its
+//     searchParams prop.
+//   lib/data.ts:     async function getCart() { "use cache"; const id = await getUserId() }  reported at getUserId()
+//   lib/session.ts:  export async function getUserId() { (await cookies()).get("session") }
+//   lib/data.ts:     async function f() { "use cache"; (await cookies()).has("t") }           reported at cookies()
+//   lib/menu.ts:     "use cache"; export async function getMenu() { await headers() }        reported at headers()
+//   lib/settings.ts: unstable_cache(async () => (await cookies()).get("theme"), ["theme"])   reported at cookies()
+//   lib/profile.ts:  async function getProfile() { "use cache"; const s = await auth() }      reported at auth()
+//   app/blog/page.tsx: "use cache"; export default async function P({ searchParams })       reported at searchParams
+// It leaves alone:
+//   - 'use cache: private', which may read request data;
+//   - draftMode(): reading isEnabled in a cache scope is allowed (toggling it is not; see Gaps);
+//   - a 'use server' function defined inside a cached component (the action runs in its own request);
+//   - a helper that reads cookies() called from code outside any cache scope, the documented fix;
+//   - a function of the same name from another module (a local `headers()` helper);
+//   - params in a cached page, which become part of the cache key;
+//   - a call into another cache scope from a cache scope (that scope's own reads are reported where they are);
+//   - test and story files.
+// Gaps: calls through object methods, callbacks passed as values, dependency injection and package code beyond the
+// auth libraries named above (another library's session read inside node_modules) are not followed; a wrapper of
+// unstable_cache (a project's own `cache(fn, keys)` that calls it) is not a cache scope; draftMode().enable()/disable()
+// in a cache scope and request data passed unresolved into a cached function (the build stalls) are not reported; a
+// nested function inside a cache scope is taken to run there even when it is only returned; every branch of a reached
+// helper counts. Imports resolve by the rule's own resolver (below): `@/` and `~/` by file layout, not tsconfig
+// `paths`; workspace packages are opaque; a local name shadowing an import or a top-level function is not checked. The
+// engine runs .ts and .tsx files apart, so a call from a .tsx file into a .ts file (or back) is not followed yet.
+
+.violation RequestInCache(at: node, api: symbol, how: symbol, sp: symbol, s: node)
+    "`{api}()` reads the incoming request inside a cache scope ({how} at {sp}:{s.line}). Next.js forbids that: it throws `next-request-in-use-cache` (with unstable_cache, an error that the function cannot depend on the request), on a dynamic route only when the route runs. Read `{api}()` in the caller, outside the cached function, and pass the value you need in as an argument so it becomes part of the cache key. If the result must differ per user and the value cannot be passed in, use 'use cache: private' instead of 'use cache'."
+RequestInCache(r, api, how, sp, a) :- rac_request(r, api), nearest(r, h, rac_fnkind),
+    s = min x : { rac_runs(x, h) }, rac_scope(s, how, a), docof(a, d), doc(d, sp, _).
+.violation RequestReached(at: node, g: symbol, api: symbol, rp: symbol, r: node, how: symbol, sp: symbol, s: node)
+    "`{g}()` reads the incoming request (`{api}()` at {rp}:{r.line}) and is called inside a cache scope ({how} at {sp}:{s.line}). Next.js forbids that, and the restriction follows the call stack: it throws `next-request-in-use-cache` (with unstable_cache, an error that the function cannot depend on the request), on a dynamic route only when the route runs. Call `{g}()` in the caller, outside the cached function, and pass the value you need in as an argument so it becomes part of the cache key. If the result must differ per user and the value cannot be passed in, use 'use cache: private' instead of 'use cache'."
+RequestReached(c, g, api, rp, r, how, sp, a) :- rac_call_in(c, h), s = min x : { rac_runs(x, h) }, rac_scope(s, how, a),
+    field(c, "function", fn), text(fn, g), r = min y : { rac_callee(c, t), rac_reach(t, y) }, rac_request(r, api),
+    docof(r, rd), doc(rd, rp, _), docof(a, d), doc(d, sp, _).
+.violation SearchParamsInCache(at: node, how: symbol, sp: symbol, s: node)
+    "This page reads `searchParams`, request data, but is cached ({how} at {sp}:{s.line}). Next.js forbids that: it throws `next-request-in-use-cache`, or the prerender stalls until it times out. Take the cache off the page: read `searchParams` in the page and pass the values you need, as arguments, to a cached function or component."
+SearchParamsInCache(n, how, sp, a) :- rac_page_scope(s), rac_scope(s, how, a), rac_search_params(s, n), docof(a, d),
+    doc(d, sp, _).
+
+// ---- cache scopes ----------------------------------------------------------------------------------------------
+.decl rac_fnkind(k: symbol)
+rac_fnkind("function_declaration"). rac_fnkind("function_expression"). rac_fnkind("arrow_function").
+rac_fnkind("method_definition"). rac_fnkind("generator_function"). rac_fnkind("generator_function_declaration").
+.decl rac_fn(f: node)
+rac_fn(f) :- kind(f, k), rac_fnkind(k).
+// rac_cache_dir(t): "use cache" or "use cache: remote" / a custom handler; never "use cache: private".
+.decl rac_cache_dir(t: symbol)
+rac_cache_dir(t) :- rac_directive(_, _, t), match("use cache(:\\s*[\\w-]+)?", t), !match("use cache:\\s*private", t).
+// rac_scope(s, how, at): function s is cached; at is the directive or the unstable_cache call that makes it so.
+.decl rac_scope(s: node, how: symbol, at: node)
+rac_scope(f, cat("'", t, "'"), st) :- rac_directive(f, st, t), rac_fn(f), rac_cache_dir(t).
+rac_scope(f, cat("'", t, "' at the top of the file"), st) :- kind(p, "program"), rac_directive(p, st, t), rac_cache_dir(t),
+    rac_exported_fn(p, f).
+rac_scope(f, "unstable_cache", u) :- rac_unstable_cache(u, a), rac_unparen(a, f), rac_fn(f).
+rac_scope(f, "unstable_cache", u) :- rac_unstable_cache(u, a), kind(a, "identifier"), rac_name_fn(a, f).
+.decl rac_unstable_cache(u: node, a: node)  // u is unstable_cache(a, …) from next/cache
+rac_unstable_cache(u, a) :- kind(u, "call_expression"), field(u, "function", fn), rac_ext(fn, "next/cache", "unstable_cache"),
+    field(u, "arguments", as), child(as, a, 0).
+// rac_exported_fn(p, f): f is a function program p exports: `export [default] [async] function f`, `export const f =
+// async () => …`, `export default async () => …`.
+.decl rac_exported_fn(p: node, f: node)
+rac_exported_fn(p, f) :- child(p, e, _), kind(e, "export_statement"), field(e, "declaration", dd), rac_decl_fn(dd, _, f).
+rac_exported_fn(p, f) :- child(p, e, _), kind(e, "export_statement"), field(e, "value", x), rac_unparen(x, f), rac_fn(f).
+// rac_server_fn(f): a function with its own 'use server' directive: an action that runs in a later request.
+.decl rac_server_fn(f: node)
+rac_server_fn(f) :- rac_directive(f, _, "use server"), rac_fn(f).
+// rac_private(f): a function cached with 'use cache: private', which may read the request.
+.decl rac_private(f: node)
+rac_private(f) :- rac_directive(f, _, t), rac_fn(f), match("use cache:\\s*private", t).
+// rac_sub(g, h): code of h runs when g runs: g itself, or a function nested in it that is not an action, nor a
+// cache scope of its own (whose reads are judged as that scope's).
+.decl rac_sub(g: node, h: node)
+rac_sub(g, g) :- rac_reachable(g).
+rac_sub(g, h) :- rac_sub(g, x), nearest(h, x, rac_fnkind), rac_fn(h), !rac_server_fn(h), !rac_own_cache(h),
+    !rac_private(h).
+.decl rac_own_cache(h: node)
+rac_own_cache(h) :- rac_scope(h, _, _).
+// rac_runs(s, h): h's own code runs inside cache scope s.
+.decl rac_runs(s: node, h: node)
+rac_runs(s, h) :- rac_scope(s, _, _), rac_sub(s, h), docof(s, d), !rac_test_doc(d).
+
+// ---- request APIs and the call graph ---------------------------------------------------------------------------
+.decl rac_api(m: symbol, y: symbol)
+rac_api("next/headers", "cookies"). rac_api("next/headers", "headers"). rac_api("next/server", "connection").
+rac_api("next-auth", "getServerSession"). rac_api("next-auth/next", "getServerSession").
+rac_api("@clerk/nextjs/server", "auth"). rac_api("@clerk/nextjs/server", "currentUser").
+rac_api("@kinde-oss/kinde-auth-nextjs/server", "getKindeServerSession").
+.decl rac_request(r: node, api: symbol)
+rac_request(r, y) :- kind(r, "call_expression"), field(r, "function", fn), rac_ext(fn, m, y), rac_api(m, y).
+// Auth.js v5: `auth` imported from the workspace file that destructures it from `NextAuth(…)`.
+rac_request(r, "auth") :- kind(r, "call_expression"), field(r, "function", fn), kind(fn, "identifier"), text(fn, x),
+    docof(r, d), rac_import(d, x, s, "auth"), rac_target(d, s, d2), rac_nextauth(d2).
+// rac_nextauth(d): document d declares `const { auth, … } = NextAuth(…)`, NextAuth being next-auth's default export.
+.decl rac_nextauth(d: number)
+rac_nextauth(d) :- kind(v, "variable_declarator"), field(v, "name", pat), kind(pat, "object_pattern"), child(pat, n, _),
+    kind(n, "shorthand_property_identifier_pattern"), text(n, "auth"), field(v, "value", c), kind(c, "call_expression"),
+    field(c, "function", fn), kind(fn, "identifier"), text(fn, x), docof(v, d), rac_import(d, x, "next-auth", "default").
+// rac_call_in(c, h): c is a call written in h's own code (not in a function nested in h).
+.decl rac_call_in(c: node, h: node)
+rac_call_in(c, h) :- kind(c, "call_expression"), nearest(c, h, rac_fnkind).
+// rac_callee(c, g): call c runs workspace function g.
+.decl rac_callee(c: node, g: node)
+rac_callee(c, g) :- kind(c, "call_expression"), field(c, "function", fn), rac_name_fn(fn, g).
+// rac_reachable(g): g is a scope, or a function some code in a scope may call (bounds the call graph).
+.decl rac_reachable(g: node)
+rac_reachable(s) :- rac_scope(s, _, _).
+rac_reachable(g) :- rac_sub(_, h), rac_call_in(c, h), rac_callee(c, g), !rac_own_cache(g), !rac_private(g),
+    !rac_server_fn(g).
+// rac_reach(g, r): calling g runs request call r: in g's code, or in a function g's code calls.
+.decl rac_reach(g: node, r: node)
+rac_reach(g, r) :- rac_sub(g, h), rac_request(r, _), nearest(r, h, rac_fnkind), !rac_own_cache(g).
+rac_reach(g, r) :- rac_sub(g, h), rac_call_in(c, h), rac_callee(c, t), t != g, rac_reach(t, r), !rac_own_cache(g).
+
+// ---- searchParams in a cached page -----------------------------------------------------------------------------
+.decl rac_page_scope(s: node)  // s is the default export of app/**/page.*
+rac_page_scope(s) :- kind(p, "program"), docof(p, d), doc(d, path, _), match("(.*/)?app/(.*/)?page\\.(tsx|ts|jsx|js)", path),
+    child(p, e, _), kind(e, "export_statement"), op(e, "default"), (field(e, "declaration", s) ; field(e, "value", x),
+    rac_unparen(x, s)), rac_fn(s).
+// rac_search_params(s, n): s's props parameter reads searchParams: `({ searchParams })`, `({ searchParams: sp })`,
+// or `props.searchParams` in s's own code.
+.decl rac_search_params(s: node, n: node)
+rac_search_params(s, n) :- rac_props(s, p), kind(p, "object_pattern"), child(p, n, _),
+    kind(n, "shorthand_property_identifier_pattern"), text(n, "searchParams").
+rac_search_params(s, n) :- rac_props(s, p), kind(p, "object_pattern"), child(p, n, _), kind(n, "pair_pattern"),
+    field(n, "key", k), text(k, "searchParams").
+rac_search_params(s, n) :- rac_props(s, p), kind(p, "identifier"), text(p, x), kind(n, "member_expression"),
+    field(n, "property", k), text(k, "searchParams"), field(n, "object", o), kind(o, "identifier"), text(o, x),
+    nearest(n, s, rac_fnkind).
+.decl rac_props(s: node, p: node)  // p is the pattern of s's first parameter
+rac_props(s, p) :- rac_page_scope(s), field(s, "parameters", ps), child(ps, x, 0),
+    (field(x, "pattern", p) ; kind(x, "identifier"), p = x).
+
+// ---- test code -------------------------------------------------------------------------------------------------
+.decl rac_test_doc(d: number)
+rac_test_doc(d) :- doc(d, p, _), match("(.*/)?(__tests__|__mocks__|tests?|e2e)/.*|.*\\.(test|spec|stories|story)\\.[cm]?[jt]sx?", p).
+
+// ---- library candidate: directives and parentheses ------------------------------------------------------------
+// rac_directive(s, st, t): statement st is directive t of program or function s ("use cache", "use server"): one of
+// the string statements that open its body.
+.decl rac_directive(s: node, st: node, t: symbol)
+rac_directive(s, st, t) :- rac_body(s, b), child(b, st, i), rac_str_stmt(st, t),
+    count : { child(b, o, j), j < i, !rac_str_stmt(o, _), !kind(o, "comment") } = 0.
+.decl rac_body(s: node, b: node)
+rac_body(p, p) :- kind(p, "program").
+rac_body(f, b) :- rac_fn(f), field(f, "body", b), kind(b, "statement_block").
+.decl rac_str_stmt(st: node, t: symbol)
+rac_str_stmt(st, t) :- kind(st, "expression_statement"), child(st, l, 0), kind(l, "string"), str(l, t).
+.decl rac_unparen(e: node, x: node)  // x is e without parentheses
+rac_unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
+rac_unparen(e, x) :- kind(e, "parenthesized_expression"), child(e, c, _), !kind(c, "comment"), rac_unparen(c, x).
+
+// ---- library candidate: import resolution ---------------------------------------------------------------------
+// The runner binds no tsconfig rows, so tsx/names' cross-file sym_of is refused. This resolves what the rule needs:
+//   rac_ext(n, m, y)       identifier or member n names export y of package m (`import { cookies } from
+//                          "next/headers"`, `import * as h from "next/headers"; h.cookies`); shadowing is not checked
+//   rac_name_fn(n, g)      identifier or member n names workspace function g: declared in the file (top level, or in
+//                          an enclosing function), or imported from a workspace file, through re-exports
+//   rac_target(d, s, d2)   specifier s of document d is document d2: relative by path; `@/x` and `~/x` by file
+//                          layout, the nearest directory above d with x or src/x (create-next-app's `"@/*"` paths);
+//                          extensions .ts/.tsx/.js/.jsx/.mts and index files tried. Workspace packages are opaque.
+.decl rac_import(d: number, x: symbol, s: symbol, y: symbol)  // d binds local x to export y ("default", "*") of s
+rac_import(d, x, s, "default") :- rac_import_clause(i, c, d, s), child(c, id, _), kind(id, "identifier"), text(id, x).
+rac_import(d, x, s, y) :- rac_import_clause(i, c, d, s), child(c, n, _), kind(n, "named_imports"), child(n, sp, _),
+    kind(sp, "import_specifier"), !op(sp, "type"), field(sp, "name", nm), text(nm, y),
+    (field(sp, "alias", al), text(al, x) ; !field(sp, "alias", _), x = y).
+rac_import(d, x, s, "*") :- rac_import_clause(i, c, d, s), child(c, ns, _), kind(ns, "namespace_import"),
+    child(ns, id, 0), text(id, x).
+.decl rac_import_clause(i: node, c: node, d: number, s: symbol)
+rac_import_clause(i, c, d, s) :- kind(i, "import_statement"), !op(i, "type"), field(i, "source", src), str(src, s),
+    child(i, c, _), kind(c, "import_clause"), docof(i, d).
+.decl rac_ext(n: node, m: symbol, y: symbol)
+rac_ext(n, m, y) :- kind(n, "identifier"), text(n, x), docof(n, d), rac_import(d, x, m, y), y != "*", !prefix(".", m).
+rac_ext(n, m, y) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), text(o, x), docof(n, d),
+    rac_import(d, x, m, "*"), !prefix(".", m), field(n, "property", p), text(p, y).
+.decl rac_name_fn(n: node, g: node)
+rac_name_fn(n, g) :- kind(n, "identifier"), text(n, x), docof(n, d), rac_top(d, x, g).
+rac_name_fn(n, g) :- kind(n, "identifier"), text(n, x), rac_inner(f, x, g), within(n, f).
+rac_name_fn(n, g) :- kind(n, "identifier"), text(n, x), docof(n, d), rac_import(d, x, s, y), y != "*",
+    rac_target(d, s, d2), rac_export(d2, y, g).
+rac_name_fn(n, g) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), text(o, x), docof(n, d),
+    rac_import(d, x, s, "*"), rac_target(d, s, d2), field(n, "property", p), text(p, y), rac_export(d2, y, g).
+// rac_decl_fn(st, x, g): declaration st declares x as function g: `function x`, `const x = async () => …`, or
+// `const x = cache(async () => …)` with React's cache, which runs its function in the caller's request.
+.decl rac_decl_fn(st: node, x: symbol, g: node)
+rac_decl_fn(g, x, g) :- kind(g, k), (k = "function_declaration" ; k = "generator_function_declaration"), field(g, "name", n),
+    text(n, x).
+rac_decl_fn(st, x, g) :- kind(st, k), (k = "lexical_declaration" ; k = "variable_declaration"), child(st, v, _),
+    kind(v, "variable_declarator"), field(v, "name", n), kind(n, "identifier"), text(n, x), field(v, "value", e),
+    rac_fn_value(e, g).
+.decl rac_fn_value(e: node, g: node)
+rac_fn_value(e, g) :- rac_unparen(e, g), rac_fn(g).
+rac_fn_value(e, g) :- rac_unparen(e, c), kind(c, "call_expression"), field(c, "function", fn), rac_ext(fn, "react", "cache"),
+    field(c, "arguments", as), child(as, a, 0), rac_unparen(a, g), rac_fn(g).
+.decl rac_top(d: number, x: symbol, g: node)  // a top-level function x of document d
+rac_top(d, x, g) :- kind(p, "program"), docof(p, d), child(p, st, _), rac_decl_fn(st, x, g).
+rac_top(d, x, g) :- kind(p, "program"), docof(p, d), child(p, e, _), kind(e, "export_statement"), field(e, "declaration", st),
+    rac_decl_fn(st, x, g).
+.decl rac_inner(f: node, x: symbol, g: node)  // function x declared in function f's own code
+rac_inner(f, x, g) :- rac_decl_fn(st, x, g), nearest(st, f, rac_fnkind).
+.decl rac_export(d: number, x: symbol, g: node)  // document d exports function g as x
+rac_export(d, x, g) :- kind(p, "program"), docof(p, d), child(p, e, _), kind(e, "export_statement"),
+    field(e, "declaration", st), rac_decl_fn(st, x, g), !op(e, "default").
+rac_export(d, "default", g) :- kind(p, "program"), docof(p, d), child(p, e, _), kind(e, "export_statement"), op(e, "default"),
+    (field(e, "declaration", g), rac_fn(g) ; field(e, "value", v), rac_fn_value(v, g)).
+rac_export(d, "default", g) :- kind(p, "program"), docof(p, d), child(p, e, _), kind(e, "export_statement"), op(e, "default"),
+    field(e, "value", v), kind(v, "identifier"), text(v, y), rac_top(d, y, g).
+rac_export(d, x, g) :- rac_export_spec(e, sp, d, y, x), !field(e, "source", _), rac_top(d, y, g).
+rac_export(d, x, g) :- rac_export_spec(e, sp, d, y, x), field(e, "source", src), str(src, s), rac_target(d, s, d2),
+    rac_export(d2, y, g).
+rac_export(d, x, g) :- kind(e, "export_statement"), field(e, "source", src), str(src, s), docof(e, d),
+    count : { child(e, c, _), (kind(c, "export_clause") ; kind(c, "namespace_export")) } = 0, rac_target(d, s, d2),
+    rac_export(d2, x, g), x != "default".
+.decl rac_export_spec(e: node, sp: node, d: number, y: symbol, x: symbol)  // `export { y as x }`
+rac_export_spec(e, sp, d, y, x) :- kind(e, "export_statement"), docof(e, d), child(e, c, _), kind(c, "export_clause"),
+    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), text(n, y),
+    (field(sp, "alias", a), text(a, x) ; !field(sp, "alias", _), x = y).
+.decl rac_spec(d: number, s: symbol)  // a specifier imported or re-exported in d
+rac_spec(d, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", src), str(src, s),
+    docof(i, d).
+.decl rac_target(d: number, s: symbol, d2: number)
+rac_target(d, s, d2) :- rac_spec(d, s), prefix(".", s), doc(d, p, _), rac_file(@join(@dir(p), s), d2).
+rac_target(d, s, d2) :- rac_alias_hit(d, s, k, d2), k = max n : { rac_alias_hit(d, s, n, _) }.
+.decl rac_alias_hit(d: number, s: symbol, n: number, d2: number)  // the alias resolves under a directory n deep
+rac_alias_hit(d, s, strlen(a), d2) :- rac_spec(d, s), match("[@~]/(?<rest>.+)", s), doc(d, p, _), rac_anc(p, a),
+    (a = "", (b = cat("src/", rest) ; b = rest) ; a != "", (b = cat(a, "/src/", rest) ; b = cat(a, "/", rest))),
+    rac_file(b, d2).
+.decl rac_anc(p: symbol, a: symbol)  // a is a directory above document p, "" for the root
+rac_anc(p, a) :- rac_spec(d, s), match("[@~]/.+", s), doc(d, p, _), match("(?<a>.*)/[^/]*", p).
+rac_anc(p, "") :- rac_spec(d, s), match("[@~]/.+", s), doc(d, p, _).
+rac_anc(p, a) :- rac_anc(p, b), match("(?<a>.*)/[^/]*", b).
+.decl rac_file(b: symbol, d2: number)  // module path b, as written without extension, is document d2
+rac_file(b, d2) :- doc(d2, f, _), rac_ext_name(e), strlen(f) > strlen(e), b = substr(f, 0, strlen(f) - strlen(e)),
+    f = cat(b, e).
+.decl rac_ext_name(e: symbol)
+rac_ext_name(""). rac_ext_name(".ts"). rac_ext_name(".tsx"). rac_ext_name(".js"). rac_ext_name(".jsx"). rac_ext_name(".mts").
+rac_ext_name("/index.ts"). rac_ext_name("/index.tsx"). rac_ext_name("/index.js").
+
+// The cases, `cases/next-practice-request-api-in-cache-scope/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "tsconfig.json" from "../cases/next-practice-request-api-in-cache-scope/tsconfig.json"
+    .fixture "src/app/blog/[slug]/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/app/blog/[slug]/page.tsx"
+    .fixture "src/app/blog/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/app/blog/page.tsx"
+    .fixture "src/app/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/app/page.tsx"
+    .fixture "src/components/cached-form.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/components/cached-form.tsx"
+    .fixture "src/components/greeting.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/components/greeting.tsx"
+    .fixture "src/components/user-name.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/components/user-name.tsx"
+    .fixture "src/lib/auth/index.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/auth/index.ts"
+    .fixture "src/lib/auth/tenant.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/auth/tenant.ts"
+    .fixture "src/lib/auth/viewer.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/auth/viewer.ts"
+    .fixture "src/lib/crypto.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/crypto.ts"
+    .fixture "src/lib/dashboard.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/dashboard.ts"
+    .fixture "src/lib/data.test.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/data.test.ts"
+    .fixture "src/lib/data.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/data.ts"
+    .fixture "src/lib/db.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/db.ts"
+    .fixture "src/lib/http.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/http.ts"
+    .fixture "src/lib/locale.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/locale.ts"
+    .fixture "src/lib/menu.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/menu.ts"
+    .fixture "src/lib/next-auth.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/next-auth.ts"
+    .fixture "src/lib/profile.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/profile.ts"
+    .fixture "src/lib/session.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/session.ts"
+    .fixture "src/lib/settings.ts" from "../cases/next-practice-request-api-in-cache-scope/src/lib/settings.ts"
+    .expect _ at "src/app/blog/page.tsx":6
+    .expect _ at "src/components/greeting.tsx":7
+    .expect _ at "src/lib/dashboard.ts":7
+    .expect _ at "src/lib/dashboard.ts":14
+    .expect _ at "src/lib/dashboard.ts":21
+    .expect _ at "src/lib/data.ts":10
+    .expect _ at "src/lib/data.ts":16
+    .expect _ at "src/lib/menu.ts":7
+    .expect _ at "src/lib/profile.ts":10
+    .expect _ at "src/lib/profile.ts":16
+    .expect _ at "src/lib/profile.ts":22
+    .expect _ at "src/lib/profile.ts":23
+    .expect _ at "src/lib/settings.ts":8
+    .expect _ at "src/lib/settings.ts":15
+.end

@@ -1,0 +1,262 @@
+.policy "next-practice-server-action-unvalidated-input" revision 1
+.description "Check a Server Function's arguments at run time before they become a Prisma filter: a client can post an object where the TypeScript type says string, and Prisma reads it as a filter."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+.scope exclude "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*"
+.scope exclude "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Every Server Function is a public POST endpoint, and its arguments are whatever the
+// client encodes: React's wire format carries plain objects, so an argument typed `string` can arrive as
+// `{ "not": "" }`. TypeScript's types are gone at run time, and Prisma's filter methods that work on many rows
+// (findFirst, findMany, count, aggregate, groupBy, updateMany, deleteMany) read such an object as a filter with
+// operators: a token lookup matches any token, a delete by id deletes every row the rest of the filter allows.
+// A Server Function is an exported function of a file whose first statement is "use server", or a function whose
+// own body starts with "use server". Its parameters carry client input, and so do names bound from them without a
+// call (`const { id } = data`, `const id = data.id as string`), and the parameters of the workspace functions they
+// are passed to (an imported data-access function, a helper in the same file, as deep as the calls go).
+//   where: { token }                         reported: a parameter is the value a field is compared with
+//   where: { id: input.id as string }        reported: a member of a parameter, a cast is no check
+//   where: filters / where: { ...input }     reported: the client writes the whole filter
+//   findOpenInvite(token)                    reported at the action's call when findOpenInvite filters on it
+//   async function a(id) { "use server"; … } reported: an inline Server Function, `.bind` arguments included
+//   findUnique / update / delete / upsert    not reported: Prisma rejects an object where a unique field goes
+//   update({ where: { id } }) then deleteMany({ where: { userId: id } })
+//                                            not reported: the earlier unique lookup by `id` (here or in a helper
+//                                            called first) already threw on an object
+//   schema.parse(input), typeof id, assertX(id), isX(id), validateX(id), checkX(id), ensureX(id), verifyX(id)
+//                                            not reported: the value (or what it was read from) is checked first
+//   { title: { contains: q } }, { id: { in: ids } }   not reported: an operator's operand is typed, not a filter
+//   { id: String(id) }, formData.get("id")   not reported: a call's result is a string, not the client's object
+//   a function not exported from the "use server" file; a function wrapped by a call (`authed(async (…) => …)`)
+//                                            not reported: not callable by a client, or its parameters unknown
+// Data written from the arguments (`data:`) is prisma-practice-request-body-as-data's.
+// One finding per query and value: `OR: [{ slug }, { slugEn: slug }]` is reported once, at the first.
+// Gaps: filters built in a variable before the call (`const where = { id }`), nested writes' filters, members of
+// helper objects (`repo.find(id)`), re-exported helpers, `export default` helpers, and wrapper-made actions
+// (next-safe-action's are validated; others are not seen). A check counts wherever it is in the function, not
+// only before the query; a check of `id` does not cover `data.id`.
+
+#include "tsx/eslint-a-common.rerail"
+
+.violation FilterValue(at: node, x: symbol, f: symbol, op: symbol)
+    "`{x}` goes from the arguments of Server Function `{f}` into the `where` of `{op}()` unchecked. Its TypeScript type is not enforced at run time: a client can post an object with an operator key such as `not` where a string is expected, and Prisma reads it as a filter, so the query matches rows it was never meant to. Check the value where it enters the action: parse the arguments with a schema of their real type (`z.string()`, `z.number().int()`), or test `typeof` before the query. If `{f}` is a helper that only other server code calls (exported from the 'use server' file for reuse or for tests), move it out of that file instead: every export of a 'use server' file is an endpoint any client can call. If a helper this rule does not recognise already checks it, keep that and ignore this finding."
+.violation WholeFilter(at: node, x: symbol, f: symbol, op: symbol)
+    "`{x}`, from the arguments of Server Function `{f}`, is the `where` of `{op}()` (or is spread into it): the client writes the whole filter, so it can read or change other users' rows and probe fields through relations. Build the filter from fields you pick, after parsing them with a schema that lists the fields and operators a client may use. If `{f}` is a helper that only other server code calls, move it out of the 'use server' file instead: every export of that file is an endpoint any client can call."
+.violation FilterValueVia(at: node, x: symbol, f: symbol, g: symbol, op: symbol, p: symbol, o: node)
+    "`{x}` goes from the arguments of Server Function `{f}` to `{g}()` unchecked, and reaches the `where` of `{op}()` at {p}:{o.line}. Its TypeScript type is not enforced at run time: a client can post an object with an operator key such as `not` where a string is expected, and Prisma reads it as a filter, so the query matches rows it was never meant to. Check the value where it enters the action (a schema of its real type such as `z.string()`, or `typeof`), or in `{g}` itself. If `{f}` is a helper that only other server code calls (exported from the 'use server' file for reuse or for tests), move it out of that file instead: every export of a 'use server' file is an endpoint any client can call. If a helper this rule does not recognise already checks it, keep that and ignore this finding."
+
+FilterValue(v, x, f, op) :- sau_action(g, f), sau_sink(g, s, _, c, _, "value"), sau_open(s),
+    v = min u : { sau_sink(g, s, u, c, _, "value") }, sau_sink(g, s, v, c, op, "value"), text(v, x).
+WholeFilter(v, x, f, op) :- sau_action(g, f), sau_sink(g, s, v, _, op, "whole"), sau_open(s), text(v, x).
+FilterValueVia(a, x, f, y, op, p, o) :- sau_action(g, f), sau_link(g, s, k, a, h, j), sau_open(s), !sau_unique_before(s, k),
+    o = min v : { sau_reach(h, j, v, _, _) }, sau_reach(h, j, o, c, op), sau_fn_name(h, y), text(a, x),
+    docof(c, d), doc(d, p, _).
+
+// ---- Server Functions ---------------------------------------------------------------------------------------------
+// sau_action(f, x): f is a Server Function named x: an export of a "use server" file (`export async function x`,
+// `export const x = async (…) => …`, `export { x }`, `export default async (…) => …`), or a function whose own body
+// starts with "use server".
+.decl sau_action(f: node, x: symbol)
+sau_action(f, x) :- sau_server_export(p, e), field(e, "declaration", f), kind(f, "function_declaration"),
+    field(f, "name", n), text(n, x).
+sau_action(f, x) :- sau_server_export(p, e), field(e, "declaration", dc), kind(dc, "lexical_declaration"),
+    child(dc, v, _), kind(v, "variable_declarator"), field(v, "name", n), text(n, x), field(v, "value", w),
+    deparen(w, f), sau_fn(f).
+sau_action(f, "default") :- sau_server_export(p, e), field(e, "value", w), deparen(w, f), sau_fn(f).
+sau_action(f, x) :- sau_server_export(p, e), !field(e, "source", _), child(e, c, _), kind(c, "export_clause"),
+    child(c, s, _), kind(s, "export_specifier"), field(s, "name", n), text(n, y), export_name(s, x), sau_top_fn(p, y, f).
+sau_action(f, x) :- sau_fn(f), directive(f, _, "use server"), sau_fn_name(f, x).
+// sau_server_export(p, e): e is a top-level export statement of program p, whose file starts with "use server".
+.decl sau_server_export(p: node, e: node)
+sau_server_export(p, e) :- program(_, p), directive(p, _, "use server"), child(p, e, _), kind(e, "export_statement").
+.decl sau_fn(f: node)
+sau_fn(f) :- kind(f, k), (k = "function_declaration" ; k = "function_expression" ; k = "arrow_function").
+// sau_top_fn(p, x, f): program p declares x at its top as function f: `function x`, `const x = (…) => …`, either one
+// exported or not.
+.decl sau_top_fn(p: node, x: symbol, f: node)
+sau_top_fn(p, x, f) :- child(p, st, _), sau_top_stmt(st, f0), kind(f0, "function_declaration"), field(f0, "name", n),
+    text(n, x), f = f0.
+sau_top_fn(p, x, f) :- child(p, st, _), sau_top_stmt(st, dc), kind(dc, "lexical_declaration"), child(dc, v, _),
+    kind(v, "variable_declarator"), field(v, "name", n), text(n, x), field(v, "value", w), deparen(w, f), sau_fn(f).
+.decl sau_top_stmt(st: node, d: node)
+sau_top_stmt(st, st) :- kind(st, k), (k = "function_declaration" ; k = "lexical_declaration").
+sau_top_stmt(st, d) :- kind(st, "export_statement"), field(st, "declaration", d).
+// sau_fn_name(f, x): the name f is declared under, for messages.
+.decl sau_fn_name(f: node, x: symbol)
+sau_fn_name(f, x) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x).
+sau_fn_name(f, x) :- sau_fn(f), !kind(f, "function_declaration"), child(v, f, _), kind(v, "variable_declarator"),
+    field(v, "name", n), text(n, x).
+sau_fn_name(f, "(anonymous)") :- sau_fn(f), !kind(f, "function_declaration"), child(v, f, _),
+    !kind(v, "variable_declarator").
+
+// ---- client input ---------------------------------------------------------------------------------------------------
+// sau_ctx(g): g's parameters may hold client input: a Server Function, or a workspace function one is passed to.
+.decl sau_ctx(g: node)
+sau_ctx(g) :- sau_action(g, _).
+sau_ctx(h) :- sau_link(_, _, _, _, h, _).
+// sau_param(g, s, i): s binds the i-th parameter of g, or a name destructured from it.
+.decl sau_param(g: node, s: node, i: number)
+sau_param(g, s, i) :- sau_ctx(g), field(g, "parameters", ps), child(ps, par, _), !not_stmt(par),
+    i = count : { child(ps, o, _), !not_stmt(o), o < par }, decl_site(g, _, s, "param", "value"), within(s, par).
+sau_param(g, s, 0) :- sau_ctx(g), field(g, "parameter", s), kind(s, "identifier").
+// sau_taint(g, s, i): in context g, site s holds (part of) g's i-th argument; sau_from(t, s): t was read from s.
+.decl sau_taint(g: node, s: node, i: number)
+sau_taint(g, s, i) :- sau_param(g, s, i).
+sau_taint(g, t, i) :- sau_from(t, s), sau_taint(g, s, i).
+.decl sau_from(t: node, s: node)
+sau_from(t, s) :- sau_val(e, s), field(dc, "value", e), kind(dc, "variable_declarator"), field(dc, "name", n),
+    kind(n, "identifier"), t = dc.
+sau_from(t, s) :- sau_val(e, s), field(dc, "value", e), kind(dc, "variable_declarator"), pattern_name(t, _, dc).
+// sau_val(e, s): expression e reads site s's value without a call or an operator: the name, a member, an index,
+// through parentheses, `as`, `satisfies`, `!` and `await`.
+.decl sau_val(e: node, s: node)
+sau_val(r, s) :- sau_site(s), ref_site(r, s), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")).
+sau_val(e, s) :- sau_val(o, s), (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", o).
+sau_val(e, s) :- sau_val(o, s), sau_see_through(e), child(e, o, 0).
+.decl sau_site(s: node)
+sau_site(s) :- sau_param(_, s, _).
+sau_site(t) :- sau_from(t, _).
+.decl sau_see_through(e: node)
+sau_see_through(e) :- kind(e, k), (k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression" ; k = "await_expression").
+
+// ---- checks ---------------------------------------------------------------------------------------------------------
+// sau_open(s): nothing checks s, or what s was read from: no `typeof s`, and s is no argument of a call whose name
+// says it parses or checks (parse, safeParse, parseAsync, validate…, assert…, isX…, check…, ensure…, verify…).
+.decl sau_open(s: node)
+sau_open(s) :- sau_site(s), !sau_checked(s).
+.decl sau_checked(s: node)
+sau_checked(s) :- sau_val(a, s), call_arg(c, a, _), callee(c, fn), sau_last_name(fn, x), sau_check_name(x).
+sau_checked(s) :- sau_val(a, s), kind(u, "unary_expression"), op(u, "typeof"), field(u, "argument", a).
+sau_checked(t) :- sau_from(t, s), sau_checked(s).
+.decl sau_last_name(fn: node, x: symbol)
+sau_last_name(fn, x) :- kind(fn, "identifier"), text(fn, x).
+sau_last_name(fn, x) :- kind(fn, "member_expression"), field(fn, "property", p), text(p, x).
+.decl sau_check_name(x: symbol)
+sau_check_name(x) :- callee(_, fn), sau_last_name(fn, x),
+    match("(safe)?[Pp]arse(Async)?|spa|[Vv]alidate.*|[Aa]ssert.*|is[A-Z].*|[Cc]heck.*|[Ee]nsure.*|[Vv]erify.*", x).
+
+// ---- Prisma filters -------------------------------------------------------------------------------------------------
+// sau_filter_call(c, op, w): c is `….model.op({ where: w, … })` for a method that accepts filter operators;
+// sau_where_call is any method's.
+.decl sau_filter_call(c: node, op: symbol, w: node)
+sau_filter_call(c, op, w) :- sau_where_call(c, op, w), sau_filter_op(op).
+.decl sau_where_call(c: node, op: symbol, w: node)
+sau_where_call(c, op, w) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", pr), text(pr, op), (sau_filter_op(op) ; sau_unique_op(op)), field(fn, "object", m),
+    kind(m, "member_expression"), call_arg(c, a, 0), kind(a, "object"), child(a, pw, _), kind(pw, "pair"),
+    field(pw, "key", k), key_static(k, "where"), field(pw, "value", w0), deparen(w0, w).
+.decl sau_filter_op(op: symbol)
+sau_filter_op("findFirst"). sau_filter_op("findFirstOrThrow"). sau_filter_op("findMany"). sau_filter_op("count").
+sau_filter_op("aggregate"). sau_filter_op("groupBy"). sau_filter_op("updateMany").
+sau_filter_op("updateManyAndReturn"). sau_filter_op("deleteMany").
+// Scalar filter operators: Prisma types their operands (a string, a list), so an object there is rejected. The
+// relation filters (is, isNot, some, every, none) and AND / OR / NOT take whole filters and are not here.
+.decl sau_operator(x: symbol)
+sau_operator(x) :- (x = "equals" ; x = "not" ; x = "in" ; x = "notIn" ; x = "lt" ; x = "lte" ; x = "gt" ; x = "gte" ;
+    x = "contains" ; x = "startsWith" ; x = "endsWith" ; x = "mode" ; x = "search" ; x = "has" ; x = "hasEvery" ;
+    x = "hasSome" ; x = "isEmpty" ; x = "isSet" ; x = "path" ; x = "string_contains" ; x = "string_starts_with" ;
+    x = "string_ends_with" ; x = "array_contains" ; x = "array_starts_with" ; x = "array_ends_with").
+// sau_sink(g, s, v, c, op, how): in context g, v reads site s and is a field's value in filter c ("value"), or is
+// the filter or spread into it ("whole").
+.decl sau_sink(g: node, s: node, v: node, c: node, op: symbol, how: symbol)
+sau_sink(g, s, v, c, op, "value") :- sau_filter_call(c, op, w), has(w, pr, "pair"), field(pr, "key", k),
+    key_static(k, x), !sau_operator(x), field(pr, "value", v), sau_val(v, s), sau_taint(g, s, _),
+    !sau_unique_before(s, c).
+sau_sink(g, s, v, c, op, "value") :- sau_filter_call(c, op, w), has(w, v, "shorthand_property_identifier"),
+    text(v, x), !sau_operator(x), sau_val(v, s), sau_taint(g, s, _), !sau_unique_before(s, c).
+sau_sink(g, s, w, c, op, "whole") :- sau_filter_call(c, op, w), sau_val(w, s), sau_taint(g, s, _).
+sau_sink(g, s, e, c, op, "whole") :- sau_filter_call(c, op, w), child(w, sp, _), kind(sp, "spread_element"),
+    child(sp, e, 0), sau_val(e, s), sau_taint(g, s, _).
+// sau_unique_before(s, c): before filter call c, s was the `id` of a unique lookup (findUnique, update, delete, …),
+// here or in a helper it was passed to, which Prisma rejects when s is not a scalar, so the code after it never
+// runs with an object.
+.decl sau_unique_before(s: node, c: node)
+sau_unique_before(s, c) :- sau_unique_id(s, c2), sau_later(c), docof(c, d), docof(c2, d), line(c2, l2),
+    line(c, l), l2 < l.
+.decl sau_later(c: node)
+sau_later(c) :- sau_filter_call(c, _, _).
+sau_later(k) :- sau_link(_, _, k, _, _, _).
+.decl sau_unique_id(s: node, c: node)
+sau_unique_id(s, c) :- sau_where_call(c, op, w), sau_unique_op(op), child(w, pr, _), kind(pr, "pair"),
+    field(pr, "key", k), key_static(k, "id"), field(pr, "value", v), sau_val(v, s).
+sau_unique_id(s, c) :- sau_where_call(c, op, w), sau_unique_op(op), child(w, v, _),
+    kind(v, "shorthand_property_identifier"), text(v, "id"), sau_val(v, s).
+sau_unique_id(s, k) :- sau_link(_, s, k, _, h, j), sau_taint(h, s2, j), sau_unique_id(s2, _).
+.decl sau_unique_op(op: symbol)
+sau_unique_op("findUnique"). sau_unique_op("findUniqueOrThrow"). sau_unique_op("update"). sau_unique_op("delete").
+sau_unique_op("upsert").
+
+// ---- across calls ---------------------------------------------------------------------------------------------------
+// sau_link(g, s, k, a, h, j): in context g, argument a (j-th) of call k reads site s, and k calls workspace function h.
+.decl sau_link(g: node, s: node, k: node, a: node, h: node, j: number)
+sau_link(g, s, k, a, h, j) :- sau_taint(g, s, _), sau_val(a, s), call_arg(k, a, j), callee(k, fn),
+    kind(fn, "identifier"), sau_callee_def(fn, h).
+// sau_reach(h, j, v, c, op): h's j-th parameter reaches filter value v of call c, unchecked on the way.
+.decl sau_reach(h: node, j: number, v: node, c: node, op: symbol)
+sau_reach(h, j, v, c, op) :- sau_sink(h, s, v, c, op, _), sau_taint(h, s, j), sau_open(s).
+sau_reach(h, j, v, c, op) :- sau_link(h, s, k, _, h2, j2), sau_taint(h, s, j), sau_open(s), !sau_unique_before(s, k),
+    sau_reach(h2, j2, v, c, op).
+
+// sau_callee_def(fn, h): the called name fn is function h: declared at the top of fn's file, or imported from a
+// workspace file that declares it at its top (the resolver below).
+.decl sau_callee_def(fn: node, h: node)
+sau_callee_def(fn, h) :- ref_site(fn, site), kind(site, "function_declaration"), nearest(site, p, "program"),
+    field(site, "name", n), text(n, x), sau_top_fn(p, x, site), h = site.
+sau_callee_def(fn, h) :- ref_site(fn, site), kind(site, "variable_declarator"), field(site, "value", w), deparen(w, h),
+    sau_fn(h), nearest(site, p, "program"), field(site, "name", n), text(n, x), sau_top_fn(p, x, h).
+sau_callee_def(fn, h) :- ref_site(fn, sp), import_binding(sp, _, src, x), x != "default", x != "*", docof(fn, d1),
+    sau_resolve(d1, src, d2), program(d2, p2), sau_top_fn(p2, x, h).
+
+// ---- library candidate: import resolution ----------------------------------------------------------------------------
+// sau_resolve(d1, src, d2): import specifier src in document d1 names document d2. Relative specifiers by path; the
+// `@/` and `~/` aliases by layout: `@/lib/db` is <root>/lib/db or <root>/src/lib/db, for a <root> directory that
+// holds the importing file (tsconfig `paths` is not read: the engine binds no tsconfig input to .rerail rules).
+// Each tries the extensions .ts, .tsx, .js, .jsx and index files.
+.decl sau_resolve(d1: number, src: symbol, d2: number)
+sau_resolve(d1, src, d2) :- sau_spec(d1, src), prefix(".", src), doc(d1, p1, _), b = @join(@dir(p1), src), sau_ext(e),
+    q = cat(b, e), doc(d2, q, _).
+sau_resolve(d1, src, d2) :- sau_spec(d1, src), match("[@~]/(?<r>.+)", src), sau_up(d1, a), sau_ext(e),
+    (a = "", q = cat(r, e) ; a = "", q = cat("src/", cat(r, e)) ;
+     a != "", q = cat(a, cat("/", cat(r, e))) ; a != "", q = cat(a, cat("/src/", cat(r, e)))),
+    doc(d2, q, _).
+// sau_up(d, a): a is a directory holding document d ("" for the repository's root), for the alias specifiers of d.
+.decl sau_up(d: number, a: symbol)
+sau_up(d, a) :- sau_spec(d, src), match("[@~]/.+", src), doc(d, p, _), a = @dir(p).
+sau_up(d, b) :- sau_up(d, a), a != "", a != ".", b = @dir(a).
+// sau_spec(d, src): a specifier the rule needs resolved: the source of an import whose name a tainted call uses.
+.decl sau_spec(d: number, src: symbol)
+sau_spec(d, src) :- sau_taint(_, s, _), sau_val(a, s), call_arg(k, a, _), callee(k, fn), kind(fn, "identifier"),
+    ref_site(fn, sp), import_binding(sp, _, src, _), docof(fn, d).
+.decl sau_ext(e: symbol)
+sau_ext(".ts"). sau_ext(".tsx"). sau_ext(".js"). sau_ext(".jsx"). sau_ext("/index.ts"). sau_ext("/index.tsx").
+sau_ext("/index.js").
+
+// The cases, `cases/next-practice-server-action-unvalidated-input/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "tsconfig.json" from "../cases/next-practice-server-action-unvalidated-input/tsconfig.json"
+    .fixture "package.json" from "../cases/next-practice-server-action-unvalidated-input/package.json"
+    .fixture "src/lib/db.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/db.ts"
+    .fixture "src/lib/auth.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/auth.ts"
+    .fixture "src/lib/invites.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/invites.ts"
+    .fixture "src/lib/projects.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/projects.ts"
+    .fixture "src/lib/tokens.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/tokens.ts"
+    .fixture "src/lib/archive/index.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/archive/index.ts"
+    .fixture "src/app/invites/actions.ts" from "../cases/next-practice-server-action-unvalidated-input/src/app/invites/actions.ts"
+    .fixture "src/app/projects/page.tsx" from "../cases/next-practice-server-action-unvalidated-input/src/app/projects/page.tsx"
+    .expect _ at "src/app/invites/actions.ts":15
+    .expect _ at "src/app/invites/actions.ts":25
+    .expect _ at "src/app/invites/actions.ts":29
+    .expect _ at "src/app/invites/actions.ts":33
+    .expect _ at "src/app/invites/actions.ts":39
+    .expect _ at "src/app/invites/actions.ts":45
+    .expect _ at "src/app/invites/actions.ts":50
+    .expect _ at "src/app/invites/actions.ts":54
+    .expect _ at "src/app/invites/actions.ts":151
+    .expect _ at "src/app/invites/actions.ts":161
+    .expect _ at "src/app/projects/page.tsx":12
+.end

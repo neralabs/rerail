@@ -1,0 +1,230 @@
+.policy "next-practice-non-serializable-client-prop" revision 1
+.description "Don't pass a function or a class instance from a Server Component to a Client Component or a DOM event handler; React cannot serialize it and the route fails at render."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Props a Server Component passes to a Client Component, and the props of DOM
+// elements it renders, cross the network as React's Flight data. Functions (other than Server Functions and client
+// references) and class instances (other than Date, Map, Set, typed arrays, Promise and the like) cannot be
+// serialized: React throws "Functions cannot be passed directly to Client Components" / "Event handlers cannot be
+// passed to Client Component props" / "Only plain objects can be passed to Client Components", and the route
+// answers 500. Storybook, unit tests and client-side renders never see it.
+// A file renders as a Server Component here when it is an App Router page, layout, template, default, loading,
+// not-found, forbidden or unauthorized file in an app/ directory (not under pages/) without 'use client', or such a
+// file imports it (transitively, `import type` aside, never through a 'use client' file), and no 'use client' module
+// imports it. A Client Component is an element whose tag is imported (relative path, `@/` or `~/` alias, index files,
+// `export … from` barrels) from a 'use client' module, or is Next.js's own Link, Image, Script or Form (the default
+// export of next/link, next/image, next/script, next/form). A value is checked through `as`/`satisfies`/`!`,
+// parentheses, ternaries, the members of object and array literals, and a `const` of the file holding one.
+//   <Picker onSelect={(id) => log(id)} />              reported: an inline function to a client component
+//   <Picker onSelect={handleSelect} />                  reported: a function this file or a non-'use client' module declares
+//   <Picker items={new Money(5)} />, <Price fmt={new Intl.NumberFormat()} />   reported: a class instance
+//   <Picker opts={{ onOpen: () => {} }} />              reported: a function inside an object literal
+//   const tabs = [{ onOpen: () => {} }]; <Picker items={tabs} />   reported: the same through a const
+//   <Picker>{(id) => <span>{id}</span>}</Picker>        reported: a render-prop child
+//   <button onClick={() => track("go")}>                reported: a handler on a DOM element a Server Component renders
+//   <Link href="/" onClick={() => track("nav")}>         reported: next/link's Link is a Client Component
+//   <Picker onSelect={saveSettings} />                  not reported: a Server Function ('use server' file or body)
+//   <Picker onSelect={update.bind(null, id)} />         not reported: a bound Server Action (the target is not checked)
+//   <Picker icon={ClientIcon} />                        not reported: an export of a 'use client' module
+//   <Picker at={new Date()} m={new Map()} />            not reported: types React serializes
+//   <ServerList renderItem={(x) => …} />                not reported: a server component's props stay on the server
+//   the same JSX in a 'use client' file, in a module a 'use client' file imports, under pages/, or in Expo Router's
+//   app/_layout.tsx                                                                not reported
+// Gaps: Prisma Decimal and other class instances that come from a query result, not a `new` in the JSX (no types);
+// identifiers bound to parameters or call results; spread props `{...props}`; `.bind` on a non-Server Function;
+// client components from workspace packages or npm other than Next.js's own (opaque to import resolution), from
+// next/dynamic, or re-exported by a barrel some client file imports; a shared module imported from both sides is left
+// alone even where the server render crashes; tsconfig `paths` other than `@/` and `~/`; and, until the engine joins
+// its language lanes, any import between a .tsx and a .ts file (a function from lib/*.ts, a 'use server' file).
+
+#include "tsx/jsx.rerail"
+
+.violation NonSerializableClientProp(at: node, what: symbol, prop: symbol, el: symbol) "`{prop}` on `<{el}>` gets {what} from a Server Component (this file is an app/ page or layout, or only server files import it), and React cannot serialize it across the server-client boundary: the route fails at render with \"Functions cannot be passed directly to Client Components\" or \"Only plain objects can be passed to Client Components\". Move the handler or the object into the client component and pass it plain data (strings, numbers, plain objects, Dates); if the function must run on the server, make it a Server Function with 'use server'. If this markup belongs in the browser, move it into a 'use client' component. Leave it only if this file is in fact rendered from client code."
+
+// nscp_directive(d, x): document d starts with the directive x ("use client", "use server").
+.decl nscp_directive(d: number, x: symbol)
+nscp_directive(d, x) :- program(d, p), directive(p, _, x).
+
+// nscp_entry(d): an App Router file Next.js renders as a Server Component unless it says 'use client': a page,
+// layout, template, default, loading, not-found, forbidden or unauthorized file in an app/ directory, outside pages/.
+// (next.config.* cannot be read from here: it is a .js/.mjs file, another lane than .tsx; see the notes.) Expo
+// Router's app/ uses _layout and index, Remix's app/routes, so these names are the App Router's.
+.decl nscp_entry(d: number)
+nscp_entry(d) :- file_name(d, f),
+    glob("{page,layout,template,default,loading,not-found,global-not-found,forbidden,unauthorized}.{tsx,jsx,ts,js}", f),
+    path_part(d, "app"), !path_part(d, "pages"), !nscp_directive(d, "use client").
+
+// nscp_import(d, d2): d imports (or re-exports) a value from workspace document d2. `import type` loads nothing.
+.decl nscp_import(d: number, d2: number)
+nscp_import(d, d2) :- nscp_spec_doc(i, d2), !op(i, "type"), docof(i, d), d2 != d.
+
+// nscp_def(d, x, dd, y): export x of document d is document dd's own export y, through `export … from` chains.
+.decl nscp_def(d: number, x: symbol, dd: number, y: symbol)
+nscp_def(d, x, d, x) :- kind(e, "export_statement"), !field(e, "source", _), exported_decl(e, x), docof(e, d).
+nscp_def(d, "default", d, "default") :- kind(e, "export_statement"), op(e, "default"), docof(e, d).
+nscp_def(d, x, dd, z) :- kind(e, "export_statement"), export_from(e, _, y, x), nscp_spec_doc(e, d2),
+    nscp_def(d2, y, dd, z), docof(e, d).
+nscp_def(d, x, dd, z) :- star_export(e, _), nscp_spec_doc(e, d2), nscp_def(d2, x, dd, z), x != "default", docof(e, d).
+// nscp_from(r, d2, x): identifier r is document d2's export x, imported by name or as its default.
+.decl nscp_from(r: node, d2: number, x: symbol)
+nscp_from(r, d2, x) :- ref_site(r, sp), import_binding(sp, _, _, x), x != "*", nearest(sp, i, "import_statement"),
+    nscp_spec_doc(i, d2).
+// nscp_imported(r, d2, dd, y): identifier r is imported from document d2, and is dd's own export y.
+.decl nscp_imported(r: node, d2: number, dd: number, y: symbol)
+nscp_imported(r, d2, dd, y) :- nscp_from(r, d2, x), nscp_def(d2, x, dd, y).
+
+// nscp_server_doc(d): d runs only as server code: reached from an entry without crossing 'use client', and no
+// 'use client' module reaches it (a shared module renders on both sides; the client side may pass functions).
+.decl nscp_server_reach(d: number)
+nscp_server_reach(d) :- nscp_entry(d).
+nscp_server_reach(d2) :- nscp_server_reach(d), nscp_import(d, d2), !nscp_directive(d2, "use client").
+.decl nscp_client_reach(d: number)
+nscp_client_reach(d) :- nscp_directive(d, "use client").
+nscp_client_reach(d2) :- nscp_client_reach(d), nscp_import(d, d2), !nscp_directive(d2, "use server").
+.decl nscp_server_doc(d: number)
+nscp_server_doc(d) :- nscp_server_reach(d), !nscp_client_reach(d).
+
+// nscp_el(e, x, client): element e in a server document, named x; client = 1 for a Client Component (its tag is
+// imported from a 'use client' module, or through a barrel from one), 0 for a DOM element.
+.decl nscp_el(e: node, x: symbol, client: number)
+nscp_el(e, x, 1) :- tag(e, t), docof(e, d), nscp_server_doc(d), nscp_from(t, d2, _), nscp_directive(d2, "use client"),
+    text(t, x).
+nscp_el(e, x, 1) :- tag(e, t), docof(e, d), nscp_server_doc(d), nscp_imported(t, _, dd, _),
+    nscp_directive(dd, "use client"), text(t, x).
+// Next.js's own Client Components, imported as their package's default export: `<Link onClick={…}>` from a page
+// fails with "Event handlers cannot be passed to Client Component props".
+nscp_el(e, x, 1) :- tag(e, t), kind(t, "identifier"), docof(e, d), nscp_server_doc(d), ref_site(t, sp),
+    import_binding(sp, _, m, "default"), nscp_client_pkg(m), text(t, x).
+.decl nscp_client_pkg(m: symbol)
+nscp_client_pkg("next/link"). nscp_client_pkg("next/image"). nscp_client_pkg("next/script"). nscp_client_pkg("next/form").
+nscp_el(e, x, 0) :- tag(e, t), host_tag(t), docof(e, d), nscp_server_doc(d), text(t, x).
+
+// nscp_prop(e, x, v): element e passes expression v as prop x: an attribute `x={v}`, or a child `{v}` as children.
+.decl nscp_prop(e: node, x: symbol, v: node)
+nscp_prop(e, x, v) :- nscp_el(e, _, _), (field(e, "open_tag", o) ; kind(e, "jsx_self_closing_element"), o = e),
+    field(o, "attribute", a), kind(a, "jsx_attribute"), child(a, n, 0), text(n, x), child(a, c, 1),
+    kind(c, "jsx_expression"), child(c, v, _), !kind(v, "comment").
+nscp_prop(e, "children", v) :- nscp_el(e, _, 1), kind(e, "jsx_element"), child(e, c, _), kind(c, "jsx_expression"),
+    child(c, v, _), !kind(v, "comment").
+
+// nscp_val(t, v): v is sent as part of t: t itself, through wrappers, ternary branches, object and array members.
+.decl nscp_val(t: node, v: node)
+nscp_val(v, v) :- nscp_prop(_, _, v).
+nscp_val(t, x) :- nscp_val(t, v), kind(v, "parenthesized_expression"), child(v, x, _), !kind(x, "comment").
+nscp_val(t, x) :- nscp_val(t, v), (kind(v, "as_expression") ; kind(v, "satisfies_expression") ;
+    kind(v, "non_null_expression")), child(v, x, 0).
+nscp_val(t, x) :- nscp_val(t, v), kind(v, "ternary_expression"), (field(v, "consequence", x) ; field(v, "alternative", x)).
+nscp_val(t, x) :- nscp_val(t, v), kind(v, "object"), child(v, p, _), kind(p, "pair"), field(p, "value", x).
+nscp_val(t, x) :- nscp_val(t, v), kind(v, "object"), child(v, x, _),
+    (kind(x, "shorthand_property_identifier") ; kind(x, "method_definition")).
+nscp_val(t, x) :- nscp_val(t, v), kind(v, "array"), child(v, x, _), !kind(x, "comment").
+// A `const` of this file holding an object or array literal: `const tabs = [{ onSelect: () => … }]; <Tabs items={tabs}/>`.
+nscp_val(t, x) :- nscp_val(t, v), kind(v, "identifier"), ref_site(v, s), kind(s, "variable_declarator"),
+    field(s, "value", x), (kind(x, "object") ; kind(x, "array")), child(l, s, _), kind(l, "lexical_declaration"),
+    op(l, "const").
+
+// nscp_plain_fn(f): f declares a function that is no Server Function: no 'use server' in its body or its file.
+.decl nscp_plain_fn(site: node)
+nscp_plain_fn(f) :- kind(f, "function_declaration"), !directive(f, _, "use server"), docof(f, d),
+    !nscp_directive(d, "use server").
+nscp_plain_fn(s) :- kind(s, "variable_declarator"), field(s, "value", f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")), !directive(f, _, "use server"), docof(s, d),
+    !nscp_directive(d, "use server").
+// nscp_plain_fn_export(d, x): document d, neither 'use client' (its exports are client references, which React
+// sends) nor 'use server', declares such a function x at its top.
+.decl nscp_plain_fn_export(d: number, x: symbol)
+nscp_plain_fn_export(d, x) :- nscp_plain_fn(s), top_level(s, x), docof(s, d), !nscp_directive(d, "use client").
+
+// nscp_bad(v, what): v is a value React cannot serialize.
+.decl nscp_bad(v: node, what: symbol)
+nscp_bad(v, "a function") :- nscp_val(_, v), (kind(v, "arrow_function") ; kind(v, "function_expression") ;
+    kind(v, "method_definition")), !directive(v, _, "use server").
+nscp_bad(v, "a function") :- nscp_val(_, v), (kind(v, "identifier") ; kind(v, "shorthand_property_identifier")),
+    ref_site(v, s), nscp_plain_fn(s).
+nscp_bad(v, "a function") :- nscp_val(_, v), (kind(v, "identifier") ; kind(v, "shorthand_property_identifier")),
+    nscp_imported(v, d2, dd, y), nscp_plain_fn_export(dd, y), !nscp_directive(d2, "use client"),
+    !nscp_directive(d2, "use server").
+nscp_bad(v, "a class instance") :- nscp_val(_, v), kind(v, "new_expression"), field(v, "constructor", c),
+    (kind(c, "identifier"), text(c, x) ; kind(c, "member_expression"), field(c, "property", p), text(p, x)),
+    !nscp_serializable_class(x).
+// The built-ins React's Flight protocol sends (react.dev, 'use client', "Serializable types"), and Error, which
+// React 19 sends too.
+.decl nscp_serializable_class(x: symbol)
+nscp_serializable_class("Date"). nscp_serializable_class("Map"). nscp_serializable_class("Set").
+nscp_serializable_class("Array"). nscp_serializable_class("Promise"). nscp_serializable_class("ArrayBuffer").
+nscp_serializable_class("DataView"). nscp_serializable_class("Int8Array"). nscp_serializable_class("Uint8Array").
+nscp_serializable_class("Uint8ClampedArray"). nscp_serializable_class("Int16Array").
+nscp_serializable_class("Uint16Array"). nscp_serializable_class("Int32Array"). nscp_serializable_class("Uint32Array").
+nscp_serializable_class("Float32Array"). nscp_serializable_class("Float64Array").
+nscp_serializable_class("BigInt64Array"). nscp_serializable_class("BigUint64Array").
+nscp_serializable_class("FormData"). nscp_serializable_class("Blob"). nscp_serializable_class("ReadableStream").
+nscp_serializable_class("Error").
+
+// Functions to DOM elements (event handlers, callback refs) and anything unserializable to a Client Component.
+NonSerializableClientProp(v, w, x, n) :- nscp_el(e, n, 1), nscp_prop(e, x, t), nscp_val(t, v), nscp_bad(v, w).
+NonSerializableClientProp(v, "a function", x, n) :- nscp_el(e, n, 0), nscp_prop(e, x, t), nscp_val(t, v),
+    nscp_bad(v, "a function").
+
+// ---- library candidate: import resolution ----------------------------------------------------------------------
+// tsx/names' `target` needs tsconfig_for/tsconfig_path, and node-resolve's spec_resolved has no producer, so the
+// rule resolves specifiers itself, from the paths of the documents it can see (one language lane: .tsx files see
+// .tsx files only, see the notes).
+// nscp_spec_doc(i, d2): import or `export … from` statement i names workspace document d2:
+//   "./picker", "../lib/x"     relative to the importing file, with the extension or index file candidates
+//   "@/components/picker"     an `@/` or `~/` alias, tried against every directory above the importing file and its
+//                             src/: the tsconfig `paths` of a Next.js app ("@/*": ["./*"] or ["./src/*"])
+.decl nscp_spec_doc(i: node, d2: number)
+nscp_spec_doc(i, d2) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), nscp_file(@join(@dir(p), s), d2).
+nscp_spec_doc(i, d2) :- import_spec(i, s), (prefix("@/", s) ; prefix("~/", s)), docof(i, d), nscp_above(d, a),
+    rest = substr(s, 2, strlen(s) - 2), (base = @join(a, rest) ; base = @join(a, cat("src/", rest))), nscp_file(base, d2).
+// nscp_above(d, a): a is a directory above document d (its own included), "" for the repository's root.
+.decl nscp_above(d: number, a: symbol)
+nscp_above(d, @dir(p)) :- import_spec(i, s), (prefix("@/", s) ; prefix("~/", s)), docof(i, d), doc(d, p, _).
+nscp_above(d, @dir(a)) :- nscp_above(d, a), a != "", a != ".".
+// nscp_file(b, d2): document d2's path is b plus an extension or an index file.
+.decl nscp_file(b: symbol, d2: number)
+nscp_file(b, d2) :- doc(d2, f, _), nscp_ext(x), k = strlen(f) - strlen(x), k > 0, b = substr(f, 0, k), f = cat(b, x).
+.decl nscp_ext(x: symbol)
+nscp_ext(".tsx"). nscp_ext(".ts"). nscp_ext(".jsx"). nscp_ext(".js"). nscp_ext(".mjs").
+nscp_ext("/index.tsx"). nscp_ext("/index.ts"). nscp_ext("/index.jsx"). nscp_ext("/index.js").
+
+// The cases, `cases/next-practice-non-serializable-client-prop/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "apps/mobile/app/_layout.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/mobile/app/_layout.tsx"
+    .fixture "apps/mobile/package.json" from "../cases/next-practice-non-serializable-client-prop/apps/mobile/package.json"
+    .fixture "apps/web/app/about/page.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/app/about/page.tsx"
+    .fixture "apps/web/app/dashboard/error.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/app/dashboard/error.tsx"
+    .fixture "apps/web/app/layout.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/app/layout.tsx"
+    .fixture "apps/web/app/settings/actions.ts" from "../cases/next-practice-non-serializable-client-prop/apps/web/app/settings/actions.ts"
+    .fixture "apps/web/app/settings/page.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/app/settings/page.tsx"
+    .fixture "apps/web/components/columns.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/components/columns.tsx"
+    .fixture "apps/web/components/index.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/components/index.tsx"
+    .fixture "apps/web/components/like-button.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/components/like-button.tsx"
+    .fixture "apps/web/components/picker.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/components/picker.tsx"
+    .fixture "apps/web/components/product-card.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/components/product-card.tsx"
+    .fixture "apps/web/components/shared-row.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/components/shared-row.tsx"
+    .fixture "apps/web/lib/format.ts" from "../cases/next-practice-non-serializable-client-prop/apps/web/lib/format.ts"
+    .fixture "apps/web/next.config.mjs" from "../cases/next-practice-non-serializable-client-prop/apps/web/next.config.mjs"
+    .fixture "apps/web/package.json" from "../cases/next-practice-non-serializable-client-prop/apps/web/package.json"
+    .fixture "apps/web/pages/legacy.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/pages/legacy.tsx"
+    .fixture "apps/web/tsconfig.json" from "../cases/next-practice-non-serializable-client-prop/apps/web/tsconfig.json"
+    .fixture "package.json" from "../cases/next-practice-non-serializable-client-prop/package.json"
+    .expect _ at "apps/web/app/about/page.tsx":13
+    .expect _ at "apps/web/app/about/page.tsx":22
+    .expect _ at "apps/web/app/about/page.tsx":25
+    .expect _ at "apps/web/app/settings/page.tsx":19
+    .expect _ at "apps/web/app/settings/page.tsx":31
+    .expect _ at "apps/web/app/settings/page.tsx":34
+    .expect _ at "apps/web/app/settings/page.tsx":37
+    .expect _ at "apps/web/app/settings/page.tsx":46
+    .expect _ at "apps/web/app/settings/page.tsx":49
+    .expect _ at "apps/web/app/settings/page.tsx":52
+    .expect _ at "apps/web/app/settings/page.tsx":58
+    .expect _ at "apps/web/components/product-card.tsx":13
+    .expect _ at "apps/web/components/product-card.tsx":16
+    .expect _ at "apps/web/components/product-card.tsx":19
+    .expect _ at "apps/web/components/product-card.tsx":23
+.end

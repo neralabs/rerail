@@ -1,0 +1,239 @@
+.policy "next-practice-redirect-in-try" revision 1
+.description "Call redirect(), notFound() and the other throwing next/navigation functions outside a try whose catch swallows errors, or rethrow them from the catch with unstable_rethrow(err)."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. redirect(), permanentRedirect(), notFound(), forbidden() and unauthorized() from
+// next/navigation never return: they throw a Next.js control-flow error (NEXT_REDIRECT, NEXT_HTTP_ERROR_FALLBACK)
+// that Next.js catches to send the redirect or the 404/403/401 page. A try around the call whose catch does not
+// rethrow swallows that error: the redirect never happens, the action returns its error result or the page renders
+// its error UI instead of the 404, and an auth redirect falls through to the code after the try/catch.
+//   try { redirect(`/posts/${id}`) } catch (e) { return { error } }       reported at redirect
+//   try { if (!post) notFound() } catch (e) { console.error(e) }           reported at notFound
+//   try { await f().then((r) => { notFound() }) } catch {}                  reported: a .then, $transaction or array
+//                                                                          callback the try awaits or runs throws into it
+//   try { redirect('/a') } catch (e) { throw new Error('failed') }          reported: the new error replaces the redirect
+//   try { try { redirect('/a') } catch (e) { throw e } } catch {}           reported: the outer catch swallows the rethrow
+//   try { await requireUser() } catch { return null }                       reported at requireUser(), a workspace
+//                                                                          function whose own body calls redirect()
+//   'use client' … onClick = async () => { try { redirect('/') } catch {} }  reported with the client message: use
+//                                                                          useRouter().push() in an event handler
+//   catch (e) { if (e instanceof Error) return { error: e.message }; throw e }   reported: NEXT_REDIRECT is an Error,
+//                                                                          so the guarded return swallows it (also
+//                                                                          `if (!(e instanceof Error)) throw e`)
+//   await save().then(() => redirect('/a')).catch(() => null)             reported: the chain's .catch callback
+//                                                                          swallows the rejection the redirect makes
+//   catch (e) { unstable_rethrow(e); … }                                    not reported: rethrows Next.js's errors
+//   catch (e) { if (isRedirectError(e)) throw e; … }                        not reported: a guard naming the error kind
+//   catch (e) { if (e instanceof ZodError) return …; throw e }              not reported: rethrows what it does not handle
+//   try { if (!ok) notFound() } catch { notFound() }                        not reported: the catch ends by throwing
+//                                                                          the same kind again
+//   try { … } catch { … }  redirect('/a')                                   not reported: the call is after the try
+//   try { … } finally { … }                                                 not reported: no catch
+//   try { … } catch { redirect('/error') }                                  not reported: the call is in the catch
+//   try { const go = () => redirect('/'); button.onclick = go } catch {}    not reported: a closure the try only defines
+//   try { return NextResponse.redirect(url) } catch {}                      not reported: returns a response, throws nothing
+//   import { redirect } from "@remix-run/node"                              not reported: only next/navigation's throw
+//   p.then(() => redirect('/a')).catch((e) => { log(e); throw e })          not reported: the .catch callback rethrows
+// Gaps: a catch that rethrows through a helper (`handleError(e)` that throws e) counts as swallowing; a promise
+// `.catch(handler)` is read only when its callback is a function literal (`.catch(console.error)` is not reported);
+// a rethrow in a nested try/if of the catch counts as rethrowing even when it only covers other errors (the
+// `instanceof Error` guard aside); helpers are followed one call deep and only into top-level functions;
+// next-auth's `signIn`/`signOut` (which also throw NEXT_REDIRECT) and a `finally` that returns are not seen.
+
+#include "tsx/modules.rerail"
+
+.violation RedirectInTry(at: node, x: symbol, t: node)
+    "`{x}()` is called inside the try block at line {t.line}, and that try's catch neither rethrows the caught error nor calls `unstable_rethrow(err)`. `{x}()` works by throwing a Next.js control-flow error, so the catch swallows it: the redirect or error page never happens and the catch's fallback runs instead. Call `{x}()` after the try/catch (keep the value it needs in a variable declared before the try), or add `unstable_rethrow(err)` from next/navigation as the catch's first statement (or `throw err` for errors the catch does not handle)."
+RedirectInTry(c, x, t) :- nrt_api_call(c, x), nrt_swallowing_try(t, b), nrt_throws_into(c, b), !nrt_client_callback(c, x),
+    !nrt_ends_in(t, x).
+
+.violation RedirectInClientHandler(at: node, x: symbol, t: node)
+    "`{x}()` is called inside the try block at line {t.line} of a callback in a 'use client' file, and that try's catch does not rethrow. `{x}()` works by throwing a Next.js control-flow error, so the catch swallows it and shows its error path after the work succeeded; Next.js also supports `{x}()` in Client Components only while rendering, not in event handlers. In an event handler or effect, navigate with `const router = useRouter()` (next/navigation) and `router.push(...)` (or `router.replace`) in the try's success path instead."
+RedirectInClientHandler(c, x, t) :- nrt_api_call(c, x), nrt_swallowing_try(t, b), nrt_throws_into(c, b),
+    nrt_client_callback(c, x), !nrt_ends_in(t, x).
+// nrt_client_callback(c, x): redirect call c sits in a function nested inside another (an event handler or effect in
+// a component), in a 'use client' file.
+.decl nrt_client_callback(c: node, x: symbol)
+nrt_client_callback(c, x) :- nrt_api_call(c, x), (x = "redirect" ; x = "permanentRedirect"), docof(c, d),
+    program(d, p), directive(p, _, "use client"), nearest(c, f, fn_scope), nearest(f, g, fn_scope),
+    !kind(g, "program").
+
+.violation RedirectHelperInTry(at: node, g: symbol, x: symbol, t: node, p: symbol, o: node)
+    "`{g}()` is called inside the try block at line {t.line} and can call `{x}()` ({p}:{o.line}), but that try's catch neither rethrows the caught error nor calls `unstable_rethrow(err)`. `{x}()` works by throwing a Next.js control-flow error, so when `{g}()` redirects the catch swallows it and the code after the try/catch runs instead. Call `{g}()` before the try, or add `unstable_rethrow(err)` from next/navigation as the catch's first statement (or `throw err` for errors the catch does not handle)."
+RedirectHelperInTry(k, g, x, t, p, o) :- nrt_swallowing_try(t, b), nrt_helper_call(k, o), within_stop(k, b, fn_scope),
+    field(k, "function", fn), text(fn, g), nrt_api_call(o, x), !nrt_ends_in(t, x), docof(o, d), doc(d, p, _).
+
+.violation RedirectInPromiseCatch(at: node, x: symbol, k: node)
+    "`{x}()` is called in a `.then()` callback, and the `.catch()` at line {k.line} of the same promise chain neither rethrows nor calls `unstable_rethrow(err)`. `{x}()` works by throwing a Next.js control-flow error, which rejects the chain, so the `.catch()` callback swallows it: the redirect or error page never happens and the callback's fallback value is used instead. Await the chain first and call `{x}()` after it (`const saved = await save().then(() => true).catch(() => false); if (saved) {x}(…)`), or call `unstable_rethrow(err)` from next/navigation first in the `.catch()` callback."
+RedirectInPromiseCatch(c, x, k) :- nrt_api_call(c, x), within_stop(c, f, fn_scope), nrt_then_cb(f, t), nrt_chain(t, k),
+    nrt_step(k, "catch"), field(k, "arguments", al), child(al, g, 0),
+    (kind(g, "arrow_function") ; kind(g, "function_expression")), !nrt_cb_rethrows(g).
+// nrt_then_cb(f, t): function f is the first argument of `t = p.then(f)`.
+.decl nrt_then_cb(f: node, t: node)
+nrt_then_cb(f, t) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), child(a, f, 0), kind(a, "arguments"),
+    child(t, a, _), kind(t, "call_expression"), nrt_step(t, "then").
+// nrt_step(k, y): call k is `<object>.y(…)`.
+.decl nrt_step(k: node, y: symbol)
+nrt_step(k, y) :- kind(k, "call_expression"), field(k, "function", m), kind(m, "member_expression"),
+    field(m, "property", pr), text(pr, y), (y = "then" ; y = "finally" ; y = "catch").
+// nrt_chain(t, k): call k is chained on t's result, through .then and .finally steps only (so the first .catch
+// after t is reached, and none after it).
+.decl nrt_chain(t: node, k: node)
+nrt_chain(t, k) :- nrt_then_cb(_, t), field(k, "function", m), kind(m, "member_expression"), field(m, "object", t),
+    nrt_step(k, _).
+nrt_chain(t, k) :- nrt_chain(t, j), (nrt_step(j, "then") ; nrt_step(j, "finally")), field(k, "function", m),
+    kind(m, "member_expression"), field(m, "object", j), nrt_step(k, _).
+// nrt_cb_rethrows(g): .catch callback g throws an identifier (its parameter, as written) or names a Next.js guard.
+.decl nrt_cb_rethrows(g: node)
+nrt_cb_rethrows(g) :- (kind(g, "arrow_function") ; kind(g, "function_expression")), kind(s, "throw_statement"),
+    within_stop(s, g, fn_scope), child(s, r, _), kind(r, "identifier").
+nrt_cb_rethrows(g) :- (kind(g, "arrow_function") ; kind(g, "function_expression")), within(n, g),
+    (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x), nrt_guard_name(x).
+
+// nrt_api_call(c, x): c calls x, one of the next/navigation functions that throw instead of returning, imported by
+// name (`import { redirect as go } from "next/navigation"`) or through a namespace (`nav.redirect()`).
+.decl nrt_api(x: symbol)
+nrt_api("redirect"). nrt_api("permanentRedirect"). nrt_api("notFound"). nrt_api("forbidden"). nrt_api("unauthorized").
+.decl nrt_api_call(c: node, x: symbol)
+nrt_api_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), ref_site(f, sp),
+    import_binding(sp, _, "next/navigation", x), nrt_api(x).
+nrt_api_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, "next/navigation", "*"),
+    field(f, "property", p), text(p, x), nrt_api(x).
+
+// nrt_swallowing_try(t, b): try statement t, with body b, has a catch that does not rethrow.
+.decl nrt_swallowing_try(t: node, b: node)
+nrt_swallowing_try(t, b) :- kind(t, "try_statement"), field(t, "body", b), field(t, "handler", h), !nrt_rethrows(h).
+// nrt_ends_in(t, x): try t's catch ends with an unconditional call of x, so a swallowed x() is thrown again.
+.decl nrt_ends_in(t: node, x: symbol)
+nrt_ends_in(t, x) :- kind(t, "try_statement"), field(t, "handler", h), field(h, "body", hb), child(hb, st, i),
+    kind(st, "expression_statement"), child(st, c, 0), nrt_api_call(c, x),
+    count : { child(hb, o, j), j > i, !kind(o, "comment") } = 0.
+
+// nrt_rethrows(h): catch clause h lets Next.js's error out: it throws its own parameter (`throw e`, under any
+// condition but an `instanceof Error` guard that returns first), or names the error kinds or unstable_rethrow
+// (`unstable_rethrow(e)`, `isRedirectError(e)`, `e.digest`, a "NEXT_REDIRECT" string).
+.decl nrt_rethrows(h: node)
+nrt_rethrows(h) :- kind(h, "catch_clause"), field(h, "parameter", p), kind(s, "throw_statement"),
+    within_stop(s, h, fn_scope), child(s, r, _), kind(r, "identifier"), ref_site(r, p), !nrt_error_swallow(h).
+nrt_rethrows(h) :- kind(h, "catch_clause"), within(n, h), (kind(n, "identifier") ; kind(n, "property_identifier")),
+    text(n, x), nrt_guard_name(x).
+nrt_rethrows(h) :- kind(h, "catch_clause"), within(n, h), kind(n, "string"), text(n, s),
+    (contains("NEXT_REDIRECT", s) ; contains("NEXT_NOT_FOUND", s) ; contains("NEXT_HTTP_ERROR", s)).
+// nrt_error_swallow(h): catch h handles every Error before its rethrow: `if (e instanceof Error) return …` (or a
+// throw of something else in that branch), or its `throw e` sits under `if (!(e instanceof Error))`. Next.js's
+// control-flow errors are Errors, so they never reach the rethrow.
+.decl nrt_error_swallow(h: node)
+nrt_error_swallow(h) :- kind(h, "catch_clause"), field(h, "parameter", p), kind(i, "if_statement"),
+    within_stop(i, h, fn_scope), field(i, "condition", cnd), child(cnd, bx, _), kind(bx, "binary_expression"),
+    op(bx, "instanceof"), field(bx, "left", l), ref_site(l, p), field(bx, "right", ty), text(ty, "Error"),
+    field(i, "consequence", cs), nrt_leaves(cs).
+nrt_error_swallow(h) :- kind(h, "catch_clause"), kind(s, "throw_statement"), within_stop(s, h, fn_scope),
+    nearest(s, i, "if_statement"), within(i, h), field(i, "condition", cnd), text(cnd, ct),
+    match("\\(\\s*!\\s*\\(\\s*[\\w$]+\\s+instanceof\\s+Error\\s*\\)\\s*\\)", ct).
+// nrt_leaves(cs): statement cs returns, or throws something other than a bare name.
+.decl nrt_leaves(cs: node)
+nrt_leaves(cs) :- kind(cs, "return_statement").
+nrt_leaves(cs) :- kind(cs, "throw_statement"), child(cs, r, _), !kind(r, "identifier").
+nrt_leaves(cs) :- kind(cs, "statement_block"), kind(s, "return_statement"), within_stop(s, cs, fn_scope).
+nrt_leaves(cs) :- kind(cs, "statement_block"), kind(s, "throw_statement"), within_stop(s, cs, fn_scope), child(s, r, _),
+    !kind(r, "identifier").
+.decl nrt_guard_name(x: symbol)
+nrt_guard_name("unstable_rethrow"). nrt_guard_name("isRedirectError"). nrt_guard_name("isNotFoundError").
+nrt_guard_name("isNextRouterError"). nrt_guard_name("isHTTPAccessFallbackError"). nrt_guard_name("digest").
+
+// nrt_throws_into(c, b): what c throws reaches try body b: c is in b with no function between, or c is in a
+// callback that a call in b runs before b goes on (an array method's callback) or awaits (`await p.then(cb)`,
+// `await prisma.$transaction(async (tx) => …)`).
+.decl nrt_throws_into(c: node, b: node)
+nrt_throws_into(c, b) :- nrt_api_call(c, _), kind(t, "try_statement"), field(t, "body", b), within_stop(c, b, fn_scope).
+nrt_throws_into(c, b) :- nrt_api_call(c, _), within_stop(c, f, fn_scope), nrt_relay(f, k), kind(t, "try_statement"),
+    field(t, "body", b), within_stop(k, b, fn_scope).
+// nrt_relay(f, k): function f is an argument of call k, and k runs it synchronously or is awaited.
+.decl nrt_relay(f: node, k: node)
+nrt_relay(f, k) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), child(a, f, _), kind(a, "arguments"),
+    child(k, a, _), kind(k, "call_expression"), nrt_runs_now(k).
+.decl nrt_runs_now(k: node)
+nrt_runs_now(k) :- kind(k, "call_expression"), field(k, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, x), nrt_sync_method(x).
+nrt_runs_now(k) :- kind(k, "call_expression"), child(w, k, _), kind(w, "await_expression").
+.decl nrt_sync_method(x: symbol)
+nrt_sync_method("forEach"). nrt_sync_method("map"). nrt_sync_method("flatMap"). nrt_sync_method("filter").
+nrt_sync_method("find"). nrt_sync_method("findIndex"). nrt_sync_method("some"). nrt_sync_method("every").
+nrt_sync_method("reduce").
+
+// nrt_helper(site, d, x, o): site, in document d, declares x, a top-level function (`function requireUser() {}`,
+// `const requireUser = async () => {}`) whose own body calls a throwing next/navigation function at o, outside any
+// nested function.
+.decl nrt_helper(site: node, d: number, x: symbol, o: node)
+nrt_helper(site, d, x, o) :- top_level(site, x), nrt_fn_of(site, f), nrt_api_call(o, _), within_stop(o, f, fn_scope),
+    docof(site, d).
+// nrt_helper_call(k, o): call k calls such a helper, declared in its own file or imported by name from a relative
+// path or a path alias.
+.decl nrt_helper_call(k: node, o: node)
+nrt_helper_call(k, o) :- kind(k, "call_expression"), field(k, "function", fn), kind(fn, "identifier"),
+    ref_site(fn, site), nrt_helper(site, _, _, o).
+nrt_helper_call(k, o) :- kind(k, "call_expression"), field(k, "function", fn), kind(fn, "identifier"),
+    ref_site(fn, sp), import_binding(sp, _, s, y), docof(k, d), nrt_module_doc(d, s, td), nrt_helper(_, td, y, o).
+.decl nrt_fn_of(site: node, f: node)
+nrt_fn_of(f, f) :- kind(f, "function_declaration").
+nrt_fn_of(v, f) :- kind(v, "variable_declarator"), field(v, "value", f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
+
+// ---- library candidate: import resolution ------------------------------------------------------------------------
+// The runner binds no tsconfig_for/tsconfig_path, so tsx/names' cross-file target/sym_of are refused; this resolves
+// the specifiers the helper variant needs by path.
+// nrt_module_doc(d, s, td): import specifier s in document d names document td. "./auth" and "../lib/auth" join to
+// d's directory (tsx/names' resolve_base adds the extension or index file). An alias "@/lib/auth" (also "~/", "#/")
+// is looked up under each directory above d, directly and under its src/, as tsconfig `paths` such as
+// `"@/*": ["./src/*"]` map it: the engine reads no tsconfig `paths`, so the alias's root is a guess, and the helper
+// must still be a top-level function of that name that redirects.
+.decl nrt_module_doc(d: number, s: symbol, td: number)
+nrt_module_doc(d, s, td) :- nrt_imports(d, s), prefix(".", s), doc(d, p, _), resolve_base(@join(@dir(p), s), m),
+    doc(td, _, m).
+nrt_module_doc(d, s, td) :- nrt_imports(d, s), match("[@~#]/(?<r>.+)", s), nrt_above(d, a), nrt_ext(e),
+    (q = @join(a, cat(r, e)) ; q = @join(a, cat("src/", r, e))), doc(td, q, _).
+.decl nrt_imports(d: number, s: symbol)
+nrt_imports(d, s) :- import_binding(sp, _, s, _), docof(sp, d).
+.decl nrt_above(d: number, a: symbol)
+nrt_above(d, @dir(p)) :- nrt_imports(d, s), match("[@~#]/.+", s), doc(d, p, _).
+nrt_above(d, @dir(a)) :- nrt_above(d, a), a != "", a != ".", a != "/".
+.decl nrt_ext(e: symbol)
+nrt_ext(".ts"). nrt_ext(".tsx"). nrt_ext(".js"). nrt_ext(".jsx"). nrt_ext("/index.ts"). nrt_ext("/index.tsx").
+nrt_ext("/index.js").
+
+// The cases, `cases/next-practice-redirect-in-try/`, read as one repository: each line ending in `// caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/next-practice-redirect-in-try/package.json"
+    .fixture "tsconfig.json" from "../cases/next-practice-redirect-in-try/tsconfig.json"
+    .fixture "src/lib/auth.ts" from "../cases/next-practice-redirect-in-try/src/lib/auth.ts"
+    .fixture "src/lib/db.ts" from "../cases/next-practice-redirect-in-try/src/lib/db.ts"
+    .fixture "src/lib/guards/index.ts" from "../cases/next-practice-redirect-in-try/src/lib/guards/index.ts"
+    .fixture "src/app/settings/actions.ts" from "../cases/next-practice-redirect-in-try/src/app/settings/actions.ts"
+    .fixture "src/app/posts/actions.ts" from "../cases/next-practice-redirect-in-try/src/app/posts/actions.ts"
+    .fixture "src/app/posts/[id]/page.tsx" from "../cases/next-practice-redirect-in-try/src/app/posts/[id]/page.tsx"
+    .fixture "src/app/api/callback/route.ts" from "../cases/next-practice-redirect-in-try/src/app/api/callback/route.ts"
+    .fixture "src/app/posts/actions.test.ts" from "../cases/next-practice-redirect-in-try/src/app/posts/actions.test.ts"
+    .fixture "src/components/delete-post-button.tsx" from "../cases/next-practice-redirect-in-try/src/components/delete-post-button.tsx"
+    .expect _ at "src/app/posts/actions.ts":17
+    .expect _ at "src/app/posts/actions.ts":25
+    .expect _ at "src/app/posts/actions.ts":35
+    .expect _ at "src/app/posts/actions.ts":47
+    .expect _ at "src/app/posts/actions.ts":60
+    .expect _ at "src/app/posts/actions.ts":152
+    .expect _ at "src/app/posts/actions.ts":162
+    .expect RedirectInPromiseCatch at "src/app/posts/actions.ts":173
+    .expect _ at "src/app/posts/[id]/page.tsx":13
+    .expect _ at "src/app/posts/[id]/page.tsx":14
+    .expect _ at "src/app/posts/[id]/page.tsx":16
+    .expect _ at "src/app/settings/actions.ts":9
+    .expect _ at "src/app/settings/actions.ts":11
+    .expect RedirectInClientHandler at "src/components/delete-post-button.tsx":17
+.end

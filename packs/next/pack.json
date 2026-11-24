@@ -3,7 +3,7 @@
   "id": "next",
   "name": "Next.js",
   "category": "framework",
-  "covers": "Linter-equivalent to @next/eslint-plugin-next 16.3.8, for pages, images, fonts and scripts.",
+  "covers": "Linter-equivalent to @next/eslint-plugin-next 16.3.8, for pages, images, fonts and scripts. Also Rerail's own App Router practice rules.",
   "reason": "matches Next.js",
   "match": {
     "any": [
@@ -218,6 +218,346 @@
       "title": "No location assign relative destination",
       "group": "Next.js",
       "mode": "log"
+    },
+    {
+      "id": "next-practice-server-action-without-auth",
+      "document": "rules/next-practice-server-action-without-auth.rerail",
+      "title": "Next.js practice: A Server Action that writes to the database checks the session inside the action",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/admin/actions.ts",
+          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/db\";\n\nexport async function deleteProject(id: string) {\n  await prisma.project.delete({ where: { id } });\n}\n"
+        },
+        "passes": {
+          "path": "src/app/admin/actions.ts",
+          "text": "\"use server\";\n\nimport { auth } from \"@/auth\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function deleteProject(id: string) {\n  const session = await auth();\n  if (!session?.user) throw new Error(\"Unauthorized\");\n  await prisma.project.delete({ where: { id, ownerId: session.user.id } });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-practice-server-action-unvalidated-input",
+      "document": "rules/next-practice-server-action-unvalidated-input.rerail",
+      "title": "Next.js practice: Check a Server Function's arguments at run time before they become a Prisma filter",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/invites/actions.ts",
+          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/db\";\n\nexport async function acceptInvite(token: string) {\n  const invite = await prisma.invite.findFirst({ where: { token, usedAt: null } });\n  if (!invite) return { error: \"Invite not found\" };\n  return invite.id;\n}\n"
+        },
+        "passes": {
+          "path": "app/invites/actions.ts",
+          "text": "\"use server\";\n\nimport { z } from \"zod\";\nimport { prisma } from \"@/lib/db\";\n\nconst Token = z.string().min(16);\n\nexport async function acceptInvite(input: unknown) {\n  const token = Token.parse(input);\n  const invite = await prisma.invite.findFirst({ where: { token, usedAt: null } });\n  if (!invite) return { error: \"Invite not found\" };\n  return invite.id;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-practice-public-env-secret",
+      "document": "rules/next-practice-public-env-secret.rerail",
+      "title": "Next.js practice: Never give a secret a NEXT_PUBLIC_ name or put it in next.config's env",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/lib/supabase/admin.ts",
+          "text": "import { createClient } from \"@supabase/supabase-js\";\n\nexport function createAdminClient() {\n  return createClient(\n    process.env.NEXT_PUBLIC_SUPABASE_URL!,\n    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!,\n  );\n}\n"
+        },
+        "passes": {
+          "path": "src/lib/supabase/admin.ts",
+          "text": "import \"server-only\";\nimport { createClient } from \"@supabase/supabase-js\";\n\nexport function createAdminClient() {\n  return createClient(\n    process.env.NEXT_PUBLIC_SUPABASE_URL!,\n    process.env.SUPABASE_SERVICE_ROLE_KEY!,\n  );\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-practice-middleware-not-applied",
+      "document": "rules/next-practice-middleware-not-applied.rerail",
+      "title": "Next.js practice: Put middleware.ts or proxy.ts beside the app's app/ or pages/ directory, and use proxy.ts only on Next.js 16",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "middleware.ts",
+          "text": "import { NextResponse, type NextRequest } from \"next/server\";\n\nexport function middleware(request: NextRequest) {\n  if (!request.cookies.has(\"session\")) {\n    return NextResponse.redirect(new URL(\"/login\", request.url));\n  }\n  return NextResponse.next();\n}\n\nexport const config = { matcher: [\"/dashboard/:path*\"] };\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{\n  \"name\": \"web\",\n  \"private\": true,\n  \"dependencies\": { \"next\": \"^15.5.2\", \"react\": \"^19.0.0\" }\n}\n"
+            },
+            {
+              "path": "src/app/page.tsx",
+              "text": "export default function Home() {\n  return <main>Welcome</main>;\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/middleware.ts",
+          "text": "import { NextResponse, type NextRequest } from \"next/server\";\n\nexport function middleware(request: NextRequest) {\n  if (!request.cookies.has(\"session\")) {\n    return NextResponse.redirect(new URL(\"/login\", request.url));\n  }\n  return NextResponse.next();\n}\n\nexport const config = { matcher: [\"/dashboard/:path*\"] };\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{\n  \"name\": \"web\",\n  \"private\": true,\n  \"dependencies\": { \"next\": \"^15.5.2\", \"react\": \"^19.0.0\" }\n}\n"
+            },
+            {
+              "path": "src/app/page.tsx",
+              "text": "export default function Home() {\n  return <main>Welcome</main>;\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "next-practice-unstable-cache-closure-key",
+      "document": "rules/next-practice-unstable-cache-closure-key.rerail",
+      "title": "Next.js practice: A function cached with unstable_cache takes per-request values as arguments or keyParts, never from the function around it",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/dashboard/page.tsx",
+          "text": "import { unstable_cache } from \"next/cache\";\n\nimport { requireUser } from \"@/lib/auth\";\nimport { prisma } from \"@/lib/db\";\n\nexport default async function DashboardPage() {\n  const { userId } = await requireUser();\n  const getInvoices = unstable_cache(\n    async () => prisma.invoice.findMany({ where: { userId } }),\n    [\"dashboard-invoices\"],\n  );\n  const invoices = await getInvoices();\n  return <ul>{invoices.map((i) => <li key={i.id}>{i.number}</li>)}</ul>;\n}\n"
+        },
+        "passes": {
+          "path": "app/dashboard/page.tsx",
+          "text": "import { unstable_cache } from \"next/cache\";\n\nimport { requireUser } from \"@/lib/auth\";\nimport { prisma } from \"@/lib/db\";\n\nconst getInvoices = unstable_cache(\n  async (userId: string) => prisma.invoice.findMany({ where: { userId } }),\n  [\"dashboard-invoices\"],\n);\n\nexport default async function DashboardPage() {\n  const { userId } = await requireUser();\n  const invoices = await getInvoices(userId);\n  return <ul>{invoices.map((i) => <li key={i.id}>{i.number}</li>)}</ul>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-practice-redirect-in-try",
+      "document": "rules/next-practice-redirect-in-try.rerail",
+      "title": "Next.js practice: Call redirect() and notFound() outside a try whose catch swallows errors, or rethrow them with unstable_rethrow",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/posts/actions.ts",
+          "text": "'use server'\nimport { redirect } from 'next/navigation'\nimport { prisma } from '@/lib/db'\n\nexport async function createPost(formData: FormData) {\n  try {\n    const post = await prisma.post.create({ data: { title: String(formData.get('title')) } })\n    redirect(`/posts/${post.id}`)\n  } catch (error) {\n    return { error: 'Could not create the post' }\n  }\n}\n"
+        },
+        "passes": {
+          "path": "app/posts/actions.ts",
+          "text": "'use server'\nimport { redirect } from 'next/navigation'\nimport { prisma } from '@/lib/db'\n\nexport async function createPost(formData: FormData) {\n  let id: string\n  try {\n    const post = await prisma.post.create({ data: { title: String(formData.get('title')) } })\n    id = post.id\n  } catch (error) {\n    return { error: 'Could not create the post' }\n  }\n  redirect(`/posts/${id}`)\n}\n"
+        }
+      }
+    },
+    {
+      "id": "next-practice-revalidate-unknown-target",
+      "document": "rules/next-practice-revalidate-unknown-target.rerail",
+      "title": "Next.js practice: revalidatePath names a route the app has",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/(site)/actions.ts",
+          "text": "\"use server\";\n\nimport { revalidatePath } from \"next/cache\";\n\nexport async function publish() {\n  revalidatePath(\"/dashbaord\");\n  revalidatePath(\"/blog/[slug]\");\n}\n",
+          "with": [
+            {
+              "path": "app/(site)/dashboard/page.tsx",
+              "text": "export default function DashboardPage() {\n  return <h1>Dashboard</h1>;\n}\n"
+            },
+            {
+              "path": "app/(site)/blog/[slug]/page.tsx",
+              "text": "export default function PostPage() {\n  return <article />;\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/(site)/actions.ts",
+          "text": "\"use server\";\n\nimport { revalidatePath } from \"next/cache\";\n\nexport async function publish(slug: string) {\n  revalidatePath(\"/dashboard\");\n  revalidatePath(\"/blog/[slug]\", \"page\");\n  revalidatePath(`/blog/${slug}`);\n}\n",
+          "with": [
+            {
+              "path": "app/(site)/dashboard/page.tsx",
+              "text": "export default function DashboardPage() {\n  return <h1>Dashboard</h1>;\n}\n"
+            },
+            {
+              "path": "app/(site)/blog/[slug]/page.tsx",
+              "text": "export default function PostPage() {\n  return <article />;\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "next-practice-revalidate-unknown-tag",
+      "document": "rules/next-practice-revalidate-unknown-tag.rerail",
+      "title": "Next.js practice: revalidateTag and updateTag name a tag some cached read is given",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/actions.ts",
+          "text": "\"use server\";\n\nimport { revalidateTag } from \"next/cache\";\n\nexport async function publish() {\n  revalidateTag(\"post\", \"max\");\n}\n",
+          "with": [
+            {
+              "path": "lib/posts.ts",
+              "text": "export async function getPosts() {\n  const res = await fetch(\"https://cms.example.com/posts\", { next: { tags: [\"posts\"] } });\n  return res.json();\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/actions.ts",
+          "text": "\"use server\";\n\nimport { revalidateTag } from \"next/cache\";\n\nexport async function publish() {\n  revalidateTag(\"posts\", \"max\");\n}\n",
+          "with": [
+            {
+              "path": "lib/posts.ts",
+              "text": "export async function getPosts() {\n  const res = await fetch(\"https://cms.example.com/posts\", { next: { tags: [\"posts\"] } });\n  return res.json();\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "next-practice-request-api-in-cache-scope",
+      "document": "rules/next-practice-request-api-in-cache-scope.rerail",
+      "title": "Next.js practice: Read cookies(), headers() and searchParams outside 'use cache' and unstable_cache scopes and pass the values in",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "lib/data.ts",
+          "text": "import { prisma } from \"./db\";\nimport { getUserId } from \"./session\";\n\nexport async function getCart() {\n  \"use cache\";\n  const userId = await getUserId();\n  return prisma.cart.findFirst({ where: { userId } });\n}\n",
+          "with": [
+            {
+              "path": "lib/session.ts",
+              "text": "import { cookies } from \"next/headers\";\n\nexport async function getUserId() {\n  return (await cookies()).get(\"session\")?.value ?? null;\n}\n"
+            },
+            {
+              "path": "lib/db.ts",
+              "text": "import { PrismaClient } from \"@prisma/client\";\n\nexport const prisma = new PrismaClient();\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "lib/data.ts",
+          "text": "import { prisma } from \"./db\";\n\nexport async function getCart(userId: string) {\n  \"use cache\";\n  return prisma.cart.findFirst({ where: { userId } });\n}\n",
+          "with": [
+            {
+              "path": "lib/session.ts",
+              "text": "import { cookies } from \"next/headers\";\n\nexport async function getUserId() {\n  return (await cookies()).get(\"session\")?.value ?? null;\n}\n"
+            },
+            {
+              "path": "lib/db.ts",
+              "text": "import { PrismaClient } from \"@prisma/client\";\n\nexport const prisma = new PrismaClient();\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "next-practice-non-serializable-client-prop",
+      "document": "rules/next-practice-non-serializable-client-prop.rerail",
+      "title": "Next.js practice: A Server Component passes Client Components and DOM elements only serializable props",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/settings/page.tsx",
+          "text": "import { Picker } from '@/components/picker';\n\nexport default function SettingsPage() {\n  return <Picker onSelect={(id) => console.log(id)} />;\n}\n",
+          "with": [
+            {
+              "path": "components/picker.tsx",
+              "text": "'use client';\n\nexport function Picker({ onSelect }: { onSelect: (id: string) => void }) {\n  return <button onClick={() => onSelect('a')}>Pick</button>;\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/settings/page.tsx",
+          "text": "import { Picker } from '@/components/picker';\nimport { saveSettings } from './actions';\n\nexport default function SettingsPage() {\n  return (\n    <Picker\n      onSelect={async (id) => {\n        'use server';\n        await saveSettings(id);\n      }}\n    />\n  );\n}\n",
+          "with": [
+            {
+              "path": "components/picker.tsx",
+              "text": "'use client';\n\nexport function Picker({ onSelect }: { onSelect: (id: string) => void }) {\n  return <button onClick={() => onSelect('a')}>Pick</button>;\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "next-practice-edge-imports-node-only",
+      "document": "rules/next-practice-edge-imports-node-only.rerail",
+      "title": "Next.js practice: Keep Node.js-only code out of Edge middleware and edge routes",
+      "group": "Next.js practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "middleware.ts",
+          "text": "import { NextResponse } from \"next/server\";\nimport { auth } from \"@/auth\";\n\nexport default auth((req) => NextResponse.next());\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{ \"name\": \"shop\", \"dependencies\": { \"next\": \"^15.2.0\", \"next-auth\": \"5.0.0-beta.25\", \"@prisma/client\": \"^6.5.0\" } }\n"
+            },
+            {
+              "path": "auth.ts",
+              "text": "import NextAuth from \"next-auth\";\nimport { PrismaAdapter } from \"@auth/prisma-adapter\";\nimport { prisma } from \"@/lib/db\";\n\nexport const { handlers, auth } = NextAuth({ adapter: PrismaAdapter(prisma), providers: [] });\n"
+            },
+            {
+              "path": "lib/db.ts",
+              "text": "import { PrismaClient } from \"@prisma/client\";\n\nexport const prisma = new PrismaClient();\n"
+            },
+            {
+              "path": "app/api/health/route.ts",
+              "text": "export function GET() {\n  return Response.json({ ok: true });\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "middleware.ts",
+          "text": "import NextAuth from \"next-auth\";\nimport authConfig from \"./auth.config\";\n\nexport const { auth: middleware } = NextAuth(authConfig);\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{ \"name\": \"shop\", \"dependencies\": { \"next\": \"^15.2.0\", \"next-auth\": \"5.0.0-beta.25\" } }\n"
+            },
+            {
+              "path": "auth.config.ts",
+              "text": "import GitHub from \"next-auth/providers/github\";\nimport type { NextAuthConfig } from \"next-auth\";\n\nexport default { providers: [GitHub] } satisfies NextAuthConfig;\n"
+            },
+            {
+              "path": "app/api/health/route.ts",
+              "text": "export function GET() {\n  return Response.json({ ok: true });\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "next-practice-client-reaches-server-module",
+      "document": "rules/next-practice-client-reaches-server-module.rerail",
+      "title": "Next.js practice: Keep database clients, Node-only packages and server-only modules out of everything a 'use client' file imports",
+      "group": "Next.js practice",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/lib/db.ts",
+          "text": "import { PrismaClient } from \"@prisma/client\";\n\nexport const prisma = new PrismaClient();\n",
+          "with": [
+            {
+              "path": "src/lib/orders.ts",
+              "text": "import { prisma } from \"./db\";\n\nexport const formatTotal = (cents: number) => `$${(cents / 100).toFixed(2)}`;\n\nexport function listOrders(customerId: string) {\n  return prisma.order.findMany({ where: { customerId } });\n}\n"
+            },
+            {
+              "path": "src/hooks/useOrderTotal.ts",
+              "text": "\"use client\";\n\nimport { useMemo } from \"react\";\nimport { formatTotal } from \"@/lib/orders\";\n\nexport function useOrderTotal(cents: number) {\n  return useMemo(() => formatTotal(cents), [cents]);\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/lib/db.ts",
+          "text": "import \"server-only\";\nimport { PrismaClient } from \"@prisma/client\";\n\nexport const prisma = new PrismaClient();\n",
+          "with": [
+            {
+              "path": "src/lib/format.ts",
+              "text": "export const formatTotal = (cents: number) => `$${(cents / 100).toFixed(2)}`;\n"
+            },
+            {
+              "path": "src/hooks/useOrderTotal.ts",
+              "text": "\"use client\";\n\nimport { useMemo } from \"react\";\nimport { formatTotal } from \"@/lib/format\";\n\nexport function useOrderTotal(cents: number) {\n  return useMemo(() => formatTotal(cents), [cents]);\n}\n"
+            }
+          ]
+        }
+      }
     }
   ]
 }

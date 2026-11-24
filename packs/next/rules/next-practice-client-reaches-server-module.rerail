@@ -1,0 +1,209 @@
+.policy "next-practice-client-reaches-server-module" revision 1
+.description "Keep database clients, Node-only packages and server-only modules out of the modules a 'use client' file imports; Next.js bundles all of them for the browser."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Next.js bundles a 'use client' module for the browser together with every module it
+// imports, transitively ("all of its imports ... are included in the client bundle"), and warns that "it's possible
+// to accidentally import server-only code into the client". A shared helper module that also imports the Prisma
+// client, a database driver or a Node.js built-in drags that code into the client graph: the client build fails to
+// resolve Node.js modules, or Prisma's browser stub ships and throws at its first use, and the module's queries ship
+// in the public bundle. `import "server-only"` makes that a build error, but only in modules that remember it. The
+// rule walks the import graph from every 'use client' module (relative imports, the `@/` and `~/` aliases, barrels
+// re-exporting with `export ... from`) and reports the import, in a module the walk reaches, of:
+//   `import { PrismaClient } from "@prisma/client"` (or a generated client) used as a value     reported
+//   `import { Pool } from "pg"`, postgres, mysql2, ioredis, mongodb, knex, bcrypt, sharp, ...      reported
+//   `import { readFile } from "node:fs/promises"`, child_process, net, tls, dns, worker_threads      reported
+//   `import "server-only"` in a module a client module reaches (the build fails; names the chain)  reported
+//   the same imports in a module no 'use client' module reaches (a Server Component's)           not reported
+//   `import type { Row } from "@/server/reports"`, `import { type Row }`, a name used only as a type,
+//   `ReturnType<typeof listInvoices>` (TypeScript drops these imports)                           not reported
+//   a 'use client' module importing a 'use server' file (Server Actions become references)        not reported
+//   `import { Role, Prisma } from "@prisma/client"` (enums, error classes: Prisma's browser build)   not reported
+//   `import path from "path"` and other built-ins Next.js polyfills for the browser                 not reported
+//   modules behind a module that imports "server-only" (that import is the one reported)           not reported
+//   tests, stories and fixtures                                                                    not reported
+// Gaps: workspace packages imported by package name (`@acme/db`) and `paths` aliases other than `@/` and `~/` are not
+// followed; dynamic `import()` and `next/dynamic` are not followed; a package.json `sideEffects: false` that lets the
+// bundler drop an unused barrel member is not read; reads of non-NEXT_PUBLIC_ `process.env` in client modules are
+// left to another rule; packages are judged by name (no reading of their `browser` fields). Engine: .ts and .tsx
+// files are joined in separate lanes, so a .tsx component importing a .ts module is not followed until the engine
+// joins them; today the rule sees .tsx -> .tsx and .ts -> .ts chains only.
+
+#include "tsx/modules.rerail"
+#include "tsx/names.rerail"
+
+.violation ClientReachesServerModule(at: node, what: symbol, chain: symbol) "This module is in the browser bundle: {chain}. Next.js ships a 'use client' module with every module it imports, transitively, and {what}. Keep this import out of the modules client code imports: move the server code (queries, the database client, file access) to a module that client components do not import, read its data in a Server Component or call it through a Server Action ('use server'), import shared types with `import type`, and add `import \"server-only\"` to the server module so the next such import fails the build. If no 'use client' module really imports this one (the path above runs only through tests or scripts), leave it."
+
+// crs_directive(d, x): document d starts with the directive x ("use client", "use server").
+.decl crs_directive(d: number, x: symbol)
+crs_directive(d, x) :- program(d, p), directive(p, _, x).
+
+// crs_test_doc(d): a test, story, fixture or generated file; none of them is bundled for a page.
+.decl crs_test_doc(d: number)
+crs_test_doc(d) :- doc(d, p, _), match("(.*/)?(__tests__|tests?|e2e|__mocks__|__fixtures__|fixtures|__stories__|generated|__generated__)/.*", p).
+crs_test_doc(d) :- doc(d, p, _), match("(.*/)?[^/]*\\.(test|spec|cy|stories|story|generated|gen)\\.[^/]*", p).
+
+// crs_root(d): a 'use client' module outside test code.
+.decl crs_root(d: number)
+crs_root(d) :- crs_directive(d, "use client"), !crs_test_doc(d).
+
+// crs_value_use(m): the import binding m (a specifier, default or namespace) is read as a value. TypeScript and SWC
+// drop an import whose names are used only as types, `typeof f` in a type (`ReturnType<typeof f>`) included, so it
+// loads nothing.
+.decl crs_value_use(m: node)
+crs_value_use(m) :- import_member(_, m, _, _), ref_site(r, m), ref(r, _, sp), sp != "type", !nearest(r, _, "type_query").
+
+// crs_loads(i): statement i loads its module at run time: an import that is not `import type` and binds nothing
+// (`import "x"`) or binds a name read as a value, or an `export ... from` that is not `export type`.
+.decl crs_loads(i: node)
+crs_loads(i) :- import_decl(i), !op(i, "type"), !import_member(i, _, _, _).
+crs_loads(i) :- import_decl(i), !op(i, "type"), import_member(i, m, _, _), crs_value_use(m).
+crs_loads(e) :- kind(e, "export_statement"), field(e, "source", _), !op(e, "type").
+
+// crs_spec(i, s): statement i names module s.
+.decl crs_spec(i: node, s: symbol)
+crs_spec(i, s) :- crs_loads(i), field(i, "source", n), str(n, s).
+
+// crs_edge(d, e): document d loads workspace document e, which is not a 'use server' file (its exports reach the
+// client as Server Action references, not as code).
+.decl crs_edge(d: number, e: number)
+crs_edge(d, e) :- crs_spec(i, s), docof(i, d), crs_resolve(d, s, e), e != d, !crs_directive(e, "use server").
+
+// crs_guarded(d): d imports "server-only". When a client module reaches it the build fails there, and that import
+// is the finding; the walk does not continue past it.
+.decl crs_guarded(d: number)
+crs_guarded(d) :- crs_spec(i, "server-only"), docof(i, d).
+
+// crs_reached(d): d is in the client bundle: a 'use client' module or a module one of them loads, transitively.
+.decl crs_reached(d: number)
+crs_reached(d) :- crs_root(d).
+crs_reached(e) :- crs_reached(d), !crs_guarded(d), crs_edge(d, e).
+
+// crs_node_only(s): a Node.js built-in Next.js does not polyfill for the browser.
+.decl crs_node_only(s: symbol)
+crs_node_only("fs"). crs_node_only("fs/promises"). crs_node_only("child_process"). crs_node_only("net").
+crs_node_only("tls"). crs_node_only("dns"). crs_node_only("dns/promises"). crs_node_only("dgram").
+crs_node_only("cluster"). crs_node_only("worker_threads"). crs_node_only("readline"). crs_node_only("module").
+crs_node_only("v8"). crs_node_only("inspector"). crs_node_only("async_hooks"). crs_node_only("http2").
+crs_node_only("perf_hooks").
+// crs_server_pkg(p): a package that only runs in Node.js: database drivers and clients, native hashing, mail.
+.decl crs_server_pkg(p: symbol)
+crs_server_pkg("pg"). crs_server_pkg("pg-pool"). crs_server_pkg("postgres"). crs_server_pkg("mysql2").
+crs_server_pkg("mysql"). crs_server_pkg("ioredis"). crs_server_pkg("redis"). crs_server_pkg("mongodb").
+crs_server_pkg("mongoose"). crs_server_pkg("better-sqlite3"). crs_server_pkg("sqlite3"). crs_server_pkg("knex").
+crs_server_pkg("bullmq"). crs_server_pkg("bcrypt"). crs_server_pkg("argon2"). crs_server_pkg("nodemailer").
+crs_server_pkg("sharp"). crs_server_pkg("drizzle-orm/node-postgres"). crs_server_pkg("drizzle-orm/postgres-js").
+crs_server_pkg("drizzle-orm/mysql2"). crs_server_pkg("drizzle-orm/better-sqlite3").
+
+// crs_bad(i, what): import i loads server-only code; what is the second half of the message.
+.decl crs_bad(i: node, what: symbol)
+crs_bad(i, "`server-only` stops `next build` with an error at this import") :- crs_spec(i, "server-only").
+crs_bad(i, cat(cat("`", s), "` is a Node.js built-in with no browser version, so the client build fails to resolve it (\"Module not found: Can't resolve\")")) :-
+    crs_spec(i, s), (crs_node_only(s) ; crs_node_only(x), s = cat("node:", x)).
+crs_bad(i, cat(cat("`", s), "` only runs in Node.js (a database driver, native addon or mail transport): the client build fails on its Node.js dependencies or ships server code to the browser")) :-
+    crs_spec(i, s), (crs_server_pkg(s) ; crs_server_pkg(p), prefix(cat(p, "/"), s)).
+crs_bad(i, cat(cat("`", s), "` is a Prisma driver adapter, server code that opens database connections")) :-
+    crs_spec(i, s), prefix("@prisma/adapter-", s).
+crs_bad(i, "the Prisma client cannot run there: `@prisma/client` bundles a stub that throws \"PrismaClient is unable to run in this browser environment\" at its first use (a generated `prisma-client` output fails the build on its Node.js imports), and this module's queries ship to every visitor") :-
+    import_decl(i), !op(i, "type"), import_member(i, m, _, _), import_binding(m, _, s, "PrismaClient"),
+    crs_value_use(m), match("(?i).*prisma.*", s).
+
+// crs_hit(m): a module of the client bundle with a reported import.
+.decl crs_hit(m: number)
+crs_hit(m) :- crs_bad(i, _), docof(i, m), crs_reached(m), !crs_test_doc(m).
+
+// crs_up(m, x): x loads m, transitively, inside the client bundle.
+.decl crs_up(m: number, x: number)
+crs_up(m, m) :- crs_hit(m).
+crs_up(m, x) :- crs_up(m, y), crs_edge(x, y), crs_reached(x), !crs_guarded(x).
+
+// crs_chain(m, c): how the client reaches m, for the message: a 'use client' module (the first by document order)
+// and its import that leads to m.
+.decl crs_root_of(m: number, r: number)
+crs_root_of(m, r) :- crs_hit(m), r = min r2 : { crs_up(m, r2), crs_root(r2) }.
+.decl crs_hop(m: number, h: number)
+crs_hop(m, h) :- crs_root_of(m, r), r != m, h = min h2 : { crs_edge(r, h2), crs_up(m, h2) }.
+.decl crs_chain(m: number, c: symbol)
+crs_chain(m, "this file is itself a 'use client' module") :- crs_root_of(m, m).
+crs_chain(m, cat(cat("`", rp), "` ('use client') imports it")) :- crs_hop(m, m), crs_root_of(m, r), doc(r, rp, _).
+crs_chain(m, cat(cat(cat(cat("`", rp), "` ('use client') imports `"), hp), "`, which leads here")) :- crs_hop(m, h), h != m,
+    crs_root_of(m, r), doc(r, rp, _), doc(h, hp, _).
+
+ClientReachesServerModule(i, w, c) :- crs_bad(i, w), docof(i, m), crs_hit(m), crs_chain(m, c).
+
+// ---- library candidate: import resolution ------------------------------------------------------------------------
+// The engine binds no tsconfig_for/tsconfig_path/file rows yet, so tsx/names' `target` resolves nothing across files,
+// and a tsconfig.json read as text sits in a lane of its own. So aliases are resolved by file layout.
+// crs_resolve(d, s, e): specifier s in document d names workspace document e:
+//   "./x", "../x"     relative to d's directory
+//   "@/x", "~/x"      the `paths` alias Next.js scaffolds ("@/*": ["./src/*"] or ["./*"]): x under the nearest
+//                     directory above d that has it, or has it under src/
+// Each base tries the file itself, the TypeScript and JavaScript extensions and `index.*`; a `.js` suffix also tries
+// the `.ts` file. Not resolved: other `paths` aliases, bare `baseUrl` names, workspace packages by package name.
+.decl crs_resolve(d: number, s: symbol, e: number)
+crs_resolve(d, s, e) :- crs_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), crs_found(@join(@dir(p), s), e).
+crs_resolve(d, s, e) :- crs_alias_hit(d, s, a, e),
+    n = max k : { crs_alias_hit(d, s, a2, _), k = strlen(a2) }, strlen(a) = n.
+// crs_alias_hit(d, s, a, e): alias s resolves to e from ancestor directory a of d.
+.decl crs_alias_hit(d: number, s: symbol, a: symbol, e: number)
+crs_alias_hit(d, s, a, e) :- crs_spec(i, s), match("[@~]/(?<r>.+)", s), docof(i, d), crs_dir_up(d, a),
+    (crs_found(@join(a, r), e) ; crs_found(@join(a, cat("src/", r)), e)).
+// crs_dir_up(d, a): a is d's directory or one above it, for a document with an alias import.
+.decl crs_dir_up(d: number, a: symbol)
+crs_dir_up(d, @dir(p)) :- crs_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _).
+crs_dir_up(d, @dir(x)) :- crs_dir_up(d, x), x != "", x != ".", x != "/".
+// crs_found(b, e): the path b, as an import writes it, names document e.
+.decl crs_found(b: symbol, e: number)
+crs_found(b, e) :- crs_file_base(b, e).
+crs_found(b, e) :- crs_file_base(x, e), b = cat(x, ".js").
+// crs_file_base(b, e): b is document e's path with one candidate ending removed.
+.decl crs_file_base(b: symbol, e: number)
+crs_file_base(b, e) :- doc(e, f, _), crs_ext(x), suffix(x, f), b = substr(f, 0, strlen(f) - strlen(x)), b != "".
+.decl crs_ext(x: symbol)
+crs_ext(""). crs_ext(".ts"). crs_ext(".tsx"). crs_ext(".js"). crs_ext(".jsx"). crs_ext(".mts"). crs_ext(".mjs").
+crs_ext("/index.ts"). crs_ext("/index.tsx"). crs_ext("/index.js"). crs_ext("/index.jsx").
+
+// The cases, `cases/next-practice-client-reaches-server-module/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "next.config.mjs" from "../cases/next-practice-client-reaches-server-module/next.config.mjs"
+    .fixture "package.json" from "../cases/next-practice-client-reaches-server-module/package.json"
+    .fixture "tsconfig.json" from "../cases/next-practice-client-reaches-server-module/tsconfig.json"
+    .fixture "src/app/actions/auth.ts" from "../cases/next-practice-client-reaches-server-module/src/app/actions/auth.ts"
+    .fixture "src/app/orders/page.tsx" from "../cases/next-practice-client-reaches-server-module/src/app/orders/page.tsx"
+    .fixture "src/components/AvatarUpload.tsx" from "../cases/next-practice-client-reaches-server-module/src/components/AvatarUpload.tsx"
+    .fixture "src/components/ContactForm.tsx" from "../cases/next-practice-client-reaches-server-module/src/components/ContactForm.tsx"
+    .fixture "src/components/OrderTable.tsx" from "../cases/next-practice-client-reaches-server-module/src/components/OrderTable.tsx"
+    .fixture "src/components/RoleSelect.tsx" from "../cases/next-practice-client-reaches-server-module/src/components/RoleSelect.tsx"
+    .fixture "src/components/__tests__/OrderTable.test.tsx" from "../cases/next-practice-client-reaches-server-module/src/components/__tests__/OrderTable.test.tsx"
+    .fixture "src/content/DocsNav.tsx" from "../cases/next-practice-client-reaches-server-module/src/content/DocsNav.tsx"
+    .fixture "src/content/DocsPage.tsx" from "../cases/next-practice-client-reaches-server-module/src/content/DocsPage.tsx"
+    .fixture "src/hooks/useInvoiceRows.ts" from "../cases/next-practice-client-reaches-server-module/src/hooks/useInvoiceRows.ts"
+    .fixture "src/hooks/useOrderTotals.ts" from "../cases/next-practice-client-reaches-server-module/src/hooks/useOrderTotals.ts"
+    .fixture "src/hooks/useReport.ts" from "../cases/next-practice-client-reaches-server-module/src/hooks/useReport.ts"
+    .fixture "src/hooks/useSessionCookie.ts" from "../cases/next-practice-client-reaches-server-module/src/hooks/useSessionCookie.ts"
+    .fixture "src/hooks/useSignIn.ts" from "../cases/next-practice-client-reaches-server-module/src/hooks/useSignIn.ts"
+    .fixture "src/hooks/useUploadLabel.ts" from "../cases/next-practice-client-reaches-server-module/src/hooks/useUploadLabel.ts"
+    .fixture "src/lib/db.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/db.ts"
+    .fixture "src/lib/format.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/format.ts"
+    .fixture "src/lib/index.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/index.ts"
+    .fixture "src/lib/mailer.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/mailer.ts"
+    .fixture "src/lib/orders.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/orders.ts"
+    .fixture "src/lib/password.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/password.ts"
+    .fixture "src/lib/session.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/session.ts"
+    .fixture "src/lib/storage.ts" from "../cases/next-practice-client-reaches-server-module/src/lib/storage.ts"
+    .fixture "src/server/billing.ts" from "../cases/next-practice-client-reaches-server-module/src/server/billing.ts"
+    .fixture "src/server/dashboard.ts" from "../cases/next-practice-client-reaches-server-module/src/server/dashboard.ts"
+    .fixture "src/server/reports.ts" from "../cases/next-practice-client-reaches-server-module/src/server/reports.ts"
+    .expect _ at "src/components/AvatarUpload.tsx":3
+    .expect _ at "src/content/DocsPage.tsx":1
+    .expect _ at "src/lib/db.ts":1
+    .expect _ at "src/lib/session.ts":1
+    .expect _ at "src/lib/storage.ts":1
+.end

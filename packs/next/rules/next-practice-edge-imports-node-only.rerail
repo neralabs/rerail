@@ -1,0 +1,304 @@
+.policy "next-practice-edge-imports-node-only" revision 1
+.description "Keep Node.js-only code (a Prisma client without an edge adapter, native addons, jsonwebtoken, Node built-ins, TCP database drivers) out of what Edge middleware and edge routes import."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Next.js runs `middleware.ts` (and every route that exports `runtime = 'edge'`) on the
+// Edge runtime, which has no TCP sockets, no file system, no native addons and no Node built-ins beyond a few
+// polyfills. Middleware runs on every matched request, so a module it loads that cannot run there takes the whole
+// site down: `new PrismaClient()` without a driver adapter throws when the module loads ("PrismaClient is not
+// configured to run in Vercel Edge Functions or Edge Middleware"), a native addon (bcrypt, argon2) fails to build or
+// load, jsonwebtoken touches Node's `crypto` as it loads. The usual way in is indirect: middleware → `auth.ts` →
+// `PrismaAdapter(prisma)` → `lib/db.ts`. The rule follows static imports and `export … from` (not `import type`, not
+// dynamic `import()`) from the edge file through the repository's files: relative paths, the `@/` and `~/` aliases
+// (to `src/` or the package root), and workspace packages by their package.json `exports`/`main` or `src/index`.
+// An edge file is `middleware.{ts,js,…}` at the root or in `src/` of a Next.js app package (its own package.json
+// lists `next`, and it has `app/` or `pages/`), unless it
+// exports `config` with `runtime: 'nodejs'` (Next.js 15.5+); or a file under `app/` or `pages/` that exports
+// `runtime = 'edge'` (or `config = { runtime: 'edge' | 'experimental-edge' }`), unless its package pins Next.js 16.3+,
+// where routes run on Node.js anyway. It reports, at the edge file's import (or the `new PrismaClient` in it):
+//   middleware.ts: import { auth } from "@/auth"  →  auth.ts → lib/db.ts: new PrismaClient()     reported
+//   middleware.ts: export { auth as middleware } from "@/auth"  →  … → import { compare } from "bcrypt"   reported
+//   app/api/banner/route.tsx (runtime 'edge'): import … from "./banner-card"  →  import sharp from "sharp"  reported
+//   route (runtime 'edge'): import { getStats } from "@acme/data"  →  export * from "./client" → new PrismaClient   reported
+//   edge file itself: import { createHash } from "node:crypto" / "fs/promises" / "pg"            reported
+// and leaves alone:
+//   new PrismaClient({ adapter }) (a driver adapter), a module using withAccelerate, `@prisma/client/edge`
+//   import type { … } / import { type A } / export type { … } from; enum imports `import { Role } from "@prisma/client"`
+//   a Node built-in or TCP driver imported only deeper in the graph (it throws only when called; the rule cannot
+//   tell whether the edge path calls it)
+//   `new PrismaClient()` inside a function (a lazy getter), reached from the edge file
+//   proxy.ts (Next.js 16: always Node.js); middleware with config.runtime 'nodejs'; routes with runtime 'nodejs' or
+//   none; edge routes in a package whose `next` range is 16.3 or later; a module merely named middleware.ts
+//   below lib/, or in a library package with no `next` of its own (a monorepo's packages/auth/src/middleware.ts)
+// Gaps: tsconfig `paths` other than `@/*` and `~/*`, and baseUrl-relative bare imports, are not resolved (the engine
+// does not bind tsconfig facts to .rerail rules yet); `catalog:`/`workspace:` versions of `next` count as unknown
+// (reported); a package's `edge-light`/`worker` export condition is not read (only the known names below are
+// node-only); `instrumentation.ts`, which runs on both runtimes, is not an entry; dynamic import() is not followed;
+// .ts and .tsx files are read in separate engine lanes, so a .tsx edge route importing a .ts module is missed today.
+
+.violation EdgeNodeOnly(at: node, entry: symbol, what: symbol, fix: symbol)
+    "`{entry}` runs on the Edge runtime, and this import loads {what}, which cannot run there: the file fails to build, or throws as it loads or on every request it serves. {fix} Leave it if that code has an edge build this rule does not know (an edge driver adapter, an `edge-light` export) or never runs on this path."
+EdgeNodeOnly(i, p, w, fx) :- eio_entry(e, k), doc(e, p, _), eio_hit(e, i, _),
+    w = join x by x sep ", " : { eio_hit(e, i, x) }, eio_fix(e, k, fx).
+
+// eio_entry(e, kind): document e runs on the Edge runtime: "middleware" or "route". Middleware must sit in a Next.js
+// app's package (its own package.json lists next, and it has app/ or pages/), so a library's src/middleware.ts
+// in a monorepo whose root lists next is not one.
+.decl eio_entry(e: number, kind: symbol)
+eio_entry(e, "middleware") :- doc(e, p, _), eio_file(p, dir, rel), match("(src/)?middleware\\.[cm]?[jt]sx?", rel),
+    eio_lists_next(dir), eio_next_app(dir), !eio_nodejs_config(e).
+eio_entry(e, "route") :- eio_edge_export(e), doc(e, p, _), eio_file(p, dir, rel), match("(src/)?(app|pages)/.+", rel),
+    eio_next_pkg(dir), !eio_next_from(dir, "16.3.0").
+.decl eio_next_app(dir: symbol)
+eio_next_app(dir) :- doc(_, p, _), eio_file(p, dir, rel), match("(src/)?(app|pages)/.+", rel).
+
+// eio_file(p, dir, rel): path p lies in the package whose package.json is in dir, at rel from there.
+.decl eio_file(p: symbol, dir: symbol, rel: symbol)
+eio_file(p, "", p) :- doc(_, p, _), package_for(p, "").
+eio_file(p, dir, rel) :- doc(_, p, _), package_for(p, dir), dir != "", prefix(cat(dir, "/"), p),
+    rel = substr(p, strlen(dir) + 1, strlen(p) - strlen(dir) - 1).
+
+// eio_next(dir, r): the package in dir (or the workspace root, when the package lists none) asks for next r. A
+// package is any folder with a package.json a document lies under, with or without a `name`.
+.decl eio_next(dir: symbol, r: symbol)
+eio_next(dir, r) :- eio_pkg_dir(dir), eio_dep_field(k), package_field(dir, cat(k, "/next"), r).
+eio_next(dir, r) :- eio_pkg_dir(dir), dir != "", !eio_lists_next(dir), eio_dep_field(k),
+    package_field("", cat(k, "/next"), r).
+.decl eio_pkg_dir(dir: symbol)
+eio_pkg_dir(dir) :- doc(_, p, _), package_for(p, dir).
+.decl eio_lists_next(dir: symbol)
+eio_lists_next(dir) :- eio_dep_field(k), package_field(dir, cat(k, "/next"), _).
+.decl eio_dep_field(k: symbol)
+eio_dep_field("dependencies"). eio_dep_field("devDependencies"). eio_dep_field("peerDependencies").
+.decl eio_next_pkg(dir: symbol)
+eio_next_pkg(dir) :- eio_next(dir, _).
+// eio_next_from(dir, v): every version dir's `next` range admits is v or later.
+.decl eio_next_from(dir: symbol, v: symbol)
+eio_next_from(dir, v) :- eio_next(dir, r), eio_version_gate(v), @semver_valid(r) = 1, @semver_subset(r, cat(">=", v)) = 1.
+.decl eio_version_gate(v: symbol)
+eio_version_gate("15.5.0"). eio_version_gate("16.0.0"). eio_version_gate("16.3.0").
+
+// eio_fix(e, kind, text): the fix the message offers, by the version of Next.js the package asks for.
+.decl eio_fix(e: number, kind: symbol, text: symbol)
+eio_fix(e, "route", "Remove the edge `runtime` setting (`export const runtime = 'edge'`, or `runtime` in its exported `config`) so the route runs on Node.js, the default (the edge runtime is deprecated); if it must stay on the edge, import only edge-safe code.") :-
+    eio_entry(e, "route").
+eio_fix(e, "middleware", cat("Import only edge-safe code here (for Auth.js, an `auth.config.ts` without the database adapter; `jose` instead of `jsonwebtoken`; Web Crypto instead of `crypto`),", " or rename the file to `proxy.ts`, which runs on Node.js in Next.js 16.")) :-
+    eio_entry(e, "middleware"), eio_mw_dir(e, dir), eio_next_from(dir, "16.0.0").
+eio_fix(e, "middleware", cat("Import only edge-safe code here (for Auth.js, an `auth.config.ts` without the database adapter; `jose` instead of `jsonwebtoken`; Web Crypto instead of `crypto`),", " or add `runtime: 'nodejs'` to its exported `config` (Next.js 15.5+).")) :-
+    eio_entry(e, "middleware"), eio_mw_dir(e, dir), eio_next_from(dir, "15.5.0"), !eio_next_from(dir, "16.0.0").
+eio_fix(e, "middleware", cat("Import only edge-safe code here (for Auth.js, an `auth.config.ts` without the database adapter; `jose` instead of `jsonwebtoken`; Web Crypto instead of `crypto`),", " or, on Next.js 15.5 or later, add `runtime: 'nodejs'` to its exported `config`.")) :-
+    eio_entry(e, "middleware"), eio_mw_dir(e, dir), !eio_next_from(dir, "15.5.0").
+.decl eio_mw_dir(e: number, dir: symbol)
+eio_mw_dir(e, dir) :- eio_entry(e, "middleware"), doc(e, p, _), eio_file(p, dir, _).
+
+// eio_export_const(d, x, v): document d exports `const x = v`.
+.decl eio_export_const(d: number, x: symbol, v: node)
+eio_export_const(d, x, v) :- kind(s, "export_statement"), child(s, l, _), kind(l, "lexical_declaration"),
+    child(l, c, _), kind(c, "variable_declarator"), field(c, "name", n), text(n, x), field(c, "value", v), docof(s, d).
+.decl eio_runtime(d: number, r: symbol)
+eio_runtime(d, r) :- eio_export_const(d, "runtime", v), str(v, r).
+eio_runtime(d, r) :- eio_export_const(d, "config", v), kind(v, "object"), child(v, pr, _), kind(pr, "pair"),
+    field(pr, "key", k), (text(k, "runtime") ; str(k, "runtime")), field(pr, "value", x), str(x, r).
+.decl eio_edge_export(d: number)
+eio_edge_export(d) :- eio_runtime(d, "edge").
+eio_edge_export(d) :- eio_runtime(d, "experimental-edge").
+.decl eio_nodejs_config(d: number)
+eio_nodejs_config(d) :- eio_export_const(d, "config", _), eio_runtime(d, "nodejs").
+
+// eio_hit(e, i, what): import i of edge file e loads what: directly, a node-only package or built-in; through the
+// files it reaches, a module that fails as it loads. A `new PrismaClient()` in e itself is its own hit.
+.decl eio_hit(e: number, i: node, what: symbol)
+eio_hit(e, i, cat("`", s, "`")) :- eio_entry(e, _), eio_spec(e, i, s), eio_node_only(s).
+eio_hit(e, i, w) :- eio_entry(e, _), eio_spec(e, i, s), eio_load_fail_spec(s, w).
+eio_hit(e, i, w) :- eio_reach(e, i, d), eio_load_fail(d, w).
+eio_hit(e, n, "`new PrismaClient()` without a driver adapter") :- eio_entry(e, _), eio_prisma_new(e, n).
+
+// eio_reach(e, i, d): import i of edge file e loads document d, directly or through other files.
+.decl eio_reach(e: number, i: node, d: number)
+eio_reach(e, i, d) :- eio_entry(e, _), eio_spec(e, i, s), eio_resolve(e, s, t), doc(d, t, _).
+eio_reach(e, i, d2) :- eio_reach(e, i, d), eio_spec(d, _, s), eio_resolve(d, s, t), doc(d2, t, _).
+
+// eio_load_fail(d, what): loading d fails on the Edge runtime: its top level builds a Prisma client without a driver
+// adapter, or it imports a package that fails as it loads.
+.decl eio_load_fail(d: number, what: symbol)
+eio_load_fail(d, cat("`new PrismaClient()` without a driver adapter (", p, ")")) :- eio_prisma_new(d, _), doc(d, p, _).
+eio_load_fail(d, cat(w, " (", p, ")")) :- eio_spec(d, _, s), eio_load_fail_spec(s, w), doc(d, p, _).
+// eio_load_fail_spec(s, what): native addons, and jsonwebtoken, whose `jwa` reads Node's crypto as it loads.
+.decl eio_load_fail_spec(s: symbol, what: symbol)
+eio_load_fail_spec(s, cat("`", s, "`")) :- eio_spec(_, _, s), eio_pkg(s, m), eio_load_fail_pkg(m).
+.decl eio_load_fail_pkg(m: symbol)
+eio_load_fail_pkg("bcrypt"). eio_load_fail_pkg("argon2"). eio_load_fail_pkg("jsonwebtoken").
+eio_load_fail_pkg("better-sqlite3"). eio_load_fail_pkg("sqlite3"). eio_load_fail_pkg("sharp").
+// eio_node_only(s): a Node built-in the Edge runtime does not polyfill, or a TCP database, cache or mail client.
+// Reported only when the edge file imports it itself, so it is used on the edge path.
+.decl eio_node_only(s: symbol)
+eio_node_only(s) :- eio_spec(_, _, s), eio_pkg(s, m), eio_node_only_pkg(m).
+eio_node_only(s) :- eio_spec(_, _, s), eio_builtin(s).
+.decl eio_node_only_pkg(m: symbol)
+eio_node_only_pkg("pg"). eio_node_only_pkg("postgres"). eio_node_only_pkg("mysql"). eio_node_only_pkg("mysql2").
+eio_node_only_pkg("ioredis"). eio_node_only_pkg("redis"). eio_node_only_pkg("mongodb"). eio_node_only_pkg("mongoose").
+eio_node_only_pkg("nodemailer"). eio_node_only_pkg("@prisma/adapter-pg"). eio_node_only_pkg("@prisma/adapter-mariadb").
+eio_node_only_pkg("@prisma/adapter-better-sqlite3").
+.decl eio_builtin(s: symbol)
+eio_builtin(s) :- eio_spec(_, _, s),
+    match("(node:)?(fs|fs/promises|child_process|net|tls|dgram|cluster|worker_threads|dns|dns/promises|crypto|os|path|http|https|http2|zlib|readline|v8|vm|perf_hooks|stream)", s).
+// eio_pkg(s, m): the package specifier s names: "@a/b/c" gives "@a/b", "pg/lib/x" gives "pg".
+.decl eio_pkg(s: symbol, m: symbol)
+eio_pkg(s, m) :- eio_spec(_, _, s), match("(?<m>@[^/]+/[^/]+)(/.*)?", s).
+eio_pkg(s, m) :- eio_spec(_, _, s), match("(?<m>[^@./][^/]*)(/.*)?", s).
+
+// eio_prisma_new(d, n): n is `new PrismaClient(…)` at d's top level (outside any function or class), with no
+// `adapter` in its options, in a file that neither imports the edge client nor extends it with Accelerate.
+.decl eio_prisma_new(d: number, n: node)
+eio_prisma_new(d, n) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d),
+    count : { inside(n, _, eio_deferred) } = 0, !eio_adapter_arg(n), !eio_edge_prisma_doc(d).
+.decl eio_deferred(k: symbol)
+eio_deferred("function_declaration"). eio_deferred("function_expression"). eio_deferred("arrow_function").
+eio_deferred("method_definition"). eio_deferred("generator_function_declaration"). eio_deferred("class_body").
+.decl eio_adapter_arg(n: node)
+eio_adapter_arg(n) :- field(n, "arguments", a), has(a, k, "property_identifier"), text(k, "adapter").
+eio_adapter_arg(n) :- field(n, "arguments", a), has(a, k, "shorthand_property_identifier"), text(k, "adapter").
+.decl eio_edge_prisma_doc(d: number)
+eio_edge_prisma_doc(d) :- eio_spec(d, _, s), match("@prisma/client/(edge|wasm)|@prisma/extension-accelerate", s).
+eio_edge_prisma_doc(d) :- kind(x, "identifier"), text(x, "withAccelerate"), docof(x, d).
+
+// library candidate: import resolution ------------------------------------------------------------------------------
+// eio_spec(d, i, s): statement i of document d loads module s: an import (not `import type`, not one whose names are
+// all `type`) or an `export … from` (not `export type`).
+.decl eio_spec(d: number, i: node, s: symbol)
+eio_spec(d, i, s) :- kind(i, "import_statement"), field(i, "source", n), str(n, s), docof(i, d), !op(i, "type"),
+    !eio_type_only(i).
+eio_spec(d, i, s) :- kind(i, "export_statement"), field(i, "source", n), str(n, s), docof(i, d), !op(i, "type").
+.decl eio_type_only(i: node)
+eio_type_only(i) :- kind(i, "import_statement"), has(i, _, "named_imports"),
+    count : { has(i, x, "import_specifier"), !glob("type *", x) } = 0,
+    count : { has(i, x, "namespace_import") } = 0, !eio_default_import(i).
+.decl eio_default_import(i: node)
+eio_default_import(i) :- kind(i, "import_statement"), child(i, c, _), kind(c, "import_clause"), child(c, x, _),
+    kind(x, "identifier").
+
+// eio_resolve(d, s, t): from document d, module s is the repository file t.
+.decl eio_resolve(d: number, s: symbol, t: symbol)
+eio_resolve(d, s, t) :- eio_base(d, s, b), eio_ext(x), t = cat(b, x), doc(_, t, _).
+eio_resolve(d, s, t) :- eio_base(d, s, b), match("(?<c>.*)\\.[cm]?js", b), eio_ext(x), x != "", t = cat(c, x),
+    doc(_, t, _).
+.decl eio_ext(x: symbol)
+eio_ext(""). eio_ext(".ts"). eio_ext(".tsx"). eio_ext(".js"). eio_ext(".jsx"). eio_ext(".mjs"). eio_ext(".mts").
+eio_ext("/index.ts"). eio_ext("/index.tsx"). eio_ext("/index.js"). eio_ext("/index.jsx").
+
+// eio_base(d, s, b): a path s may name from d, before extensions: relative to d's folder; `@/x` and `~/x` in the
+// package's `src/` or at its root; a workspace package's `exports` entry, `main`, or its folder (and `src/`).
+.decl eio_base(d: number, s: symbol, b: symbol)
+eio_base(d, s, b) :- eio_rel_in(d, s, x), eio_norm(x, b).
+eio_base(d, s, b) :- eio_spec(d, _, s), (prefix("@/", s) ; prefix("~/", s)), doc(d, p, _), package_for(p, dir),
+    r = substr(s, 2, strlen(s) - 2), (q = cat("src/", r) ; q = r), eio_join(dir, q, b).
+eio_base(d, s, b) :- eio_ws(d, s, dir, sub), eio_pkg_in(dir, sub, x), eio_norm(x, b).
+eio_base(d, s, b) :- eio_ws(d, s, dir, "."), (b = dir, dir != "" ; eio_join(dir, "src/index", b)).
+eio_base(d, s, b) :- eio_ws(d, s, dir, sub), sub != ".", r = substr(sub, 2, strlen(sub) - 2),
+    (q = r ; q = cat("src/", r)), eio_join(dir, q, b).
+// eio_rel_in(d, s, x): relative module s, joined to d's folder (not yet normalised).
+.decl eio_rel_in(d: number, s: symbol, x: symbol)
+eio_rel_in(d, s, x) :- eio_spec(d, _, s), (prefix("./", s) ; prefix("../", s)), doc(d, p, _), eio_dir(p, dir),
+    eio_join(dir, s, x).
+// eio_pkg_in(dir, sub, x): the file a workspace package's `exports` (or, for ".", `main`/`module`) names, joined.
+.decl eio_pkg_in(dir: symbol, sub: symbol, x: symbol)
+eio_pkg_in(dir, sub, x) :- eio_export_target(dir, sub, v), eio_join(dir, v, x).
+eio_pkg_in(dir, ".", x) :- eio_ws(_, _, dir, "."), package_field(dir, k, v), (k = "main" ; k = "module"),
+    eio_join(dir, v, x).
+// eio_ws(d, s, dir, sub): s names subpath sub ("." or "./x") of the workspace package in dir.
+.decl eio_ws(d: number, s: symbol, dir: symbol, sub: symbol)
+eio_ws(d, s, dir, ".") :- eio_spec(d, _, s), package(dir, s).
+eio_ws(d, s, dir, cat(".", substr(s, strlen(m), strlen(s) - strlen(m)))) :- eio_spec(d, _, s), eio_pkg(s, m),
+    m != s, package(dir, m).
+// eio_export_target(dir, sub, v): package.json `exports` maps sub to file v (any condition but `types`), with a
+// trailing `*` pattern filled in. Keys are JSON pointers: "./x" is ".~1x".
+.decl eio_export_target(dir: symbol, sub: symbol, v: symbol)
+eio_export_target(dir, ".", v) :- eio_ws(_, _, dir, "."), package_field(dir, "exports", v).
+eio_export_target(dir, sub, v) :- eio_ws(_, _, dir, sub), k = cat("exports/", @replace_all(sub, "/", "~1")),
+    package_field(dir, key, v), (key = k ; prefix(cat(k, "/"), key)), !suffix("/types", key), !suffix(".d.ts", v).
+eio_export_target(dir, sub, v) :- eio_ws(_, _, dir, sub), package_field(dir, key, w), prefix("exports/.~1", key),
+    match("exports/(?<kp>[^/]*)\\*(/.*)?", key), !suffix("/types", key), !suffix(".d.ts", w),
+    q = @replace_all(kp, "~1", "/"), prefix(q, sub), rest = substr(sub, strlen(q), strlen(sub) - strlen(q)),
+    v = @replace_all(w, "\\*", rest).
+
+// eio_dir(p, dir): the folder of path p ("" at the root).
+.decl eio_dir(p: symbol, dir: symbol)
+eio_dir(p, dir) :- doc(_, p, _), match("(?<dir>.*)/[^/]*", p).
+eio_dir(p, "") :- doc(_, p, _), !contains("/", p).
+// eio_norm(x, b): path x with `./` and `dir/../` taken out, one level per step until none is left.
+.decl eio_norm(x: symbol, b: symbol)
+eio_norm(x, b) :- eio_norm_step(x, b), !match(".*[^/.][^/]*/\\.\\.(/.*)?", b).
+.decl eio_norm_step(x: symbol, y: symbol)
+eio_norm_step(x, y) :- eio_norm_in(x), y = @replace_all(@replace_all(x, "(^|/)\\./", "${1}"), "/\\.?$", "").
+eio_norm_step(x, y) :- eio_norm_step(x, z), match(".*[^/.][^/]*/\\.\\.(/.*)?", z),
+    y = @replace_all(@replace_all(z, "[^/.][^/]*/\\.\\./", ""), "[^/.][^/]*/\\.\\.$", "").
+.decl eio_norm_in(x: symbol)
+eio_norm_in(x) :- eio_rel_in(_, _, x).
+eio_norm_in(x) :- eio_pkg_in(_, _, x).
+// eio_join(a, b, x): path b under folder a ("" is the root).
+.decl eio_join(a: symbol, b: symbol, x: symbol)
+eio_join(a, b, x) :- eio_join_in(a, b), (a = "", x = b ; a != "", x = cat(a, "/", b)).
+.decl eio_join_in(a: symbol, b: symbol)
+eio_join_in(dir, s) :- eio_spec(d, _, s), (prefix("./", s) ; prefix("../", s)), doc(d, p, _), eio_dir(p, dir).
+eio_join_in(dir, q) :- eio_spec(d, _, s), (prefix("@/", s) ; prefix("~/", s)), doc(d, p, _), package_for(p, dir),
+    r = substr(s, 2, strlen(s) - 2), (q = cat("src/", r) ; q = r).
+eio_join_in(dir, v) :- eio_export_target(dir, _, v).
+eio_join_in(dir, v) :- eio_ws(_, _, dir, "."), package_field(dir, k, v), (k = "main" ; k = "module").
+eio_join_in(dir, "src/index") :- eio_ws(_, _, dir, ".").
+eio_join_in(dir, q) :- eio_ws(_, _, dir, sub), sub != ".", r = substr(sub, 2, strlen(sub) - 2), (q = r ; q = cat("src/", r)).
+
+// The cases, `cases/next-practice-edge-imports-node-only/`, read as one repository: each line ending in `// caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/next-practice-edge-imports-node-only/package.json"
+    .fixture "middleware.ts" from "../cases/next-practice-edge-imports-node-only/middleware.ts"
+    .fixture "auth.ts" from "../cases/next-practice-edge-imports-node-only/auth.ts"
+    .fixture "auth.config.ts" from "../cases/next-practice-edge-imports-node-only/auth.config.ts"
+    .fixture "lib/db.ts" from "../cases/next-practice-edge-imports-node-only/lib/db.ts"
+    .fixture "lib/session.ts" from "../cases/next-practice-edge-imports-node-only/lib/session.ts"
+    .fixture "lib/edge-db.ts" from "../cases/next-practice-edge-imports-node-only/lib/edge-db.ts"
+    .fixture "lib/middleware.ts" from "../cases/next-practice-edge-imports-node-only/lib/middleware.ts"
+    .fixture "app/api/og/route.tsx" from "../cases/next-practice-edge-imports-node-only/app/api/og/route.tsx"
+    .fixture "app/api/feed/route.ts" from "../cases/next-practice-edge-imports-node-only/app/api/feed/route.ts"
+    .fixture "app/api/report/route.ts" from "../cases/next-practice-edge-imports-node-only/app/api/report/route.ts"
+    .fixture "app/api/hash/route.ts" from "../cases/next-practice-edge-imports-node-only/app/api/hash/route.ts"
+    .fixture "app/api/stats/route.ts" from "../cases/next-practice-edge-imports-node-only/app/api/stats/route.ts"
+    .fixture "app/api/tags/route.ts" from "../cases/next-practice-edge-imports-node-only/app/api/tags/route.ts"
+    .fixture "app/(tools)/play/ping/api/route.ts" from "../cases/next-practice-edge-imports-node-only/app/(tools)/play/ping/api/route.ts"
+    .fixture "pages/api/legacy.ts" from "../cases/next-practice-edge-imports-node-only/pages/api/legacy.ts"
+    .fixture "app/api/banner/route.tsx" from "../cases/next-practice-edge-imports-node-only/app/api/banner/route.tsx"
+    .fixture "app/api/banner/banner-card.tsx" from "../cases/next-practice-edge-imports-node-only/app/api/banner/banner-card.tsx"
+    .fixture "lib/audit.ts" from "../cases/next-practice-edge-imports-node-only/lib/audit.ts"
+    .fixture "packages/data/package.json" from "../cases/next-practice-edge-imports-node-only/packages/data/package.json"
+    .fixture "packages/data/src/index.ts" from "../cases/next-practice-edge-imports-node-only/packages/data/src/index.ts"
+    .fixture "packages/data/src/client.ts" from "../cases/next-practice-edge-imports-node-only/packages/data/src/client.ts"
+    .fixture "packages/data/src/stats.ts" from "../cases/next-practice-edge-imports-node-only/packages/data/src/stats.ts"
+    .fixture "packages/data/src/slug.ts" from "../cases/next-practice-edge-imports-node-only/packages/data/src/slug.ts"
+    .fixture "apps/admin/package.json" from "../cases/next-practice-edge-imports-node-only/apps/admin/package.json"
+    .fixture "apps/admin/src/middleware.ts" from "../cases/next-practice-edge-imports-node-only/apps/admin/src/middleware.ts"
+    .fixture "apps/admin/src/auth.ts" from "../cases/next-practice-edge-imports-node-only/apps/admin/src/auth.ts"
+    .fixture "apps/admin/src/lib/password.ts" from "../cases/next-practice-edge-imports-node-only/apps/admin/src/lib/password.ts"
+    .fixture "apps/admin/src/lib/users.ts" from "../cases/next-practice-edge-imports-node-only/apps/admin/src/lib/users.ts"
+    .fixture "apps/admin/src/app/api/health/route.ts" from "../cases/next-practice-edge-imports-node-only/apps/admin/src/app/api/health/route.ts"
+    .fixture "packages/auth-kit/package.json" from "../cases/next-practice-edge-imports-node-only/packages/auth-kit/package.json"
+    .fixture "packages/auth-kit/src/middleware.ts" from "../cases/next-practice-edge-imports-node-only/packages/auth-kit/src/middleware.ts"
+    .fixture "apps/web/package.json" from "../cases/next-practice-edge-imports-node-only/apps/web/package.json"
+    .fixture "apps/web/middleware.ts" from "../cases/next-practice-edge-imports-node-only/apps/web/middleware.ts"
+    .fixture "apps/web/proxy.ts" from "../cases/next-practice-edge-imports-node-only/apps/web/proxy.ts"
+    .fixture "apps/web/lib/db.ts" from "../cases/next-practice-edge-imports-node-only/apps/web/lib/db.ts"
+    .fixture "apps/site/package.json" from "../cases/next-practice-edge-imports-node-only/apps/site/package.json"
+    .fixture "apps/site/app/api/avatar/route.ts" from "../cases/next-practice-edge-imports-node-only/apps/site/app/api/avatar/route.ts"
+    .fixture "apps/web/app/api/og/route.ts" from "../cases/next-practice-edge-imports-node-only/apps/web/app/api/og/route.ts"
+    .expect _ at "middleware.ts":2
+    .expect _ at "middleware.ts":6
+    .expect _ at "app/api/banner/route.tsx":2
+    .expect _ at "app/api/feed/route.ts":1
+    .expect _ at "app/api/stats/route.ts":1
+    .expect _ at "app/(tools)/play/ping/api/route.ts":1
+    .expect _ at "pages/api/legacy.ts":2
+    .expect _ at "pages/api/legacy.ts":3
+    .expect _ at "apps/admin/src/middleware.ts":1
+    .expect _ at "apps/site/app/api/avatar/route.ts":1
+.end

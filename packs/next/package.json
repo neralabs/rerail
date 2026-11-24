@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-next",
   "version": "0.1.8",
-  "description": "Rerail rule pack: @next/eslint-plugin-next rules ported to Rerail code rules.",
+  "description": "Rerail rule pack: @next/eslint-plugin-next rules ported to Rerail code rules, and Rerail's own App Router practice rules.",
   "keywords": [
     "rerail",
     "rerail-pack",

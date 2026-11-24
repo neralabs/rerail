@@ -1,0 +1,8 @@
+{
+  "name": "@acme/data",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./slug": "./src/slug.ts"
+  }
+}

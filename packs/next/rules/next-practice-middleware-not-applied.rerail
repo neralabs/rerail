@@ -1,0 +1,157 @@
+.policy "next-practice-middleware-not-applied" revision 1
+.description "Put middleware.ts or proxy.ts where Next.js loads it, beside the app's app/ or pages/ directory, and use proxy.ts only on Next.js 16; anywhere else the file never runs."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Next.js runs one middleware file per app (`proxy.ts` from Next.js 16): it looks for
+// it only in the folder that holds the app's `app/` or `pages/` directory, the project folder (beside next.config.*
+// or the package.json that depends on next) or its `src/` when the app lives in `src/app` or `src/pages`. A file
+// anywhere else is an ordinary module nothing imports, and a `proxy.ts` before Next.js 16 is not a convention file at
+// all: no error, no warning, and every redirect, auth check, rewrite or header it adds is silently missing.
+// A file counts as meant for Next.js when it is named middleware.{ts,tsx,js,jsx} or proxy.{ts,tsx,js,jsx}, exports a
+// default or a binding of its own name (`middleware` / `proxy`), and exports `config` or imports next/server,
+// next-auth, @auth/*, next-intl/middleware or @clerk/nextjs; and no other file imports it (a helper, not the entry).
+//   middleware.ts beside package.json, app in src/app               reported: Next.js reads only src/middleware.ts
+//   src/middleware.ts, app in ./app                                  reported: Next.js reads only ./middleware.ts
+//   src/app/(dashboard)/middleware.ts                                reported: inside the app directory
+//   proxy.ts beside ./app with "next": "^15.5.2"                     reported: proxy.ts arrived in Next.js 16
+//   src/proxy.ts with src/app, "next": "16.1.0"                      not reported: where Next.js loads it
+//   src/middleware.ts with src/app on Next.js 16                     not reported: deprecated, still loaded
+//   middleware.ts beside ./pages (Pages Router)                      not reported
+//   app/middleware.ts that the real proxy.ts imports                 not reported: a helper
+//   app/api/upstream/proxy.ts exporting only proxyToApi              not reported: not a middleware entry
+//   docker/proxy.ts, lib/middleware.ts (copied at build, helpers)    not reported: not a place Next.js looks
+//   next.config with `pageExtensions`                                not reported: the file names differ there
+//   proxy.ts with "next": "catalog:" or "latest"                     not reported: version unknown
+// Gaps: a computed `config.matcher` (Next.js 15+ throws in dev and fails the build, so it is not silent); custom
+// `pageExtensions` (middleware.page.ts); a Next.js project with neither next.config.* nor a package.json naming next;
+// imports through tsconfig `paths` other than `@/`, `~/`, `#…/` style prefixes (no tsconfig facts in the runner);
+// dynamic `import()` of the file; a version given only by a workspace catalog.
+
+.violation MiddlewareNotApplied(at: node, file: symbol, want: symbol) "Next.js never loads this `{file}`: it reads the middleware/proxy file only from {want}, the folder that holds this app's `app`/`pages` directory, so every redirect, auth check, rewrite or header in it is silently skipped. Move the file to {want} (keeping the name and its `config`). Leave it where it is only if it is not this app's middleware: a helper another file imports, or a template your build copies into place."
+MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), mna_home(r, h), !mna_custom_ext(r),
+    (dir = r ; dir = @join(r, "src")), dir != h, mna_where(h, w).
+MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), mna_home(r, h), !mna_custom_ext(r),
+    a = @join(h, "app"), (dir = a ; prefix(cat(a, "/"), dir)), mna_where(h, w).
+
+.violation ProxyBeforeNext16(at: node, version: symbol) "This app depends on next `{version}`, and `proxy.ts` is only a Next.js 16 convention: before 16 the file is an ordinary module that never runs, so every redirect, auth check or header in it is skipped. Rename it to `middleware.ts` and export the function as `middleware` (or default). If this change also upgrades next to 16, keep `proxy.ts`."
+ProxyBeforeNext16(e, v) :- mna_entry(_, e, f, dir), prefix("proxy.", f), mna_home(r, dir), !mna_custom_ext(r),
+    (package_field(r, "dependencies/next", v) ; package_field(r, "devDependencies/next", v)),
+    @semver_valid(v) = 1, @semver_subset(v, "<16.0.0-0") = 1, !contains("15.6.0-", v).
+
+// mna_where(h, w): how a message names folder h: `apps/web/src/`, or the repository root.
+.decl mna_where(h: symbol, w: symbol)
+mna_where(h, cat("`", h, "/`")) :- mna_home(_, h), h != "".
+mna_where("", "the repository root") :- mna_home(_, "").
+
+// mna_entry(d, e, f, dir): document d, named f in folder dir, is written as a Next.js middleware/proxy file; e is its
+// export that Next.js would run (a default, or the binding named after the file). Not imported by another file.
+.decl mna_entry(d: number, e: node, f: symbol, dir: symbol)
+mna_entry(d, e, f, @dir(p)) :- file_name(d, f), match("(middleware|proxy)\\.(tsx|ts|jsx|js)", f), doc(d, p, _),
+    mna_runs(d, e), mna_next_like(d), !mna_imported(d).
+// mna_runs(d, e): export e is `export default …`, or exports the file's own name: `export function middleware`,
+// `export const proxy = …`, `export { auth as middleware }`, `export { auth as middleware } from "./auth"`.
+.decl mna_runs(d: number, e: node)
+mna_runs(d, e) :- kind(e, "export_statement"), op(e, "default"), docof(e, d).
+mna_runs(d, e) :- mna_exported(e, x), docof(e, d), file_name(d, f), prefix(cat(x, "."), f).
+.decl mna_exported(e: node, x: symbol)
+mna_exported(e, x) :- kind(e, "export_statement"), field(e, "declaration", c), kind(c, "function_declaration"),
+    field(c, "name", n), text(n, x).
+mna_exported(e, x) :- kind(e, "export_statement"), field(e, "declaration", c), child(c, v, _),
+    kind(v, "variable_declarator"), field(v, "name", n), text(n, x).
+mna_exported(e, x) :- kind(e, "export_statement"), child(e, l, _), kind(l, "export_clause"), child(l, s, _),
+    kind(s, "export_specifier"), field(s, "alias", n), text(n, x).
+mna_exported(e, x) :- kind(e, "export_statement"), child(e, l, _), kind(l, "export_clause"), child(l, s, _),
+    kind(s, "export_specifier"), !field(s, "alias", _), field(s, "name", n), text(n, x).
+// mna_next_like(d): d exports `config` or imports a request-handling Next.js API.
+.decl mna_next_like(d: number)
+mna_next_like(d) :- mna_exported(e, "config"), docof(e, d).
+mna_next_like(d) :- mna_spec(i, s), docof(i, d),
+    (s = "next/server" ; s = "next-intl/middleware" ; prefix("next-auth", s) ; prefix("@auth/", s) ; prefix("@clerk/nextjs", s)).
+
+// mna_root(r): folder r is a Next.js project: it holds next.config.*, or a package.json that depends on next.
+.decl mna_root(r: symbol)
+mna_root(@dir(p)) :- mna_next_config(p).
+mna_root(r) :- package_field(r, k, _), (k = "dependencies/next" ; k = "devDependencies/next").
+// mna_next_config(p): p is a next.config.* file. Read from the file tree, not documents: a .mjs config and the .tsx
+// pages are in other language lanes than a middleware.ts.
+.decl mna_next_config(p: symbol)
+mna_next_config(p) :- file(p), (glob("next.config.{js,mjs,cjs,ts,mts}", p) ; glob("**/next.config.{js,mjs,cjs,ts,mts}", p)).
+// mna_router(x): folder x holds an `app` or `pages` directory with a file in it (Next.js's findDir tests only that
+// the directory exists).
+.decl mna_folder(a: symbol)
+mna_folder(@dir(p)) :- file(p).
+mna_folder(@dir(a)) :- mna_folder(a), a != "".
+.decl mna_router(x: symbol)
+mna_router(@dir(a)) :- mna_folder(a), (a = "app" ; a = "pages" ; suffix("/app", a) ; suffix("/pages", a)).
+// mna_home(r, h): Next.js looks for project r's middleware in h: r when r/app or r/pages exists, else r/src.
+.decl mna_home(r: symbol, h: symbol)
+mna_home(r, r) :- mna_root(r), mna_router(r).
+mna_home(r, s) :- mna_root(r), !mna_router(r), s = @join(r, "src"), mna_router(s).
+// mna_custom_ext(r): r's next.config sets pageExtensions, so the file names Next.js looks for are not the defaults.
+// Read from the config's document (file_line cannot be asked of a path found in the file tree), so a next.config.mjs
+// is seen only by the .js lane's run.
+.decl mna_custom_ext(r: symbol)
+mna_custom_ext(@dir(p)) :- kind(n, "property_identifier"), text(n, "pageExtensions"), docof(n, c), doc(c, p, _),
+    mna_next_config(p).
+
+// library candidate: import resolution (no tsconfig facts in the runner, so aliases are read by their shape).
+// mna_spec(i, s): import or re-export statement i names module s.
+.decl mna_spec(i: node, s: symbol)
+mna_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).
+// mna_imported(d): another document imports d: a relative specifier that joins to d's path (with or without its
+// extension, or as its folder's index), or an alias (`@/x`, `~/x`, `#x/…`, `@scope/x`) whose rest ends d's path.
+.decl mna_base(d: number, b: symbol)
+mna_base(d, b) :- file_name(d, f), match("(middleware|proxy)\\.(tsx|ts|jsx|js)", f), doc(d, p, _),
+    match("(?<b>.*)\\.(tsx|ts|jsx|js)", p).
+.decl mna_imported(d: number)
+mna_imported(d) :- mna_base(d, b), doc(d, p, _), mna_spec(i, s), prefix(".", s), docof(i, d2), d2 != d, doc(d2, p2, _),
+    t = @join(@dir(p2), s), (t = b ; t = p).
+mna_imported(d) :- mna_base(d, b), mna_spec(i, s), match("[@~#][^/]*/(?<rest>.+)", s), docof(i, d2), d2 != d,
+    (b = rest ; suffix(cat("/", rest), b)).
+
+// The cases, `cases/next-practice-middleware-not-applied/`, read as one repository of several Next.js apps: each line
+// ending in `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/next-practice-middleware-not-applied/package.json"
+    .fixture "apps/web/package.json" from "../cases/next-practice-middleware-not-applied/apps/web/package.json"
+    .fixture "apps/web/next.config.ts" from "../cases/next-practice-middleware-not-applied/apps/web/next.config.ts"
+    .fixture "apps/web/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/web/middleware.ts"
+    .fixture "apps/web/docker/proxy.ts" from "../cases/next-practice-middleware-not-applied/apps/web/docker/proxy.ts"
+    .fixture "apps/web/src/app/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/web/src/app/page.tsx"
+    .fixture "apps/web/src/app/(dashboard)/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/web/src/app/(dashboard)/middleware.ts"
+    .fixture "apps/web/src/app/(dashboard)/settings/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/web/src/app/(dashboard)/settings/page.tsx"
+    .fixture "apps/web/src/lib/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/web/src/lib/middleware.ts"
+    .fixture "apps/site/package.json" from "../cases/next-practice-middleware-not-applied/apps/site/package.json"
+    .fixture "apps/site/next.config.mjs" from "../cases/next-practice-middleware-not-applied/apps/site/next.config.mjs"
+    .fixture "apps/site/proxy.ts" from "../cases/next-practice-middleware-not-applied/apps/site/proxy.ts"
+    .fixture "apps/site/src/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/site/src/middleware.ts"
+    .fixture "apps/site/app/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/site/app/page.tsx"
+    .fixture "apps/site/app/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/site/app/middleware.ts"
+    .fixture "apps/site/app/locale/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/site/app/locale/middleware.ts"
+    .fixture "apps/site/app/api/upstream/proxy.ts" from "../cases/next-practice-middleware-not-applied/apps/site/app/api/upstream/proxy.ts"
+    .fixture "apps/site/app/auth/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/site/app/auth/middleware.ts"
+    .fixture "apps/legacy/package.json" from "../cases/next-practice-middleware-not-applied/apps/legacy/package.json"
+    .fixture "apps/legacy/proxy.ts" from "../cases/next-practice-middleware-not-applied/apps/legacy/proxy.ts"
+    .fixture "apps/legacy/app/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/legacy/app/page.tsx"
+    .fixture "apps/docs/package.json" from "../cases/next-practice-middleware-not-applied/apps/docs/package.json"
+    .fixture "apps/docs/next.config.js" from "../cases/next-practice-middleware-not-applied/apps/docs/next.config.js"
+    .fixture "apps/docs/src/proxy.ts" from "../cases/next-practice-middleware-not-applied/apps/docs/src/proxy.ts"
+    .fixture "apps/docs/src/app/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/docs/src/app/page.tsx"
+    .fixture "apps/blog/package.json" from "../cases/next-practice-middleware-not-applied/apps/blog/package.json"
+    .fixture "apps/blog/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/blog/middleware.ts"
+    .fixture "apps/blog/pages/index.tsx" from "../cases/next-practice-middleware-not-applied/apps/blog/pages/index.tsx"
+    .fixture "apps/shop/package.json" from "../cases/next-practice-middleware-not-applied/apps/shop/package.json"
+    .fixture "apps/shop/next.config.ts" from "../cases/next-practice-middleware-not-applied/apps/shop/next.config.ts"
+    .fixture "apps/shop/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/shop/middleware.ts"
+    .fixture "apps/shop/src/app/page.page.tsx" from "../cases/next-practice-middleware-not-applied/apps/shop/src/app/page.page.tsx"
+    .fixture "apps/admin/package.json" from "../cases/next-practice-middleware-not-applied/apps/admin/package.json"
+    .fixture "apps/admin/src/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/admin/src/middleware.ts"
+    .fixture "apps/admin/src/app/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/admin/src/app/page.tsx"
+    .expect _ at "apps/web/middleware.ts":4
+    .expect _ at "apps/web/src/app/(dashboard)/middleware.ts":3
+    .expect _ at "apps/site/src/middleware.ts":3
+    .expect _ at "apps/site/app/locale/middleware.ts":3
+    .expect _ at "apps/legacy/proxy.ts":3
+.end

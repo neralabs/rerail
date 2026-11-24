@@ -1,0 +1,8 @@
+{
+  "name": "@acme/web",
+  "private": true,
+  "dependencies": {
+    "next": "^15.5.2",
+    "react": "^19.0.0"
+  }
+}

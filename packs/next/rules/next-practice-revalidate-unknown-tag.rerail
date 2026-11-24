@@ -1,0 +1,139 @@
+.policy "next-practice-revalidate-unknown-tag" revision 1
+.description "Revalidate a cache tag some cached read is given; a misspelt, renamed or never-assigned revalidateTag or updateTag target refreshes nothing, and readers keep serving stale data."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/.next/**", "**/coverage/**", "**/.venv/**", "**/.yarn/**"
+.scope exclude "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/__mocks__/**"
+.scope exclude "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+// Rerail's own rule, not a port; the tag half of next-practice-revalidate-unknown-target, split off so it can log
+// while the path half steers. revalidateTag(tag) and updateTag(tag) from next/cache succeed whatever they are given:
+// a tag no cached read carries invalidates nothing, and every reader keeps serving the old (sometimes
+// permission-relevant) data. Nothing errors. Tags are checked against the tags this repository assigns: a
+// `tags: [...]` property (fetch's next.tags, unstable_cache's options, a wrapper's) and cacheTag() arguments.
+//   revalidateTag("post", "max")                        reported: readers are tagged "posts"
+//   updateTag(`comment-${id}`)                          reported: no tag starts with "comment-"
+//   revalidateTag(`post-${id}`) beside unstable_cache(..., { tags: [`post-${p.id}`] })   not reported
+//   revalidateTag("teams") where some tag is computed (`{ tags }`, `tags: [t]`, cacheTag(t)) and the string
+//     "teams" is written anywhere else in the repository                                  not reported
+//   a revalidateTag that is not next/cache's, test files: not reported
+// Gaps: tags assigned in another lane (.ts and .tsx are separate partitions in today's engine, so a tag set in a
+// .tsx file is unseen from a .ts call: a false positive, see the `lanes` test; the common shape is a cached read in
+// page.tsx revalidated from actions.ts, and the reason this rule logs); tags read through constants
+// (revalidateTag(TAGS.posts)) are not checked.
+
+#include "tsx/names.rerail"
+
+.violation UnknownTag(at: node, f: symbol, t: symbol)
+    "{f}({t}) names a cache tag that nothing in this repository assigns (no fetch next.tags, unstable_cache tags or cacheTag() with it), so it invalidates nothing and readers keep serving stale data. Use the exact tag the cached reads are given (tags are case-sensitive), or tag the read that should refresh; leave it if the tag is assigned outside this repository or in a .tsx file this check cannot see from a .ts one (a cached read in page.tsx, revalidated from actions.ts)."
+UnknownTag(c, f, t) :- rutg_tag_call(c, f, v, w), !rutg_tag_known(v, w), rutg_arg(c, 0, a), text(a, t), docof(c, d),
+    !rutg_test_doc(d).
+
+// ---- the calls ------------------------------------------------------------------------------------------------
+// rutg_call(c, x): c calls next/cache's x, imported by name (renamed too) or through a namespace import.
+.decl rutg_api(x: symbol)
+rutg_api("revalidateTag"). rutg_api("updateTag"). rutg_api("unstable_expireTag").
+.decl rutg_call(c: node, x: symbol)
+rutg_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), ref_site(f, sp),
+    import_binding(sp, _, "next/cache", x), rutg_api(x).
+rutg_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), ref_site(o, sp), import_binding(sp, _, "next/cache", "*"), field(f, "property", p),
+    text(p, x), rutg_api(x).
+.decl rutg_arg(c: node, i: number, a: node)
+rutg_arg(c, i, a) :- rutg_call(c, _), field(c, "arguments", args), child(args, a, i).
+.decl rutg_test_doc(d: number)  // a test helper outside the scope's test globs
+rutg_test_doc(d) :- doc(d, p, _), match("(?:.*/)?(?:test|tests|e2e|fixtures|playwright|cypress)/.*", p).
+.decl rutg_static(a: node, v: symbol)
+rutg_static(a, v) :- static_value(a, v).
+rutg_static(a, v) :- kind(a, "template_string"), !rutg_has_sub(a), value(a, v).
+.decl rutg_has_sub(a: node)
+rutg_has_sub(a) :- kind(a, "template_string"), child(a, s, _), kind(s, "template_substitution").
+
+// ---- cache tags -----------------------------------------------------------------------------------------------
+// rutg_tag_call(c, f, v, w): c is f(tag) with tag v, w "lit" for a static string, "pre" for a template whose static
+// start is v (not empty).
+.decl rutg_tag_call(c: node, f: symbol, v: symbol, w: symbol)
+rutg_tag_call(c, f, v, "lit") :- rutg_call(c, f), rutg_arg(c, 0, a), rutg_static(a, v).
+rutg_tag_call(c, f, v, "pre") :- rutg_call(c, f), rutg_arg(c, 0, a), rutg_tpl_prefix(a, v), v != "".
+.decl rutg_tpl_prefix(a: node, v: symbol)
+rutg_tpl_prefix(a, v) :- rutg_has_sub(a), text(a, s), match("`(?<v>[^`$]*)\\$\\{[\\s\\S]*", s).
+.decl rutg_tag_arg(a: node)  // what a revalidation names: not an assignment of the tag
+rutg_tag_arg(a) :- rutg_call(c, _), rutg_arg(c, 0, a).
+
+// rutg_tag_el(e): e is a tag the code assigns: an element of a `tags: [...]` array, or an argument of cacheTag().
+.decl rutg_tag_el(e: node)
+rutg_tag_el(e) :- rutg_tags_pair(pr), field(pr, "value", v), kind(v, "array"), child(v, e, _), !kind(e, "comment").
+rutg_tag_el(e) :- kind(c, "call_expression"), field(c, "function", f), rutg_cache_tag_fn(f), field(c, "arguments", args),
+    child(args, e, _), !kind(e, "comment").
+.decl rutg_tags_pair(pr: node)
+rutg_tags_pair(pr) :- kind(pr, "pair"), field(pr, "key", k), (text(k, "tags") ; kind(k, "string"), str(k, "tags")).
+.decl rutg_cache_tag_fn(f: node)  // cacheTag, unstable_cacheTag, x.cacheTag: by name, whatever it is imported from
+rutg_cache_tag_fn(f) :- kind(f, "identifier"), (text(f, "cacheTag") ; text(f, "unstable_cacheTag")).
+rutg_cache_tag_fn(f) :- kind(f, "member_expression"), field(f, "property", p), (text(p, "cacheTag") ; text(p, "unstable_cacheTag")).
+.decl rutg_tag_val(v: symbol)  // a static tag assigned somewhere
+rutg_tag_val(v) :- rutg_tag_el(e), rutg_static(e, v).
+.decl rutg_tag_pre(v: symbol)  // the static start of a template tag assigned somewhere ("" for `${x}`)
+rutg_tag_pre(v) :- rutg_tag_el(e), rutg_tpl_prefix(e, v).
+// rutg_open(): some assigned tag is computed (`{ tags }`, `tags: list`, `tags: [t]`, `cacheTag(t)`, a spread), or
+// unstable_cache gets options it cannot see (`unstable_cache(fn, keys, opts)`): the tag may be any string written
+// elsewhere and passed in.
+.decl rutg_open(z: number)
+rutg_open(1) :- rutg_tag_el(e), !rutg_static(e, _), !rutg_has_sub(e).
+rutg_open(1) :- rutg_tags_pair(pr), field(pr, "value", v), !kind(v, "array").
+rutg_open(1) :- kind(s, "shorthand_property_identifier"), text(s, "tags").
+rutg_open(1) :- kind(c, "call_expression"), field(c, "function", f), text(f, "unstable_cache"), field(c, "arguments", args),
+    child(args, o, 2), !kind(o, "object").
+.decl rutg_elsewhere(v: symbol)  // a string written outside a revalidation
+rutg_elsewhere(v) :- rutg_open(1), kind(n, "string"), str(n, v), !rutg_tag_arg(n).
+.decl rutg_elsewhere_pre(v: symbol)
+rutg_elsewhere_pre(v) :- rutg_open(1), rutg_tpl_prefix(n, v), v != "", !rutg_tag_arg(n).
+
+// rutg_tag_known(v, w): a tag some read may carry.
+.decl rutg_tag_known(v: symbol, w: symbol)
+rutg_tag_known(v, "lit") :- rutg_tag_call(_, _, v, "lit"), rutg_tag_val(v).
+rutg_tag_known(v, "lit") :- rutg_tag_call(_, _, v, "lit"), rutg_tag_pre(p), prefix(p, v).
+rutg_tag_known(v, "lit") :- rutg_tag_call(_, _, v, "lit"), rutg_elsewhere(v).
+rutg_tag_known(v, "lit") :- rutg_tag_call(_, _, v, "lit"), rutg_elsewhere_pre(p), prefix(p, v).
+rutg_tag_known(v, "pre") :- rutg_tag_call(_, _, v, "pre"), rutg_tag_val(s), prefix(v, s).
+rutg_tag_known(v, "pre") :- rutg_tag_call(_, _, v, "pre"), rutg_tag_pre(p), (prefix(p, v) ; prefix(v, p)).
+rutg_tag_known(v, "pre") :- rutg_tag_call(_, _, v, "pre"), rutg_elsewhere(s), prefix(v, s).
+rutg_tag_known(v, "pre") :- rutg_tag_call(_, _, v, "pre"), rutg_elsewhere_pre(p), (prefix(p, v) ; prefix(v, p)).
+
+// The cases, `cases/next-practice-revalidate-unknown-tag/web/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "__tests__/actions.test.ts" from "../cases/next-practice-revalidate-unknown-tag/web/__tests__/actions.test.ts"
+    .fixture "app/actions.ts" from "../cases/next-practice-revalidate-unknown-tag/web/app/actions.ts"
+    .fixture "e2e/helpers.ts" from "../cases/next-practice-revalidate-unknown-tag/web/e2e/helpers.ts"
+    .fixture "lib/data.ts" from "../cases/next-practice-revalidate-unknown-tag/web/lib/data.ts"
+    .fixture "lib/db.ts" from "../cases/next-practice-revalidate-unknown-tag/web/lib/db.ts"
+    .fixture "lib/local-revalidate.ts" from "../cases/next-practice-revalidate-unknown-tag/web/lib/local-revalidate.ts"
+    .fixture "package.json" from "../cases/next-practice-revalidate-unknown-tag/web/package.json"
+    .expect _ at "app/actions.ts":8
+    .expect _ at "app/actions.ts":9
+    .expect _ at "app/actions.ts":10
+.end
+
+// `jobs/`: tags come through a wrapper (`{ tags }`), so a tag is known when its string is written anywhere else.
+.test computed_tags exactly
+    .fixture "src/cache.ts" from "../cases/next-practice-revalidate-unknown-tag/jobs/src/cache.ts"
+    .fixture "src/db.ts" from "../cases/next-practice-revalidate-unknown-tag/jobs/src/db.ts"
+    .fixture "src/refresh.ts" from "../cases/next-practice-revalidate-unknown-tag/jobs/src/refresh.ts"
+    .fixture "src/teams.ts" from "../cases/next-practice-revalidate-unknown-tag/jobs/src/teams.ts"
+    .expect _ at "src/refresh.ts":4
+    .expect _ at "src/refresh.ts":5
+.end
+
+// `lanes/`: .ts and .tsx files are separate partitions in today's engine. A tag assigned in page.tsx is seen from
+// refresh.tsx (.tsx to .tsx), but not from actions.ts. That call is reported today, a false positive; the expect
+// below records it and must flip to `.expect no` once the engine joins the two lanes.
+.test lanes
+    .fixture "app/comments/actions.ts" from "../cases/next-practice-revalidate-unknown-tag/lanes/app/comments/actions.ts"
+    .fixture "app/comments/form.tsx" from "../cases/next-practice-revalidate-unknown-tag/lanes/app/comments/form.tsx"
+    .fixture "app/comments/page.tsx" from "../cases/next-practice-revalidate-unknown-tag/lanes/app/comments/page.tsx"
+    .fixture "app/comments/refresh.tsx" from "../cases/next-practice-revalidate-unknown-tag/lanes/app/comments/refresh.tsx"
+    .expect _ at "app/comments/refresh.tsx":8
+    .expect no _ at "app/comments/refresh.tsx":7
+    .expect _ at "app/comments/actions.ts":7
+.end

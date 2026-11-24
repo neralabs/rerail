@@ -1,0 +1,6 @@
+{
+  "name": "@acme/auth-kit",
+  "private": true,
+  "exports": { ".": "./src/index.ts", "./middleware": "./src/middleware.ts" },
+  "dependencies": { "@acme/data": "*" }
+}

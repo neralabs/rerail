@@ -1,0 +1,7 @@
+FROM node:20-alpine AS build
+WORKDIR /app
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_JWT_SECRET # caught
+ARG STRIPE_SECRET_KEY
+COPY . .
+RUN npm ci && npm run build

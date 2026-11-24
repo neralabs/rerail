@@ -1,0 +1,174 @@
+.policy "next-practice-unstable-cache-closure-key" revision 1
+.description "A function cached with unstable_cache must take the request's values (user, tenant, params) as arguments or in keyParts, not read them from the function around it: the cache key does not see them."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Next.js's `unstable_cache(fn, keyParts, options)` keys an entry on keyParts, the
+// arguments the cached function is called with, and fn's source text. A variable fn reads from the function around
+// the call (a `userId`, an `orgId`, a session, a route param) is in none of them, so the result computed for the
+// first request is served to every later one, another user's or tenant's included, until it revalidates.
+// (`'use cache'` binds the variables it reads into its key; unstable_cache does not.) The cached function is the
+// first argument, written inline or named: a function declared in the enclosing function. The callee is Next's own
+// `unstable_cache`, however imported (`import { unstable_cache as cache }`, `import * as nc from "next/cache"`).
+// A variable read is covered when keyParts read it, or read a variable whose initial value derives from it; a
+// variable derived from others (`const where = { orgId, currency }`) is covered when every request value it derives
+// from is. A request value is a parameter, or a variable whose initial value calls, awaits or constructs something.
+//   unstable_cache(async () => db.invoice.findMany({ where: { userId } }), ["invoices"])()   reported: userId
+//   unstable_cache(async () => db.team.findUnique({ where: { id: teamId } }))()              reported: no keyParts
+//   const load = async () => db.post.findMany({ where: { teamId } }); unstable_cache(load, ["posts"])()  reported
+//   const where = { orgId, currency }; unstable_cache(async () => …where…, [`t-${orgId}`])()  reported: currency
+//   unstable_cache(async (id) => …id…, ["org-name"])(orgId)               not reported: a parameter, in the key
+//   unstable_cache(async () => …teamId…, ["members", teamId])()           not reported: in keyParts
+//   unstable_cache(async () => …user.orgId…, ["p", user.orgId])()         not reported: keyParts read user.orgId
+//   unstable_cache(async () => …s.user.orgId…, ["o", s.user.id])()        reported: keyParts hold another field of s
+//   unstable_cache(async () => …s.user.id…, ["p", s.user])(), [s.user.id.toString()]   not reported: a field path
+//                                                                         covers its own fields and the values above it
+//   const key = `inv-${userId}`; unstable_cache(async () => …userId…, [key])()   not reported: key derives from it
+//   const where = { orgId, id }; unstable_cache(async () => …where…, ["i", orgId, id])() not reported: all keyed
+//   export const getX = unstable_cache(async (id) => db.x.find(id), ["x"])        not reported: module scope only
+//   const take = 10; const orderBy = { updatedAt: "desc" } (in the function)      not reported: no request value
+//   unstable_cache(async (...a) => fn(...a), keys) in a wrapper `cache(fn, keys)` not reported: fn is only called
+//   function visible(p) {…} in the function, read by the cached function         not reported: code, not data
+//   `'use cache'` functions                                                       not reported: not unstable_cache
+// Gaps: what a captured function or helper itself reads is not followed; a captured value that is the same for every
+// request (a client or config built by a call in the function) is reported; a project wrapper around unstable_cache
+// (cal.diy's `@calcom/lib/unstable_cache`) is not followed to its callers; `this` is not read; only initial values
+// are traced, not reassignments.
+
+#include "tsx/names.rerail"
+
+.violation ClosureKey(at: node, x: symbol) "The function cached by `unstable_cache` reads `{x}` from the function around it, but the cache key is only keyParts, the arguments the cached function is called with and its source text: the result computed for the first `{x}` is served for every other `{x}` (another user's or tenant's data) until it revalidates. Make `{x}` (or the ids it comes from) a parameter of the cached function and pass it at the call, `unstable_cache(async ({x}) => …, [\"…\"])({x})`, or add it to keyParts. Leave it only if `{x}` is the same for every call, such as a client or a constant."
+ClosureKey(e, x) :- ucck_call(c, e), ucck_free(c, x, s), ucck_open(c, s).
+.violation ClosureKeyField(at: node, t: symbol, x: symbol) "The function cached by `unstable_cache` reads `{t}` from the function around it, and keyParts hold only other fields of `{x}`, not `{t}` or a value it belongs to: the result computed for the first `{t}` is served for every later request whose keyed fields match (another organization's data, when the same user switches organization) until it revalidates. Add `{t}` to keyParts, or make it a parameter of the cached function and pass it at the call. Leave it only if what keyParts hold already fixes `{t}`."
+ClosureKeyField(e, t, x) :- ucck_call(c, e), ucck_read(c, r, s), ref(r, x, "value"), ucck_request(s),
+    ucck_key_ref(c, s, _), ucck_top(r, t), !ucck_path_covered(c, s, t).
+
+// ucck_call(c, e): c calls Next's unstable_cache, named by callee e: imported from next/cache under any local name,
+// or a member of `import * as nc from "next/cache"`. Read from this file's imports alone (no import resolution
+// needed: next/cache is a package).
+.decl ucck_call(c: node, e: node)
+ucck_call(c, e) :- kind(c, "call_expression"), field(c, "function", e0), ucck_bare(e0, e), kind(e, "identifier"),
+    ref_site(e, sp), import_binding(sp, _, "next/cache", "unstable_cache").
+ucck_call(c, e) :- kind(c, "call_expression"), field(c, "function", e0), ucck_bare(e0, e),
+    kind(e, "member_expression"), field(e, "property", p), text(p, "unstable_cache"), field(e, "object", o),
+    kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, "next/cache", "*").
+// ucck_bare(e, b): e without the parentheses around it.
+.decl ucck_bare(e: node, b: node)
+ucck_bare(e, e) :- kind(e, k), k != "parenthesized_expression".
+ucck_bare(e, b) :- kind(e, "parenthesized_expression"), child(e, i, 0), ucck_bare(i, b).
+// ucck_arg(c, i, a): argument i of the call c (0: the function, 1: keyParts), without parentheses.
+.decl ucck_arg(c: node, i: number, a: node)
+ucck_arg(c, i, a) :- ucck_call(c, _), field(c, "arguments", al), child(al, a0, _), !kind(a0, "comment"),
+    ucck_bare(a0, a), i = count : { child(al, o, _), !kind(o, "comment"), o < a0 }.
+// ucck_fn(c, g): g is the function c caches: written inline, or named by the argument.
+.decl ucck_fn(c: node, g: node)
+ucck_fn(c, g) :- ucck_arg(c, 0, g), ucck_fn_kind(g).
+ucck_fn(c, g) :- ucck_arg(c, 0, r), kind(r, "identifier"), ref_site(r, s), ucck_fn_site(s, g).
+.decl ucck_fn_kind(g: node)
+ucck_fn_kind(g) :- kind(g, "arrow_function") ; kind(g, "function_expression").
+// ucck_fn_site(s, g): the declaration at s is the function g: `function g() {}`, `const g = async () => …`.
+.decl ucck_fn_site(s: node, g: node)
+ucck_fn_site(s, s) :- kind(s, "function_declaration").
+ucck_fn_site(s, g) :- kind(s, "variable_declarator"), field(s, "value", v), ucck_bare(v, g), ucck_fn_kind(g).
+
+// ucck_free(c, x, s): the function c caches reads x, a variable of a function around it declared at s, other than
+// one it only calls (a wrapper's `fn` parameter); ucck_read(c, r, s) names each such read r.
+.decl ucck_read(c: node, r: node, s: node)
+ucck_read(c, r, s) :- ucck_fn(c, g), within(r, g), ref(r, _, "value"), ref_site(r, s), s != g, !within(s, g),
+    ucck_local_data(s), !ucck_called(r).
+.decl ucck_free(c: node, x: symbol, s: node)
+ucck_free(c, x, s) :- ucck_read(c, r, s), ref(r, x, "value").
+// ucck_local_data(s): s declares a variable of a function (not the module), holding data: not a function, a class
+// or a type.
+.decl ucck_local_data(s: node)
+ucck_local_data(s) :- nearest(s, h, fn_scope), !kind(h, "program"), !ucck_code(s).
+.decl ucck_code(s: node)
+ucck_code(s) :- site_form(s, "function") ; site_form(s, "class") ; site_form(s, "type") ; ucck_fn_site(s, _).
+.decl ucck_called(r: node)  // `fn(...args)`: r is the callee
+ucck_called(r) :- kind(cl, "call_expression"), field(cl, "function", r).
+// ucck_init(s, v): v is the initial value of the variable declared at s, a plain name or a destructured one.
+.decl ucck_init(s: node, v: node)
+ucck_init(s, v) :- kind(s, "variable_declarator"), field(s, "value", v).
+ucck_init(s, v) :- pattern_name(s, _, d), field(d, "value", v).
+// ucck_reads(s, b): the initial value of the variable at s reads b.
+.decl ucck_reads(s: node, b: node)
+ucck_reads(s, b) :- ucck_init(s, v), (r = v ; within(r, v)), ref(r, _, "value"), ref_site(r, b), b != s.
+
+// ucck_cand(c, s): the variable at s is read by the function c caches, or derived into one it reads.
+.decl ucck_cand(c: node, s: node)
+ucck_cand(c, s) :- ucck_free(c, _, s).
+ucck_cand(c, b) :- ucck_dep(_, s, b), ucck_cand(c, s).
+// ucck_dep(c, s, b): s, a variable c depends on, derives from local data b through its initial value.
+.decl ucck_dep(c: node, s: node, b: node)
+ucck_dep(c, s, b) :- ucck_cand(c, s), ucck_reads(s, b), ucck_local_data(b).
+// ucck_open(c, s): the key of c does not cover the variable at s: keyParts do not see it, and it is a request value
+// itself (ucck_request) or derives from one they do not cover.
+.decl ucck_open(c: node, s: node)
+ucck_open(c, s) :- ucck_cand(c, s), !ucck_keyed(c, s), ucck_request(s), !ucck_dep(c, s, _).
+ucck_open(c, s) :- ucck_cand(c, s), !ucck_keyed(c, s), ucck_dep(c, s, b), ucck_open(c, b).
+// ucck_request(s): the variable at s takes a value per call: a parameter (or any binding without an initial value),
+// or one whose initial value calls, awaits or constructs something (`await requireUser()`, `Date.now()`).
+.decl ucck_request(s: node)
+ucck_request(s) :- ucck_cand(_, s), !ucck_init(s, _).
+ucck_request(s) :- ucck_cand(_, s), ucck_init(s, v), (n = v ; within(n, v)),
+    (kind(n, "call_expression") ; kind(n, "await_expression") ; kind(n, "new_expression")).
+
+// ucck_keyed(c, s): keyParts of c read the variable at s, or a variable whose initial value derives from it
+// (`const key = \`inv-${userId}\``).
+.decl ucck_keyed(c: node, s: node)
+ucck_keyed(c, s) :- ucck_key_reach(c, s).
+.decl ucck_key_reach(c: node, b: node)
+ucck_key_reach(c, k) :- ucck_arg(c, 1, a), (r = a ; within(r, a)), ref(r, _, "value"), ref_site(r, k).
+ucck_key_reach(c, b) :- ucck_key_reach(c, k), ucck_reads(k, b).
+
+// ---- field paths ------------------------------------------------------------------------------------------------
+// A read `a.b.c` of a keyed variable a is covered by a keyPart that reads a, a.b or a.b.c (or a.b.c.d: the key is
+// finer), not by one that reads only a.b.d: the paths must not part.
+// ucck_key_ref(c, s, k): keyParts of c read the variable at s, at reference k.
+.decl ucck_key_ref(c: node, s: node, k: node)
+ucck_key_ref(c, s, k) :- ucck_arg(c, 1, a), (k = a ; within(k, a)), ref(k, _, "value"), ref_site(k, s),
+    ucck_cand(c, s).
+// ucck_top(r, t): t is the dotted path of the longest `r.p.q` member chain on reference r (`r` alone when none).
+.decl ucck_seed(r: node)
+ucck_seed(k) :- ucck_key_ref(_, _, k).
+ucck_seed(r) :- ucck_read(c, r, s), ucck_key_ref(c, s, _).
+.decl ucck_up(r: node, m: node, t: symbol)
+ucck_up(r, r, x) :- ucck_seed(r), ref(r, x, "value").
+ucck_up(r, m2, cat(t, ".", y)) :- ucck_up(r, m, t), kind(m2, "member_expression"), field(m2, "object", m),
+    field(m2, "property", p), kind(p, "property_identifier"), text(p, y).
+.decl ucck_member_parent(m: node)
+ucck_member_parent(m) :- ucck_up(_, m, _), kind(m2, "member_expression"), field(m2, "object", m),
+    field(m2, "property", p), kind(p, "property_identifier").
+.decl ucck_top(r: node, t: symbol)
+ucck_top(r, t) :- ucck_up(r, m, t), !ucck_member_parent(m).
+// ucck_path_covered(c, s, t): some keyPart of c reads the variable at s along a path that t extends or that extends t.
+.decl ucck_path_covered(c: node, s: node, t: symbol)
+ucck_path_covered(c, s, t) :- ucck_read(c, r, s), ucck_top(r, t), ucck_key_ref(c, s, k), ucck_top(k, kt),
+    (kt = t ; prefix(cat(kt, "."), t) ; prefix(cat(t, "."), kt)).
+
+// The cases, `cases/next-practice-unstable-cache-closure-key/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/next-practice-unstable-cache-closure-key/package.json"
+    .fixture "tsconfig.json" from "../cases/next-practice-unstable-cache-closure-key/tsconfig.json"
+    .fixture "lib/db.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/db.ts"
+    .fixture "lib/auth.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/auth.ts"
+    .fixture "lib/cache.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/cache.ts"
+    .fixture "lib/data/invoices.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/data/invoices.ts"
+    .fixture "lib/data/invoices.test.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/data/invoices.test.ts"
+    .fixture "lib/data/projects.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/data/projects.ts"
+    .fixture "app/dashboard/page.tsx" from "../cases/next-practice-unstable-cache-closure-key/app/dashboard/page.tsx"
+    .fixture "app/orgs/page.tsx" from "../cases/next-practice-unstable-cache-closure-key/app/orgs/page.tsx"
+    .fixture "app/teams/[teamId]/page.tsx" from "../cases/next-practice-unstable-cache-closure-key/app/teams/[teamId]/page.tsx"
+    .expect _ at "app/dashboard/page.tsx":10
+    .expect ClosureKeyField at "app/orgs/page.tsx":10
+    .expect _ at "app/teams/[teamId]/page.tsx":10
+    .expect _ at "app/teams/[teamId]/page.tsx":21
+    .expect _ at "lib/data/invoices.ts":7
+    .expect _ at "lib/data/invoices.ts":14
+.end
