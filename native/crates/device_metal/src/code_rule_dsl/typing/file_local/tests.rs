@@ -66,11 +66,15 @@ fn source_relations_keep_their_document_location() {
 
 /// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
 /// reader (`found`, as `MA033` over `ma_owner(_)`), is moved to the cross-file part with its file-local readers
-/// (decision 0290), so `locate_all` leaves every row the chunks hand on located.
+/// (decision 0290), so `locate_all` leaves every row the chunks hand on located. Here its rule reads its rows' nodes,
+/// and the program has no `docof` or `node` to name their documents by.
+///
+/// Where its rule reads a relation whose location column holds documents (`owner(d)`, filled from `doc`'s), that column
+/// names each row's document (decision 0680): it is located (`aware_at`) and read back from it, not moved.
 #[test]
 fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
-    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
-                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let text = ".decl text(n: node, s: symbol)\n.input text\n.decl owner(n: node)\nowner(n) :- text(n, \"a\").\n\
+                .decl aware()\naware() :- owner(n), text(n, \"b\").\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
     let v = read(text);
     assert!(split_of(&v).local.contains("aware"), "the case: aware is file-local before the move");
     let (v, found) = located(v);
@@ -83,6 +87,17 @@ fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
     let (v, found) = located(v);
     found.unwrap();
     assert_eq!(moved(&v), ["aware"]);
+
+    // A document column names them.
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let (v, found) = located(read(text));
+    found.expect("every row the chunks hand on located");
+    assert!(moved(&v).is_empty(), "{:?}", moved(&v));
+    let parts = split_of(&v);
+    assert!(!parts.local.contains("aware") && parts.local.contains("aware_at") && !parts.local.contains("found"), "{:?}", parts.local);
+    assert_eq!(parts.causes["aware"], "read back from its located form (`locate`)");
+    assert!(v.rules().filter(|r| v.rel_name(r.head().rel()) == "aware").all(|r| reads(&v, r) == ["aware_at"]), "aware is read back from its located form");
 }
 
 /// An earlier phase's export is a run constant, but not placeless (decision 0083 §2.3): a rule that joins it is
@@ -623,6 +638,47 @@ alone(a) :- node(_, a, "identifier", _, _), text(a, s), !(text(b, s), b != a).
     assert!(refused.contains("made by the lowering of alone") || refused.contains("  alone:"), "{refused}");
 }
 
+/// Decision 0680: a keyed family of one file's values, read by file-local rules and by a declared `cross_file` one, is
+/// per-file. The cross-file reader reads its located form (`ok_at`, made beside it by `locate`), which names each
+/// row's document through the node the root's rule leaves unnamed, and nothing is moved or refused.
+#[test]
+fn a_per_file_family_a_cross_file_rule_reads_is_relayed() {
+    let base = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl fmt(c: node, v: symbol)
+.input node, fmt
+.decl pv(v: symbol)
+pv(v) :- fmt(_, v).
+.decl rest(v: symbol, r: symbol, i: number)
+rest(v, v, 0) :- pv(v).
+.decl bad(v: symbol)
+bad(v) :- rest(v, r, _), contains("}}", r).
+.decl ok(v: symbol)
+ok(v) :- pv(v), !bad(v).
+.decl flagged(c: node)
+flagged(c) :- fmt(c, v), !ok(v).
+.decl seen(v: symbol) cross_file
+seen(v) :- ok(v).
+.decl many(c: node)
+many(c) :- fmt(c, v), seen(v).
+.output flagged, many
+"#;
+    let (v, found) = located(read(base));
+    assert!(found.as_ref().is_ok_and(|l| l.contains(&"ok".to_owned())), "{found:?}\n{}", v.show());
+    let moves: Vec<String> = ProgramFields::qualifiers(&*v).into_iter().filter(|(_, w)| w.contains(crate::code_rule_dsl::typing::file_local::MOVED_CROSS_FILE)).map(|(r, _)| r).collect();
+    assert!(moves.is_empty(), "nothing moved: {moves:?}");
+    let programs = programs_of(v).unwrap();
+    crossings_checked(&programs).unwrap();
+    for rel in ["pv", "rest", "bad", "ok", "flagged"] {
+        assert!(programs.file_local.contains(rel), "{rel}: {:?}", programs.file_local);
+    }
+    assert!(!programs.file_local.contains("seen") && !programs.file_local.contains("many"), "{:?}", programs.file_local);
+    let cross = &programs.versions.cross;
+    let reads = |v: &Version, rel: &str| -> Vec<String> { rules_of(v, rel).into_iter().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect() };
+    assert!(reads(cross, "seen").iter().any(|r| r.starts_with("ok_at")), "{}", cross.show());
+    assert!(reads(&programs.versions.local, "ok").contains(&"pv".to_owned()), "kept for its file-local readers:\n{}", programs.versions.local.show());
+}
+
 /// A view of values its readers cover is file-local (decision 0652): `clash(x, v, w)` is built from every file's
 /// attributes, but each reader holds the two attributes it is built from, in its own document, so derived per chunk
 /// it answers each reader as over every file, positive or negated. `defined(x)`, read by a rule holding only a
@@ -1140,9 +1196,13 @@ fn a_located_rule_keeps_its_branded_atoms() {
     let mut p = Pipeline::new("test", v);
     p.program(&mut pass);
     let (out, _) = p.finish().unwrap();
-    assert_eq!(pass.result(), Ok(vec!["named".to_owned()]));
+    // `all` is a union of `named`, per file (decision 0680): located through `named`'s twin, which its node left
+    // unnamed locates; `named`'s own rules stay beside it.
+    assert_eq!(pass.result(), Ok(vec!["all".to_owned(), "named".to_owned()]));
     let keeps = |r: RuleRef<'_>| r.body().filter_map(|l| l.atom()).any(|a| out.rel_name(a.rel()) == "node" && a.args().any(|t| matches!(t, TermRef::Branded(b) if b == kind)));
     assert!(rules_of(&out, "named_at").into_iter().any(keeps), "the located rule keeps it:\n{}", out.show());
+    assert!(rules_of(&out, "all_at").into_iter().all(|r| r.body().filter_map(|l| l.atom()).any(|a| out.rel_name(a.rel()) == "named_at")), "{}", out.show());
+    assert_eq!(rules_of(&out, "named").len(), 1, "{}", out.show());
 }
 
 /// An export read by a cross-file rule with a demand is cut on a version: the cut's line, and the program made
@@ -1515,5 +1575,63 @@ pieces(c, n) :- call_fmt(c, v), ok(v), n = count : { rest(v, _, _) }.
     let other = format!("{base}.decl odd(c: node)\nodd(c) :- kind(c, \"string\"), text(c, v), ok(v).\n.output odd\n");
     let split = split_of(&with_core(&other));
     assert!(!split.covered.contains("ok") && !split.local.contains("odd"), "{:?}", split.causes);
+}
+
+/// Decision 0680: a keyed family's reads at one key place one document, a negated one where a positive one holds
+/// the key: its members joined at the key are per-file, read or not. Two families at one key are not.
+#[test]
+fn a_keyed_familys_reads_at_one_key_are_one_document() {
+    // The shape of `%`-format parsing (`pct_*`): a root of one file's values, members recursive through each other,
+    // and members joining two of the family at the key, one by a negated read. Nothing reads `conv` or `stuck`.
+    let base = r#"
+.decl call_fmt(c: node, v: symbol)
+call_fmt(c, v) :- kind(c, "call"), field(c, "function", f), text(f, v).
+.decl pv(v: symbol)
+pv(v) :- call_fmt(_, v).
+.decl rest(v: symbol, r: symbol, i: number)
+.decl spec(v: symbol, i: number, k: symbol, r: symbol)
+rest(v, v, 0) :- pv(v).
+rest(v, r, i + 1) :- spec(v, i, _, r).
+spec(v, i, k, x) :- rest(v, r, i), match("%(?<k>[a-z])(?<x>[\s\S]*)", r).
+.decl conv(v: symbol, i: number, k: symbol)
+conv(v, i, k) :- spec(v, i, k, _), rest(v, r, i), contains("%", r).
+.decl stuck(v: symbol, i: number)
+stuck(v, i) :- rest(v, r, i), contains("%", r), !spec(v, i, _, _).
+.decl bad(c: node)
+bad(c) :- call_fmt(c, v), stuck(v, _).
+.output bad
+"#;
+    let split = split_of(&with_core(base));
+    for rel in ["pv", "rest", "spec", "conv", "stuck", "bad"] {
+        assert!(split.local.contains(rel), "{rel}: {:?}", split.causes);
+    }
+    assert!(split.crossings.is_empty(), "{:?}", split.crossings);
+    // Two families at one key are two documents: a string of one file's calls and of another's attributes.
+    let other = format!("{base}.decl av(v: symbol)\nav(v) :- kind(a, \"attribute\"), text(a, v).\n.decl both(v: symbol)\nboth(v) :- pv(v), av(v).\n.output both\n");
+    let split = split_of(&with_core(&other));
+    assert!(!split.local.contains("both"), "{:?}", split.causes);
+}
+
+/// Decision 0680: a relation of values derived from one file's rows each (`pv(v) :- call_fmt(_, v)`, a union) is
+/// per-file, and so is a union of it; a join of it with another file's rows is not, nor a negated read of it alone.
+#[test]
+fn a_union_of_one_files_rows_is_per_file() {
+    let base = r#"
+.decl call_fmt(c: node, v: symbol)
+call_fmt(c, v) :- kind(c, "call"), field(c, "function", f), text(f, v).
+.decl pv(v: symbol)
+pv(v) :- call_fmt(_, v).
+.decl upper(v: symbol)
+upper(v) :- pv(v), match("[A-Z]+", v).
+.output upper
+"#;
+    let split = split_of(&with_core(base));
+    for rel in ["pv", "upper"] {
+        assert!(split.local.contains(rel), "{rel}: {:?}", split.causes);
+    }
+    // A string's text joined with the calls' values of any file: two documents, cross-file and declared.
+    let other = format!("{base}.decl named(s: node)\nnamed(s) :- kind(s, \"string\"), text(s, v), upper(v).\n.output named\n");
+    let split = split_of(&with_core(&other));
+    assert!(!split.local.contains("named"), "{:?}", split.causes);
 }
 

@@ -1861,7 +1861,9 @@ fn a_text_read_left_as_rows_says_why_its_node_is_not_known() {
         ("out(s) :- text(n, s).", "no positive atom binds $n"),
         ("out(s) :- name(n, \"x\"), text(n, s).", "name[0]: a per-node value"),
         ("out(s) :- kind(n, k), text(k, s).", "kind[1]: not every rule of it fills column 1 with a node"),
-        (".decl d(x: node)\nd(x) :- kind(x, \"call\").\nd(x) :- kind(_, x).\nout(s) :- d(n), text(n, s).", "d[0]: cross-file: d: reads kind with no location"),
+        // A union of one file's rows is per-file (decision 0680): its second rule fills the column with a kind.
+        (".decl d(x: node)\nd(x) :- kind(x, \"call\").\nd(x) :- kind(_, x).\nout(s) :- d(n), text(n, s).", "d[0]: not every rule of it fills column 0 with a node"),
+        (".decl d(x: node)\nd(x) :- kind(x, \"call\"), name(x, s), kind(y, \"def\"), name(y, s).\nout(s) :- d(n), text(n, s).", "d[0]: cross-file: d: joins 2 documents"),
         (
             ".decl def(s: symbol)\ndef(s) :- kind(d, \"function_definition\"), name(d, s).\n.decl call(c: node) cross_file\ncall(c) :- kind(c, \"call\"), name(c, s), def(s).\nout(s) :- call(n), text(n, s).",
             "call[0]: cross-file: call",

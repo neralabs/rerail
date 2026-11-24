@@ -1865,6 +1865,48 @@ y = x{i} + 2
     run(&edited, true);
 }
 
+/// A string test compared with `!=` runs natively (decision 0680): the plan search's inlining (decision 0173 §7)
+/// unfolds `!bb_mangled(v)`, bugbear's `identifier(v), prefix("__", v), !suffix("__", v)`, into one copy per literal,
+/// each negated: `@prefix(v, "__") != 1`. A test's value is 0 or 1, so the native engine runs it as `= 0`. Before, it
+/// declined the stratum, and the 300-file bench's strict run stopped on SQL inside the waves. Here `inline` asks for
+/// the unfolding, in a strict run of a process of its own, as a corpus run keeps plans.
+#[test]
+fn a_string_tests_inequality_runs_natively() {
+    let _switches = super::switches::reading();
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let src = base.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.py"), "a = '__x'\nb = '__y__'\nc = 'z'\n").unwrap();
+    let program = base.join("t.rerail");
+    std::fs::write(
+        &program,
+        ".decl strv(n: node, s: symbol)\nstrv(n, s) :- kind(n, \"string\"), value(n, s).\n\
+         .decl seen(s: symbol)\nseen(s) :- strv(_, s).\n\
+         .decl mangled(s: symbol) inline\nmangled(s) :- seen(s), prefix(\"__\", s), !suffix(\"__\", s).\n\
+         .decl plain(n: node)\nplain(n) :- strv(n, s), seen(s), !mangled(s).\n.output plain\n",
+    )
+    .unwrap();
+    let store = base.join("store.sqlite");
+    super::test_store::begun(&store);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+        .env("RERAIL_TAPE_CACHE", &store)
+        .env("RERAIL_CHILD_RUN", &src)
+        .env("RERAIL_CHILD_OUT", base.join("out"))
+        .env("RERAIL_CHILD_PROGRAM", &program)
+        .env("RERAIL_COSTS", base.join("costs.sqlite"))
+        .env("RERAIL_IMAGE_STORE", base.join("images"))
+        .env("RERAIL_SQL_STRICT", "1");
+    let output = super::switches::started(|| child.output()).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(4).collect();
+    assert!(output.status.success(), "the run's process: {}; {}", output.status, if fault.is_empty() { stderr.lines().rev().take(20).collect::<Vec<_>>().join("\n") } else { fault.join("\n") });
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "plain").unwrap();
+    assert_eq!(rows.len(), 2, "`__y__` and `z`, not the mangled `__x`: {rows:?}");
+}
+
 /// One corpus run in a process of its own, for `the_run_after_a_cold_one_writes_nothing`.
 #[test]
 #[ignore = "a parent test runs it in a process of its own"]

@@ -988,6 +988,11 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
 fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
     let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
     let space = crate::content_store::local_space(&plan_digest(program));
+    // Inside the waves only the entries admitted before them are read (decision 0104): a space not admitted (a cold
+    // run's, whose plan no earlier run stored) holds none here, and its values' rows are made again.
+    if !stored && !store.memo_admitted(&space) {
+        return Ok(Vec::new());
+    }
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let parts: Vector<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
     let mut blobs = {

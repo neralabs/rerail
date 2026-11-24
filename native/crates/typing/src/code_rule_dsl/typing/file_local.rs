@@ -342,6 +342,8 @@ pub struct Programs {
     pub positions: Vec<(String, String)>,
     /// The split's undeclared crossings (`FileLocal::crossings`, decision 0652).
     pub crossings: std::collections::BTreeMap<String, String>,
+    /// The moved relations that are unions of one document's rows (`FileLocal::moved_unions`, decision 0680).
+    pub moved_unions: std::collections::BTreeSet<String>,
 }
 
 /// The relations a node's place in its document is (decision 0649): an edit moves them for every node after it, so
@@ -406,6 +408,7 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     let mut programs = assemble(version, local, constants, split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
+    programs.moved_unions = split.moved_unions.clone();
     Ok(programs)
 }
 
@@ -455,7 +458,7 @@ pub fn assemble(
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
     positions_checked(&positions, strict_positions())?;
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions, crossings: Default::default() })
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), moved_unions: Default::default() })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
@@ -632,6 +635,10 @@ pub const MOVED_CROSS_FILE: &str = "moved_cross_file";
 /// `FileLocal::path_keys` names) would place it in one file. Neither a declaration nor a move (0652).
 pub const READ_LOCATED: &str = "read_located";
 
+/// The qualifier `locate` gives each located form it makes, `q_at(d, …)` beside `q(…)` (decision 0680): its rows are
+/// `q`'s, each with its document. The split reads a read of it as holding `q`'s rows, a keyed family's key among them.
+pub const LOCATED_FORM: &str = "located_form";
+
 /// The qualifier of a relation whose rows choose how its readers are evaluated, not what they derive: a pair cache's
 /// guard (`rr_pair_cache_…_small`), a deferred join's hot endpoints (`rr_deferred_…_hot`). Its readers derive the
 /// same rows whatever it holds, so the split places it with its inputs and reads it as a test (decision 0652): in a
@@ -661,7 +668,9 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     for rel in moved_in(&f) {
         // A function of strings (`match_all`) moved for a cross-file reader joins no documents.
         let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::ArchivedNativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);
-        if !functional && !placement_only(v, &f, rel) && !meant(rel) {
+        // A union of one document's rows whose documents no read names (decision 0680) is where it was before: no
+        // crossing.
+        if !functional && !placement_only(v, &f, rel) && !meant(rel) && !p.moved_unions.contains(rel) {
             refused.push(crossing_shown(v, rel, "its rows name no document (moved by `locate`), and are read on"));
         }
     }
