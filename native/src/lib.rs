@@ -46,6 +46,7 @@ mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
 mod path_owner;
+pub mod pipe_server;
 pub mod process;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).

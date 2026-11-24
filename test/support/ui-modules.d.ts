@@ -123,7 +123,7 @@ declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
   export function isRunning(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): boolean;
   export function notRunningReason(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): string | null;
-  export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
+  export function packSuppressions(rules: readonly object[]): string;
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
   export function isFromPack(stored: { origin: string }): boolean;
@@ -217,14 +217,13 @@ declare module "*/ui/format.js" {
 
 declare module "*/ui/settings-writes.js" {
   /** One settings write: the folder, the targets and the values it sets (`on: null` clears). */
-  export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null; suppressions?: "honour" | "ignore" } }
+  export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null } }
   /** The writes the whole-pack switch sends for pack `packId`: per folder, the pack's on, then its rules' own on cleared. */
   export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
   /** The page's rule setting writes; `toast`, `invalidate` and `owner` (given the one pack a change is to) are the page's. */
   export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: (packId?: string) => "repository" | "checkout" }): {
     setEnabled(ids: readonly string[], enabled: boolean, label: string, failed?: string): Promise<void>;
     setPackEnabled(packId: string, enabled: boolean, label: string, failed?: string): Promise<void>;
-    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string, failed?: string): Promise<void>;
   };
 }
 
@@ -257,6 +256,10 @@ declare module "*/ui/pack-model.js" {
   export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
   export const SHEET_FILTER_AT: number;
   export function sheetRules(pack: Pack, query: string): Pack["rules"];
+  type Recommendation = { packId: string; reason?: string };
+  export function suggestedReason(recommendations: readonly Recommendation[] | null, packId: string): string | null;
+  export function suggestedSplit<P extends Pack>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
+  export function startGroups<R extends { on?: boolean }>(rows: readonly R[]): { on: R[]; off: R[] };
 }
 
 declare module "*/ui/routes.js" {

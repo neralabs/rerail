@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/pack-model.js";
+import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
 import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
 import { packKind } from "../../ui/render/pack-panel.js";
@@ -282,6 +282,34 @@ describe("the catalog", () => {
     expect(catalogPacks(packs, "all").map(p => p.id)).toEqual(["blade", "next", "python", "vue"]);
     expect(catalogPacks(packs, "framework").map(p => p.id)).toEqual(["next", "vue"]);
     expect(catalogPacks(packs, "language").map(p => p.id)).toEqual(["blade", "python"]);
+  });
+
+  it("puts the packs Rerail suggests for the repo first, once the recommendations name one", () => {
+    const sorted = catalogPacks(packs, "all");
+    const recommendations = [{ packId: "vue", reason: "package.json depends on vue" }, { packId: "python" }];
+
+    expect(suggestedSplit(sorted, null)).toBeNull();
+    expect(suggestedSplit(sorted, [])).toBeNull();
+    const split = suggestedSplit(sorted, recommendations);
+    expect(split?.suggested.map(p => p.id)).toEqual(["python", "vue"]);
+    expect(split?.others.map(p => p.id)).toEqual(["blade", "next"]);
+    // A kind with no suggested pack still splits: its packs are all others.
+    expect(suggestedSplit(catalogPacks(packs, "language").filter(p => p.id === "blade"), recommendations)?.suggested).toEqual([]);
+  });
+
+  it("says why a pack is suggested, empty when the recommendation gives no reason", () => {
+    const recommendations = [{ packId: "vue", reason: "package.json depends on vue" }, { packId: "python" }];
+
+    expect(suggestedReason(recommendations, "vue")).toBe("package.json depends on vue");
+    expect(suggestedReason(recommendations, "python")).toBe("");
+    expect(suggestedReason(recommendations, "next")).toBeNull();
+    expect(suggestedReason(null, "vue")).toBeNull();
+  });
+
+  it("groups a pack not added by how its rules start, keeping their order", () => {
+    const rows = [{ id: "x:1", title: "Alpha", on: true }, { id: "x:2", title: "Beta", on: false }, { id: "x:3", title: "Gamma", on: true }];
+
+    expect(startGroups(rows)).toEqual({ on: [rows[0], rows[2]], off: [rows[1]] });
   });
 
   it("filters a pack sheet's rules by title or id, A to Z", () => {

@@ -1,0 +1,1 @@
+On Windows, a hook sends nothing to the engine pipe `RERAIL_ENGINE_SOCKET` names until Windows says the daemon `daemon.json` records holds that pipe, or the engine there proves it holds the capability in `daemon.json`. The daemon `daemon.json` records still gets every event, whatever its version: with the capability from Rerail 0.1.1 on, and with none before.
