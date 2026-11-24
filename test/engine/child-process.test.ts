@@ -168,6 +168,15 @@ describe("endProcessTree", () => {
       .toEqual(Array.from(cannotStart, () => ["taskkill.exe", ["/T", "/F", "/PID", "4242"]]));
   });
 
+  it("on Windows starts taskkill in the system folder, so it never holds the folder this process runs in", () => {
+    // Nothing waits for taskkill, and on Windows a running process holds the folder it runs in.
+    vi.mocked(childProcess.spawn).mockImplementationOnce((() => undefined) as unknown as typeof childProcess.spawn);
+    endProcessTree({ pid: 4242, exitCode: null, signalCode: null, kill: () => true }, { platform: "win32" });
+    const [program, args, options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)! as unknown as [string, string[], childProcess.SpawnOptions];
+    expect([win32.basename(program), args]).toEqual(["taskkill.exe", ["/T", "/F", "/PID", "4242"]]);
+    expect(options.cwd).toBe(win32.dirname(program));
+  });
+
   it("ends a child and the process it started, which holds the child's output, so that output closes", async () => {
     // The grandchild writes its pid to the output it shares with the child, then both wait; on macOS and Linux the
     // child leads a process group of its own (`detached`), which goes whole.
