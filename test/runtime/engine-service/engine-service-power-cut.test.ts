@@ -83,16 +83,31 @@ async function nextDaemon(root: string, databasePath: string, now: () => number 
   return started;
 }
 
-function answer(child: ChildProcess, wanted: (message: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
+/**
+ * The first message of `child` that `wanted` takes. The wait ends at the first of that message, the child's close and
+ * 60 s; the last two reject with what the child wrote to its stderr. Its close, not its exit: the stderr pipe has
+ * drained by then, so the error holds all of it.
+ */
+function answer(child: ChildProcess, stderr: () => string, wanted: (message: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("the daemon process did not answer within 60 s")), 60_000);
-    const listen = (message: Record<string, unknown>) => {
-      if (!wanted(message)) return;
+    const end = () => {
       clearTimeout(timer);
       child.off("message", listen);
+      child.off("close", closed);
+    };
+    const fail = (why: string) => {
+      end();
+      reject(new Error(`the daemon process ${why}; its stderr: ${stderr().slice(0, 2_000)}`));
+    };
+    const listen = (message: Record<string, unknown>) => {
+      if (!wanted(message)) return;
+      end();
       resolve(message);
     };
+    const closed = (code: number | null, signal: NodeJS.Signals | null) => fail(`exited (${code ?? signal}) before it answered`);
+    const timer = setTimeout(() => fail("did not answer within 60 s"), 60_000);
     child.on("message", listen);
+    child.once("close", closed);
   });
 }
 
@@ -108,19 +123,7 @@ async function daemonProcess(root: string, databasePath: string) {
   let stderr = "";
   child.stderr!.on("data", chunk => { stderr += String(chunk); });
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
-  // Heard from the process's start on: a session's evaluator can open before its start event is answered.
-  const opened = new Map<string, PromiseWithResolvers<void>>();
-  const openedFor = (sessionId: string): PromiseWithResolvers<void> => {
-    const known = opened.get(sessionId) ?? Promise.withResolvers<void>();
-    opened.set(sessionId, known);
-    return known;
-  };
-  child.on("message", (message: Record<string, unknown>) => {
-    if (typeof message.opened === "string") openedFor(message.opened).resolve();
-  });
-  const ready = await answer(child, message => message.ready === true).catch((error: unknown) => {
-    throw new Error(`${String(error)}; its stderr: ${stderr.slice(0, 2_000)}`);
-  });
+  const ready = await answer(child, () => stderr, message => message.ready === true);
   const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath: String(ready.socketPath) }, event);
   return {
     send,
@@ -129,8 +132,9 @@ async function daemonProcess(root: string, databasePath: string) {
      * result's answer: at a session's first start an edit that comes sooner is answered with no check.
      */
     startChecked: async (event: Extract<AdapterEvent, { kind: "session-start" }>) => {
-      await send(event);
-      await openedFor(event.session.sessionId).promise;
+      // Heard from before the start is sent: a session's evaluator can open before its start event is answered.
+      const { sessionId } = event.session;
+      await Promise.all([answer(child, () => stderr, message => message.opened === sessionId), send(event)]);
     },
     stop: async () => {
       child.kill("SIGKILL");
