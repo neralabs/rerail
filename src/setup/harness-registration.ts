@@ -2024,7 +2024,7 @@ const CMD_RUN_LIMIT_MS = 10_000;
  * ends with exit 0 within `limitMs`. A file there is not enough. The `DisableCMD` policy at 1 leaves it in place, and
  * cmd then writes "The command prompt has been disabled by your administrator." and ends with exit 255 for every
  * command; an AppLocker or WDAC rule refuses to start it. Only set-up asks it, before it writes a hook entry
- * (`hookExecEntry`); started off the event loop, as set-up's other work is.
+ * (`hookExecEntry`).
  */
 export function cmdRunsCommands(path: string, limitMs = CMD_RUN_LIMIT_MS): Promise<boolean> {
   return new Promise(resolve => {

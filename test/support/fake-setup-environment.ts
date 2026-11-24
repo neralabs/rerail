@@ -25,6 +25,8 @@ export function fakeSetupEnvironment(options: {
   unreadable?: readonly Harness[];
   /** Coding agents whose registration is written but whose hook fails when set-up runs it, as Claude Code's can. */
   hookFails?: readonly Harness[];
+  /** cmd.exe ran no command when set-up started it, so Claude Code's hooks start with `node`. */
+  nodeHookFallback?: boolean;
   browser?: boolean;
   /** Whether the person has let Rerail read their sessions already; true unless a test asks the question. */
   sessionsApproved?: boolean;
@@ -62,7 +64,7 @@ export function fakeSetupEnvironment(options: {
         ],
         codexTrust: changed.includes("codex"),
         ompPlugin: false,
-        nodeHookFallback: false,
+        nodeHookFallback: options.nodeHookFallback === true && changed.includes("claude-code"),
       };
     },
     sessionsApproved: () => approved,
