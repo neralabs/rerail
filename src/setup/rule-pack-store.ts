@@ -49,7 +49,8 @@ const STALE_STAGING_MS = 60 * 60 * 1000;
  * An npm install or uninstall in the packs prefix is stopped at this; a checked install then puts the prefix back. A
  * pack is a few MB (the largest of Rerail's, python, is about 6 MB unpacked): seconds on most lines. The packs lock
  * is held through a stopped install and its put-back, which can be an install and a removal: three npm calls, each
- * stopped at this plus `KILL_GRACE_MS`, about 4 min 15 s in all, under the `PACKS_LOCK_WAIT_MS` another process waits.
+ * stopped at this plus `KILL_GRACE_MS` and answering at most another `KILL_GRACE_MS` later, once its output is let go:
+ * about 4 min 30 s in all, under the `PACKS_LOCK_WAIT_MS` another process waits.
  */
 const PACK_INSTALL_TIMEOUT_MS = 80_000;
 

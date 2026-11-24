@@ -36,7 +36,10 @@ export class CommandTimeoutError extends Error {
 /** The last `TIMEOUT_OUTPUT_LINES` lines of `text` that are not blank. */
 const lastLines = (text: string): string => text.split(/\r?\n/u).filter(line => line.trim() !== "").slice(-TIMEOUT_OUTPUT_LINES).join("\n");
 
-/** How long a command stopped for running too long has to exit after SIGTERM before it is killed. */
+/**
+ * How long a command stopped for running too long has to exit after SIGTERM before it is killed, and how long
+ * `runCommand` waits after a command exits for a process it left running to let go of its output.
+ */
 export const KILL_GRACE_MS = 5_000;
 
 /**
@@ -97,6 +100,8 @@ export async function runCommand(command: string, args: readonly string[], optio
   // closed, so `close` comes with what the command printed by then.
   let unheld: NodeJS.Timeout | undefined;
   child.once("exit", () => {
+    // The command has ended: its timeout no longer applies while the pipes drain.
+    cancelStop();
     unheld = setTimeout(() => {
       child.stdout.destroy();
       child.stderr.destroy();
@@ -104,7 +109,6 @@ export async function runCommand(command: string, args: readonly string[], optio
   });
   child.once("close", (code, signal) => {
     clearTimeout(unheld);
-    cancelStop();
     const detail = cleanCommandError(stderr || stdout);
     if (timedOut) {
       reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(detail)));

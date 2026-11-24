@@ -203,7 +203,7 @@ describe("npmPackStore", () => {
     expect(timeouts).toHaveLength(2);
     const [install, remove] = timeouts.map(timeout => {
       expect(timeout).toBeDefined();
-      return timeout! + KILL_GRACE_MS;
+      return timeout! + 2 * KILL_GRACE_MS;
     });
     // The lock is held through a stopped install and its put-back: an install, then a removal.
     expect(install! * 2 + remove!).toBeLessThan(PACKS_LOCK_WAIT_MS);
