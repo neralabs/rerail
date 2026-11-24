@@ -12,6 +12,8 @@ pub mod label_leaves_w8;
 pub mod join_run;
 pub mod lanes;
 mod sources;
+#[cfg(test)]
+mod sort_merge_spike;
 
 pub use sources::*;
 
