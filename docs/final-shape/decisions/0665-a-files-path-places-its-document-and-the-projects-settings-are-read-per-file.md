@@ -128,7 +128,12 @@ farm host, so it is in the slow tier.
 
 - bounded-composed-graph-paths over the 334-file corpus completes: 30 findings. It was refused before.
 - Phase 0's tests, the split's 36 tests, and the 32 pack split tests (the new one included) pass.
-- The position report: see below.
+- The position report (every data-layer policy over the 334-file corpus and every pack over a small corpus; one
+  host, every run completed): 75 flagged rules before, 67 after. No rule is newly flagged. The 8 gone are React's gate
+  (`early_read`, `render_early`, `p19_holds_read`, `p35_rr_agg1`, `p7_rr_agg1`, `rr_agg43` and two demands): React's
+  12 become 4, `p36`'s chain through `cap_name`, which was there before and reads no setting. No chain roots at
+  `package_for`, `py_platform` or an option any more. Where a root cause is now named one step further along (a
+  read-back of a located form, two documents joined), it was "reads R with no location" before.
 
 ## Left open
 
