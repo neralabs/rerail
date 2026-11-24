@@ -984,7 +984,9 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - The enforcer's spool in `tmpdir()` survives a crash.
 - On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
   names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
-  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  the capability, on another, then the receipt of a steer the event's answer carried (`POST /receipts`), with the
+  capability too, on that connection after the answer, or on a new one once that connection has been idle 5 s. The
+  time between the two is not short. A Claude Code or Codex hook checks before it
   waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
   then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
   12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free
