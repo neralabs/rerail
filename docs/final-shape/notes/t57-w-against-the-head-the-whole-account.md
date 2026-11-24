@@ -131,3 +131,86 @@ and memory above, and they are built.
 3. The blocks at the peak: free blocks given back, the device pool not opened by a CPU run, and the live blocks
    accounted by owner.
 4. The cross-file part with 0652's split.
+
+## 7. Steps 1–3, done (2026-11-24)
+
+### Step 1: the merge, and `all` again
+
+The hub (roll-up 116, e41938af26) is merged, and 0649 and 0652 are ported onto its tree (9123d21c82). 0652's
+follow-up (872f3a300b) and the strata branch's view work are not: they meet the hub's own view work in the same
+structures (the merge question, published as a page). With 0652 the cross-file part's share of the join work fell
+from 18% to under 5%, and no per-file relation joins there.
+
+The merge first made the head slower, profiled on m3: 1,643 G → 2,246 G instructions, for fewer join rows (444 M
+→ 384 M). The stack samples put it in two places, both fixed (9b6d39a4c1):
+- the code table, moved into a block by the hub, read every word through a non-inlined `AsRef` with the region
+  guard's check, about eight a node the matcher reads: now a slice taken once;
+- every freed chunk gave its pages to the OS at once, and the next allocation faulted them back; the hub's blocks
+  for short-lived vectors made that six times as frequent. A free now gives pages back once its merged free chunk
+  reaches 256 KB (`GIVE_MIN`).
+
+A whole-run sample after the fix: the code table's calls about 5,000 samples → 17, give-back and reuse 1,970 →
+208. Unprofiled, `all` on m1max: W 477 G, the head 1,927 G (on m3 before the fixes: 582 G and 2,151 G). The hosts
+were loaded; the difference is four times, which the load does not move.
+
+### Step 3: blocks given back, no device pool for a CPU run
+
+- A run bound to the CPU leased the residency's 64 MB slab of the device pool (190 MB on `all`) and copied every
+  tape into a room there. `rerail_blocks::alloc::run_device` asks the run's binding; `tape::placed::device` is
+  `None` for a CPU run, and the store's writer takes the parsed image where it lies (a5bae2b36a). s10: bound to
+  the CPU, 0 MB leased; with `--metal`, 1,122 tapes placed and 64 MB leased; the same rows.
+- `Extent::given` and `host_free_resident`: the free lists' resident bytes, which `freed_blocks_are_given_back`
+  bounds.
+- Still owed: the live blocks at the peak by owner.
+
+### Step 2: each heavy head against W's Rust
+
+W's reference graph is `calls::summarize`, run in the parse workers on each Python file's tape:
+1. `ScopeTable::build_in` walks the tree once and gives each identifier its binding (local, parameter, class
+   member, import, global). `resolve_python_index` then resolves each load: 3.46 M loads on `all` in 0.23 s, 70 ns
+   a load.
+2. `Extractor::walk` walks the tree once more with a stack of contexts (the owner definition, what `self` means,
+   the class) and records each definition, call and reference with its `via`.
+3. The serial part links the summaries by name (`Graph::link_references`): 8% of the graph's CPU.
+
+Each of the head's per-file heads does one of these jobs, by joins:
+
+| Head (units on `all`) | W's job | Why the rules make more rows |
+|---|---|---|
+| `wstart` 15.8 M, `walk` | where a load's lookup starts: the scope on the walk's stack | six steps a name: the name, `!def_outside`, `nearest`, an id's range, `kind`, `scope` (E3, E7) |
+| `bind_only` 20.3 M | a binding target, marked as the walk passes the statement that binds | a union of ten rules read only negated; demand probes each rule for every identifier (E4) |
+| `rf_in` 16.6 M | the owner definition on the walk's stack | the nearest `def` found, then range and kind tests as steps (E3) |
+| `cls_early` 4.8 M, `cls_late` 5.0 M | a class's members, collected once (`members`) | every name of the body against every binding before it (E2); six negations a name (E10) |
+| `param` 3.8 M | the parameter list's children, read at the definition | the list joined to its children and its kinds as steps (E3) |
+| `rf_qn` 4.2 M | the qualified name, the stack's names joined | the recursive rule binds the scope and lists every node under it to keep the few definitions (E1) |
+| `rf_named`, `rf_expr`, `rf_bind`, `rf_annot_head` 4.5–6.3 M | a reference's `via`, decided as the walk reads it | each `via` a relation of its own over every name read, each materialized (E7) |
+| `rf_builtin` | not a reference: a builtin's name is never interned | every read name's text joined, then tested against 150 names (E6) |
+| `rf_fcond`, `rf_crossing` | the context on the stack | the nearest condition or function found as a join, its kind tested after (E6) |
+| `rf_same_qn` | the interner: one id a qualified name | every pair of definitions in a document through two `docof`s and two `node_order`s (E9) |
+
+So the rules do W's two walks as relations that a name passes through one after another, each materialized, each
+found by joins where W reads the node or the stack. The rules are right to say it this way; the engine is what makes
+it cost 8.5 times. §8 lists what it needs.
+
+## 8. The expansions, and the shapes the engine lacks
+
+The cost cases (`crates/boot/.../convert/tests/cost_shape_tests.rs`, 31 of them) run the rules over generated
+modules and bound each head's join work a name read. 9 pass after steps 1–3. Each failing case names its expansion:
+
+| | Expansion | Cases (now) | The missing shape |
+|---|---|---|---|
+| E1 | a recursive `nearest` called with its far end bound lists every node under it | `rf_qn`: a step makes 4,528 rows for 96 names | `nearest` evaluated from the near end only: a bound scope binds nothing to walk down from |
+| E2 | `f < n` between nodes becomes two joins with `node_order` | 4 plans join `node_order`; `cls_early` | a comparison of nodes is a read of their tape order (their ids are in tape order), a test in the step that binds the second |
+| E3 | a step that only filters bound variables (an id's range, a constant kind, a comparison) costs a unit a row | 287 plans, 34.2 units a name; `c_node` 3 units a row; `wstart`, `walk`, `rf_in`, `param` | filters fused into the step that binds their last variable |
+| E4 | a union read only negated is probed rule by rule for each demanded key | `bind_only`: 9,975 units | the union made once, as a set, then tested |
+| E5 | per-file relations run in the cross-file part | passes after 0652 | — |
+| E6 | a test of a value is made after a join that reads every candidate | `rf_builtin` 3,441 units over 332; `rf_fcond`; `rf_crossing` | the test in the step that reads the value (a text against a constant set, a kind) |
+| E7 | each name passes a dozen per-node relations, each materialized | 137 units a name read against a bound of 40 | node-keyed columns: a per-node fact is a column read by node id, not a relation joined |
+| E9 | a group by key found as pairs | `rf_same_qn` | a group: one read a key |
+| E10 | a chain of negations tested a name each | `cls_late` | negations of the same key read in one step |
+
+And the allocation cases: the joins 21.6 KB a name read, closing an engine 3,113 bytes, the live statistics 4,096,
+the matcher wave 1,651, string annotations 403.
+
+The next work builds E2, E3, E1, E4 and E7, in that order: E2 and E3 are the lowering's and the join's own, and
+the others read through them.
