@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startHistorySync, type HistorySync } from "../../src/daemon/index.js";
+import { RerailDaemon, startHistorySync, type HistorySync } from "../../src/daemon/index.js";
 import { openRerailDatabase, type RerailDatabase } from "../../src/engine/index.js";
 import { cutPowerInCopy } from "../support/engine/power-cut.js";
 import { recordLogSyncs } from "../support/engine/log-syncs.js";
@@ -125,6 +125,26 @@ describe("the daemon's sync of the history", () => {
     ]);
     await vi.advanceTimersByTimeAsync(4 * PERIOD_MS);
     expect(sync).toHaveBeenCalledTimes(4);
+  });
+
+  it("runs while the daemon runs, and its close stops it", async () => {
+    const { path, commit } = store();
+    const synced: string[] = [];
+    const daemon = await RerailDaemon.start({
+      version: "test", databasePath: path, workspaceRoot: dirname(path), port: 0, remoteSink: false, checkoutPruning: false,
+      historySync: { periodMs: 20, sync: async databasePath => void synced.push(databasePath) },
+    });
+    let closed = false;
+    cleanups.push(async () => { if (!closed) await daemon.close(); });
+    commit();
+    for (let waited = 0; synced.length === 0 && waited < 10_000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20));
+    expect(synced).toEqual([path]);
+    await daemon.close();
+    closed = true;
+    const atClose = synced.length;
+    commit();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(synced).toHaveLength(atClose);
   });
 
   it("keeps a commit through a power cut more than one period after it", async () => {
