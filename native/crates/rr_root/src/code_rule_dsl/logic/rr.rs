@@ -739,7 +739,12 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
 /// every file's graph, each once, in link order (by rank, then by name).
 pub fn planned_library(paths: &[PathBuf]) -> Result<Vec<PlannedModule>, Error> {
     use super::plan::corpus::phase0;
-    let seeds: Vec<phase0::Seed> = paths.iter().map(|p| phase0::Seed::File(p.canonical().unwrap_or_else(|_| p.clone()))).collect();
+    // Each a module: a file outside the library and the phase programs as the text that includes it (`module_seed`).
+    let dirs = phase0::Dirs::here();
+    let seeds: Vec<phase0::Seed> = paths.iter().map(|p| p.canonical().unwrap_or_else(|_| p.clone())).map(|p| match &dirs {
+        Some(dirs) => dirs.module_seed(p),
+        None => phase0::Seed::File(p),
+    }).collect();
     let graphs = phase0::graphs(&seeds).map_err(|e| Error::Syntax(format!("phase 0's plan of the library: {e}")))?;
     let mut whole = phase0::Graph::default();
     for g in &graphs {

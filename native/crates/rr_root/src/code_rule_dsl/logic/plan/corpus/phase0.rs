@@ -608,6 +608,24 @@ impl Dirs {
     pub(in crate::code_rule_dsl) fn here() -> Option<Dirs> {
         Some(Dirs { lib: dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
     }
+
+    /// Library file `path` (canonical), which a program of the run includes, as the seed whose graph plans it as a
+    /// module: the file itself under the library or the phase programs (`p0_seed_reaches(f, f)`). Elsewhere a file
+    /// seed is a program's own text, no module (decision 0639 §2), so a file there that programs include (the packs'
+    /// tables beside the library, `#include "../packs/python/….stdlib.rerail"`) is a text that includes it by its
+    /// name from the library, as a program that includes it names it: it is planned as that program's module is.
+    /// A text names only the library's files (`p0_cand`, rank 1), and a file beside a program is written into the
+    /// program's text (`settings::program_texts`), so every library file of a run has such a name.
+    pub(in crate::code_rule_dsl) fn module_seed(&self, path: PathBuf) -> Seed {
+        if path.starts_with(&self.lib) || path.starts_with(&self.phases) {
+            return Seed::File(path);
+        }
+        let name = self.lib.parent().and_then(|up| path.strip_prefix(up).ok()).map(|rel| format!("../{}", rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")));
+        match name {
+            Some(name) => Seed::Text { t_shape: false, includes: vec![(0, name)], phases: Vec::new() },
+            None => Seed::File(path),
+        }
+    }
 }
 
 /// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rerail` is handed it.

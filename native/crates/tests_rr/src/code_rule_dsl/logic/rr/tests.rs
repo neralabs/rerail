@@ -6612,6 +6612,28 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     assert!(differ.is_empty(), "{} of {compared} modules differ against their scope's headers:\n{}", differ.len(), differ.join("\n"));
 }
 
+/// Decision 0639 §2: every library file a pack's program includes is in a module of the library's plan, the packs'
+/// tables beside the library (`#include "../packs/python/….stdlib.rerail"`) too. Planned as file seeds, which outside
+/// the library are a program's own text, they were in no module, and a run of RUF013 with any other program lowered
+/// it in a scope without its table ("relation stdlib_module is read by the rule for stdlib_known and not declared").
+#[test]
+fn every_library_file_a_pack_includes_is_a_planned_module() {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    for path in walk_rr(&lib.join("../packs/python")) {
+        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        if let Ok(Some(m)) = super::modules(&src) {
+            paths.extend(m.files.into_iter().map(|(p, _, _)| p));
+        }
+    }
+    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}");
+    let plan = super::planned_library(&paths.iter().cloned().collect::<Vec<_>>()).unwrap();
+    let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let planned: BTreeSet<PathBuf> = plan.iter().flat_map(|m| m.files.lines().filter(|f| !f.is_empty()).map(|f| canonical(Path::new(f))).collect::<Vec<_>>()).collect();
+    let missing: Vec<&PathBuf> = paths.iter().filter(|p| !planned.contains(&canonical(p))).collect();
+    assert!(missing.is_empty(), "library files in no planned module: {missing:?}");
+}
+
 /// T8 (decision 0639 §4): the link is a union with nothing to decide, so two modules that give one relation two
 /// declarations (`link_conflict`), or one helper's name two sets of rules (`helper_conflict`), fail it; modules that
 /// agree link. That no library has either is T1 and T2: every program links.

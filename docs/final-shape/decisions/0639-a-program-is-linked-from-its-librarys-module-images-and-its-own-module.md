@@ -172,6 +172,13 @@ file seed, and the library files a text seed includes by name) and holds their p
 (`rr::hold_planned_modules`, one read of the store). A module whose key changed, or that no store holds, is lowered
 in the waves as before. A wrong guess costs a read, never an answer.
 
+**The packs' tables are modules too (2026-11-23).** A file seed is a module only under the library or the phase
+programs: elsewhere it is a program's own text. The run's library (`rr::planned_library`) seeded every library file
+as a file, so the packs' tables beside the library (`#include "../packs/python/….stdlib.rerail"`) were in no module,
+and a program that includes one, lowered in its scope with any other program, met its relations undeclared.
+`Dirs::module_seed` seeds such a file as a text that includes it by its name from the library, as its program names
+it. Test: `every_library_file_a_pack_includes_is_a_planned_module`.
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.
