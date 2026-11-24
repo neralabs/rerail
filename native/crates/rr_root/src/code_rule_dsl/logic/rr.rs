@@ -722,17 +722,8 @@ fn closed_program(files: &SharedFiles, own: &Statements) -> Result<(), Error> {
 /// image store; each read from its image, or lowered where phase 0 could not lower it, to give its error.
 #[allow(clippy::type_complexity)]
 pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
-    use super::plan::corpus::phase0;
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("the library's modules, as phase 0 plans them ({} files)", paths.len()));
-    let seeds: Vec<phase0::Seed> = paths.iter().map(|p| phase0::Seed::File(p.canonical().unwrap_or_else(|_| p.clone()))).collect();
-    let graphs = phase0::graphs(&seeds).map_err(|e| Error::Syntax(format!("phase 0's plan of the library: {e}")))?;
-    // The modules of every file's graph, each once, in link order: by rank, then by name.
-    let mut whole = phase0::Graph::default();
-    for g in &graphs {
-        whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
-        whole.plan.extend(g.plan.iter().map(|(m, r)| (m.clone(), r.clone())));
-    }
-    let plan = plan_of(&whole)?;
+    let plan = planned_library(paths)?;
     let mut modules = Vec::with_capacity(plan.len());
     let mut files = Vec::with_capacity(plan.len());
     let mut keys = Vec::with_capacity(plan.len());
@@ -742,6 +733,20 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
         keys.push(planned_key(&m.key).ok_or_else(|| Error::Syntax(format!("{}: no module key", m.key)))?);
     }
     Ok((modules, files, keys))
+}
+
+/// Phase 0's plan of library files `paths`, as seeds (a library or phase file is a module of its own): the modules of
+/// every file's graph, each once, in link order (by rank, then by name).
+pub fn planned_library(paths: &[PathBuf]) -> Result<Vec<PlannedModule>, Error> {
+    use super::plan::corpus::phase0;
+    let seeds: Vec<phase0::Seed> = paths.iter().map(|p| phase0::Seed::File(p.canonical().unwrap_or_else(|_| p.clone()))).collect();
+    let graphs = phase0::graphs(&seeds).map_err(|e| Error::Syntax(format!("phase 0's plan of the library: {e}")))?;
+    let mut whole = phase0::Graph::default();
+    for g in &graphs {
+        whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
+        whole.plan.extend(g.plan.iter().map(|(m, r)| (m.clone(), r.clone())));
+    }
+    plan_of(&whole)
 }
 
 /// Where the run's rule images are kept (decision 0264): the engine build's store, shared by every project
@@ -845,6 +850,24 @@ fn image_lease() -> i64 {
 
 /// Phase 0's request of a module's lowering (`bootstrap.rerail`'s `p0_lower_req`, decision 0639 §3), and its answer.
 pub const LOWER_REQUEST: &str = "p0_lower_req";
+/// The file system's request of a rule file's interface digest (`interface_digest`), and its answer: `core.rerail`'s
+/// `file_interface(path, d)`, which phase 0's keys read (decision 0639 §4).
+pub const INTERFACE_REQUEST: &str = "rr_interface_req";
+pub const INTERFACE: &str = "file_interface";
+
+/// The digest of a rule file's interface (decision 0639 §4): its statements as written, in order, but its rules with
+/// a body and its includes. A module lowers to the same image against its scope's interfaces (T9), so its key names
+/// its scope's files by this: an edit of a rule's body in its scope lowers it again no more.
+pub fn interface_digest(path: &Path) -> Option<String> {
+    use sha2::Digest as _;
+    let (statements, _) = read(path).ok()?;
+    let mut h = sha2::Sha256::new();
+    for s in statements.iter().filter(|s| !s.has_body() && !is_include(s)) {
+        h.update((s.text().len() as u64).to_le_bytes());
+        h.update(s.text().as_bytes());
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
 pub const LOWERED: &str = "p0_module_lowered";
 
 /// The modules this process lowered or read for phase 0's plan, by the store they are kept in and their key, each with
@@ -873,7 +896,7 @@ pub fn planned_key(key: &str) -> Option<crate::content_store::HashKey> {
     if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let mut bytes = format!("rerail module image v3 (helpers named by content) {}\0", super::program_image::FORMAT).into_bytes();
+    let mut bytes = format!("rerail module image v4 (helpers named by content) {}\0", super::program_image::FORMAT).into_bytes();
     switched(&mut bytes);
     bytes.push(0);
     bytes.extend_from_slice(key.as_bytes());
@@ -1337,13 +1360,13 @@ pub fn lower_statements_version(statements: Statements) -> Result<std::sync::Arc
     link_library_versions(vec![lower::lower_module_in_written(statements, &[])?])
 }
 
-/// A library's modules linked (decision 0639 §4): their union over their images (`lower::link_versions`), then the
+/// A library's modules linked (decision 0639 §4): their union over their images (`lower::link_library`), then the
 /// lowering's tail (`lowering_tail_on`) as edits of it. No rule of a module is copied; a caller that keeps the
 /// program as an image folds it (`Version::fold`).
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: the modules' union (lower::link_versions)".into());
-        lower::link_versions(modules)?
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: the modules' union (lower::link_library)".into());
+        lower::link_library(modules)?.with(None)?
     };
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail, all of it".into());
     lowering_tail_on(linked.version, false, linked.lowered, None)
@@ -1582,7 +1605,7 @@ pub struct PlannedModule {
 impl PlannedModule {
     /// The module: its image, read where phase 0 kept it, or lowered here, where phase 0 could not lower it, to give
     /// its error in the place of the program that reads it.
-    fn module(&self) -> Result<lower::Module, Error> {
+    pub fn module(&self) -> Result<lower::Module, Error> {
         if let Some((m, _)) = planned_module(&self.key) {
             return Ok(m);
         }

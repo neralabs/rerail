@@ -6799,6 +6799,15 @@ fn run_observed_within(
                 let answer = match rel { git::REVISION => "git_view_revision_of", git::REPO_REVISION => "git_revision_of", _ => "git_object_of" };
                 return Ok(vec![(answer.to_owned(), out)]);
             }
+            if rel == crate::code_rule_dsl::logic::rr::INTERFACE_REQUEST {
+                let mut out = Vec::new();
+                for row in rows.iter() {
+                    if let Some(d) = world.interface(&text(row[0])?) {
+                        out.push(rerail_blocks::vector![row[0], atoms(&[d.as_str()])?[0]]);
+                    }
+                }
+                return Ok(vec![(crate::code_rule_dsl::logic::rr::INTERFACE.to_owned(), out)]);
+            }
             if rel == crate::code_rule_dsl::logic::rr::LOWER_REQUEST {
                 // Each module asked, in rank order: its scope's images, which rank below it, are made first
                 // (decision 0639 §3).

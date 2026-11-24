@@ -178,12 +178,19 @@ p0_scope(m, s) :- p0_closure(w, m, q), p0_module_of(w, q, s), s != m.
 // Its rank: the files of its closure. A module ranks above every module in its scope.
 .decl p0_module_rank(m: symbol, reached: number)
 p0_module_rank(m, k) :- p0_module_of(w, _, m), k = count : { p0_closure(w, m, _) }.
+// A scope's file by its interface (decision 0639 §4, `core.rerail`'s `file_interface`, the file system's answer): its
+// statements less its rules' bodies and its includes, all a module lowered against it reads of it (T9).
+// Each file of a module's closure as its key names it: its own files by their bytes, its scope's by their interface,
+// so an edit of a rule's body in its scope leaves its key, and its image, as they were.
+.decl p0_key_digest(m: symbol, q: symbol, d: symbol)
+p0_key_digest(m, q, d) :- p0_closure(w, m, q), p0_module_of(w, q, m), p0_digest(q, d).
+p0_key_digest(m, q, d) :- p0_closure(w, m, q), p0_module_of(w, q, s), s != m, file_interface(q, d).
 // Its key: the engine's build, its name, and its closure's digests and edges, each in order. A key reads digests, not
 // other keys, so no recursion runs through an aggregate.
 .decl p0_closure_digests(m: symbol, ds: symbol)
-p0_closure_digests(m, ds) :- p0_module_rank(m, _), ds = join d by d sep "," : { p0_closure(_, m, q), p0_digest(q, d) }.
+p0_closure_digests(m, ds) :- p0_module_rank(m, _), ds = join d by d sep "," : { p0_key_digest(m, _, d) }.
 .decl p0_edge_text(m: symbol, e: symbol)
-p0_edge_text(m, e) :- p0_closure(w, m, a), p0_edge(w, a, b), p0_digest(a, da), p0_digest(b, db), e = cat(da, ">", db).
+p0_edge_text(m, e) :- p0_closure(w, m, a), p0_edge(w, a, b), p0_key_digest(m, a, da), p0_key_digest(m, b, db), e = cat(da, ">", db).
 .decl p0_closure_edges(m: symbol, es: symbol)
 p0_closure_edges(m, es) :- p0_module_rank(m, _), es = join e by e sep "," : { p0_edge_text(m, e) }.
 .decl p0_module_key(m: symbol, key: symbol)

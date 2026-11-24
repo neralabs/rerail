@@ -11007,3 +11007,19 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - boot command frame 1, revision metadata 1;
   - tests-corpus reuse, warm and prepared 23.
 - `fresh_and_restored_programs_have_identical_relation_identities` failed under Relax at its child spawn (`nice <binary>`, not a self-spawn), not on its assertions. Fixed in the next commit, then passed.
+
+### Q529. Roll-up 102 (final-rerail-shape-rr-align d326d92310 onto Pulling-it-all-together): what the merge chose
+
+- rr-align's 0639 step 5: a module depends on its scope's interface:
+  - a scope's files are named by their interface digests (`file_interface`, `rr_interface_req`);
+  - the lowerer keeps the declarations its lowering makes (`uses`);
+  - image key salt v4;
+  - `link_versions` is gone.
+- text_demand.rs: both sides fixed the same thing, a span's text twinned with a long-text node (the hub in 06ca4f9ae1, rr-align in this commit). There is one mechanism per job, and the hub's is kept: every span (the source's, a line's, a token's: `m != 0`) demands no twin. The branch's narrows it to the source and lines (`m & 3`). The hub's message explains why tokens belong: a token's text is made at any length too.
+- Ported:
+  - the `INTERFACE_REQUEST` answer reads the hub's `Asked` rows (`rows.iter()`) and answers `Vector` rows;
+  - the T9 test reads `Statements` (the hub's block column), not `Vec<Stmt>`.
+- Checked with Relax, RERAIL_GPU=cpu: logic and tests-rr, 0 errors. Tests:
+  - tests-rr T9 and the library link 2;
+  - tests-corpus phase 0 (with `a_modules_key_names_its_scopes_interfaces`) and r5 11;
+  - logic's `logical_line_predicates_and_aliases_use_the_vocabulary_batch` 1.

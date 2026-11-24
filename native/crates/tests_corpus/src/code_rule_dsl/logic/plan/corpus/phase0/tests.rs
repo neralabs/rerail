@@ -369,6 +369,35 @@
         assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "lowered once");
     }
 
+    /// T9 (decision 0639 §4): a module's key names its scope's files by their interfaces (`p0_interface`), so an
+    /// edit of a rule's body in its scope keeps its key, and its image, while an edit of a declaration there does not.
+    #[test]
+    fn a_modules_key_names_its_scopes_interfaces() {
+        let dir = tempfile::tempdir().unwrap();
+        // The keys of the modules of base.rerail (1) and of top.rerail (2), each found by its file's digest in its name.
+        let keys = |base: &str| -> std::collections::BTreeMap<i64, String> {
+            std::fs::write(dir.path().join("base.rerail"), base).unwrap();
+            std::fs::write(dir.path().join("top.rerail"), "#include \"base.rerail\"\n.decl top(x: number)\ntop(x) :- base(x).\n").unwrap();
+            std::fs::write(dir.path().join("p.rerail"), "#include \"top.rerail\"\n.decl y(x: number)\ny(x) :- top(x).\n.output y\n").unwrap();
+            let p = super::Seed::File(dunce::canonicalize(dir.path().join("p.rerail")).unwrap());
+            let graph = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
+            assert_eq!(graph.lowered.len(), graph.plan.len(), "every planned module lowered: {}", graph.describe());
+            let of = |file: &str| -> String {
+                let d = graph.digests.iter().find(|(p, _)| p.ends_with(file)).map(|(_, d)| d.iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_else(|| panic!("{file}: {}", graph.describe()));
+                graph.plan.iter().find(|(name, _)| name.ends_with(&d)).map(|(_, m)| m.key.clone()).unwrap_or_else(|| panic!("{file}'s module: {}", graph.describe()))
+            };
+            [(1, of("base.rerail")), (2, of("top.rerail"))].into()
+        };
+        let before = keys(".decl c(x: number)\nc(1).\n.decl base(x: number)\nbase(x) :- c(x).\n");
+        let body = keys(".decl c(x: number)\nc(1).\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
+        assert_ne!(before[&1], body[&1], "base's own file changed: its key");
+        assert_eq!(before[&2], body[&2], "a rule's body in its scope: top's key as it was");
+        let decl = keys(".decl c(x: number)\nc(1).\n.decl d(x: number)\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
+        assert_ne!(body[&2], decl[&2], "a declaration in its scope: top's key");
+        let fact = keys(".decl c(x: number)\nc(1).\nc(2).\n.decl d(x: number)\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
+        assert_ne!(decl[&2], fact[&2], "a fact in its scope: top's key");
+    }
+
     /// T5 (decision 0639 §3): a graph whose module's image the store does not hold does not hold (`Graph::holds`), so
     /// `graphs` derives it again in that store, which asks for the lowering; a reused run of phase 0 checks its answer
     /// by the same look (`rr::planned_module_held`, the record's `p0_lower_req` entry).

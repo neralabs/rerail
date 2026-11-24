@@ -359,6 +359,22 @@ does against a header-only scope. Their names are their content already, so the 
 key can then name its scope's interface digests, not its scope's files: an edit of a rule body that leaves a module's
 interface unchanged lowers that module again, and no module that includes it.
 
+**As built (step 5).** The lowerer keeps the declarations its clauses' lowering makes (`uses`: `tape`, `rx_span`, a
+one-kind set, a demand's request, the file system's request), and `unseed` keeps each as the module's own though its
+scope made it too. The inputs a module's lowering adds follow its stated ones by name, so their order does not depend
+on which module made one first. In a key's rows an unnamed made helper is `@helper <stem>`, and a helper that reads a
+module-named one is module-named. T9 is `every_module_lowers_alike_against_its_scopes_headers`: every module of every
+pack's library and of the phase programs lowers to its image against its scope's headers alone.
+
+A file's interface digest is `rr::interface_digest`: SHA-256 over its statements but its rules with a body and its
+includes, each length-prefixed. It is the file system's answer `file_interface(path, d)` (`core.rerail`,
+`rr_interface_req`), beside `file_digest`: a request keyed by its path, which the lowering derives from the literals
+that bind the path. Written as an engine answer with its request in `bootstrap.rerail`, it was answered but its rows
+did not reach the key's rules. `p0_key_digest` names a module's own files by their bytes and its scope's by their
+interface, and `p0_closure_digests` and `p0_edge_text` read it. The run's record keeps each answer, so a reused phase 0
+run checks it again (`World::observation`). The image key's salt is v4. Test `a_modules_key_names_its_scopes_interfaces`:
+an edit of a rule's body in a module's scope keeps the module's key; an edit of a declaration or a fact there changes it.
+
 ### 5. The template holds every module
 
 `test_store::fill` already gives phase 0 every library file and phase program as seeds, in one run. With §3, that run
@@ -544,9 +560,12 @@ silently. Each place a digest stands for content, what can collide, and what is 
    `a_helpers_content_name_holds_every_field_that_names_it`, Collisions 3 `a_templates_bytes_read_back_as_its_rule`;
    `once_key` is gone rather than moved to SHA-256, as the content name is the merge.
 4. §4's link: the union rules, the engine's view over module images, the conflicts. Single programs and
-   `lower_library` onto it, and `link_versions` and the Rust plan removed. T1, T2, T8.
+   `lower_library` onto it, and `link_versions` and the Rust plan removed. T1, T2, T8. **Done**: stage A (the plan's
+   modules, the union's checks) and stage B (`Version::Union`, `lower::link_library`); `link_versions`,
+   `AppendModule` and `library_plan` are gone.
 5. §4's interface: a module declares the lowering-made declarations it uses; its key names its scope's interface
-   digests. T9.
+   digests. T9. **Done**: T9 `every_module_lowers_alike_against_its_scopes_headers`, and
+   `a_modules_key_names_its_scopes_interfaces`; the digest is the file system's `file_interface`.
 6. §6: the local and upward tail steps at module time; kind sets, then sources on request, as rules per program.
    T10.
 7. §5 checked by T4 on the template, and the template's fill time measured.
