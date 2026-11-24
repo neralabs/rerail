@@ -107,7 +107,7 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
       const started = await freshGit();
       expect(started.runGit(root, ["environment", script, join(root, `rerail-${index}.json`)]).status).toBe(0);
       // The same Git call through the launcher: Rerail's own settings and environment for every Git it starts.
-      execFileSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "environment", script, join(root, `launcher-${index}.json`)], {
+      execFileSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-c", "log.showSignature=false", "-C", root, "environment", script, join(root, `launcher-${index}.json`)], {
         env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" },
       });
       const [rerail, through] = await Promise.all([environment(join(root, `rerail-${index}.json`)), environment(join(root, `launcher-${index}.json`))]);
@@ -135,7 +135,7 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
       for (const [name, value] of Object.entries({ HOME: undefined, HOMEDRIVE: share.slice(0, 2), HOMEPATH: share.slice(2), PATH: personPath(launcher) })) vi.stubEnv(name, value);
       const started = await freshGit();
       expect(started.runGit(root, ["environment", script, join(root, `rerail-${index}.json`)]).status).toBe(0);
-      execFileSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "environment", script, join(root, `launcher-${index}.json`)], {
+      execFileSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-c", "log.showSignature=false", "-C", root, "environment", script, join(root, `launcher-${index}.json`)], {
         env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" },
       });
       const [rerail, through] = await Promise.all([read(join(root, `rerail-${index}.json`)), read(join(root, `launcher-${index}.json`))]);
@@ -185,7 +185,7 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
     expect(daemon.gitExecutable().startsWith(root)).toBe(false);
     // The first start has the share looked at off the thread; a call that does not block lets that look answer.
     expect((await daemon.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
-    const through = spawnSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "only"], {
+    const through = spawnSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-c", "log.showSignature=false", "-C", root, "only"], {
       encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" },
     });
     const rerail = daemon.runGit(root, ["only"]);
