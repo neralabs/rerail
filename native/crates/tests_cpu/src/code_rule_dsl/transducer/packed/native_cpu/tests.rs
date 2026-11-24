@@ -4064,7 +4064,7 @@
     }
 
     /// Every node of each file as a root of every program.
-    fn every_root(programs: &[Program], files: &[TapeDoc]) -> Vec<Vec<Vec<u32>>> {
+    fn every_root(programs: &[Program], files: &[TapeDoc]) -> Vec<Vec<Vector<u32>>> {
         files.iter().map(|file| vec![(0..file.transducer_len() as u32).collect(); programs.len()]).collect()
     }
 
