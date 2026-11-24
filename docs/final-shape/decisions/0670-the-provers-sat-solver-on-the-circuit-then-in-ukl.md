@@ -281,6 +281,14 @@ formula").
   The hardest dump: 41.7 s to 29.5 s (watch visits 16,210, analysis 14,600 million cycles). Per formula the device
   is still about 60 times the CPU: each step of a search is a few dependent reads of device memory, and a hard
   search is millions of them in a row.
+- **The device's search on the CPU** (`bitlex_csat_lanes`): the kernel's search in Rust, step for step: a round's
+  literals, their watch lists, their gates 32 at a time, a step's literals placed in lane order; the same heap,
+  analysis (its room checked a chunk of 32 literals at a time, as the lanes take them), jumps back and reductions. On
+  800 random formulas and the 4 hard dumps, its answer, model and every count (conflicts, decisions, rounds, learned
+  clauses and literals, watch visits, gate items, reductions) are the device's, on CUDA and on Metal: a caller may
+  take either's, and its answers do not depend on the machine. Its cost on the CPU is the search's: the hardest dump
+  in 2.7 s (the CPU's own solver: 0.5 s), as it takes 22,006 conflicts to the solver's 9,160 and checks a round's
+  gates whole.
 - **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
   the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
   the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on

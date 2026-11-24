@@ -292,7 +292,7 @@ impl Fanout {
         &self.seeds
     }
 
-    fn of_var(&self, v: usize) -> &[u32] {
+    pub(crate) fn of_var(&self, v: usize) -> &[u32] {
         if v + 1 >= self.starts.len() {
             return &[];
         }

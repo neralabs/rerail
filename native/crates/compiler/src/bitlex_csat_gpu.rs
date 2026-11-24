@@ -5,16 +5,17 @@
 //! its own is each formula's state (values, trail, watches, learned clauses), its working memory.
 //!
 //! The answers are the CPU's (`bitlex_csat::Solver`): satisfiable, unsatisfiable, or unknown past the conflicts'
-//! budget or the learned clauses' room, sound either way. The search is its own (decisions in VMTF order, a round's
-//! implications in lane order), so a formula's conflicts are not the CPU's.
+//! budget or the learned clauses' room, sound either way. The search is its own (a round's implications in lane
+//! order, the integer activities' heap), and `bitlex_csat_lanes` is the same search on the CPU: the same answer,
+//! model and counts on every backend and without a device.
 //!
 //! Memory, a batch: a descriptor of `DESC` words a formula, in the block; the states, `state_words` each. Launches:
 //! a threadgroup of `LANES` (a SIMD group) a formula; each launch runs a formula `STEPS` steps at most, the GPU's time
 //! a launch bounded; at most `LAUNCHES` launches, past which a formula still running is unknown.
 
-use crate::bitlex_csat::{Fanout, Gates};
+pub use crate::bitlex_csat_lanes::{Answer, Formula, Solved};
+use crate::bitlex_csat_lanes::{arena, learned};
 use crate::bitlex_grown::{FormulaBlock, Grown};
-use crate::bitlex_sat::Clauses;
 use rerail_gpu::device::ComputeQueue;
 use rerail_gpu::kernels::{alloc, launch, program, read};
 
@@ -33,14 +34,6 @@ const LANES: u64 = 32;
 const STEPS: u32 = 1 << 12;
 /// The launches a batch takes at most.
 const LAUNCHES: usize = 1 << 12;
-/// A formula's room for learned clauses, by its size: their literals (16 words a variable, from 4,096 to 2^18), and
-/// a clause for each 16 of those. The kernel reduces them as they fill it (`cs_reduce`).
-fn arena(vars: usize) -> u32 {
-    (16 * vars).clamp(1 << 12, 1 << 18) as u32
-}
-fn learned(vars: usize) -> u32 {
-    arena(vars) / 16
-}
 /// The state's header (the kernel's `HEADER`) and the statuses it reports.
 const HEADER: usize = 32;
 const SAT: u32 = 1;
@@ -60,46 +53,6 @@ struct Args {
 }
 // SAFETY: four u32s, no padding.
 unsafe impl rerail_gpu::Pod for Args {}
-
-/// A formula: its gates (the first `base` listed by `fan`, the rest a solve's own, listed by `own`), its plain
-/// clauses, its variables (numbered from 1), and its budget of conflicts: with none, it stops at its first decision
-/// (propagation at level 0 alone). All in one block.
-pub struct Formula<'a> {
-    pub vars: usize,
-    pub gates: &'a Gates,
-    pub base: usize,
-    pub fan: &'a Fanout,
-    pub own: Option<&'a Fanout>,
-    pub clauses: &'a Clauses,
-    pub conflicts: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Answer {
-    /// A model: each variable's value (`[0]` unused).
-    Sat(Vec<bool>),
-    Unsat,
-    Unknown,
-}
-
-#[derive(Clone, Debug)]
-pub struct Solved {
-    pub answer: Answer,
-    /// Unknown because the learned clauses' room is full (else the budget, or the launches, ran out).
-    pub roomless: bool,
-    pub conflicts: u32,
-    pub decisions: u32,
-    pub rounds: u32,
-    /// The clauses it learned and their literals.
-    pub learned: u32,
-    pub learned_literals: u32,
-    pub visits: u32,
-    pub items: u32,
-    pub reductions: u32,
-    /// The device's cycles by part, over 256 (0 where its backend has no clock): watch visits, gate items, analysis,
-    /// jumps back, decisions, reductions.
-    pub cycles: [u32; 6],
-}
 
 /// A formula's state, in words (the kernel's layout).
 fn state_words(vars: usize, clauses: usize) -> usize {
@@ -227,67 +180,9 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitlex_csat::Solver;
-    use crate::bitlex_sat::{Answer as CpuAnswer, Lit};
-
-    struct Rng(u64);
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0
-        }
-        fn below(&mut self, n: u64) -> u64 {
-            self.next() % n
-        }
-        fn lit(&mut self, vars: usize) -> Lit {
-            let v = self.below(vars as u64) as Lit + 1;
-            if self.next() & 1 == 0 { v } else { -v }
-        }
-    }
-
-    /// Whether a model holds: every gate (as `Gates::cnf` writes its clauses) and every plain clause.
-    fn holds(model: &[bool], gates: &Gates, clauses: &Clauses) -> bool {
-        let mut all = Clauses::default();
-        gates.cnf(&mut all);
-        let t = |l: Lit| model[l.unsigned_abs() as usize] == (l > 0);
-        all.iter().chain(clauses.iter()).all(|c| c.iter().any(|&l| t(l)))
-    }
-
-    /// A random circuit over `vars` inputs, built in `block`: `And`s, `Xor`s and `One`s over earlier variables (a
-    /// third of them wide), plain clauses of two to four literals over all; the last `own` gates are a solve's own.
-    fn circuit(rng: &mut Rng, block: &FormulaBlock, inputs: usize, gates_n: usize, clauses_n: usize, own: usize) -> (Gates, Clauses, usize, usize) {
-        let (mut g, mut c) = (Gates::in_block(block), Clauses::in_block(block));
-        let mut vars = inputs;
-        for _ in 0..gates_n {
-            match rng.below(5) {
-                0 | 1 => {
-                    let n = if rng.below(3) == 0 { 3 + rng.below(4) as usize } else { 1 + rng.below(2) as usize };
-                    let args: Vec<Lit> = (0..n).map(|_| rng.lit(vars)).collect();
-                    vars += 1;
-                    g.and(vars as Lit, &args);
-                }
-                2 | 3 => {
-                    let (a, b) = (rng.lit(vars), rng.lit(vars));
-                    vars += 1;
-                    g.xor(vars as Lit, a, b);
-                }
-                _ => {
-                    let n = 1 + rng.below(4) as usize;
-                    let args: Vec<Lit> = (0..n).map(|_| rng.lit(vars)).collect();
-                    g.one(&args);
-                }
-            }
-        }
-        for _ in 0..clauses_n {
-            let n = 2 + rng.below(3) as usize;
-            let lits: Vec<Lit> = (0..n).map(|_| rng.lit(vars)).collect();
-            c.push(&lits);
-        }
-        let base = g.len().saturating_sub(own);
-        (g, c, vars, base)
-    }
+    use crate::bitlex_csat::{Fanout, Gates, Solver};
+    use crate::bitlex_csat_lanes::tests::{circuit, holds, same_search, Rng};
+    use crate::bitlex_sat::{Answer as CpuAnswer, Clauses};
 
     /// Random circuits, some with a solve's own gates: the device's answers are the CPU solver's, and each model it
     /// gives holds.
@@ -314,6 +209,9 @@ mod tests {
             .map(|((g, c, vars, base), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 100_000 })
             .collect();
         let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        for (i, (f, x)) in formulas.iter().zip(&got).enumerate() {
+            same_search(i, x, &crate::bitlex_csat_lanes::solve(f));
+        }
         let (mut sat, mut unsat, mut searched) = (0, 0, 0);
         let mut s = Solver::default();
         for (i, (((g, c, vars, base), (fan, _)), x)) in made.iter().zip(&fans).zip(&got).enumerate() {
@@ -361,6 +259,9 @@ mod tests {
             .map(|((g, c, vars, base), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 0 })
             .collect();
         let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        for (i, (f, x)) in formulas.iter().zip(&got).enumerate() {
+            same_search(i, x, &crate::bitlex_csat_lanes::solve(f));
+        }
         let (mut at_0, mut searched) = (0, 0);
         let mut s = Solver::default();
         for (i, (((g, c, vars, base), (fan, _)), x)) in made.iter().zip(&fans).zip(&got).enumerate() {
@@ -402,7 +303,11 @@ mod tests {
         let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
         eprintln!("the device: {} formulas, {:.1} ms", formulas.len(), t.elapsed().as_secs_f64() * 1e3);
         let mut s = Solver::default();
-        for ((p, (g, vars, base, c)), (x, (fan, _))) in paths.iter().zip(&made).zip(got.iter().zip(&fans)) {
+        for ((p, (g, vars, base, c)), ((x, (fan, _)), f)) in paths.iter().zip(&made).zip(got.iter().zip(&fans).zip(&formulas)) {
+            let t = std::time::Instant::now();
+            let twin = crate::bitlex_csat_lanes::solve(f);
+            eprintln!("the device's search on the CPU: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+            same_search(0, x, &twin);
             let t = std::time::Instant::now();
             s.reset(*vars);
             for cl in c.iter() {
