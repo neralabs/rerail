@@ -255,6 +255,39 @@ impl KeptSpace {
         Self::mapped(store, space, rows).map_err(|(path, e)| StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())))
     }
 
+    /// `space` as connection `t` finds it: its chain's rows, read, then the files they name, mapped; `None` when it
+    /// keeps none. A writer's commit sweeps the files it replaced (`sweep`), and one the rows named can go between
+    /// the read and the mapping (another shared object's writer in this process, or another process): the rows are
+    /// read again, and name the files that commit wrote. Outside a transaction each read is the store's last commit;
+    /// inside a write transaction no commit comes between. A file gone from rows read twice the same is corruption.
+    pub fn read(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
+        Ok(Self::read_rows(store, t, space)?.map(|(_, kept)| kept))
+    }
+
+    /// `read`, with the rows the space was mapped by (a reader that keeps a mapping while its chain stays).
+    pub fn read_rows(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        Self::settle(store, t, space, chain_rows(t, space)?)
+    }
+
+    /// `read_rows` from `rows`, read on `t` earlier: the rows read again where a file they name is gone.
+    pub(crate) fn settle(store: &Path, t: &Connection, space: &[u8; 32], mut rows: ChainRows) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        loop {
+            if rows.is_empty() {
+                return Ok(None);
+            }
+            match Self::mapped(store, space, &rows) {
+                Ok(kept) => return Ok(Some((rows, kept))),
+                Err((path, e)) => {
+                    let again = (e.kind() == std::io::ErrorKind::NotFound).then(|| chain_rows(t, space)).transpose()?;
+                    match again {
+                        Some(now) if now != rows => rows = now,
+                        _ => return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display()))),
+                    }
+                }
+            }
+        }
+    }
+
     /// `open`'s files, or the first that does not open, with why.
     fn mapped(store: &Path, space: &[u8; 32], rows: &ChainRows) -> Result<KeptSpace, (PathBuf, std::io::Error)> {
         let dir = space_dir(store, space);
@@ -1049,20 +1082,17 @@ impl super::ContentStore {
             }
             Err(_) => {}
         }
-        let now = {
+        let read = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            chain_rows(&connection, space)?
+            KeptSpace::read_rows(&self.database_path, &connection, space)?
         };
+        let now = read.as_ref().map(|(rows, _)| rows.clone()).unwrap_or_default();
         super::held::snapshot_kept(&self.database_path, |kept| {
             if let Some(kept) = kept {
                 kept.insert(*space, now.clone());
             }
         });
-        if now.is_empty() {
-            return Ok(None);
-        }
-        let kept = KeptSpace::open(&self.database_path, space, &now)?;
-        Ok(Some((now, kept)))
+        Ok(read)
     }
 
     /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
@@ -1144,7 +1174,7 @@ pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<KeptOf>> {
     let mut by: std::collections::HashMap<(String, &'static str), (usize, usize, usize)> = Default::default();
     for s in &spaces {
         let space: [u8; 32] = s.as_slice().try_into().map_err(|_| StoreError::Invalid("a space of another length".into()))?;
-        let kept = KeptSpace::open(path, &space, &chain_rows(&c, &space)?)?;
+        let Some(kept) = KeptSpace::read(path, &c, &space)? else { continue };
         for k in kept.view().all() {
             let bytes = (0..k.rows.arity as usize).map(|col| k.rows.col(col).bytes()).sum::<usize>() + k.rows.levels().map_or(0, |l| l.bytes());
             let what = match k.key.part { 0 => "rows", p if p > 0 => "granule", _ => "beside" };

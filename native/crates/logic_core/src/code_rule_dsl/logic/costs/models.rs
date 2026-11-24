@@ -92,11 +92,7 @@ fn of_words(machine: &str, words: &[i64]) -> Option<Saved> {
 
 /// `machine`'s saved model in the statistics' store at `path`, read on `db`, its connection.
 pub fn read(db: &Connection, path: &Path, machine: &str) -> Option<Saved> {
-    let rows = chain_rows(db, &space()).ok()?;
-    if rows.is_empty() {
-        return None;
-    }
-    let kept = KeptSpace::open(path, &space(), &rows).ok()?;
+    let kept = KeptSpace::read(path, db, &space()).ok()??;
     let chain = kept.view();
     let entry = chain.get(&FactKey { rel: MODEL, ident: &ident(), part: part(machine) })?;
     let flat: Vec<i64> = (0..entry.rows.len()).map(|i| entry.rows.get(i, 0)).collect();

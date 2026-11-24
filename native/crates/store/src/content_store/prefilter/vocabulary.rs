@@ -13,7 +13,7 @@
 //!   that some tape holds, found by value (never tested) and kept as any key's.
 //!
 //! Terms are the store's atoms, typed `s`.
-use super::super::kept_facts::{KeptPut, KeptSpace, chain_rows, sorted_put};
+use super::super::kept_facts::{KeptPut, KeptSpace, sorted_put};
 use super::super::{ContentStore, StoreError, StoreResult};
 use super::kept;
 use rerail_blocks::kept::{FactKey, Kept, KeptRead};
@@ -142,10 +142,7 @@ impl ContentStore {
         }
         let path = self.database_path.clone();
         let (out, written) = super::super::atoms::mapped(|| self.immediate_transaction(|t| {
-            let open = |space: &[u8; 32]| -> StoreResult<Option<KeptSpace>> {
-                let rows = chain_rows(t, space)?;
-                if rows.is_empty() { Ok(None) } else { KeptSpace::open(&path, space, &rows).map(Some) }
-            };
+            let open = |space: &[u8; 32]| -> StoreResult<Option<KeptSpace>> { KeptSpace::read(&path, t, space) };
             let (counts, kept) = (open(&kept::space())?, open(&space())?);
             let (mut out, from, found) = self.place(kind, lang, keys, literals, counts.as_ref(), kept.as_ref())?;
             let counts_view = counts.as_ref().map(KeptSpace::view);

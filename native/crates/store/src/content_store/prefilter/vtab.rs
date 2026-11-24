@@ -243,7 +243,9 @@ fn open_cached(opened: &Opened, connection: &Connection, store: &Path, space: &[
         let _ = at;
         return Ok(Some(Arc::clone(kept)));
     }
-    let kept = Arc::new(KeptSpace::open(store, space, &rows).map_err(error)?);
+    // Mapped by the rows it settles on (`KeptSpace::read_rows`: a file a later commit swept is read from that commit's).
+    let Some((rows, kept)) = KeptSpace::read_rows(store, connection, space).map_err(error)? else { return Ok(None) };
+    let kept = Arc::new(kept);
     *opened = Some((rows, Arc::clone(&kept)));
     Ok(Some(kept))
 }
