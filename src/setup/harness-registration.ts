@@ -2006,7 +2006,11 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
   return HARNESSES.filter((harness) => existsSync(join(base, CONFIG_DIRS[harness])));
 }
 
-/** How long registration waits for `cmd.exe /d /c exit 0` to end before it reads that cmd.exe as one that runs no command. */
+/**
+ * How long registration waits for `cmd.exe /d /c exit 0` to end before it ends that cmd.exe, which then reads as one
+ * that runs no command. It bounds a start that never ends: Windows runs the program an Image File Execution Options
+ * `Debugger` value names for cmd.exe in its place, with cmd's command line, and that program may never exit.
+ */
 const CMD_RUN_LIMIT_MS = 10_000;
 
 /**
@@ -2019,9 +2023,18 @@ const CMD_RUN_LIMIT_MS = 10_000;
 function cmdRunsCommands(path: string): Promise<boolean> {
   return new Promise(resolve => {
     try {
-      const cmd = spawn(path, ["/d", "/c", "exit", "0"], { stdio: "ignore", timeout: CMD_RUN_LIMIT_MS });
-      cmd.once("error", () => resolve(false));
-      cmd.once("exit", code => resolve(code === 0));
+      const cmd = spawn(path, ["/d", "/c", "exit", "0"], { stdio: "ignore" });
+      // Not spawn's `timeout`, whose timer only 'exit' clears: a start that fails sends 'error' alone, and that timer
+      // would hold the process open for its whole length. This one is cleared on both: it runs only while cmd.exe does.
+      const limit = setTimeout(() => cmd.kill(), CMD_RUN_LIMIT_MS);
+      cmd.once("error", () => {
+        clearTimeout(limit);
+        resolve(false);
+      });
+      cmd.once("exit", code => {
+        clearTimeout(limit);
+        resolve(code === 0);
+      });
     } catch {
       // The helper refuses a path that is not full, and spawn throws on arguments it cannot pass: no cmd.exe to start.
       resolve(false);

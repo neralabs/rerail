@@ -518,6 +518,44 @@ describe("Claude Code settings.json", () => {
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
   });
 
+  /**
+   * What holds the event loop of a node that ran `registerHarnesses(options)` once the call settled, with this
+   * process's `SystemRoot` (`process.getActiveResourcesInfo()`): `rerail setup` ends when nothing does.
+   */
+  async function heldAfterRegistration(options: RegistrationOptions): Promise<string[]> {
+    const script = join(dirname(options.root), "register.mts");
+    const registration = new URL("../../src/setup/harness-registration.ts", import.meta.url).href;
+    await writeFile(script, [
+      `import { registerHarnesses } from ${JSON.stringify(registration)};`,
+      `await registerHarnesses(${JSON.stringify(options)});`,
+      "console.log(JSON.stringify(process.getActiveResourcesInfo()));",
+    ].join("\n"));
+    const run = spawnSync(process.execPath, ["--import", "tsx", script], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    return JSON.parse(run.stdout) as string[];
+  }
+
+  it("leaves no timer of its cmd.exe start running where cmd.exe cannot start", async () => {
+    const { home, root } = await fixture();
+    // A full path that names no folder on any computer that runs this test: spawn sends 'error' and no 'exit'.
+    vi.stubEnv("SystemRoot", String.raw`Z:\rerail-test-no-windows`);
+
+    const held = await heldAfterRegistration({ root, home, nodePath: await windowsNode(home, "newer-node"), platform: "win32", harnesses: ["claude-code"] });
+    expect(held).not.toContain("Timeout");
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("leaves no timer of its cmd.exe start running once cmd.exe ends", async () => {
+    const { home, root } = await fixture();
+    // A node at cmd.exe's System32 path, which takes `/d` for a script it cannot find and exits 1.
+    const systemRoot = join(dirname(home), "Windows");
+    await mkdir(join(systemRoot, "System32"), { recursive: true });
+    await copyFile(process.execPath, join(systemRoot, "System32", "cmd.exe"));
+    vi.stubEnv("SystemRoot", systemRoot);
+
+    const held = await heldAfterRegistration({ root, home, nodePath: await windowsNode(home, "newer-node"), platform: "win32", harnesses: ["claude-code"] });
+    expect(held).not.toContain("Timeout");
+  }, 60_000);
+
   it.runIf(process.platform === "win32")("writes main's node hook entry where cmd.exe is there but runs no command, as under the DisableCMD policy", async () => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
