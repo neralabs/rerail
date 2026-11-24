@@ -61,10 +61,15 @@ struct Args {
 // SAFETY: eight u32s, no padding.
 unsafe impl rerail_gpu::Pod for Args {}
 
-/// A formula's state, in words (the kernel's layout).
-fn state_words(vars: usize, clauses: usize) -> usize {
+/// A formula's state, in words (the kernel's layout, `cs_setup`), its widest gate `wide - 2` wide.
+fn state_words(vars: usize, clauses: usize, wide: usize) -> usize {
     let (n, l, a) = (vars + 1, learned(vars) as usize, arena(vars) as usize);
-    HEADER + 9 * n + 2 * n + 4 * (clauses + l) + (l + 1) + a + 2 * (n + 1) + n + l + LANES as usize
+    HEADER + 11 * n + 2 * wide + LANES as usize + l + (l + 1) + 4 * (clauses + l) + a
+}
+
+/// A formula's widest gate's width and 2 (at least 4): the room of a conflict's clause or an explanation.
+fn wide(gates: &crate::bitlex_csat::Gates) -> usize {
+    (0..gates.len()).map(|g| gates.args(g).len()).max().unwrap_or(0).max(2) + 2
 }
 
 /// A byte offset in the block as the kernel reads it: in words.
@@ -107,6 +112,7 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             }
             None => (u32::MAX, u32::MAX),
         };
+        let wide = wide(f.gates);
         let model = u32::try_from(model_words).map_err(|_| "the prover's GPU: a batch's models past 16 GiB".to_string())?;
         let d: [u32; DESC] = [
             f.vars as u32,
@@ -126,14 +132,14 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             arena(f.vars),
             f.conflicts,
             f.fan.vars() as u32,
-            0,
+            wide as u32,
             0,
             0,
         ];
         table.extend_from_slice(&d);
         at.push(model_words);
         model_words += (f.vars + 1).div_ceil(32);
-        slot_words = slot_words.max(state_words(f.vars, f.clauses.len()));
+        slot_words = slot_words.max(state_words(f.vars, f.clauses.len(), wide));
     }
     let n = formulas.len();
     let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(n);

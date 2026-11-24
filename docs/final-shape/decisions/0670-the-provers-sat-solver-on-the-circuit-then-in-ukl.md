@@ -304,6 +304,25 @@ formula").
   - By the slots' memory: 128 MB (40 slots) 60.3 s, 256 MB 35.3 s, 512 MB 18.1 s, **1 GB (320 slots) 11.1 s**, 2 GB
     36.6 s. `STATE_BYTES` is 1 GB: 138 hard searches a second, about twice what the machine's 20 CPU cores give with
     the CPU's own solver (3.2 a second a core).
+- **Past 1 GB of slots, measured** (the same 1,536 searches; the Spark's GPU shared with other work at times, so a
+  single run may be off):
+  - A slot's state smaller: the analysis' mark a bit of the value word, a reason and its argument side by side,
+    a conflict's and an explanation's room the widest gate's (not a variable's each), the learned clauses' room
+    last. 11 words a variable instead of 14: 1 GB, 11.1 s to 10.8 s; 2 GB, 36.6 s to 33.9 s.
+  - Values a byte each (a quarter of the bytes every gate check reads): no change at 1 GB, none better at 2 GB.
+    Not kept.
+  - Each search one SM's: 80 registers a lane and no stack (`RERAIL_CUDA_KERNEL_INFO`), so up to 24 searches an SM
+    are resident; residency is not the limit.
+  - The slots' alignment moves the time: 1,000 words of padding a slot, 10.8 s to 17.5 s; slots rounded to 2 MB
+    pages, 2 GB from 33.9 s to 22.8 s (1 GB unchanged). Where the device's caches or page tables lose the slots past
+    about 400 searches is not known (the Spark gives no GPU counters); 1 GB of slots stays the setting.
+- **The repeated propagation**: 93% of a hard search's assignments set a variable to the value a jump back had
+  just unset it from. Chronological backtracking (Nadel and Ryvchin 2018; a literal's level its reason's highest,
+  a conflict analysed at its own level, a jump of more than `T` levels made one level), tried on the CPU's copy of
+  the search, does not lower it (93% at every `T`) and searches worse: `T` = 0, 2.5 to 3.6 times the gate checks on
+  three of the four dumps; `T` = 3, 1.2 to 1.8 times; `T` = 10, the hardest unproved in 100,000 conflicts. The
+  values recur because most of a circuit's variables take the same value whenever they are derived, not because
+  levels are jumped over. Not kept.
 - **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
   the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
   the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on

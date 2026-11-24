@@ -40,6 +40,8 @@
 #define NONE 0xFFFFFFFFu
 #define GATE 0x80000000u
 #define FIXED 3u
+#define SEEN 0x80000000u
+#define LEVELS 0x1FFFFFFFu
 
 // A formula's descriptor: word offsets in the block, counts.
 #define D_VARS 0u
@@ -59,6 +61,7 @@
 #define D_ARENA 14u
 #define D_BUDGET 15u  // conflicts
 #define D_FVARS 16u   // the variables `D_FSTARTS` covers (the window's)
+#define D_WIDE 17u    // the widest gate's width and 2: a conflict's or an explanation's room
 #define DESC 20u
 
 // A state's header.
@@ -142,7 +145,9 @@ typedef struct Csat {
     uint32_t lane;
     uint32_t vars, fvars, base, gates, rec, args, fs, fg, os, og, lits, ends, clauses, lcap, acap, budget;
     // The state's arrays (word offsets in `s`).
-    uint32_t val, reason, why, trail, limits, seen, act, heap, hat, whead, wnext, wlit, lstart, arena, cbuf, ebuf, lmark, lbd, scratch;
+    uint32_t wide;
+    // `val`: a variable's word (below); `rw`: its reason and the argument that implied it (`why`), side by side.
+    uint32_t val, rw, trail, limits, act, heap, hat, whead, wnext, wlit, lstart, arena, cbuf, ebuf, lmark, lbd, scratch;
 } Csat;
 
 typedef struct Check {
@@ -156,7 +161,7 @@ UKL_INLINE uint32_t cs_lvar(int32_t l) { return (uint32_t)(l < 0 ? -l : l); }
 // A literal's watch list: the clauses watching it, visited when it turns false.
 UKL_INLINE uint32_t cs_lslot(int32_t l) { return 2u * cs_lvar(l) + (l < 0 ? 1u : 0u); }
 
-// A variable's word: 0 unset, else its level `<< 2`, 1 true or 2 false.
+// A variable's word: 0 unset, else its level `<< 2`, 1 true or 2 false, and `SEEN` while analysis has marked it.
 UKL_INLINE int32_t cs_value(UKL_PRIVATE Csat* c, int32_t l)
 {
     uint32_t w = c->s[c->val + cs_lvar(l)];
@@ -165,7 +170,7 @@ UKL_INLINE int32_t cs_value(UKL_PRIVATE Csat* c, int32_t l)
     int32_t t = (w & 1u) != 0u ? 1 : -1;
     return l > 0 ? t : -t;
 }
-UKL_INLINE uint32_t cs_level_of(UKL_PRIVATE Csat* c, uint32_t v) { return c->s[c->val + v] >> 2; }
+UKL_INLINE uint32_t cs_level_of(UKL_PRIVATE Csat* c, uint32_t v) { return (c->s[c->val + v] >> 2) & LEVELS; }
 
 UKL_INLINE uint32_t cs_g_kind(UKL_PRIVATE Csat* c, uint32_t g) { return c->b[c->rec + 4u * g] & 3u; }
 UKL_INLINE uint32_t cs_g_width(UKL_PRIVATE Csat* c, uint32_t g) { return c->b[c->rec + 4u * g] >> 2; }
@@ -197,8 +202,8 @@ UKL_INLINE void cs_put(UKL_PRIVATE Csat* c, uint32_t at, int32_t l, uint32_t rea
 {
     uint32_t v = cs_lvar(l);
     c->s[c->val + v] = (c->s[H_LEVEL] << 2) | (l > 0 ? 1u : 2u);
-    c->s[c->reason + v] = reason;
-    c->s[c->why + v] = why;
+    c->s[c->rw + 2u * v] = reason;
+    c->s[c->rw + 2u * v + 1u] = why;
     c->s[c->trail + at] = (uint32_t)l;
 }
 // Lane 0's: at the trail's end.
@@ -679,7 +684,7 @@ UKL_INLINE void cs_bump_all(UKL_PRIVATE Csat* c, uint32_t v __UKL_PARAMS)
 // the clause that did (`*id`).
 UKL_INLINE uint32_t cs_explain(UKL_PRIVATE Csat* c, uint32_t v, UKL_PRIVATE uint32_t* id)
 {
-    uint32_t r = c->s[c->reason + v], w = c->s[c->why + v], len = 0u;
+    uint32_t r = c->s[c->rw + 2u * v], w = c->s[c->rw + 2u * v + 1u], len = 0u;
     *id = NONE;
     if ((r & GATE) == 0u) {
         *id = r;
@@ -752,7 +757,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
             int32_t q = j < j1 ? (id != NONE ? cs_cl_lit(c, id, j) : (int32_t)c->s[buf + j]) : 0;
             uint32_t v = q != 0 ? cs_lvar(q) : 0u;
             uint32_t lv = q != 0 ? cs_level_of(c, v) : 0u;
-            bool can = q != 0 && q != p && lv != 0u && c->s[c->seen + v] == 0u;
+            bool can = q != 0 && q != p && lv != 0u && (c->s[c->val + v] & SEEN) == 0u;
             ukl_mask_t same = ukl_sg_match(can ? v : NONE - c->lane __UKL_ARGS);
             can = can && ukl_mask_lowest(same) == c->lane;
             ukl_mask_t cands = ukl_sg_ballot(can __UKL_ARGS);
@@ -761,7 +766,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
             if (u + len + pushes > c->acap)
                 return 0u;
             if (can) {
-                c->s[c->seen + v] = 1u;
+                c->s[c->val + v] |= SEEN;
                 c->s[c->scratch + ukl_mask_rank(cands, c->lane)] = v;
                 if (lv != here)
                     c->s[c->arena + u + len + ukl_mask_rank(lows, c->lane)] = (uint32_t)q;
@@ -781,7 +786,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
                 return 0u;
             }
             uint32_t lo = at > UKL_SIMD_WIDTH ? at - UKL_SIMD_WIDTH : 0u, i = lo + c->lane;
-            bool hit = i < at && c->s[c->seen + cs_lvar((int32_t)c->s[c->trail + i])] != 0u;
+            bool hit = i < at && (c->s[c->val + cs_lvar((int32_t)c->s[c->trail + i])] & SEEN) != 0u;
             ukl_mask_t m = ukl_sg_ballot(hit __UKL_ARGS);
             if (m != 0u) {
                 at = lo + 63u - ukl_clz64((uint64_t)m);
@@ -793,7 +798,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
         ukl_sg_barrier();
         count--;
         if (c->lane == 0u) {
-            c->s[c->seen + cs_lvar(l)] = 0u;
+            c->s[c->val + cs_lvar(l)] &= ~SEEN;
             if (count == 0u) {
                 c->s[c->arena + u] = (uint32_t)(-l);
             } else {
@@ -821,7 +826,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
         uint32_t k = kb + c->lane, lv = 0u;
         if (k < len) {
             uint32_t v = cs_lvar((int32_t)c->s[c->arena + u + k]);
-            c->s[c->seen + v] = 0u;
+            c->s[c->val + v] &= ~SEEN;
             lv = cs_level_of(c, v);
         }
         uint32_t top = ukl_sg_max(lv __UKL_ARGS);
@@ -959,9 +964,9 @@ UKL_INLINE bool cs_reduce(UKL_PRIVATE Csat* c __UKL_PARAMS)
         uint32_t tl = c->s[H_TRAIL];
         for (uint32_t i = 0u; i < tl; i++) {
             uint32_t v = cs_lvar((int32_t)c->s[c->trail + i]);
-            uint32_t r = c->s[c->reason + v];
+            uint32_t r = c->s[c->rw + 2u * v];
             if ((r & GATE) == 0u && r != NONE && r >= c->clauses)
-                c->s[c->reason + v] = NONE;
+                c->s[c->rw + 2u * v] = NONE;
         }
         // Kept: the short (by levels) and the newer half, newest first while they fit in half the arena; dropped: those
         // level 0 satisfies. Marked (the LBD's top bit), then compacted in order.
@@ -1060,7 +1065,6 @@ UKL_INLINE void cs_start(UKL_PRIVATE Csat* c __UKL_PARAMS)
     uint32_t n = c->vars + 1u;
     for (uint32_t v = c->lane; v < n; v += UKL_SIMD_WIDTH) {
         c->s[c->val + v] = 0u;
-        c->s[c->seen + v] = 0u;
         c->s[c->lmark + v] = 0u;
         // Every activity 0: the heap is the numbers, highest first.
         c->s[c->act + v] = 0u;
@@ -1144,26 +1148,27 @@ UKL_INLINE void cs_setup(UKL_PRIVATE Csat* c, UKL_GLOBAL const uint32_t* d)
     c->lcap = d[D_LEARNED];
     c->acap = d[D_ARENA];
     c->budget = d[D_BUDGET];
+    c->wide = d[D_WIDE];
     uint32_t n = c->vars + 1u, nodes = 2u * (c->clauses + c->lcap);
+    // What every step reads first, the learned clauses' room last: a search touches the room's pages only as it
+    // fills them. (`state_words` on the host.)
     c->val = HEADER;
-    c->reason = c->val + n;
-    c->why = c->reason + n;
-    c->trail = c->why + n;
+    c->rw = c->val + n;
+    c->trail = c->rw + 2u * n;
     c->limits = c->trail + n;
-    c->seen = c->limits + n;
-    c->act = c->seen + n;
+    c->act = c->limits + n;
     c->heap = c->act + n;
     c->hat = c->heap + n;
-    c->whead = c->hat + n;
-    c->wnext = c->whead + 2u * n;
+    c->lmark = c->hat + n;
+    c->whead = c->lmark + n;
+    c->cbuf = c->whead + 2u * n;
+    c->ebuf = c->cbuf + c->wide;
+    c->scratch = c->ebuf + c->wide;
+    c->lbd = c->scratch + UKL_SIMD_WIDTH;
+    c->lstart = c->lbd + c->lcap;
+    c->wnext = c->lstart + c->lcap + 1u;
     c->wlit = c->wnext + nodes;
-    c->lstart = c->wlit + nodes;
-    c->arena = c->lstart + c->lcap + 1u;
-    c->cbuf = c->arena + c->acap;
-    c->ebuf = c->cbuf + n + 1u;
-    c->lmark = c->ebuf + n + 1u;
-    c->lbd = c->lmark + n;
-    c->scratch = c->lbd + c->lcap;
+    c->arena = c->wlit + nodes;
 }
 
 // Every lane: a finished formula's report (`out`, 16 words) and, satisfiable, its model (`models`, a bit a variable).

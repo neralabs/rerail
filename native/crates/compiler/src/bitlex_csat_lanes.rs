@@ -1217,4 +1217,43 @@ pub(crate) mod tests {
         }
         assert!(sat >= 60 && unsat >= 60 && searched >= 60, "{sat} sat, {unsat} unsat, {searched} searched");
     }
+    /// The formulas in `RERAIL_CSAT_DUMPS` (`Gates::dump`s), solved by this search and by the CPU's solver: each one's
+    /// answers, counts and time (decision 0670; a tool, so ignored).
+    #[test]
+    #[ignore]
+    fn the_dumped_formulas_here() {
+        let Some(dir) = std::env::var_os("RERAIL_CSAT_DUMPS") else { return };
+        let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the dumps").map(|e| e.expect("a dump").path()).collect();
+        paths.sort();
+        let block = FormulaBlock::new();
+        let mut s = Solver::default();
+        for p in &paths {
+            let (g, vars, base, c) = Gates::undump_into(&std::fs::read_to_string(p).expect("a dump"), Gates::in_block(&block), Clauses::in_block(&block));
+            let (fan, own) = (Fanout::of(&g, base, vars), Fanout::of_range(&g, base..g.len(), vars));
+            let f = Formula { vars, gates: &g, base, fan: &fan, own: (base < g.len()).then_some(&own), clauses: &c, conflicts: 100_000 };
+            let t = std::time::Instant::now();
+            let x = solve(&f);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            s.reset(vars);
+            for cl in c.iter() {
+                s.add(cl);
+            }
+            let cpu = s.solve(&g, &fan, base, 100_000);
+            match (&x.answer, cpu) {
+                (Answer::Sat(m), CpuAnswer::Sat) => assert!(holds(m, &g, &c), "{p:?}: the model does not hold"),
+                (Answer::Unsat, CpuAnswer::Unsat) | (Answer::Unknown, _) => {}
+                (a, b) => panic!("{p:?}: the search {a:?}, the solver {b:?}"),
+            }
+            eprintln!(
+                "{}: {:?}, {} conflicts, {} decisions, {} rounds, {} gate items, {} watch visits, {ms:.1} ms",
+                p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+                x.answer == Answer::Unsat,
+                x.conflicts,
+                x.decisions,
+                x.rounds,
+                x.items,
+                x.visits
+            );
+        }
+    }
 }

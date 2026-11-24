@@ -89,6 +89,8 @@ const CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED: CUresult = 712;
 const CU_MEMHOSTREGISTER_PORTABLE: u32 = 0x01;
 const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
+const CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES: i32 = 3;
+const CU_FUNC_ATTRIBUTE_NUM_REGS: i32 = 4;
 const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
 
 /// The first of `names` the loader opens.
@@ -691,6 +693,14 @@ impl CudaComputeFunctionLibrary {
         let mut static_smem = 0;
         ck(unsafe { (a.cu_func_get_attribute)(&mut static_smem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, func) }, "cuFuncGetAttribute")?;
         let dynamic_limit = self.device.max_shared_per_block.saturating_sub(static_smem as u32);
+        // `RERAIL_CUDA_KERNEL_INFO=1`: each kernel's registers a thread and its stack (local memory) a thread, as it
+        // is loaded: what bounds the groups an SM keeps resident.
+        if std::env::var_os("RERAIL_CUDA_KERNEL_INFO").is_some_and(|v| v == "1") {
+            let (mut regs, mut local) = (0, 0);
+            ck(unsafe { (a.cu_func_get_attribute)(&mut regs, CU_FUNC_ATTRIBUTE_NUM_REGS, func) }, "cuFuncGetAttribute")?;
+            ck(unsafe { (a.cu_func_get_attribute)(&mut local, CU_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, func) }, "cuFuncGetAttribute")?;
+            eprintln!("cuda kernel {function_name}: {regs} registers, {local} bytes of local memory a thread, {static_smem} bytes of shared memory");
+        }
         ck(unsafe { (a.cu_func_set_attribute)(func, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, dynamic_limit as i32) }, "cuFuncSetAttribute")?;
         Ok(CudaComputeFunction { func, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
     }
