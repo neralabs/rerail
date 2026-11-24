@@ -2289,7 +2289,8 @@ impl Batch {
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.h = job.reach(&p.buffer, 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
-        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places, table.room());
+        // Its clear a thread for 4 places (`dedup_clear_one`).
+        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places / 4, table.room());
         job.m = (Some(job.desc.totals + 4 * in_slot as u64), table.room());
         job.own.push(p);
         let (l, o) = (table.key(job.desc.l), out.key(job.desc.o));
@@ -2773,12 +2774,15 @@ impl Batch {
         let groups = |threads: usize| threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1);
         // A row stage's SIMD groups, a worker's group of them an item.
         let rows_a_group = rerail_accel::gpu::join::GROUP as usize / simd_group();
-        // A dedup's places placed with its input: its clear's count its places' word (its size script's).
-        // A fold's, its clear's and its merge's count its mask's word and one.
-        let clears: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.h_place.map(|h| match h.places {
-            Some(w) => (pa + at[h.block].expect("its places' block") + w.0, 0),
-            None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
-        })).collect();
+        // A dedup's clear: its input's rows' count and 4, as its places are its rows' (`dedup_mask`: twice its rows, a
+        // power of two, 16 at least), 4 a thread. A fold's, its clear's and its merge's count its mask's word and one.
+        let clears: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| match (j.kind, j.dedup) {
+            (JobKind::Dedup, Some(d)) => Some((j.desc.totals + 4 * u64::from(d[1]), 4)),
+            _ => j.h_place.map(|h| match h.places {
+                Some(w) => (pa + at[h.block].expect("its places' block") + w.0, 0),
+                None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
+            }),
+        }).collect();
         let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
             let mut items = Vec::new();
             let mut segs = Vec::new();

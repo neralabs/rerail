@@ -1575,17 +1575,25 @@ unsafe fn same_row(d: &Dedup, t: *const i64, a: u32, b: u32) -> bool {
     d.cols[..d.ncols.min(16) as usize].iter().all(|&c| col(t, c, d.cap, a) == col(t, c, d.cap, b))
 }
 
-unsafe fn row_hash(rd: Reads, d: &Dedup, t: *const i64, x: u32) -> u32 {
+/// The places a dedup uses (`dedup_mask`): twice its rows' count, a power of two (16 at least), within its own.
+unsafe fn dedup_mask(totals: *const u32, d: &Dedup) -> u32 {
+    let two = 2 * (*totals.add(d.in_slot as usize)).min(d.cap) as u64;
+    let p = if two <= 16 { 16 } else { two.next_power_of_two() };
+    (p - 1).min(d.mask as u64) as u32
+}
+
+unsafe fn row_hash(rd: Reads, d: &Dedup, t: *const i64, x: u32, mask: u32) -> u32 {
     let h = d.cols[..d.ncols.min(16) as usize].iter().fold(KEY_SEED, |h, &c| rd.key_mix(h, col(t, c, d.cap, x)));
-    (h as u32) & d.mask
+    (h as u32) & mask
 }
 
 unsafe fn dedup_claim_one(rd: Reads, t: *const i64, totals: *const u32, p: *mut u32, d: &Dedup, x: u32) {
     if x >= (*totals.add(d.in_slot as usize)).min(d.cap) {
         return;
     }
-    let mut a = row_hash(rd, d, t, x);
-    for _ in 0..=d.mask {
+    let mask = dedup_mask(totals, d);
+    let mut a = row_hash(rd, d, t, x, mask);
+    for _ in 0..=mask {
         let place = at(p.add(a as usize));
         match place.compare_exchange(NONE, x, SeqCst, SeqCst) {
             Ok(_) => return,
@@ -1593,16 +1601,16 @@ unsafe fn dedup_claim_one(rd: Reads, t: *const i64, totals: *const u32, p: *mut 
                 place.fetch_min(x, SeqCst);
                 return;
             }
-            Err(_) => a = (a + 1) & d.mask,
+            Err(_) => a = (a + 1) & mask,
         }
     }
 }
 
 /// Row `x` (below the head's rows) kept: the first of its rows in the head's set.
-unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, d: &Dedup, x: u32) {
-    let mut a = row_hash(rd, d, t, x);
+unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, d: &Dedup, mask: u32, x: u32) {
+    let mut a = row_hash(rd, d, t, x, mask);
     let mut keep = 0;
-    for _ in 0..=d.mask {
+    for _ in 0..=mask {
         let y = *p.add(a as usize);
         if y == NONE {
             break;
@@ -1614,7 +1622,7 @@ unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u
         if same_row(d, t, y, x) {
             break;
         }
-        a = (a + 1) & d.mask;
+        a = (a + 1) & mask;
     }
     *counts.add(x as usize) = keep;
 }
@@ -2054,8 +2062,9 @@ unsafe fn dedup_mark_range(rd: Reads, t: *const i64, totals: *const u32, p: *con
     let x1 = x1.min(d.cap.saturating_add(1));
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     fill_u32(counts, x0.max(n), x1, 0);
+    let mask = dedup_mask(totals, d);
     for x in x0..x1.min(n) {
-        dedup_mark_one(rd, t, p, counts, d, x);
+        dedup_mark_one(rd, t, p, counts, d, mask, x);
     }
 }
 
@@ -2926,7 +2935,12 @@ impl Prog {
             PK_COPY => rows_copy_range(rd, b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), t0, t1),
             PK_IX_KEY => ix_key_range(rd, b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
             PK_IX_PLACE => ix_place_range(rd, b.l as *const u8, b.v as *const u32, j.vc as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
-            PK_DEDUP_CLEAR => fill_u32(b.h, t0, t1.min((*j.dd).mask.saturating_add(1)), NONE),
+            // Threads [t0, t1) clear places 4 t0 to 4 t1, within those the rows use (`dedup_mask`).
+            PK_DEDUP_CLEAR => {
+                let end = dedup_mask(j.totals, &*j.dd) as u64 + 1;
+                let (a, z) = ((4 * t0 as u64).min(end) as u32, (4 * t1 as u64).min(end) as u32);
+                fill_u32(b.h, a, z, NONE)
+            }
             PK_MAP => stage_map_range(&*j.s, b.o, j.totals, t0, t1),
             PK_STAGE_COUNT => stage_count_range(&stage(j.s), j, b, t0, t1),
             PK_SCAN_COUNT => scan_count_range(&stage(j.s), j, b, t0, t1),

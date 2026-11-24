@@ -1275,28 +1275,45 @@ UKL_INLINE bool same_row(DedupP d, Longs T, uint32_t a, uint32_t b) {
     return true;
 }
 
-UKL_INLINE uint32_t row_hash(DedupP d, Longs T, uint32_t x) {
-    uint64_t h = KEY_SEED;
-    for (uint32_t c = 0; c < d->ncols && c < 16; c++) h = key_mix(h, T[(uint64_t)d->cols[c] * d->cap + x]);
-    return (uint32_t)h & d->mask;
+// The places a dedup uses: twice its rows' count, a power of two (16 at least), within those it has (`mask`). Its
+// clear, its claims and its marks take them from that count, so a round of few rows clears and probes a table of
+// its own size, not one of its table's room.
+UKL_INLINE uint32_t dedup_mask(JSPACE const uint32_t* totals, DedupP d)
+{
+    uint32_t n = ukl_min(totals[d->in_slot], d->cap);
+    uint64_t two = 2ul * (uint64_t)n;
+    uint64_t p = two <= 16ul ? 16ul : 1ul << (64u - ukl_clz64(two - 1ul));
+    return (uint32_t)ukl_min(p - 1ul, (uint64_t)d->mask);
 }
 
-UKL_INLINE void dedup_clear_one(JSPACE uint32_t* P, DedupP d, uint32_t i)
+UKL_INLINE uint32_t row_hash(DedupP d, Longs T, uint32_t x, uint32_t mask) {
+    uint64_t h = KEY_SEED;
+    for (uint32_t c = 0; c < d->ncols && c < 16; c++) h = key_mix(h, T[(uint64_t)d->cols[c] * d->cap + x]);
+    return (uint32_t)h & mask;
+}
+
+// Thread `t` clears places 4t to 4t + 3: the rows' count and 4 threads cover the places (`dedup_mask`).
+UKL_INLINE void dedup_clear_one(JSPACE uint32_t* P, JSPACE const uint32_t* totals, DedupP d, uint32_t t)
 {
-    if (i <= d->mask) P[i] = 0xffffffffu;
+    uint32_t mask = dedup_mask(totals, d);
+    for (uint32_t k = 0; k < 4u; k++) {
+        uint64_t i = 4ul * (uint64_t)t + k;
+        if (i <= (uint64_t)mask) P[i] = 0xffffffffu;
+    }
 }
 
 UKL_INLINE void dedup_claim_one(Longs T, JSPACE const uint32_t* totals, JSPACE uint32_t* P, DedupP d, uint32_t x)
 {
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
     if (x >= n) return;
-    uint32_t at = row_hash(d, T, x);
+    uint32_t mask = dedup_mask(totals, d);
+    uint32_t at = row_hash(d, T, x, mask);
     // Bounded: a place at a time.
-    for (uint32_t k = 0; k <= d->mask; k++) {
+    for (uint32_t k = 0; k <= mask; k++) {
         uint32_t seen = ukl_atomic_cas(&P[at], 0xffffffffu, x);
         if (seen == 0xffffffffu) return;
         if (same_row(d, T, seen, x)) { ukl_atomic_min(&P[at], x); return; }
-        at = (at + 1) & d->mask;
+        at = (at + 1) & mask;
     }
 }
 
@@ -1305,14 +1322,15 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
     if (x > d->cap) return;
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
     if (x >= n) { counts[x] = 0; return; }
-    uint32_t at = row_hash(d, T, x);
+    uint32_t mask = dedup_mask(totals, d);
+    uint32_t at = row_hash(d, T, x, mask);
     uint32_t keep = 0;
-    for (uint32_t k = 0; k <= d->mask; k++) {
+    for (uint32_t k = 0; k <= mask; k++) {
         uint32_t y = P[at];
         if (y == 0xffffffffu) break;
         if (y == x) { keep = 1; break; }
         if (same_row(d, T, y, x)) break;
-        at = (at + 1) & d->mask;
+        at = (at + 1) & mask;
     }
     counts[x] = keep;
 }
@@ -1986,7 +2004,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, t); break;
         case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
-        case PK_DEDUP_CLEAR: dedup_clear_one(H, j->dd, t); break;
+        case PK_DEDUP_CLEAR: dedup_clear_one(H, j->totals, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
         case PK_STAGE_COUNT: stage_count_one(L, j->R, j->totals, j->counters, c, j->A, j->D, j->F, j->s, t); break;
