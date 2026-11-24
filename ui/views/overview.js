@@ -10,6 +10,7 @@ import { data, ui, ALL_TIME, activityAllOf, allFires, fires, isSetUp, packById, 
 import { newerRelease } from "../settings-model.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
+import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
 import { enforcementTag, ruleTableHead, updateEnforcementTag } from "../render/enforcement.js";
@@ -111,17 +112,17 @@ function dismissUpdate() {
 }
 
 /**
- * "Rerail 0.3.0 just launched.", from the newest version the daemon reports (`/healthz.update`), with Open Settings,
- * which goes to About Rerail: the release notes and how to update are there, so the banner carries neither. It sits
- * below the banners that ask for something, since it doesn't.
+ * "Rerail 0.3.0 just launched.", from the newest version the daemon reports (`/healthz.update`), with how to update:
+ * the command to paste into a coding agent's session and its Copy, and Details in Settings, which goes to About Rerail
+ * and its release notes. It sits below the banners that ask for something, since it doesn't.
  */
 function renderUpdate(root) {
   const latest = data.loaded && isSetUp() ? newerRelease(data.health) : null;
   const show = latest !== null && !updateDismissed(latest);
   setContent(root, show ? latest : "", () => (!show ? null : h("div.welcome", { role: "status" }, icon("rocket", 22), h("div", null,
     h("b", null, `Rerail ${latest} just launched.`),
-    h("p", null, "See what’s new and how to update in Settings. Your rules and history come with you."),
-    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "settings?section=about" }, "Open Settings"))),
+    h("p", null, "To update, paste ", h("code", null, AGENT_UPDATE_COMMAND), " into a session with your coding agent. It updates your rule packs too, and backs up your rules and history first."),
+    h("p.acts", null, updateCopyButton("button.btn.sm", "Copy update command"), updateDetailsLink())),
   h("button.x", { "data-act": "dismissupdate", "aria-label": "Dismiss" }, "✕"))));
 }
 
@@ -258,8 +259,8 @@ function ruleRow(item) {
     h("div.rmain", null,
       h("div.rtitle", null, h("button.t", { "data-act": "detail", "data-i": item.id })),
       h("div.rside", null,
-        h("span.count.num", null, h("b")),
         enforcementTag(),
+        h("span.count.num", null, h("b")),
         h("button.sw", { role: "switch", "data-act": "toggle", "data-i": item.id })),
       h("div.rmeta", null, h("span.mono", null, item.id), h("span.last"))));
 }

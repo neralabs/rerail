@@ -1310,14 +1310,15 @@ jobs:
           mode: save
 
   # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch, the path
-  # owner read) are compiled out on Linux, where the rust job runs every other test; these filters select them and the
-  # Windows-neutral tests beside them: the process and path owner tests are the engine's, the tree watch's
-  # rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's
-  # canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here
-  # too. The main instance's lock tests run here as well: the wait for a held lock is Windows code (an overlapped
-  # LockFileEx cancelled at its bound) that the same tests run as Unix code on Linux. A debug build, as in the rust
-  # job, through its own compile cache. Its own job, beside build-windows and the shards rather than on one of them.
-  # Gated as the rust job is, and only when the change selects the engine's tests (`rust-engine`).
+  # owner read, the named pipe lookup's open) are compiled out on Linux, where the rust job runs every other test;
+  # these filters select them and the Windows-neutral tests beside them: the process, path owner and pipe lookup
+  # tests are the engine's, the tree watch's rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts
+  # `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
+  # Windows' verbatim paths broke: its test runs here too. The main instance's lock tests run here as well: the wait
+  # for a held lock is Windows code (an overlapped LockFileEx cancelled at its bound) that the same tests run as Unix
+  # code on Linux. A debug build, as in the rust job, through its own compile cache. Its own job, beside
+  # build-windows and the shards rather than on one of them. Gated as the rust job is, and only when the change
+  # selects the engine's tests (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1372,7 +1373,7 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: main_instance:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: main_instance:: pipe_server:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}

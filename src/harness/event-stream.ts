@@ -138,7 +138,7 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
         if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
         const named = process.env.RERAIL_ENGINE_SOCKET;
-        const endpoint = named !== undefined ? await engineEndpointAt(named) : await daemonEngineEndpoint(replaceOtherPackage, deadline);
+        const endpoint = named !== undefined ? await engineEndpointAt(named, deadline) : await daemonEngineEndpoint(replaceOtherPackage, deadline);
         replaceOtherPackage = false;
         const { eventId: _eventId, deliveries, ...facts } = await ingestEngineEventAnswer(endpoint, event, configuration);
         answered = facts;

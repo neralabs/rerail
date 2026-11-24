@@ -156,7 +156,11 @@ a secret token sent as `x-rerail-access`, on every request.
     agent sandbox. Otherwise a process that reaches the socket but cannot read the Rerail home could make the daemon
     write anywhere.
   - Hooks take the capability from the daemon's state with the socket path (`daemonEngineEndpoint`). For a socket in
-    `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`).
+    `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`). On
+    Windows they send neither the capability nor the event until Windows names the process holding the pipe's server
+    end as the daemon `daemon.json` records (its pid, started no later than it recorded itself), which wrote that
+    capability itself, or else the engine on that pipe gives the proof T2 describes for the capability `daemon.json`
+    records.
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
   `/native/session` and `/native/shutdown` refuse any `Origin`.
@@ -941,6 +945,16 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - `openInBrowser` puts the capability link in `argv` (`open`, `xdg-open`), readable by other users via `ps` while the
   process runs. Accepted: the window is short.
 - The enforcer's spool in `tmpdir()` survives a crash.
+- On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
+  names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
+  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
+  then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
+  12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free
+  instance of a busy pipe, as Node's connect does (the check's own wait for an instance, `ENGINE_ANSWER_WAIT_MS`, is
+  as long). If the daemon ends in that time and another user creates a pipe of that name, that user gets the event and
+  the capability. The other user cannot end the daemon to open that window. What would close it: the same check on
+  the connection that carries the event.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
   `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no

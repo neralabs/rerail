@@ -24,7 +24,7 @@ import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, ty
 import { isBusy } from "../engine/storage/sqlite-wal.js";
 import { waitForWriteLock } from "../engine/storage/write-lock-wait.js";
 import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
-import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
+import { DAEMON_ACCESS_HEADER, ENGINE_ANSWER_WAIT_MS, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./daemon/engine-proof.js";
 import { isNamedPipe } from "./daemon/engine-pipe.js";
 import { KeptRuntimes } from "./memory/kept-runtimes.js";
@@ -1570,6 +1570,14 @@ function answered(response: ServerResponse, body: string): AnswerFate {
   return { refused: gone || connection.errored !== null, heard };
 }
 
+/**
+ * How long the event's request to `endpoint` waits for its answer, from the request: {@link ENGINE_ANSWER_WAIT_MS}, less
+ * what a proof on the engine that came first took (`proofTookMs`), and at least 1 ms, since a socket reads 0 as no limit.
+ */
+function answerWaitMs(endpoint: EngineEndpoint): number {
+  return endpoint.proofTookMs === undefined ? ENGINE_ANSWER_WAIT_MS : Math.max(1, ENGINE_ANSWER_WAIT_MS - endpoint.proofTookMs);
+}
+
 export async function ingestEngineEvent(
   endpoint: EngineEndpoint,
   event: AdapterEvent,
@@ -1600,7 +1608,7 @@ async function postEngineEvent(
 ): Promise<RerailEventSuccessFrame> {
   const body = engineRequestBody(event, configuration);
   const { sent, answer } = postEngine(endpoint, call, EVENTS_PATH, body);
-  sent.setTimeout(30_000, () => sent.destroy(new Error("Kernel request timed out")));
+  sent.setTimeout(answerWaitMs(endpoint), () => sent.destroy(new Error("Kernel request timed out")));
   const { status, text } = await answer;
   if (status !== 200) throw new Error(`Kernel request failed (${status}): ${text}`);
   const result = decodeRerailEventResult(text);

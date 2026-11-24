@@ -230,7 +230,10 @@ async function runHostHookOnce(
   if (untaken !== undefined) return await leaveForDaemon(hook, untaken);
   // Found before the session's lock is taken: a session's hooks that arrive together (parallel tool calls, subagents)
   // wait out a busy daemon side by side. Under the lock, each hook would begin its wait only when the one before it
-  // gave up.
+  // gave up. For the Windows pipe RERAIL_ENGINE_SOCKET names, this lookup is the check that the pipe is the home's
+  // daemon (`engineEndpointAt`), so each event goes out on a check made before the wait for the lock, up to 30 s
+  // (`LOCK_WAIT_MS`), and before its own connection's wait for a free instance of the pipe; docs/threat-model.md
+  // states that time in full.
   return await answerWith(await hookDaemon(options, startsSession), hook);
 }
 
@@ -377,8 +380,8 @@ function untakenForm(event: AdapterEvent): AdapterEvent {
 async function hookDaemon(options: HookOptions, startsSession: boolean): Promise<HookDaemon> {
   try {
     const named = namedEngineSocket(options);
-    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
     const { daemonDeadline } = options;
+    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named, daemonDeadline) };
     if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
     return await runningDaemonEngineEndpoint(daemonDeadline);
   } catch (error) {

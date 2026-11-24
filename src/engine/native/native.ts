@@ -547,6 +547,14 @@ export interface NativeTreeWatcher {
   close(): void;
 }
 
+/** The process holding the server end of a Windows named pipe ({@link NativeBinding.namedPipeServer}). */
+export interface NativeNamedPipeServer {
+  /** Absent when other clients kept every instance of the pipe taken until the wait ran out. */
+  pid?: number | null;
+  /** When it started, epoch ms; absent where this user may not ask. */
+  startedAt?: number | null;
+}
+
 export interface NativeBinding {
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
@@ -608,6 +616,12 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
+  /**
+   * Windows only: the process holding the server end of the named pipe `path` and when it started, opening again while
+   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where no pipe
+   * of that name takes a connection, and on every other system. A binary built before it lacks it.
+   */
+  namedPipeServer?(path: string, timeoutMs: number): Promise<NativeNamedPipeServer | null>;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
