@@ -1495,7 +1495,7 @@ type ModeInputs = BTreeMap<String, ([Arc<dyn crate::code_rule_dsl::facts::vtab::
 
 /// The engine's list a maintain mode's joined line runs in (`setfix`): its probes (seeds and delta probes), then its
 /// removals, checked adds and rechecks (`maint_step_counts`), each in spec order.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ModeLine {
     Probe,
     Remove,
@@ -1646,10 +1646,94 @@ fn kept_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::In
     Ok(if minus.is_empty() && plus.is_empty() { Moved::Not } else { Moved::Rows(minus, plus) })
 }
 
-/// A relation's rows gone and added (`Moved::Rows`) as its minus and plus versions, beside its kept rows `old`.
-fn diff_versions(old: &super::native::component::InRel, gone: &[i64], added: &[i64]) -> [Arc<super::native::component::InRel>; 2] {
+/// A relation's rows gone and added (`Moved::Rows`) as its minus and plus versions, beside its old rows `old` (kept,
+/// or a reach index made from its reads' old rows, `reach_was`): old, minus and plus.
+fn diff_versions(old: &Arc<super::native::component::InRel>, gone: &[i64], added: &[i64]) -> [Arc<super::native::component::InRel>; 3] {
     let k = old.k.max(1);
-    [gone, added].map(|rows| super::native::component::InRel::from_flat(rows.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), rows.len() / k, old.types().to_vec()))
+    let [minus, plus] = [gone, added].map(|rows| super::native::component::InRel::from_flat(rows.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), rows.len() / k, old.types().to_vec()));
+    [Arc::clone(old), minus, plus]
+}
+
+/// A reach index made again in a maintained run with no old rows kept (decision 0119 §3: made in place, it keeps
+/// none): the index its reads' old rows close to, made again, and its rows gone and added against it (0094 §8), read
+/// only at the starts whose rows can differ (`Closed::changed_since`). A reach's are those whose seeds changed and
+/// those that reach, before or after, the source of an edge gone or added: a start reaching none of them reaches the
+/// same nodes over the edges that did not change. A relation through a reach's are those whose reach changed and those
+/// reaching a node whose values changed. `None` where a read's old rows are not to be had (its readers derive again).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn reach_was(
+    rel: &str,
+    native: &super::program_image::ArchivedNativeSpec,
+    db: &Connection,
+    f0: Fields<'_>,
+    diffs: &HashMap<String, [Arc<super::native::component::InRel>; 3]>,
+    moved_rels: &HashSet<String>,
+    made: &HashMap<String, (Arc<super::native::reach::Closed>, Vector<i64>)>,
+    m: &mut dyn Maintain,
+    rules_by: &IndexMap<&str, Vec<RuleKey>>,
+    run_vs: &body::Versions,
+) -> Option<(Arc<super::native::reach::Closed>, Vector<i64>, Vector<i64>)> {
+    use super::native::{component, reach::Closed};
+    use super::program_image::ArchivedNativeSpec as Native;
+    use crate::code_rule_dsl::facts::vtab::Source as _;
+    type Src = Arc<dyn crate::code_rule_dsl::facts::vtab::Source>;
+    let _span = super::profile::span(|| format!("{rel}: its delta against its reads' old rows"));
+    let pairs = |s: &Src, c: [usize; 2]| -> Vec<(i64, i64)> {
+        let mut v = [0i64; 2];
+        (0..s.len()).map(|r| { s.row_at(r, &c, &mut v); (v[0], v[1]) }).collect()
+    };
+    // A read's old pairs, and the pairs it lost and gained.
+    let mut read = |r: &str| -> Option<(Vec<(i64, i64)>, Vec<(i64, i64)>)> {
+        if !moved_rels.contains(r) {
+            let now = component::derived(db, r).or_else(|| crate::code_rule_dsl::facts::vtab::bound_source(db, r))?;
+            return Some((pairs(&now, [0, 1]), Vec::new()));
+        }
+        let ([o, mi, pl], c) = match moved_versions(r, diffs, m, db, f0, rules_by, run_vs) {
+            Some(([o, mi, pl, _], cols)) => ([o, mi, pl], cols.map_or(Some([0, 1]), |c| Some([*c.first()?, *c.get(1)?]))?),
+            // A relation the mode maintained: a version of its kept rows, its change marked where its rows lie.
+            None => {
+                use component::Ver;
+                let h = component::held(db, r).filter(|h| h.start().is_some())?;
+                let [o, mi, pl] = [Ver::Old, Ver::Minus, Ver::Plus].map(|v| h.version_view(v));
+                let src = |x: Arc<component::InRel>| x.source((0..h.k).map(|c| sql_col(r, c)).collect());
+                ([src(o?), src(mi?), src(pl?)], [0, 1])
+            }
+        };
+        let mut changed = pairs(&mi, c);
+        changed.extend(pairs(&pl, c));
+        Some((pairs(&o, c), changed))
+    };
+    let held = component::held_source(db, rel)?;
+    let new = held.as_any()?.downcast_ref::<Closed>()?;
+    let (old, starts) = match native {
+        Native::Reach { seed, edge } => {
+            let ((seed_was, seed_changed), (edge_was, edge_changed)) = (read(f0.rel_name(*seed))?, read(f0.rel_name(*edge))?);
+            let old = Closed::reach(&seed_was, &edge_was);
+            let sources: Vec<i64> = edge_changed.iter().map(|e| e.0).collect();
+            let mut starts: Vec<i64> = seed_changed.iter().map(|s| s.0).collect();
+            starts.extend(old.starts_reaching(&sources));
+            starts.extend(new.starts_reaching(&sources));
+            (old, starts)
+        }
+        Native::ReachThrough { reach, map } => {
+            let reach = f0.rel_name(*reach);
+            let reach_held = component::held_source(db, reach)?;
+            let reach_now = reach_held.as_any()?.downcast_ref::<Closed>()?;
+            let (reach_was, mut starts): (&Closed, Vec<i64>) = match made.get(reach) {
+                Some((was, changed)) => (was, changed.to_vec()),
+                None if !moved_rels.contains(reach) => (reach_now, Vec::new()),
+                None => return None,
+            };
+            let (map_was, map_changed) = read(f0.rel_name(*map))?;
+            let keys: Vec<i64> = map_changed.iter().map(|p| p.0).collect();
+            starts.extend(reach_was.starts_reaching(&keys));
+            starts.extend(reach_now.starts_reaching(&keys));
+            (reach_was.through(&map_was), starts)
+        }
+        _ => return None,
+    };
+    let (gone, added) = new.changed_since(&old, &starts);
+    Some((Arc::new(old), gone, added))
 }
 
 fn stratum_key(scc: &super::front::Comp) -> String {
@@ -2692,6 +2776,9 @@ impl<'a> Run<'a, '_> {
         // Each joined line's kept-plan key, by the engine's list it runs in (`ModeLine`), in spec order: its work goes
         // to the next run's planning budget (decision 0122, Q208).
         let mut mode_keys: Vec<(ModeLine, PlanKey)> = Vec::new();
+        // Each line's name, for the trace (`RERAIL_MODE_TRACE`) only: its list, its rule's head, what drives it, its order.
+        let trace = std::env::var_os("RERAIL_MODE_TRACE").is_some();
+        let mut mode_names: Vec<String> = Vec::new();
         let mut input_held: Vec<String> = Vec::new();
         // Each relation starts from its kept rows, held under its own name when the stratum opens (below).
         for r in scc {
@@ -2875,6 +2962,9 @@ impl<'a> Run<'a, '_> {
                     };
                     lines.push(line);
                     mode_keys.push((kind, key));
+                    if trace {
+                        mode_names.push(format!("{kind:?} {} by {}{rel} at {k} ({n} rows): {}", b.show_head(), if a.neg() { "!" } else { "" }, b.shown(&order).join(" , ")));
+                    }
                 }
             }
             // An aggregate over a changed relation (as the forms' `__grp` relations): its groups whose key is in the
@@ -2957,6 +3047,9 @@ impl<'a> Run<'a, '_> {
                         let spec = spec.encode();
                         lines.push(if removing { SpecLine::Remove { head: head_i, join: spec } } else { SpecLine::Seed { head: head_i, join: spec, est: Default::default() } });
                         mode_keys.push((if removing { ModeLine::Remove } else { ModeLine::Probe }, key));
+                        if trace {
+                            mode_names.push(format!("{} {} by the aggregate over {rel} ({n} rows)", if removing { "Remove" } else { "Probe" }, b.show_head()));
+                        }
                     }
                 }
             }
@@ -2990,6 +3083,9 @@ impl<'a> Run<'a, '_> {
             };
             lines.push(SpecLine::Recheck { head: head_i, join: spec });
             mode_keys.push((ModeLine::Recheck, key));
+            if trace {
+                mode_names.push(format!("Recheck {}", b.show_head()));
+            }
         }
         let quiet = !lines.iter().any(|l| matches!(l, SpecLine::Remove { .. } | SpecLine::Seed { .. } | SpecLine::AddChecked { .. }));
         // A recursive rule's delta probes: the waves that carry the rows put back and added, and the drivers that find
@@ -3012,6 +3108,9 @@ impl<'a> Run<'a, '_> {
                 };
                 lines.push(SpecLine::Join { head: head_i, delta: ri[b.rel(a)], join: spec, whole: None, est: Default::default() });
                 mode_keys.push((ModeLine::Probe, key));
+                if trace {
+                    mode_names.push(format!("Probe (wave) {} by {}", b.show_head(), b.show_atom(a)));
+                }
             }
         }
         // Quiet: no join to run. The relation is its kept one, its statistics as kept (`quiet_card`).
@@ -3049,19 +3148,28 @@ impl<'a> Run<'a, '_> {
             let mut lists: [std::vec::IntoIter<Vec<(i64, i64)>>; 4] = [probes.into_iter(), removes.into_iter(), adds.into_iter(), rechecks.into_iter()];
             let mut work: Vec<(PlanKey, f64)> = Vec::new();
             let mut probe = 0;
-            for (kind, key) in &mode_keys {
+            let mut named: Vec<(f64, &str)> = Vec::new();
+            for (i, (kind, key)) in mode_keys.iter().enumerate() {
                 let Some(line) = lists[*kind as usize].next() else { continue };
                 let mut w = work_of(&line);
                 if *kind == ModeLine::Probe {
                     w += drivers.iter().filter(|(p, _)| *p == probe).map(|(_, d)| work_of(d)).sum::<f64>();
                     probe += 1;
                 }
+                if let Some(name) = mode_names.get(i) {
+                    named.push((w, name));
+                }
                 match work.iter_mut().find(|(k, _)| k == key) {
                     Some((_, at)) => *at += w,
                     None => work.push((*key, w)),
                 }
             }
+            if trace {
+                named.sort_by(|a, b| b.0.total_cmp(&a.0));
+                eprintln!("RERAIL_MODE_TRACE {}: the mode's work {:.0}; most: {}", stratum_key(scc), work.iter().map(|(_, w)| w).sum::<f64>(), named.iter().take(4).filter(|(w, _)| *w > 0.0).map(|(w, n)| format!("{w:.0} {n}")).collect::<Vec<_>>().join("; "));
+            }
             for (key, w) in work {
+                crate::code_rule_dsl::logic::run::shape::join_work(w as usize);
                 Model::ran(key, w);
             }
         }
@@ -4830,7 +4938,11 @@ impl<'a> Run<'a, '_> {
         {
             let empty = Vec::new();
             let work = |line: usize| (super::profile::plan_work(counted.get(line).unwrap_or(&empty)) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum())) as f64;
+            if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                eprintln!("RERAIL_MODE_TRACE {}: derived, work {:.0}", stratum_key(scc), (0..keys.len()).map(work).sum::<f64>());
+            }
             for (line, key) in keys.iter().enumerate() {
+                crate::code_rule_dsl::logic::run::shape::join_work(work(line) as usize);
                 if let Some(key) = key {
                     Model::ran(*key, work(line));
                 }
@@ -5500,12 +5612,12 @@ pub trait KeptStrata {
 /// native operator's inputs.
 /// A changed read's versions as the maintain mode reads them (decision 0364): its kept rows, its rows gone and added,
 /// and its rows now, each a source read where it lies, with the columns of the input it is a view of, where it is
-/// one. A relation derived again that could not be made a version of its kept rows (`kept_delta`) has its kept rows
-/// as old and its rows gone and added as minus and plus (`diffs`); a changed input, its given deltas; a view of an
+/// one. A relation derived again that could not be made a version of its kept rows (`kept_delta`), or a reach index
+/// made again (`reach_was`), has its old rows and its rows gone and added as old, minus and plus (`diffs`); a changed input, its given deltas; a view of an
 /// input the engine holds with its change marked where its rows lie (a file-local part's export, `fl…_cparam`), its
 /// input's versions through its columns. Shared by the mode's inputs and the reach by kind and key (decision 0563 B).
-fn moved_versions(r: &str, diffs: &HashMap<String, [Arc<super::native::component::InRel>; 2]>, m: &mut dyn Maintain, db: &Connection, f0: Fields<'_>, rules_by: &IndexMap<&str, Vec<RuleKey>>, run_vs: &body::Versions) -> Option<([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 4], Option<rerail_blocks::vector::Vector<usize>>)> {
-    if let (Some([mi, pl]), Some(o), Some(now)) = (diffs.get(r), m.kept(r), super::native::component::held(db, r)) {
+fn moved_versions(r: &str, diffs: &HashMap<String, [Arc<super::native::component::InRel>; 3]>, m: &mut dyn Maintain, db: &Connection, f0: Fields<'_>, rules_by: &IndexMap<&str, Vec<RuleKey>>, run_vs: &body::Versions) -> Option<([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 4], Option<rerail_blocks::vector::Vector<usize>>)> {
+    if let (Some([o, mi, pl]), Some(now)) = (diffs.get(r), super::native::component::held(db, r)) {
         let cols = |x: &Arc<super::native::component::InRel>| x.source((0..o.k).map(|c| sql_col(r, c)).collect());
         return Some(([cols(&o), cols(mi), cols(pl), cols(&now)], None));
     }
@@ -5532,7 +5644,7 @@ fn moved_versions(r: &str, diffs: &HashMap<String, [Arc<super::native::component
 /// What the reach by kind and key reads of a stratum's changed reads (decision 0563 B): each one's versions
 /// (`moved_versions`), and how a joined relation is read. Made at the driver, for one stratum.
 struct Reach<'r, 'f> {
-    diffs: &'r HashMap<String, [Arc<super::native::component::InRel>; 2]>,
+    diffs: &'r HashMap<String, [Arc<super::native::component::InRel>; 3]>,
     db: &'r Connection,
     f0: Fields<'f>,
     rules_by: &'r IndexMap<&'f str, Vec<RuleKey>>,
@@ -6753,9 +6865,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let live = std::cell::RefCell::new(NetDeltas::new());
     // Reach indexes made again whose old rows are kept in memory: their deltas made once they are (`kept_delta`).
     let mut reach_olds: HashMap<String, Arc<super::native::component::InRel>> = HashMap::new();
+    // The reach indexes made again with no old rows kept: each one's delta is made against the index its reads' old
+    // rows close to (`reach_was`), and that old index and the starts whose rows changed are held for a relation
+    // through it.
+    let mut reach_made: BTreeSet<String> = BTreeSet::new();
+    let mut reach_was_made: HashMap<String, (Arc<super::native::reach::Closed>, Vector<i64>)> = HashMap::new();
     // A relation derived again whose delta is its rows gone and added (`Moved::Rows`): its minus and plus versions,
     // given to its readers (`ins`).
-    let mut diffs: HashMap<String, [Arc<super::native::component::InRel>; 2]> = HashMap::new();
+    let mut diffs: HashMap<String, [Arc<super::native::component::InRel>; 3]> = HashMap::new();
     // A changed read's versions as strata read them (`unchanged_as_read`), by its minus version and the columns read:
     // made once for all the strata that read the same columns. The minus version is held by its entry, so its address
     // is no other's while the entry lives.
@@ -7268,17 +7385,21 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         continue;
                     }
                     // A native operator's stratum (the reach index, decision 0119) has no maintained form: it is made again
-                    // from its reads as they are now, as the base program makes it, and its readers derive again. A text
-                    // test's has (`maintain`: only the new strings tested). A reach index whose old rows are kept in
-                    // memory (a chunk's guest rounds, decision 0331) is made the same way, and its delta is then made
-                    // against them (`reach_delta`), so its readers are maintained.
+                    // from its reads as they are now, as the base program makes it. A text test's has (`maintain`: only
+                    // the new strings tested). A reach index has its delta once made, so its readers are maintained:
+                    // against its old rows where they are kept in memory (a chunk's guest rounds, decision 0331,
+                    // `kept_delta`), else against the index its reads' old rows close to, made again (`reach_was`: made
+                    // in place, the index keeps no rows, decision 0119 §3). Any other operator's readers derive again.
                     if scc.iter().any(|r| f0.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::ArchivedNativeSpec::TextTest { .. }))) {
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
                         outcome.again.push((stratum_key(scc), crate::code_rule_dsl::logic::plan::again::NATIVE_OPERATOR));
                         for r in scc {
-                            if let Some(old) = m.kept(r).filter(|_| matches!(f0.native(r).map(|n| &n.spec), Some(super::program_image::ArchivedNativeSpec::Reach { .. } | super::program_image::ArchivedNativeSpec::ReachThrough { .. }))) {
+                            let reach = matches!(f0.native(r).map(|n| &n.spec), Some(super::program_image::ArchivedNativeSpec::Reach { .. } | super::program_image::ArchivedNativeSpec::ReachThrough { .. }));
+                            if let Some(old) = m.kept(r).filter(|_| reach) {
                                 reach_olds.insert(r.to_owned(), old);
+                            } else if reach {
+                                reach_made.insert(r.to_owned());
                             } else {
                                 m.no_delta(r);
                                 moved_rels.insert(r.to_owned());
@@ -7711,6 +7832,29 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             super::profile::stratum(&skey, "reach index over held relations (decision 0119)", || why);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
+            if reach_made.remove(*rel)
+                && let Some(m) = maintaining.as_deref_mut()
+            {
+                match reach_was(rel, native, db, f0, &diffs, &moved_rels, &reach_was_made, m, &rules_by, &run_vs) {
+                    Some((old, gone, added)) if gone.is_empty() && added.is_empty() => {
+                        reach_was_made.insert((*rel).to_owned(), (old, Vector::new()));
+                        outcome.unchanged.insert((*rel).to_owned());
+                    }
+                    Some((old, gone, added)) => {
+                        let starts: Vector<i64> = gone.chunks(2).chain(added.chunks(2)).map(|p| p[0]).collect();
+                        super::profile::note(format!("{rel} delta against its reads' old rows (0094 §8)"), || format!("{} gone, {} added, at {} starts", gone.len() / 2, added.len() / 2, starts.len()));
+                        let held = super::native::component::InRel::over_source(Arc::clone(&old) as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, vec![b'i'; 2]);
+                        diffs.insert((*rel).to_owned(), diff_versions(&held, &gone, &added));
+                        reach_was_made.insert((*rel).to_owned(), (old, starts));
+                        m.delta_made(rel);
+                        moved_rels.insert((*rel).to_owned());
+                    }
+                    None => {
+                        m.no_delta(rel);
+                        moved_rels.insert((*rel).to_owned());
+                    }
+                }
+            }
             if let Some(old) = reach_olds.remove(*rel)
                 && let Some(m) = maintaining.as_deref_mut()
             {
@@ -7790,7 +7934,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         }
         // A reach index not made in place (`reach_rows`) has no delta: its readers derive again.
         if let Some(m) = maintaining.as_deref_mut() {
-            for r in scc.iter().filter(|r| reach_olds.remove(*r).is_some()) {
+            for r in scc.iter().filter(|r| reach_olds.remove(*r).is_some() | reach_made.remove(*r)) {
                 m.no_delta(r);
                 moved_rels.insert(r.to_owned());
             }

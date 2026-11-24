@@ -30,7 +30,7 @@ merged the hub, django-bugs, Native-and-GPU-strata and Typing-support:
 - **underway:** not closed, and an active worktree's own records name it ("Who works on what", below).
 - **open:** not closed, and no worktree is on it.
 
-Of all 571 records: 479 closed, 17 underway, 75 open. A campaign is closed
+Of all 581 records: 482 closed, 20 underway, 79 open. A campaign is closed
 when every record of it is closed and a check keeps its invariant ("How to close them").
 
 ## The campaigns
@@ -69,7 +69,7 @@ when every record of it is closed and a check keeps its invariant ("How to close
 | [0613](decisions/0613-macro-expansions-are-memoized-requests-run-in-waves-their-results-a-tree.md) Macro expansions are memoized requests, run in waves; their results … | [preprocessor](#preprocessor) | Go-C-and-C-support | memoized expansions run in waves, their results a tree |
 | [0617](decisions/0617-matrix-units-through-ukl.md) Matrix units through UKL: native-shaped fragments, owned by one or … | [any-gpu](#any-gpu) | CUDA-support | matrix units through UKL: native-shaped fragments, emulated where none |
 
-### Not closed, in no campaign (29)
+### Not closed, in no campaign (36)
 
 Records the audit of 2026-11-23 did not take (written since, or merged in from a branch), whose status is not
 closed. Each is a candidate for a campaign.
@@ -97,14 +97,21 @@ closed. Each is a candidate for a campaign.
 | [0614](decisions/0614-a-tokens-first-byte-picks-its-region-and-row-by-nibble-tables.md) A token's first byte picks its region and its row by nibble tables | open |  | decided (the user, 2026-11-21: "no, use simdjson's approach for this where possible. We already have done some of the proving … |
 | [0615](decisions/0615-the-token-loop-keeps-a-templates-code-as-its-own-state.md) The token loop keeps a template's code as its own state | open |  | decided (the user, 2026-11-21: "Next: step C item 3, the escapes tested over code … Then the template masks, which need state kept in the … |
 | [0616](decisions/0616-a-sessions-corpus-batch-takes-its-unchanged-groups-from-the-last-run.md) A session's corpus batch takes its unchanged groups from the last run | open |  | accepted (2026-11-22). Amends 0494 (a batch makes a document when first read) for a session's corpus batch. |
-| [0622](decisions/0622-a-relations-sealed-chunks-take-the-frozen-columns-encodings.md) A relation's sealed chunks take the frozen columns' encodings | underway | wolfeel, Swift-Kotlin-Scala-support | steps 1 and 2 built (2026-11-22); steps 3 and 4 measured and not kept (below). t52 step 5: written before it was built, as t52's plan … |
+| [0622](decisions/0622-a-relations-sealed-chunks-take-the-frozen-columns-encodings.md) A relation's sealed chunks take the frozen columns' encodings | underway | wolfeel, Swift-Kotlin-Scala-support | steps 1 and 2 built (2026-11-22); step 3 built behind `RERAIL_SEAL_TAILS=on`, off by default; step 4 built (2026-11-23, below). t52 step … |
 | [0623](decisions/0623-rrs-generated-rust-beside-the-lean-parser.md) `.rerail`'s generated Rust, read beside the lean parser | underway | Parser-generators, Swift-Kotlin-Scala-support | the comparison is made, and the order below is done. The item is the user's (2026-11-22): "please figure out how JIT is faster than AOT, … |
 | [0628](decisions/0628-the-planners-statistics-and-the-tapes-code-tables-in-blocks.md) The planner's statistics are overlay blocks; a tape's code table is … | underway | Two-pass-roots-and-cross-file, Swift-Kotlin-Scala-support |  |
 | [0638](decisions/0638-format-16-codes-are-the-grammars-numbered-by-a-corpus.md) Format 16's codes are the grammar's, numbered by a corpus's counts | underway | Bend-language-investigation | decided (2026-11-23), by the user: "you may ORDER the codes based on a corpus, so long as it's large (we have a 502-repo corpus and the … |
+| [0639](decisions/0639-a-program-is-linked-from-its-librarys-module-images-and-its-own-module.md) A program is linked from module images that phase 0 plans and keeps … | underway | final-shape-rr-align | draft (2026-11-23). Revised the same day at the user's direction (keep as much as possible as facts, and do as much of the work as … |
 | [0640](decisions/0640-a-node-read-binds-its-columns-at-once-and-an-id-finds-its-place-in-one-step.md) A node read binds its columns at once, and an id finds its place in … | underway | wolfeel | designed, and its first lever measured (2026-11-23); nothing built. Numbered past the highest record in any worktree (0639). |
 | [0641](decisions/0641-a-programs-phases-are-indirect-on-metal-too-its-kernels-call-free.md) A program's phases are indirect on Metal too: its kernels call-free | open |  | accepted (2026-11-23). Amends 0648 (a program's levels are stacked dispatches): its Metal exception, a phase dispatched directly with its … |
-| [0647](decisions/0647-a-rounds-phases-cost-their-work-in-one-group-not-their-dispatches.md) A round's phases cost their work in one group, not their dispatches | open |  | spike (2026-11-23). Measured; nothing here changes 0641's times past the M3's run-to-run noise. Each of the three mechanisms below is in … |
+| [0645](decisions/0645-kernels-are-prepared-for-a-named-target-and-shipped-per-target.md) Kernels are prepared for a named target, and shipped per target | open |  | decided (2026-11-23). The user asked for the design ("for production builds, we need to compile kernels for each of the M families GPUs so … |
+| [0647](decisions/0647-a-rounds-phases-cost-their-work-in-one-group-not-their-dispatches.md) A round's phases cost their work in one group, not their dispatches | open |  | spike (2026-11-23). Measured; nothing here changes 0641's times past the M3's run-to-run noise. The direct dispatch and the chains are in … |
 | [0648](decisions/0648-a-programs-levels-are-stacked-dispatches-one-launch-a-stack.md) A program's levels are stacked dispatches, one launch a stack | underway | django-bugs | accepted (2026-11-23), amended by 0641: Metal dispatches a phase indirectly too, its program's kernels call-free (the M3 hung at an … |
+| [0651](decisions/0651-gpu-kernels-ship-as-npm-packages-per-backend-family-and-platform.md) GPU kernels ship as npm packages, one per backend family and platform | underway | CUDA-support | proposed (2026-11-23). The user asked: "For the GPU packaging, we will need a separate npm package to be built for each of the GPU … |
+| [0653](decisions/0653-the-preprocessors-setup-is-a-program-of-phases-on-a-work-queue-and-grid-h-is-gone.md) The preprocessor's setup is a program of phases on a work queue, and … | underway | cost-classifier | accepted (2026-11-23). Supersedes the persistent grid of 0468 §4, 0540 §3's join and 0568's residency for the preprocessor, and 0588 §6's … |
+| [0656](decisions/0656-a-tapes-auxiliary-index-names-vocabulary-places-counts-read-in-rust-and-ukl.md) A tape's auxiliary index: its names, vocabulary, places and counts, … | open |  | decided (the user, 2026-11-23: "If we took an interim "sidecar" before changing the tape format, what would it look like in its most … |
+| [0659](decisions/0659-an-unchanged-run-is-answered-by-its-frames-k4s-empty-leaf-delta-checked-first.md) An unchanged run is answered by its frames: K4's empty leaf delta, … | open |  | decided (2026-11-23), by the user: "build the proposal", after the spike that measured it (commits `cfdc9f1034`, `06bc84f2fa`). It … |
+| [0661](decisions/0661-a-recursive-set-heads-made-texts-are-one-arena-value-a-text.md) A recursive set head's made texts are one arena value a text | open |  | in progress (2026-11-23). Seven of the eight strata run on the device, and `literal_key` beside them; `ask_c` needs the forms listed at … |
 
 ## How to close them
 
@@ -344,7 +351,7 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 - 0116 and 0115: derived frames written by document granule.
 - 0117 step 5: a reached stratum's component kept with the session.
 - 0225 §4, §5, §7 (§7 is 0246 stage 3), 0328 (the image as a pass's output), 0132 (bulk planning).
-- 0094 §8's gate (`a_moved_definition_costs_about_itself`, ignored): a reach index made in place (0119) gets a delta against its last run's rows, so its readers are maintained, not derived again `without a version`; and a move's deltas are its definitions', not its files' (step 6 above), so no stratum passes θ that an edit of the definition in place keeps under it.
+- 0094 §8's gate (`a_moved_definition_costs_about_itself`, ignored), which counts the joins' work (`shape::join_work`). Done 2026-11-24: a reach index made again has its delta, against the index its reads' old rows close to, read at the starts that can differ (0119 §5), so its readers are maintained. Left: the mode's lines a delta leads but that then walk whole documents (0364 R4 at scale): `bv` and `pv`, led by `docof`'s changed nodes, read every node of every importing file through `rr_cx_reach` before `qv` binds them, 58,623 of the move's 93,291 (cold 61,264, the edit in place 17,738).
 
 **Closes when.** The edit check shows no stratum reading past its delta, on ep2 and on the fixture; 0094 §8's gate passes, its `ignore` removed.
 
@@ -702,7 +709,7 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 
 | Record | Left | Origin |
 |---|---|---|
-| [0431](decisions/0431-guests-are-tape-values-the-rules-make-not-documents.md) No guest documents: strings the rules parse are tape values; … | @parse of computed strings checked against packs' use; embed_value placement; queued-tape programs record; publication.rs program count | a |
+| [0431](decisions/0431-guests-are-tape-values-the-rules-make-not-documents.md) No guest documents: strings the rules parse are tape values; … | @parse of computed strings checked against packs' use; embed_value placement; queued-tape programs record. publication.rs's program count done (2026-11-23) | a |
 
 <a id="typing"></a>
 ## Typing and libraries: cross-file facts as ordinary facts, libraries held once
@@ -860,7 +867,7 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 
 | Record | Left | Origin |
 |---|---|---|
-| [0094](decisions/0094-one-shape-phases-keys-libraries-scope.md) One shape for phases, keys, libraries and scope | the incremental layout-invariance gate (§8), written as a test (`a_moved_definition_costs_about_itself`, ignored until met) and measured; met by a reach index's delta when it is made in place and by … | a |
+| [0094](decisions/0094-one-shape-phases-keys-libraries-scope.md) One shape for phases, keys, libraries and scope | the incremental layout-invariance gate (§8), written as a test (`a_moved_definition_costs_about_itself`, ignored until met) that counts the joins' work | a |
 
 **The assistant's own choices (c), and the goal each served:**
 

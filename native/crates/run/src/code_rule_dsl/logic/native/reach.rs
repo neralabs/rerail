@@ -352,6 +352,44 @@ impl Closed {
         set.contains(id).then(|| self.off[i] + set.rank(id) as usize - 1)
     }
 
+    /// The starts whose rows hold any of `values` (as `z`): for a reach, the starts that reach one of those nodes.
+    /// Each distinct closure is tested once.
+    pub fn starts_reaching(&self, values: &[i64]) -> Vector<i64> {
+        let ids: RoaringBitmap = values.iter().filter_map(|v| self.domain.binary_search(v).ok().map(|i| i as u32)).collect();
+        let mut tested: std::collections::HashMap<*const RoaringBitmap, bool> = std::collections::HashMap::new();
+        self.xs
+            .iter()
+            .zip(&self.sets)
+            .filter(|(_, s)| !ids.is_empty() && *tested.entry(Arc::as_ptr(s)).or_insert_with(|| !s.is_disjoint(&ids)))
+            .map(|(&x, _)| x)
+            .collect()
+    }
+
+    /// Its rows gone and added since `old` (each row-major `(x, z)`, ordered), read at `starts` only: the caller names
+    /// every start whose rows can differ (decision 0094 §8: a reach index made in place, which keeps no rows, has its
+    /// delta against the index its reads' old rows close to).
+    pub fn changed_since(&self, old: &Closed, starts: &[i64]) -> (Vector<i64>, Vector<i64>) {
+        let values = |c: &Closed, x: i64| -> Vector<i64> { c.start(x).map(|i| c.sets[i].iter().map(|id| c.domain[id as usize]).collect()).unwrap_or_default() };
+        let mut starts = starts.to_vec();
+        starts.sort_unstable();
+        starts.dedup();
+        let (mut gone, mut added) = (Vector::new(), Vector::new());
+        for x in starts {
+            let (was, now) = (values(old, x), values(self, x));
+            let (mut i, mut j) = (0, 0);
+            while i < was.len() || j < now.len() {
+                match (was.get(i), now.get(j)) {
+                    (Some(a), Some(b)) if a == b => (i, j) = (i + 1, j + 1),
+                    (Some(&a), Some(&b)) if a < b => { gone.extend_from_slice(&[x, a]); i += 1; }
+                    (Some(&a), None) => { gone.extend_from_slice(&[x, a]); i += 1; }
+                    (_, Some(&b)) => { added.extend_from_slice(&[x, b]); j += 1; }
+                    (None, None) => unreachable!(),
+                }
+            }
+        }
+        (gone, added)
+    }
+
     /// The graph it closes over: its cycles and connected parts.
     pub fn shape(&self) -> Shape {
         self.graph.shape()

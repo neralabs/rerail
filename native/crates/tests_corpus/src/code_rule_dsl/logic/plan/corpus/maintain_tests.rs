@@ -629,24 +629,21 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
 
 /// Decision 0094 §8, the incremental layout-invariance gate: a move costs about the moved definitions. t22's move,
 /// in small: a definition many files call goes to a module of its own (`_moved_0.py`), its old module re-exporting it
-/// where it was, so no importer changes. Answers are a fresh run's (R10). Its work is set against an edit of the same
-/// definition in place, a statement added to its body: the move touches two files where that edit touches one, so
-/// no stratum may be derived again that the edit kept, and it maintains at most a few times the edit's strata.
+/// where it was, so no importer changes. Answers are a fresh run's (R10, `fresh_tier`). Its cost is the joins' work
+/// (`shape::join_work`, counted, not timed), set against an edit of the same definition in place, a statement added to
+/// its body, which touches one file where the move touches two and changes no import: the move may cost a few times
+/// the edit, and at most half a cold run (it touches 2 files of 27). Strata derived again are not the measure: one that is cheap to derive is derived (0090 §4's priced
+/// clause), and the reach indexes over the import graph are made again whenever it changes (decision 0119 §3), their
+/// readers maintained from their delta.
 ///
-/// It fails today, for two causes, as on corpus0's `conform` package (95 files, 8 definitions moved; t22's scripts in
-/// `docs/rule-syntax/site/bench/layout-invariance`), where the move derived 62 strata again and its cross part took
-/// 1.8 times a cold run's:
-/// - The move changes the import graph, so the reach indexes over it (`rr_cx_reach`, `rr_cx_sees`,
-///   `rr_in_annotation_0_anc`) are made again. Made in place (decision 0119), they keep no rows of the last run to set
-///   the new ones against (`m.kept` is none), so none has a delta (`no_delta`), and every reader derives again,
-///   `changed without a version`: here 2 and 14 strata, on corpus0 3 and 15.
-/// - The moved files' deltas are wider than the moved definitions, so strata are past θ (0090 §4) that the edit in
-///   place keeps under it: here 14 against the edit's 1, on corpus0 44 (1.7 M rows of change queued).
-///
-/// Met by a reach index's delta when it is made in place, and deltas by definition (0090 §2 and step 6, 0092):
-/// edit-cost's work (0094 §8).
+/// It fails today (2026-11-24): joins' work cold 61,264, the edit in place 17,738, the move 93,291. The move derives
+/// nothing again but the two reach indexes (their readers maintained from their delta), and maintains 145 strata;
+/// four lines of the big recursive component cost 58,623 of it. Each is led by its delta, `docof`'s changed nodes,
+/// then reads `rr_cx_reach` and `docof` by document: every node of every file that imports the changed one, before
+/// `qv` binds it to nothing (`bv(s, x, k, v) :- ibind(s, x, q), qv(m9, q, k, v), docof(s, d9), docof(m9, e9),
+/// rr_cx_reach(d9, e9)`, and `pv`'s like it). The edit in place pays the same lines, 10,142 of its 17,738.
 #[test]
-#[ignore = "0094 §8: a reach index made in place has no delta, and a move's deltas are wider than its definitions (edit-cost)"]
+#[ignore = "0094 §8: a mode line led by a delta walks whole documents (docof through rr_cx_reach), so the move costs more than a cold run (edit-cost, 0364 R4 at scale)"]
 fn a_moved_definition_costs_about_itself() {
     let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_cx.rerail")).unwrap();
     let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";
@@ -660,10 +657,7 @@ fn a_moved_definition_costs_about_itself() {
     }
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("move", &program, &["call_target", "call_open", "type_of"], &refs);
-    // The test's relations are small: 0090 §4's floor (1,024 rows) lowered, as R4's tests do, so a delta wider than
-    // the move is seen past θ here as on corpus0. Taken after the session, which holds the maintain tests one at a time.
-    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
-    s.run();
+    let cold = s.run();
     s.write("pkg/helpers.py", &helpers.replace("    n = int(s)\n", "    n = int(s)\n    n = n + 0\n"));
     let edit = s.edit("a statement added to parse");
     s.write("pkg/helpers.py", helpers);
@@ -673,8 +667,12 @@ fn a_moved_definition_costs_about_itself() {
     s.write("pkg/helpers.py", &helpers.replace(moved_def, "from pkg._moved_0 import parse\n"));
     let moved = s.edit("parse moved to a module of its own");
     let again = |r: &Ran| r.report.cross_again.iter().map(|(w, n)| (*w, *n)).collect::<BTreeMap<&str, usize>>();
-    let report = format!("edit in place: again {:?}, maintained {:?}; move: again {:?}, maintained {:?}", again(&edit), edit.report.cross_maintained, again(&moved), moved.report.cross_maintained);
-    let more: Vec<&str> = again(&moved).keys().filter(|w| !again(&edit).contains_key(**w)).copied().collect();
-    assert!(more.is_empty() && moved.report.cross_maintained.2 <= edit.report.cross_maintained.2, "0094 §8: the move derived strata again that the edit kept ({more:?}): {report}");
-    assert!(moved.report.cross_maintained.0 <= 3 * edit.report.cross_maintained.0.max(1), "0094 §8: the move maintained past 3 times the edit's strata: {report}");
+    let report = format!(
+        "joins' work: cold {}, edit in place {}, move {}; edit: again {:?}, maintained {:?}; move: again {:?}, maintained {:?}",
+        cold.shape.join_work, edit.shape.join_work, moved.shape.join_work, again(&edit), edit.report.cross_maintained, again(&moved), moved.report.cross_maintained
+    );
+    eprintln!("0094 §8: {report}");
+    assert!(edit.shape.join_work > 0, "the edit in place ran joins: {report}");
+    assert!(moved.shape.join_work <= 3 * edit.shape.join_work, "0094 §8: the move costs past 3 times the edit in place: {report}");
+    assert!(2 * moved.shape.join_work <= cold.shape.join_work, "0094 §8: the move costs past half a cold run: {report}");
 }

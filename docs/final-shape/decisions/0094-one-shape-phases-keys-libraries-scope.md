@@ -1,8 +1,9 @@
 # 0094: One shape for phases, keys, libraries and scope
 
-Status: partly built (audited 2026-11-23, corrected the same day). Left: the incremental layout-invariance gate (§8),
-written as a test (`a_moved_definition_costs_about_itself`, ignored until met) and measured; met by a reach index's
-delta when it is made in place and by deltas by definition, edit-cost's work.
+Status: partly built (audited 2026-11-23, corrected 2026-11-24). Left: the incremental layout-invariance gate (§8),
+written as a test (`a_moved_definition_costs_about_itself`, ignored until met) that counts the joins' work. A reach
+index made again has its delta (2026-11-24); left is the maintain mode's lines that a delta leads but that walk whole
+documents (0364 R4 at scale), edit-cost's work.
 §5's searches are 0144's demand rules (built); §6's stored answers and read record are t24's step 1 (built), keyed by
 the module graph since t25. Accepted (2026-11-08). A map, not a mechanism: it says which decision answers each question,
 settles where two disagreed, and keeps the numbers in one register.
@@ -356,20 +357,45 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
       memo, as they should be, and 11.4 s CPU against a cold run's 16.2 s. Its cross part took 3.0 s against a cold
       run's 1.7 s, and its statistics 1.2 s against 0.2 s. Of the program's 216 strata it maintained 123 and derived
       62 again; 1.7 M rows of change were queued to the store.
-    - Two causes, by the 62 strata's reasons:
+    - What the 62 strata derived again stood for, read again by `RERAIL_MODE_TRACE` (2026-11-24; the first reading,
+      of the same day before, gave a second cause that was wrong):
       - 3 native operators' strata made again, and 15 readers of theirs. The move changes the import graph, so the
         reach indexes over it (`rr_cx_reach`, `rr_cx_sees`, `rr_in_annotation_0_anc`, decision 0119) are made
         again. Made in place, they keep no rows of the last run (`m.kept` is none in the level driver), so none
-        has a delta (`no_delta`), and each reader derives again: `rr_cx_reach changed without a version`
+        had a delta (`no_delta`), and each reader derived again: `rr_cx_reach changed without a version`
         (10 strata), `rr_cx_sees` (4), `rr_in_annotation_0_anc` (1).
-      - 44 past the threshold (0090 §4): the moved files' deltas are their documents' rows, wider than the moved
-        definitions (0090's cause 2; per-definition deltas are its step 6 and 0092).
+      - 44 past the threshold (0090 §4), most by its priced clause (the mode's lines priced above a fresh derive),
+        not by the deltas' size. The deltas are not wider than the moved definitions: node ids are by definition
+        already (§2a: a granule's slot is a hash of its key, a document's of its path), and `kind`'s delta is the
+        moved definitions' nodes (11,268 rows). Many of the 44 are cheap to derive (`tvarq` 25 rows of work,
+        `mtvar` 30), and deriving them is right. Two of their deltas are wide for another reason: `node_order`'s
+        keys are run ranks (decision 0121), which a granule taken out of a file moves for every later granule
+        (77,454 rows changed), past θ's size clause for `shadowed`.
+      - Beside the strata: the base relations' versions for the changed documents (0458) took 1.05 s against the
+        whole of a cold run's statistics' 0.2 s; the file-local joins over the 16 changed files (`walk` 0.70 s,
+        `rotgt` 0.54 s) cost more than a cold run's over all 95 (0.17 s, 0.14 s); 1.7 M rows of change were queued
+        to the frames, before t33's K4 was merged.
+    - **A reach index made again has its delta (2026-11-24).** Made in place it keeps no rows (decision 0119 §3),
+      so its old index is made again from its reads' old rows (their versions, read in place), and its rows gone
+      and added are read only at the starts that can differ: those whose seeds changed, and those that reach,
+      before or after, the source of an edge gone or added (`plan::reach_was`, `Closed::changed_since`). A relation
+      through a reach (`rr_cx_sees`) the same way over its map. Its readers are maintained from that delta, the old
+      index given as their old rows. Decision 0331's case, old rows kept in memory, is unchanged.
+    - **The gate counts work, not strata.** A stratum derived again is not a cost: one cheap to derive is derived
+      (the priced clause), and the reach indexes are made again whenever the import graph changes. The test
+      counts the native joins' work (`shape::join_work`: the rows into each step and those its last step makes,
+      as the planner prices a plan), every line of the run's strata, and sets the move's against an edit of the
+      same definition in place and against a cold run. Its answers are a fresh run's (`fresh_tier`).
     - The test (`maintain_tests::a_moved_definition_costs_about_itself`) is t22's move in small: calls_cx over 26
-      files, a definition 12 files call moved to `_moved_0.py` and re-exported, with θ's floor lowered as R4's tests
-      do. Its work is set against an edit of that definition in place, which derives 1 stratum again (past θ) and
-      maintains 68. The move derives 30 again, by corpus0's three reasons (2 native operators' strata, 14 reads
-      without a version, 14 past θ), and maintains 117. It is ignored until both causes are met; that change
-      removes the `ignore`.
+      files, a definition 12 files call moved to `_moved_0.py` and re-exported, θ at its defaults. With the reach
+      indexes' delta and t33's K4 merged, the move derives nothing again but the two reach indexes, and maintains
+      145 strata. Its work: cold 61,264, the edit in place 17,738, the move 93,291. Four lines of the big recursive
+      component (`bv`, `pv` and their 39 companions) cost 58,623 of the move's, and 10,142 of the edit's. Each is
+      led by its delta, `docof`'s changed nodes, and then reads `rr_cx_reach` and `docof` by document: every node of
+      every file that imports the changed one, before `qv` binds the changed node to nothing (`bv(s, x, k, v) :-
+      ibind(s, x, q), qv(m9, q, k, v), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9)`; `pv`'s through `litq`
+      and `qn` alike). That is 0364 R4 at scale: the order after the driver, priced. The test is ignored until the
+      move costs at most 3 times the edit in place and at most half a cold run.
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers
