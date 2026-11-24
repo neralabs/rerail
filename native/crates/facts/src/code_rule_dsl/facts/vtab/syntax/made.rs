@@ -70,6 +70,9 @@ pub(super) struct Context {
     pub(super) cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
     pub(super) dialects: Arc<Dialects>,
     pub(super) projection: Arc<Projection>,
+    /// Which nodes have text (`View::Text`), by dialect tag, where the projection reads `text`: each dialect's tables
+    /// made once for the batch (`core_rr::TextRows`).
+    pub(super) text_rows: Vec<Option<super::core_rr::TextRows>>,
     pub(super) block: Arc<Block>,
     /// Each guest's host.
     pub(super) host: HashMap<u32, u32>,
@@ -335,13 +338,24 @@ impl Docs {
         let token_order = core && super::tokens::VIEWS.iter().any(|r| projection.wants(r));
         // `text`'s rows (`View::Text`): which nodes have text, and which positions.
         let reads_text = core && projection.wants("text");
-        let text_rows = dialect.filter(|_| reads_text).map(|dialect| super::core_rr::TextRows::new(projection, dialect));
+        // The batch's tables for the dialect; one made here for a dialect the batch had none of when it was made.
+        let made_here;
+        let text_rows = match dialect.filter(|_| reads_text) {
+            Some(dialect) => match self.context.text_rows.get(usize::from(tag)).and_then(Option::as_ref) {
+                Some(rows) => Some(rows),
+                None => {
+                    made_here = super::core_rr::TextRows::new(&self.context.projection, dialect);
+                    Some(&made_here)
+                }
+            },
+            None => None,
+        };
         let spans = super::TextSpans {
             tokens: projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all"),
             source: projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source),
             lines: projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line),
         };
-        let text = reads_text.then_some((text_rows.as_ref(), spans));
+        let text = reads_text.then_some((text_rows, spans));
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), token_order, text, &self.context.block, self.context.cache.clone());
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
@@ -2162,7 +2176,9 @@ impl Tested {
         let (strings, symbols) = batch.vocabulary();
         self.test(|i| strings.get(i), &symbols);
         // `text`'s strings are the view's (decision 0656 step 4), read off the tape and interned as a read of them
-        // interns them: none is among the groups' strings. A document's at a time.
+        // interns them (`text_atom`, which fills the document's term table its later reads take): none is among the
+        // groups' strings. A document's at a time, each text tested where it lies, and each symbol once a run
+        // (`Vocabulary::rows`' `seen`).
         if batch.shape == Shape::Core && batch.projection.wants("text") {
             for doc in 0..batch.docs.len() {
                 let p = &batch.docs[doc];
@@ -2170,11 +2186,11 @@ impl Tested {
                 for i in 0..p.text_rows() {
                     let (local, x) = p.text_local(i);
                     if let Ok(a) = u32::try_from(p.text_atom(&batch.atoms, local, x)) {
-                        texts.push(p.with_text(local, x, str::to_owned));
+                        texts.push(p.text_str(local, x));
                         syms.push(a);
                     }
                 }
-                self.test(|i| texts[i].as_str(), &syms);
+                self.test(|i| texts[i], &syms);
             }
         }
         scanned.store(true, Ordering::Release);

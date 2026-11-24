@@ -300,7 +300,8 @@ impl TapeImage {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest) })
+        let index_at = Self::index_at(&held)?;
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), index_at })
     }
 
     /// The language's table.
@@ -324,17 +325,27 @@ fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, dige
         return Err("a written tape without its presence".into());
     }
     let key = u64::from_le_bytes(digest[..8].try_into().expect("8 bytes"));
-    let lang = match &*tape {
-        f16::Written::F16(t) => f16::lang(t.tag()),
-        f16::Written::F16Z(t) => f16::lang(t.tag()),
-    }
-    .ok_or("a format 16 tape of a language without its table")?;
-    let named = code_sets(lang.table(), language);
+    let tag = match &*tape {
+        f16::Written::F16(t) => t.tag(),
+        f16::Written::F16Z(t) => t.tag(),
+    };
+    let lang = f16::lang(tag).ok_or("a format 16 tape of a language without its table")?;
+    // The dialect's code sets, made once with its grammar (`Grammar::aux_codes`); a tape of another tag's, here.
+    let grammar = super::Grammar::embedded(language).ok();
+    let made;
+    let named = match grammar.as_deref().and_then(|g| g.aux_codes(tag)) {
+        Some(codes) => codes,
+        None => {
+            made = code_sets(lang.table(), language);
+            &made
+        }
+    };
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "auxiliary index built".into());
     let aux = match &*tape {
-        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, &named, rerail_tape_format::aux_index::Sections::ALL)?,
+        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)?,
         f16::Written::F16Z(t) => {
             let cache = f16::ZCache::of([t]);
-            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, &named, rerail_tape_format::aux_index::Sections::ALL)?
+            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)?
         }
     };
     tape.lay_aux(&aux)

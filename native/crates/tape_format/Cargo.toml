@@ -26,6 +26,8 @@ lz4-sys = "=1.11.1"
 memchr = "=2.8.3"
 # simdjson's nibble lookups: a format 16 part's code bytes tested against a set 64 at a time (`match_groups`).
 rerail-simd8 = { path = "../simd8" }
+# The auxiliary index's builder's map of a leaf's text to its term (`aux_index::build`): SipHash was a sixth of it.
+rustc-hash = "=2.1.3"
 
 [dev-dependencies]
 rerail-tape-format = { path = ".", features = ["test-hooks"] }
