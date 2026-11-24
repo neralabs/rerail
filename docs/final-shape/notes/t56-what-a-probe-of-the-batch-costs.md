@@ -176,6 +176,52 @@ The fresh sample's self samples under the joins' walk (`run_join_in_each::enter`
 
 These are the next levers, in the order of 0640's "What follows": the loop's per-candidate cost, then B.
 
+### W against the head, same host (2026-11-24, m3, load 79, `all`, CPU, unprofiled)
+
+| | CPU | wall | instructions | peak |
+|---|---|---|---|---|
+| W (`bin-prof`, 6970a3e539) | 50.4 s | 34.1 s | 491 G | 1,044 MB |
+| head (`c1596b8fba`) | 151.9 s | 57.4 s | 1,579 G | 2,195 MB |
+
+The findings' rows are W's (the head adds its debug relations). `tmp/refs/three/wvh.sh` runs both, one after the
+other.
+
+### Step 7: the join's own loop, measured by parts
+
+The lab `setfix::loop_lab_tests::a_joins_candidates_cost` (an ignored test) runs three joins over derived relations
+(sealed rows, the chains their waves kept), shaped like the step table's heaviest lines: a membership on two
+columns, and a lookup by one column, with one and with eight rows a key. It prints each step's CPU a row, the
+index path each probe took, a probe's reads (`runs::probe_reads`, counted in its first round alone), and the
+one-row lookup taken apart on one thread: the order's search alone, `candidates`, the ids walked, and the rows read.
+
+At 50,000 keys every probe of the lab is a kept chain's (path 2), tagged by its lead's hash. A probe costs 35 ns of
+search, 20 ns of `candidates` around it, and 30 ns to read its row, against 10 ns for that read by hand. The step
+then read and compared the key's columns again, which the order's search had compared already.
+
+**A (done): an order's leading key columns are exact.** A probe of an order whose leading columns are key columns
+finds only rows that hold the key there (`cands::exact_cols`). Those columns are now neither read nor compared
+again, as a view's exact columns were not. In the lab (warm round), the membership went from 117–139 to 93 ns, the
+one-row lookup from 128–148 to 118 ns, and the eight-row lookup from 548–562 to 377 ns a probe (47 ns a row out, from
+69). On `all` (m3, profiled): the rows were unchanged, and `kind / lookup on (c0)` went from 267 to 240 ns; the rest
+moved little.
+
+**Why `all` moved little: the lab's scale.** At a million keys the lab costs what `all` does (290–340 ns a probe),
+and the search alone is 161 ns. A probe compares 7.4 rows and reads 17.5 tags, from 2 and 8:
+- A 16-bit tag is shared by about 15 keys at that size, and its span is bisected: about 7 compares, each a sealed
+  read of a far row.
+- The scan sorts its rows by the next step's key (decision 0112's sorted batch), but a tagged order is sorted by
+  the lead's hash: each probe's gallop from the last one's place crosses the array.
+
+**B: the probes come in the order's order.** A scan feeding a tagged order sorts its keys by the lead's tag first, so
+the gallop moves forward a short way each probe.
+
+**C: an order prints its leading key columns.** Its prints cover its first `p` columns (the shortest key set it
+serves), not the whole key or nothing, so a span's rows are found by their prints and a longer key bisects only
+within them. This reaches the kept chains and the dedup order, which were never printed, and the ranged orders.
+
+Predicted, at a million keys: the search from 161 to about 50 ns. Each is measured alone, in the lab at both
+scales and then on `all`.
+
 ### Step 6: `wstart` priced again
 
 The answer that `wstart`'s rows are cheaper stored than inlined priced its readers' reads by the step table. It is

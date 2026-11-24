@@ -56,6 +56,29 @@ impl<'a> Rows<'a> {
     }
 }
 
+/// The key columns a probe of `src` (by its key columns, all bound) matches exactly, which its rows need not be read
+/// or checked for:
+/// - a view's: the sorted index's column, a lookup on one key column, every column of a composite lookup. A view's
+///   column may be a search on the tape (decision 0353 step 2: a node's parent on format 15).
+/// - an order's (a derived input's own, or a kept chain, `Csr::runs`): its leading columns that are key columns. Its
+///   search compared each row it finds on them (`Index::find_at`), and the step read and compared them again: a
+///   sealed chunk's decode a column a candidate (t56 step 7).
+pub(super) fn exact_cols(src: &Src) -> u64 {
+    let Src::In(rel, ix) = src else { return 0 };
+    if let Some(index) = ix.runs(rel) {
+        return index.cols.iter().take_while(|c| ix.cols.contains(c)).fold(0, |m, &c| m | 1 << c);
+    }
+    if rel.view.is_none() {
+        0
+    } else if ix.composite {
+        ix.cols.iter().fold(0, |m, &c| m | 1 << c)
+    } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
+        1 << ix.cols[ix.lead]
+    } else {
+        0
+    }
+}
+
 pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, report: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
         Src::In(rel, ix) => {
@@ -170,20 +193,8 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
     };
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
-    // As the join's step: the key columns a view's probe matched exactly, which its rows need not be checked for.
-    let exact: u64 = match src {
-        _ if keys.is_empty() => 0,
-        Src::In(rel, ix) if rel.view.is_some() && ix.runs(rel).is_none() => {
-            if ix.composite {
-                ix.cols.iter().fold(0, |m, &c| m | 1 << c)
-            } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
-                1 << ix.cols[ix.lead]
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
+    // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
+    let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(src) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
     // A whole key of a derived input's index: its sorted hash's candidates (t50 step 5), each checked against its row.
     if let Src::In(rel, ix) = src

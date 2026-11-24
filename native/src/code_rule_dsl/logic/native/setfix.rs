@@ -85,6 +85,8 @@ mod refusal_tests;
 mod key_tests;
 #[cfg(test)]
 mod index_order_tests;
+#[cfg(test)]
+mod loop_lab_tests;
 // `bounded_tests` reads the language (`rr::parse_version`), and `retain_tests` the planner's retention: `rerail-logic`'s
 // facade of this module mounts them.
 #[cfg(test)]
@@ -7941,18 +7943,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let given = if i == 0 { cx.first.take() } else { None };
                 let handed = given.is_some();
-                // The key columns a view's probe matched exactly, which its rows need not be read or checked for: the
-                // sorted index's column, a lookup on one key column, every column of a composite lookup. A view's
-                // column may be a search on the tape (decision 0353 step 2: a node's parent on format 15).
-                let exact: u64 = match src {
-                    _ if handed || keys.is_empty() => 0,
-                    Src::In(rel, ix) if rel.view.is_some() && ix.runs(rel).is_none() => {
-                        if ix.composite { ix.cols.iter().fold(0, |m, &c| m | 1 << c) }
-                        else if ix.sorted || (ix.source && ix.cols.len() == 1) { 1 << ix.cols[ix.lead] }
-                        else { 0 }
-                    }
-                    _ => 0,
-                };
+                // The key columns the probe matched exactly, which its rows need not be read or checked for
+                // (`cands::exact_cols`). Candidates handed to the step were not found by its probe.
+                let exact: u64 = if handed || keys.is_empty() { 0 } else { cands::exact_cols(src) };
                 let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c)
                     | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0)
                     | binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c)

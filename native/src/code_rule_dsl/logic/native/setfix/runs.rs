@@ -364,6 +364,24 @@ impl Sorted {
 
 
 
+/// A lab's counts of what probes read (`find_at`, every thread): [probes of a run, rows compared, tags or fences read].
+#[cfg(test)]
+pub(super) mod probe_reads {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+    static READS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+    /// Whether they count (a lab's counting rounds alone: counted, every compare writes one of three shared words).
+    pub(in super::super) static ON: AtomicBool = AtomicBool::new(false);
+    pub(in super::super) fn add(i: usize, n: u64) {
+        if ON.load(Relaxed) {
+            READS[i].fetch_add(n, Relaxed);
+        }
+    }
+    /// The counts, zeroed.
+    pub(in super::super) fn take() -> [u64; 3] {
+        [0, 1, 2].map(|i| READS[i].swap(0, Relaxed))
+    }
+}
+
 /// Whether an order on `cols` of a relation of `k` columns is tagged: the order on every column, of two or more.
 #[inline]
 pub(super) fn tagged(cols: &[usize], k: usize) -> bool {
@@ -557,15 +575,19 @@ impl Run {
         let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
         let n = self.ids.len();
         let cmp = |id: u32| -> Ordering {
+            #[cfg(test)]
+            probe_reads::add(1, 1);
             cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
+        #[cfg(test)]
+        probe_reads::add(0, 1);
         let (lo, hi) = if !self.tags.is_empty() {
             let t = tag(lead);
-            let s = gallop(&self.tags, (*hint as usize).min(n), |&x| x < t);
-            (s, s + gallop(&self.tags[s..], 0, |&x| x == t))
+            let s = gallop(&self.tags, (*hint as usize).min(n), |&x| { #[cfg(test)] probe_reads::add(2, 1); x < t });
+            (s, s + gallop(&self.tags[s..], 0, |&x| { #[cfg(test)] probe_reads::add(2, 1); x == t }))
         } else {
-            let a = gallop(&self.fences, (*hint as usize / FENCE).min(self.fences.len()), |&f| f < lead);
-            let b = a + gallop(&self.fences[a..], 0, |&f| f == lead);
+            let a = gallop(&self.fences, (*hint as usize / FENCE).min(self.fences.len()), |&f| { #[cfg(test)] probe_reads::add(2, 1); f < lead });
+            let b = a + gallop(&self.fences[a..], 0, |&f| { #[cfg(test)] probe_reads::add(2, 1); f == lead });
             (a.saturating_sub(1) * FENCE, (b * FENCE).min(n))
         };
         if !self.prints.is_empty() && key.len() == cols.len() {
