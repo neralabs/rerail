@@ -33,6 +33,7 @@ import { ENTRY_POINTS } from "../src/engine/index.js";
 import { DAEMON_STATE_FILE, ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, type DaemonState } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
+import { awaitCodeRulesOpenThrough } from "./support/code-rules-open.js";
 
 const PACKAGE_ROOT = resolve(".");
 const CLI = join(PACKAGE_ROOT, "dist", "cli", "cli.js");
@@ -135,6 +136,15 @@ async function startSession(session: Session): Promise<void> {
   // The session-start note counts the rules on: the session's rules are available.
   expect(contextOf(start)).toMatch(/Rerail is on in this repo: \d+ rules? (?:is|are) on\./u);
   await hook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "prompt-1", prompt: "Add the classifiers." }, session.projectDir, session.env);
+  // A session's first start answers its tool calls without code rules while they open (the first index of the
+  // checkout, its rules compiled), and the first pass after checks what was edited meanwhile; only an edit made once
+  // they run is steered at its own result. So each session waits for them, through Read calls that edit nothing, sent
+  // to the daemon itself so a slow engine in front of it does not hold the wait.
+  await awaitCodeRulesOpenThrough(session.id, async probe => {
+    const read = { ...common, tool_name: "Read", tool_use_id: `toolu_open_probe_${probe}`, tool_input: { file_path: join(session.projectDir, "pyproject.toml") } };
+    await hook({ ...read, hook_event_name: "PreToolUse" }, session.projectDir);
+    await hook({ ...read, hook_event_name: "PostToolUse", tool_response: { type: "text" } }, session.projectDir);
+  });
 }
 
 /** The turn's end: `Stop`'s answer. */
