@@ -1021,9 +1021,8 @@ process's CPU time):
 | keyed join, 100 K × 100 K (249,484 rows) | 113.9 ms | 103.4 ms |
 | closure, 400 nodes (157,228 rows, 24 rounds) | 56.6 ms | 72.6 ms |
 
-The keyed join is 9% faster than the scalar joins. The closure is 28% slower: its rounds are many and small, and
-each round is the program's phases (union, dedup, gate, append, delta), where the scalar joins' closure does a
-round's work in fewer passes. That gap is the next work.
+The keyed join is 9% faster than the scalar joins. The closure is 28% slower; where its time goes at opt-level 3 is
+not yet measured (a profile of this build is the next step), and that gap is the next work.
 
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
