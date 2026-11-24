@@ -148,7 +148,8 @@ a secret token sent as `x-rerail-access`, on every request.
   - Compared by SHA-256 of both values with `timingSafeEqual` (`sameSecret` in `src/runtime/daemon-control.ts`).
   - 32 random bytes, written 0600 via a temp file and rename.
   - Kept across restarts by a loopback daemon; minted at each start by a remote or public-host daemon.
-- **Engine socket.** Hooks send events to `POST /events` on a Unix socket in a per-user 0700 folder (T14).
+- **Engine socket.** Hooks send events to `POST /events`, and, while another process holds the database's write lock,
+  the receipt of a steer their answer carried to `POST /receipts`, on a Unix socket in a per-user 0700 folder (T14).
   - The engine service (`startEngineService`, `src/runtime/engine-service.ts`) requires the capability as
     `x-rerail-access` and answers `401` before reading the body.
   - Reason: a request names where its runtime writes (`storageRoot`, `databasePath`), and the daemon runs outside every
@@ -360,6 +361,9 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
+- A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
+  beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
+  (`keepReceipt` in `src/runtime/session-store.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
@@ -1018,7 +1022,9 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - The enforcer's spool in `tmpdir()` survives a crash.
 - On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
   names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
-  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  the capability, on another, then the receipt of a steer the event's answer carried (`POST /receipts`), with the
+  capability too, on that connection after the answer, or on a new one once that connection has been idle 5 s. The
+  time between the two is not short. A Claude Code or Codex hook checks before it
   waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
   then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
   12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free
