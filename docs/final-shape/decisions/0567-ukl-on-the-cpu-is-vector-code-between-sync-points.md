@@ -1140,6 +1140,33 @@ pass, and `parity_row_texts` fails in two cases of a product of two relations, t
 source before this change, only within the whole suite and not when it runs alone, so it is not this change's; it
 is not yet found.
 
+On the M1 Max it fails only while other tests use the GPU (`--test-threads=1`: all pass); its report has the text
+arena grown in place six times in one program (`remaps: 6`) and no rows out. The user's: "take note of the arena
+failure, we will do it later" (2026-11-24).
+
+### The count's reads, measured (the user's: "please address these", 2026-11-24)
+
+The keyed join's count, one thread on the M3: 200,000 bindings, 1,134,822 candidates (the places of their index
+groups), 997,886 of them past the key check, 249,484 rows out past `z < x`. The closure's: 314,456 bindings, 660,660
+candidates, 393,056 past the keys. So the index's slots are not the cost (88% of the keyed join's candidates are its
+rows): what the count reads is the join's own, each candidate's key and test columns at its row, which the index's
+places scatter over the relation.
+
+Tried and measured, neither kept (the count's samples, against 335 before):
+- **The binding columns and the chunk words, one load of 8.** Where a step's lanes are within 8 of the least, one
+  64-byte load and a table lookup (`tbl`) for its 8 words: 363 samples. A step's candidates' chunks span more than 8
+  words of the directory, so most steps fell to the lane loads, after the test.
+- **The candidates' bindings as bytes.** A tile is 256 bindings, so a byte each: one 8-byte store where there were
+  32 bytes, no change.
+
+Kept: the chunks' words read by a scalar base and each lane's index (`gather64_ix`), as the columns' are (325
+samples; no vector of addresses).
+
+What would take the reads down is the index's layout, not the program's: a group's key and test columns in the
+index's order (or a tag per place beside its row), so a group's candidates are read in place, in order. That changes
+the relation's index in its block (decision 0353's: an index in its relation's block), read by every reader, and is
+not made here.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
