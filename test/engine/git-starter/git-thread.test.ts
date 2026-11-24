@@ -187,15 +187,20 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
     const at = await folder("behind");
     const [release, launched, answered] = [join(at, "release"), join(at, "launched"), join(at, "answered")];
     expect(startGitInThread("win32")).toBe(true);
-    const held = async (wait: string): Promise<number | null> => (await runGitAsync(root, ["--version"], { env: { RERAIL_TEST_START_WAIT: wait } })).status;
+    const held = async (wait: string, mark = ""): Promise<number | null> => (await runGitAsync(root, ["--version"], { env: { RERAIL_TEST_START_WAIT: wait, RERAIL_TEST_START_MARK: mark } })).status;
     // Four held starts take the four threads; the read's start waits behind one of them. Three more bring each thread to
     // two, and the last start waits behind the read's in its thread until the process the read's Git starts has run or
     // the read has answered.
-    const first = [held(release), held(release), held(release), held(release)];
+    const marks = [0, 1, 2, 3].map(index => join(at, `holding-${index}`));
+    const first = marks.map(async mark => await held(release, mark));
     const stop = new AbortController();
     const read = runGitAsync(root, ["-c", `alias.launch=!echo started > '${slashed(launched)}'; sleep 30`, "launch"], { signal: stop.signal });
     const rest = [held(release), held(release), held(release), held([launched, answered].join(delimiter))];
     stop.abort();
+    // Every thread has loaded and holds its first start before any Git starts. On Windows a process started while
+    // another thread starts one inherits that one's pipe ends: tsx's esbuild service, started as a thread loads, would
+    // keep a Git's output open past the read's time limit.
+    await until(() => marks.every(mark => existsSync(mark)), 20_000, "the four held starts");
     await writeFile(release, "");
     const answer = await read;
     await writeFile(answered, "");
@@ -489,7 +494,8 @@ describe("a program run to its end in a starter thread", () => {
     const scripts: [string, number?][] = [
       ["process.stdout.write('out'); process.stderr.write('note')"],
       ["process.stdout.write('out'); process.stderr.write('refused'); process.exit(2)"],
-      ["process.stdout.write('waits'); setInterval(() => undefined, 1000)", 1_000],
+      // Prints nothing: what a child prints before its kill depends on how soon a loaded machine starts it.
+      ["setInterval(() => undefined, 1000)", 1_000],
     ];
     const byNode = promisify(nodeExecFile);
     const node = async (file: string, args: string[], timeoutMs?: number) => await byNode(file, args, { encoding: "utf8", ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }) });
@@ -505,6 +511,6 @@ describe("a program run to its end in a starter thread", () => {
     }));
     vi.unstubAllEnvs();
     expect({ inThread, inAThread: marks.map(mark => existsSync(mark)) }).toEqual({ inThread: asNodeRuns, inAThread: [true, true, true] });
-    expect(inThread[2]).toMatchObject({ killed: true, code: null, stdout: "waits" });
+    expect(inThread[2]).toMatchObject({ killed: true, code: null, signal: "SIGTERM" });
   }, 60_000);
 });
