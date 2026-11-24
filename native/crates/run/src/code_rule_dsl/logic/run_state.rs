@@ -122,6 +122,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/plan_search/src/code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED", Carried, ""),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "DECIDING", Call, "the decisions of the step open on this thread (decision 0269): a pool job's are the profile's alone"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
+    ("crates/prof/src/code_rule_dsl/logic/profile.rs", "ACCOUNTED", Thread, "the time this thread's closed scopes accounted for (t56 step 1): an open step's own time is its time less theirs"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "QUIET", Call, "a debug build's tree check beside a pass, its decisions unrecorded for the call (`quiet`): a pool job it starts records its own"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's shard of its run's profile records, merged into them as they are read (decision 0442)"),

@@ -298,6 +298,18 @@ function ruleDocuments(directory) {
 }
 
 /**
+ * The first core release that reads a rule written in `.rerail` in a pack (`rules/<id>.rerail` in pack.json): an older
+ * core refuses the document path, so it drops the whole pack. 0.2.0 is released and reads none (its rules test a
+ * `.rerail` file only from a source clone), so the first is the release after it, 0.2.1.
+ */
+export const RERAIL_DOCUMENTS_SINCE = "0.2.1";
+
+/** The ids of the rules a parsed `pack.json` ships written in `.rerail`. */
+export function rerailRules(packJson) {
+  return (packJson?.rules ?? []).filter((rule) => typeof rule.document === "string" && rule.document.endsWith(".rerail")).map((rule) => rule.id);
+}
+
+/**
  * Every language the rule documents under `<directory>/rules` name (a query's, a define's or a transform's
  * `language`), sorted. A document that is not JSON names none: the pack validation's check 1 reports it.
  */
@@ -358,12 +370,14 @@ export function shippedRuleKeys(directory) {
 }
 
 /**
- * The oldest core release that loads a pack holding the rules `heldOff` off and shipping rules in `languages` whose ast
- * rules use `ruleKeys`: the newest of the releases that first read each. Undefined when every core loads it.
+ * The oldest core release that loads a pack holding the rules `heldOff` off, shipping rules in `languages` whose ast
+ * rules use `ruleKeys`, and shipping the rules `rerail` written in `.rerail`: the newest of the releases that first
+ * read each. Undefined when every core loads it.
  */
-export function coreFloor(heldOff, languages, ruleKeys) {
+export function coreFloor(heldOff, languages, ruleKeys, rerail) {
   const since = [
     ...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []),
+    ...(rerail.length > 0 ? [RERAIL_DOCUMENTS_SINCE] : []),
     ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? []),
     ...ruleKeys.flatMap((key) => RULE_KEY_SINCE.get(key) ?? []),
   ];

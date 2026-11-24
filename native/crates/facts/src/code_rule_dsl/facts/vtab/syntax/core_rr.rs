@@ -466,20 +466,11 @@ pub(super) struct CoreRows {
     /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
     /// node id, with the document's source they were read off: one parse a document, not one a node.
     format_values: Option<(std::sync::Arc<crate::code_rule_dsl::tape::Text>, Vec<Option<(String, &'static str)>>)>,
-    /// The node kinds whose `text` is made at any length (`Projection::long_text`).
-    pub(super) long_text: BTreeSet<String>,
-    /// Every node's `text` at any length (`Projection::long_text_any`).
-    pub(super) long_text_any: bool,
-    /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
-    /// parent. `None` every node.
-    pub(super) text_nodes: Option<super::TextNodes>,
     /// The nodes whose `op` and `op_at` rows are made (`Projection::op_nodes`); `None` every node.
     pub(super) op_nodes: Option<super::TextNodes>,
-    /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
-    text_codes: Option<super::NodesOf>,
+    /// `op_nodes` as the walked document's dialect's codes (`for_dialect`).
     op_codes: Option<super::NodesOf>,
     op_at: Vector<[i64; 3]>,
-    text: Vector<[i64; 2]>,
     name: Vector<[i64; 2]>,
     str: Vector<[i64; 2]>,
     strprefix: Vector<[i64; 2]>,
@@ -501,7 +492,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -512,8 +503,8 @@ impl CoreRows {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Visits {
     All,
-    /// Those whose text (`text`, `text_nodes`) or ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
-    Read { text: bool, op: bool },
+    /// Those whose ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
+    Read,
     None,
 }
 
@@ -523,7 +514,7 @@ pub(super) struct Skip {
     pub(super) ops: bool,
     pub(super) comment: bool,
     pub(super) name: bool,
-    /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
+    /// `str`, `strprefix`, `value`, `static_value`, `value_type`.
     pub(super) literal: bool,
     /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
     pub(super) str: bool,
@@ -558,50 +549,71 @@ pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::Span
 /// Texts past this are scanned where they are, not kept in `Extra::rx_memo`.
 pub(super) const RX_MEMO_TEXT: usize = 4096;
 
-impl CoreRows {
-    /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
-    fn reads_text(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
-        self.text_nodes.as_ref().is_none_or(|nodes| match self.text_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
-            Some(codes) => codes.reads(nodes, p, id, dialect),
-            None => nodes.reads(p, id, dialect),
-        })
-    }
+/// Which numbered nodes have `text` (decision 0656 step 4): `text` is a view (`View::Text`), its node rows the
+/// nodes the projection's walk marks (`Item::Text`), so no row is made and no text interned until a rule reads it.
+/// A node has text where a rule reads the text of a node like it (`Projection::text_nodes`: its kind, its field,
+/// its parent's; every node where that is `None`), within the inline bound (`TEXT_INLINE`), or past it where it is
+/// token-like (no child, a comment, a literal with a prefix) or of a kind a rule reads at any length
+/// (`Projection::long_text`, `long_text_any`).
+pub(super) struct TextRows<'a> {
+    nodes: Option<(&'a super::TextNodes, super::NodesOf)>,
+    long: &'a BTreeSet<String>,
+    long_any: bool,
+}
 
+impl<'a> TextRows<'a> {
+    /// What `projection` reads of the text of `dialect`'s nodes.
+    pub(super) fn new(projection: &'a super::Projection, dialect: &Dialect) -> Self {
+        TextRows { nodes: projection.text_nodes.as_ref().map(|n| (n, n.of_dialect(dialect))), long: &projection.long_text, long_any: projection.long_text_any }
+    }
+    /// Whether tape node `id` of `f` has text.
+    pub(super) fn has(&self, f: FactsIn<'_>, dialect: &Dialect, id: u32) -> bool {
+        if let Some((nodes, codes)) = &self.nodes
+            && !codes.reads(nodes, f, id, dialect)
+        {
+            return false;
+        }
+        let kind = dialect.name(f, id);
+        let text = f.text(id);
+        if text.len() <= TEXT_INLINE || self.long_any || self.long.contains(kind) || is_comment(kind) {
+            return true;
+        }
+        let children = f.children(id);
+        children.is_empty() || literal(dialect.family, kind, text, interpolated(f, dialect, kind, &children)).prefix.is_some()
+    }
+}
+
+impl CoreRows {
     /// Whether a rule reads node `id`'s `op` or `op_at` rows (`op_nodes`).
     fn reads_op(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
         self.op_nodes.as_ref().is_none_or(|nodes| match self.op_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
-            Some(codes) => codes.reads(nodes, p, id, dialect),
-            None => nodes.reads(p, id, dialect),
+            Some(codes) => codes.reads(nodes, p.f(), id, dialect),
+            None => nodes.reads(p.f(), id, dialect),
         })
     }
 
-    /// `text_nodes` and `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
+    /// `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
     pub(super) fn for_dialect(&mut self, dialect: &Dialect) {
-        if let Some(nodes) = &self.text_nodes && !self.text_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
-            self.text_codes = Some(nodes.of_dialect(dialect));
-        }
         if let Some(nodes) = &self.op_nodes && !self.op_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
             self.op_codes = Some(nodes.of_dialect(dialect));
         }
     }
 
-    /// The nodes `node` visits. Where it makes no row but `text` and the ops, and the rules read only some nodes'
-    /// (`text_nodes`, `op_nodes`), those nodes; where it makes none, no node. A phase that reads a few names' text
-    /// (phase 1's imports) then makes its rows without a second walk of every node of every document (the main
-    /// phase's), and one reading the ops of a few kinds' nodes (`op(m, "|")` of a `binary_operator`) visits those.
-    pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
+    /// The nodes `node` visits. Where it makes no row but the ops, and the rules read only some nodes' (`op_nodes`),
+    /// those nodes; where it makes none, no node. A phase reading the ops of a few kinds' nodes (`op(m, "|")` of a
+    /// `binary_operator`) visits those. No node is visited for its text: `text` is a view (`TextRows`).
+    pub(super) fn visits(&self, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
         let only_these = s.comment && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
-        let (text, op) = (wants_text, !s.ops);
-        if !only_these || text && self.text_nodes.is_none() || op && self.op_nodes.is_none() {
+        if !only_these || !s.ops && self.op_nodes.is_none() {
             return Visits::All;
         }
-        if !text && !op { Visits::None } else { Visits::Read { text, op } }
+        if s.ops { Visits::None } else { Visits::Read }
     }
 
     /// The per-node relations the walk makes, as the profile names them (`node rows`' spans).
-    pub(super) fn making(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
+    pub(super) fn making(&self, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
         let s = &self.skip;
         let named = [
             (!s.ops, "op"),
@@ -610,7 +622,6 @@ impl CoreRows {
             (!s.literal, "literal"),
             (!s.literal_rows, "literal rows"),
             (!s.literal_value, "literal values"),
-            (wants_text, "text"),
             (wants_parts, "parts"),
             (wants_part_starts, "part starts"),
             (wants_words, "words"),
@@ -625,14 +636,15 @@ impl CoreRows {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::Read { text, op } => text && self.reads_text(p, dialect, id) || op && self.reads_op(p, dialect, id),
+            Visits::Read => self.reads_op(p, dialect, id),
         }
     }
 
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
     /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = p.f();
         let kind = dialect.name(f, id);
         let text = f.text(id);
@@ -655,12 +667,10 @@ impl CoreRows {
         for (i, t) in ops.iter().enumerate() {
             self.op_at.push([n, i as i64, string(t) as i64]);
         }
-        let mut token_like = children.is_empty();
         if is_comment(kind) {
             if !self.skip.comment {
                 self.comment.push([n, string(comment_body(text)) as i64]);
             }
-            token_like = true;
         } else {
             if self.skip.name {
             } else if let Some(s) = name(kind, text) {
@@ -668,13 +678,7 @@ impl CoreRows {
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
             }
-            // Where only `text` reads the literal (a prefix makes a node token-like), it is read only where that decides
-            // whether the node has text: a node whose text a rule reads, past the inline bound, with children. Decoded
-            // for every node of the walk (every node's, a program reading `op`), it was most of this walk.
-            let for_text_only = self.skip.literal_rows && self.skip.str && self.skip.literal_value;
-            let read_literal = !self.skip.literal
-                && (!for_text_only
-                    || wants_text && !token_like && !(text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) && self.reads_text(p, dialect, id));
+            let read_literal = !self.skip.literal;
             let interpolated = read_literal && interpolated(f, dialect, kind, &children);
             let mut lit = if read_literal { literal(dialect.family, kind, text, interpolated) } else { Literal::default() };
             // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
@@ -691,7 +695,6 @@ impl CoreRows {
                 if !self.skip.literal_rows {
                     self.strprefix.push([n, string(prefix) as i64]);
                 }
-                token_like = true;
             }
             if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
@@ -730,32 +733,6 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && self.keeps_text(p, dialect, id, kind, text, token_like) {
-            self.text.push([n, string(text) as i64]);
-        }
-    }
-
-    /// Whether node `id`'s `text` row is made, given whether it is token-like (`token_like`): a node whose text a rule
-    /// reads, within the inline bound, or token-like, or of a kind read at any length.
-    fn keeps_text(&self, p: &Projected, dialect: &Dialect, id: u32, kind: &str, text: &str, token_like: bool) -> bool {
-        self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind))
-    }
-
-    /// Whether node `id` is token-like as `node` finds it: no children, a comment, or a literal with a prefix.
-    fn token_like(&self, f: FactsIn<'_>, dialect: &Dialect, id: u32, kind: &str, text: &str) -> bool {
-        let children = f.children(id);
-        if children.is_empty() || is_comment(kind) {
-            return true;
-        }
-        !self.skip.literal && literal(dialect.family, kind, text, interpolated(f, dialect, kind, &children)).prefix.is_some()
-    }
-
-    /// Node `id`'s `text` row's text, read off its document's tape as `node` makes it (decision 0353 step 3): a
-    /// probe of `text` by node reads it, its document's node rows not made. `None`: the node has no `text` row.
-    pub(super) fn text_row<'p>(&self, p: &'p Projected, dialect: &Dialect, id: u32) -> Option<&'p str> {
-        let f = p.f();
-        let (kind, text) = (dialect.name(f, id), f.text(id));
-        self.keeps_text(p, dialect, id, kind, text, self.token_like(f, dialect, id, kind, text)).then_some(text)
     }
 
     /// A withheld document's one row: its first error (`verdict`).
@@ -763,11 +740,9 @@ impl CoreRows {
         self.syntax_error.push([i64::from(p.key()), i64::from(*l), string(msg) as i64]);
     }
 
-    /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
-    /// its tokens (none for a text-only document: it has no node).
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
-        let f = p.f();
+    /// A document's rows: its source and lines (a file's own, `own_text`; a guest's text is part of its file's). Their
+    /// text, and its tokens', is the `text` view's (`Projected::text_spans`).
+    pub(super) fn document(&mut self, p: &Projected, own_text: bool, projection: &super::Projection) {
         let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key());
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
@@ -780,36 +755,6 @@ impl CoreRows {
             if projection.wants("line_count") { self.line_count.push([key, x.lines.counted() as i64]); }
         }
         drop(lines_span);
-        let text_span = crate::code_rule_dsl::logic::profile::span(|| "span text".into());
-        // A token that is no node has text where a rule reads a token's (`Projection::token_text`); the source and a
-        // line where one reads theirs (`requested_container`), or, where the rules read every node's text (no
-        // `text_nodes`), within the bound. Every line's and token's text was 1.27 M of execution_authority_bypass's
-        // 1.61 M strings over the data layer's 7,416 files, read by no rule.
-        // RERAIL_LINE_TEXT=all makes every line's and the source's text within the bound, as before span_text_demand.
-        let all_line_text = std::env::var("RERAIL_LINE_TEXT").is_ok_and(|v| v == "all");
-        let narrowed = self.text_nodes.is_some();
-        let token_text = projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all");
-        if wants_text {
-            // An end point has no text (it is empty): the positions before them.
-            for i in 0..x.ends_from() as usize {
-                let [a, b] = p.span(p.len() + i as u32);
-                // The source and its lines have text where a rule reads it (`span_text_demand`), at any length:
-                // within the inline bound too, or every distinct line of the corpus is an atom (40 of the 55 MB of
-                // atoms authentication-plan-purity left over `impl/`). `RERAIL_LINE_TEXT=all` makes every one
-                // within the bound, as before.
-                let container = i >= x.tokens as usize && i <= x.tokens as usize + x.lines.count();
-                let requested_container = (wants_source_text && i == x.tokens as usize)
-                    || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
-                let token = i < x.tokens as usize;
-                // Within the bound: a line or the source only where asked for (or RERAIL_LINE_TEXT=all); another
-                // location where the rules read every node's text (not `narrowed`).
-                let bounded = (b - a) as usize <= TEXT_INLINE && if container { all_line_text } else { !narrowed };
-                if requested_container || token && token_text || !token && bounded {
-                    self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
-                }
-            }
-        }
-        drop(text_span);
     }
 
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
@@ -868,10 +813,6 @@ impl CoreRows {
     }
 
     /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
-    pub(super) fn extend_text(&mut self, rows: &[[i64; 2]]) {
-        self.text.extend_from_slice(rows);
-    }
-
     /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
     /// document W reads no values of (`Dialect::values`) has these.
     pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
@@ -898,7 +839,6 @@ impl CoreRows {
         value_type.sort_unstable();
         vec![
             ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
-            ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),
             ("strprefix", node_sym(&self.strprefix)),

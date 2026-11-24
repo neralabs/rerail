@@ -1056,6 +1056,7 @@ mod tests {
         if layer().is_none() {
             return;
         }
+        let _big = big_leases();
         let p = lease(1 << 16).unwrap();
         let at = p.host() as usize;
         let q = Queue::new().unwrap();

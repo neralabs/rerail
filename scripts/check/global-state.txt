@@ -308,6 +308,7 @@ native/crates/sessions_base/src/code_rule_dsl/sql_executor/work_graph.rs::NEXT_G
 native/crates/setfix/src/code_rule_dsl/logic/device/solver.rs::SOLVER	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix.rs::ONCE	stays	a hook registered once
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
+native/crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs::ON	stays	a test's switch: whether its counter counts
 native/crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
 native/crates/setfix/src/code_rule_dsl/waves/owner/database.rs::SETUP	stays	code registered at load
 native/crates/setfix/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)

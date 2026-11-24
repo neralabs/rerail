@@ -523,3 +523,197 @@ The mark questions' look-ahead (`word_at`, `at_K_at`) read a record's code after
 bound. Where a token is its record (no region read in parts), each reads it with one test, `self.recs.get(j)`, as the
 lean parser reads `self.t.get(j)`. Side by side, five rounds: the same within the host's swing (33.2–35.4 ms before,
 34.7–37.0 after); kept as lean's shape.
+
+## One structure, two lowerings: calls on the CPU, the loop on a device (done)
+
+What was left of tier 2's gap was the one loop's control flow: each level's return and each place after a call went
+through `match st`, one indirect jump that the CPU's predictor misses, and a level's call pushed and popped `stack`.
+Lean's level is a function and its return a native return, which the return-address predictor gets right. The parser
+is to run on a GPU as well (the user, 2026-11-23: "Consider that we want the parserse eventually to run on both CPU and
+GPU. What is the version of this decision which improves performance and closes the structural gap but allows us to
+generate GPU-shaped code too?").
+
+So the grammar's tier 2 is one structure, lowered two ways:
+
+| | Device (GPU, the JIT's targets) | CPU |
+|---|---|---|
+| A level | a range of places of `'run: loop { match st }` | a method |
+| A level's call | push the saved state and the return place, then jump | a call; the saved state in locals, restored on return |
+| The code after a call | a place | the code that follows |
+| A loop's head | a place | a loop |
+| Depth | `deeper`, `DEPTH`, then refuse | the same |
+
+Both are written from the grammar by the same rules' code (`G::code`) and the same sets: the rules a refusing level
+reaches (`refusers`, whose takes skip the refused-mark test elsewhere), the levels whose call saves the refused marks,
+and those whose code may set the level's word (`word_setters`). A call saves only what its level may change, in both.
+Only the call site, a level's end and the code after a call are written differently. The tests check the loop's tape
+equal to the calls' on every sample and corpus file (`tape_differs`), and both against the JIT's.
+
+`Compiled::rust` (and `rerail-rr-aot`'s `tier2.rs`, Kotlin's) is the calls form; `Compiled::rust_loop` (`tier2_loop.rs`)
+the loop. Side by side on spark1, three rounds in turns: tier 2 33.6–36.4 ms as the loop, 28.1–28.5 ms as calls (load
+2); 35.5–36.6 against 30.2–30.9 ms at load 13. Lean's tier 2 is 28.4 ms. All tests pass: rr_parser 52 (the loop's tapes
+equal to the calls'), kotlin_parser 70, `json_rust_is_current`, the product build.
+
+## The pairs mask of the block's one load, as lean's `pair` (done)
+
+Tier 1's block classes (`block_classes`) were one load and one classify, but the operators' pairs mask (`k_pair_6`)
+loaded the block again, and the block a byte on, and compared each pair's two bytes. It is now made of the same load,
+as the lean lexer's `pair`: one nibble-table pair names the pairs a byte starts, another, of the block shifted a byte
+on (`shift_in`, the next block's first byte in), those it ends; a pair is a bit of both, packed once (eight pairs a
+pair of tables). The block is classified once, and its five masks packed from it, as lean's four.
+
+All tests pass.
+
+## A block classified once, its neighbours' one byte tested (done)
+
+A mask a byte on or back (`next(digit)`, `prev(digit)`: a number's `.` between digits) read the neighbour block's
+classes: the loop classified the next block with each block (`ahead`), and again its own after a token jumped past it.
+A shift of one byte needs one bit of the neighbour, its byte at `base + 64` or `base - 1`: that byte is now tested where
+it is, as the lean lexer's `shift_in` reads it, and the loop classifies each block once, where it comes to it. A shift of
+more than a byte read the neighbour's classes until the reversals below. All tests pass.
+
+### Tier 1 beside lean
+
+`rr_syntax`'s `lean_speed` example runs the lean lexer as `rr-aot-speed` runs tier 1 (the same files), for information.
+
+## The dropped nodes no reading can reach go (done)
+
+A profile of the calls form on m3 put `shift_dead`'s loop among tier 2's hottest lines, though it runs only where the
+list of dropped nodes (`dead`) is not empty: the list only grew, so after a file's first `drop` every wrap walked all of
+it. A dropped node matters only while a reading may reach it, and a reading starts at a level's node made last, which
+only moves on. So `shift_dead` first drops the nodes before every open level's node made last (and those a reading took
+out), and the list is empty again once its statement is passed. All tests pass.
+
+### Tier 1's structure against lean's (2026-11-23)
+
+Tier 1 writes about as many records as lean's lexer writes tokens (its comments apart): the difference is in each
+token's code, not in their number. A region's end (a string's, a comment's, a tick literal's) is read from the token by
+windows, as lean's micro-lexers read from the token.
+
+## A token reads only the word it may be, and a class the padding lacks reads no end (done)
+
+Four changes to tier 1's token loop, each the lean lexer's shape:
+
+- **Only a row a word may be reads a word.** The word was read after the rows' match, for every token: a string's, a
+  comment's, a number's too. Each row now reads it in its own arm, and only a row a word may be (`RowArm::word`: a
+  grammar word whose first byte may be the row's first and whose others its tail's); the others' word is 0. As in the
+  lean lexer, where only a word run has a code.
+- **A one-byte token's word is in `TOKEN`.** `TOKEN`'s load gives each byte's pick, its record kind, and the code of the
+  word that byte is alone, so a one-byte operator's word is that load's, as the lean lexer reads an operator's kind from
+  its `TOKEN`. A longer token's is `word_at`'s.
+- **`word_at` is the lean lexer's `word_code`.** A slot is its word's first 8 bytes, its length and its code; the hit
+  is compared without a branch, and only a word longer than 8 compares the rest (`long_tail`, by its code).
+- **A class the padding lacks reads no end.** The source is padded with spaces (`PADDING`), so a class without the
+  space holds no bit past the file, and a window before the file shifts its bytes out. Such a class's window
+  (`cls_*`) masks nothing (`padded`), as the lean lexer reads its padded bytes. A class with the space still masks to
+  the file's bytes (`held`).
+
+`lex`'s check that the padding is spaces reads it 8 bytes at a time.
+
+The branch-free table for words to 16 bytes, as lean's `ninth`, came later (the reversals below). All tests pass.
+
+`rr-aot-speed` and `lean_speed` take `RR_ONLY=lex`: only the lexer.
+
+## A string's tests find its escapes once a window (done)
+
+A string's tests over its bytes (`str_bad`, a `\u` escape's digits) were read in one window loop (`wany_in`), but each
+test found the window's escapes itself, each with its own carry: three `escaped_step`s of the same backslashes a
+window. A window function that reads the escapes of one mask now has a twin given them (`e_NAME`), and a window loop
+whose tests all read the same escapes finds them once, with one carry (`fuse_tests`), as the lean lexer's string reader
+passes each escape once. All tests pass.
+
+## A string's end and its tests in one window loop (done)
+
+A string was read twice: its end found from the byte after its quote (`wfirst_bit`), then its tests over its bytes
+from the quote (`wany_in`). Now a row whose first bytes start no escape of its end's mask (`Bytes::escape_bytes`: the
+escapes are of one class, and none of the row's first bytes is in it) reads both in one window loop from its opener
+(`wfirst_any`, made by `fuse_read`): the escapes found once a window, the opener's byte no end, the tests kept to the
+end's byte. The escapes from the opener are then those from the byte after it, so the end is the same byte. As the lean
+lexer's `string_end`, which finds a string's end and its `\u` in one pass. All tests pass.
+
+### Where tier 1's code is beyond lean's
+
+The work the grammar asks beyond lean's lexer: the token marks tier 2 reads (each grammar token's `tested` bits, the
+number's and the operator's tests), the words (the hash of a word run, as lean's), and a string's tests (lean's tests
+only a `\u`).
+
+## A window's class a byte on or back is its own bits shifted (done)
+
+The window readers (a region's end, a run past its block) read a class a byte on or back as the window loaded there
+and classified again (`cls_X(p + 1)`): a comment's `*/`, a tick fence's second tick, a number's digit about its dot.
+Now a class at one byte's distance is the window's own bits shifted, with the one neighbour byte tested where it is, as
+the block's form reads its neighbours (and the lean lexer derives its masks from its window's one classify). Further off (a `\u` escape's four digits) it read the window there at first; the reversals below shift every distance.
+All tests pass.
+
+### Where tier 2's code differs from lean's (2026-11-23)
+
+Its writer calls are the plain ones (no chain or window check), and the mark tests are compiled out of almost every
+take. The rest is spread over the rules' calls:
+the levels stack's push and pop, the depth check, a comment test at each record (comments are records between the
+tokens, where the lean lexer keeps them apart), and the writer's columns zeroed at each file (`vec![0; cap]`, every cell
+written before it is read).
+
+Comments kept apart would change the records' layout, which the engine's executors share (`records::MARK_SHIFT`, read by
+the stream walk and the JIT's record loops), not only tier 2's.
+
+## A dropped leaf goes without a reading, and a node held dead is held once (done)
+
+A `drop` (an aggregate's separator) read the node made last again (`reread`): its nodes collected into a vector and
+written back, for a leaf of no extra with nothing inside it to keep. That leaf now just goes (the tape one node
+shorter). And each drop pushed its node open onto the list of nodes held dead (`dead`), once a separator: a list of the
+same node, each `wrap` walking it. A node already held is not pushed again, as every use reads it the same once.
+
+Kept as the shape of the work: no allocation and no list for a separator. All tests pass.
+
+## Steps once reverted on speed, restored on shape (2026-11-23)
+
+Three of the steps above were first tried, then put back because they timed slower. Timing was the wrong test: the
+measure is the generated Rust beside the lean lexer's source (`rr_syntax/src/lean.rs`). Each step is restored and kept on
+that measure:
+
+- **Every class at a distance comes from the window's one classify.** A window reader's class some bytes on or back (a
+  `\u` escape's four digits, a fence's second tick) is the window's own bits shifted, with each neighbour byte past the
+  window tested where it is. It is no longer the window loaded and classified again there. In the block's form, a class
+  more than a byte away no longer classifies the next or the last block (`ahead`, `behind`): the neighbour block's
+  bytes are tested where they are and shifted in. Lean derives every mask from its `Window`'s one classify and reads its
+  neighbour with `shift_in`. So the loop's head now classifies each block once, and only there.
+- **A token's one-byte tests are bits of the block's masks.** A test at a token's start (`first_clear(&M, s, s + 1)`,
+  `bit(&M, s)`: an operator's `-` not before a digit, a number's `0` before a digit, a `/` opening a comment) reads bit
+  `s - base` of the block's mask `k_M`. The mask is made once a block from its classes, as lean's tokens read the
+  `Window`'s masks. It is no longer a test of the bytes at the token.
+- **`word_at` has no branch.** A slot holds a word's first 8 bytes, its next 8, its length and its code. The token's
+  two words of memory, each masked to the length, are compared with the length in one test, as lean's `word_code` folds
+  its `ninth` byte into the hit. There is no `long_tail` compare by code. A grammar with a word over 16 bytes keeps the
+  match form.
+
+Also: the escapes' class call inside a window closure's `unsafe` is written without its own `unsafe` (a nested-block
+warning in the generated file), and a shift of 0 is not written. All tests pass: rr, Kotlin, JSON, the product build,
+clippy.
+
+## Comments apart from the tokens, the writer sized as lean's, Kotlin's words by the table (2026-11-23)
+
+Three differences the generated Rust still had from the lean parsers' source:
+
+- **The comments are apart from the tokens.** Tier 1 wrote a comment (an extra) as a record between the tokens, and
+  tier 2 tested each record for one: `next_tok` skipped them, `prev_tok` scanned back over them, and `advance` kept the
+  pending ones' place. The lean lexers keep their comments in a list of their own (`Lexed::comments`), and the lean
+  parser places them by where they start (`comment`, `next_comment`). Now tier 1's `Lexed` holds the grammar tokens'
+  records (`recs`) and the comments' (`extras`), pushed apart as lean's `comments`. Tier 2's cursor over them is lean's:
+  `pend` (the first not yet written), `xi` (the first after the token's start) and `next_x` (where that one starts),
+  moved on in `advance` (`pass_comments`). `flush`, `settle`, and Kotlin's `drops`, `loses` and `loses since` read
+  `xs[pend..xi]`. The next and the previous token are `i + 1` and `i - 1`. A gap question (decision 0451) reads the
+  tokens and the comments by where they start (`back`, `ahead`, `since_comments`).
+  This is the Bitlex compiler's Rust only. The engine's records (`records.rs`: the stream walk, the JIT, the Metal
+  passes) still hold the extras among the tokens. The tests compare tier 1's tokens and comments, merged by start,
+  with the interpreter's records, and the tapes with the JIT's.
+- **The writer is sized as lean's.** Lean makes its writer for each file with room for `n + n / 2 + comments + 8`
+  nodes (`n` its tokens). Tier 2 sized it from the bytes (`src.len() / 3 + 16`) and now sizes it as lean does. Both make
+  the writer for each file: lean reuses no columns either, so that part was no difference.
+- **Kotlin's words come from the table.** Kotlin's tier 1 matched a token's bytes against each word (`match b`). It
+  now reads the word as rr's does, and as lean Kotlin's `keyword_switch` does: the first 8 bytes and the next 8,
+  masked to the length, hashed by one multiply into `WORDS`, and compared without a branch. Kotlin's source has no
+  padding, so a load near the file's end reads zeros past it (`load8`, its end apart and cold, as lean Kotlin's
+  `swar::load8`).
+
+Also: the uncalled helpers' pass collapses every run of blank lines it leaves. All tests pass: rr, Kotlin, JSON, the
+product build, clippy.

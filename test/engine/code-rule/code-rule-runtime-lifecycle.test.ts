@@ -1248,7 +1248,7 @@ describe("source-scoped steers", () => {
       const windows = vi.spyOn(CodeRuleBridge.prototype, "unwatchedCall");
       try {
         await test.call("write");
-        expect(windows).toHaveBeenCalledWith("write", "write", { path: "edited.py" });
+        expect(windows).toHaveBeenCalledWith("write", expect.objectContaining({ toolName: "write", input: { path: "edited.py" } }));
       } finally {
         windows.mockRestore();
         await test.close();

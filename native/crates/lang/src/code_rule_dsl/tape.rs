@@ -1231,6 +1231,12 @@ impl TapeImage {
         }
     }
 
+    /// The document's index (decision 0656 step 4), read in its home: every image holds one, its writer's
+    /// (`written_16`), and one read in without it is refused (`sixteen`).
+    pub fn doc_index(&self) -> rerail_tape_format::doc_index::DocIndex<'_> {
+        rerail_tape_format::doc_index::DocIndex::read(self.aux_bytes().expect("an image holds its index")).expect("an image's index reads")
+    }
+
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 16 (or 16z) as stored.
     /// Nothing is copied.
     pub fn from_home(home: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
@@ -1274,6 +1280,12 @@ impl TapeImage {
         let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
+        }
+        // Its index, which every reader reads (`doc_index`): a home without one, or without a section its reads need,
+        // was written by no writer of this layout.
+        match image.aux_bytes() {
+            Some(b) => rerail_tape_format::doc_index::DocIndex::read(b).map(drop).map_err(|e| format!("a stored tape's auxiliary index: {e}"))?,
+            None => return Err("a stored tape without its auxiliary index".into()),
         }
         Ok(image)
     }

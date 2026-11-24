@@ -323,8 +323,12 @@ fn sweep(dir: &Path, rows: &ChainRows, committed: &ChainRows) {
 #[derive(Default)]
 struct Staging(std::sync::Mutex<HashSet<PathBuf>>);
 
+/// The machine's (`profile::machine`), not a shared object's: a store's files are every object's on the machine, and
+/// the writer's jobs run under their own runs' objects. A sweep by a job outside a run (phase 0's graphs, kept after its
+/// run) read the outer object's set, which lacked the files a run's wave had staged under its own, and removed them
+/// before their commit linked them (a chain naming a file gone: "a space's kept facts", corrupt).
 fn staging() -> std::sync::Arc<Staging> {
-    rerail_prof::code_rule_dsl::logic::profile::shared::<Staging>()
+    rerail_prof::code_rule_dsl::logic::profile::machine::<Staging>()
 }
 
 /// A space's puts written to a file of their own ahead of their wave (`KeptStage`): what its commit links.

@@ -12,8 +12,9 @@ use crate::executors_guard_tests::{product_lines, repo, sources};
 const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\t')", "rsplit('\\t')", "split(\"\\t\")", "split_once(\"\\t\")", ", '\\t')"];
 
 /// The files that may split on a tab, how many times, and why.
-const ALLOWED: [(&str, usize, &str); 7] = [
-    ("native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
+const ALLOWED: [(&str, usize, &str); 8] = [
+    ("native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 1, "a `.input` file's text (a repository file the rule declares as input)"),
+    ("native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/leaves.rs", 1, "a consulted base read's key (revision, path), as the read recorded it"),
     ("native/crates/tests_corpus/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger and matrix, hand-kept documents, their lines split in one place (`ledger_cells`)"),
     ("native/crates/typing/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/crates/ygraph/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),

@@ -639,3 +639,29 @@ fn rows_another_writer_replaced_open_as_the_last_commit() {
     assert_eq!(rels, ["a", "b", "c"], "every entry the last commit keeps");
     assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
 }
+
+/// A file staged ahead of its wave's commit (`KeptStage`) under one run's object is kept by a sweep under another
+/// object on the same machine (a writer's job outside a run): the staged files are the machine's, as the store's files
+/// are. With the set an object's, the sweep removed it before the commit linked it, and the chain named a file gone.
+#[test]
+fn a_file_staged_under_one_object_is_kept_by_a_sweep_under_another() {
+    use rerail_prof::code_rule_dsl::logic::profile::{Shared, shared_here, within};
+    let (path, _c) = store("staged-objects");
+    let machine = std::sync::Arc::clone(shared_here().machine());
+    let staged = {
+        let _a = within(Shared::on(&machine));
+        stage_space(&path, &SPACE, &[], rerail_blocks::block::Flush::Os).unwrap()
+    };
+    let file = space_dir(&path, &SPACE).join(&staged.name);
+    assert!(file.exists());
+    {
+        let _b = within(Shared::on(&machine));
+        sweep(&space_dir(&path, &SPACE), &Vec::new(), &Vec::new());
+    }
+    assert!(file.exists(), "a staged file, unlinked yet, kept by another object's sweep");
+    // Once a chain row names it, it is no longer staged: a sweep that names it no more removes it.
+    let rows: ChainRows = vec![(1, staged.name.clone(), staged.tag)];
+    sweep(&space_dir(&path, &SPACE), &rows, &rows);
+    sweep(&space_dir(&path, &SPACE), &Vec::new(), &Vec::new());
+    assert!(!file.exists(), "a linked file no row names, swept");
+}

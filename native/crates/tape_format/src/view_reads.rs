@@ -128,6 +128,27 @@ impl<'a> Tape<'a> {
         }
         i
     }
+    /// Named node `node`'s place among its parent's named children that are no comment (`tape_place_past_comments`,
+    /// `aux_index::place_past_comments`: T's shape's places): as `place`, the comments before the every-K-th named
+    /// sibling taken off, and the steps after it counting no comment. `NONE` where the home holds no index.
+    pub fn place_past_comments(&self, node: u32) -> u32 {
+        use crate::aux_index::K;
+        let Some(aux) = self.aux() else { return NONE };
+        let p = self.parent(node);
+        if p == NONE {
+            return 0;
+        }
+        let (mut i, mut c) = match aux.eighth_past_comments(p, node) {
+            None => (0, p + 1),
+            Some((k, e, q)) => (k * K - q, e),
+        };
+        while c < node {
+            let code = self.number(c);
+            i += u32::from(aux.named(code) && !aux.comment(code));
+            c = self.end_of(c);
+        }
+        i
+    }
 }
 
 /// Which place a `Loc` view's second column holds (`view_loc_*`), and core.rerail's `rr_report_location`.
@@ -227,9 +248,20 @@ impl<'a> Doc<'a> {
         match col {
             0 => self.parent_id(l, self.tape_node(l)),
             1 => self.node_id(l),
-            // Read in the tape's auxiliary index where the entry says so (decision 0656 step 4), else its `places`.
-            _ if self.entry.places_by_index != 0 => i64::from(self.tape.place(self.tape_node(l))),
-            _ => i64::from(self.items(&self.entry.places)[l as usize]),
+            // An outermost anchor's, its rank among the anchors; any other's read in the tape's auxiliary index, as the
+            // entry's shape numbers places (decision 0656 step 4).
+            _ => {
+                let x = self.tape_node(l);
+                let anchor = rerail_clif::view_reads::ANCHOR_ITEM as u32;
+                i64::from(if self.is(anchor, x) {
+                    // SAFETY: as `tape_node`.
+                    unsafe { self.numbering().rank(anchor, x) }
+                } else if self.entry.place == rerail_clif::view_reads::PLACE_PAST_COMMENTS {
+                    self.tape.place_past_comments(x)
+                } else {
+                    self.tape.place(x)
+                })
+            }
         }
     }
     /// The numbered node of the `field` view's row `i`, and its tape node.

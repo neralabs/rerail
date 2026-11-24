@@ -19,11 +19,12 @@ pub use reads::RowReads;
 
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens, spread
 /// nodes (`spread`'s), the token order's places (`tokens`: with a token, one before, one after), `op`'s rows,
-/// and the nodes with a numbered tape parent and the root (`Item::Child`: `tape_rows`' `structural_before`,
-/// `rr_token_named`), as its projection has them; the documents' table keeps them.
+/// the nodes with a numbered tape parent and the root (`Item::Child`: `tape_rows`' `structural_before`,
+/// `rr_token_named`), and `text`'s rows (`Projected::text_rows`), as its projection has them; the documents' table
+/// keeps them.
 pub type ViewCounts = [u32; COUNTS];
 /// How many views' counts a document has (`ViewCounts`).
-pub const COUNTS: usize = 11;
+pub const COUNTS: usize = 12;
 
 /// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
 /// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
@@ -42,7 +43,7 @@ pub struct Kept {
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     use super::tokens::TokRel;
-    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After), p.ops(), p.parented()]
+    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After), p.ops(), p.parented(), p.text_rows()]
 }
 
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
@@ -436,7 +437,16 @@ impl Docs {
         let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::clone(&d.facts.lines))));
         let new_span = profile::span(|| "projected".into());
         let token_order = core && super::tokens::VIEWS.iter().any(|r| projection.wants(r));
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), token_order, &self.context.block, self.context.cache.clone());
+        // `text`'s rows (`View::Text`): which nodes have text, and which positions.
+        let reads_text = core && projection.wants("text");
+        let text_rows = dialect.filter(|_| reads_text).map(|dialect| super::core_rr::TextRows::new(projection, dialect));
+        let spans = super::TextSpans {
+            tokens: projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all"),
+            source: projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source),
+            lines: projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line),
+        };
+        let text = reads_text.then_some((text_rows.as_ref(), spans));
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), token_order, text, &self.context.block, self.context.cache.clone());
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.set_file(Guest::file_key(d.guest.as_deref().map(Guest::of), d.key));
         drop(new_span);
@@ -1196,8 +1206,10 @@ impl Batch {
                 need.dedup();
                 if need.is_empty() && waits {
                     // Another thread's group: the pool's next job (`help_once`, within this thread's stack), else a
-                    // wait for a group to end.
+                    // wait for a group to end. Its time is the wait's span's, not the reading step's (t56 step 1); a
+                    // job it runs charges its own scopes.
                     drop(s);
+                    let _waited = profile::span(|| "batch: waited for another thread's make".to_owned());
                     if !rerail_accel::exec::help_once() {
                         let mut s = self.rows.state.lock();
                         if want.iter().any(|&i| s.of[i].is_none() && s.claimed[i].is_some_and(|t| t != me)) {
@@ -1217,10 +1229,14 @@ impl Batch {
                 s.makers.push(me);
                 (need, waits, Claim { rows: &self.rows, me, docs })
             };
-            let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|mut m| {
-                let used: Option<Arc<[u32]>> = m.used.take().map(Arc::from);
-                self.group_rels(m, &need).map(|r| (r, used))
-            });
+            let made = {
+                // The make's own span: the reading step that asked for it is not charged it (t56 step 1).
+                let _made = profile::span(|| "batch: rows made".to_owned());
+                self.make_rows(&need, self.rows.first(), &[]).and_then(|mut m| {
+                    let used: Option<Arc<[u32]>> = m.used.take().map(Arc::from);
+                    self.group_rels(m, &need).map(|r| (r, used))
+                })
+            };
             let makes = self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             crate::code_rule_dsl::prof::count(if whole { "batch: documents made by a whole read" } else { "batch: documents made by a probe" }, need.len());
             crate::code_rule_dsl::prof::count("batch: groups made", 1);
@@ -1339,7 +1355,7 @@ impl Batch {
             return c;
         }
         self.ensure(&(0..self.docs.len()).collect::<Vec<_>>());
-        self.rows.complete.get_or_init(|| {
+        profile::once(&self.rows.complete, "batch: every relation's rows", || {
             let rels = self.rows.state.lock().rels.clone();
             // Each relation's rows as given (its kept statistics'): its `len` was answered by them.
             for (rel, r) in rels.iter().enumerate() {
@@ -1358,49 +1374,6 @@ impl Batch {
         Arc::clone(&self.rows.state.lock().rels[rel])
     }
 
-    /// Node `n`'s `text` row read off its document's tape (decision 0353 step 3), where its document is not made: a
-    /// row id from `TAPE_ROWS` on (`Some(None)`: the node has none). `None` where the tape does not answer it (a batch
-    /// of T's shape, a document made, withheld or text-only, a token's or span's id), and its document is made.
-    pub(super) fn tape_text(&self, n: i64) -> Option<Option<usize>> {
-        if self.projection.shape != Shape::Core || !self.projection.wants("text") {
-            return None;
-        }
-        if let Some(&row) = self.tape_text.lock().1.get(&n) {
-            return Some(row.map(|r| TAPE_ROWS + r as usize));
-        }
-        let i = self.docs.position((n >> 32) as u32)?;
-        if self.rows.state.lock().of[i].is_some() {
-            return None;
-        }
-        let tag = self.docs.tag(i);
-        let dialect = if tag == TEXT { None } else { self.dialects.get(tag) }?;
-        let MadeDoc { p, withheld, .. } = self.docs.made(i);
-        if *withheld {
-            return None;
-        }
-        let local = p.local_of(n as u32).filter(|&l| l < p.len())?;
-        let x = p.ranks().select(Item::Node, local)?;
-        let c = self.text_rows.get_or_init(|| super::core_rows_for(&self.projection));
-        let atom = match c.text_row(p, dialect, x) {
-            Some(text) => Some(i64::from(self.atoms.intern(text).ok()?)),
-            None => None,
-        };
-        let mut taped = self.tape_text.lock();
-        let (rows, by_node) = &mut *taped;
-        if let Some(&row) = by_node.get(&n) {
-            return Some(row.map(|r| TAPE_ROWS + r as usize));
-        }
-        let row = atom.map(|a| {
-            rows.push([n, a]);
-            (rows.len() - 1) as u32
-        });
-        by_node.insert(n, row);
-        Some(row.map(|r| TAPE_ROWS + r as usize))
-    }
-    /// A `text` row read off the tape (`tape_text`), by its row id.
-    pub(super) fn tape_text_row(&self, row: usize) -> [i64; 2] {
-        self.tape_text.lock().0[row - TAPE_ROWS]
-    }
     /// The keys of the documents whose paths' atoms are `values` (a read of `doc` by its path): its documents' paths
     /// interned once, none made. `None` where they could not be.
     pub(super) fn keys_of_paths(&self, values: &[i64]) -> Option<Vec<u32>> {
@@ -1581,8 +1554,6 @@ fn session_group() -> usize {
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the
 /// one group's rows when one group holds them all (a batch read whole); before, what is known without making a
 /// document, and a probe of the first column makes the documents it names.
-/// The first row id of a `text` row read off the tape (`Batch::tape_text`): past every row a batch's relation holds.
-pub(super) const TAPE_ROWS: usize = 1 << 30;
 
 pub(super) struct MadeRows {
     pub(super) batch: Arc<Batch>,
@@ -1700,27 +1671,6 @@ impl MadeRows {
     /// The rows a read of `column` by `values` matches (each also passing `keep`), the documents they name made, in
     /// their groups' ranges: `None` for a column that names no document (by its key, or `doc`'s by its path).
     fn routed(&self, column: usize, values: &[i64], eqs: &[(usize, i64)]) -> Option<(Arc<Relation>, rerail_blocks::vector::Vector<usize>)> {
-        // `text` by node, of a document not made: read off its tape, its node rows not made (decision 0353 step 3).
-        if column == 0 && self.batch.rows.names[self.rel] == "text" {
-            let mut taped = Vec::new();
-            let mut rest: Vec<i64> = Vec::new();
-            for &v in values {
-                match self.batch.tape_text(v) {
-                    Some(row) => taped.extend(row),
-                    None => rest.push(v),
-                }
-            }
-            let (r, mut rows) = if rest.is_empty() { (self.batch.made_so_far(self.rel), rerail_blocks::vector::Vector::new()) } else { self.routed_made(column, &rest, eqs)? };
-            rows.extend(taped.into_iter().filter(|&row| {
-                let got = self.batch.tape_text_row(row);
-                eqs.iter().all(|&(c, v)| got.get(c) == Some(&v))
-            }));
-            return Some((r, rows));
-        }
-        self.routed_made(column, values, eqs)
-    }
-    /// `routed`'s rows of the documents the values name, those documents made.
-    fn routed_made(&self, column: usize, values: &[i64], eqs: &[(usize, i64)]) -> Option<(Arc<Relation>, rerail_blocks::vector::Vector<usize>)> {
         let Some(keys) = self.route(column, values) else {
             profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], self.by().column()));
 
@@ -1730,9 +1680,8 @@ impl MadeRows {
     }
     /// `lookup_read` of one value of the column that names a row's document (`by`), where it names one document: that
     /// document's group made if it is not, and its rows by the group's index of the column, read as found. No set,
-    /// list or row buffer a probe: a probe of a made relation by its document's node (`text(n, s)`) is one group's
-    /// index read; of a document not made, its `text` read off its tape (`Batch::tape_text`). `false` where the read
-    /// is not of that shape (the general route reads it).
+    /// list or row buffer a probe: a probe of a made relation by its document's node is one group's index read. `false`
+    /// where the read is not of that shape (the general route reads it).
     /// `hint`: the step's cursor's (`ProbeCursor::hint`): the last probe's document plus one and the row its search
     /// ended at, each checked before it is used.
     fn read_one(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32; 2], each: &mut dyn FnMut(usize, &[i64])) -> bool {
@@ -1753,21 +1702,6 @@ impl MadeRows {
         // The document's group as it went on: read with no lock, nothing counted.
         let p = match self.batch.rows.published[doc].get() {
             Some(p) => p,
-            // `text` by node, its document not made: read off its tape (decision 0353 step 3), none made.
-            None if column == 0
-                && self.batch.rows.names[self.rel] == "text"
-                && let Some(row) = self.batch.tape_text(value) =>
-            {
-                if let Some(row) = row {
-                    let got = self.batch.tape_text_row(row);
-                    let mut v = [0i64; 16];
-                    for (o, &c) in v.iter_mut().zip(columns) {
-                        *o = got[c];
-                    }
-                    each(row, &v[..columns.len()]);
-                }
-                return true;
-            }
             None => {
                 let before = self.batch.rows.groups();
                 self.batch.ensure(&[doc]);
@@ -1941,13 +1875,6 @@ impl Source for MadeRows {
         }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
-        if row >= TAPE_ROWS {
-            let got = self.batch.tape_text_row(row);
-            for (o, &c) in out.iter_mut().zip(columns) {
-                *o = got[c];
-            }
-            return;
-        }
         if let Some(t) = self.done() {
             return t.row_at(row, columns, out);
         }
@@ -1975,14 +1902,7 @@ impl Source for MadeRows {
         };
         let mut v = vec![0; _columns.len()];
         for row in rows {
-            if row >= TAPE_ROWS {
-                let got = self.batch.tape_text_row(row);
-                for (o, &c) in v.iter_mut().zip(_columns) {
-                    *o = got[c];
-                }
-            } else {
-                Source::row_at(r.as_ref(), row, _columns, &mut v);
-            }
+            Source::row_at(r.as_ref(), row, _columns, &mut v);
             _each(row, &v);
         }
         true
@@ -2292,9 +2212,6 @@ impl Source for MadeRows {
             .or_else(|| self.target().lookup_eq(_column, _value, _eqs))
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        if row >= TAPE_ROWS {
-            return self.batch.tape_text_row(row)[column];
-        }
         if let Some(t) = self.done() {
             return t.value(row, column);
         }
@@ -2402,6 +2319,22 @@ impl Tested {
         }
         let (strings, symbols) = batch.vocabulary();
         self.test(|i| strings[i].as_str(), &symbols);
+        // `text`'s strings are the view's (decision 0656 step 4), read off the tape and interned as a read of them
+        // interns them: none is among the groups' strings. A document's at a time.
+        if batch.shape == Shape::Core && batch.projection.wants("text") {
+            for doc in 0..batch.docs.len() {
+                let p = &batch.docs[doc];
+                let (mut texts, mut syms) = (Vec::new(), Vec::new());
+                for i in 0..p.text_rows() {
+                    let (local, x) = p.text_local(i);
+                    if let Ok(a) = u32::try_from(p.text_atom(&*batch.atoms, local, x)) {
+                        texts.push(p.with_text(local, x, str::to_owned));
+                        syms.push(a);
+                    }
+                }
+                self.test(|i| texts[i].as_str(), &syms);
+            }
+        }
         scanned.store(true, Ordering::Release);
     }
 }
