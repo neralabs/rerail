@@ -1266,8 +1266,12 @@ UKL_INLINE void scan_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPA
 // least row index of rows equal to it wins), and a row is kept when it holds its place. The kept rows keep their order.
 // `cap`: its rows' table's stride; `ocap`: its distinct rows' (a table its size script placed: as many as they are);
 // `places`: its places, `mask + 1` (its clear's count).
-typedef struct Dedup { uint32_t cap; uint32_t in_slot; uint32_t out_slot; uint32_t ncols; uint32_t mask; uint32_t cols[16]; uint32_t ocap; uint32_t places; } Dedup;
-UKL_STATIC_ASSERT(sizeof(Dedup) == 92, "Dedup: size");
+// `seen` (decision 0567): its rows less those a relation holds, through the relation's map (`h_at` in its map's
+// block, `hmask + 1` places of 3 words, a row of the relation a place, as a fold's key map is laid out); its rows out
+// placed in the map as the rows they become (its rows past `r_rows_at`'s length, in their order).
+typedef struct Dedup { uint32_t cap; uint32_t in_slot; uint32_t out_slot; uint32_t ncols; uint32_t mask; uint32_t cols[16]; uint32_t ocap; uint32_t places;
+                       uint32_t seen; uint32_t hmask; uint32_t pad; uint64_t r_at, r_rows_at, h_at; } Dedup;
+UKL_STATIC_ASSERT(sizeof(Dedup) == 128, "Dedup: size");
 typedef JSPACE const Dedup* DedupP;
 
 UKL_INLINE bool same_row(DedupP d, Longs T, uint32_t a, uint32_t b) {
@@ -1317,7 +1321,34 @@ UKL_INLINE void dedup_claim_one(Longs T, JSPACE const uint32_t* totals, JSPACE u
     }
 }
 
-UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE const uint32_t* P, JSPACE uint32_t* counts, DedupP d, uint32_t x)
+// Whether the relation holds row `x` (`Dedup::seen`): its map's place for the row's key, and on, until an empty one.
+UKL_INLINE bool dedup_held(Longs T, JSPACE const uint8_t* R, JSPACE const uint8_t* HB, DedupP d, uint32_t x)
+{
+    JSPACE const uint32_t* M = (JSPACE const uint32_t*)(HB + d->h_at);
+    uint32_t at = row_hash(d, T, x, d->hmask);
+    for (uint32_t k = 0; k <= d->hmask; k++) {
+        uint32_t r = M[3u * at];
+        if (r == 0xffffffffu) return false;
+        bool same = true;
+        for (uint32_t c = 0; same && c < d->ncols && c < 16; c++) same = (int64_t)clif_rel_get(R, d->r_at, r, c) == T[(uint64_t)d->cols[c] * d->cap + x];
+        if (same) return true;
+        at = (at + 1) & d->hmask;
+    }
+    return false;
+}
+
+// Row `id` of the relation placed in its map (`Dedup::seen`): a new row, so a place of its own.
+UKL_INLINE void dedup_place(Longs T, JSPACE uint8_t* HB, DedupP d, uint32_t x, uint32_t id)
+{
+    JSPACE uint32_t* M = (JSPACE uint32_t*)(HB + d->h_at);
+    uint32_t at = row_hash(d, T, x, d->hmask);
+    for (uint32_t k = 0; k <= d->hmask; k++) {
+        if (ukl_atomic_cas(&M[3u * at], 0xffffffffu, id) == 0xffffffffu) return;
+        at = (at + 1) & d->hmask;
+    }
+}
+
+UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE const uint32_t* P, JSPACE uint32_t* counts, JSPACE const uint8_t* R, JSPACE const uint8_t* HB, DedupP d, uint32_t x)
 {
     if (x > d->cap) return;
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
@@ -1332,10 +1363,11 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
         if (same_row(d, T, y, x)) break;
         at = (at + 1) & mask;
     }
+    if (keep != 0u && d->seen != 0u && dedup_held(T, R, HB, d, x)) keep = 0u;
     counts[x] = keep;
 }
 
-UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, DedupP d, uint32_t x)
+UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, JSPACE const uint8_t* R, JSPACE uint8_t* HB, DedupP d, uint32_t x)
 {
     // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
     uint32_t o0 = offsets[0];
@@ -1347,6 +1379,9 @@ UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const
     if ((offsets[x + 1] - o0) == at) return;
     if (at >= d->ocap) return;
     for (uint32_t c = 0; c < d->ncols && c < 16; c++) O[(uint64_t)c * d->ocap + at] = T[(uint64_t)d->cols[c] * d->cap + x];
+    // The row it becomes: the relation's rows as the device holds them, and its place among the new ones
+    // (`Batch::append_live` writes them there).
+    if (d->seen != 0u) dedup_place(T, HB, d, x, clif_rows_len(R, d->r_rows_at) + at);
 }
 
 // ---- A batch's jobs (decisions 0601, 0603): its levels' work, run by its program (`join_run`). ----
@@ -1509,10 +1544,23 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
 
 // The old map's slot `s` (at `h0_at` in `OB`, `omask + 1` slots) into the new one (grown: every key placed again, its
 // changes and round with it); its key read in `R`'s row.
+// Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
 UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
     LatP p;
     clif_struct(LatP, p, pp);
+    if (p.code == 4u) {
+        if (s >= p.n) return;
+        JSPACE uint32_t* M = (JSPACE uint32_t*)(HB + p.h_at);
+        int64_t key[8];
+        for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = lat_r(R, &p, s, c);
+        uint32_t at = lat_hash(key, p.nkeys, p.hmask);
+        for (uint32_t k = 0; k <= p.hmask; k++) {
+            if (ukl_atomic_cas(&M[3 * at], 0xffffffffu, s) == 0xffffffffu) return;
+            at = (at + 1) & p.hmask;
+        }
+        return;
+    }
     if (s > p.omask) return;
     JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
@@ -2013,11 +2061,11 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_ROW_TEXT:
             row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
             break;
-        case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, j->dd, t); break;
+        case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t); break;
         case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, j->A, j->counters, j->D, j->F, j->ws, t); break;
         case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->totals, c, O, j->s, t); break;
         case PK_ROW_SCATTER: row_scatter_one(L, V, j->totals, c, O, j->s, t); break;
-        case PK_DEDUP_SCATTER: dedup_scatter_one(L, j->totals, c, O, j->dd, t); break;
+        case PK_DEDUP_SCATTER: dedup_scatter_one(L, j->totals, c, O, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t); break;
         // A fold's buffers: `L` its rows, `A` its places, `totals` the best row a place, `H` its flags, `S` the relation's
         // block, `VC` its key map's, `G` the old map's, `O` the changed rows, `counters` theirs, `V` the arena.
         case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;

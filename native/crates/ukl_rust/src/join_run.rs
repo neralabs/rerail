@@ -188,8 +188,15 @@ struct Dedup {
     cols: [u32; 16],
     ocap: u32,
     places: u32,
+    /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567).
+    seen: u32,
+    hmask: u32,
+    pad: u32,
+    r_at: u64,
+    r_rows_at: u64,
+    h_at: u64,
 }
-const _: () = assert!(size_of::<Dedup>() == 92);
+const _: () = assert!(size_of::<Dedup>() == 128);
 
 #[repr(C)]
 struct Job {
@@ -1606,6 +1613,35 @@ unsafe fn dedup_claim_one(rd: Reads, t: *const i64, totals: *const u32, p: *mut 
     }
 }
 
+/// Whether the relation holds row `x` (`Dedup::seen`): its map's place for the row's key, and on, to an empty one.
+unsafe fn dedup_held(rd: Reads, t: *const i64, r: *const u8, hb: *const u8, d: &Dedup, x: u32) -> bool {
+    let m = hb.add(d.h_at as usize) as *const u32;
+    let mut a = row_hash(rd, d, t, x, d.hmask);
+    for _ in 0..=d.hmask {
+        let y = *m.add(3 * a as usize);
+        if y == NONE {
+            return false;
+        }
+        if (0..d.ncols.min(16)).all(|c| rd.rel_get(r, d.r_at, y, c) as i64 == col(t, d.cols[c as usize], d.cap, x)) {
+            return true;
+        }
+        a = (a + 1) & d.hmask;
+    }
+    false
+}
+
+/// Row `id` of the relation placed in its map (`Dedup::seen`): a new row, so a place of its own.
+unsafe fn dedup_place(rd: Reads, t: *const i64, hb: *mut u8, d: &Dedup, x: u32, id: u32) {
+    let m = hb.add(d.h_at as usize) as *mut u32;
+    let mut a = row_hash(rd, d, t, x, d.hmask);
+    for _ in 0..=d.hmask {
+        if at(m.add(3 * a as usize)).compare_exchange(NONE, id, SeqCst, SeqCst).is_ok() {
+            return;
+        }
+        a = (a + 1) & d.hmask;
+    }
+}
+
 /// Row `x` (below the head's rows) kept: the first of its rows in the head's set.
 unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, d: &Dedup, mask: u32, x: u32) {
     let mut a = row_hash(rd, d, t, x, mask);
@@ -1625,6 +1661,14 @@ unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u
         a = (a + 1) & mask;
     }
     *counts.add(x as usize) = keep;
+}
+
+/// `dedup_mark_one`, less the rows the relation holds (`Dedup::seen`).
+unsafe fn dedup_mark_held(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, r: *const u8, hb: *const u8, d: &Dedup, mask: u32, x: u32) {
+    dedup_mark_one(rd, t, p, counts, d, mask, x);
+    if d.seen != 0 && *counts.add(x as usize) != 0 && dedup_held(rd, t, r, hb, d, x) {
+        *counts.add(x as usize) = 0;
+    }
 }
 
 // ---- Indexes built on the device. ----
@@ -1679,7 +1723,26 @@ unsafe fn lat_rows(p: &LatP, cnt: *const u32) -> u32 {
     if p.counted & 1 != 0 { (*cnt).min(p.n) } else { p.n }
 }
 
+/// Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
 unsafe fn lat_rehash_one(rd: Reads, r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: u32) {
+    if p.code == 4 {
+        if s >= p.n {
+            return;
+        }
+        let h = hb.add(p.h_at as usize) as *mut u32;
+        let mut key = [0i64; 8];
+        for c in 0..p.nkeys.min(8) {
+            key[c as usize] = lat_r(rd, r, p, s, c);
+        }
+        let mut a = lat_hash(rd, &key, p.nkeys, p.hmask);
+        for _ in 0..=p.hmask {
+            if at(h.add(3 * a as usize)).compare_exchange(NONE, s, SeqCst, SeqCst).is_ok() {
+                return;
+            }
+            a = (a + 1) & p.hmask;
+        }
+        return;
+    }
     if s > p.omask {
         return;
     }
@@ -2058,13 +2121,14 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     }
 }
 
-unsafe fn dedup_mark_range(rd: Reads, t: *const i64, totals: *const u32, p: *const u32, counts: *mut u32, d: &Dedup, x0: u32, x1: u32) {
+#[allow(clippy::too_many_arguments)]
+unsafe fn dedup_mark_range(rd: Reads, t: *const i64, totals: *const u32, p: *const u32, counts: *mut u32, r: *const u8, hb: *const u8, d: &Dedup, x0: u32, x1: u32) {
     let x1 = x1.min(d.cap.saturating_add(1));
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     fill_u32(counts, x0.max(n), x1, 0);
     let mask = dedup_mask(totals, d);
     for x in x0..x1.min(n) {
-        dedup_mark_one(rd, t, p, counts, d, mask, x);
+        dedup_mark_held(rd, t, p, counts, r, hb, d, mask, x);
     }
 }
 
@@ -2129,8 +2193,12 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     });
 }
 
-unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, x0: u32, x1: u32) {
+#[allow(clippy::too_many_arguments)]
+unsafe fn dedup_scatter_range(rd: Reads, t: *const i64, totals: *mut u32, offsets: *const u32, o: *mut i64, r: *const u8, hb: *mut u8, d: &Dedup, x0: u32, x1: u32) {
     let o0 = *offsets;
+    // The rows they become (`Dedup::seen`): the relation's rows as the device holds them, and their places among the
+    // new ones (`Batch::append_live` writes them there).
+    let had = if d.seen != 0 { rd.rows_len(r, d.r_rows_at) } else { 0 };
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     if x0 == 0 && x1 > 0 {
         *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
@@ -2139,6 +2207,11 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
         let len = below(a, len, d.ocap);
         for c in 0..d.ncols.min(16) {
             copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
+        }
+        if d.seen != 0 {
+            for i in 0..len {
+                dedup_place(rd, t, hb, d, x + i, had + a + i);
+            }
         }
     });
 }
@@ -2945,11 +3018,11 @@ impl Prog {
             PK_STAGE_COUNT => stage_count_range(&stage(j.s), j, b, t0, t1),
             PK_SCAN_COUNT => scan_count_range(&stage(j.s), j, b, t0, t1),
             PK_WITNESS_COUNT => witness_count_range(&stage(j.s), j, b, t0, t1),
-            PK_DEDUP_MARK => dedup_mark_range(rd, b.l, j.totals, b.h, b.c, &*j.dd, t0, t1),
+            PK_DEDUP_MARK => dedup_mark_range(rd, b.l, j.totals, b.h, b.c, j.s_, j.vc, &*j.dd, t0, t1),
             PK_STAGE_SCATTER => stage_scatter_range(&stage(j.ws), j, b, t0, t1),
             PK_SCAN_SCATTER => scan_scatter_range(&stage(j.s), j, b, t0, t1),
             PK_ROW_SCATTER => row_scatter_range(&stage(j.s), j, b, t0, t1),
-            PK_DEDUP_SCATTER => dedup_scatter_range(b.l, j.totals, b.c, b.o, &*j.dd, t0, t1),
+            PK_DEDUP_SCATTER => dedup_scatter_range(rd, b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, t0, t1),
             PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),
             PK_LAT_CLEAR => lat_clear_range(b.la, b.lt, b.h, lat(), t0, t1),
             PK_SUM if t0 == 0 && t1 > 0 => sum_one(j.p as *const SumP),

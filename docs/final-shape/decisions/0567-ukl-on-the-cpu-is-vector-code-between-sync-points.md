@@ -951,6 +951,41 @@ What rs.rs must do so that its `join_run` is the oracle's size:
 - **No instances at width 1** (one value has one shape), and no inlining of the generator's own: functions the size
   of the source's.
 
+### The program's own waste, on Metal and the CPU alike (the user's: "Fix the join program that metal runs as well", 2026-11-23)
+
+A profile of the closure stratum (400 nodes, 157,228 rows; the CPU device running `join_run`) put most of the time
+in the program's own work, not the joins': the round's dedup table cleared at its room, and the head's index rebuilt
+every round. Both are the program's, so both are fixed in `join_stages.uglykl` (Metal's) and `join_run` alike.
+
+1. **The dedup's places are its round's rows'** (done). A dedup's table was twice its input's room, cleared every
+   round: 2^20 places for a union of room 311,855 that a round fills with a few thousand rows. Its clear, its claims
+   and its marks now take their mask from the round's rows (`dedup_mask`: twice `min(totals[in_slot], cap)`, a power
+   of two, 16 at least, within its room), and the clear's items are those rows and 4, four places a thread. Closure:
+   245 ms to 227 ms. Small: the room's clear was not the cost the profile's `fill_u32` was.
+2. **The head's rows a set the program keeps, not an index each round builds** (done). A round's new rows were its
+   union made distinct, less the head's rows (an ANTI stage probing an index of all the head's columns). That index
+   is live (`IX_LIVE`): every round sorted every row the head had and placed its offsets over all its buckets
+   (262,144, 24 rounds), so a component's time was its rounds times its rows. Indexes of a range of rows
+   (`Index::from`) do not help: the rounds are the device's (a template the program repeats), so the host cannot
+   choose a round's ranges. A fold (the lattice heads' `lattice_fold`, a key map kept across rounds) does not either:
+   it writes the relation as it claims, so its gate must come first and count the union's rows. Against an exact
+   bound (the closure's reach, 160 K rows) a round of mostly held rows would stop the program for nothing.
+
+   Now a set head keeps a map of its rows (`SetHead::map`), laid out as a lattice head's key map, in its block, twice
+   the program's bound. Each program first empties it and places the relation's rows in it (`Batch::set_map`, code 4
+   of `lat_rehash_one`), so a round that a gate stopped in the last program leaves nothing behind. The round's dedup
+   (`Batch::dedup_less`) marks a row new where it is the first of its rows and its map holds no equal row
+   (`dedup_held`, reading the relation in place). Its scatter places each new row in the map as the row it becomes:
+   the relation's rows as the device holds them, and its place among the new ones, which `append_live` writes there.
+   The gate reads the new rows' count, as before. `round_index` and the ANTI stage are gone.
+
+   **Measured** (this Mac, debug build, `joins_timed_on_the_cpu_and_the_device`, the CPU device running
+   `join_run`): closure, 400 nodes, from 227 ms to 56.8 ms wall (70 ms CPU); the CPU's scalar joins take 42.8 ms
+   (59 ms CPU). The keyed join (100 K × 100 K) is unchanged: 80 ms against the CPU joins' 54 ms. **Checked:**
+   `setfix::device`'s tests pass on the CPU (40). On Metal they fail no test that passed before: m3 fails 11, 12
+   before (`a_leveled_recursion_on_the_device_has_the_cpus_levels` now passes; the rest are "a stratum past one
+   launch and its budget's relaunches"), and the mini fails 2, 3 before (text functions).
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
