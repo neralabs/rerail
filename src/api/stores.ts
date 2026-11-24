@@ -13,6 +13,7 @@ import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-stor
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { createMergeAssistService, type MergeAssistRuntime, type MergeAssistService } from "../runtime/merge-assist/service.js";
 import type { RerailApiStores } from "./operation.js";
+import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import { databaseChangeFeed, type ChangeFeed, type ChangeFeedOptions } from "./change-feed.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
@@ -22,6 +23,8 @@ export interface DatabaseApiStoresOptions {
   readonly origin: () => string;
   /** The coding agent check set-up provides (`codingAgentStates`); the API answers 503 without it. */
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
+  /** The published rule packs set-up reads from npm (`publishedPackReader`); the API answers 503 without them. */
+  readonly publishedRulePacks?: PublishedRulePackReader;
   /** The daemon's engine service, which starts opening again a session it suspended (`RerailApiStores.resumeSession`). */
   readonly resumeSession?: (sessionId: string) => void;
   /**
@@ -77,6 +80,10 @@ export class DatabaseApiStores implements RerailApiStores {
 
   codingAgents(): Promise<CodingAgentState[]> | undefined {
     return this.#options.codingAgents?.();
+  }
+
+  publishedRulePacks(): PublishedRulePackReader | undefined {
+    return this.#options.publishedRulePacks;
   }
 
   resumeSession(sessionId: string): void {

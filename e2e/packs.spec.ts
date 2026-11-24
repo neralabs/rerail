@@ -162,6 +162,40 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect(row.getByRole("button", { name: "Add pack" })).toBeVisible();
   });
 
+  test("the catalog lists the packs published on npm and not installed, a fitting one with the suggested, the rest under Other rule packs, each with its install command", async ({ page, rerail }) => {
+    const url = await rerail.dashboard("mature", { hash: "packs" });
+    const published = (id: string, name: string, fields: Record<string, unknown>) => ({
+      id, name, category: "framework", covers: `${name} rules.`, publisher: "rerail", packageName: `@neralabs/rerail-pack-${id}`, installedVersion: null, ...fields,
+    });
+    // A checkout's daemon reads no npm: the published packs are the daemon's answer as a managed install gives it.
+    let answer: object = {
+      repositoryKey: "unused", checkoutPath: "/unused", readAt: 1,
+      packs: [
+        published("react", "React", { version: "0.1.12", ruleCount: 32, reason: "matches the react dependency in package.json", folder: "" }),
+        published("django", "Django", { version: "0.2.0", ruleCount: 25 }),
+      ],
+    };
+    await page.route("**/api/rule-packs/published?**", async route => { await route.fulfill({ json: answer }); });
+    await page.goto(url);
+
+    const group = (title: string) => page.locator("#content .groups > .ghead.grp", { hasText: title }).locator("xpath=following-sibling::div[1]");
+    const django = group("Other rule packs").locator(".prow2.pub").filter({ has: page.locator("b", { hasText: /^Django$/u }) });
+    await expect(django.locator(".pstate")).toHaveText("v0.2.0Not installed");
+    await expect(django).toContainText("25 rules");
+    await expect(django).toContainText("Install it with rerail packs add django@0.2.0, then add it here.");
+    await expect(django.getByRole("button", { name: "Copy command" })).toHaveAttribute("data-i", "rerail packs add django@0.2.0");
+    const react = group("Suggested for").locator(".prow2.pub").filter({ has: page.locator("b", { hasText: /^React$/u }) });
+    await expect(react.locator(".whybox")).toContainText("matches the react dependency in package.json");
+    // Not installed, so no sheet: its rules are read once it is.
+    await react.locator("b", { hasText: /^React$/u }).click();
+    await expect(page.locator("#panel")).not.toBeVisible();
+
+    answer = { repositoryKey: "unused", checkoutPath: "/unused", readAt: null, unread: "could not reach the npm registry (ENOTFOUND)", packs: [] };
+    await page.reload();
+    await expect(page.locator("#content .pubnote")).toHaveText("Couldn’t read the other rule packs published on npm. Could not reach the npm registry (ENOTFOUND).");
+    await expect(page.locator("#content .prow2.pub")).toHaveCount(0);
+  });
+
   test("a catalog row asks on a line of its own, then reads Removed with Undo until the page is left", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "packs" });
     await page.goto(url);

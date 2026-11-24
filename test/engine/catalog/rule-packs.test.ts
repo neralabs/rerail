@@ -8,7 +8,9 @@ import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createRerailApi,
+  createRerailMcpHandler,
   operations,
+  publishedRulePacksSchema,
   rulePackListSchema,
   rulePackRecommendationsSchema,
   DatabaseApiStores,
@@ -19,11 +21,13 @@ import {
   RECOMMENDATION_CACHE_MS,
   readRulePacks,
   recommendRulePacks,
+  type PublishedRulePacks,
   type RulePack,
 } from "../../../src/engine/catalog/rule-packs.js";
 import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import { CALLER_CWD_HEADER } from "../../../src/engine/catalog/repository-model.js";
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
 import { repositoryPath } from "../../support/oracles.js";
@@ -611,6 +615,78 @@ describe("rule pack API", () => {
       const packOf = Object.fromEntries(rules.map(listedRule => [listedRule.rule.id, listedRule.packId]));
       expect(packOf["complexity-cyclomatic-typescript"]).toBe("complexity");
       expect(packOf[typescript!.rules[0]!.id]).toBe("typescript");
+    } finally {
+      stores.close();
+    }
+  });
+
+  it("lists the packs published on npm, installed or not, each suggested for the checkout where it fits, and reads npm only for a person", async () => {
+    const root = realpathSync(await temporaryDirectory("rerail-published-packs-api-"));
+    const checkout = join(root, "web-app");
+    writeFiles(checkout, { "package.json": JSON.stringify({ dependencies: { react: "19.0.0" } }), "src/App.tsx": "export {};\n" });
+    execFileSync("git", ["init", "-q", checkout]);
+    const databasePath = join(root, "rerail.sqlite");
+    const database = openRerailDatabase(databasePath);
+    let repositoryKey: string;
+    try {
+      repositoryKey = recordCheckout(database, checkout).repositoryKey;
+    } finally {
+      database.$client.close();
+    }
+    const [complexity, react, vue] = ["complexity", "react", "vue"].map(id => readRulePacks([repositoryPath("packs", id)])[0]!);
+    const listed = (pack: RulePack, version: string, ruleCount: number) => ({ pack, packageName: `@neralabs/rerail-pack-${pack.id}`, version, ruleCount });
+    const refreshes: boolean[] = [];
+    let npm: PublishedRulePacks = { packs: [listed(complexity!, "9.0.0", 7), listed(react!, "0.1.12", 32), listed(vue!, "0.1.8", 21)], readAt: 1_000 };
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+      publishedRulePacks: { read: async refresh => { refreshes.push(refresh); return npm; } },
+    });
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const published = `/api/rule-packs/published?checkout=${encodeURIComponent(checkout)}`;
+    const get = async (url: string) => publishedRulePacksSchema.parse(await (await app.request(url)).json());
+    try {
+      installPack("complexity");
+      const pack = (found: RulePack) => ({ id: found.id, name: found.name, category: found.category, covers: found.covers, publisher: "rerail", packageName: `@neralabs/rerail-pack-${found.id}` });
+      expect(await get(published)).toEqual({
+        repositoryKey, checkoutPath: checkout, readAt: 1_000,
+        packs: [
+          // Installed at this repository's version, so not the one npm has.
+          { ...pack(complexity!), version: "9.0.0", ruleCount: 7, installedVersion: JSON.parse(readFileSync(repositoryPath("packs", "complexity", "package.json"), "utf8")).version, reason: "matches *.ts files in src", folder: "src" },
+          { ...pack(react!), version: "0.1.12", ruleCount: 32, installedVersion: null, reason: "matches the react dependency in package.json", folder: "" },
+          { ...pack(vue!), version: "0.1.8", ruleCount: 21, installedVersion: null },
+        ],
+      });
+
+      npm = { unread: "could not reach the npm registry (https://registry.npmjs.org, ENOTFOUND): check your network, proxy, or registry in ~/.npmrc" };
+      expect(await get(published)).toEqual({ repositoryKey, checkoutPath: checkout, readAt: null, unread: npm.unread, packs: [] });
+      expect(refreshes).toEqual([true, true]);
+
+      // A coding agent's read never asks npm.
+      const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
+      const response = await mcp(new Request("http://localhost:4737/mcp", {
+        method: "POST",
+        headers: { host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream", [CALLER_CWD_HEADER]: encodeURIComponent(checkout) },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "rule_packs_published", arguments: {} } }),
+      }));
+      expect(((await response.json()) as { result: { structuredContent: unknown } }).result.structuredContent).toMatchObject({ readAt: null, packs: [] });
+      expect(refreshes).toEqual([true, true, false]);
+    } finally {
+      removeInstalledPacks();
+      stores.close();
+    }
+  });
+
+  it("answers 503 for the published packs where the daemon reads no npm", async () => {
+    const root = realpathSync(await temporaryDirectory("rerail-published-packs-none-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
+    try {
+      const response = await createRerailApi(stores, operations, { version: "0.0.0-test" }).request(`/api/rule-packs/published?checkout=${encodeURIComponent(root)}`);
+      expect(response.status).toBe(503);
     } finally {
       stores.close();
     }

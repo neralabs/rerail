@@ -22,7 +22,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`; `pack` for
   a pack page and Created by you; `packs` for the catalog, which lists the packs Rerail suggests for the repository
-  first, each with why, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
+  first, each with why, then the others, and after the installed packs of each the ones only published on npm, each
+  with the command that installs it, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`access`, `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
   Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
   conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
@@ -45,7 +46,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and how a pack's rules treat suppression comments),
   `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
-  whole-pack switch's state, the catalog's kinds and order and the packs suggested for the repository, and a pack
+  whole-pack switch's state, the catalog's kinds, entries and order and the packs suggested for the repository, and a pack
   sheet's rules), `history-model.js` (which rules History by rule lists under
   its All · Log only · Steered · Declined chips, each violation in one outcome, and which one it shows), `sessions-model.js` (a session's events as turns and tool
   calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states,

@@ -1,10 +1,12 @@
 /**
- * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
- * by kind, as a list or as cards; once the recommendations are read, the packs Rerail suggests for this repository
- * first, each with why, then the others. Each pack has its version and where it stands (Added, or Removed with Undo
+ * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, then, once the daemon
+ * has read them from npm, every other published pack that fits this Rerail, each part alphabetical, filtered by kind,
+ * as a list or as cards; once the recommendations are read, the packs Rerail suggests for this repository first, each
+ * with why, then the others. Each installed pack has its version and where it stands (Added, or Removed with Undo
  * until the page is left) on a line under its name, and Add pack or a quiet Remove pack that asks first, its question
  * on a line of its own under the pack's text. A pack is added whole: its rules arrive as the pack starts them, opt-in
- * ones off. The review
+ * ones off. A pack only published has its version on npm and the command that installs it, with Copy; once it is
+ * installed it reads as the others, with Add pack. The review
  * (`#packs?review=1`, set-up's `#rule-packs?review=1`): the packs set-up picked for this repository, each with why
  * and a switch, then the others with Add pack. The person starts Rerail back in the terminal or coding agent.
  */
@@ -12,10 +14,10 @@ import { h, setContent, icon } from "../dom.js";
 import { failed, fmt, plural } from "../format.js";
 import { isRerailPack, isRunning, isWorktreePack, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
-import { captureScope, inScope, recommendationsFor } from "../poll.js";
+import { captureScope, inScope, publishedPacksFor, recommendationsFor } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { commonActions, keepPack } from "../actions.js";
-import { catalogKinds, catalogPacks, suggestedReason, suggestedSplit } from "../pack-model.js";
+import { catalogEntries, catalogKinds, catalogPacks, catalogSuggestions, installCommand, suggestedReason, suggestedSplit } from "../pack-model.js";
 import { packAction, packIcon, packKind, removePackControl, suggestedBox } from "../render/pack-panel.js";
 
 export const needs = ["rules", "packs", "activity"];
@@ -67,7 +69,31 @@ const catalogCard = (pack, status, action, question) => h("div.pcard", { "data-a
   question,
   h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
 
+/**
+ * A pack published on npm that is not installed: its version there, what it covers, why it is suggested, its rule
+ * count, and the command that installs it, with Copy. It opens no sheet: its rules are read once it is installed.
+ */
+function publishedItem(pack) {
+  const command = installCommand(pack), n = pack.ruleCount;
+  const status = h("span.pstate", null, h("span.badge.pver", { title: `${pack.name} ${pack.version}, on npm` }, `v${pack.version}`), h("span.notinst", null, "Not installed"));
+  const why = pack.reason === undefined ? null : suggestedBox("Why suggested", pack.reason);
+  const how = h("span.meta.how", null, "Install it with ", h("code", null, command), ", then add it here.");
+  const copy = h("button.btn.sm", { "data-act": "cmdcopy", "data-i": command, title: `${command}, to run in a terminal` }, icon("copy"), "Copy command");
+  const meta = `${fmt(n)} ${plural(n, "rule")}`;
+  if (ui.catView === "cards") {
+    return h("div.pcard.pub", null,
+      h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack)))),
+      status, h("span.sub", { title: pack.covers }, pack.covers), why, how,
+      h("div.pc-foot", null, h("span.meta", null, meta), copy));
+  }
+  return h("div.prow2.pub", null,
+    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), status, h("span.sub", { title: pack.covers }, pack.covers), why,
+      h("span.meta", null, isRerailPack(pack) ? meta : `${meta} · ${publisherLabel(pack)}`), how),
+    h("div.pend", null, copy));
+}
+
 function catalogItem(pack) {
+  if (pack.published) return publishedItem(pack);
   const asking = ui.removeAsk === pack.id;
   const { status, action } = asking ? { status: null, action: null } : catalogState(pack);
   const question = asking ? h("div.rmline", null, removePackControl(pack)) : null;
@@ -82,7 +108,7 @@ function catalogItem(pack) {
 const CATALOG_LINE = "Rule packs are ready-made rules, mostly the same ones linters use (ESLint, Ruff, Clippy…), checked while your coding agent writes. Add one to this repo, or remove it later.";
 
 function catalog() {
-  const all = listed(), kinds = catalogKinds(all);
+  const all = catalogEntries(listed(), data.publishedPacks), kinds = catalogKinds(all);
   if (!kinds.some(([k]) => k === kind)) kind = "all";
   const shown = catalogPacks(all, kind);
   const added = shown.filter(isAttached).length;
@@ -95,7 +121,15 @@ function catalog() {
       h("div.rangectl.viewctl", { role: "group", "aria-label": "View" },
         h("button", { "data-act": "catview", "data-i": "list", "aria-pressed": String(ui.catView === "list") }, "List"),
         h("button", { "data-act": "catview", "data-i": "cards", "aria-pressed": String(ui.catView === "cards") }, "Cards"))),
-    catalogBody(shown));
+    catalogBody(shown),
+    publishedNote());
+}
+
+/** Under the packs, while the published ones are read, or why they could not be. */
+function publishedNote() {
+  const published = data.publishedPacks;
+  if (published === null) return h("p.pubnote", { role: "status" }, "Reading the other rule packs published on npm…");
+  return published.unread === null ? null : h("p.pubnote", { role: "status" }, failed("Couldn’t read the other rule packs published on npm", published.unread));
 }
 
 /** Packs as the view chosen shows them: cards or a list. */
@@ -105,11 +139,11 @@ const packBox = packs => (ui.catView === "cards" ? h("div.cards", null, packs.ma
 const groupHead = (title, n, line) => h("div.ghead.grp", null, h("h3", null, title, h("span.n2", null, fmt(n))), h("p", null, line));
 
 /**
- * The catalog's packs: one list until the recommendations are read and suggest a pack; then the packs suggested for
- * this repository, then the others.
+ * The catalog's packs: one list until the recommendations or the published packs are read and suggest a pack; then the
+ * packs suggested for this repository, then the others.
  */
 function catalogBody(shown) {
-  const split = suggestedSplit(shown, data.recommendations);
+  const split = suggestedSplit(shown, catalogSuggestions(data.recommendations, shown));
   if (split === null) return packBox(shown);
   const repo = repoName() || "this repo", { suggested, others } = split;
   return h("div.groups", null,
@@ -164,19 +198,21 @@ function review() {
 
 export function render(root) {
   const view = ui.view;
-  const sig = JSON.stringify([view, kind, data.packs.map(p => [p.id, p.version]), [...data.attachedPacks.keys()], isSetUp(), data.recommendations, ui.catView, ui.removeAsk,
+  const sig = JSON.stringify([view, kind, data.packs.map(p => [p.id, p.version]), [...data.attachedPacks.keys()], isSetUp(), data.recommendations, data.publishedPacks, ui.catView, ui.removeAsk,
     [...ui.removedPacks], repoName(), stateHere(), runningCount()]);
   setContent(root, sig, () => (view === "review" ? review() : catalog()));
 }
 
 /**
  * The catalog opens on every kind; both it and the review read the repository for the packs Rerail suggests, once per
- * repository.
+ * repository, and the catalog the packs published on npm, which the daemon reads when they are first asked for.
  */
 export function enter() {
   if (ui.view === "packs") kind = "all";
-  if (ui.scope === null || data.recommendations !== null) return;
+  if (ui.scope === null) return;
   const scope = captureScope(), repo = repoName() || "this repo", view = ui.view;
+  if (view === "packs" && data.publishedPacks === null) publishedPacksFor(scope).then(invalidate);
+  if (data.recommendations !== null) return;
   recommendationsFor(scope).then(invalidate, error => readFailed(scope, view, `Couldn’t read ${repo} to pick rule packs`, error));
 }
 

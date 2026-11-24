@@ -360,6 +360,7 @@ A checkout wins, then the repository, then the calling agent's checkout. A repos
 | `repository_start`, `repository_stop` | `POST /api/repository/start`, `/stop` | Scope `checkout` (with the checkouts inside it) or `repository`. |
 | `repository_link` | `POST /api/repository/aliases` | Make another remote address resolve to this repository. People only. |
 | `rule_packs_recommend` | `GET /api/rule-packs/recommendations` | The packs that fit a checkout, each with the folder to add it in. |
+| `rule_packs_published` | `GET /api/rule-packs/published` | Every pack published on npm that fits this Rerail, installed or not, each with the folder to add it in where it fits. |
 | `coding_agents_list` | `GET /api/coding-agents` | Each coding agent Rerail works with: found on this computer, connected, and any problem. Changes nothing. |
 | `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack. |
 | `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit. |

@@ -70,11 +70,34 @@ export function catalogKinds(packs) {
   return [["all", "All"], ...present.map(c => [c, categoryLabel(c) || c])];
 }
 
-/** The packs of kind `kind` ("all": every one), alphabetical by name. */
+/** The packs of kind `kind` ("all": every one): the installed ones, then those only published, each alphabetical by name. */
 export function catalogPacks(packs, kind) {
   return packs.filter(p => kind === "all" || p.category === kind)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    .sort((a, b) => Number(a.published === true) - Number(b.published === true) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
+
+/**
+ * Every pack the catalog lists: the installed ones (`GET /api/rule-packs`), then each pack `published` lists
+ * (`GET /api/rule-packs/published`) that is not installed, marked `published: true`. A pack installed since the list was
+ * read is the installed one.
+ */
+export function catalogEntries(installed, published) {
+  const ids = new Set(installed.map(p => p.id));
+  return [...installed, ...(published?.packs ?? []).filter(p => !ids.has(p.id)).map(p => ({ ...p, published: true }))];
+}
+
+/**
+ * What the catalog splits on: the recommendations of the installed packs, and each published pack of `entries` that fits
+ * this repository; `null` while neither is read.
+ */
+export function catalogSuggestions(recommendations, entries) {
+  const fitting = entries.filter(p => p.published && p.reason !== undefined).map(p => ({ packId: p.id, reason: p.reason }));
+  return recommendations === null && fitting.length === 0 ? null : [...(recommendations ?? []), ...fitting];
+}
+
+/** The command that installs published pack `pack` at its version: one of Rerail's own by its id, any other by its package. */
+export const installCommand = pack =>
+  `rerail packs add ${pack.packageName === `@neralabs/rerail-pack-${pack.id}` ? pack.id : pack.packageName}@${pack.version}`;
 
 /**
  * Why Rerail suggested pack `packId` for this repository, from `GET /api/rule-packs/recommendations` (`""` when it gave

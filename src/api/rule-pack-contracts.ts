@@ -53,6 +53,26 @@ export const rulePackListSchema = z.object({
   skipped: z.array(skippedRulePackSchema).describe("Installed packs left out because they failed a check; the others load."),
 });
 
+export const publishedRulePacksSchema = z.object({
+  repositoryKey: z.string(),
+  checkoutPath: z.string().describe("The checkout the packs were matched against, as for the recommendations."),
+  readAt: z.number().int().nullable().describe("When npm listed the packs (epoch ms); null when they could not be read."),
+  unread: z.string().optional().describe("Why the published packs could not be read, for example npm could not reach its registry; set exactly when readAt is null."),
+  packs: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    category: z.enum(RULE_PACK_CATEGORIES),
+    covers: z.string(),
+    publisher: z.string().describe("As for an installed pack: rerail for Rerail's own, else the npm scope or package name."),
+    packageName: z.string(),
+    version: z.string().describe("The version npm has under the update channel's tag that fits this Rerail."),
+    ruleCount: z.number().int().positive().describe("The rules on once the pack is added."),
+    installedVersion: z.string().nullable().describe("The version of this package this Rerail loads now; null when it is not installed."),
+    reason: z.string().optional().describe("Why the pack is suggested for the checkout; absent when it does not fit it."),
+    folder: z.string().optional().describe("Folder to add the pack in, as for the recommendations; absent when it does not fit."),
+  }).strict()),
+});
+
 export const rulePackRecommendationsSchema = z.object({
   repositoryKey: z.string(),
   checkoutPath: z.string().describe("The checkout that was scanned: the target's, else the main checkout on disk, else the most recently seen."),
