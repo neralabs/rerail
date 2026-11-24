@@ -2424,6 +2424,11 @@ impl DigestRead {
         source::read(&self.path).ok()
     }
 
+    /// `read`, into the home `place` makes (`snapshot::read_placed`).
+    pub fn read_placed(&self, place: source::Placer<'_>) -> Option<rerail_tape_format::home::Home> {
+        source::read_placed(&self.path, place).ok()
+    }
+
     /// `bytes`' length and digest, as `hash` gives a file's.
     pub fn hashed(bytes: &[u8]) -> (u64, [u8; 32]) {
         (bytes.len() as u64, Sha256::digest(bytes).into())

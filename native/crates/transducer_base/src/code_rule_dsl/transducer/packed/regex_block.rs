@@ -59,7 +59,7 @@ pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 struct SpanEnds {
     filters: Vec<std::sync::Arc<SpanPrefilter>>,
     /// Each document's source, once; `files` are (document, program) pairs.
-    sources: Vec<std::sync::Arc<String>>,
+    sources: Vec<std::sync::Arc<crate::code_rule_dsl::tape::Text>>,
     files: Vec<(usize, usize)>,
     gpu: bool,
 }
@@ -120,12 +120,12 @@ impl rerail_accel::kernel::Program for SpanEnds {
 /// Every (file, program) pair's marks in one batch (decision 0066's shape), as one launch of `ex`: each pattern's
 /// ends over each of `sources` (`files`: (source, the pattern's index in `filters`)), placed by price on the cores or,
 /// when `device` and `ex` has one, the GPU.
-pub(in crate::code_rule_dsl) fn ends_launch(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
+pub(in crate::code_rule_dsl) fn ends_launch(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<crate::code_rule_dsl::tape::Text>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     ends_on(ex, filters, sources, files, device, None)
 }
 
 /// [`ends_launch`], pinned to `lane` when given.
-pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vector<u64>>, RanOn), String> {
+pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<crate::code_rule_dsl::tape::Text>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     if files.is_empty() {
         return Ok((Vec::new(), RanOn::Cpu));
     }
@@ -472,7 +472,7 @@ pub fn compile_span(re: &str, lines: bool) -> Option<std::sync::Arc<dyn crate::c
 
 /// The facts' span prefilter launcher (`facts::span_prefilter::Launch`): this module's prefilters, as `compile_span`
 /// made them.
-pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
+pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<crate::code_rule_dsl::tape::Text>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     let filters = filters
         .iter()
         .map(|f| std::sync::Arc::clone(f).into_any().downcast::<SpanPrefilter>().map_err(|_| "span prefilter: not a block program's".to_owned()))

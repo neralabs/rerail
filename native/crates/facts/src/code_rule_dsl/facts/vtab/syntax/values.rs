@@ -240,7 +240,7 @@ pub struct Values {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
-    _batches: Vec<Arc<super::Batch>>,
+    batches: Vec<Arc<super::Batch>>,
 }
 
 impl Values {
@@ -271,17 +271,20 @@ impl Values {
         docs.dedup();
         for (name, src) in sources {
             // A relation made on lookup (containment, an axis) has its rows only once a lookup asks. The long-text
-            // nodes are the binding a node read goes through (`LongTexts::of`): kept with none, a value's node is read
-            // in its own batch (a string's value in a Vue piece, decision 0597), not looked for in the chunk's.
+            // nodes' source holds the value's batch, which every node read of the value goes through
+            // (`LongTexts::of`): kept with no rows too, so a value's node is read in its own batch (a string's value in a
+            // Vue piece, decision 0597).
             if src.len() == 0 && !src.made_on_lookup() && name != super::LONG_TEXT_NODES {
                 continue;
             }
             // The keys its nodes are found by: the long-text nodes' the value's own alone (a host file's node read
             // under its places' hosts' keys too, `value` of a `getattr`'s string, went to a string annotation's batch,
             // which holds no node of the file, and found nothing); a view of the value's own documents' those
-            // documents'; any other the value's own, and the hosts' nodes its rows name (`hosted`).
+            // documents'; any other the value's own, and the hosts' nodes its rows name (`hosted`). `own` is every
+            // value of the round (`admit_many`), the hosts apart (`hosts`): keyed by the first alone, a round's later
+            // values' nodes were read in no batch (`Optional` of R10's second annotation).
             let (keyed, general) = if name == super::LONG_TEXT_NODES {
-                (&own[..own.len().min(1)], false)
+                (own, false)
             } else if src.rows_of_own_documents() && !own_docs.is_empty() {
                 (&own_docs[..], false)
             } else {
@@ -356,7 +359,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, _batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, batches: batches.clone() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -512,6 +515,15 @@ impl Layered {
     pub fn source_of(&self, n: i64) -> Arc<dyn Source> {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
+    /// The sources that may hold node `n`'s document: the chunk's batch's, then each admitted value's that names its
+    /// key (a value's rows are keyed by its places' hosts too, so a host file's key names its guests' parts).
+    pub fn sources_of(&self, n: i64) -> Vec<Arc<dyn Source>> {
+        let mut out = vec![Arc::clone(&self.base)];
+        if let Some(p) = self.values.parts.load().get(&self.name) {
+            out.extend(p.by_key.parts((n >> 32) as u32).map(|i| Arc::clone(&p.list[i].src)));
+        }
+        out
+    }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return None;
@@ -576,14 +588,13 @@ impl Layered {
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Layered {
-    /// A view's rows on the device: the chunk's batch's and its values', read in place through their directory. The
-    /// base's view as the device reads it (its kind, its block), its directory that of every document.
-    fn view_over(&self) -> Option<DeviceView<'_>> {
+    /// A view's rows on the device: the batch's and its values', read in place through their directory. The base's
+    /// view as the device reads it (its kind), its directory that of every document.
+    fn view_over(&self) -> Option<DeviceView> {
         let batch = self.base.python_batch()?;
         let mut dv = self.base.device_view();
         let dv_ref = dv.as_mut()?;
-        // A view not read in place is made from the chunk's batch alone: it holds none of the values' rows.
-        let v = dv_ref.in_place.as_mut()?;
+        let v = &mut dv_ref.in_place;
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
@@ -592,15 +603,15 @@ impl Layered {
         }
         v.dir = views.dir?;
         v.buffers = views.buffers.clone();
-        v.cache = views.cache.clone();
+        v.caches = views.caches.clone();
         v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
         v.failed = v.cache_failed();
         dv_ref.rows = self.len();
         dv
     }
 
-    /// An axis's rows on the device (a base made on lookup): the device's solve of the chunk's batch and of its
-    /// values', in one relation, made again when values are admitted after it. Its rows are more than the source
+    /// An axis's rows on the device (a base made on lookup): the device's solve of the batch and of its values', off
+    /// their tapes, in one relation, made again when values are admitted after it. Its rows are more than the source
     /// numbers (a value's are made on lookup, `MADE_AT`): a reader that binds it reads every pair.
     fn solved_in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         let base = self.base.as_any()?.downcast_ref::<super::within::Within>()?;
@@ -613,7 +624,11 @@ impl Layered {
             return made.as_ref().map(|w| w.in_block(w.len()));
         }
         let more: Option<Vec<&super::within::Within>> = p.list.iter().map(|x| x.src.as_any().and_then(|a| a.downcast_ref::<super::within::Within>())).collect();
-        let made = more.and_then(|m| base.solved_with(&m));
+        // Over the layered directory of the batch and its values (`views_over`), read off their tapes: one value's
+        // axis a batch of it, in the order admitted.
+        // The axis's own batch: an axis is no node source (`python_batch`).
+        let dir = self.values.dir(base.batch())?;
+        let made = more.filter(|m| m.len() == dir.batches.len()).and_then(|m| base.solved_with(&m, &dir.views, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>));
         solved.insert(self.name.clone(), (p.list.len(), made.clone()));
         made.map(|w| w.in_block(w.len()))
     }
@@ -623,9 +638,11 @@ impl Source for Layered {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         self.base.syntax_batch()
     }
-    /// A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
+    /// A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
+    /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too (`sources_of`), so a host file's
+    /// key names its guests' parts as well: the first of them that holds the node answers.
     fn node_read(&self, name: &str, n: i64) -> Option<String> {
-        self.source_of(n).node_read(name, n)
+        self.sources_of(n).into_iter().find_map(|s| s.node_read(name, n))
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -1047,7 +1064,7 @@ impl Source for Layered {
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<DeviceView<'_>> {
+    fn device_view(&self) -> Option<DeviceView> {
         if !self.has_parts() {
             return self.base.device_view();
         }

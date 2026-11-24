@@ -692,7 +692,8 @@ impl Image {
     /// The stack in `file`, mapped: read where its bytes are. The file is never written in place (`write` puts a
     /// whole new file in its place), so a map stays as it was while the stack is read.
     pub fn mapped(file: &Path) -> std::io::Result<Vec<Image>> {
-        let f = std::fs::File::open(file)?;
+        // Read-only, the user's, in a folder of the user's alone (`rerail_blocks::mapped`).
+        let f = rerail_blocks::mapped::open_read(file, true)?;
         // SAFETY: no writer changes the file in place: each write renames a new file over it (`write`).
         let backing = match unsafe { memmap2::Mmap::map(&f) } {
             Ok(m) => Backing::Mapped(m),
@@ -1356,10 +1357,14 @@ fn put(dir: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let new = dir.join(format!(".{FILE}.{}.{n}", std::process::id()));
     let written = (|| {
-        let mut f = std::fs::File::create(&new)?;
+        // The file is mapped by its readers (`Image::mapped`): its folder the user's alone, the file made `0600` and
+        // read-only (`0400`) once whole, before it takes the name (`rerail_blocks::mapped`).
+        rerail_blocks::mapped::make_folder(dir)?;
+        let mut f = rerail_blocks::mapped::open_write(&new, true, true)?;
         for p in parts {
             f.write_all(p)?;
         }
+        rerail_blocks::mapped::mark_frozen(&f)?;
         drop(f);
         std::fs::rename(&new, dir.join(FILE))
     })();

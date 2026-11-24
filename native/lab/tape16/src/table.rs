@@ -152,8 +152,8 @@ pub fn run(tag: u8, scratch: &Path, out: &Path, counts: &Counts) -> Result<Repor
     // The codes a table holds are the grammar's: a numbering changes their order alone. Where a table is shipped, the
     // grammar's set is held to it (a grammar changed since is written by a run without counts).
     if counts.nodes > 0 && let Some(shipped) = rerail_tape_format::f16::lang(tag) {
-        let mut was: Vec<&Entry> = shipped.table().entries().iter().collect();
-        let mut now: Vec<&Entry> = table.iter().collect();
+        let mut was: Vec<Entry> = shipped.table().entries().map(|e| e.to_owned()).collect();
+        let mut now: Vec<Entry> = table.clone();
         was.sort();
         now.sort();
         if was != now {
@@ -163,7 +163,7 @@ pub fn run(tag: u8, scratch: &Path, out: &Path, counts: &Counts) -> Result<Repor
     let names = names_of(of, &ids, &table);
     let lang = Lang::new(CodeTable::new(table), [1, 1, 1], crate::f16::revision(tag))?.with_names(names);
     let comment = format!(
-        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3 and 0626. Written by the lab from the grammar:\n  tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)\n{} codes{}{}.",
+        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:\n  tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)\n{} codes{}{}.",
         crate::capture::language(tag),
         lang.table().len(),
         if bound { "; no node types declared: the grammar's list is the bound" } else { "" },

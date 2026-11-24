@@ -594,7 +594,7 @@ pub(super) fn evaluate_batched_relations(
                 }
             } else {
                 // Queue file identities only; admission precedes source hydration.
-                let empty = std::sync::Arc::new(String::new());
+                let empty = std::sync::Arc::new(crate::code_rule_dsl::tape::Text::default());
                 let files = state
                     .files
                     .values()

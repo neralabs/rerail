@@ -11,6 +11,8 @@ test-hooks = ["rerail-clif/test-hooks"]
 # The hand-written reference writer of format 16 (`f16::reference`), which the writer's ops are checked against: the
 # tests', and the lab's (decision 0434 §6, R16). No build of the engine turns it on.
 reference = []
+# `Text` as ast-grep's `Content`: the engine's documents' source, which its matchers read.
+ast-grep = ["dep:ast-grep-core"]
 
 [dependencies]
 # The writer's columns and state, in the run's blocks (decision 0628 §3).
@@ -26,6 +28,8 @@ lz4-sys = "=1.11.1"
 memchr = "=2.8.3"
 # simdjson's nibble lookups: a format 16 part's code bytes tested against a set 64 at a time (`match_groups`).
 rerail-simd8 = { path = "../simd8" }
+# The source text read by ast-grep's matchers in place (`Text` as its `Content`; the engine's `TapeDoc`).
+ast-grep-core = { version = "=0.51.0", optional = true }
 
 [dev-dependencies]
 rerail-tape-format = { path = ".", features = ["test-hooks"] }

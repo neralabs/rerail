@@ -1508,7 +1508,7 @@ fn packed_repeated_capture_pattern_and_sql_equality_execute_together() {
     let compiled = code_rule(json!({ "pattern": "$A + $A" }));
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("a repeated capture pattern lowers into SQL");
-    let source = Arc::new("x + x\ny + z\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("x + x\ny + z\n"));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -1835,7 +1835,7 @@ pub(super) fn sql_workspace_ranges_for_statement(
     let mut tapes = Vec::new();
     let mut anchors: Vec<Vec<rerail_blocks::vector::Vector<u32>>> = Vec::new();
     for (_, source) in files {
-        let source = Arc::new(source.clone());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source.clone()));
         let image = TapeImage::parse(&grammar, &source, &|| false)
             .expect("parser completed")
             .expect("tape image");
@@ -2042,7 +2042,7 @@ pub(super) fn sql_violation_values_for_statement(
     dialect: GrammarDialect,
     statement: Option<&str>,
 ) -> Vec<serde_json::Value> {
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(dialect).expect("contract grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -2204,7 +2204,7 @@ fn sql_outcome_with_failure(
         .expect("policy has complete structural SQL lowering");
     let execution_sql = use_execution_sql.then(|| plan.execution_sql());
     let statement = execution_sql.or(statement);
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(dialect).expect("contract grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -2622,7 +2622,7 @@ fn sql_single_bindings(
 ) -> Vec<((usize, usize), BTreeMap<String, String>)> {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")

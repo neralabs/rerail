@@ -206,6 +206,9 @@ pub struct Started {
 /// still running is waited for by whoever reads its runs). The space is not held after: the lane's next batch may
 /// read what this one keeps.
 pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
+    // An evaluation of the launch budget (decision 0601), or the caller's when it is in one, as `run`'s: a lane starts
+    // a submission on its pool's thread, outside any other.
+    let _evaluation = super::launch::LaunchScope::enter();
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
     let scratch = space.free_scratch();
     // The submission's launches are one evaluation (`launch`), or its caller's when it is in one.

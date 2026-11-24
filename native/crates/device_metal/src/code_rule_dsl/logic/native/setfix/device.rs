@@ -1126,37 +1126,12 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
 
-/// Whether `rel` is a view of a source's rows chosen by constants alone (a statement's `WHERE c = v`), with no dead
-/// rows, whose source the views' reads answer in place, every row of it: read there as a whole view is, the constants
-/// the stage's keys past its own (`with_consts`, decision 0353 step 6), none uploaded.
-fn reads_source(rel: &InRel) -> bool {
-    rel.ndead == 0
-        && rel.view.as_ref().is_some_and(|v| !v.whole() && v.by_constants() && v.src.device_view().is_some_and(|d| d.rows == v.src.len() && d.in_place.is_some()))
-}
-
-/// Column `c` of `rel` among its owner's columns: a whole view's (or one `reads_source` reads), its source's.
+/// Column `c` of `rel` among its owner's columns: a whole view's, its source's.
 fn owner_col(rel: &InRel, c: usize) -> usize {
     match &rel.view {
-        Some(v) if (v.whole() && rel.ndead == 0) || reads_source(rel) => v.column(c),
+        Some(v) if v.whole() && rel.ndead == 0 => v.column(c),
         _ => c,
     }
-}
-
-/// A stage's probe with the constants that chose its view's rows as keys past its own (`reads_source`): each
-/// candidate is checked against them (the kernels' `matches`), its index of them too.
-fn with_consts(mut d: mj::Stage, consts: &[(u32, i64)]) -> Result<mj::Stage, String> {
-    for &(c, v) in consts {
-        let i = d.nkeys as usize;
-        if i >= mj::MAX_KEYS {
-            return Err("a probe of a view chosen by constants with more keys than a stage holds".into());
-        }
-        d.key_kind[i] = mj::CONST;
-        d.key_const[i] = v;
-        d.key_slot[i] = 0;
-        d.key_rcol[i] = c;
-        d.nkeys += 1;
-    }
-    Ok(d)
 }
 
 /// The screen of a stage of `rel` (decision 0488): the kept filter of the first of `d`'s keys' columns (the
@@ -1239,8 +1214,7 @@ fn one_launch(rep: &Report) {
     if rep.dispatches != 0 && rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::reserve_grows) {
         // A stratum is one program; a wave's first stratum's report holds the wave's, one a stratum.
         let one = rep.waved != 0 || rep.programs == 1;
-        // A view expanded for it (copy 0353 step 4) is a dispatch of its pass, not a launch.
-        let launches = rep.programs + rep.relaunches + rep.remaps + rep.expanded;
+        let launches = rep.programs + rep.relaunches + rep.remaps;
         let ok = one && rep.dispatches == launches && rep.reruns == 0 && rep.relaunches <= rep.rounds + rep.programs;
         if std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some_and(|v| v == "log") {
             eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds);
@@ -1277,12 +1251,12 @@ struct Run<'p> {
     rels: Vec<Option<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>)>>,
     /// Per atom stage, where its relation's columns lie in the device's copy (`resident`).
     places: Vec<Option<Vector<u32>>>,
-    /// Each stage's constants that chose its view's rows, keys past its own (`reads_source`, `with_consts`).
-    consts: Vec<Vec<(u32, i64)>>,
     /// Per witness stage, its probes' relations, sorts and descriptors (their columns where the copies hold them).
     probes: Vec<Option<Vec<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, mj::Stage)>>>,
     /// Each stage's screen: its relation's kept filter of a key's column (`screen_of`, decision 0488).
     screens: Vec<Option<mj::Screen>>,
+    /// Per atom stage, the constants its stage adds as keys: a filtered view's read in place whole (`resident`).
+    consts: Vec<Consts>,
     /// The head's distinct rows (a column per slot of `uniq_cols`), made on the device after the last stage; their
     /// count is `totals`' last word.
     uniq: Option<mj::Table>,
@@ -1302,17 +1276,29 @@ fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBloc
     }
 }
 
-/// The device's handle to `rel`'s columns `need` and `cols`, its index by `cols` (none when it has no keys), and
-/// where each of its columns lies in the handle (`mj::NONE`: not held). Nothing is kept of it between strata
-/// (decision 0478 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
-/// found in their blocks (or built there by `batch`); a copy (rows uploaded, a view made on the device) is made for
-/// this stratum, holding only the columns it reads, and its index built with it. A stratum in flight holds its own.
+/// A filtered view's constants (`View::eqs`) as keys its stage adds (`with_consts`): each one's column where the
+/// device reads it, and its value.
+type Consts = Vec<(u32, i64)>;
+
+/// A stage's descriptor `d` with `consts` as keys past its own: a probe's index is built over its key columns and
+/// theirs (`resident`), and every candidate is checked against them (`matches`).
+fn with_consts(mut d: mj::Stage, consts: &[(u32, i64)]) -> mj::Stage {
+    for &(c, v) in consts {
+        let k = d.nkeys as usize;
+        (d.key_kind[k], d.key_const[k], d.key_rcol[k]) = (mj::CONST, v, c);
+        d.nkeys += 1;
+    }
+    d
+}
+
+/// The device's handle to `rel`'s columns `need` and `cols` for a stage of mode `mode`, its index by `cols` (none
+/// when it has no keys), where each of its columns lies in the handle (`mj::NONE`: not held), and the constants its
+/// stage adds as keys (a filtered view's). Nothing is kept of it between strata (decision 0478 steps 1 and 3): rows
+/// in a block, and a view read in place, are read where they lie, their indexes found in their blocks (or built there
+/// by `batch`). Nothing is uploaded (decision 0353 step 6): rows read neither way refuse the stratum (`Err`), which
+/// runs on the CPU.
 #[allow(clippy::type_complexity)]
-///
-/// A view of a source's rows chosen by constants (`reads_source`) is its source's view read in place, every row: the
-/// constants come back with it, each its column in the handle and its value, keys past the stage's own; `probed`, a
-/// stage probes it, so its index is by them too.
-fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vector<u32>, Vec<(u32, i64)>), String> {
+fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vector<u32>, Consts), String> {
     // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
@@ -1325,7 +1311,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
         let by: Vector<usize> = cols.iter().map(|&c| place[c] as usize).collect();
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-        rep.moved += u32::from(ix.copied());
         return Ok((dev, Some(ix), place, Vec::new()));
     }
     // A `has` axis probed by one of its columns is read off the tape (decision 0353 step 5): a stage walks each
@@ -1340,24 +1325,56 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
         let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;
         return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
-    let c0 = thread_cpu();
+    // A view filtered by constants is read in place whole (decision 0353 step 4): its constants are keys its stage adds
+    // (`with_consts`), so a probe's index is over its key columns and theirs and every candidate is checked against
+    // them; nothing of it is uploaded. Where a stage checks no keys (a filter's), or the keys are more than a stage
+    // holds, it is uploaded as before.
+    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
+        && matches!(mode, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS)
+        && let Some(d) = view.src.device_view()
+    {
+        let ncols = view.src.columns().len();
+        let dev = Rc::new(mj::DevRel::view_in(d.home, ncols, d.rows, d.in_place).map_err(|e| format!("{e:?}: a filtered view read in place"))?);
+        rep.in_place += 1;
+        crate::code_rule_dsl::prof::count(["device.view_read.filtered.node", "device.view_read.filtered.child", "device.view_read.filtered.field", "device.view_read.filtered.core", "device.view_read.filtered.axis", "device.view_read.filtered.line", "device.view_read.filtered.end_line", "device.view_read.filtered.col", "device.view_read.filtered.docof", "device.view_read.filtered.tline", "device.view_read.filtered.tape", "device.view_read.filtered.depth", "device.view_read.filtered.order"].get(d.view as usize).copied().unwrap_or("device.view_read.filtered.other"), d.rows);
+        // Each column at its source's place (`owner_col` maps a whole view's alone).
+        let place: Vector<u32> = (0..rel.k).map(|c| view.column(c) as u32).collect();
+        let consts: Consts = view.eqs().iter().map(|&(c, v)| (c as u32, v)).collect();
+        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        // `child` probed by its parent: its children off the tape, the constants checked on each (decision 0353 step 4c).
+        if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+            return Ok((dev, Some(Rc::new(ix)), place, consts));
+        }
+        let keyed: Vec<usize> = by.iter().copied().chain(consts.iter().map(|&(c, _)| c as usize)).collect();
+        let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered view's {} rows", dev.rows))?);
+        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        return Ok((dev, Some(ix), place, consts));
+    }
+    // A view filtered by constants of a source in a block is read there whole (decision 0353 step 6), as a view the
+    // device reads in place is: its constants keys its stage adds.
+    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
+        && matches!(mode, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS)
+        && let Some(b) = view.src.in_block().filter(|b| b.rows as usize == view.src.len())
+    {
+        let ncols = view.src.columns().len();
+        let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a filtered relation in its block"))?);
+        rep.in_place += 1;
+        crate::code_rule_dsl::prof::count("device.view_read.filtered.in_block", b.rows as usize);
+        let place: Vector<u32> = (0..rel.k).map(|c| view.column(c) as u32).collect();
+        let consts: Consts = view.eqs().iter().map(|&(c, v)| (c as u32, v)).collect();
+        let keyed: Vec<usize> = cols.iter().map(|&c| place[c] as usize).chain(consts.iter().map(|&(c, _)| c as usize)).collect();
+        let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered relation's {} rows", dev.rows))?);
+        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        return Ok((dev, Some(ix), place, consts));
+    }
     let whole = matches!(&rel.view, Some(v) if v.whole() && rel.ndead == 0);
-    let filtered = reads_source(rel);
-    // A view chosen by constants holds its source's every row (`reads_source`).
-    let n_all = match &rel.view {
-        Some(v) if filtered => v.src.len(),
-        _ => rel.len(),
-    };
-    let ids: Option<rerail_blocks::vector::Vector<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
-    let n = ids.as_ref().map_or(n_all, |v| v.len());
-    // A whole view its batch's chunk block makes (decision 0289 §2).
+    let n = rel.len() - rel.ndead;
+    // A whole view the device reads in place (decision 0353 step 4).
     let made = match &rel.view {
         Some(view) if whole => view.src.device_view().filter(|d| d.rows == n),
-        // Read in place, never made (`reads_source`).
-        Some(view) if filtered => view.src.device_view().filter(|d| d.rows == n && d.in_place.is_some()),
         _ => None,
     };
-    let (dev, held): (mj::DevRel, Vector<usize>) = match made.as_ref().and_then(|d| Some((d.view, d.in_place.clone()?, d.home.clone()?))) {
+    let (dev, held): (mj::DevRel, Vector<usize>) = match made.as_ref().map(|d| (d.view, d.in_place.clone(), d.home.clone())) {
         // A view the views' reads answer is read in place (decision 0353 step 4d): its relation of no columns, which
         // the view's source holds, keeps its indexes (decision 0478 step 3); every column is the view's own.
         Some((view, v, home)) => {
@@ -1368,120 +1385,53 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
             crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline", "device.view_read.tape", "device.view_read.depth", "device.view_read.order"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
             (dev, (0..ncols).collect())
         }
-        None if filtered => return Err("a view chosen by constants whose source is no longer read in place".into()),
-        None => {
+        // No rows: an empty relation of the device's own, nothing read.
+        None if n == 0 => {
             let mut want: Vector<usize> = need.iter().chain(cols).map(|&c| owner_col(rel, c)).collect();
             want.sort_unstable();
             want.dedup();
-            let k = want.len();
-            // The process's device budget short (the syntax side's tapes hold most of it): the pool's free buffers
-            // give theirs back first.
-            if mj::device_bytes_left() < 8 * k * n + headroom() {
-                mj::give_back();
-            }
-            let dev = if let Some(d) = made {
-// copy (0353 step 4): a view made on the device for a stratum (decision 0353).
-                let device = rerail_accel::gpu::join::device()?;
-                let block = d.block.device_buffer(device)?;
-                let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
-                batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
-                rep.uploads += 1;
-                rep.upload_cpu += thread_cpu() - c0;
-                let by = &mut rep.upload_by[profile::UPLOAD_MADE];
-                // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
-                crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
-                by.0 += dev.bytes() as u64;
-                by.1 += thread_cpu() - c0;
-                dev
-            } else {
-                // What each upload read, and why it was not read where it lies: what step 6 removes, by view, and flat
-                // rows no block holds as one relation with its dead rows' delta.
-                {
-                    let why = match &rel.view {
-                        _ if ids.is_some() && rel.view.is_none() => "flat rows with dead rows, no block taking their delta",
-                        None => "flat rows in no one block",
-                        Some(_) if ids.is_some() => "dead rows",
-                        Some(view) if !view.whole() && view.by_constants() => "filtered by constants",
-                        Some(view) if !view.whole() => "of chosen rows (a version's, or picked)",
-                        Some(view) => match view.src.in_block() {
-                            Some(b) if b.rows as usize == n => "in a block, not taken",
-                            Some(_) => "in a block of other rows",
-                            None if view.src.device_view().is_some() => "made on the device, of other rows",
-                            None => "in no block, not made on the device",
-                        },
-                    };
-                    let cols: String = rel.view.as_ref().map_or_else(String::new, |v| v.src.columns().join(",")).chars().take(60).collect();
-                    crate::code_rule_dsl::prof::count_named(format!("device.upload ({why}): {cols}"), 8 * k * n);
-                }
-// copy (0353 step 6): rows uploaded from the host for a stratum (decision 0353).
-                let dev = mj::DevRel::upload(k, n, |v| {
-                    let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
-                    match &rel.view {
-                        Some(view) if whole => {
-                            // The source's rows in order, the columns held read at once per row (`Source::for_rows`).
-                            view.src.for_rows(&want, &mut |r, row| {
-                                if r >= n {
-                                    return;
-                                }
-                                for (c, &x) in row.iter().enumerate() {
-                                    v[c * n + r] = x;
-                                }
-                            });
-                        }
-                        None => {
-                            // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
-                            for r in 0..n {
-                                let row = rel.at(row_of(r));
-                                for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row.at(w);
-                                }
-                            }
-                        }
-                        Some(_) => {
-                            for r in 0..n {
-                                let row = rel.at(row_of(r)).read();
-                                for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row.at(w);
-                                }
-                            }
-                        }
-                    }
-                })
-                .map_err(|e| format!("{e:?}: an upload of {n} rows, {k} columns"))?;
-                rep.uploads += 1;
-                rep.upload_bytes += dev.bytes() as u64;
-                rep.upload_cpu += thread_cpu() - c0;
-                let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
-                by.0 += dev.bytes() as u64;
-                by.1 += thread_cpu() - c0;
-                dev
+            (mj::DevRel::empty(want.len(), 0).map_err(|e| format!("{e:?}: an empty relation"))?, want)
+        }
+        // Nothing is uploaded (decision 0353 step 6): rows neither in a block nor read in place refuse the stratum,
+        // which runs on the CPU, reading them where they lie. Counted by why and by the relation's columns or name.
+        None => {
+            let why = match &rel.view {
+                _ if rel.ndead > 0 => "dead rows",
+                Some(view) if !view.whole() => match (view.src.in_block().is_some(), view.src.device_view().is_some(), mode) {
+                    (_, true, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS) => "filtered by constants, more keys than a stage holds",
+                    (_, true, _) => "filtered by constants, a stage of no keys",
+                    (true, _, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS) => "filtered by constants, in a block",
+                    (true, _, _) => "filtered by constants, in a block, a stage of no keys",
+                    (false, false, _) => "filtered by constants, in no block",
+                },
+                Some(view) if view.src.in_block().is_some() => "in a block of other rows",
+                Some(view) if view.src.device_view().is_some() => "read in place, of other rows",
+                Some(_) => "in no block, not read in place",
+                None => "rows in no block",
             };
-            (dev, want)
+            let what: String = match &rel.view {
+                Some(view) => view.src.columns().join(","),
+                None => rel.table_name().unwrap_or("?").to_owned(),
+            };
+            let what: String = what.chars().take(60).collect();
+            crate::code_rule_dsl::prof::count_named(format!("device.not_in_place ({why}): {what}"), n);
+            return Err(format!("a relation not read in place ({why}: {what}) has no device form"));
         }
     };
     let dev = Rc::new(dev);
     let place: Vector<u32> = (0..rel.k).map(|c| held.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
-    // The constants that chose a view's rows, each its column in the handle: keys past the probe's own.
-    let consts: Vec<(u32, i64)> = match &rel.view {
-        Some(v) if filtered => v.eqs().iter().map(|&(c, x)| held.iter().position(|&w| w == c).map(|p| (p as u32, x)).ok_or("a constant's column not held")).collect::<Result<_, _>>()?,
-        _ => Vec::new(),
-    };
-    // Held for its texts or verdicts (`probed` false), no stage probes it.
-    if cols.is_empty() && (consts.is_empty() || !probed) {
-        return Ok((dev, None, place, consts));
+    if cols.is_empty() {
+        return Ok((dev, None, place, Vec::new()));
     }
-    let own: Vector<usize> = cols.iter().map(|&c| place[c] as usize).collect();
-    let by: Vector<usize> = own.iter().copied().chain(consts.iter().map(|&(c, _)| c as usize)).collect();
-    // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c); the
-    // constants that chose its rows checked on each.
-    if let Some(ix) = batch.by_parent(&dev, &own).map_err(|e| format!("{e:?}: a parent probe"))? {
-        return Ok((dev, Some(Rc::new(ix)), place, consts));
+    let by: Vector<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+    // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
+    if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
     let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
     // Found where a stratum before built it (a view's, in its block), or built here.
     if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-    rep.moved += u32::from(ix.copied());
-    Ok((dev, Some(ix), place, consts))
+    Ok((dev, Some(ix), place, Vec::new()))
 }
 
 /// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
@@ -1514,7 +1464,7 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .map(|((c, d), g)| match (c, d, g) {
             (StatColumn::Values(v), _, _) => StatCol::Host(v),
             // Every relation the device holds lies in a block (decision 0325 step 5), read there.
-            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32) },
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32), far: d.far_or(&d.held().buffer) },
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
@@ -1618,7 +1568,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], consts: vec![Vec::new(); plan.stages.len()], screens: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1665,7 +1615,7 @@ impl<'p> Run<'p> {
                 Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names | Kind::RowText { .. } | Kind::Witness { .. } => {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Atom { rel, cols }, None) => {
-                            let (dev, ix, place, consts) = resident(rel, &right_cols(&s.desc), cols, true, batch, rep)?;
+                            let (dev, ix, place, consts) = resident(rel, &right_cols(&s.desc), cols, s.desc.mode, batch, rep)?;
                             self.screens[k] = screen_of(rel, &s.desc)?;
                             self.rels[k] = Some((dev, ix));
                             self.places[k] = Some(place);
@@ -1677,12 +1627,12 @@ impl<'p> Run<'p> {
                             for (_, _, b) in rest {
                                 need.extend((0..b.nkeys as usize).filter(|&q| b.key_kind[q] == mj::ACOL).map(|q| b.key_slot[q] as usize));
                             }
-                            let (dev, ix, place, consts) = resident(rel, &need, cols, true, batch, rep)?;
+                            let (dev, ix, place, consts) = resident(rel, &need, cols, s.desc.mode, batch, rep)?;
                             self.screens[k] = screen_of(rel, &s.desc)?;
                             let mut probes = Vec::new();
                             for (r, bcols, b) in rest {
-                                let (bdev, bix, bplace, bconsts) = resident(r, &right_cols(b), bcols, true, batch, rep)?;
-                                let mut b = with_consts(narrowed(*b, &bplace), &bconsts)?;
+                                let (bdev, bix, bplace, bconsts) = resident(r, &right_cols(b), bcols, b.mode, batch, rep)?;
+                                let mut b = with_consts(narrowed(*b, &bplace), &bconsts);
                                 for q in 0..b.nkeys as usize {
                                     if b.key_kind[q] == mj::ACOL {
                                         b.key_slot[q] = place[b.key_slot[q] as usize];
@@ -1747,7 +1697,7 @@ impl<'p> Run<'p> {
                         };
                         batch.row_stage(s.desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), id, i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
-                        let desc = with_consts(self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at)), &self.consts[k])?;
+                        let desc = with_consts(self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at)), &self.consts[k]);
                         if let Some(probes) = &self.probes[k] {
                             let rest: Vec<(mj::Stage, &mj::DevRel, Option<&mj::DevIndex>)> = probes.iter().map(|(r, ix, b)| (*b, &**r, ix.as_deref())).collect();
                             batch.witness(desc, left, right.ok_or("a witness with no relation")?, self.screens[k].as_ref(), &rest, i, o, &self.totals, &out)
@@ -1768,8 +1718,10 @@ impl<'p> Run<'p> {
     fn encode_head(&mut self, batch: &mut mj::Batch) -> Result<(), String> {
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
-        let uniq = batch.table(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
-        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {} rows", table.cap))?;
+        // Its room: the guess while its batch runs, the rows the device wrote once it is done (a stage not run again).
+        let room = table.room();
+        let uniq = batch.table(self.uniq_cols.len(), room).map_err(|e| format!("{e:?}: the head's table of {room} rows"))?;
+        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {room} rows"))?;
         self.uniq = Some(uniq);
         Ok(())
     }
@@ -1924,7 +1876,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
             Err(e) => return Err(e),
         }
     }
-    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
+    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu).max(0.0);
     let rows: u64 = rep.rows;
     crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
     one_launch(&rep);
@@ -2086,6 +2038,11 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner)
     let encoded = with_open::<Wave, _>(|w| {
         let (n, batch) = w.as_mut().expect("the open wave");
         let runs = encode_runs(rules, batch, &mut rep, names);
+        if runs.is_err() {
+            // Half encoded into the wave's batch, beside its other strata's work: the wave fails, and its strata run
+            // on the CPU.
+            batch.spoil();
+        }
         // Its heads' rows placed by its own program (`encode_place`), as `run`'s; its rows' rooms fresh, as `resume`
         // finds them.
         let fresh: Vec<Fresh> = vec![Fresh::default(); store.rels.len()];
@@ -2104,7 +2061,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner)
         drop(runs);
         return Ok(None);
     }
-    rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
+    rep.encode_cpu = thread_cpu() - c0;
     let t = TICKETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live, pre)));
     // Its stratum resumes on this thread, which holds its runs and its wave (`lanes::wave::kept_here`).
@@ -2378,7 +2335,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
                 }
             }
             if !rel.contains(&row) {
-                fresh[head].add(&row);
+                fresh[head].add(&row, rel);
             }
         }
         out.push(n as u64);
@@ -2418,13 +2375,12 @@ impl PlacedHeads {
 /// first room, and `place_growth` the rest); the relation bound for the writes holds `n`.
 fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize, room: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
     let (bound, n) = (n, room.min(n));
-    // A block with no room for them: the relation's rows moved into one with room (`Part::moved_room`), which the
-    // claim makes its tail, so it stays one relation.
-    let moved = |l: Option<crate::code_rule_dsl::facts::rows::Lent>, why: &'static str| l.inspect(|_| crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", why, 1));
+    // Past an earlier lot's rows where its block has room for them (the relation stays one, and a reader binds it
+    // whole).
     let room = match fresh.last_placed() {
-        Some(super::Placed::Part(p)) => p.room(n).or_else(|| moved(Some(p.moved_room(p.len(), n)), "heads' relations moved to room for a next lot")),
-        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n).or_else(|| moved(Some(lent.moved(*written, n)), "heads' relations moved to room for a next lot")),
-        None => rel.tail_room(n).or_else(|| moved(rel.tail_moved(n), "heads' tails moved to room for the device's rows")),
+        Some(super::Placed::Part(p)) => p.room(n),
+        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n),
+        Some(super::Placed::Wave { .. }) | None => None,
     };
     if let Some(lent) = room {
         let at = lent.at;
@@ -2437,23 +2393,17 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize, room: u
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their own tail", 1);
         return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
     }
-    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail with rows)", 1);
-    // A large one alone in a block with room past its rows for the indexes its readers probe it by (decision 0353
-    // step 6): in the run's shared block, a later probe found no room there and copied it (`DevIndex::moved`, 766.4
-    // MB in 247 copies on the M3's 300-file run, ab110). Room for a full directory of them (`ADDED_INDEXES`): with
-    // room for one a column and one more, a relation of three columns probed by more keys was copied (ab118). Its
-    // block is memory only as it is written. A small one shares the run's block, its copy as small.
-    let part = if n < bound {
-        // Mapped as reached: alone in a block with room for its bound, its first room reserved.
-        Part::with_index_room_for(crate::code_rule_dsl::facts::rows::Life::Run, k, n, bound, rerail_blocks::relation::ADDED_INDEXES)
-    } else if bound >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, rerail_blocks::relation::ADDED_INDEXES) } else { Part::for_writes(k, n) };
-    let dst = mj::DevRel::in_block(&part.in_block(bound as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
-    Ok((super::Placed::Part(part), dst, 0))
+    // Else in the wave's room the CPU's rows of the wave are written into too (decision 0353 step 6): its tail's own
+    // where its block has room, else regions of its own, nothing moved. Its bound's slots claimed (the relation
+    // bound for the writes holds them), its memory mapped as its rows reach it (`place_growth`).
+    let wave = rel.wave_room();
+    let (r, row) = wave.claim(u32::try_from(bound).map_err(|_| format!("{bound} rows of a head"))?);
+    let dst = mj::DevRel::in_block(&wave.part(r).in_block(row + bound as u32), k).map_err(|e| format!("{e:?}: a head's wave room in its block"))?;
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their wave's room", 1);
+    // `n`: the slots claimed, until the rows written are known (`written`).
+    Ok((super::Placed::Wave { room: wave, r, row, n: bound as u32 }, dst, row as usize))
 }
 
-/// The rows from which a head's relation the device writes is alone in a block with room for its indexes
-/// (`head_room`).
-const ALONE_ROWS: usize = 4096;
 
 /// `room` (`head_room`'s) with its `n` rows written: the rows the store takes.
 ///
@@ -2467,6 +2417,12 @@ unsafe fn written(room: super::Placed, n: usize) -> super::Placed {
             super::Placed::Part(part)
         }
         super::Placed::Tail { lent, .. } => super::Placed::Tail { lent, n: n as u32 },
+        // The room's slots past them given back where they are the last claimed (else they lie unwritten, past the
+        // rows the wave's end lays out).
+        super::Placed::Wave { room, r, row, n: claimed } => {
+            let _ = room.give_back(r, row + n as u32, claimed - n as u32);
+            super::Placed::Wave { room, r, row, n: n as u32 }
+        }
     }
 }
 
@@ -2502,6 +2458,9 @@ const PLACE_ROOM_BYTES: usize = REACH_BYTES;
 /// A head's room's rows at least where its reach is not its room (`encode_place`).
 const PLACE_ROOM_MIN: usize = 1 << 16;
 
+/// The rows under which a head's room is reserved whole (`place_first`): a few pages.
+const ALONE_ROWS: usize = 4096;
+
 /// A placed head's first room (`encode_place`): its bound, where a mapped page is not real memory or its bound is
 /// small (under `ALONE_ROWS` rows: in the run's block, a few pages); else twice the rows its rules' tables were
 /// encoded for (`guess`), at least `ALONE_ROWS`, within its bound. A test build's `RERAIL_ROOMS_MAPPED=N`: `N` rows.
@@ -2520,6 +2479,7 @@ fn place_growth(room: &super::Placed, at: usize, first: usize, bound: usize, new
     let part = match room {
         super::Placed::Part(p) => p.clone(),
         super::Placed::Tail { lent, .. } => lent.tail().clone(),
+        super::Placed::Wave { room, r, .. } => room.part(*r).clone(),
     };
     let now = std::cell::Cell::new(first);
     Box::new(move || {
@@ -2778,8 +2738,8 @@ struct Own {
     /// component's own order, before the run's memo as filed (decision 0478 step 7).
     growth: HashMap<(u64, usize), f64>,
     /// Each relation's keys (`delta`: its last round's), every one a stage of the component's plans probes it by: its
-    /// deltas are made with room for an index of each, so no probe copies them (decision 0353 step 6,
-    /// `DevIndex::moved`). A total grows in a block with room for its indexes (`SetHead`).
+    /// deltas are made with room for an index of each, so no probe is refused for want of room
+    /// (decision 0353 step 6). A total grows in a block with room for its indexes (`SetHead`).
     keys: HashMap<(usize, bool), Vec<Vector<usize>>>,
     /// Each live relation's rows (`delta`: its delta's) as the last program left them (`device_rounds`): a stage's
     /// guess of its rows out reads these, not the relation's bound.
@@ -2834,7 +2794,6 @@ impl Own {
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-        rep.moved += u32::from(ix.copied());
         self.sorts.insert(key, ix.clone());
         Ok(Some((dev, Some(ix))))
     }
@@ -2884,7 +2843,9 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     let text_head = matches!(store.rels[h].device_lattice(), Some(Ok((3, ..))));
     let k = store.rels[h].k;
     let from: Vec<(usize, &Run<'_>)> = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h).map(|r| (x, r))).collect();
-    let cap: usize = from.iter().map(|(_, r)| r.uniq.as_ref().map_or(0, |u| u.cap)).sum();
+    // A run not run again in a round a gate stopped keeps its rows of the finished batch: their room is the rows the
+    // device wrote (`Table::room`), not the guess.
+    let cap: usize = from.iter().map(|(_, r)| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
     if cap == 0 {
         return Ok(None);
     }
@@ -2901,7 +2862,7 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     }).collect();
     let srcs: Vec<(&mj::Table, usize, &mj::Words, usize, &[mj::Col])> = from.iter().zip(&cols).map(|((_, r), c)| {
         let u = r.uniq.as_ref().expect("the head's rows");
-        (u, u.cap, &r.totals, r.totals.len - 1, c.as_slice())
+        (u, u.room(), &r.totals, r.totals.len - 1, c.as_slice())
     }).collect();
     batch.append_rows(&srcs, &union, (&words, 0)).map_err(|e| format!("{e:?}"))?;
     Ok(Some((union, words, cap)))
@@ -2917,7 +2878,7 @@ fn round_index(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], he
             continue;
         }
         // Its relation's room for the round's rows first, then its index: the index's room is reserved past it.
-        let cap: usize = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h)).map(|r| r.uniq.as_ref().map_or(0, |u| u.cap)).sum();
+        let cap: usize = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h)).map(|r| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
         let had = own.total.get(&h).map_or(0, |t| t.rows);
         if let Some(part) = sets.get(&h).and_then(|s| s.part.as_ref()) && !part.reserve((had + cap) as u64) {
             return Err(format!("a recursive head of {} rows past its block's room", had + cap));
@@ -2946,7 +2907,6 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.relaunches += done.relaunches;
     rep.remaps += done.remaps;
     rep.room_remaps += done.room_remaps;
-    rep.expanded += done.expanded;
     rep.maps_grown += done.maps_grown;
     rep.programs += done.programs;
     rep.gpu_seconds += done.gpu_seconds;
@@ -3118,7 +3078,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     }
     rep.decode_cpu += thread_cpu() - d0;
     rep.rounds = rounds as u32;
-    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
+    rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu).max(0.0);
     one_launch(&rep);
     LAST.with_borrow_mut(|l| *l = Some(rep));
     Ok(made)

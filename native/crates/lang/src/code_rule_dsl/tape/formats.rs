@@ -10,7 +10,7 @@
 //! format 16's bounds, is an error: there is no other format to keep (format 15 is removed, 0631).
 
 use rerail_blocks::vector::Vector;
-use super::{Code, FileImage, Grammar, Held, TapeDoc, TapeImage};
+use super::{Code, FileImage, Grammar, Held, TapeDoc, TapeImage, Text};
 use crate::code_rule_dsl::language::GrammarDialect;
 use rerail_tape_format::{Redo, Writer};
 use rerail_tape_format::f16::{self, Lang};
@@ -289,10 +289,11 @@ impl TapeImage {
 }
 
 /// `source`'s tape from the `.rerail` parser, in the run's format: the parser's own sink (`lean::Sink16`, its keys
-/// numbered in the language's table), with each block's presence.
+/// numbered in the language's table), with each block's presence, through `lean::tape_to` (compiled in the parser's
+/// crate).
 pub(super) fn rr_tape(source: &str) -> Result<f16::Finished, String> {
     let (_, _, z) = run_16(GrammarDialect::Rr)?;
-    rerail_rr_syntax::lean::tape_into(source, &mut rerail_rr_syntax::lean::Sink16::new(z, true))
+    rerail_rr_syntax::lean::tape_to(source, z, true)
 }
 
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it
@@ -305,17 +306,17 @@ pub struct DocTape {
     /// The cache a 16z tape's blocks are decoded into: its batch's (`TapeDoc::in_batch`); none outside a batch.
     cache: Option<Arc<f16::ZCache>>,
     /// The document's source.
-    source: Arc<String>,
+    source: Arc<Text>,
 
 }
 
 impl DocTape {
-    pub fn new(image: Arc<TapeImage>, source: Arc<String>) -> Self {
+    pub fn new(image: Arc<TapeImage>, source: Arc<Text>) -> Self {
         Self::in_batch(image, source, None)
     }
 
     /// `new`, a 16z tape's blocks decoded into `cache`, its batch's.
-    pub fn in_batch(image: Arc<TapeImage>, source: Arc<String>, cache: Option<Arc<f16::ZCache>>) -> Self {
+    pub fn in_batch(image: Arc<TapeImage>, source: Arc<Text>, cache: Option<Arc<f16::ZCache>>) -> Self {
         let reader = image.tape_in(cache.as_deref());
         // SAFETY: the reader borrows the image's bytes and code table, the cache, and the language tables (static).
         // The image and the cache are in their `Arc`s' allocations, which do not move, and are never changed once
@@ -343,7 +344,7 @@ impl DocTape {
     }
 
     /// The source the tape is over.
-    pub fn source(&self) -> &Arc<String> {
+    pub fn source(&self) -> &Arc<Text> {
         &self.source
     }
 

@@ -1585,6 +1585,38 @@ call_at(p, l) :- doc(d, p, _), node(d, n, k, _, _), (k = "call" ; k = "call_expr
     }
 }
 
+/// A file with a string annotation keeps its own findings: its annotation's value is a tape value whose parts are keyed
+/// by the file's key too, so a node of the file is read through the first source that holds its document
+/// (`Layered::node_read`, decision 0431 §8). Read through its guest's batch instead, every one of the file's texts was
+/// none, its names never resolved, and the file lost every finding (43 of hogql's 189 files after the hub merge).
+#[test]
+fn a_file_with_a_string_annotation_keeps_its_findings() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrstrann");
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(corpus.join("a_plain.py"), "def f(a):\n    return len(a)\n").unwrap();
+    std::fs::write(corpus.join("e_strann.py"), "# comment\ndef f(a: \"T | int | None\"):\n    return len(a)\n").unwrap();
+    let policy = dir.join("rule.rerail");
+    std::fs::write(&policy, r#"
+.policy "probe-len" revision 1
+.language python
+.scope include "**/*.py"
+#include "python/names.rerail"
+.violation P(at: node) "len"
+P(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.len").
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &corpus, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut files: Vec<String> = result["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned())
+        .collect();
+    files.sort();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(files, ["a_plain.py", "e_strann.py"], "each file's `len` call, the one with a string annotation too: {result:#}");
+}
+
 /// Empty scopes still run global absence checks; they must not become a planning error or an early return.
 #[test]
 fn empty_corpora_run_global_absence_findings() {
@@ -3782,6 +3814,7 @@ Call(c) :- kind(c, "call").
     let roots = || -> std::collections::BTreeSet<String> {
         let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
         let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        crate::content_store::atoms::install_kept_tables(&c).unwrap();
         let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
         st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
     };

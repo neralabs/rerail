@@ -27,6 +27,11 @@ fn main() -> ExitCode {
     rerail_engine::tools::watch();
     // Before any block is made: the one block policy. The command's machine: its pool, of the most threads the
     // process uses (`RERAIL_THREADS`), this thread one of them (decision 0442).
+    // Before any file is mapped: the folders the run maps files from are the user's alone (`launch_checks`).
+    if let Err(e) = rerail_engine::tools::launch_checks() {
+        eprintln!("rerail-engine: {e}");
+        return ExitCode::FAILURE;
+    }
     rerail_engine::threads::configure();
     let machine = rerail_engine::threads::Machine::here();
     let args: Vec<String> = std::env::args().skip(1).collect();

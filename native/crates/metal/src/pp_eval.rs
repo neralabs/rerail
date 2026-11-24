@@ -107,6 +107,7 @@ pub fn placement<'a>(
         let document = Resident {
             digest,
             slab: Arc::clone(slab),
+            source: None,
             view,
             at: offset,
             len: bytes,

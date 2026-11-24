@@ -376,15 +376,9 @@ fn sweep(dir: &Path, rows: &[Row]) {
 }
 
 /// The directory made private to its user, as the store's other directories are.
+/// Its blocks are mapped: one that group or world may write or search is refused (`rerail_blocks::mapped`).
 pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
-    if dir.is_dir() {
-        return Ok(());
-    }
-    let mut b = std::fs::DirBuilder::new();
-    b.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    b.create(dir)
+    rerail_blocks::mapped::make_folder(dir)
 }
 
 /// A new file's name on the disk before the commit that names it, with `Flush::Synced`; otherwise the OS's to write

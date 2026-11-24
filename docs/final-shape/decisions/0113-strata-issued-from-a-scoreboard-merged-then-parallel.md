@@ -1,7 +1,8 @@
 # 0113: Strata issued from a scoreboard: merged into components first, then run in parallel on the one executor
 
-Status: partly built (audited 2026-11-23). Left: interner overlay (§4), shared plan/open per component, sessions and
-answered requests issued, wall measured at 10-300 files. Draft (2026-11-11); steps 1–5 built in a first form
+Status: partly built (audited 2026-11-23, corrected the same day). Left: shared plan/open per component, sessions and
+answered requests issued (`Board` is not made where strata are kept or maintained), wall measured at 10-300 files.
+§4's interner overlay is answered by 0114 §5 (atoms reserved by component, built; `held_only` is gone). Draft (2026-11-11); steps 1–5 built in a first form
 (2026-11-11, `logic::plan::issue`, `accel::stream`), step 6 in part. What is built, measured, and where it departs
 from the text below is in **Built so far** at the end. It builds on 0100 (one executor, levels as batches, claims, one
 pool) and takes up two items 0100 and 0101 left open: 0100 step 6's queued shape for parallel strata, and 0101 §3's

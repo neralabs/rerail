@@ -17,7 +17,7 @@ fn parsed(sources: &[String]) -> Vec<AstGrep<TapeDoc>> {
             let image = TapeImage::encode(doc.tree.root_node(), &grammar, s, &|| false).unwrap();
             AstGrep::doc(
                 TapeDoc::restore(
-                    std::sync::Arc::new(s.clone()),
+                    std::sync::Arc::new(s.clone().into()),
                     std::sync::Arc::clone(&grammar),
                     &image,
                     &|| false,

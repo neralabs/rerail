@@ -23,6 +23,12 @@ fn rust_is_current() {
 /// A tape's nodes, in order: each one's number in the `.rerail` table, start, end and size.
 type Nodes = Vec<(u32, u64, u64, usize)>;
 
+/// The parser as Rust's tape of `buf[..n]` (`rerail_rr_aot::parse`, `buf` padded), in format 16 through the lean
+/// parser's sink; or the byte it refused the file at.
+fn aot_tape(buf: &[u8], n: usize) -> Result<crate::Tape, u32> {
+    rerail_rr_aot::parse(buf, n, &mut rerail_rr_syntax::lean::Sink16::new(false, true)).map(|t| crate::written(t.expect("a format 16 tape").tape).expect("format 16"))
+}
+
 /// A format 16 tape's nodes, read in place.
 fn tape_nodes(t: &crate::Tape) -> Nodes {
     use rerail_tape_format::tape::Tape as _;
@@ -34,7 +40,7 @@ fn tape_nodes(t: &crate::Tape) -> Nodes {
 /// node that differs.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.image(text.as_bytes()).ok().map(|t| tape_nodes(&t));
-    let ours = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len(), &mut rerail_rr_syntax::lean::Sink16::new(false, true)).ok().map(|t| tape_nodes(&crate::written(t.expect("a format 16 tape").tape).expect("format 16")));
+    let ours = aot_tape(&rerail_rr_aot::padded(text.as_bytes()), text.len()).ok().map(|t| tape_nodes(&t));
     match (theirs, ours) {
         (None, None) => None,
         (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
@@ -83,7 +89,7 @@ fn tier2_checked_marks() -> u32 {
 fn deep_nesting_ends_in_a_refusal() {
     for n in [128, 200, 3_000, 100_000] {
         for text in [format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n)), format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n))] {
-            let got = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len(), &mut rerail_rr_syntax::lean::Sink16::new(false, true));
+            let got = aot_tape(&rerail_rr_aot::padded(text.as_bytes()), text.len());
             if n >= 3_000 {
                 assert!(got.is_err(), "{n} deep: refused");
             }
@@ -271,7 +277,7 @@ fn corpus_tapes_are_the_jits() {
 
 /// CPU time over the corpus (this thread's, the least of `RR_ROUNDS` rounds, 7 by default), the parsers in turns each
 /// round: the parser as Rust (`rerail_rr_aot`), tier 1 alone (`lex`) and the whole (`parse`, tier 2 the difference);
-/// the JIT (`compiled().parser.image`); and the engine's hand-written reader (`engine_tape`), for scale. Each from the
+/// the JIT (`Compiled::image`); and the engine's hand-written reader (`engine_tape`), for scale. Each from the
 /// text, the buffers padded before. Build optimized (`--profile profiling`) and run alone, at nice 19; the load is
 /// printed.
 #[test]
@@ -288,9 +294,9 @@ fn rr_aot_against_jit() {
         rerail_prof::thread_cpu() - t
     };
     let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
-    let aot = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len(), &mut rerail_rr_syntax::lean::Sink16::new(false, true)).map_or(0, |r| r.map_or(0, |f| f.tape.as_bytes().len()))).sum::<usize>();
-    let jit = || files.iter().map(|t| c.image(t.as_bytes()).map_or(0, |i| i.as_bytes().len())).sum::<usize>();
-    let engine = || files.iter().map(|t| crate::engine_tape(t).as_bytes().len()).sum::<usize>();
+    let aot = || bufs.iter().zip(&files).map(|(b, t)| aot_tape(b, t.len()).map_or(0, |c| c.len())).sum::<usize>();
+    let jit = || files.iter().map(|t| c.image(t.as_bytes()).map_or(0, |i| i.len())).sum::<usize>();
+    let engine = || files.iter().map(|t| crate::engine_tape(t).len()).sum::<usize>();
     // The JIT's tier 1 alone: its batch made and called, as `image` makes it.
     let jit_lex = || {
         files
@@ -304,7 +310,7 @@ fn rr_aot_against_jit() {
     };
     // The lean parser (`rr_syntax::lean`, hand-written Rust): the shape the generated Rust is to have.
     let lean_lex = || files.iter().map(|t| crate::rr::lean::token_count(t)).sum::<usize>();
-    let lean = || files.iter().map(|t| crate::rr::lean::tape(t).map_or(0, |t| t.as_bytes().len())).sum::<usize>();
+    let lean = || files.iter().map(|t| crate::rr::lean::tape(t).map_or(0, |t| t.len())).sum::<usize>();
     let mut best = [std::time::Duration::MAX; 7];
     for _ in 0..rounds {
         for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex, &lean_lex, &lean].into_iter().enumerate() {
@@ -312,7 +318,7 @@ fn rr_aot_against_jit() {
         }
     }
     let refused = |f: &dyn Fn(&str, &[u8]) -> bool| files.iter().zip(&bufs).filter(|(t, b)| f(t, b)).count();
-    let (aot_refused, jit_refused) = (refused(&|t, b| rerail_rr_aot::parse(b, t.len(), &mut rerail_rr_syntax::lean::Sink16::new(false, true)).is_err()), refused(&|t, _| c.image(t.as_bytes()).is_err()));
+    let (aot_refused, jit_refused) = (refused(&|t, b| aot_tape(b, t.len()).is_err()), refused(&|t, _| c.image(t.as_bytes()).is_err()));
     let mb = bytes as f64 / 1e6;
     let row = |name: &str, d: std::time::Duration| eprintln!("  {name:<44} {:>9.3} ms  {:>8.1} MB/s  {:>6.2} ns/byte", d.as_secs_f64() * 1e3, mb / d.as_secs_f64(), d.as_secs_f64() * 1e9 / bytes as f64);
     eprintln!("{} files, {:.2} MB; refused: the parser as Rust {aot_refused}, the JIT {jit_refused}; least of {rounds} rounds", files.len(), mb);

@@ -136,7 +136,7 @@ fn unescaped(s: &str) -> Option<String> {
 }
 
 impl Lang {
-    /// `table` by number (the lab's: every code the grammar allows and no other, decision 0626, numbered by how often
+    /// `table` by number (the lab's: every code the grammar allows and no other, decision 0631, numbered by how often
     /// each is a node's over a corpus, so the common codes are below the cutoff and only rare ones are read through
     /// the side list; a code no counted node has, by `(flags, kind, field, classes)`), the widths in bytes, and the
     /// revision (1–254).
@@ -2563,6 +2563,66 @@ mod tests {
                 assert_eq!(f16::has_kind(b, &v, block, kind), jit.two("tape_has_kind", b, &v, block as usize, kind), "kind {kind} in block {block}");
             }
         }
+    }
+
+    /// Decision 0353 step 3 on the CPU: a 16z tape's reads in Rust (`reads::f16z`, its blocks decoded into a rolling
+    /// cache as the CLIF's are) are the JIT's, node by node: size, code, start, end, parent and slot, over a tape of
+    /// more blocks than the cache holds, each reader with a cache of its own of three generations of two blocks (so
+    /// generations turn while it reads).
+    #[test]
+    fn the_rust_16z_reads_are_the_jits() {
+        use crate::reads::f16z::Z;
+        use rerail_clif::view::cache;
+        let jit = rerail_clif::jit::Reads::new();
+        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
+        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
+        let mut view = z.view(&lang).unwrap();
+        let blocks = z.p.block_count();
+        assert!(blocks > 2, "more blocks than a cache's generation holds");
+        // A cache of its own for each reader: the JIT's after the tape, the view naming it by its offset; the
+        // Rust reads' apart, named by its address.
+        let spec = cache::Spec::new(3, 2, view.columns[3] as usize);
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes() + 64, 0);
+        let jit_at = at + (64 - (bytes.as_ptr() as usize + at) % 64) % 64;
+        spec.init(&mut bytes[jit_at..jit_at + spec.bytes()]).unwrap();
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (jit_at as u32, 0, spec.entry_bytes() as u32, 1);
+        let mut own = vec![0u64; (spec.bytes() + 64).div_ceil(8)];
+        let own_at = (64 - (own.as_ptr() as usize) % 64) % 64;
+        // SAFETY: the buffer's bytes past the alignment.
+        let own_cache = unsafe { std::slice::from_raw_parts_mut(own.as_mut_ptr().cast::<u8>().add(own_at), spec.bytes()) };
+        spec.init(own_cache).unwrap();
+        let tape = z.as_bytes();
+        let rust = Z { t: tape, v: &view, cache: own_cache.as_ptr() };
+        let n = view.nodes;
+        // Forward, then back from the end (each a turn of the generations), then strided across the blocks.
+        let order: Vec<u32> = (0..n).chain((0..n).rev()).chain((0..n).map(|i| (i * 977) % n)).collect();
+        for &i in &order {
+            let x = i as usize;
+            assert_eq!(rust.size(i), jit.one("tape_size", &bytes, &view, x), "size of {i}");
+            assert_eq!(rust.number(i), jit.one("tape_number", &bytes, &view, x), "number of {i}");
+            assert_eq!(rust.start(i), jit.one("tape_start", &bytes, &view, x), "start of {i}");
+            assert_eq!(rust.end(i), jit.one("tape_end", &bytes, &view, x), "end of {i}");
+            assert_eq!(rust.parent(i), jit.one("tape_parent", &bytes, &view, x), "parent of {i}");
+            assert_eq!(rust.slot(i), slot(bytes.as_ptr(), &view, i), "slot of {i}");
+        }
+        // And the crate's own reader of the tape, which decodes its blocks its own way.
+        let held = ZCache::of([&z]);
+        let reader = z.reader(&lang, Some(&held)).unwrap();
+        for i in 0..n {
+            assert_eq!(u64::from(rust.start(i)), reader.start(i as usize), "start of {i}");
+            assert_eq!(rust.parent(i), reader.parent(i as usize).map_or(crate::reads::NONE, |p| p as u32), "parent of {i}");
+        }
+        // SAFETY: the Rust reads' cache, which no read uses now.
+        assert_eq!(unsafe { cache::Counts::read(own_cache.as_ptr()) }.failed, 0, "no read without room");
+        assert!(cache::Spec::check(own_cache).is_ok(), "the cache as its reads leave it");
     }
 
     /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a

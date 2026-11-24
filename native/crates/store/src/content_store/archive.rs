@@ -56,8 +56,7 @@ const AGED_TAPES: &str = "SELECT t.tape_id, t.seg, t.seg_at, t.seg_len FROM tape
 impl ContentStore {
     /// Whether an archive pass is due (`corpus_state.archive_due`): a point read.
     pub fn archive_due(&self) -> StoreResult<bool> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        Ok(connection.query_row_cached("SELECT archive_due FROM corpus_state WHERE singleton=1", [], |r| r.get::<_, i64>(0)).optional()?.unwrap_or(0) != 0)
+        self.corpus_kept(|c| c.state().archive_due != 0)
     }
 
     /// Archives up to `batch` aged sources and as many aged tapes (the module's rules); returns how many. A pass that
@@ -109,8 +108,12 @@ impl ContentStore {
         }
         if archived == 0 {
             self.immediate_transaction_once(|tx| {
-                tx.execute_cached("UPDATE corpus_state SET archive_due=0 WHERE singleton=1", [])?;
-                super::corpus_runs::kept::sync_at(tx, &super::corpus_runs::kept::Touch::default())
+                super::corpus_runs::kept::write_at(tx, |c, w| {
+                    let mut state = c.state();
+                    state.archive_due = 0;
+                    w.state(state);
+                    Ok(())
+                })
             })?;
         }
         Ok(archived)

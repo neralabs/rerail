@@ -22,6 +22,7 @@ use super::{Batch, Projected, Shape};
 use crate::code_rule_dsl::facts::core::NONE;
 use crate::code_rule_dsl::facts::vtab::Source;
 use rerail_blocks::vector::Vector;
+use rerail_clif::view_reads::{TAPE, TOK};
 use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock};
 
@@ -104,6 +105,9 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// What a document's rows read beyond its projection, made once per document.
     type Doc: Send + Sync;
     fn name(&self) -> &'static str;
+    /// Its slot of the batch's views' directory, which holds its first rows by document (`Batch::firsts_at`,
+    /// `view_reads::TAPE`, `TOK`).
+    fn slot(&self) -> usize;
     fn columns(&self) -> &'static [&'static str];
     /// The column holding the row's own item's id, which a lookup addresses.
     fn own(&self) -> usize;
@@ -128,7 +132,7 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        let Some(doc) = batch.doc(value >> 32) else { return };
+        let Some(doc) = batch.doc(value >> 32, &mut 0) else { return };
         let at = At { batch, doc };
         let p = at.p();
         let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };
@@ -161,27 +165,25 @@ pub(super) struct RowsView<R: TapeRows> {
     batch: Arc<Batch>,
     rows: R,
     per: Box<[OnceLock<Per<R::Doc>>]>,
-    offsets: OnceLock<Vector<usize>>,
 }
 
 impl<R: TapeRows> RowsView<R> {
     pub(super) fn new(batch: &Arc<Batch>, rows: R) -> Self {
         let per = (0..batch.docs.len()).map(|_| OnceLock::new()).collect();
-        RowsView { batch: Arc::clone(batch), rows, per, offsets: OnceLock::new() }
+        RowsView { batch: Arc::clone(batch), rows, per }
     }
 
     fn at(&self, doc: usize) -> At<'_> {
         At { batch: &self.batch, doc }
     }
 
-    /// Document `doc`'s rows: their count checked by its offsets, which its kept counts may have given.
+    /// Document `doc`'s rows: their count checked by its first rows, which its kept counts may have given.
     fn per(&self, doc: usize) -> &Per<R::Doc> {
         self.per[doc].get_or_init(|| {
             let at = self.at(doc);
             let rows = self.rows.rows(&at);
             let made = rows.count(matches!(rows, Rows::Ranked { .. }).then(|| at.p()));
-            let offsets = self.offsets();
-            let given = offsets[doc + 1] - offsets[doc];
+            let given = self.firsts().range(doc).len();
             if made as usize != given {
                 self.batch.docs.fail(format!("{}: {made} rows of document {doc} read, its counts gave {given} (decision 0494)", self.rows.name()));
             }
@@ -189,24 +191,17 @@ impl<R: TapeRows> RowsView<R> {
         })
     }
 
-    /// The rows' offsets by document, from each document's counts (decision 0494): those kept, else its projection's.
-    fn offsets(&self) -> &[usize] {
-        self.offsets.get_or_init(|| {
-            let mut offsets = Vector::with_capacity(self.per.len() + 1);
-            offsets.push(0);
-            for doc in 0..self.per.len() {
-                let n = self.rows.counted(&self.batch, doc, &|| self.batch.docs.counts(doc));
-                offsets.push(offsets.last().unwrap() + n as usize);
-            }
-            offsets
-        })
+    /// Its first rows by document, in the batch's views' directory (decision 0353 step 3), from each document's counts
+    /// (decision 0494): those kept, else its projection's (`count`).
+    fn firsts(&self) -> super::made::Firsts<'_> {
+        self.batch.firsts_at(self.rows.slot())
     }
 
-    /// Row `row`'s document and its number there.
+    /// Row `row`'s document and its number there (the directory's search).
     fn locate(&self, row: usize) -> (usize, u32) {
-        let offsets = self.offsets();
-        let doc = offsets.partition_point(|&o| o <= row) - 1;
-        (doc, (row - offsets[doc]) as u32)
+        let firsts = self.firsts();
+        let doc = firsts.doc_of(row, 0);
+        (doc, (row - firsts.at(doc)) as u32)
     }
 
     /// Document `doc`'s row `k`, every column.
@@ -232,12 +227,12 @@ impl<R: TapeRows> Source for RowsView<R> {
     /// 0494: a batch given its counts makes no document for a `len`); then checked by the kept ones.
     fn len(&self) -> usize {
         let given = self.batch.given_rows(self.rows.name());
-        if self.offsets.get().is_none()
+        if !self.batch.firsts_written()
             && let Some(n) = given.or_else(|| self.rows.statistics(&self.batch).map(|s| s[0].1 as usize))
         {
             return n;
         }
-        let len = *self.offsets().last().unwrap();
+        let len = self.firsts().total();
         if let Some(n) = given.filter(|&n| n != len) {
             self.batch.docs.fail(format!("{}: {len} rows read, its kept statistics counted {n} (decision 0494)", self.rows.name()));
         }
@@ -266,15 +261,15 @@ impl<R: TapeRows> Source for RowsView<R> {
     /// Document after document, each one's rows in its items' order: no row's place searched.
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         let (mut all, mut row) = ([0; COLUMNS], vec![0; columns.len()]);
-        let offsets = self.offsets();
+        let firsts = self.firsts();
         for doc in 0..self.per.len() {
-            let (per, at) = (self.per(doc), self.at(doc));
+            let (per, at, first) = (self.per(doc), self.at(doc), firsts.at(doc));
             let mut emit = |k: u32, item: u32| {
                 self.rows.row(&at, &per.doc, item, k, &mut all);
                 for (o, &c) in row.iter_mut().zip(columns) {
                     *o = all[c];
                 }
-                each(offsets[doc] + k as usize, &row);
+                each(first + k as usize, &row);
             };
             match per.rows {
                 Rows::None => {}
@@ -288,8 +283,8 @@ impl<R: TapeRows> Source for RowsView<R> {
         }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vector<usize>> {
-        let offsets = self.offsets();
-        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| offsets[i]..offsets[i + 1]).collect())
+        let firsts = self.firsts();
+        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| firsts.range(i)).collect())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let per = if column == self.rows.own() {
@@ -309,7 +304,7 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !self.rows.keyed(column) {
             return None;
         }
-        let offsets = self.offsets();
+        let firsts = self.firsts();
         let mut rows = Vector::new();
         for &v in values {
             self.rows.find(&self.batch, column, v, &mut |doc, x| {
@@ -321,7 +316,7 @@ impl<R: TapeRows> Source for RowsView<R> {
                     Rows::None => None,
                 };
                 if let Some(k) = rank {
-                    rows.push(offsets[doc] + k as usize);
+                    rows.push(firsts.at(doc) + k as usize);
                 }
             });
         }
@@ -378,6 +373,38 @@ pub(super) fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> 
         }
     }
     out
+}
+
+/// The directory's slots whose rows a document's views' counts do not give: `doc`'s, a row a file (decision 0494: a
+/// read of `doc` alone makes no document). `Batch::firsts_at` writes them apart (`count_free`), and the views' fill
+/// leaves them as written.
+pub(super) fn free_slots() -> [usize; 1] {
+    [DocRow.slot()]
+}
+
+/// Document `doc`'s rows of each relation at a slot of `free_slots`, in that order, none of its counts asked.
+pub(super) fn count_free(batch: &Batch, doc: usize) -> [usize; 1] {
+    [DocRow.counted(batch, doc, &|| unreachable!("doc's rows are counted by its files, not by its views")) as usize]
+}
+
+/// Document `doc`'s rows of each relation `views` serves over `batch`, at its slot (`TapeRows::slot`) of `by`, a row of
+/// the views' directory's first rows (`Batch::firsts_at`), from its views' counts `counts`.
+pub(super) fn count(batch: &Batch, doc: usize, counts: &ViewCounts, by: &mut [usize]) {
+    fn put<R: TapeRows>(r: R, batch: &Batch, doc: usize, counts: &ViewCounts, by: &mut [usize]) {
+        by[r.slot()] = r.counted(batch, doc, &|| *counts) as usize;
+    }
+    put(DocRow, batch, doc, counts, by);
+    put(NamedChild, batch, doc, counts, by);
+    put(VisitIndex, batch, doc, counts, by);
+    if batch.shape == Shape::Core {
+        put(TreeDigest, batch, doc, counts, by);
+        for rel in [TokRel::First, TokRel::Last, TokRel::Before, TokRel::After] {
+            put(TokenNeighbour(rel), batch, doc, counts, by);
+        }
+        for side in [Side::Before, Side::After] {
+            put(Gap(side), batch, doc, counts, by);
+        }
+    }
 }
 
 /// Document `doc`'s derived columns that its program reads, made before a device reads its view entry (`ViewDoc`'s
@@ -506,6 +533,9 @@ impl TapeRows for Gap {
     fn name(&self) -> &'static str {
         STRUCTURAL[self.0 as usize]
     }
+    fn slot(&self) -> usize {
+        TAPE + self.0 as usize
+    }
     fn columns(&self) -> &'static [&'static str] {
         &["n", "s"]
     }
@@ -536,6 +566,9 @@ impl TapeRows for TokenNeighbour {
     type Doc = ();
     fn name(&self) -> &'static str {
         TOKENS[self.0 as usize]
+    }
+    fn slot(&self) -> usize {
+        TOK + self.0 as usize
     }
     fn columns(&self) -> &'static [&'static str] {
         self.0.columns()
@@ -607,6 +640,9 @@ impl TapeRows for NamedChild {
     fn name(&self) -> &'static str {
         NAMED
     }
+    fn slot(&self) -> usize {
+        TAPE + 2
+    }
     fn columns(&self) -> &'static [&'static str] {
         &["p", "i", "c", "start", "end_"]
     }
@@ -619,10 +655,13 @@ impl TapeRows for NamedChild {
     fn rows(&self, at: &At) -> Rows {
         Rows::Ranked { item: Item::Child, skip: Self::skip(at.p()) }
     }
-    /// The root is marked where it is numbered: a file's own tree's (its tape node 0), never a guest's.
+    /// Its `Item::Child` marks but the root's, which the walk marks where tape node 0 is numbered (`skip`): a file's
+    /// own tree's, and a guest's whose root is its tape's node 0 (a program on a tape of its own; not a fragment's
+    /// expression inside its wrapper). A guest is walked with no anchors, so each numbered node but its first has a
+    /// numbered parent: its marks are its nodes less one, and the root's. So the counts tell, no document made.
     fn counted(&self, batch: &Batch, doc: usize, counts: &dyn Fn() -> ViewCounts) -> u32 {
         let counts = counts();
-        let root = batch.docs.guest(doc).is_none() && counts[NODES] > 0;
+        let root = counts[NODES] > 0 && (batch.docs.guest(doc).is_none() || counts[CHILDREN] >= counts[NODES]);
         counts[CHILDREN].saturating_sub(u32::from(root))
     }
     fn doc(&self, _: &At) {}
@@ -662,6 +701,9 @@ impl TapeRows for DocRow {
     type Doc = [i64; 2];
     fn name(&self) -> &'static str {
         DOC
+    }
+    fn slot(&self) -> usize {
+        TAPE + 5
     }
     fn columns(&self) -> &'static [&'static str] {
         &["d", "path", "module"]
@@ -720,8 +762,8 @@ impl VisitIndex {
     fn places<'a>(at: &'a At) -> &'a Cells<u32> {
         let p = at.p();
         p.derived.visits.get_or_init(|| {
-            let dialect = at.batch.dialects.get(p.tag).expect("a document with rows has a grammar");
-            let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python) == Some(p.tag);
+            let dialect = at.batch.dialects.get(p.tag()).expect("a document with rows has a grammar");
+            let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python) == Some(p.tag());
             let n = p.len() as usize;
             // copy: derived (each node's place in the visit order, a walk the tape holds no index of)
             Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
@@ -738,6 +780,9 @@ impl TapeRows for VisitIndex {
     type Doc = ();
     fn name(&self) -> &'static str {
         VISIT
+    }
+    fn slot(&self) -> usize {
+        TAPE + 3
     }
     fn columns(&self) -> &'static [&'static str] {
         &["n", "i"]
@@ -798,6 +843,9 @@ impl TapeRows for TreeDigest {
     type Doc = ();
     fn name(&self) -> &'static str {
         DIGEST
+    }
+    fn slot(&self) -> usize {
+        TAPE + 4
     }
     fn columns(&self) -> &'static [&'static str] {
         &["n", "s"]

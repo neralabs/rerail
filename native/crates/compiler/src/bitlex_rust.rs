@@ -1714,9 +1714,9 @@ impl<'a> G<'a> {
     }
 }
 
-/// `code` with its writer's calls the plain ones (`Writer::plain_key` and the rest): tier 2 opens no chain and writes an
-/// image or the columns, never format 16, so no call need check for a chain held or a node passed on (the writer
-/// asserts both in a test build).
+/// `code` with its writer's calls the plain ones (`Writer::plain_key` and the rest): tier 2 opens no chain and commits
+/// nothing before its finish, so no call need check for a chain held or a node passed on (the writer asserts both in
+/// a test build).
 fn plain_writer(code: &str) -> String {
     [
         ("self.w.key(", "self.w.plain_key("),

@@ -189,8 +189,8 @@ DEFINE_KERNEL2(blocks_tests, reads_probe, ROBUFFER, uint8_t, b, "[block]", ARGS,
     uint64_t rel = p.rel;
     UKL_GLOBAL uint64_t* o = out + id * 4u;
     UKL_GLOBAL const Relation* r = (UKL_GLOBAL const Relation*)(b + rel);
-    o[0] = clif_rel_get(b, rel, r->base_rows + id, 0u);
-    o[1] = clif_rel_get(b, rel, r->base_rows + id, 1u);
+    o[0] = clif_rel_get(b, rel, r->base_rows + id, 0u, 0ul);
+    o[1] = clif_rel_get(b, rel, r->base_rows + id, 1u, 0ul);
     o[2] = clif_rel_dead(b, rel, id);
     o[3] = clif_rel_group(b, rel, 0u, mix(SEED, (int64_t)o[1]));
 }

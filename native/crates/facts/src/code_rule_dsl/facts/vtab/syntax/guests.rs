@@ -76,7 +76,7 @@ impl GuestRows {
     /// projected before it, its host among them.
     /// `wants` says whether `host_node`, `unparse_of`, `guest_of` and `guest_place` are read.
     pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &dyn Hosts, [host_nodes, unparse, guest_of, guest_place]: [bool; 4], string: &mut dyn FnMut(&str) -> usize) {
-        let key = i64::from(p.key);
+        let key = i64::from(p.key());
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
         // A file's grammar, read off its tape (a program's is its `rr_program` row).

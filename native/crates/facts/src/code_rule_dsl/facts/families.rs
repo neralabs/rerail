@@ -166,12 +166,12 @@ pub fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreR
 }
 
 /// The source of the blob a path name binds, as stored.
-pub(crate) fn blob_source(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<Arc<String>>> {
+pub(crate) fn blob_source(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<Arc<crate::code_rule_dsl::tape::Text>>> {
     let Some(source) = blob_source_id(graph, digest)? else {
         return Ok(None);
     };
     let bytes = graph.store().get_source(source)?;
-    Ok(String::from_utf8(bytes).ok().map(Arc::new))
+    Ok(String::from_utf8(bytes).ok().map(|s| Arc::new(s.into())))
 }
 
 /// A path's dialect, where it has one with a tape.
@@ -211,7 +211,7 @@ pub struct Families {
     /// Prefilter rows built in this recomputation, published together.
     rows: Vec<TapePrefilter>,
     /// Sources parsed ahead, in parallel, by `parse_ahead`: each its text and its parse.
-    parsed: HashMap<SourceId, (Arc<String>, Option<Result<FileImage, String>>)>,
+    parsed: HashMap<SourceId, (Arc<crate::code_rule_dsl::tape::Text>, Option<Result<FileImage, String>>)>,
     pub parses: Parses,
 }
 
@@ -346,7 +346,7 @@ impl Families {
                 continue;
             }
             let Ok(source) = String::from_utf8(store.get_source(source_id)?) else { continue };
-            sources.push((source_id, language, Arc::new(source)));
+            sources.push((source_id, language, Arc::new(tape::Text::from(source))));
         }
         let parsed = crate::code_rule_dsl::logic::profile::on_cores(|| {
             sources
@@ -385,7 +385,7 @@ impl Families {
                 let Ok(source) = String::from_utf8(store.get_source(source_id)?) else {
                     return Ok(None);
                 };
-                let source = Arc::new(source);
+                let source = Arc::new(tape::Text::from(source));
                 let parse = TapeImage::parse(&grammar, &source, &|| false);
                 (source, parse)
             }
@@ -418,7 +418,7 @@ impl Families {
         let Ok(source) = String::from_utf8(store.get_source(source_id)?) else {
             return Ok(None);
         };
-        let source = Arc::new(source);
+        let source = Arc::new(tape::Text::from(source));
         let Some(bytes) = store.get_tapes_bulk(&[id])?.remove(&id) else {
             return Ok(None);
         };

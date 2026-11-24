@@ -501,14 +501,6 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 #[cfg(test)]
 pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("atom_blocks", &["seq", "tag"]),
-    ("corpus_decided", &["singleton", "run", "time", "swept"]),
-    ("corpus_live", &["source_id", "grammar_version", "tape_format"]),
-    ("corpus_manifest_plans", &["manifest_id", "plan_digest"]),
-    ("corpus_manifests", &["manifest_id", "root_id", "last_run", "last_time", "grammar_version", "tape_format", "plan_digest", "digest", "sources", "lane", "policy"]),
-    ("corpus_plan_relations", &["plan_digest"]),
-    ("corpus_plans", &["plan_digest", "live"]),
-    ("corpus_roots", &["root_id"]),
-    ("corpus_state", &["singleton", "run", "history_bytes", "due", "archive_due"]),
     ("facts_chain", &["space", "seq", "tag"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors", "at_start", "at_end"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).

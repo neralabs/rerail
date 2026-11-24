@@ -123,7 +123,7 @@ fn composed_queries_read_adopted_inputs_and_replace_their_versions() {
         },
     )
     .unwrap();
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     for n in [7, 9] {
         native::component::retain(&db, "supplied", vec![rerail_blocks::vector![n]], vec![b'i']).unwrap();
         native::component::adopt(

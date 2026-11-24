@@ -155,6 +155,29 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     })
 }
 
+/// Each relation `core.rerail` declares with columns of type `node`, and those columns: a node's alone, never a span
+/// or another location's (`loc`). The declarations' own types, read off its text: a version lowers `node`, `span` and
+/// `loc` alike (`lower::ty`). Empty when `core.rerail` does not read.
+pub fn core_node_columns() -> &'static std::collections::HashMap<String, Vec<usize>> {
+    static NODES: std::sync::OnceLock<std::collections::HashMap<String, Vec<usize>>> = std::sync::OnceLock::new();
+    NODES.get_or_init(|| std::fs::read_to_string(library().join("core.rerail")).map(|src| node_columns_declared(&src)).unwrap_or_default())
+}
+
+/// The columns of type `node` of each relation `.decl`ared in `src` (`.decl r(a: node, b: span)` gives `r: [0]`).
+pub fn node_columns_declared(src: &str) -> std::collections::HashMap<String, Vec<usize>> {
+    let mut out = std::collections::HashMap::new();
+    for line in src.lines() {
+        let Some(rest) = line.trim_start().strip_prefix(".decl ") else { continue };
+        let Some((name, cols)) = rest.split_once('(') else { continue };
+        let Some((cols, _)) = cols.split_once(')') else { continue };
+        let nodes: Vec<usize> = cols.split(',').enumerate().filter(|(_, c)| c.split_once(':').is_some_and(|(_, t)| t.trim() == "node")).map(|(i, _)| i).collect();
+        if !nodes.is_empty() {
+            out.insert(name.trim().to_owned(), nodes);
+        }
+    }
+    out
+}
+
 /// `core_names` less the relations decision 0174's rewrite adds (`lower::made_on_request`): what a program in
 /// `core.rerail`'s shape declares whichever attributes it answers on request (a round may be undone, `lower::undo_round`).
 pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
@@ -759,7 +782,7 @@ fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> 
 }
 
 pub fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
+    if super::plan::corpus::keeps_store() && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
 }
 
 /// The image store a run opened, held while the run's call runs (`HoldImages`, one of the run's own values, decision
@@ -1925,7 +1948,7 @@ pub fn text_header(src: &str) -> Result<std::sync::Arc<super::program_image::Ver
 fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>) {
     use super::plan::corpus::{combined, phases};
     let key = combined::text_header_key(src);
-    let store = (cfg!(feature = "tape-cache") && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
+    let store = (super::plan::corpus::keeps_store() && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
     let found = store.as_ref().and_then(|store| {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
@@ -1968,7 +1991,7 @@ fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], progr
 
 fn rule_file_store(path: &Path, library: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
     use super::plan::corpus::{combined, phases};
-    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
+    if !super::plan::corpus::keeps_store() || super::plan::corpus::phase0::active() { return None; }
     Some((combined::rule_file_key(path, library, sha), crate::code_rule_dsl::prof::time("rr.inspect.store", phases::reading_store)))
 }
 

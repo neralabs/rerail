@@ -63,7 +63,7 @@ struct Doc {
 
 fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32, String>) -> Option<Doc> {
     let source = std::fs::read_to_string(path).ok()?;
-    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
+    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source.into()), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
     // Read in a batch of its own: its 16z blocks decoded into a cache made for it (`Facts::alone`).
     let cache = f.own_cache();
@@ -232,7 +232,7 @@ struct DocSets {
 
 fn doc_sets(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32, String>) -> Option<DocSets> {
     let source = std::fs::read_to_string(path).ok()?;
-    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
+    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source.into()), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
     // Read in a batch of its own: its 16z blocks decoded into a cache made for it (`Facts::alone`).
     let cache = f.own_cache();

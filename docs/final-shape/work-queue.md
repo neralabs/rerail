@@ -10960,3 +10960,29 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - tests-lang: id reads (7);
   - boot: test flush (1).
 - Not passing: `json_rules_pack_is_current`, red before the merge too, fixed on its own. The whole tests-rr suite does not finish inside one capped run (32 tests in 580 s): the branch's spike tests take 40 to 90 s each.
+
+### Q527. Roll-up 100 (sync-integration-hub-tape ed60cf1eef onto Pulling-it-all-together): what the merge chose
+
+- sync-integration-hub-tape merged the hub up to roll-up 95, Native-and-GPU-strata (0353 steps 3-8, 0574), Typing-support-final-shape (t33 steps 1-8, K1-K4) and django-bugs (0648). So this one merge takes in Typing's t33 too. A direct Typing merge was started first and aborted: it re-fought the contests sync's 6f277440ff had already settled (the session holds its corpus batch alone; `HeldCorpus`'s other parts, `corpus_kept_differences` and `by_document` go; one in-place reader of kept statistics). Sync's resolutions are kept as made.
+- Sync's sides, by its decisions:
+  - views are read in place (0353 step 4):
+    - the chunk views' axis solve goes, with `chunk_views.uglykl` and the global-state entry `CHUNK_AXIS`;
+    - `expand_view` goes, and with it `Report::expanded` and its term in setfix's launch count;
+  - nothing is uploaded (0353 step 6): the placement table's `gpu_upload_s` and `gpu_upload_values` columns go. The hub's `gpu_s` and `gpu_rounds` columns stay.
+- The hub's sides:
+  - space.rs: `finish` resumes the evaluation `start` carried;
+  - the 0647 test `a_sized_scan_past_its_own_tiles_scans_its_sums_as_levels`;
+  - the switch list without `RERAIL_PROGRAM_BUDGET`;
+  - typed transmutes in tests-lang.
+- join_stages: sync's far reads (`j->RF`) for `PK_COPY` and `PK_IX_KEY`. The hub's `PK_IX_PLACE` and `PK_IX_OFFS` stay (0648's split of index placing), since their functions have the hub's signatures.
+- Ported after the merge:
+  - metal_join: a second `batch.finish` and `drop(kept)` were left by a hunk that merged cleanly. Removed.
+  - The rr-align answer to `LOWER_REQUEST` reads sync's `Asked` rows (`Row`, by slice) in place of `Vector` rows.
+- global-state.txt: sync had moved the hub's entries within the file. Each one is kept once.
+- Decisions README: rows merged by number (0638 and 0640 from sync).
+- Checked with Relax, RERAIL_GPU=cpu: 0 errors over logic, device-metal, accel, tape-format and 12 test crates. Tests:
+  - tests-lang directory searches 1;
+  - tests-rr link 1;
+  - setfix device 39 passed. The two parity reds were red before this merge and are left for the green pass;
+  - tests-corpus session and cross views 35, phase 0 10, and `the_run_after_a_cold_one_with_tape_values_writes_nothing` (now green).
+- r5 (`r5_the_runs_read_no_sql_inside_the_waves`) was red after the merge: it came in with roll-up 99 (rr-align's 0639 §3 answer). Fixed in the next commit.

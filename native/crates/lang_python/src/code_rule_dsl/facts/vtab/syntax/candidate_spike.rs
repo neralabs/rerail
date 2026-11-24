@@ -19,7 +19,7 @@ impl CandidateSpike for Batch {
         let members = std::collections::BTreeSet::from(["open".to_owned()]);
         let mut output = Vec::new();
         let mut total = candidate_spike::Work::default();
-        for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
+        for p in self.docs.iter().filter(|p| p.tag() == py.grammar.tag()) {
             let (rows, work) = candidate_spike::experiment(&py.grammar, p.f(), 2, &members, collector_mode, |n| {
                 let imports = py.imports(self, p);
                 if mode=="typed_ranges" {

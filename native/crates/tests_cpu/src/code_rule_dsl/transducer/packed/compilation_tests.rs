@@ -9,7 +9,7 @@ use crate::code_rule_dsl::tape::{DERIVED_CLASS_BASE, Grammar, TapeDoc, TapeImage
 use std::sync::Arc;
 
 fn python_tape(source: &str) -> TapeDoc {
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")

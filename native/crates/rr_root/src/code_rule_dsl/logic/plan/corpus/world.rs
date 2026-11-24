@@ -556,27 +556,30 @@ pub fn bytes_digests_held(paths: &[PathBuf], hold: Option<&super::texts::Sources
             .zip(paths.par_iter())
             .enumerate()
             .map(|(i, (s, path))| match s {
-                DigestStep::Read(r) if representatives[i] == i => {
-                    let bytes = r.read()?;
+                // Read into the home the builders read it in (a slab's room where a device reads sources, decision
+                // 0353 step 7) when it is kept for them; else a vector, hashed and dropped.
+                DigestStep::Read(r) if representatives[i] == i && hold.is_some() => {
+                    let bytes = r.read_placed(&crate::code_rule_dsl::tape::placed::placer)?;
                     let hashed = DigestRead::hashed(&bytes);
                     let mut git_text = None;
                     if let Some(hold) = hold {
                         if let Some(s) = r.stat() {
                             hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
                         } else {
-                            git_text = Some(bytes);
+                            git_text = crate::code_rule_dsl::tape::Text::new(bytes).ok().map(std::sync::Arc::new);
                         }
                     }
                     Some((hashed, git_text))
                 }
+                DigestStep::Read(r) if representatives[i] == i => Some((DigestRead::hashed(&r.read()?), None)),
                 _ => None,
             })
             .collect()
     });
     if let Some(hold) = hold {
         for (path, &first) in paths.iter().zip(&representatives) {
-            if let Some((_, Some(bytes))) = &hashed[first] {
-                hold.keep_git(path, bytes);
+            if let Some((_, Some(text))) = &hashed[first] {
+                hold.keep_git(path, text);
             }
         }
     }

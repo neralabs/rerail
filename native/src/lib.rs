@@ -13,6 +13,7 @@ use rerail_store::Canonical as _;
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
+
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
 /// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
@@ -27,6 +28,9 @@ mod test_watchdog;
 // The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
 #[cfg(test)]
 mod test_flush;
+// The test binary's folders are the user's alone (a umask of 077, decision 0574).
+#[cfg(test)]
+mod test_private_folders;
 #[cfg(test)]
 mod text_readers_guard_tests;
 #[cfg(all(test, not(windows)))]

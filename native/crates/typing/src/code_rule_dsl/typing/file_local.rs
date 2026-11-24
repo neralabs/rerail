@@ -187,6 +187,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResu
 
 mod on_version;
 pub use on_version::FileLocal;
+pub use on_version::reads_a_node;
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 #[cfg(any(test, feature = "test-hooks"))]

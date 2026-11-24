@@ -14,7 +14,7 @@
         let native = StrDoc::new(source, GrammarDialect::Vue);
         let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)
             .expect("encodes");
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).expect("restores")
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).expect("restores")
     }
 
     /// The program a Vue file of `source` embeds, a document of its own, with its dialect and its
@@ -23,7 +23,7 @@
         let guests = tape(source).guests().expect("owned");
         let doc = guests.first().expect("a program").doc.clone();
         let dialect = *doc.get_lang();
-        let text = doc.get_source().clone();
+        let text = doc.get_source().to_string();
         (AstGrep::doc(doc), dialect, text)
     }
 

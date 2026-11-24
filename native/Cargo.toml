@@ -86,6 +86,7 @@ test-hooks = ["rerail-blocks/test-hooks", "rerail-c-pp/test-hooks", "rerail-clif
 dunce = "=1.0.5"
 # Only under `test-hooks` (above); the tests have it as a dev-dependency.
 tempfile = { version = "=3.27.0", optional = true }
+# Only under `test-hooks` (above), as `tempfile`: the tests' process keeps its folders private (`private_test_folders`).
 # `.rerail`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
@@ -226,6 +227,7 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+# The tests' process keeps its folders private (`private_test_folders`, decision 0574).
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "crates/simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

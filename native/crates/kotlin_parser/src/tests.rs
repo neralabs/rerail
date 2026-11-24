@@ -110,16 +110,6 @@ fn the_as_escape_is_the_interpreters() {
     ]);
 }
 
-/// The CPU's tier 2 over tier 1's run `run` of `bytes` (a device's records, or the interpreter's), its tape in format 16.
-fn tier2_over(c: &Compiled, bytes: &[u8], run: &rerail_compiler::block::BlockRun) -> Result<Tape, String> {
-    sixteen(c.parser.tier2.image16_on(bytes, lean::TERMINATORS, run, lang(), c.numbers(), false)?)
-}
-
-/// The interpreter's `nodes` of `bytes` written in format 16, as `Compiled::interpreted` writes them.
-fn interpreter_tape(c: &Compiled, bytes: &[u8], nodes: &[rerail_compiler::stream::Node]) -> Result<Tape, String> {
-    sixteen(rerail_compiler::stream::image16_by(nodes, &c.program.readings.extras, &number, rerail_compiler::stream::Form16 { lang: lang(), terminators: lean::TERMINATORS, tag: TAG, z: false }, bytes)?)
-}
-
 /// The parser as Rust (`rerail_kotlin_aot`, its `tier1.rs` and `tier2.rs`) is the Bitlex
 /// compiler's output for the grammar (`tiers_rust`); `RERAIL_BLESS=1` writes it again.
 #[test]
@@ -132,6 +122,12 @@ fn rust_is_current() {
         }
         assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "kotlin_aot's {file} is not the compiler's: RERAIL_BLESS=1");
     }
+}
+
+/// `text`'s tape by the compiled tier 2 over tier 1's run `run` (the interpreter's, or a device's records), in format
+/// 16: or why it refuses the file.
+fn tape_over(c: &Compiled, text: &str, run: &rerail_compiler::block::BlockRun) -> Result<Tape, String> {
+    sixteen(c.parser.tier2.image16_on(text.as_bytes(), lean::TERMINATORS, run, lang(), c.numbers(), false)?)
 }
 
 /// `text`'s tape from the parser as Rust (`rerail_kotlin_aot`: tier 1, then tier 2), as text.
@@ -703,10 +699,9 @@ fn a_string_with_templates_is_one_record() {
         device.positions[usize::from(r.starts)] = ms.as_slice().into();
         device.positions[usize::from(r.lasts)] = ml.as_slice().into();
         device.codes = codes;
-        let over = tier2_over(c, bytes, &device).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses the masks' records of {text:?}: {why}"));
+        let over = tape_over(c, text, &device).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses the masks' records of {text:?}: {why}"));
         assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the masks' records, {text:?}");
-        let nodes = rerail_compiler::stream::run(&c.program, bytes, &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
-        let interp = interpreter_tape(c, bytes, &nodes).unwrap_or_else(|why| panic!("the interpreter's tape of {text:?}: {why}"));
+        let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         // The CPU's tier 1: the interpreter's records and codes.
         let cpu = c.parser.tier1.extract(bytes);
@@ -714,7 +709,7 @@ fn a_string_with_templates_is_one_record() {
         let n = run.codes.len();
         assert_eq!((&cpu.positions[0][..n.min(cpu.positions[0].len())], &cpu.positions[1][..n.min(cpu.positions[1].len())], &cpu.codes[..]), (&starts[..], &lasts[..], &run.codes[..]), "the CPU's tier 1, {text:?}\n{}", c.explain(text));
         // The CPU's tier 2, over the interpreter's tier 1 and over its own: the lean parser's.
-        let over = tier2_over(c, bytes, &run).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses {text:?}: {why}\n{}", c.explain(text)));
+        let over = tape_over(c, text, &run).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses {text:?}: {why}\n{}", c.explain(text)));
         assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the interpreter's tier 1, {text:?}");
         let image = c.tape(text).unwrap_or_else(|why| panic!("the CPU refuses {text:?}: {why}\n{}", c.explain(text)));
         assert_eq!(image_text(&image).expect("a tape image"), want, "the CPU, {text:?}");
@@ -894,7 +889,7 @@ fn split_operators_are_the_lean_parsers() {
     ]);
     for text in ["val a = b ? .c\n", "val a = b > = c\n", "val a = b >\n  = c\n"] {
         assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
-        assert!(compiled().expect("compiles").tape(text).is_err(), "the grammar reads {text:?}");
+        assert!(compiled().expect("compiles").image(text).is_none(), "the grammar reads {text:?}");
     }
 }
 
@@ -1877,7 +1872,7 @@ fn probe() {
     for text in std::fs::read_to_string(path).expect("the probe file").split("\n---\n") {
         let text = format!("{}\n", text.trim_end_matches('\n'));
         let lean = lean_text(&text);
-        let ours = c.tape(&text).ok().and_then(|i| image_text(&i).ok());
+        let ours = c.image(&text).and_then(|i| image_text(&i).ok());
         let verdict = match (&lean, &ours) {
             (Some(a), Some(b)) if a == b => "same".to_string(),
             (Some(a), Some(b)) => {
@@ -1889,7 +1884,7 @@ fn probe() {
                 let run = c.program.block_programs[0].run(text.as_bytes());
                 let why = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).err();
                 let near = why.as_ref().and_then(|w| w.at).map(|a| text[a as usize..].chars().take(30).collect::<String>());
-                let jit2 = tier2_over(c, text.as_bytes(), &run).map(|t| t.as_bytes().len());
+                let jit2 = tape_over(c, &text, &run).map(|t| t.len());
                 let cpu = c.parser.tier1.extract(text.as_bytes());
                 let same1 = cpu.codes == run.codes && cpu.positions == run.positions;
                 let first = (0..cpu.codes.len().min(run.codes.len())).find(|&i| cpu.codes[i] != run.codes[i] || cpu.positions.iter().zip(&run.positions).any(|(a, b)| a.get(i) != b.get(i)));
@@ -1927,8 +1922,8 @@ fn probe() {
                 }
                 Err(why) => eprintln!("  interpreter refuses: {why:?}"),
             }
-            if let Ok(t) = tier2_over(c, text.as_bytes(), &run) {
-                eprintln!("  JIT tier 2:\n{}", image_text(&t).unwrap_or_else(|why| why));
+            if let Ok(t) = tape_over(c, &text, &run) {
+                eprintln!("  JIT tier 2:\n{}", image_text(&t).unwrap_or_default());
             }
         }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_TOKENS").is_some() {

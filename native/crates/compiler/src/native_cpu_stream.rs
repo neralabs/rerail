@@ -5687,6 +5687,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let s = NodeCol::of(rows, AT_START).get_row(&mut f, b);
                     NodeCol::of(rows, AT_START).put_row(&mut f, a, s);
                     NodeCol::of(rows, AT_END).put_row(&mut f, a, s);
+                    // Its size again (a leaf): the format 16 writer's pass reads its row and size when the
+                    // nodes are passed (`Table::pass`), the extras pending not yet.
                     let one = f.ins().iconst(types::I64, 1);
                     table.close_cells(&mut f, &env, first, one);
                     f.ins().jump(fall, &[]);
@@ -6242,7 +6244,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let root = f.ins().uload32(flags, open_c, 0);
                         let root_row = NodeCol::row(&mut f, rows_here, root);
                         end_c.put_row(&mut f, root_row, len);
-                        // Its start, past the file's leading blanks, the writer's pass gave it (`Table::pass`).
+                        // A padded root's start (past the file's leading blanks, as tree-sitter's) was given
+                        // to its writer when it was passed (`Table::pass`).
                         let size = f.ins().isub(nodes, root);
                         table.close_cells(&mut f, &env, root, size);
                     }

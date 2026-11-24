@@ -17,7 +17,7 @@ pub fn register() {
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::compile_matcher::WAVES.register("rerail-device-metal", &METAL);
     // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
-    crate::code_rule_dsl::facts::vtab::syntax::device_chunk::CHUNK_AXIS.register("rerail-device-metal", packed::metal_join::axis_in_chunk);
+    crate::code_rule_dsl::facts::nearest::AXIS_SOLVE.register("rerail-device-metal", packed::metal_join::axis_in_place);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 

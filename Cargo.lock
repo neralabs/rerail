@@ -5134,6 +5134,7 @@ dependencies = [
  "rerail-prof",
  "rerail-store",
  "rerail-store-base",
+ "rerail-tape-format",
  "rusqlite",
  "same-file",
  "serde",
@@ -5687,6 +5688,7 @@ name = "rerail-rr-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-rr-aot",
+ "rerail-rr-syntax",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -6333,6 +6335,7 @@ dependencies = [
  "rerail-section",
  "rerail-store",
  "rerail-store-base",
+ "rerail-tape-format",
  "rusqlite",
  "same-file",
  "serde",
@@ -6365,6 +6368,7 @@ dependencies = [
  "rerail-prof",
  "rerail-registry",
  "rerail-store-base",
+ "rerail-tape-format",
  "rusqlite",
  "same-file",
  "serde",
@@ -6389,6 +6393,7 @@ dependencies = [
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
+ "ast-grep-core",
  "lz4-sys",
  "memchr",
  "rerail-clif",
@@ -8601,6 +8606,7 @@ name = "rerail-vector"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "rerail-registry",
  "serde",
 ]
 

@@ -238,10 +238,12 @@ pub fn check_submission() {
 }
 
 /// Marks the dispatches of the command known by `pointer` (a submission's key: a `lane::Command`'s, a `join::Pass`'s
-/// or the GPU lane's) submitted, or completed.
+/// or the GPU lane's) submitted, or completed. A wait in a thread's teardown (a submission a thread-local held,
+/// waited as it drops) finds the ledger gone: its evaluation is over, and there is nothing to mark.
 pub fn mark(pointer: usize, completed: bool) {
-    EVALUATION.with_borrow(|slot| {
-        if let Some(evaluation) = slot {
+    let _ = EVALUATION.try_with(|cell| {
+        let slot = cell.borrow();
+        if let Some(evaluation) = slot.as_ref() {
             let mut evaluation = evaluation.borrow_mut();
             if let Some(&id) = evaluation.commands.get(&pointer) {
                 for record in &mut evaluation.records {

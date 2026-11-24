@@ -447,7 +447,6 @@ pub(super) enum Found {
 /// engine ships it; `None` when neither has it, or when what is kept no longer reads. With it, the sources of its
 /// programs' texts, and whether its atoms moved.
 pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
-    super::memo::off();
     let start = std::time::Instant::now();
     // The store's, where its program's text is stored (a pointer is kept only beside its text, `record`).
     let kept = source.and_then(|_| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the pointer, read".into()); pointer::get(store, key) });
@@ -585,7 +584,6 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
 /// by the store's writer, which names the programs' sources so collection keeps them. Nothing when a program does not
 /// read back from its text: the next run prepares again.
 pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: String, key: &[u8; 32], prepared: &Prepared) {
-    super::memo::off();
     let mut facts = rest_of(prepared);
     let mut programs = Vec::new();
     for (name, version) in [("source", &prepared.source), ("lowered", &prepared.lowered.version)] {

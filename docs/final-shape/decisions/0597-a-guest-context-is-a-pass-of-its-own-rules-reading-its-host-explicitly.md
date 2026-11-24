@@ -1,7 +1,7 @@
 # 0597. A guest context is a pass of its own rules, reading its host's finished facts explicitly
 
-Status: partly built (audited 2026-11-23). Left: Step 4: remove hiding's annotation range, FoldOwn, narrow copies and
-one_document (still in the code). Step 5: f-strings and Vue. Step 6: measure. Proposed (2026-11-21), from the user:
+Status: built (2026-11-22; the audit's "partly built" corrected 2026-11-23: steps 1-7 are built, step 6 measured,
+below). Proposed (2026-11-21), from the user:
 "should we instead do another fixedpoint of annotation/template analysis AFTER the main program has run, with the
 facts from the main program as an input?"; "I was already thinking about having each language run in a different pass
 ... scan the code inside f-strings and handle DSLs like vue's html-like code"; "yes, an explicit pass"; "if we want to

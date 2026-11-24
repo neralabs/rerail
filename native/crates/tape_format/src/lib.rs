@@ -12,6 +12,9 @@ pub mod home;
 pub mod newlines;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
 pub mod reads;
+/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the host executor's reads of a
+/// document's views' rows, through its entry in its batch's views' directory.
+pub mod view_reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 
@@ -1408,18 +1411,22 @@ mod tests {
     /// Each node: its code, its subtree's end, its parent, its start and its end.
     type Row = (u32, usize, Option<usize>, u64, u64);
 
-    /// A language whose table holds kinds 0 to 15, each numbered its kind.
+    /// A language whose table holds kinds 0 to 15 in fields 0 to 7, each numbered its kind and 16 its field.
     fn lang() -> &'static f16::Lang {
         static LANG: std::sync::OnceLock<f16::Lang> = std::sync::OnceLock::new();
         LANG.get_or_init(|| {
-            let entries = (0..16).map(|kind| Entry { kind, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let entries = (0..8).flat_map(|field| (0..16).map(move |kind| Entry { kind, field, flags: 0, alias: None, classes: Vec::new() })).collect();
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         })
     }
 
-    /// Format 16 (16z where `z`) in `lang`, each key numbered its kind.
+    /// Format 16 (16z where `z`) in `lang`, each key numbered its kind and 16 its field: a key of no field, its kind.
     fn target(z: bool) -> Target {
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(|k: u32| (k < 16).then_some(k)) })
+        let number = |k: u32| {
+            let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
+            (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
+        };
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
     }
 
     /// The rows of the tape `w` finishes.

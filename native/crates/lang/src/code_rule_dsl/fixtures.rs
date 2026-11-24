@@ -59,7 +59,7 @@ pub fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
     let grammar = Grammar::new(lang).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
     let bytes = image.to_bytes().unwrap();
-    (TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(), bytes)
+    (TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap(), bytes)
 }
 
 /// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in

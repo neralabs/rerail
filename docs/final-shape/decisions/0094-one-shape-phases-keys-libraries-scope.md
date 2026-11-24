@@ -1,7 +1,8 @@
 # 0094: One shape for phases, keys, libraries and scope
 
-Status: partly built (audited 2026-11-23). Left: §5 searches; §6 phase 0's stored answers and read record; incremental
-layout-invariance gate. Accepted (2026-11-08). A map, not a mechanism: it says which decision answers each question,
+Status: partly built (audited 2026-11-23, corrected the same day). Left: the incremental layout-invariance gate (§8).
+§5's searches are 0144's demand rules (built); §6's stored answers and read record are t24's step 1 (built), keyed by
+the module graph since t25. Accepted (2026-11-08). A map, not a mechanism: it says which decision answers each question,
 settles where two disagreed, and keeps the numbers in one register.
 
 ## Intro

@@ -25,13 +25,14 @@
 //! **Keys.** A relation read by keys is sorted on the device by a hash of its key columns (`rel_hash`, then
 //! the GPU lane's radix sort (`rerail_accel::gpu::join`) of 16, 24 or 32 bits, as its rows need), and a binding finds its run of equal hashes by a
 //! bounded binary search; every candidate's keys are compared whole, so a collision costs a comparison, never a row.
-//! A relation's upload (`DevRel`) and each of its sorts (`DevIndex`) stay on the device while the engine holds them.
+//! A relation (`DevRel`, read where it lies: nothing is uploaded, decision 0353 step 6) and each of its sorts
+//! (`DevIndex`) stay on the device while the engine holds them.
 //!
 //! **One submission, a launch a level.** A `Batch` encodes every stage of every rule it is given into one submission
 //! of the device layer's queue (serial: each dispatch sees the last one's writes). Its stages are queued and launched
 //! a level at a time (`Batch::flush`, decision 0601): every rule's stage at one depth in one launch of each kernel,
 //! each job's buffers reached by their device addresses, one scan of all their counts; so a stratum's launches are
-//! its levels', not its rules'. Every launch counts in the evaluation's launch budget. The kernels are UKL (`join_stages.uglykl`, `chunk_views.uglykl`; decision 0440 step C),
+//! its levels', not its rules'. Every launch counts in the evaluation's launch budget. The kernels are UKL (`join_stages.uglykl`; decision 0440 step C),
 //! on every backend; a view read in place (decision 0353 step 4d) is read through its directory's addresses, which
 //! only a device with them has (`ViewInPlace`, made on Metal alone). A table's capacity is fixed when its stage is
 //! encoded; a stage whose rows overflow it writes none past it and reports its true count, and the caller runs it again
@@ -300,32 +301,10 @@ impl Stage {
     }
 }
 
-/// The chunk views' kernels (decision 0289 §2): the chunk's structures as `rerail-blocks` generates them, then
-/// `view_expand`, which makes each row as `Viewed::value_at` does, and the axes' solve (`chunk_views.uglykl`).
-fn chunk_views_source() -> String {
-    format!(
-        "{}{}{}{}{}",
-        rerail_accel::gpu::join::COMMON,
-        rerail_blocks::RELATION_READS,
-        crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ukl(),
-        // The lines' reads (decision 0612), which place a span on the facts' line index.
-        "#include <ukl/reads/lines.h>\n",
-        include_str!("chunk_views.uglykl")
-    )
-}
-
-/// The programs' kernels (`join_grid`, `join_phase`: decision 0648) and the chunk views' kernels
-/// (`chunk_views_source`), to compile ahead of their first use (`MatcherDevice::kernels_ahead`): each asked for as its
+/// The programs' kernels (`join_grid`, `join_phase`: decision 0648) and the axes' solve's kernels over the views
+/// read in place (`AXIS_KERNELS`), to compile ahead of their first use (`MatcherDevice::kernels_ahead`): each asked for as its
 /// use asks for it (`pipeline`), so its use finds it.
 pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
-    let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
-        let make = move || {
-            let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = pipeline(variant, name, source).map(drop)))?;
-            made
-        };
-        (format!("{variant} {name}"), Box::new(make))
-    };
     // The programs' kernels for the run's views' format.
     let mut v: Vec<super::device::KernelAhead> = vec![{
         let make = move || {
@@ -335,7 +314,15 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
         };
         ("join join_phase".to_owned(), Box::new(make))
     }];
-    v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
+    let format = run_view_format();
+    v.extend(AXIS_KERNELS.map(|name| -> super::device::KernelAhead {
+        let make = move || {
+            let mut made = Ok(());
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = view_pipe(name, format).map(drop)))?;
+            made
+        };
+        (format!("join{format} {name}"), Box::new(make))
+    }));
     v
 }
 
@@ -355,6 +342,15 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         include_str!("join_stages.uglykl")
     )
 });
+
+/// The axes' solve's kernels (`axis_in_place`), which read the views where they lie: each compiled for the tape format of
+/// the views it reads (decision 0576), as the program's worker is (`program_pipe`).
+const AXIS_KERNELS: [&str; 2] = ["axis_count", "axis_write"];
+
+/// A kernel of the views' reads (`AXIS_KERNELS`) for views of `format` (0: several).
+fn view_pipe(name: &str, format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
+    pipeline(&format!("join{format}"), name, || view_source(format))
+}
 
 /// The join kernels' source for views of tape format `format` (0: of several, each view read tells its own).
 fn view_source(format: u32) -> String {
@@ -413,138 +409,141 @@ pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
-/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunks`: each
-/// node's rows counted by a climb of its ancestors and the counts scanned into the starts (in its chunk, page-aligned,
-/// bound as a buffer of their own with no copy); then, the totals read, the rows written, each the ids of `n` and `a`,
-/// into one relation of exactly that many rows (decision 0353 step 5), each chunk's past the one's before (a chunk's
-/// batch and its tape values, decision 0431 §8). It is a derived fact like a rule's head: it lies in a run's block,
-/// not leased from the device's budget, which a room sized before the count (containment's up to several rows a node)
-/// filled. Its starts are the first chunk's.
-pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], bits: Option<&[u32]>, inside: bool)
-                     -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+/// The in-place axis solve's parameters (`axis_count`'s `AxisP`): the views' directory's GPU address, the `node`
+/// view's rows, whether a set's bits are given, whether every ancestor, then the relation's rows' descriptor's offset
+/// and the rows it holds.
+#[repr(C)]
+struct AxisParams {
+    dir: u64,
+    n: u32,
+    bits: u32,
+    inside: u32,
+    pad: u32,
+    rows_at: u64,
+    rows: u64,
+}
+const _: () = assert!(std::mem::size_of::<AxisParams>() == 40);
+
+impl AxisParams {
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: `repr(C)` integers with no padding (its size asserted).
+        unsafe { std::slice::from_raw_parts((self as *const AxisParams).cast::<u8>(), std::mem::size_of::<AxisParams>()) }
+    }
+}
+
+/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::AxisSolve`), read off the tape
+/// (decision 0353 step 4): over `views`' directory (a batch's, or a layered source's of a batch and its tape values,
+/// decision 0431 §8), whose `node` rows are `nodes`, each row's ancestors climbed by the views' reads, as a `has` probe
+/// climbs them, and counted; the counts scanned into the starts, in `block` (the batch's, page-aligned, bound as a
+/// buffer of their own with no copy); then, the total read, the rows written, each the ids of `n` and `a`, into one
+/// relation of exactly that many rows (decision 0353 step 5). It is a derived fact like a rule's head: it lies in a
+/// run's block, not leased from the device's budget. `bits`: per kind atom a bit (`None`: every kind); `inside`: every
+/// ancestor in the set, else the nearest. A 16z directory whose caches fail while it reads is refused (the host
+/// solves).
+pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nodes: usize, block: &rerail_blocks::Block, dir_at: usize, bits: Option<&[u32]>, inside: bool)
+                     -> Result<crate::code_rule_dsl::facts::nearest::SolvedOnDevice, String> {
     use crate::code_rule_dsl::facts::rows::Part;
-    use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
+    use rerail_clif::view_reads::{ViewDir, ViewRow};
     const PAGE: usize = 16384;
-    let full = || "the chunk block cannot hold the axis".to_string();
-    let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
+    // A kind atom's bit: 256 tags of 1,024 slots (`facts::core::KIND_STRIDE`), the kernels' `[8192]`.
+    const BIT_WORDS: usize = 8192;
     let device = rerail_accel::gpu::join::device()?;
-    // An evaluation of the launch budget, or the caller's when it is in one: every chunk's count and write.
+    // An evaluation of the launch budget, or the caller's when it is in one: the count and the write.
     let _evaluation = super::metal_backend::launch::LaunchScope::enter();
-    let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
-    let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
-    // Each chunk's counts scanned into its starts: its parameters, its starts' offset, and its rows. Every chunk's
-    // count and scan in one submission, a stack (decision 0647): one launch however many chunks the axis is over (a
-    // layered source's, one a tape value's), waited for once.
-    let mut each: Vec<([u32; 8], usize, usize)> = Vec::with_capacity(chunks.len());
-    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    // Each chunk's buffers and scan, kept until the submission completes.
-    let mut kept: Vec<(Buffer, Buffer, Scan)> = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        let b = &chunk.block;
-        // SAFETY: the chunk's root, which `device_chunk::build` wrote.
-        let n = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).nodes } as usize;
-        let bits_at = match bits {
-            Some(words) => {
-                let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
-                // SAFETY: just allocated for `words.len()` values.
-                // copy: not block data: the set's membership bits, made here for the kernel.
-                unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
-                b.offset_of(p)
-            }
-            None => 0,
-        };
-        let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
-        let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
-        let whole = b.device_buffer(device)?;
-        // SAFETY: the starts' pages lie in the chunk's block, which outlives the work: it is waited for below.
-        let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), start_bytes)? };
-        let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
-        let scan = Scan::owned(n)?;
+    let format = views.format;
+    let count = view_pipe("axis_count", format)?;
+    let write = view_pipe("axis_write", format)?;
+    let n = nodes;
+    let failed = views.cache_failed();
+    let resident = |pass: &Pass| {
+        let buffers: Vec<&Buffer> = views.buffers.iter().collect();
+        pass.use_read(&buffers);
+        for cache in views.caches.iter().filter_map(|c| c.buffer.as_ref()) {
+            pass.use_read_write(cache);
+        }
+    };
+    let set = Words::zeroed(BIT_WORDS).map_err(|e| format!("{e:?}: the axis's set"))?;
+    if let Some(words) = bits {
+        if words.len() > BIT_WORDS {
+            return Err(format!("an axis's set of {} words, past the kernels' {BIT_WORDS}", words.len()));
+        }
+        // copy: not block data: the set's membership bits, made here for the kernel.
+        for (i, &w) in words.iter().enumerate() {
+            set.set(i, w);
+        }
+    }
+    let mut params = AxisParams { dir: views.dir, n: n as u32, bits: u32::from(bits.is_some()), inside: u32::from(inside), pad: 0, rows_at: 0, rows: 0 };
+    let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
+    let start_at = block.try_alloc(start_bytes, PAGE).ok_or("the batch's block cannot hold the axis's starts")?;
+    // SAFETY: the starts' pages lie in the batch's block, which outlives the work: it is waited for below.
+    let starts = unsafe { rerail_device::device::wrap_host_memory(device, block.ptr::<u8>(start_at), start_bytes)? };
+    let scan = Scan::owned(n)?;
+    {
+        let p = Held::of(params.bytes().iter().copied()).map_err(|e| format!("{e:?}"))?;
+        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
         let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
-        pass.stack();
-        pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
+        resident(pass);
+        pass.run_bytes(&count, &[&set.buffer.buffer, &starts, &p.buffer], &[], groups(n + 1));
         scan.encode(pass, &starts)?;
-        kept.push((whole, starts, scan));
-        each.push((p, start_at, 0));
+        batch.finish().map_err(|e| format!("{e:?}"))?;
     }
-    batch.finish().map_err(|e| format!("{e:?}"))?;
-    drop(kept);
-    for (chunk, e) in chunks.iter().zip(each.iter_mut()) {
-        // SAFETY: the scans completed: each chunk's last start is its total.
-        e.2 = unsafe { *chunk.block.ptr::<u32>(e.1 + 4 * e.0[1] as usize) } as usize;
+    if views.cache_failed() != failed {
+        return Err("the axis's reads found no room in the 16z cache".to_owned());
     }
-    let total: usize = each.iter().map(|e| e.2).sum();
-    let first_start = each.first().map_or(0, |e| e.1);
-    // Each document's first row where it has rows (a chunk's rows past the ones' before): the runs of its ids' keys
-    // (decision 0494 step 7), read off the scanned starts where they lie.
+    // SAFETY: the scan completed: its last value is the total.
+    let total = unsafe { *block.ptr::<u32>(start_at + 4 * n) } as usize;
+    // Each document's first row where it has rows: the runs of its ids' keys (decision 0494 step 7), from the
+    // directory's rows (each one's key and first `node` row) and the scanned starts where they lie.
+    // SAFETY: the directory lies in `block` at `dir_at` (`views_in_place`), alive while the batch is; its rows are
+    // written once its views were.
+    let (dir, rows) = unsafe {
+        let d = &*block.ptr::<ViewDir>(dir_at);
+        (d, std::slice::from_raw_parts(block.ptr::<ViewRow>(d.rows as usize), d.ndocs as usize))
+    };
+    // SAFETY: the scanned starts, `n + 1` values.
+    let start = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(start_at), n + 1) };
     let runs_of = |put: &mut dyn FnMut(u32, u32)| {
-        let mut past = 0u32;
-        for (chunk, &(_, start_at, len)) in chunks.iter().zip(&each) {
-            let b = &chunk.block;
-            // SAFETY: the chunk's root and documents, which `device_chunk::build` wrote; its starts, scanned above.
-            unsafe {
-                let root = &*b.ptr::<ChunkRoot>(chunk.root);
-                let n = root.nodes as usize;
-                let starts = std::slice::from_raw_parts(b.ptr::<u32>(start_at), n + 1);
-                let docs = root.docs.as_slice();
-                for (i, d) in docs.iter().enumerate() {
-                    let end = docs.get(i + 1).map_or(n, |e| e.node_row as usize);
-                    let (from, to) = (starts[d.node_row as usize], starts[end]);
-                    if to > from {
-                        put(past + from, d.key);
-                    }
-                }
+        for (i, r) in rows.iter().enumerate() {
+            let end = rows.get(i + 1).map_or(dir.ends[0], |e| e.rows[0]) as usize;
+            let (from, to) = (start[r.rows[0] as usize], start[end.min(n)]);
+            if to > from {
+                put(from, r.key);
             }
-            past += len as u32;
         }
     };
     let mut runs = 0;
     runs_of(&mut |_, _| runs += 1);
-    // Alone in its block, with room for an index by each key strata probe an axis by (`AXIS_KEYS`). Each column
+    // Alone in its block, with room for an index at every entry of its directory (`Part::over_key_runs`). Each column
     // its ids' low bits, under the documents' keys.
-    let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, crate::code_rule_dsl::facts::rows::AXIS_KEYS, runs);
+    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, runs);
     let mut k = 0;
     runs_of(&mut |first, key| {
         keys.put(k, first, key);
         k += 1;
     });
     if total > 0 {
-        let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
-        let rows_at = rows.rows_at() as i64;
-        let out = rows.facts().block.device_buffer(device)?;
-        let mut past = 0usize;
-        // Every chunk's rows written in one submission, a stack (decision 0647).
+        let needed = out_rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        (params.rows_at, params.rows) = (out_rows.rows_at() as u64, total as u64);
+        let out = out_rows.facts().block.device_buffer(device)?;
+        let p = Held::of(params.bytes().iter().copied()).map_err(|e| format!("{e:?}"))?;
         let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-        let mut kept: Vec<(Buffer, Buffer)> = Vec::with_capacity(chunks.len());
-        for (chunk, (mut p, start_at, len)) in chunks.iter().zip(each) {
-            let b = &chunk.block;
-            let n = p[1] as usize;
-            // p[4]: the rows the relation holds; p[7]: the first of this chunk's (b0: its rows' descriptor).
-            (p[4], p[7]) = (total as u32, past as u32);
-            past += len;
-            if len == 0 {
-                continue;
-            }
-            let whole = b.device_buffer(device)?;
-            // SAFETY: as the count's: the chunk's block outlives the work, waited for below.
-            let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), (4 * (n + 1)).next_multiple_of(PAGE))? };
-            let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
-            pass.stack();
-            pass.run(&write, &[&whole, &starts, &out], &p, &[rows_at], groups(n));
-            kept.push((whole, starts));
-        }
+        let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
+        resident(pass);
+        pass.run_bytes(&write, &[&set.buffer.buffer, &starts, &out, &p.buffer], &[], groups(n));
         batch.finish().map_err(|e| format!("{e:?}"))?;
-        drop(kept);
+        if views.cache_failed() != failed {
+            return Err("the axis's reads found no room in the 16z cache".to_owned());
+        }
         // Bounded by the relation's chunks (decision 0463): what the writer refused fails the solve, which the host
         // then makes.
-        let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        let now = out_rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         if now != needed {
             return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0463)", now.wrapping_sub(needed)));
         }
     }
     // SAFETY: the writes completed, every row below the total written.
-    unsafe { rows.written(total as u32) };
-    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: first_start, rows })
+    unsafe { out_rows.written(total as u32) };
+    Ok(crate::code_rule_dsl::facts::nearest::SolvedOnDevice { start: start_at, rows: out_rows })
 }
 
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.
@@ -558,7 +557,7 @@ pub(in crate::code_rule_dsl) struct DevRel {
     pub(in crate::code_rule_dsl) at: u64,
     /// Its dead rows' delta's offset in that block (`Stage::r_dead`); 0 when it has none.
     pub(in crate::code_rule_dsl) dead: u64,
-    /// The relation, when it is the device's own (`empty`, `upload`): what the host reads it by once the device
+    /// The relation, when it is the device's own (`empty`): what the host reads it by once the device
     /// wrote it.
     part: Option<crate::code_rule_dsl::facts::rows::Part>,
     /// The block its relation lies in (none for words): where its indexes go (decision 0325 step 5).
@@ -583,6 +582,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// A live relation's rows mapped and its indexes' buckets (`DevRel::mapped`): its indexes' room is for those rows,
     /// grown with them between its program's launches (`Batch::gate`'s rooms), where `rows` is its bound.
     mapped: Option<(usize, usize)>,
+    /// The block its chain's far base lies in (decision 0353 step 6, `InBlock::far`), bound beside its own: the
+    /// kernels make its offset from the two bindings (`rel_b`).
+    far: Option<Held>,
 }
 
 impl DevRel {
@@ -614,7 +616,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None, far: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -674,10 +676,13 @@ impl DevRel {
     }
 
     pub(in crate::code_rule_dsl) fn resident_in(&self, pass: &Pass) {
+        if let Some(f) = &self.far {
+            pass.use_read(&[&f.buffer]);
+        }
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
             pass.use_read(&buffers);
-            if let Some(cache) = v.cache.as_ref().and_then(|c| c.buffer.as_ref()) {
+            for cache in v.caches.iter().filter_map(|c| c.buffer.as_ref()) {
                 pass.use_read_write(cache);
             }
         }
@@ -686,24 +691,16 @@ impl DevRel {
         }
     }
 
-    /// A relation of `cols` columns and `rows` rows, its values given by `fill` (column `c` at
-    /// `[c * rows .. (c + 1) * rows]`) and written by the host into a relation of the device's own.
-// copy (0353 step 6): an upload of rows from the host. It goes with its last caller (decision 0353).
-    pub(in crate::code_rule_dsl) fn upload(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
-        // copy (0353 step 6): its site (row 5).
-        const UPLOAD: rerail_prof::copies::Site = rerail_prof::copies::Site::new(5, "6", "rows uploaded from the host (DevRel::upload)");
-        UPLOAD.time(|| (Self::upload_in(cols, rows, fill), 8 * cols * rows))
-    }
-
-    fn upload_in(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
-        let mut values = vec![0i64; cols * rows];
-        fill(&mut values);
+    /// A test's relation of the device's own, `cols` columns and `rows` rows, each value `value(c, r)` written once
+    /// where it lies.
+    #[cfg(test)]
+    fn written(cols: usize, rows: usize, value: impl Fn(usize, usize) -> i64) -> Result<DevRel, Error> {
         let dev = DevRel::empty(cols, rows)?;
         let rel = dev.part.as_ref().expect("its own").rel();
         for c in 0..cols {
-            for (r, &v) in values[c * rows..(c + 1) * rows].iter().enumerate() {
+            for r in 0..rows {
                 // SAFETY: row `r` is claimed (`for_device`), and nothing else writes the relation yet.
-                unsafe { rel.rows.put(r as u32, c, v) };
+                unsafe { rel.rows.put(r as u32, c, value(c, r)) };
             }
         }
         Ok(dev)
@@ -719,7 +716,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None, far: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -735,7 +732,20 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false, mapped: None }.noted())
+        let far = b.far().map(|f| held_block(device, &f, Box::new(f.clone()))).transpose()?;
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false, mapped: None, far }.noted())
+    }
+
+    /// The buffer its kernels bind as its far base's block (`far`): `bound`, the buffer its own reads bind, when its
+    /// chain reaches no other block.
+    pub(in crate::code_rule_dsl) fn far_or<'a>(&'a self, bound: &'a Buffer) -> &'a Buffer {
+        self.far.as_ref().map_or(bound, |f| &f.buffer)
+    }
+
+    /// The address of its far base's block for a job that reads it (`JobDesc::rf`): 0, none, when its chain reaches
+    /// no other block (the kernels then read its own).
+    fn far_reach(&self, job: &mut Job) -> Result<u64, Error> {
+        self.far.as_ref().map_or(Ok(0), |f| job.reach(&f.buffer, 0, false))
     }
 
     /// Rows `from..from + rows` of `b`'s relation, of `cols` columns, read where they lie (`in_block`): a fixpoint's
@@ -978,13 +988,13 @@ impl IxParams {
 }
 
 /// A relation's index on key columns, the relation's own (decision 0325 step 5): its number in the relation's
-/// directory, read by `rel_group`. A relation whose block had no room for it was copied once into a block that has
-/// (`moved`), which the probes then read.
+/// directory, read by `rel_group`. A view's relation of no values whose block had no room for it is a new one
+/// (`fresh`), which the probes then read: the view's rows are read through the view's reads, as before.
 pub(in crate::code_rule_dsl) struct DevIndex {
 
     pub(in crate::code_rule_dsl) index: u32,
     pub(in crate::code_rule_dsl) rows: usize,
-    moved: Option<std::rc::Rc<DevRel>>,
+    fresh: Option<std::rc::Rc<DevRel>>,
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
     /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
@@ -999,19 +1009,9 @@ pub(in crate::code_rule_dsl) struct DevIndex {
 }
 
 impl DevIndex {
-    /// Whether it copied its relation, whose block had no room for it (`moved`, 0353 step 6).
-    pub(in crate::code_rule_dsl) fn copied(&self) -> bool {
-        self.moved.is_some()
-    }
-
-    /// The device memory it holds of its own: a moved relation's (the index lies in its relation's block).
-    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.moved.as_ref().map_or(0, |m| m.bytes())
-    }
-
-    /// The relation its probes read: `rel`, or the copy it was built on.
+    /// The relation its probes read: `rel`, or a view's new relation of no values it was built on.
     pub(in crate::code_rule_dsl) fn of<'a>(&'a self, rel: &'a DevRel) -> &'a DevRel {
-        self.moved.as_deref().unwrap_or(rel)
+        self.fresh.as_deref().unwrap_or(rel)
     }
 }
 
@@ -1080,6 +1080,26 @@ struct Building {
     /// by the buffers both bind, and a wrap of the block made after it (the block grown, `Block::device_buffer`) is
     /// another buffer, which the build's writes are not ordered before.
     buffer: Option<Buffer>,
+    /// The program its builder's last job launched in (`Ran::ctl`), once launched: whether it built the index whole.
+    whole: Option<Built>,
+}
+
+/// A program a builder ran in, read once its work completes: whether it built its indexes whole. A program stops
+/// early where a gate stops it (`Batch::gate`), which comes alone in its level after everything queued before it, so
+/// the builders before it ran (and those after are `Building::gated`); or where a size script's claim passes its
+/// arena (decision 0603 step 5), which may be at any level, before a builder's last phase: none of its builders is
+/// built then. Nor is any where a push passed its queue's room.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct Built {
+    ctl: std::sync::Arc<Words>,
+}
+
+impl Built {
+    /// Whether the program built its indexes whole. Read after its work completed.
+    pub(in crate::code_rule_dsl) fn whole(&self) -> bool {
+        let flags = self.ctl.get(6);
+        flags & (1 | 32) == 0 && self.ctl.get(3) == 0
+    }
 }
 
 impl Building {
@@ -1471,9 +1491,6 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) maps_grown: u32,
     /// Its programs launched (each once, then its relaunches and remaps).
     pub(in crate::code_rule_dsl) programs: u32,
-    /// Its views expanded into device relations (`expand_view`, copy 0353 step 4): dispatches of its passes before
-    /// a program, no launch of their own.
-    pub(in crate::code_rule_dsl) expanded: u32,
     /// Whether a program was not launched because it reached a block through two of its wraps (`launch`): its
     /// encoding grew the block past the wrap it had bound. Nothing of it ran; its caller encodes it again
     /// (`Batch::again_on_rewrap`), whose binds take the grown wrap.
@@ -1490,6 +1507,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     queued: Vec<Job>,
     /// The levels flushed since the program last launched (`flush`, `run_program`, decision 0603).
     program: Program,
+    /// A level's encoding failed partway (`flush`: a lease refused): its program is dropped unlaunched, and the batch
+    /// launches nothing more and fails at `finish` (its strata on the CPU).
+    spoiled: bool,
     /// The programs launched since the last `finish`: read when their work is done.
     programs: Vec<Ran>,
     committed: Vec<Submitted>,
@@ -1503,7 +1523,7 @@ pub(in crate::code_rule_dsl) struct Batch {
     building: Vec<Building>,
     /// The submissions of indexes other batches build that this one's stages read (`InFlight`): waited for at its finish,
     /// and one the device failed fails this batch too.
-    borrowed: Vec<Submitted>,
+    borrowed: Vec<(Submitted, crate::code_rule_dsl::facts::rows::Whole)>,
     /// Whether a gate was queued since the last `finish`.
     gated: bool,
     /// Whether its caller encodes a program again that reached a block through two wraps (`Done::rewrapped`);
@@ -1577,6 +1597,7 @@ impl Batch {
             pass: None,
             queued: Vec::new(),
             program: Program::default(),
+            spoiled: false,
             programs: Vec::new(),
             gated: false,
             again_on_rewrap: false,
@@ -1718,10 +1739,12 @@ impl Batch {
         let s = pass.commit().map_err(Error::from)?;
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
-        // be built (`finish`): none is told.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live) {
+        // be built (`finish`): none is told. Nor is any of a spoiled batch's (`flush`): its builders may never launch.
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && !self.spoiled) {
+            // Launched, or not told: its program is what says whether it was built.
+            let Some(whole) = b.whole.clone() else { continue };
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), lent: false });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), lent: false, whole: std::sync::Arc::new(move || whole.whole()) });
             b.queued = true;
         }
         self.committed.push(s);
@@ -1733,6 +1756,18 @@ impl Batch {
     /// the one queue (a batch that reads what this one's work writes).
     pub(in crate::code_rule_dsl) fn commit_open(&mut self) -> Result<(), Error> {
         self.submit_open()
+    }
+
+    /// Its programs launched so far, their work waited for, marked stopped where a size script's claim passed their
+    /// arena (decision 0603 step 5), as the device marks one: a test's stop at a level the test does not place.
+    #[cfg(test)]
+    fn stop_programs_as_arena_full(&mut self) {
+        for s in &self.committed {
+            s.watch().wait();
+        }
+        for r in &self.programs {
+            r.ctl.set(6, r.ctl.get(6) | 2 | 32);
+        }
     }
 
     /// Commits what is open and waits for every submission. A submission the device failed fails the batch: its
@@ -1754,7 +1789,7 @@ impl Batch {
                 break;
             }
             let (whole, again) = self.programs_done()?;
-            failed += usize::from(!whole);
+            failed += usize::from(!whole || self.spoiled);
             if again.is_empty() || failed > 0 {
                 break;
             }
@@ -1781,9 +1816,10 @@ impl Batch {
         if let Some(t) = &self.program.top {
             t.set(0, 0);
         }
-        // The indexes of other batches its stages read: one whose builder the device failed is half written.
-        for s in self.borrowed.drain(..) {
-            failed += usize::from(!s.wait_ok().1);
+        // The indexes of other batches its stages read: one whose builder the device failed, or whose program stopped
+        // before it, is half written.
+        for (s, whole) in self.borrowed.drain(..) {
+            failed += usize::from(!s.wait_ok().1 || !whole());
         }
         let overran = self.overran();
         self.written.clear();
@@ -1838,6 +1874,13 @@ impl Batch {
             if (stopped && b.gated) || b.live {
                 continue;
             }
+            // Its program stopped before its last phase (an arena passed, decision 0603 step 5): never written whole.
+            if !b.whole.as_ref().is_some_and(Built::whole) {
+                crate::code_rule_dsl::prof::count_named("device.index its program stopped before, given back".into(), 4 * b.room.rows_n as usize);
+                // SAFETY: the batch's work has completed; nothing reads the room as an index.
+                unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
+                continue;
+            }
             b.check("its batch done");
             let (r, room) = (unsafe { &*b.rel }, &b.room);
             // Another batch built the same index meanwhile (each found none, and built its own, on another thread),
@@ -1878,7 +1921,7 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
@@ -1894,13 +1937,14 @@ impl Batch {
             _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
     /// before (by any batch, kept with the relation), else built by this batch's work into the relation's block
     /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
-    /// it is copied once into a block of its own that has (with no dead rows: their bits lie in the old block).
+    /// it is refused (`Error::BackendCapacity`), nothing copied (decision 0353 step 6); a view's relation of no values
+    /// is made anew.
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
         let mut ix = self.index_of(rel, cols)?;
         ix.cols = cols.to_vec();
@@ -1912,15 +1956,15 @@ impl Batch {
     /// batch built meanwhile, went back when the earlier one was done (`finish`): its buckets emptied, its entry free
     /// for the next, so a probe of it found no rows (B023's closures, 2026-11-22: a function's body lost, its loop
     /// variable's late reads found). So a relation's index is found again (the one kept); a walk of the tape stands.
-    /// An index of a relation the earlier batch copied (`moved`) is the copy's: found again there, as its builder,
-    /// cut before it was all encoded, gave it back too.
+    /// An index of a relation the earlier batch made fresh (`fresh`: a view's new home, or a link in a block of its own)
+    /// is the fresh one's: found again there, as its builder, cut before it was all encoded, gave it back too.
     pub(in crate::code_rule_dsl) fn again(&mut self, rel: &DevRel, ix: &std::rc::Rc<DevIndex>) -> Result<std::rc::Rc<DevIndex>, Error> {
         if ix.walk != 0 {
             return Ok(std::rc::Rc::clone(ix));
         }
-        if let Some(copy) = &ix.moved {
-            let found = self.index(copy, &ix.cols)?;
-            return Ok(std::rc::Rc::new(DevIndex { moved: Some(std::rc::Rc::clone(copy)), ..found }));
+        if let Some(fresh) = &ix.fresh {
+            let found = self.index(fresh, &ix.cols)?;
+            return Ok(std::rc::Rc::new(DevIndex { fresh: Some(std::rc::Rc::clone(fresh)), ..found }));
         }
         Ok(std::rc::Rc::new(self.index(rel, &ix.cols)?))
     }
@@ -1947,7 +1991,7 @@ impl Batch {
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
             // relation's index is built again for each round (below): none found.
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32).filter(|_| !rel.live) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
             // This batch's own build: read by its stages after it. One in the open submission is ordered before them
             // (a submission's launches run in order); one in a submission already committed is not, as another batch's
@@ -1961,11 +2005,11 @@ impl Batch {
                     drop(held);
                     let buffer = bound(&home)?;
                     self.queue_index(rel, cols, &room, &buffer)?;
-                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: true, walk: 0, buffer, cols: Vec::new() });
+                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: true, walk: 0, buffer, cols: Vec::new() });
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
-                    taken = Some((room.index as u32, f.done.watch()));
+                    taken = Some((room.index as u32, f.done.watch(), f.whole.clone()));
                     break 'room None;
                 }
                 // Bound by the builder's buffer: its launches, before this batch's probes in the open submission,
@@ -1974,7 +2018,7 @@ impl Batch {
                     Some(buffer) => Held::of_block(buffer, rerail_blocks::region::whole(&home.block), Box::new(home.clone())),
                     None => bound(&home)?,
                 };
-                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer, cols: Vec::new() });
+                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer, cols: Vec::new() });
             }
             // Another batch's, its work committed: taken, not built again. Building it again here took the block's room
             // twice (row 9 of 0353: two waves of a level each built [0,1], and the [0] after found no bytes left, and
@@ -1987,7 +2031,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 f.lent = true;
-                taken = Some((f.room.index as u32, f.done.watch()));
+                taken = Some((f.room.index as u32, f.done.watch(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
@@ -2003,11 +2047,12 @@ impl Batch {
         };
         // Out of the block's lock: its builder's work done before this batch encodes a read of it. A builder the device
         // failed fails this batch too.
-        if let Some((index, builder)) = taken {
-            if !builder.wait_ok().1 {
+        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it.
+        if let Some((index, builder, whole)) = taken {
+            if !builder.wait_ok().1 || !whole() {
                 return Err(Error::BackendFailure);
             }
-            return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            return Ok(DevIndex { index, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -2021,56 +2066,46 @@ impl Batch {
                 crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
                 let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
                 let ix = self.index(&fresh, cols)?;
-                return Ok(DevIndex { moved: Some(fresh), ..ix });
+                return Ok(DevIndex { fresh: Some(fresh), ..ix });
             }
-// copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
-// the indexes its readers probe (decision 0353).
-            // By where the relation lies: the device's own (an upload, a fixpoint's delta) has room for its first key's
-            // index alone; one in a block of the run's shares the block's room with the relations beside it.
-            const MOVED_OWN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved): the device's own");
-            const MOVED_IN_BLOCK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a key's index (DevIndex::moved): in a block with no room left");
-            (if rel.part.is_some() { &MOVED_OWN } else { &MOVED_IN_BLOCK }).copied(8 * rel.cols * rel.rows);
-            // Why its block refused the index: its directory full, or no bytes left; and what the relation is.
-            if rel.part.is_none() {
-                let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
-                let free = home.block.reserved().saturating_sub(home.block.used());
-                let why = format!(
-                    "device.moved in a block: {} block, {} columns keyed by {:?}, {}, {}, {} indexes there ({} of other rows: {}), {} of {} MB left",
-                    if home.is_shared() { "a shared" } else { "its own" },
-                    rel.cols,
-                    cols,
-                    if full { "its directory full" } else { "no bytes for it" },
-                    if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
-                    r.nindex.load(std::sync::atomic::Ordering::Relaxed).min(9),
-                    (0..r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).filter(|&i| r.indexes.as_slice().get(i).is_some_and(|ix| ix.rows.len() != rel.rows)).count().min(9),
-                    // Each entry's key, `o` an order (decision 0478 step 5b), `?` not built.
-                    r.indexes.as_slice().iter().take(r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).map(|ix| {
-                        let k: Vec<String> = ix.key[..(ix.ncols as usize).min(8)].iter().map(u16::to_string).collect();
-                        let what = if ix.state == rerail_blocks::relation::DEAD { "x" } else if ix.ncols == 0 { "?" } else if ix.ordered != 0 { "o" } else { "" };
-                        format!("[{}]{what}{}", k.join(","), if ix.from != 0 { format!("@{}", ix.from) } else { String::new() })
-                    }).collect::<Vec<_>>().join(" "),
-                    if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
-                    (home.block.reserved() >> 20).next_power_of_two(),
-                );
-                crate::code_rule_dsl::prof::count_named(why, 8 * rel.cols * rel.rows);
+            // Nothing is copied for a key (decision 0353 step 6): the index goes in a device block of its own, built on a
+            // link there that reads the relation as its far base (`Part::far_link`), which the batch binds beside it.
+            if rel.far.is_none()
+                && let Some(base) = rel.holder().filter(|p| std::ptr::eq(p.rel(), r))
+                && let Some(link) = crate::code_rule_dsl::facts::rows::Part::far_link(&base, rel.rows as u32)
+            {
+                let fresh = std::rc::Rc::new(DevRel::in_block(&link.in_block(rel.rows as u32), rel.cols)?);
+                crate::code_rule_dsl::prof::count_named("device.index_beside: an index in a block of its own".to_owned(), rel.rows);
+                let ix = self.index(&fresh, cols)?;
+                return Ok(DevIndex { fresh: Some(fresh), ..ix });
             }
-            let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
-            let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
-            self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
-            let ix = self.index(&copy, cols)?;
-            return Ok(DevIndex { moved: Some(copy), ..ix });
+            // A relation that cannot be linked (its chain reaches another block already, or no device block is had)
+            // refuses its stratum, which runs on the CPU, reading it where it lies. Counted by why its block refused
+            // it, its directory full or no bytes left, and by where the relation lies.
+            let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
+            let free = home.block.reserved().saturating_sub(home.block.used());
+            let why = format!(
+                "device.no_index_room: {}, {}, {}, {} of {} MB left",
+                if full { "its directory full" } else { "no bytes for it" },
+                if rel.part.is_some() { "the device's own" } else { "in a block" },
+                if r.continues() { "a continuation" } else { "a relation" },
+                if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
+                (home.block.reserved() >> 20).next_power_of_two(),
+            );
+            crate::code_rule_dsl::prof::count_named(why, rel.rows);
+            return Err(Error::BackendCapacity);
         };
         let n = rel.rows;
         // Held by the batch from here: an error before its builder is all encoded gives the room back when the batch
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live, buffer: None });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live, buffer: None, whole: None });
         let buffer = bound(&home)?;
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;
         self.building[held].encoded = true;
-        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer, cols: Vec::new() })
+        Ok(DevIndex { index: room.index as u32, rows: n, fresh: None, built: true, walk: 0, buffer, cols: Vec::new() })
     }
 
     /// Commits the open work as a submission of its own (`submit_open`), and opens the next pass with what was resident
@@ -2128,6 +2163,7 @@ impl Batch {
         job.p = Some(ix.bytes().to_vec());
         // It reads the relation and writes its index's room in the block, which no queued job reads.
         job.desc.l = job.reach(&buffer.buffer, 0, true)?;
+        job.desc.rf = rel.far_reach(&mut job)?;
         job.desc.a = job.desc.l + room.offs as u64;
         job.desc.counters = job.desc.l + room.rows as u64;
         (job.count, job.buckets) = (n, room.mask as usize + 1);
@@ -2138,29 +2174,6 @@ impl Batch {
         job.live_ix = rel.mapped.and(rel.home.clone()).map(|h| (h, rel.at, room.index, m as u32));
         job.order(&[job.desc.l], &[]);
         self.queue(job)
-    }
-
-
-    /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
-    /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
-// copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
-// read of the tape, and a stage reads it in place (decision 0353).
-    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
-        let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
-        const EXPANDED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(4, "4", "a view expanded into a device relation (expand_view)");
-        EXPANDED.copied(8 * out.rows * cols.len());
-        self.writes(out, "a view expanded");
-        let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
-        let rows_at = out.rows_at();
-        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, 0, rows_at as u32, (rows_at >> 32) as u32];
-        p.extend(cols.iter().map(|&c| c as u32));
-        if out.rows > 0 {
-            let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
-            let pass = self.pass()?;
-            pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
-            self.done.expanded += 1;
-        }
-        Ok(())
     }
 
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index), queued in the batch's
@@ -2205,6 +2218,9 @@ impl Batch {
         job.makes_placed(out, &[(0, CAP_OUT)]);
         job.desc.l = left.reach_by(&mut job, false)?;
         job.desc.r = job.reach(&rbuf, 0, false)?;
+        if let Some((rel, index)) = right {
+            job.desc.rf = index.map_or(rel, |ix| ix.of(rel)).far_reach(&mut job)?;
+        }
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.counters = job.reach(&counters.buffer.buffer, 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
@@ -2246,16 +2262,20 @@ impl Batch {
         let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
         bind_right(&mut stage, rel, right.1);
         let a = rel.wrap()?;
+        let a_far = rel.far_or(&a).clone();
         let fbuf = self.screen(&mut stage, screen);
         let mut probes = [Stage::default(); WITNESS_PROBES];
         let mut bufs: Vec<Buffer> = Vec::new();
+        let mut fars: Vec<Buffer> = Vec::new();
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
             let mut b = *b;
             let rel = ix.map_or(*rel, |ix| ix.of(rel));
             bind_right(&mut b, rel, *ix);
             b.cap_in = left.room() as u32;
             probes[k] = b;
-            bufs.push(rel.wrap()?);
+            let bound = rel.wrap()?;
+            fars.push(rel.far_or(&bound).clone());
+            bufs.push(bound);
         }
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
@@ -2281,11 +2301,16 @@ impl Batch {
         job.m = (Some(job.desc.totals), left.room());
         job.desc.l = left.reach_by(&mut job, false)?;
         job.desc.r = job.reach(&a, 0, false)?;
+        job.desc.rf = job.reach(&a_far, 0, false)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
         job.desc.f = job.reach(&fbuf, 0, false)?;
         for k in 0..WITNESS_PROBES {
             job.desc.w[k] = job.reach(bufs.get(k).unwrap_or(&dummy), 0, false)?;
+            job.desc.wf[k] = match fars.get(k) {
+                Some(f) => job.reach(f, 0, false)?,
+                None => 0,
+            };
         }
         // A semi-join's scatter reads no arena, counters or names.
         job.desc.a = job.reach(&dummy, 0, false)?;
@@ -2490,6 +2515,9 @@ impl Batch {
             _ => None,
         };
         job.desc.l = job.reach(&s, s_off, false)?;
+        if let Rows::Rel(r) = src {
+            job.desc.rf = r.far_reach(&mut job)?;
+        }
         job.desc.o = job.reach(&d, d_off, true)?;
         job.desc.totals = job.reach(&totals, 0, false)?;
         job.rows = count.map(|(slot, _)| (job.desc.totals + 4 * slot as u64, 0));
@@ -2802,6 +2830,30 @@ impl Batch {
     /// scatters. Nothing launches here: the program runs as one launch before the next launch made at once, and at
     /// the commit (`run_program`).
     fn flush(&mut self) -> Result<(), Error> {
+        if self.spoiled {
+            self.queued.clear();
+            return Err(Error::BackendCapacity);
+        }
+        let flushed = self.flush_level();
+        if flushed.is_err() {
+            // Its program half made (a scan's words named, not made).
+            self.spoil();
+        }
+        flushed
+    }
+
+    /// The batch spoiled: its work not launched yet is dropped and never launched, it launches nothing more, and its
+    /// `finish` fails (its strata on the CPU). For an encoding that failed partway: a level half flushed, or a
+    /// stratum half encoded into a batch other strata share (a wave's), whose work would launch beside theirs.
+    pub(in crate::code_rule_dsl) fn spoil(&mut self) {
+        self.spoiled = true;
+        self.queued.clear();
+        let top = self.program.top.take();
+        self.program = Program { top, ..Program::default() };
+    }
+
+    /// `flush`'s work: the level's jobs into the program.
+    fn flush_level(&mut self) -> Result<(), Error> {
         if self.queued.is_empty() {
             return Ok(());
         }
@@ -3079,6 +3131,9 @@ impl Batch {
     /// phases a dispatch each, stacked several rounds to a launch (`launch`). Its control words are read when the
     /// batch is done (`finish`): a stack's walk not done launches its next, a park its phase's rest.
     fn run_program(&mut self) -> Result<(), Error> {
+        if self.spoiled {
+            return Ok(());
+        }
         self.flush()?;
         if self.program.phases.is_empty() {
             return Ok(());
@@ -3183,7 +3238,12 @@ impl Batch {
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? },
                         item_kinds: prog.items.iter().map(|i| i[0] >> 24).collect(), jumps: prog.jumps, last };
         let rounds = ProgramSizes::now().rounds.unwrap_or(STACK_ROUNDS_FIRST).max(1);
-        let r = Ran { ctl: Words::zeroed(16)?, slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
+        let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
+        // The builders whose jobs it holds (every one encoded and not launched yet): whether it built their indexes
+        // whole is read from its control words once its stacks are done (`Built`).
+        for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
+            b.whole = Some(Built { ctl: r.ctl.clone() });
+        }
         self.launch(r)
     }
 
@@ -4525,7 +4585,7 @@ const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
 /// walk goes on from (none: done); its rounds a launch at most; the sequence of its next dispatch of a phase of no
 /// segments (`phase_begins`, from 1); and its last stack's grids, held until it ran.
 struct Ran {
-    ctl: Words,
+    ctl: std::sync::Arc<Words>,
     slots: Words,
     cap: usize,
     at: Option<u32>,
@@ -4635,9 +4695,14 @@ struct JobDesc {
     cnt: u64,
     /// Its words, some its level's size script writes (`word_at!`).
     at: JobWords,
+    /// The blocks the far bases of the relations it reads lie in (decision 0353 step 6, `DevRel::far`), by address:
+    /// `rf` the stage's probed relation's (a copy's or an index's, `l`'s), `wf` the witness probes'. 0: none, its own
+    /// block.
+    rf: u64,
+    wf: [u64; WITNESS_PROBES],
 }
 
-const _: () = assert!(std::mem::size_of::<JobDesc>() == 208);
+const _: () = assert!(std::mem::size_of::<JobDesc>() == 240);
 
 /// `join_stages.uglykl`'s `JobWords`, byte for byte: a word record (its `UKL_WORD_RECORD`), 32-bit words only.
 #[repr(C)]
@@ -5046,7 +5111,7 @@ pub mod tests {
             return;
         }
         let n = 300;
-        let src = DevRel::upload(2, n, |v| for (i, x) in v.iter_mut().enumerate() { *x = i as i64 }).unwrap();
+        let src = DevRel::written(2, n, |c, r| (c * n + r) as i64).unwrap();
         let dst = DevRel::empty(2, n).unwrap();
         let (sb, db) = (src.home.clone().unwrap(), dst.home.clone().unwrap());
         let (s0, d0) = (rerail_blocks::region::whole(&sb.block).region().version(), rerail_blocks::region::whole(&db.block).region().version());
@@ -5061,36 +5126,25 @@ pub mod tests {
         }
     }
 
-    /// Q265: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its
-    /// work, which builds the index into it, completes: a stage's handle to it dropped meanwhile does not give back
-    /// its relation, and the index the batch marks built is still its own. The batch holds it as the index it builds
-    /// (`Building`, which `finish` checks against the descriptor as it was reserved); its buffers, as every launch's,
-    /// its passes' fences hold (decision 0491 step 2).
+    /// A key past the room of a relation's block goes in a device block beside it, nothing copied and nothing refused
+    /// (decision 0353 step 6): on a link there whose far base is the relation. The indexes built before it are the
+    /// relation's own, built by the batch, which finishes.
     #[test]
-    fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
+    fn a_key_past_a_relations_room_goes_beside_not_copied() {
         if rerail_accel::gpu::join::device().is_err() {
             return;
         }
         let n = 1000;
         let cols: Vec<Vector<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
-        let rel = DevRel::upload(4, n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap();
+        let rel = DevRel::written(4, n, |c, r| cols[c][r]).unwrap();
         let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = Batch::new().unwrap();
         let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
-        let mut moved = None;
-        for key in keys {
-            let ix = batch.index(&rel, key).unwrap();
-            if let Some(m) = ix.moved.clone() {
-                moved = Some(m);
-                break;
-            }
-        }
-        let moved = moved.expect("a key past the relation's directory moves it");
-        assert_eq!(std::rc::Rc::strong_count(&moved), 1, "no handle of the stage's is left but this one");
-        drop(moved);
-        // A relation made meanwhile takes the room a moved relation given back would have left.
-        let _after = DevRel::upload(4, n, |v| v.fill(-1)).unwrap();
-        batch.finish().expect("its index built into the relation it moved, still held");
+        let built: Vec<DevIndex> = keys.iter().map(|key| batch.index(&rel, key).expect("every key indexed")).collect();
+        let beside = built.iter().position(|ix| ix.fresh.is_some()).expect("a key past the relation's room");
+        assert!(beside > 0 && built[..beside].iter().all(|ix| ix.fresh.is_none()), "the first ones in the relation's own block");
+        assert!(built[beside..].iter().all(|ix| ix.fresh.is_some() && ix.of(&rel).far.is_some()), "the rest beside it, reading it as their far base");
+        batch.finish().expect("every index built");
     }
 
     /// A two-stage plan on the device against the same plan by nested loops: a scan of `a` (slots 0, 1), a join of
@@ -5107,7 +5161,7 @@ pub mod tests {
         let c0 = rows(nc, 5, 4000);
         let up = |cols: &[&Vector<i64>]| {
             let n = cols[0].len();
-            DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
+            DevRel::written(cols.len(), n, |c, r| cols[c][r]).unwrap()
         };
         let (ra, rb, rc) = (up(&[&a0, &a1]), up(&[&b0, &b1]), up(&[&c0]));
         let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
@@ -5200,8 +5254,7 @@ pub mod tests {
         let c0 = rows(nc, 5, 4000);
         let up = |cols: &[&Vector<i64>]| {
             let n = cols[0].len();
-            // copy: not block data (a test's literal rows)
-            DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
+            DevRel::written(cols.len(), n, |c, r| cols[c][r]).unwrap()
         };
         let screen = |keys: &[i64], key: u32| {
             let f = crate::code_rule_dsl::facts::rows::FactsBloom::new(crate::code_rule_dsl::logic::bloom::kept_words_for(keys.len()));
@@ -5285,11 +5338,7 @@ pub mod tests {
         let (c0, c1) = (rows(n, 31, 97), rows(n, 32, 13));
         // A device relation's block has room for one index: one relation a key.
         let up = || {
-            DevRel::upload(2, n, |v| {
-                v[..n].copy_from_slice(&c0);
-                v[n..].copy_from_slice(&c1);
-            })
-            .unwrap()
+            DevRel::written(2, n, |c, r| if c == 0 { c0[r] } else { c1[r] }).unwrap()
         };
         let (dev0, dev1) = (up(), up());
         // A host relation in its block, bound before its index was added: a block without a slab of its own is bound
@@ -5301,7 +5350,7 @@ pub mod tests {
             let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = Batch::new().unwrap();
             let ix = batch.index(dev, &cols).unwrap();
-            assert!(ix.built && ix.moved.is_none(), "built in the relation's own block");
+            assert!(ix.built && ix.fresh.is_none(), "built in the relation's own block");
             let again = batch.index(dev, &cols).unwrap();
             assert!(!again.built && again.index == ix.index, "one build a batch");
             batch.finish().unwrap();
@@ -5407,6 +5456,43 @@ pub mod tests {
         assert_eq!(rows_of(i1.index), (half as u32..n as u32).collect::<Vec<_>>(), "the delta's rows");
     }
 
+    /// A program stopped where a size script's claim passed its arena (decision 0603 step 5) may stop at any level,
+    /// before an index's builder ran: the index is not marked built, and a batch that took it from the builder's
+    /// committed work fails (its strata on the CPU), as one whose builder the device failed. The bench's wrong
+    /// findings (C409, F823, PYI047 by turns) were CPU probes of such an index, its buckets never written.
+    #[test]
+    fn an_index_whose_program_stopped_at_its_arena_is_not_built() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let n = 20_000;
+        let (c0, c1) = (rows(n, 41, 97), rows(n, 42, 13));
+        let vals: Vec<i64> = (0..n).flat_map(|i| [c0[i], c1[i]]).collect();
+        let held = crate::code_rule_dsl::facts::rows::anon_in_block(2, &vals);
+        let placed = DevRel::in_block(&held, 2).unwrap();
+        let r = placed.relation();
+        let mut builder = Batch::new().unwrap();
+        let built = builder.index(&placed, &[0]).unwrap();
+        assert!(built.built);
+        builder.commit_open().unwrap();
+        let mut taker = Batch::new().unwrap();
+        let taken = taker.index(&placed, &[0]).unwrap();
+        assert!(!taken.built && taken.index == built.index, "taken from the builder's committed work");
+        builder.stop_programs_as_arena_full();
+        assert!(taker.finish().is_err(), "a batch that read the index its builder's program stopped before fails");
+        builder.finish().unwrap();
+        assert_eq!(r.find_index(&[0], n as u32), None, "not marked built");
+        let ix = r.index_at(built.index as usize);
+        assert_eq!((ix.ncols, ix.state), (0, rerail_blocks::relation::DEAD), "its room given back");
+        // Built again by the next batch that probes the key, whole.
+        let mut again = Batch::new().unwrap();
+        let rebuilt = again.index(&placed, &[0]).unwrap();
+        assert!(rebuilt.built);
+        again.finish().unwrap();
+        assert_eq!(r.find_index(&[0], n as u32), Some(rebuilt.index as usize));
+    }
+
     /// Decision 0384 steps 7 and 8: a fork (a second relation started from frozen rows whose writer another took), and
     /// a fork of it, is bound as one relation, nothing merged: the kernels read its bases' rows down its chain
     /// (`rel_get`), and the device's index of it is the host's, over every id.
@@ -5449,7 +5535,60 @@ pub mod tests {
             let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = Batch::new().unwrap();
             let ix = batch.index(&dev, &cols).unwrap();
-            assert!(ix.built && ix.moved.is_none(), "built in the fork's own block");
+            assert!(ix.built && ix.fresh.is_none(), "built in the fork's own block");
+            batch.finish().unwrap();
+            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let (r, h) = (dev.relation(), host.relation());
+            let hosts = {
+                let home = host.home.as_ref().unwrap();
+                // SAFETY: one thread; the rows are written.
+                let room = unsafe { h.try_reserve_index(&home.block, &key, n as u32) }.unwrap();
+                unsafe {
+                    h.build_index(&room);
+                    h.index_built(&room);
+                }
+                room.index
+            };
+            let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
+            assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
+            assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+        }
+    }
+
+    /// Decision 0353 step 6: a relation of a kept relation and rows of a run's block after it is bound as one
+    /// relation through links, nothing merged; the kernels read the kept rows in the far block bound beside the
+    /// relation's (`rel_get`'s `far`). The device's index of it is the host's over the same rows in one relation, and
+    /// a copy of it reads every row.
+    #[test]
+    fn the_device_reads_a_chain_through_its_far_base() {
+        use crate::code_rule_dsl::facts::rows::{Life, Rows as FactRows};
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        // An evaluation of the launch budget: every launch counts in one (the ledger refuses a launch outside one).
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let n = 5_000;
+        let (c0, c1) = (rows(n, 41, 97), rows(n, 42, 13));
+        let vals = |lo: usize, hi: usize| -> Vec<i64> { (lo..hi).flat_map(|i| [c0[i], c1[i]]).collect() };
+        let mut kept = FactRows::living(2, Life::Kept);
+        // copy: not block data: a test's rows
+        kept.extend_from_slice(&vals(0, 3_000));
+        let mut chain = kept.freeze(3_000);
+        let mut run = FactRows::living(2, Life::Run);
+        // copy: not block data: a test's rows
+        run.extend_from_slice(&vals(3_000, n));
+        chain.append_part(run.last_in_block().unwrap().part.unwrap());
+        let b = chain.in_block().expect("bound");
+        assert!(b.far().is_some() && b.rows == n as u32, "a chain bound whole, its base in another block");
+        let dev = DevRel::in_block(&b, 2).unwrap();
+        let mut host = FactRows::new(2);
+        // copy: not block data: a test's rows
+        host.extend_from_slice(&vals(0, n));
+        let host = DevRel::in_block(&host.in_block().unwrap(), 2).unwrap();
+        for cols in [vec![0usize], vec![1, 0]] {
+            let mut batch = Batch::new().unwrap();
+            let ix = batch.index(&dev, &cols).unwrap();
+            assert!(ix.built, "built in the chain's block");
             batch.finish().unwrap();
             let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
             let (r, h) = (dev.relation(), host.relation());
@@ -5464,6 +5603,67 @@ pub mod tests {
                 room.index
             };
             let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
+            assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
+            assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+        }
+        // Every row, read through the chain by a copy into a table.
+        let out = Table::new(2, n).unwrap();
+        let mut batch = Batch::new().unwrap();
+        batch.copy(Rows::Rel(&dev), n, None, &[Col::From(0), Col::From(1)], Rows::Table(&out), 0, None).unwrap();
+        batch.finish().unwrap();
+        assert_eq!(out.column(0, n), &c0[..], "column 0, down the chain");
+        assert_eq!(out.column(1, n), &c1[..], "column 1, down the chain");
+    }
+
+    /// Decision 0353 step 6: a relation whose index directory is full gets its next index in a device block of its
+    /// own, on a link there that reads the relation as its far base; nothing is copied and the stratum is not
+    /// refused. The index is the host's over the same rows.
+    #[test]
+    fn an_index_past_a_full_directory_goes_in_a_block_beside() {
+        use crate::code_rule_dsl::facts::rows::Rows as FactRows;
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        // An evaluation of the launch budget: every launch counts in one (the ledger refuses a launch outside one).
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let n = 2_000;
+        let cs: Vec<Vector<i64>> = (0..4).map(|c| rows(n, 51 + c as u64, 37 + 11 * c as i64)).collect();
+        let vals: Vec<i64> = (0..n).flat_map(|i| cs.iter().map(move |c| c[i])).collect();
+        let mut held = FactRows::new(4);
+        // copy: not block data: a test's rows
+        held.extend_from_slice(&vals);
+        let dev = DevRel::in_block(&held.in_block().unwrap(), 4).unwrap();
+        let mut keys: Vec<Vec<usize>> = (0..4).map(|c| vec![c]).collect();
+        keys.extend((0..4).flat_map(|a| (0..4).filter(move |&b| b != a).map(move |b| vec![a, b])));
+        keys.push(vec![0, 1, 2]);
+        assert_eq!(keys.len(), rerail_blocks::relation::ADDED_INDEXES + 1);
+        let mut host = FactRows::new(4);
+        // copy: not block data: a test's rows
+        host.extend_from_slice(&vals);
+        let host = DevRel::in_block(&host.in_block().unwrap(), 4).unwrap();
+        for (i, cols) in keys.iter().enumerate() {
+            let mut batch = Batch::new().unwrap();
+            let ix = batch.index(&dev, cols).unwrap();
+            batch.finish().unwrap();
+            assert_eq!(ix.fresh.is_some(), i == rerail_blocks::relation::ADDED_INDEXES, "{cols:?}: in the relation's own directory while it has room");
+            if ix.fresh.is_none() {
+                continue;
+            }
+            let beside = ix.of(&dev);
+            assert!(beside.far.is_some(), "a link whose far base is the relation");
+            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let h = host.relation();
+            let hosts = {
+                let home = host.home.as_ref().unwrap();
+                // SAFETY: one thread; the rows are written.
+                let room = unsafe { h.try_reserve_index(&home.block, &key, n as u32) }.unwrap();
+                unsafe {
+                    h.build_index(&room);
+                    h.index_built(&room);
+                }
+                room.index
+            };
+            let (d, w) = (beside.relation().index_at(ix.index as usize), h.index_at(hosts));
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
         }

@@ -180,14 +180,24 @@ impl Sketch {
 
     /// `encode`'s sketch back; `None` if the bytes are not one.
     pub fn decode(bytes: &[u8]) -> Option<Sketch> {
-        let mut at = 1;
+        Sketch::decode_at(&|i| bytes[i], 0, bytes.len())
+    }
+
+    /// `decode` of the `n` bytes from `from`, each read by position where it lies (`byte`): a blob in a kept
+    /// entry's words is not read into bytes first (decision 0353 step 8).
+    pub fn decode_at(byte: &dyn Fn(usize) -> u8, from: usize, n: usize) -> Option<Sketch> {
+        let end = from + n;
+        let mut at = from + 1;
         let mut int = || {
-            let b = bytes.get(at..at + 4)?;
+            if at + 4 > end {
+                return None;
+            }
+            let v = (0..4).rev().fold(0u32, |w, k| w << 8 | byte(at + k) as u32) as i32;
             at += 4;
-            Some(i32::from_le_bytes(b.try_into().ok()?))
+            Some(v)
         };
         // A sketch of another format placed its values elsewhere: not one to add rows to.
-        if bytes.first() != Some(&FORMAT) {
+        if n == 0 || byte(from) != FORMAT {
             return None;
         }
         let mut s = Sketch::default();
@@ -210,7 +220,7 @@ impl Sketch {
                 }
             }
         }
-        (at == bytes.len()).then_some(s)
+        (at == end).then_some(s)
     }
 }
 

@@ -134,7 +134,7 @@ impl PythonProject for Batch {
                 return Err(format!("Python demand references absent document {doc}"));
             };
             let p = &self.docs[index];
-            if crate::code_rule_dsl::language::from_tape_tag(p.tag) != Some(GrammarDialect::Python)
+            if crate::code_rule_dsl::language::from_tape_tag(p.tag()) != Some(GrammarDialect::Python)
             {
                 return Err("Python producer received another grammar".into());
             }

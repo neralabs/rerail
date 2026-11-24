@@ -364,7 +364,7 @@ fn column_statistics_of_resident_columns_are_read_in_place() {
     let wide: Vector<i64> = (0..n).map(|_| if rng.below(2) == 0 { -(1i64 << 40) + rng.below(30) as i64 } else { (1i64 << 40) + rng.below(30) as i64 }).collect();
     let all: Vector<i64> = key.iter().chain(&wide).copied().collect();
     let held = join::Held::of(all.into_iter()).expect("the device");
-    let cols = [join::StatCol::Device { buffer: &held.buffer, at: 0, rows: n, col: None }, join::StatCol::Device { buffer: &held.buffer, at: n, rows: n, col: None }];
+    let cols = [join::StatCol::Device { buffer: &held.buffer, at: 0, rows: n, col: None, far: &held.buffer }, join::StatCol::Device { buffer: &held.buffer, at: n, rows: n, col: None, far: &held.buffer }];
     let got = join::column_stats_of(&cols, 16).expect("the device");
     let want = join::column_stats(&[&key, &wide], 16).expect("the device");
     assert_eq!(got, want);

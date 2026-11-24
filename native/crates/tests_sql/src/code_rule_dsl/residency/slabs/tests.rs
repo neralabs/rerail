@@ -137,23 +137,37 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     for format in Format::ALL {
         drop_all();
-        let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = SOURCES
-            .iter()
-            .map(|&(source, lang)| {
-                let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
-                let grammar = Grammar::new(lang).unwrap();
-                crate::code_rule_dsl::tape::formats::as_run(format, || {
-                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-                    crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
-                })
+        // Each document's tape and source are placed in rooms as it is restored (`TapeImage::housed`,
+        // `placed::housed`), and the residency takes them as they lie (decision 0353 step 7, row 13).
+        let restore = |&(source, lang): &(&str, _)| {
+            let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
+            let grammar = Grammar::new(lang).unwrap();
+            crate::code_rule_dsl::tape::formats::as_run(format, || {
+                let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+                crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
             })
-            .collect();
+        };
+        let mut docs = vec![restore(&SOURCES[0])];
+        // A room larger than a slab takes one of its own: the next documents' tapes go to another.
+        let held_big = tape_room(SLAB_BYTES + (1 << 20)).unwrap();
+        docs.extend(SOURCES[1..].iter().map(restore));
         let first = admit_docs(&docs[..1]).unwrap();
-        // A source larger than a slab takes one of its own; the next document goes to another.
-        let big = vec![b'x'; SLAB_BYTES + (1 << 20)];
-        let held_big = admit_sources(&[&big]).unwrap();
         let rest = admit_docs(&docs[1..]).unwrap();
         assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
+        for (doc, document) in docs.iter().zip(first.iter().chain(&rest)) {
+            let (_, stored, text) = doc.in_place().expect("a restored document's tape and source in rooms");
+            assert_eq!(document.image().as_ptr(), stored.as_ptr(), "{format:?}: the tape where it lies, not copied");
+            // The source where the document reads it: by the slabs' device addresses, from the document's first byte.
+            let address = |slab: &Slab| slab.device_buffer().device_address().expect("a buffer with an address") as i64;
+            let (source_slab, source_at, _) = crate::code_rule_dsl::tape::placed::slab_room(text.home().room().unwrap()).unwrap();
+            assert_eq!(source_slab.host().wrapping_add(source_at) as *const u8, text.as_ptr(), "{format:?}: the source's room");
+            assert_eq!(
+                address(&document.slab) + document.at as i64 + document.view.source_offset(),
+                address(&source_slab) + source_at as i64,
+                "{format:?}: the view names the source where it lies, not a copy"
+            );
+            assert_eq!(document.source.as_ref().map(|s| s.id), (source_slab.id != document.slab.id).then_some(source_slab.id), "{format:?}: the source's slab, held");
+        }
         let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
         // A batch over two slabs reaches the second by the slabs' device addresses (and a 16z batch its cache's):
         // refused where buffers have none (OpenCL without host USM: Apple's, AMD's), and its caller splits it by slab.
@@ -251,7 +265,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
                 // Made as a run of `format` makes it, whatever the process's run stores.
                 crate::code_rule_dsl::tape::formats::as_run(format, || {
                     let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-                    crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+                    crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).unwrap()
                 })
             })
             .collect::<Vec<_>>();
