@@ -711,10 +711,12 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 /// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
 /// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
 /// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…x…, k) }, node_order(v, kv)`, where
-///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered<k>`, written after the program's rules.
+///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered_<digest>`, named by its content (its atom's
+///   relation and arguments, the node aggregated marked) and written after the program's rules, so a module's tail
+///   and the whole program's give one helper one name (decision 0639 §6a).
 ///
 /// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body. Fresh
-/// variables are numbered over the program in rule order.
+/// variables are numbered in each rule, so a rule is written alike wherever it is tailed.
 pub struct OrderNodes;
 
 /// What a literal of a rule becomes.
@@ -750,10 +752,10 @@ impl ProgramPass for OrderNodes {
             AggRef::Max => Some(AggOp::Max),
             _ => None,
         };
-        let mut fresh = 0usize;
         let mut helpers = 0usize;
         let mut plans: BTreeMap<RuleId, Vec<Ordered>> = BTreeMap::new();
         for r in v.rules() {
+            let mut fresh = 0usize;
             let mut nodes = BTreeSet::new();
             typed(r.head(), &mut nodes);
             for l in r.body() {
@@ -836,7 +838,36 @@ impl ProgramPass for OrderNodes {
             }
         }
         made.sort_by_key(|m| m.2);
-        for (id, lit, helper, _, _) in &made {
+        // Each helper's name, by its content: its atom's relation, gating and arguments, the node aggregated `o`,
+        // the other variables by their first place.
+        let mut names: Vec<String> = Vec::with_capacity(made.len());
+        for (id, lit, _, _, _) in &made {
+            let r = input.rule(*id).expect("a rule of the input");
+            let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
+            let mut vars: Vec<Slot> = Vec::new();
+            let args: Vec<String> = atom
+                .args()
+                .map(|t| match t {
+                    TermRef::Var(s) if s == o => "o".to_owned(),
+                    TermRef::Var(s) => {
+                        let at = vars.iter().position(|x| *x == s).unwrap_or_else(|| {
+                            vars.push(s);
+                            vars.len() - 1
+                        });
+                        format!("v{at}")
+                    }
+                    t => input.show_term(r, t),
+                })
+                .collect();
+            let content = format!("{}\0{}\0{}", input.rel_name(atom.rel()), atom.gated(), args.join("\0"));
+            let digest = crate::content_store::HashKey::sha256(content.as_bytes()).sha256_bytes().unwrap_or_default();
+            names.push(format!("rr_ordered_{}", digest[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()));
+        }
+        let mut once: BTreeSet<&str> = BTreeSet::new();
+        for (i, (id, lit, _, _, _)) in made.iter().enumerate() {
+            if !once.insert(names[i].as_str()) {
+                continue;
+            }
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
             let cols = input.columns_of(input.rel_name(atom.rel())).unwrap_or_default();
             let mut seen: Vec<Slot> = Vec::new();
@@ -851,9 +882,8 @@ impl ProgramPass for OrderNodes {
                 }
             }
             decl.push(("k".to_owned(), "int".to_owned()));
-            declared.push((format!("rr_ordered{helper}"), decl));
+            declared.push((names[i].clone(), decl));
         }
-        let names: Vec<String> = (0..helpers).map(|h| format!("rr_ordered{h}")).collect();
         let b = w.derive()?;
         for (rel, decl) in &declared {
             let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
@@ -885,8 +915,12 @@ impl ProgramPass for OrderNodes {
             }
             rb.finish()?;
         }
-        // The helpers, after the program's rules: `rr_ordered<k>(args, k) :- atom, node_order(o, k)`.
+        // The helpers, after the program's rules: `rr_ordered_<digest>(args, k) :- atom, node_order(o, k)`, each once.
+        let mut once: BTreeSet<&str> = BTreeSet::new();
         for (id, lit, helper, args, k) in &made {
+            if !once.insert(names[*helper].as_str()) {
+                continue;
+            }
             let r = input.rule(*id).expect("a rule of the input");
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
             let kk = ord(*k);
@@ -1293,9 +1327,8 @@ impl ProgramPass for GrammarNames {
 
 /// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
 /// does not derive them (`rewritten`, its settings: `next_sibling`, `precedes`) are declared in `core.rerail` for the
-/// checker; they are no relations of the program. `within` stays declared where a rule reads it: the lowering made it
-/// the engine's relation (decision 0050); a program lowered without `core.rerail` (its own part, `parse_own`) still
-/// declares it.
+/// checker; they are no relations of the program. `within` is `WithinRead`'s: whether a rule reads it is the whole
+/// program's to say, and a module that states it may have its readers in another (decision 0639 §6a).
 pub struct BuiltinsOut {
     pub rewritten: Vec<String>,
 }
@@ -1305,11 +1338,9 @@ impl ProgramPass for BuiltinsOut {
     fn settings(&self) -> Vec<u8> {
         self.rewritten.join("\n").into_bytes()
     }
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        let v = cx.v();
-        let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
-        let out: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| !(reads_within && *b == "within")).collect();
+        let out: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| *b != WITHIN).collect();
         let head = w.on()?;
         for &b in &out {
             if head.declares(b) {
@@ -1319,9 +1350,37 @@ impl ProgramPass for BuiltinsOut {
         if out.iter().any(|b| head.input_names().iter().any(|i| i == b)) {
             head.fields().retain_inputs(|i| !out.contains(&i));
         }
+        Ok(())
+    }
+}
+
+/// `within` stays declared where a rule reads it: the lowering made it the engine's relation (decision 0050); a
+/// program lowered without `core.rerail` (its own part, `parse_own`) still declares it. Where no rule reads it, it is
+/// no relation of the program, as `BuiltinsOut`'s others are not. It reads every rule, so it runs on the program, after
+/// the modules' tails (decision 0639 §6a): a prelude states `within` an input, and its readers include it.
+pub struct WithinRead;
+
+impl ProgramPass for WithinRead {
+    const NAME: &'static str = "within read";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        let v = cx.v();
+        let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
         if reads_within {
+            let head = w.on()?;
             head.fields().declare_absent(WITHIN, &[("n", "node"), ("a", "node")]);
             head.fields().add_input(WITHIN);
+            return Ok(());
+        }
+        let (declared, input) = (v.decl_of(WITHIN).is_some(), v.input_names().iter().any(|i| i == WITHIN));
+        if declared || input {
+            let head = w.on()?;
+            if declared {
+                head.fields().undeclare(WITHIN);
+            }
+            if input {
+                head.fields().retain_inputs(|i| i != WITHIN);
+            }
         }
         Ok(())
     }

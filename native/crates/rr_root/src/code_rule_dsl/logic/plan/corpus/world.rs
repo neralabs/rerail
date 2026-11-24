@@ -488,6 +488,10 @@ impl World {
                 let (key, _) = serde_json::from_str::<(String, String)>(path).ok()?;
                 (if crate::code_rule_dsl::logic::rr::planned_module_held(&key) { "held" } else { "gone" }).to_owned()
             }
+            crate::code_rule_dsl::logic::rr::TAIL_REQUEST => {
+                let (tail, _) = serde_json::from_str::<(String, String)>(path).ok()?;
+                (if crate::code_rule_dsl::logic::rr::planned_tail_held(&tail) { "held" } else { "gone" }).to_owned()
+            }
             super::analysis_history::REQUEST => {
                 let (kind, key) = serde_json::from_str::<(String, String)>(path).ok()?;
                 super::analysis_history::requested(&kind, &key).ok()?.1

@@ -25,6 +25,9 @@
 //                                       the module plan (decision 0639 §1, below): module `m` is lowered against the
 //                                       modules `s`, ranks `k`, and is kept under `key`
 //   p0_module_lowered(key, image)       the module of `key` lowered, its image's digest (the engine's answer)
+//   p0_tail_key(m, t), p0_module_tailed(t, image)
+//                                       module `m`'s tail is kept under `t`; the module of tail key `t` tailed, its
+//                                       image's digest (the engine's answer, decision 0639 §6a)
 //
 // One more builtin fact: env("rerail.build", b), the engine's build, which a module's key names.
 //
@@ -215,4 +218,23 @@ p0_lower_req(k, r, fs, ks, rs) :- p0_module_key(m, k), p0_module_rank(m, r), p0_
 .decl p0_module_lowered(key: symbol, image: symbol)
 .answer p0_lower_req -> p0_module_lowered
 
-.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key, p0_module_lowered
+// Each module's tail, asked of the engine (decision 0639 §6a): the tail's steps less the downward ones, over its
+// scope's tails and its image, kept under a key of its own. The steps read its scope's rules, not only their
+// interfaces (a context's instances copy them), so the key names its scope's files by their bytes: an edit of a
+// rule's body in its scope tails it again, and lowers nothing again. Its request holds its lowering's, so the engine
+// lowers it first where its lowering is not yet answered, its scope's tail keys, and its scope's keys in link order
+// (by rank, then name), which its tail links them in as a whole library's tail does. It answers in rank order.
+.decl p0_scope_digests(m: symbol, ds: symbol)
+p0_scope_digests(m, ds) :- p0_module_rank(m, _), ds = join d by d sep "," : { p0_scope_file(m, _, d) }.
+.decl p0_tail_key(m: symbol, t: symbol)
+p0_tail_key(m, @sha256(cat("tail|", k, "|", ds))) :- p0_module_key(m, k), p0_scope_digests(m, ds).
+.decl p0_scope_tails(m: symbol, ts: symbol)
+p0_scope_tails(m, ts) :- p0_module_rank(m, _), ts = join t by t sep "," : { p0_scope(m, s), p0_tail_key(s, t) }.
+.decl p0_scope_order(m: symbol, ks: symbol)
+p0_scope_order(m, ks) :- p0_module_rank(m, _), ks = join k by (r, s) sep "," : { p0_scope(m, s), p0_module_rank(s, r), p0_module_key(s, k) }.
+.decl p0_tail_req(tail: symbol, rank: number, key: symbol, files: symbol, scope: symbol, reached: symbol, scope_tails: symbol, linked: symbol)
+p0_tail_req(t, r, k, fs, ks, rs, ts, os) :- p0_tail_key(m, t), p0_module_key(m, k), p0_lower_req(k, r, fs, ks, rs), p0_scope_tails(m, ts), p0_scope_order(m, os).
+.decl p0_module_tailed(tail: symbol, image: symbol)
+.answer p0_tail_req -> p0_module_tailed
+
+.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key, p0_module_lowered, p0_tail_key, p0_module_tailed

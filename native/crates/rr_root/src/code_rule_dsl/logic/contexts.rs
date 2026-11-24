@@ -674,6 +674,136 @@ pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
     Ok(out)
 }
 
+/// A made pass stated once (decision 0639 §6a): the `.pass` rows of one context, host, roots and holes, which
+/// `declared` reads as one pass, written as one row, where the first stood: its exports all the rows', its reads theirs
+/// in the order they first come. Each module's tail states the pass as its scope made it, and its readers' tails add
+/// what they make of it; the whole program's tail states it once.
+pub struct PassesOnce;
+
+impl super::program_image::manager::ProgramPass for PassesOnce {
+    const NAME: &'static str = "a pass stated once";
+    fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
+        type Key = (String, String, String, Option<String>);
+        let settings = ProgramFields::settings(&**cx.v());
+        // Each row's pass and lists, as `declared` reads them; a row it would refuse is left as it is, for it to.
+        let row = |text: &str| -> Option<(Key, Vec<String>, Vec<String>)> {
+            let w = words(text);
+            let [name, of, host, roots, rel, tail @ ..] = w.as_slice() else { return None };
+            let (holes, tail) = match tail {
+                [h, hrel, tail @ ..] if h == "holes" => (Some(hrel.clone()), tail),
+                _ => (None, tail),
+            };
+            let [exports, rest @ ..] = tail else { return None };
+            if of != "of" || roots != "roots" || exports != "exports" {
+                return None;
+            }
+            let (rels, left) = names(rest, "reads").ok()?;
+            let reads = match left.split_first() {
+                None => Vec::new(),
+                Some((r, list)) if r == "reads" => names(list, "").ok()?.0.into_iter().map(|(r, _)| r).collect(),
+                _ => return None,
+            };
+            Some(((name.clone(), host.clone(), rel.clone(), holes), rels.into_iter().map(|(r, _)| r).collect(), reads))
+        };
+        let mut rows: BTreeMap<Key, (usize, BTreeSet<String>, Vec<String>, usize)> = BTreeMap::new();
+        let mut gone: BTreeSet<usize> = BTreeSet::new();
+        for (i, (key, text)) in settings.iter().enumerate() {
+            let Some((k, exports, reads)) = (key == "pass").then(|| row(text)).flatten() else { continue };
+            match rows.get_mut(&k) {
+                None => {
+                    rows.insert(k, (i, exports.into_iter().collect(), reads, 1));
+                }
+                Some((_, e, r, n)) => {
+                    gone.insert(i);
+                    *n += 1;
+                    e.extend(exports);
+                    for x in reads {
+                        if !r.contains(&x) {
+                            r.push(x);
+                        }
+                    }
+                }
+            }
+        }
+        if gone.is_empty() {
+            return Ok(());
+        }
+        let combined: BTreeMap<usize, String> = rows
+            .into_iter()
+            .filter(|(_, (_, _, _, n))| *n > 1)
+            .map(|((name, host, roots, holes), (at, exports, reads, _))| {
+                let holes = holes.map_or(String::new(), |h| format!(" holes {h}"));
+                let reads = if reads.is_empty() { String::new() } else { format!(" reads {}", reads.join(", ")) };
+                (at, format!("{name} of {host} roots {roots}{holes} exports {}{reads}", exports.into_iter().collect::<Vec<_>>().join(", ")))
+            })
+            .collect();
+        let out: Vec<(String, String)> = settings
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !gone.contains(i))
+            .map(|(i, (key, text))| match combined.get(&i) {
+                Some(row) => (key, row.clone()),
+                None => (key, text),
+            })
+            .collect();
+        w.on()?.fields().set_field(super::program_facts::Field::Settings(&out));
+        Ok(())
+    }
+}
+
+/// A host's copies taken out once a pass holds them (decision 0639 §6a), as `write` takes out the relations only a
+/// pass holds: a relation the host derives, of which a made pass's instance is derived, that no other rule reads and
+/// that is no input or output, its rules and declaration gone, to a fixed point (a copy read only by another such
+/// copy goes with it). A module's tail keeps the copy its scope derives where the context's instance of it is made by
+/// a reader's tail, in another module; the whole program's tail never makes it.
+pub struct HostCopiesOut;
+
+impl super::program_image::manager::ProgramPass for HostCopiesOut {
+    const NAME: &'static str = "a host's copies out";
+    fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let made: Vec<String> = ProgramFields::settings(&**v).into_iter().filter(|(k, _)| k == "pass").filter_map(|(_, text)| words(&text).into_iter().next()).collect();
+        if made.is_empty() {
+            return Ok(());
+        }
+        let derived = |x: &str| v.rel(x).is_some_and(|r| v.heads(r).next().is_some());
+        let (inputs, outputs) = (ProgramFields::input_names(&**v), ProgramFields::output_names(&**v));
+        // Each relation's readers, by head, its own rules aside.
+        let mut readers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in v.rules() {
+            let head = v.rel_name(r.head().rel());
+            for a in r.reads() {
+                let x = v.rel_name(a.rel());
+                if x != head {
+                    readers.entry(x).or_default().insert(head);
+                }
+            }
+        }
+        let copy = |x: &str| !of_a_context(x) && derived(x) && !inputs.iter().any(|i| i == x) && !outputs.iter().any(|o| o == x) && made.iter().any(|c| derived(&instance(c, x)));
+        let mut gone: BTreeSet<&str> = BTreeSet::new();
+        loop {
+            let more: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| !gone.contains(h) && copy(h) && readers.get(h).is_none_or(|by| by.iter().all(|b| gone.contains(b)))).collect();
+            if more.is_empty() {
+                break;
+            }
+            gone.extend(more);
+        }
+        if gone.is_empty() {
+            return Ok(());
+        }
+        let b = w.derive()?;
+        for r in v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel()))) {
+            b.keep(v, r);
+        }
+        for rel in &gone {
+            if ProgramFields::declares(&**v, rel) {
+                b.fields().undeclare(rel);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The passes made in a program's lowering (`rr::lowering_tail_on`), before its declarations are checked: a `.from`
 /// name is read from its pass, and a part lowered in a library's scope has its passes made of what it holds.
 pub struct Passes;

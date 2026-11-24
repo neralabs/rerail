@@ -4945,7 +4945,7 @@ fn aggregate_demand_is_placed_on_the_version() {
 }
 
 /// The lowering tail's node rewrites run on a modular text's version (decision 0281's path, step 7b): two nodes compared
-/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper (`rr_ordered0`), as
+/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper named by its content (`rr_ordered_<digest>`), as
 /// `lowering_tail::OrderNodes` makes them, and a tree axis read declared an input (`lowering_tail::DeclareAxes`); a debug build checks the
 /// image against the tree's (`link_seeded_version`).
 #[test]
@@ -4967,7 +4967,7 @@ fn finishs_rewrites_run_on_the_version() {
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
     assert!(before.contains("node_order("), "{before}");
-    assert!(rules.iter().any(|x| x.starts_with("rr_ordered0(")), "the max's helper: {rules:#?}");
+    assert!(rules.iter().any(|x| x.starts_with("rr_ordered_")), "the max's helper: {rules:#?}");
     let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
     let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
     assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
@@ -6452,7 +6452,7 @@ fn rule_lines_names_aside(printed: &str) -> BTreeSet<String> {
 /// T1 (decision 0639): a program that includes the library, read by `parse_version` (its library linked from its
 /// modules' images and its own text one more module), is the program its library files and its text lowered as one
 /// module make (the whole lowering, which a text read before decision 0639 step 4): the same rules and as many helpers,
-/// names aside (`rule_lines_names_aside`). The first `RERAIL_T1_N` (2) such programs of every pack and of the phase
+/// names aside (`rule_lines_names_aside`), and the same inputs. The first `RERAIL_T1_N` (2) such programs of every pack and of the phase
 /// programs; the spike (`spike_0639_programs_linked_from_modules`) runs them all.
 #[test]
 fn a_program_linked_from_its_modules_is_its_whole_lowering() {
@@ -6479,7 +6479,16 @@ fn a_program_linked_from_its_modules_is_its_whole_lowering() {
             let Ok(whole) = super::lower_statements_version(all).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v)) else { continue };
             let linked = parse_version(&src).unwrap_or_else(|e| panic!("{}: the module path: {e}", path.display()));
             let helpers = |v: &Arc<Version>| v.declared_names().into_iter().filter(|r| r.starts_with("rr_")).count();
-            let (a, b) = (rule_lines_names_aside(&print_version(&linked).unwrap()), rule_lines_names_aside(&print_version(&whole).unwrap()));
+            // The `.input` list a relation a line: past the inputs a program states, its order is the order the lowering
+            // and the tail's steps added them, which the module path adds module by module (a library module's tail
+            // its `node_order` before a later module's lowering its `tape`).
+            let lines = |v: &Arc<Version>| -> BTreeSet<String> {
+                rule_lines_names_aside(&print_version(v).unwrap()).into_iter().flat_map(|l| match l.strip_prefix(".input ") {
+                    Some(rest) => rest.split(", ").map(|r| format!(".input {}", r.trim())).collect::<Vec<_>>(),
+                    None => vec![l],
+                }).collect()
+            };
+            let (a, b) = (lines(&linked), lines(&whole));
             assert!(a == b, "{}: {} lines and {}; only the module path's: {:#?}\nonly the whole lowering's: {:#?}", path.display(), a.len(), b.len(), a.difference(&b).take(6).collect::<Vec<_>>(), b.difference(&a).take(6).collect::<Vec<_>>());
             assert_eq!(helpers(&linked), helpers(&whole), "{}: the helpers", path.display());
             taken += 1;
@@ -6664,6 +6673,262 @@ fn a_templates_bytes_read_back_as_its_rule() {
         assert!(seen.insert((v.rel_name(r.head().rel()).to_owned(), bytes)), "{}", v.show_rule(r));
     }
     assert!(lower::template_nodes(&[1, 0, 0, 0, 0, 9, 0, 0, 0]).is_none(), "a length past the end");
+}
+
+/// Every pack's library and the phase programs' (decision 0639 §6a's tests): the pack, its library's plan, and each
+/// program with its text and its library files.
+#[allow(clippy::type_complexity)]
+fn tail_libraries() -> Vec<(String, Vec<super::PlannedModule>, Vec<(PathBuf, String, Vec<PathBuf>)>)> {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut packs: Vec<(String, PathBuf)> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path())).collect();
+    packs.push(("phases".into(), crate::source_tree::native().join("src/code_rule_dsl/typing/programs")));
+    packs.sort();
+    let mut out = Vec::new();
+    for (pack, dir) in packs {
+        let mut programs = walk_rr(&dir);
+        programs.sort();
+        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut texts = Vec::new();
+        for path in programs {
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            if let Ok(Some(m)) = super::modules(&src) {
+                let files: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
+                paths.extend(files.iter().cloned());
+                texts.push((path, src, files));
+            }
+        }
+        if paths.is_empty() {
+            continue;
+        }
+        let plan = super::planned_library(&paths.into_iter().collect::<Vec<_>>()).unwrap_or_else(|e| panic!("{pack}: {e}"));
+        out.push((pack, plan, texts));
+    }
+    out
+}
+
+/// A version's lines with names aside (`rule_lines_names_aside`), each `.input` and `.output` list a line a relation
+/// (a module states its own), and variables and columns renamed by place (`alpha`).
+fn tail_lines(v: &Arc<Version>) -> BTreeSet<String> {
+    rule_lines_names_aside(&print_version(v).unwrap())
+        .into_iter()
+        .flat_map(|l| match l.split_once(' ') {
+            Some((d @ (".input" | ".output"), rest)) => rest.split(", ").map(|r| format!("{d} {}", r.trim())).collect::<Vec<_>>(),
+            _ => vec![l],
+        })
+        .map(|l| alpha(&l))
+        .collect()
+}
+
+/// The relation a printed line is of: a rule's head, a declaration's or a list's relation.
+fn line_relation(l: &str) -> String {
+    let l = l.trim_start_matches(".decl ").trim_start_matches(".input ").trim_start_matches(".output ");
+    l.split(['(', ' ', ',']).next().unwrap_or_default().trim().to_owned()
+}
+
+/// Each module of `plan` tailed in plan order (`rr::tail_module`), each over its scope's tails.
+fn tailed_modules(plan: &[super::PlannedModule]) -> Vec<lower::Module> {
+    let at: std::collections::HashMap<&str, usize> = plan.iter().enumerate().map(|(i, m)| (m.key.as_str(), i)).collect();
+    let mut tailed: Vec<lower::Module> = Vec::with_capacity(plan.len());
+    for m in plan {
+        let mut scope: Vec<usize> = m.scope.split(',').filter(|k| !k.is_empty()).map(|k| at[k]).collect();
+        scope.sort();
+        let lowered: Vec<lower::Module> = scope.iter().map(|&j| plan[j].module().unwrap()).collect();
+        let tails: Vec<lower::Module> = scope.iter().map(|&j| tailed[j].clone()).collect();
+        let name = m.files.lines().next().unwrap_or_default().to_owned();
+        tailed.push(super::tail_module(&lowered, &tails, m.module().unwrap()).unwrap_or_else(|e| panic!("{name}: its tail: {e}")));
+    }
+    tailed
+}
+
+/// T11 (decision 0639 §6a, E12 and E12b): every library's modules, each tailed at module time over its scope's tails
+/// (`rr::tail_module`), unite to the library's tail, core.rerail's declarations made over the union as a program makes
+/// them (`rr::program_steps`). A line only the union has is a list setting a module states for
+/// its own (a context's `.pass`, the demand's `.pragma`), or of a relation no rule of the union reads but its own: a
+/// host's copy a context leaves where its other declaration exports it (Vue's `script`), which `Prune` drops. The
+/// module steps over the union leave it as it was.
+#[test]
+fn modules_tailed_at_module_time_unite_to_the_librarys_tail() {
+    let libraries = tail_libraries();
+    let failures: Vec<String> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        use rayon::prelude::*;
+        libraries.par_iter().flat_map(|(pack, plan, _)| {
+            let mut bad = Vec::new();
+            let modules: Vec<lower::Module> = plan.iter().map(|m| m.module().unwrap()).collect();
+            let linked = lower::link_library(modules).unwrap().with(None).unwrap();
+            let whole = tail_lines(&super::tail_steps(linked.version, false, linked.lowered, None, &super::module_steps()).unwrap());
+            let tailed = tailed_modules(plan);
+            // The union as a program reads it: core.rerail's declarations of what none of its modules declares made
+            // over it first (`program_steps`), which the modules' tails leave to it.
+            let link = || lower::link_library(tailed.clone()).unwrap().with(None).unwrap();
+            let united = {
+                let l = link();
+                super::tail_steps(l.version, false, l.lowered, None, &[super::TailStep::CoreDecls]).unwrap()
+            };
+            let union = tail_lines(&united);
+            let only_whole: Vec<&String> = whole.difference(&union).take(4).collect();
+            if !only_whole.is_empty() {
+                bad.push(format!("{pack}: lines only the library's tail has: {only_whole:#?}"));
+            }
+            let list_setting = |l: &str| l.starts_with(".pass ") || l.starts_with(".pragma \"magic-transform\"");
+            let reads: BTreeSet<(String, String)> = united.rules().flat_map(|r| {
+                let h = united.rel_name(r.head().rel()).to_owned();
+                r.reads().map(|a| (h.clone(), united.rel_name(a.rel()).to_owned())).collect::<Vec<_>>()
+            }).collect();
+            // The relations of the lines only the union has, less each that a rule of another relation reads, to a
+            // fixed point: what is left nothing else reads, which `Prune` drops.
+            let extra: Vec<&String> = union.difference(&whole).filter(|l| !list_setting(l)).collect();
+            let mut dead: BTreeSet<String> = extra.iter().map(|l| line_relation(l)).collect();
+            loop {
+                let read: BTreeSet<String> = dead.iter().filter(|r| reads.iter().any(|(h, b)| b == *r && h != *r && !dead.contains(h))).cloned().collect();
+                if read.is_empty() {
+                    break;
+                }
+                dead.retain(|r| !read.contains(r));
+            }
+            let live: Vec<&&String> = extra.iter().filter(|l| !dead.contains(&line_relation(l))).take(4).collect();
+            if !live.is_empty() {
+                bad.push(format!("{pack}: lines only the union has, of relations its rules read: {live:#?}"));
+            }
+            let again = super::tail_steps(Arc::clone(&united), false, link().lowered, None, &super::module_steps()).unwrap();
+            let twice = tail_lines(&again);
+            if twice != union {
+                bad.push(format!("{pack}: the module steps over the union: {:?} gone, {:?} made", union.difference(&twice).take(3).collect::<Vec<_>>(), twice.difference(&union).take(3).collect::<Vec<_>>()));
+            }
+            bad
+        }).collect()
+    });
+    assert!(libraries.len() > 10, "{} libraries", libraries.len());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A program's version pruned (`Prune`), as its plan prunes it.
+fn pruned(v: Arc<Version>) -> Arc<Version> {
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+    let mut p = Pipeline::new("T12: pruned", v);
+    p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::Prune::default());
+    p.finish().unwrap().0
+}
+
+/// What two versions of one program differ by, as T12 compares them: their lines, a made pass's `.pass` among them
+/// (stated once, `contexts::PassesOnce`), and their contexts as `contexts::declared` reads them.
+fn program_difference(a: &Arc<Version>, b: &Arc<Version>) -> Option<String> {
+    let (la, lb) = (tail_lines(a), tail_lines(b));
+    let only_b: Vec<&String> = lb.difference(&la).take(12).collect();
+    let only_a: Vec<&String> = la.difference(&lb).take(4).collect();
+    // Each context's exports that the program holds: an export's instance derived, or the export's own rules where
+    // the context is not made yet.
+    let contexts = |v: &Arc<Version>| {
+        let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
+        crate::code_rule_dsl::logic::contexts::declared(v)
+            .map(|d| d.contexts.into_iter().map(|(n, c)| {
+                let held: BTreeSet<String> = c.exports.into_iter().filter(|e| derived(&crate::code_rule_dsl::logic::contexts::instance(&n, e)) || (!c.made && derived(e))).collect();
+                (n, c.host, held)
+            }).filter(|(_, _, held)| !held.is_empty()).collect::<Vec<_>>())
+            .map_err(|e| e.to_string())
+    };
+    let (ca, cb) = (contexts(a), contexts(b));
+    // The rules of `b` that read the relation of its first line `a` lacks: what keeps it.
+    let readers: Vec<String> = only_b.first().map(|l| line_relation(l)).map(|rel| b.rules().filter(|r| b.rel_name(r.head().rel()) != rel && r.reads().any(|x| b.rel_name(x.rel()) == rel)).map(|r| b.show_rule(r)).take(3).collect()).unwrap_or_default();
+    (!only_a.is_empty() || !only_b.is_empty() || ca != cb).then(|| format!("only the whole tail's {only_a:#?}; only the product's {only_b:#?}{}; read in the product by {readers:#?}", if ca != cb { format!("; contexts {ca:?} / {cb:?}") } else { String::new() }))
+}
+
+/// T12 (decision 0639 §6a, E13 on the product path): every pack program's version (`rr::parse_version`), linked from
+/// its library's tailed modules and its own module tailed, then the downward steps and the steps after them, is the
+/// version of the whole library and its own module tailed by `TAIL`, both pruned. A program with nothing to output
+/// is compared unpruned. The texts' graphs come from one run of phase 0, as a run's texts' do (`phase0::graphs`).
+#[test]
+fn programs_linked_from_tailed_modules_plan_as_whole_tails_do() {
+    let per: usize = 6;
+    // Planned on the test's thread, in its store, which the programs' tasks are bound to: they find its graphs and
+    // images there and run no phase 0 of their own (two runs at once in one store wait on its lease).
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let libraries = tail_libraries();
+    let seeds: Vec<crate::code_rule_dsl::logic::plan::corpus::phase0::Seed> = libraries.iter().flat_map(|(_, _, texts)| texts.iter().take(per)).filter_map(|(_, src, _)| super::text_seed(src).unwrap()).collect();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
+    let failures: Vec<String> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        use rayon::prelude::*;
+        libraries.par_iter().flat_map(|(pack, _, texts)| texts.par_iter().take(per).filter_map(|(path, src, _)| {
+            // Today's path over the product's own plan: its library's modules as lowered and its own module, linked,
+            // then all of `TAIL`.
+            let (plan, own) = match super::text_plan(src) {
+                Ok(planned) => planned?,
+                Err(e) => return Some(format!("{pack}: {}: its plan: {e}", path.display())),
+            };
+            let reference = plan.iter().map(|m| m.module()).collect::<Result<Vec<lower::Module>, _>>().and_then(|ms| {
+                let scope: Vec<&lower::Module> = ms.iter().collect();
+                let own = lower::lower_module_in_written(own, &scope)?;
+                let linked = lower::link_library(ms.clone())?.with(Some(own))?;
+                super::tail_steps(linked.version, false, linked.lowered, None, &super::TAIL)
+            }).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v));
+            let product = super::parse_version(src);
+            match (reference, product) {
+                (Ok(a), Ok(b)) => {
+                    let (a, b) = if a.outputs().next().is_some() { (pruned(a), pruned(b)) } else { (a, b) };
+                    program_difference(&a, &b).map(|d| format!("{pack}: {}: {d}", path.display()))
+                }
+                (Err(a), Err(b)) if a.to_string() == b.to_string() => None,
+                (a, b) => Some(format!("{pack}: {}: {:?} / {:?}", path.display(), a.err().map(|e| e.to_string()), b.err().map(|e| e.to_string()))),
+            }
+        }).collect::<Vec<_>>()).collect()
+    });
+    assert!(failures.is_empty(), "{} programs:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// T13 (decision 0639 §6a, E16): over every pack program's link, each step after the downward ones that is not an
+/// across step changes only the relations of the edit so far: those the downward steps or the program's own module
+/// changed, and those an across step before it changed. So it runs on that edit alone. An across step (`Place::Across`)
+/// rewrites what other modules hold by its readers, per program (0639's Collisions 6): its changes join the edit.
+#[test]
+fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_change() {
+    use std::collections::BTreeMap;
+    let per: usize = 6;
+    // Planned on the test's thread, in its store, as T12's are.
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let libraries = tail_libraries();
+    let failures: Vec<String> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        use rayon::prelude::*;
+        libraries.par_iter().flat_map(|(pack, _, texts)| texts.par_iter().take(per).filter_map(|(path, src, files)| {
+            // The files' graphs are `tail_libraries`'s: planning them runs no phase 0 again.
+            let ms = match super::library_modules_planned(files) {
+                Ok((ms, _, _)) => ms,
+                Err(e) => return Some(format!("{pack}: {}: its library's plan: {e}", path.display())),
+            };
+            let own: Vec<from_tape::Stmt> = from_tape::RrFile::read(src.as_str()).unwrap().statements().into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect();
+            let scope: Vec<&lower::Module> = ms.iter().collect();
+            let own = lower::lower_module_in_written(own, &scope).ok()?;
+            let own_heads: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).collect();
+            let fresh = || lower::link_library(ms.clone()).unwrap().with(Some(own.clone())).unwrap();
+            let m = super::tail_steps(fresh().version, true, fresh().lowered, None, &super::module_steps()).ok()?;
+            let d = super::tail_steps(Arc::clone(&m), true, fresh().lowered, None, &super::DOWNWARD).ok()?;
+            let after: Vec<super::TailStep> = super::program_steps().into_iter().filter(|s| !super::DOWNWARD.contains(s)).collect();
+            let heads = |v: &Arc<Version>| -> BTreeMap<String, BTreeSet<String>> {
+                let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for l in tail_lines(v) {
+                    out.entry(line_relation(&l)).or_default().insert(l);
+                }
+                out
+            };
+            let changed = |x: &BTreeMap<String, BTreeSet<String>>, y: &BTreeMap<String, BTreeSet<String>>| -> BTreeSet<String> { x.keys().chain(y.keys()).filter(|k| x.get(*k) != y.get(*k)).cloned().collect() };
+            let (hm, hd) = (heads(&m), heads(&d));
+            let mut edit: BTreeSet<String> = changed(&hm, &hd).into_iter().chain(own_heads).collect();
+            let (mut v, mut hv) = (d, hd);
+            for step in after {
+                let next = super::tail_steps(Arc::clone(&v), true, fresh().lowered, None, &[step]).ok()?;
+                let hn = heads(&next);
+                let made = changed(&hv, &hn);
+                if step.place() == super::Place::Across {
+                    edit.extend(made);
+                } else if let Some(r) = made.iter().find(|r| !edit.contains(*r)) {
+                    let empty = BTreeSet::new();
+                    let (was, now) = (hv.get(r).unwrap_or(&empty), hn.get(r).unwrap_or(&empty));
+                    return Some(format!("{pack}: {}: {step:?} changes {:?} outside the edit; {r}'s lines gone {:?}, new {:?}", path.display(), made.iter().filter(|r| !edit.contains(*r)).take(6).collect::<Vec<_>>(), was.difference(now).take(2).collect::<Vec<_>>(), now.difference(was).take(2).collect::<Vec<_>>()));
+                }
+                (v, hv) = (next, hn);
+            }
+            None
+        }).collect::<Vec<_>>()).collect()
+    });
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// Spike for decision 0639 step 6 (the tail by module), over the packs named (`RERAIL_SPIKE_PACKS`, comma-separated

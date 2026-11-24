@@ -6555,6 +6555,30 @@ fn run_observed_within(
                 }
                 return Ok(vec![(crate::code_rule_dsl::logic::rr::INTERFACE.to_owned(), out)]);
             }
+            if rel == crate::code_rule_dsl::logic::rr::TAIL_REQUEST {
+                // Each module's tail asked, in rank order: its scope's tails, which rank below it, are made first
+                // (decision 0639 §6a).
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}: modules tailed"));
+                let mut asked: Vec<&Vec<i64>> = rows.iter().collect();
+                asked.sort_by_key(|r| r.get(1).copied().unwrap_or_default());
+                let mut out = Vec::new();
+                for row in asked {
+                    let [tail, _, key, files, scope, reached, scope_tails, linked] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a tail key, a rank, a key, files, a scope, its files, its tails and its scope in link order"))); };
+                    let tail_text = text(*tail)?;
+                    // A module that does not tail is not answered: a program that reads it tails it where it reads
+                    // it, and meets the error there.
+                    let image = match crate::code_rule_dsl::logic::rr::tail_planned_module(&tail_text, &text(*key)?, &text(*files)?, &text(*scope)?, &text(*reached)?, &text(*scope_tails)?, &text(*linked)?) {
+                        Ok(image) => image,
+                        Err(e) => {
+                            crate::code_rule_dsl::logic::profile::decision("a module phase 0 could not tail (decision 0639 §6a)", || e.to_string());
+                            continue;
+                        }
+                    };
+                    world.consulted_lookup(rel, &tail_text, "", "held".to_owned());
+                    out.push(vec![*tail, atoms(&[image.as_str()])?[0]]);
+                }
+                return Ok(vec![(crate::code_rule_dsl::logic::rr::TAILED.to_owned(), out)]);
+            }
             if rel == crate::code_rule_dsl::logic::rr::LOWER_REQUEST {
                 // Each module asked, in rank order: its scope's images, which rank below it, are made first
                 // (decision 0639 §3).

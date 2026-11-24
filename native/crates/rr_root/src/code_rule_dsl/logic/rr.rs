@@ -434,6 +434,14 @@ pub fn modules(src: &str) -> Result<Option<Modules>, Error> {
     Ok(read_text(src)?.modules())
 }
 
+/// A modular text's plan and its own statements, its includes left out, as `Text::lower_version` links them (decision
+/// 0639): `None` for a text that includes nothing.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn text_plan(src: &str) -> Result<Option<(Vec<PlannedModule>, Vec<Stmt>)>, Error> {
+    let Read::Modular { own, plan, .. } = read_text(src)?.0 else { return Ok(None) };
+    Ok(Some((plan, own.into_iter().filter(|s| !is_include(s)).collect())))
+}
+
 /// `modules` of many texts, in their order: every text's include graph derived by one run of phase 0 first, as a
 /// corpus run reads its programs (`phase0::graphs`), not one nested run a text; then the texts read on the pool, each
 /// finding its graph kept. A text that does not read gives its error in its place.
@@ -822,11 +830,12 @@ pub fn library_unions_made() -> usize {
     crate::code_rule_dsl::logic::profile::shared::<LinkedLibraries>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).keys().filter(|(p, _)| *p == at).count()
 }
 
-/// How many modules phase 0 lowered in this process for the store the run reads (`lower_planned_module`), not read.
+/// Whether phase 0 lowered the module of plan key `key` in this process for the store the run reads
+/// (`lower_planned_module`), not read: by its key, so tests that run beside it lower their own modules unseen.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn planned_modules_lowered() -> usize {
-    let at = image_store_path();
-    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter(|((p, _), (_, _, made))| *made && *p == at).count()
+pub fn planned_module_made(key: &str) -> bool {
+    let Some(k) = planned_key(key) else { return false };
+    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(image_store_path(), k)).is_some_and(|(_, _, made)| *made)
 }
 
 /// A plan's key (`p0_module_key`, 64 hex digits, which names the engine's build) as the store's alias, with the
@@ -847,10 +856,21 @@ fn image_digest(bytes: &[u8]) -> String {
     sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// A tail key (`p0_tail_key`, 64 hex digits) as the store's alias: `planned_key`'s, of a module's tail.
+pub fn planned_tail_key(tail: &str) -> Option<crate::content_store::HashKey> {
+    let mut bytes = b"rerail module tail (decision 0639, 6a)\0".to_vec();
+    bytes.extend_from_slice(&planned_key(tail)?.sha256_bytes().unwrap_or_default());
+    Some(crate::content_store::HashKey::sha256(&bytes))
+}
+
 /// The module of plan key `key`, with its image's digest: made or read in this process, else read from the image
 /// store (`image_store`) and decoded. `None` where no store holds it.
 fn planned_module(key: &str) -> Option<(lower::Module, String)> {
-    let k = planned_key(key)?;
+    held_module(planned_key(key)?)
+}
+
+/// The module whose image is kept under alias `k` (a plan key's or a tail key's), as `planned_module` reads it.
+fn held_module(k: crate::content_store::HashKey) -> Option<(lower::Module, String)> {
     let held = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
     let at = (image_store_path(), k);
     if let Some((m, d, _)) = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&at) {
@@ -872,7 +892,16 @@ fn planned_module(key: &str) -> Option<(lower::Module, String)> {
 /// store (or the shipped bundle), mapped where it is and not decoded. What a reused run of phase 0 checks its answer
 /// by (`World::observation`), and a graph by (`Graph::holds`): a key names its image's content.
 pub fn planned_module_held(key: &str) -> bool {
-    let Some(k) = planned_key(key) else { return false };
+    planned_key(key).is_some_and(image_held)
+}
+
+/// Whether the tail key `tail` names is held, as `planned_module_held`.
+pub fn planned_tail_held(tail: &str) -> bool {
+    planned_tail_key(tail).is_some_and(image_held)
+}
+
+/// Whether the image kept under alias `k` is held: made in this process for the store the run reads, or in that store.
+fn image_held(k: crate::content_store::HashKey) -> bool {
     if crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(&(image_store_path(), k)) {
         return true;
     }
@@ -915,6 +944,57 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
     keep_image(store.as_deref(), "a module image", k, bytes);
     crate::code_rule_dsl::prof::count("rr.module_lowered_for_the_plan", 1);
     crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((image_store_path(), k), (m, digest.clone(), true));
+    Ok(digest)
+}
+
+/// Phase 0's request of a module's tail (`bootstrap.rerail`'s `p0_tail_req`), and its answer.
+pub const TAIL_REQUEST: &str = "p0_tail_req";
+pub const TAILED: &str = "p0_module_tailed";
+
+/// The tails this process made for phase 0's plan, by the store they are kept in and their alias (`tail_planned_module`).
+#[derive(Default)]
+struct TailsMade(std::sync::Mutex<std::collections::HashSet<(Option<PathBuf>, crate::content_store::HashKey)>>);
+
+/// Whether phase 0 tailed the module of tail key `tail` in this process for the store the run reads
+/// (`tail_planned_module`), not read.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn planned_tail_made(tail: &str) -> bool {
+    let Some(k) = planned_tail_key(tail) else { return false };
+    crate::code_rule_dsl::logic::profile::shared::<TailsMade>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains(&(image_store_path(), k))
+}
+
+/// The module of tail key `tail` tailed (`tail_module`), with its image's digest, as `planned_module` reads it.
+fn planned_tailed(tail: &str) -> Option<(lower::Module, String)> {
+    held_module(planned_tail_key(tail)?)
+}
+
+/// Phase 0's answer to a module's tail (`p0_tail_req`, decision 0639 §6a): the module of plan key `key` (lowered
+/// first, as `lower_planned_module` lowers it, where it is not held), tailed (`tail_module`) over its scope's modules
+/// in link order, whose keys are `linked`, less its scope's tails, whose tail keys are `scope_tails` (comma-separated),
+/// and kept under tail key `tail`; or found held. Its image's digest.
+#[allow(clippy::too_many_arguments)]
+pub fn tail_planned_module(tail: &str, key: &str, files: &str, scope: &str, reached: &str, scope_tails: &str, linked: &str) -> Result<String, Error> {
+    if let Some((_, digest)) = planned_tailed(tail) {
+        return Ok(digest);
+    }
+    let k = planned_tail_key(tail).ok_or_else(|| Error::Syntax(format!("{tail}: no tail key")))?;
+    lower_planned_module(key, files, scope, reached)?;
+    let m = planned_module(key).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: lowered, and not held")))?;
+    let tails: Vec<lower::Module> = scope_tails.split(',').filter(|s| !s.is_empty()).map(|s| planned_tailed(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's tail {s} is not made")))).collect::<Result<_, _>>()?;
+    // Its scope's modules as lowered, in link order: by rank, then name, as a library's link orders them (a link reads
+    // `docof`'s type from the last module that declares it).
+    let lowered: Vec<lower::Module> = linked.split(',').filter(|s| !s.is_empty()).map(|s| planned_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
+    let m = tail_module(&lowered, &tails, m).map_err(|e| match e {
+        Error::Syntax(m) => Error::Syntax(format!("{}: its tail: {m}", files.lines().next().unwrap_or_default())),
+        e => e,
+    })?;
+    let bytes: crate::content_store::record::Bytes = std::sync::Arc::new(module_image::encode(&m).map_err(Error::Syntax)?);
+    let digest = image_digest((*bytes).as_ref());
+    keep_image(image_store().as_deref(), "a module's tail", k, bytes);
+    crate::code_rule_dsl::prof::count("rr.module_tailed_for_the_plan", 1);
+    let at = (image_store_path(), k);
+    crate::code_rule_dsl::logic::profile::shared::<TailsMade>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(at.clone());
+    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(at, (m, digest.clone(), false));
     Ok(digest)
 }
 
@@ -1211,6 +1291,10 @@ pub enum TailStep {
     /// declared by its pass.
     ContextPasses,
     CrossingCycles,
+    /// A host's copies a made pass holds taken out (`contexts::HostCopiesOut`), where `ContextPasses` takes them out.
+    HostCopiesOut,
+    /// A made pass's `.pass` rows of one context as one (`contexts::PassesOnce`).
+    PassesOnce,
     /// Only for a text's link (`declared`).
     Declared,
     ThreeValued,
@@ -1219,6 +1303,8 @@ pub enum TailStep {
     SpanPatterns,
     GrammarNames,
     BuiltinsOut,
+    /// `within` declared where a rule reads it, out where none does (`lowering_tail::WithinRead`).
+    WithinRead,
     KindSets,
     Unit,
     BooleanRelations,
@@ -1239,9 +1325,9 @@ pub enum TailStep {
 }
 
 /// The tail's steps in the order `whole` runs them.
-pub const TAIL: [TailStep; 24] = {
+pub const TAIL: [TailStep; 27] = {
     use TailStep::*;
-    [ContextPasses, CrossingCycles, Declared, ThreeValued, Findings, CoreDecls, SpanPatterns, GrammarNames, BuiltinsOut, KindSets, Unit, BooleanRelations, ScopeGlobs, SourcesOnRequest, OrderNodes, DeclareAxes, Checks, AggregateDemand, Unit, LiteralsOnce, DropSelfRules, DropRepeated, FactsOnce, Widen]
+    [ContextPasses, CrossingCycles, HostCopiesOut, PassesOnce, Declared, ThreeValued, Findings, CoreDecls, SpanPatterns, GrammarNames, BuiltinsOut, WithinRead, KindSets, Unit, BooleanRelations, ScopeGlobs, SourcesOnRequest, OrderNodes, DeclareAxes, Checks, AggregateDemand, Unit, LiteralsOnce, DropSelfRules, DropRepeated, FactsOnce, Widen]
 };
 
 /// The tail's steps that read what the whole program reads (decision 0639 §6, downward).
@@ -1286,6 +1372,15 @@ pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared
             }
             TailStep::KindSets => {
                 p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
+            }
+            TailStep::WithinRead => {
+                p.program(&mut lowering_tail::WithinRead);
+            }
+            TailStep::PassesOnce => {
+                p.program(&mut super::contexts::PassesOnce);
+            }
+            TailStep::HostCopiesOut => {
+                p.program(&mut super::contexts::HostCopiesOut);
             }
             TailStep::Unit => {
                 p.program(&mut lowering_tail::Unit);
@@ -1338,6 +1433,120 @@ pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared
     let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)
+}
+
+/// Where a tail step runs (decision 0639 §6, §6a), by what it reads.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// A rule or a relation, with declarations: at module time.
+    Local,
+    /// A scope's results into a module (a context's instances, the three-valued closure, span columns, components):
+    /// at module time, over the scope's tails.
+    Upward,
+    /// What the whole program reads (kind sets read, sources on request): per program.
+    Downward,
+    /// A helper rewritten by its readers, which other modules hold (aggregate demand narrows a shared `once` helper,
+    /// widening widens a context's): per program, where every reader is (0639's Collisions 6).
+    Across,
+}
+
+impl TailStep {
+    /// Where the step runs.
+    pub fn place(self) -> Place {
+        use TailStep::*;
+        match self {
+            ContextPasses | CrossingCycles | ThreeValued | SpanPatterns | Checks => Place::Upward,
+            KindSets | SourcesOnRequest => Place::Downward,
+            // What a module holds, kept, dropped or stated by what other modules derive or read: a prelude's `within`,
+            // which its readers read; a context's pass, which each module that reads it states as its scope makes it,
+            // and the host's copies its instance, made in a reader, holds.
+            AggregateDemand | Widen | WithinRead | PassesOnce | HostCopiesOut => Place::Across,
+            Declared | Findings | CoreDecls | GrammarNames | BuiltinsOut | Unit | BooleanRelations | ScopeGlobs | OrderNodes | DeclareAxes | LiteralsOnce | DropSelfRules | DropRepeated | FactsOnce => Place::Local,
+        }
+    }
+}
+
+/// The steps a module's tail runs at module time (decision 0639 §6a): `TAIL`'s local and upward ones.
+pub fn module_steps() -> Vec<TailStep> {
+    TAIL.iter().copied().filter(|s| matches!(s.place(), Place::Local | Place::Upward)).collect()
+}
+
+/// The steps a program runs over its link of tailed modules (decision 0639 §6a): the downward ones, then the steps
+/// `TAIL` runs after the first of them. E13: a program's tail in this order is its tail in `TAIL`'s.
+/// First, in `TAIL`'s order, what `TAIL` runs before the first downward step and `tail_module` leaves to the program:
+/// core.rerail's declarations of what no module of the program declares (`CoreDecls`) and the steps across modules
+/// (a host's copies out, a pass's rows as one, `within` where read), so the downward steps make nothing from what
+/// the whole has taken out.
+pub fn program_steps() -> Vec<TailStep> {
+    let first = TAIL.iter().position(|s| DOWNWARD.contains(s)).unwrap_or(TAIL.len());
+    let before = TAIL[..first].iter().filter(|s| **s == TailStep::CoreDecls || s.place() == Place::Across);
+    before.chain(DOWNWARD.iter()).chain(TAIL[first..].iter().filter(|s| !DOWNWARD.contains(s))).copied().collect()
+}
+
+/// Module `m` tailed (decision 0639 §6a): the module steps over its scope's modules as lowered, `scope`, linked with
+/// `m`, stated as what they make beyond what its scope's tails `tails` hold together: their rules, declarations, facts, inputs, outputs and
+/// `.about` rows (a setting, a context's declaration) that the union does not, so a link of tails states each once.
+/// The rules of the helpers `m` names stay, as a link asks of every module that names one (`helper_conflict`). What
+/// the steps make of its scope's rules for `m` (a context's instances, made at the module that declares the context)
+/// is `m`'s. The steps run over lowered modules, as the whole library's do: a scope's tail has run the later steps
+/// (`BuiltinsOut` derives `within`, which a context reads as a view), so steps run again over it meet a program the
+/// whole never shows them. E12: the parts' union is the whole library's tail. Its parts (`Module::parts`) are `m`'s:
+/// a program lowers its own module against its scope's lowered modules, not their tails.
+pub fn tail_module(scope: &[lower::Module], tails: &[lower::Module], m: lower::Module) -> Result<lower::Module, Error> {
+    use super::program_image::fields::ProgramFields;
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a module's tail (decision 0639 §6a)".to_owned());
+    let parts = m.parts();
+    let own = std::sync::Arc::clone(m.version());
+    let mut modules = scope.to_vec();
+    modules.push(m);
+    let linked = lower::link_library(modules)?.with(None)?;
+    let lowered = std::sync::Arc::clone(&linked.version);
+    let v = tail_steps(linked.version, false, linked.lowered, None, &module_steps())?;
+    // core.rerail's declaration of a relation the link reads and no module of it declares, an input (`CoreDecls`): the
+    // program's to make, where no module of it declares the relation (a reader may, `typing/calls.rerail`'s `docof`
+    // and `env`), so the tail keeps it for its own steps and states none (`program_steps` runs `CoreDecls` first). One
+    // `node` projects (`kind`, `docof`) the module derives, and states.
+    let inputs_now = ProgramFields::input_names(&*v);
+    let fallback = |rel: &str| lower::core::is_core(rel) && !ProgramFields::declares(&*lowered, rel) && inputs_now.iter().any(|i| i == rel);
+    let union = if tails.is_empty() { super::program_image::Builder::base().base_version().map_err(Error::Syntax)? } else { lower::link_library(tails.to_vec())?.with(None)?.version };
+    let helpers: BTreeSet<&str> = parts.helpers.iter().map(String::as_str).collect();
+    let held: std::collections::HashSet<String> = union.rules().map(|r| union.show_rule(r)).collect();
+    let mut b = super::program_image::Builder::base();
+    for r in v.rules() {
+        if helpers.contains(v.rel_name(r.head().rel())) || !held.contains(&v.show_rule(r)) {
+            b.copy(&v, r);
+        }
+    }
+    for rel in ProgramFields::declared_names(&*v).into_iter().filter(|r| !fallback(r)) {
+        let cols = ProgramFields::columns_of(&*v, &rel).unwrap_or_default();
+        if ProgramFields::declares(&*own, &rel) || ProgramFields::columns_of(&*union, &rel).as_ref() != Some(&cols) {
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            b.fields().declare(&rel, &pairs);
+        }
+    }
+    for rel in ProgramFields::fact_names(&*v) {
+        if ProgramFields::states_facts(&*own, &rel) || !ProgramFields::states_facts(&*union, &rel) {
+            b.fields().set_facts(&rel, &ProgramFields::fact_rows(&*v, &rel));
+        }
+    }
+    let (inputs, outputs) = (ProgramFields::input_names(&*union), ProgramFields::output_names(&*union));
+    for rel in ProgramFields::input_names(&*v).into_iter().filter(|r| !inputs.contains(r) && !fallback(r)) {
+        b.fields().add_input(&rel);
+    }
+    for rel in ProgramFields::output_names(&*v).into_iter().filter(|r| !outputs.contains(r)) {
+        b.fields().add_output(&rel);
+    }
+    let program = |r: &str| !r.starts_with("module_");
+    let held_about = union.about_kept(&program);
+    let mut about = v.about_kept(&program);
+    for (name, rows) in about.iter_mut() {
+        if let Some(there) = held_about.get(name) {
+            rows.retain(|row| !there.contains(row));
+        }
+    }
+    about.retain(|_, rows| !rows.is_empty());
+    b.fields().set_about(&about);
+    lower::Module::of_parts(parts, b.base_version().map_err(Error::Syntax)?)
 }
 
 /// The alias the library linked from modules `keys` is kept under.
@@ -1508,6 +1717,11 @@ pub struct PlannedModule {
     pub files: String,
     pub scope: String,
     pub reached: String,
+    /// Its tail key (`p0_tail_key`), and its scope's (comma-separated, in their key's order).
+    pub tail: String,
+    pub scope_tails: String,
+    /// Its scope's keys in link order (`p0_scope_order`): by rank, then name.
+    pub linked: String,
 }
 
 impl PlannedModule {
@@ -1519,6 +1733,15 @@ impl PlannedModule {
         }
         lower_planned_module(&self.key, &self.files, &self.scope, &self.reached)?;
         planned_module(&self.key).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {}: lowered, and not held", self.key)))
+    }
+
+    /// The module tailed (decision 0639 §6a), read where phase 0 kept it, or tailed here, as `module` lowers it.
+    pub fn tailed(&self) -> Result<lower::Module, Error> {
+        if let Some((m, _)) = planned_tailed(&self.tail) {
+            return Ok(m);
+        }
+        tail_planned_module(&self.tail, &self.key, &self.files, &self.scope, &self.reached, &self.scope_tails, &self.linked)?;
+        planned_tailed(&self.tail).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {}: tailed, and not held", self.key)))
     }
 }
 
@@ -1552,7 +1775,11 @@ fn plan_of(g: &super::plan::corpus::phase0::Graph) -> Result<Vec<PlannedModule>,
                 reached.extend(files_of(s)?);
             }
             reached.sort();
-            Ok(PlannedModule { key: m.key.clone(), files: lines(files_of(name)?), scope: scope.into_iter().collect::<Vec<_>>().join(","), reached: lines(reached) })
+            let tails: BTreeSet<&str> = m.scope.iter().filter_map(|s| g.plan.get(s)).map(|r| r.tail.as_str()).collect();
+            let mut linked: Vec<(i64, &str, &str)> = m.scope.iter().filter_map(|s| g.plan.get(s).map(|r| (r.rank, s.as_str(), r.key.as_str()))).collect();
+            linked.sort();
+            let linked = linked.into_iter().map(|(_, _, k)| k).collect::<Vec<_>>().join(",");
+            Ok(PlannedModule { key: m.key.clone(), files: lines(files_of(name)?), scope: scope.into_iter().collect::<Vec<_>>().join(","), reached: lines(reached), tail: m.tail.clone(), scope_tails: tails.into_iter().collect::<Vec<_>>().join(","), linked })
         })
         .collect()
 }
@@ -1561,7 +1788,7 @@ fn plan_of(g: &super::plan::corpus::phase0::Graph) -> Result<Vec<PlannedModule>,
 /// linked after them (decision 0639): the program `lower_statements_version` makes of them all, its library's walk
 /// made once.
 fn linked_from_plan(plan: &[PlannedModule], own: Vec<Stmt>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let mut modules: Vec<lower::Module> = {
+    let modules: Vec<lower::Module> = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "a text's modules, from their images".into());
         plan.iter().map(PlannedModule::module).collect::<Result<_, _>>()?
     };
@@ -1571,15 +1798,23 @@ fn linked_from_plan(plan: &[PlannedModule], own: Vec<Stmt>) -> Result<std::sync:
         let scope: Vec<&lower::Module> = modules.iter().collect();
         lower::lower_module_in_written(own, &scope)?
     };
-    // The library's union, made once for its modules in this process (decision 0639 §4).
-    let key = (image_store_path(), plan.iter().map(|m| m.key.clone()).collect::<Vec<_>>());
+    // The library's modules tailed (decision 0639 §6a), as phase 0 kept them, and the text's own module tailed over
+    // them: its scope is the whole library.
+    let tailed: Vec<lower::Module> = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "a text's modules' tails, from their images".into());
+        plan.iter().map(PlannedModule::tailed).collect::<Result<_, _>>()?
+    };
+    let own = tail_module(&modules, &tailed, own)?;
+    drop(modules);
+    // The library's union of its tails, made once for its modules in this process (decision 0639 §4).
+    let key = (image_store_path(), plan.iter().map(|m| m.tail.clone()).collect::<Vec<_>>());
     let held = crate::code_rule_dsl::logic::profile::shared::<LinkedLibraries>();
     let library = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
     let library = match library {
         Some(l) => l,
         None => {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's union of its modules (lower::link_library)".into());
-            let l = std::sync::Arc::new(lower::link_library(std::mem::take(&mut modules))?);
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's union of its modules' tails (lower::link_library)".into());
+            let l = std::sync::Arc::new(lower::link_library(tailed)?);
             held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, std::sync::Arc::clone(&l));
             l
         }
@@ -1588,8 +1823,9 @@ fn linked_from_plan(plan: &[PlannedModule], own: Vec<Stmt>) -> Result<std::sync:
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: a text's own module onto its library's union".into());
         library.with(Some(own))?
     };
-    let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail, all of it".into());
-    lowering_tail_on(linked.version, false, linked.lowered, None)
+    // The program's steps: the downward ones over the union, then those after them (E13, E16).
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: the program's steps".into());
+    tail_steps(linked.version, false, linked.lowered, None, &program_steps())
 }
 
 /// Each library's union (`lower::LinkedLibrary`) made in this process, by the image store and its modules' plan keys.

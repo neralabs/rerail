@@ -352,21 +352,27 @@
         let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
         let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
         let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
-        let before = crate::code_rule_dsl::logic::rr::planned_modules_lowered();
+        // The plan's modules this process lowered, by key: tests beside this one lower their own.
+        macro_rules! made {
+            ($graph:expr) => {
+                $graph.plan.values().map(|m| m.key.clone()).filter(|k| crate::code_rule_dsl::logic::rr::planned_module_made(k)).collect::<Vec<String>>()
+            };
+        }
         let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
         assert!(!graph.plan.is_empty(), "{}", graph.describe());
         assert_eq!(graph.lowered.len(), graph.plan.len(), "every planned module lowered: {:?}", graph.lowered);
-        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before, "the template's modules, lowered again");
+        assert_eq!(made!(graph), Vec::<String>::new(), "the template's modules, lowered again");
         // A module of the program's own directory, beside it: lowered once.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("extra.rerail"), ".decl extra(x: number)\nextra(1).\n").unwrap();
         std::fs::write(dir.path().join("p.rerail"), "#include \"python/env.rerail\"\n#include \"extra.rerail\"\n.decl y(x: number)\ny(x) :- extra(x).\n.output y\n").unwrap();
         let p = super::Seed::File(dunce::canonicalize(dir.path().join("p.rerail")).unwrap());
         let graph = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
-        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "the new module alone: {}", graph.describe());
+        let new = made!(graph);
+        assert_eq!(new.len(), 1, "the new module alone: {}", graph.describe());
         assert_eq!(graph.lowered.len(), graph.plan.len());
-        let _ = super::derive(std::slice::from_ref(&p)).unwrap();
-        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "lowered once");
+        let again = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
+        assert_eq!(made!(again), new, "lowered once");
     }
 
     /// T9 (decision 0639 §4): a module's key names its scope's files by their interfaces (`p0_interface`), so an
@@ -396,6 +402,39 @@
         assert_ne!(body[&2], decl[&2], "a declaration in its scope: top's key");
         let fact = keys(".decl c(x: number)\nc(1).\nc(2).\n.decl d(x: number)\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
         assert_ne!(decl[&2], fact[&2], "a fact in its scope: top's key");
+    }
+
+    /// T14 (decision 0639 §6a): a module's tail key (`p0_tail_key`) names its scope's files by their bytes, so an edit
+    /// of a rule's body in its scope tails it again and lowers nothing again: its key, by its scope's interfaces, stays.
+    /// Phase 0 keeps every planned module's tail (`p0_module_tailed`).
+    #[test]
+    fn a_body_edit_in_a_scope_tails_its_readers_again_and_lowers_none_again() {
+        let dir = tempfile::tempdir().unwrap();
+        // Each module's (key, tail key): base.rerail's (1) and top.rerail's (2).
+        let keys = |base: &str| -> std::collections::BTreeMap<i64, (String, String)> {
+            std::fs::write(dir.path().join("base.rerail"), base).unwrap();
+            std::fs::write(dir.path().join("top.rerail"), "#include \"base.rerail\"\n.decl top(x: number)\ntop(x) :- base(x).\n").unwrap();
+            std::fs::write(dir.path().join("p.rerail"), "#include \"top.rerail\"\n.decl y(x: number)\ny(x) :- top(x).\n.output y\n").unwrap();
+            let p = super::Seed::File(dunce::canonicalize(dir.path().join("p.rerail")).unwrap());
+            let graph = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
+            assert_eq!(graph.tailed.len(), graph.plan.len(), "every planned module tailed: {}", graph.describe());
+            assert!(graph.plan.values().all(|m| graph.tailed.contains_key(&m.tail)), "{}", graph.describe());
+            let of = |file: &str| -> (String, String) {
+                let d = graph.digests.iter().find(|(p, _)| p.ends_with(file)).map(|(_, d)| d.iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_else(|| panic!("{file}: {}", graph.describe()));
+                graph.plan.iter().find(|(name, _)| name.ends_with(&d)).map(|(_, m)| (m.key.clone(), m.tail.clone())).unwrap_or_else(|| panic!("{file}'s module: {}", graph.describe()))
+            };
+            [(1, of("base.rerail")), (2, of("top.rerail"))].into()
+        };
+        let before = keys(".decl c(x: number)\nc(1).\n.decl base(x: number)\nbase(x) :- c(x).\n");
+        let body = keys(".decl c(x: number)\nc(1).\n.decl base(x: number)\nbase(x) :- c(x), x > 0.\n");
+        assert_ne!(before[&1], body[&1], "base's own file changed: its keys");
+        // Top's image is the one kept under its key, which the edit leaves: it is not lowered again.
+        assert_eq!(before[&2].0, body[&2].0, "a rule's body in its scope: top's key as it was");
+        assert_ne!(before[&2].1, body[&2].1, "a rule's body in its scope: top's tail key");
+        // By key, as tests beside this one lower and tail their own modules.
+        use crate::code_rule_dsl::logic::rr::{planned_module_made, planned_tail_made};
+        assert!(planned_module_made(&body[&1].0), "base lowered again");
+        assert!(planned_tail_made(&body[&1].1) && planned_tail_made(&body[&2].1), "base and top tailed again");
     }
 
     /// T5 (decision 0639 §3): a graph whose module's image the store does not hold does not hold (`Graph::holds`), so

@@ -6332,9 +6332,11 @@ pub const FILE_SYSTEM: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_
 
 /// The engine's other answers and their requests: a module's lowering, a Git view's revisions, objects, payloads and
 /// inventory, and the analysis history's scans. Each request is of several columns, made by rules (`git.rerail`, `analysis.rerail`).
-pub const ENGINE_ANSWERS: [(&str, &str); 7] = [
+pub const ENGINE_ANSWERS: [(&str, &str); 8] = [
     // A module's lowering (decision 0639 §3), asked by phase 0.
     ("p0_module_lowered", "p0_lower_req"),
+    // A module's tail (decision 0639 §6a), asked by phase 0.
+    ("p0_module_tailed", "p0_tail_req"),
     ("git_view_revision_of", "git_view_revision_request"),
     ("git_revision_of", "git_revision_request"),
     ("git_object_of", "git_object_request"),
