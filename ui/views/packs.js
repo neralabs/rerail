@@ -205,13 +205,18 @@ export function render(root) {
 
 /**
  * The catalog opens on every kind; both it and the review read the repository for the packs Rerail suggests, once per
- * repository, and the catalog the packs published on npm, which the daemon reads when they are first asked for.
+ * repository, and the catalog the packs published on npm, which the daemon reads when they are first asked for, again
+ * on each visit while they could not be read.
  */
 export function enter() {
   if (ui.view === "packs") kind = "all";
   if (ui.scope === null) return;
   const scope = captureScope(), repo = repoName() || "this repo", view = ui.view;
-  if (view === "packs" && data.publishedPacks === null) publishedPacksFor(scope).then(invalidate);
+  // A read that failed is tried again on each visit, as the daemon asks npm again.
+  if (view === "packs" && data.publishedPacks?.unread !== null) {
+    data.publishedPacks = null;
+    publishedPacksFor(scope).then(invalidate);
+  }
   if (data.recommendations !== null) return;
   recommendationsFor(scope).then(invalidate, error => readFailed(scope, view, `Couldn’t read ${repo} to pick rule packs`, error));
 }

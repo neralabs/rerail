@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import type { RulePack } from "../../src/engine/index.js";
-import { PUBLISHED_PACKS_MAX_AGE_MS, publishedPackReader, type PublishedPacksMessage } from "../../src/setup/published-packs.js";
+import { PUBLISHED_PACKS_MAX_AGE_MS, publishedPackReader, publishedPacksOf, type PublishedPacksMessage } from "../../src/setup/published-packs.js";
+import { discoverPacks, type PackStore } from "../../src/setup/rule-pack-store.js";
+import { installPackDirectory } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const listed = (id: string, version = "0.1.0") => ({ pack: { id } as RulePack, packageName: `@neralabs/rerail-pack-${id}`, version, ruleCount: 3 });
 
@@ -104,5 +111,31 @@ describe("publishedPackReader", () => {
     registry.answer({ unread: "could not reach the npm registry" });
     await settled();
     expect(await reader.read(false)).toEqual({ packs: [listed("blade")], readAt: 0 });
+  });
+});
+
+describe("publishedPacksOf", () => {
+  const homes: string[] = [];
+  afterEach(async () => { for (const home of homes.splice(0)) await removeFolder(home); });
+
+  it("offers what discovery found, each pack at its version with the rules it starts on", () => {
+    const found = { ...listed("react", "0.1.12"), match: { reason: "unused", folder: "" }, installed: null };
+    expect(publishedPacksOf({ available: [found] })).toEqual({ packs: [listed("react", "0.1.12")] });
+  });
+
+  it("says why when npm gave no pack, rather than listing the installed packs standing in for them", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-published-offline-")));
+    homes.push(home);
+    installPackDirectory(repositoryPath("packs", "typescript"), "typescript", home);
+    const offline: PackStore = {
+      home,
+      fetch: async ids => ({ fetched: [], problems: ids.map(id => ({ packageName: `@neralabs/rerail-pack-${id}`, reason: "could not reach the npm registry (ENOTFOUND)" })), release: async () => {} }),
+      install: async () => {},
+      remove: async () => {},
+    };
+
+    const discovery = await discoverPacks(undefined, offline);
+    expect(discovery.available.map(found => found.pack.id)).toEqual(["typescript"]);
+    expect(publishedPacksOf(discovery)).toEqual({ unread: "could not reach the npm registry (ENOTFOUND)" });
   });
 });

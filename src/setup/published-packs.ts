@@ -8,6 +8,7 @@
  */
 import { Worker } from "node:worker_threads";
 import type { PublishedRulePack, PublishedRulePackReader, PublishedRulePacks } from "../engine/catalog/rule-packs.js";
+import type { PackDiscovery } from "./rule-pack-store.js";
 
 /** How long a list read from npm is shown before a person's read asks npm again. */
 export const PUBLISHED_PACKS_MAX_AGE_MS = 24 * 60 * 60_000;
@@ -17,6 +18,12 @@ export const PUBLISHED_FETCH_TIMEOUT_MS = 60_000;
 
 /** What `discoverPublished` posts back (`published-packs-worker.ts`): the packs, or why npm gave none. */
 export type PublishedPacksMessage = { readonly packs: readonly PublishedRulePack[] } | { readonly unread: string };
+
+/** What a discovery for no repository offers: the packs it found, or why npm gave none (offline, no access). */
+export function publishedPacksOf(discovery: Pick<PackDiscovery, "available" | "downloadFailures">): PublishedPacksMessage {
+  if (discovery.downloadFailures !== undefined) return { unread: discovery.downloadFailures.join("; ") };
+  return { packs: discovery.available.map(({ pack, packageName, version, ruleCount }) => ({ pack, packageName, version, ruleCount })) };
+}
 
 /** What the worker is started with. */
 export interface PublishedPacksWorkerData {

@@ -583,7 +583,8 @@ export function recommendRulePacks(
 
 /** How long a daemon reuses a repository's scan, and the recommendations made from it, before scanning it again. */
 export const RECOMMENDATION_CACHE_MS = 60_000;
-const recommendationCache = new Map<string, { at: number; digest: string; recommendations: RulePackRecommendation[] }>();
+/** By the scan they were made from, so they go with it. */
+const recommendationCache = new WeakMap<RepositoryScan, { digest: string; recommendations: RulePackRecommendation[] }>();
 const scanCache = new Map<string, { at: number; scan: RepositoryScan }>();
 
 /**
@@ -607,9 +608,10 @@ export function recentScan(repositoryRoot: string, now = Date.now()): Repository
  */
 export function cachedRecommendRulePacks(repositoryRoot: string, now = Date.now()): RulePackRecommendation[] {
   const catalog = loadRuleCatalog();
-  const cached = recommendationCache.get(repositoryRoot);
-  if (cached !== undefined && cached.digest === catalog.digest && now - cached.at < RECOMMENDATION_CACHE_MS) return cached.recommendations;
-  const recommendations = rulePacksThatFit(recentScan(repositoryRoot, now), [...catalog.packs.values()], catalog.notRun).filter(found => found.ruleCount > 0);
-  recommendationCache.set(repositoryRoot, { at: now, digest: catalog.digest, recommendations });
+  const scan = recentScan(repositoryRoot, now);
+  const cached = recommendationCache.get(scan);
+  if (cached?.digest === catalog.digest) return cached.recommendations;
+  const recommendations = rulePacksThatFit(scan, [...catalog.packs.values()], catalog.notRun).filter(found => found.ruleCount > 0);
+  recommendationCache.set(scan, { digest: catalog.digest, recommendations });
   return recommendations;
 }

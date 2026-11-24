@@ -168,13 +168,14 @@ test.describe("rule pack pages and the catalog over mature", () => {
       id, name, category: "framework", covers: `${name} rules.`, publisher: "rerail", packageName: `@neralabs/rerail-pack-${id}`, installedVersion: null, ...fields,
     });
     // A checkout's daemon reads no npm: the published packs are the daemon's answer as a managed install gives it.
-    let answer: object = {
+    const read = {
       repositoryKey: "unused", checkoutPath: "/unused", readAt: 1,
       packs: [
         published("react", "React", { version: "0.1.12", ruleCount: 32, reason: "matches the react dependency in package.json", folder: "" }),
         published("django", "Django", { version: "0.2.0", ruleCount: 25 }),
       ],
     };
+    let answer: object = read;
     await page.route("**/api/rule-packs/published?**", async route => { await route.fulfill({ json: answer }); });
     await page.goto(url);
 
@@ -194,6 +195,13 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await page.reload();
     await expect(page.locator("#content .pubnote")).toHaveText("Couldn’t read the other rule packs published on npm. Could not reach the npm registry (ENOTFOUND).");
     await expect(page.locator("#content .prow2.pub")).toHaveCount(0);
+
+    // A read that failed is tried again on the next visit.
+    answer = read;
+    await page.locator('#sidenav [data-i="overview"]').click();
+    await page.locator('#sidenav [data-i="packs"]').click();
+    await expect(django).toBeVisible();
+    await expect(page.locator("#content .pubnote")).toHaveCount(0);
   });
 
   test("a catalog row asks on a line of its own, then reads Removed with Undo until the page is left", async ({ page, rerail }) => {
