@@ -423,7 +423,8 @@ The stat decides, as it does for Git, in three cases:
 
 - **No change time to trust.** FAT and exFAT answer a change time of 0. A network share's change time is kept by the
   server's file system: a volume counts as local only where it refuses the protocol query (`FileRemoteProtocolInfo`)
-  with error 87, as NTFS and ReFS do. A workspace asks each volume once.
+  with error 87, as NTFS and ReFS do. A workspace asks each volume once, or once by each call that misses it while
+  another asks.
 - **Data not on this disk.** A cloud provider's placeholder (`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`,
   `FILE_ATTRIBUTE_RECALL_ON_OPEN`) and an offline file (`FILE_ATTRIBUTE_OFFLINE`) keep their stat's answer: freeing a
   placeholder's space moves its change time, and a read would download it.

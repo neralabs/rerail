@@ -802,7 +802,7 @@ impl GitWorkspace {
     /// (`BaseFile::checkout`) and, on Windows, nothing changed the file after its last write, or the stat decides
     /// there as it does for Git (`VolumeAnswers::stat_proves`), so its bytes are the blob's (phase 0, t23). `None`
     /// where only a hash could tell. The volumes' answers are this workspace's own (`volume_answers`), so each volume
-    /// is asked once.
+    /// is asked once, or once by each call that misses it while another asks.
     pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
         let file = self.unedited_base_file(relative_path)?;
         let recorded = file.checkout?;
@@ -2215,9 +2215,9 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// Whether a volume keeps change times is asked once: for files that give their volume's
-    /// serial number, once per volume, and for files that give none, once in all. Every other
-    /// proof makes the serial number query alone.
+    /// Whether a volume keeps change times is asked once by proofs made one after another: for
+    /// files that give their volume's serial number, once per volume, and for files that give none,
+    /// once in all. Every other proof makes the serial number query alone.
     #[cfg(windows)]
     #[test]
     fn a_restore_asks_a_volume_about_its_change_times_once() {
@@ -2301,8 +2301,8 @@ mod tests {
     }
 
     /// A workspace asks a volume whether it keeps change times once across its restores and its
-    /// looks at clean blobs: after the first, each one of a file whose change time moved makes the
-    /// serial number query alone.
+    /// looks at clean blobs made one after another: after the first, each one of a file whose
+    /// change time moved makes the serial number query alone.
     #[cfg(windows)]
     #[test]
     fn a_workspaces_restores_and_looks_ask_a_volume_about_its_change_times_once() {
