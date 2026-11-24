@@ -3106,9 +3106,15 @@ impl<'a> Run<'a, '_> {
             let bound = b.with_head_bound();
             self.model.late(pf, &bound, None, false)?;
             plan_site("the maintain mode's recheck");
+            let mut recheck_shown = String::new();
             let priced = match self.model.plan_rule_reused(pf, &bound, None) {
                 // The spec of the order as priced: its head's variables bound before its first step (`with_head_bound`).
-                Ok(((order, _, _), _)) => self.whole_join_spec(&bound, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
+                Ok(((order, _, _), _)) => {
+                    if trace {
+                        recheck_shown = bound.shown(&order).join(" , ");
+                    }
+                    self.whole_join_spec(&bound, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None)))
+                }
                 Err(_) => None,
             };
             let (spec, key) = match priced {
@@ -3128,7 +3134,7 @@ impl<'a> Run<'a, '_> {
             lines.push(SpecLine::Recheck { head: head_i, join: spec });
             mode_keys.push((ModeLine::Recheck, key));
             if trace {
-                mode_names.push(format!("Recheck {}", b.show_head()));
+                mode_names.push(format!("Recheck {}: {recheck_shown}", b.show_head()));
             }
         }
         let quiet = !lines.iter().any(|l| matches!(l, SpecLine::Remove { .. } | SpecLine::Seed { .. } | SpecLine::AddChecked { .. }));

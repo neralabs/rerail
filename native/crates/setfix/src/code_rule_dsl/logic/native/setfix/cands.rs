@@ -240,6 +240,10 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             let rel = &store.rels[*r];
             let delta = matches!(src, Src::Delta(_));
             if keys.is_empty() {
+                // A range of a column (a document's nodes, `Ranged::doc`) read in an order that leads with it.
+                if let Some((cands, _)) = rel.scan_within(delta, hints, within) {
+                    return (Rows::Comp(rel), cands);
+                }
                 (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
             } else {
                 if last.settings().noted { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }

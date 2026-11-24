@@ -152,6 +152,35 @@ fn expr<'v>(b: &Body<'v>, v: &Val<'v>, idx: usize, slots: &mut Slots, lines: &mu
     }
 }
 
+/// The variables step `s` of `b` binds, added to `bound`.
+fn binds(b: &Body<'_>, s: &Step, bound: &mut VarSet) {
+    let mut add = |t: TermRef<'_>| {
+        if let TermRef::Var(v) = t {
+            bound.insert(v);
+        }
+    };
+    match b.view(s.at) {
+        Lit::Atom(l) if !l.neg() => l.args().for_each(&mut add),
+        // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
+        Lit::Cmp { l, op: CmpOp::Eq, r: TermRef::Call(f, args) } if b.v.text(f) == "cat" => {
+            add(l);
+            args.for_each(&mut add);
+        }
+        Lit::Cmp { l, op: CmpOp::Eq, r } => {
+            add(l);
+            add(r);
+        }
+        Lit::Nearest { n, a, .. } => {
+            bound.insert(n);
+            bound.insert(a);
+        }
+        Lit::Agg { var, .. } => {
+            bound.insert(var);
+        }
+        _ => {}
+    }
+}
+
 impl<'a> Run<'a, '_> {
     /// `join_spec` for a whole rule: `None` too when a head variable is bound by none of its steps (the native join
     /// would read past its slots). A prefix of a body (the probe for how far a body runs natively) is not checked.
@@ -168,31 +197,7 @@ impl<'a> Run<'a, '_> {
         // A recheck's head is bound by its candidate (`Body::with_head_bound`).
         let mut bound = b.bound_before();
         for s in steps {
-            let mut add = |t: TermRef<'_>| {
-                if let TermRef::Var(v) = t {
-                    bound.insert(v);
-                }
-            };
-            match b.view(s.at) {
-                Lit::Atom(l) if !l.neg() => l.args().for_each(&mut add),
-                // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
-                Lit::Cmp { l, op: CmpOp::Eq, r: TermRef::Call(f, args) } if b.v.text(f) == "cat" => {
-                    add(l);
-                    args.for_each(&mut add);
-                }
-                Lit::Cmp { l, op: CmpOp::Eq, r } => {
-                    add(l);
-                    add(r);
-                }
-                Lit::Nearest { n, a, .. } => {
-                    bound.insert(n);
-                    bound.insert(a);
-                }
-                Lit::Agg { var, .. } => {
-                    bound.insert(var);
-                }
-                _ => {}
-            }
+            binds(b, s, &mut bound);
         }
         let mut head_vars = Vec::new();
         for t in b.head().args() {
@@ -483,8 +488,7 @@ impl<'a> Run<'a, '_> {
                         && !self.mode_reads.contains_key(&next.at)
                         && let Lit::Atom(nl) = b.view(next.at)
                         && !nl.neg()
-                        && !scc.contains(b.rel(nl))
-                        && (native_rels.contains(b.rel(nl)) || !(self.inputs.contains(b.rel(nl)) || self.model.view_src.contains_key(b.rel(nl))))
+                        && (scc.contains(b.rel(nl)) || native_rels.contains(b.rel(nl)) || !(self.inputs.contains(b.rel(nl)) || self.model.view_src.contains_key(b.rel(nl))))
                         && b.args(next.at).iter().any(|t| matches!(t, TermRef::Var(v) if *v == xv))
                     {
                         doc_after = Some((x, d, idx));

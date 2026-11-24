@@ -6545,6 +6545,9 @@ fn run_observed_within(
                 let load = |space| retain::Retained::bind_kept(store, space, key, key, &r.placed, r.components(), &digests);
                 let k = load(rounds_space)?;
                 let missing = r.missing(&k);
+                if std::env::var_os("RERAIL_MODE_TRACE").is_some() && !missing.is_empty() {
+                    eprintln!("RERAIL_MODE_TRACE *: the cone's rounds: the frames hold no final round: {} of it not current ({:?})", missing.len(), missing.iter().take(8).collect::<Vec<_>>());
+                }
                 if missing.is_empty() {
                     from_rounds = Some(k);
                 } else {
@@ -6647,6 +6650,14 @@ fn run_observed_within(
                     Err(cone_rounds::Gave::Err(e)) => return Err(e),
                     Err(cone_rounds::Gave::Up(why)) => gave_up = Some(why),
                 }
+            }
+            if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                eprintln!("RERAIL_MODE_TRACE *: the cone's rounds not run: {}", match (&gave_up, &round, &cone_handle) {
+                    (Some(why), _, _) => format!("given up ({why})"),
+                    (None, None, None) => "no store".to_owned(),
+                    (None, None, Some(_)) => "no round program".to_owned(),
+                    (None, Some(_), _) => "no final round kept".to_owned(),
+                });
             }
             if let Some(why) = &gave_up {
                 let mut ledger = load_ledger_in.lock().unwrap_or_else(|e| e.into_inner());

@@ -438,6 +438,20 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
         the import's: the callers' `pv` rows change with the moved name (24 gone and added, each probed into about
         15 rules, and rechecked against each of `pv`'s), and the strata over imports (`run_import`, `ext_import`,
         `open_sync`, `xknown`) are reached, which an edit in place does not reach.
+      - Then (2026-11-24): a stratum's own relation read the same way (`bv`'s `qv`: `Rel::scan_within` over an order
+        the plan asks for, led by the range's column); a row gone from a recursive component by levels is checked
+        again at the end only by the rules that read the component (one that reads lower strata alone derived it no
+        more then than now). The move 21,737, the edit 6,821.
+      - Where the rest is. The sources phase's cones run their gated fixpoint over kept strata, not their rounds
+        (decision 0145): with their gates ungated, the Python and C import programs do not stratify (`py_admitted`
+        reads `py_listed_above` negatively in its component). So a path added derives the source-language chain whole
+        (973 rows against the edit's 162). The cross part, 17,708 against 3,970, is proportional to what changed: its
+        maintain mode does 4.4 rows of work per delta row read in the move and 5.5 in the edit, and the move reads
+        4,062 delta rows against 720. Those are the moved definition's nodes (35 against the edit's 6, every relation
+        keyed by node), the callers' references to its new id (`pv`: node ids carry the document, §2a), and the
+        import's 15 pairs, each with what it derives. Its rechecks are 3,000 rows: each row gone tried by each rule of
+        its relation, most by rules that never derived it, where the run's deltas say nothing of where a body fails
+        (testing the changed reads' atoms first was tried and cost more).
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers

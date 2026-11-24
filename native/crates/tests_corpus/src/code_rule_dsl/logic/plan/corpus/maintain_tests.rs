@@ -636,15 +636,18 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
 /// clause), and the reach indexes over the import graph are made again whenever it changes (decision 0119 §3), their
 /// readers maintained from their delta.
 ///
-/// It fails today (2026-11-24), at its first bar only: joins' work cold 60,594, the edit in place 6,822, the move
-/// 21,994 (3.2 times the edit, 0.36 of a cold run); 24,658 before a mode line's `docof` was read as a range of the
+/// It fails today (2026-11-24), at its first bar only: joins' work cold 60,595, the edit in place 6,821, the move
+/// 21,737 (3.2 times the edit, 0.36 of a cold run). The cross part's maintain mode does 4.4 rows of work for each
+/// delta row it reads in the move and 5.5 in the edit: the move reads 4,062 delta rows against the edit's 720 (the
+/// moved definition's 35 nodes against the edit's 6, the 12 callers' references to its new id, the import's 15 pairs
+/// and what each derives). 24,658 before a mode line's `docof` was read as a range of the
 /// atom after it (`setfix::Ranged::doc`) and the source languages' suffixes were looked up, not each tested. It was 93,291 before the maintain mode priced its lines under
 /// the floor (`Model::under_floor_line`) and sized a stratum's relations as kept (`kept_card`). The move derives
 /// nothing again but the two reach indexes, and maintains 145 strata; its heaviest lines are led by `rr_cx_reach`'s
 /// 15 changed rows and read the documents those pairs join (`pv`, `tsub`, `bv`: 500 to 560 rows each), which the
 /// edit in place, changing no import, does not pay.
 #[test]
-#[ignore = "0094 §8: the move costs 3.2 times the edit in place (21,994 against 6,822 rows of joins' work), past 3 (edit-cost, 0364 R4 at scale)"]
+#[ignore = "0094 §8: the move costs 3.2 times the edit in place (21,737 against 6,821 rows of joins' work), past 3 (edit-cost, 0364 R4 at scale)"]
 fn a_moved_definition_costs_about_itself() {
     let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_cx.rerail")).unwrap();
     let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";

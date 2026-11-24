@@ -1311,6 +1311,19 @@ impl Rel {
         }
         (Cands::Runs(found), n)
     }
+    /// Its rows (its delta's, `delta`) whose column `c` lies in `within`'s range, read with no key: an order that leads
+    /// with `c` searched, two searches a run; rows pushed since its orders were made stay candidates, as a probe's do
+    /// (`probe_at`). `None` where no order leads with `c`.
+    fn scan_within(&self, delta: bool, hints: &mut [u32; runs::HINTS], within: Within) -> Option<(Cands<'_>, usize)> {
+        let (c, lo, hi) = within?;
+        let ix = self.idx.iter().find(|ix| ix.cols.first() == Some(&c))?;
+        let found = ix.find_at(&self.data, self.k, &[], delta.then_some(self.wave), hints).within(&self.data, self.k, c, lo, hi);
+        let n = found.len();
+        if !delta && self.indexed < self.n {
+            return Some((Cands::Pending(found, self.indexed as u32, self.n as u32), n + self.n - self.indexed));
+        }
+        Some((Cands::Runs(found), n))
+    }
     fn probe(&self, keys: &[usize], key: &[i64], delta: bool) -> (Cands<'_>, usize) {
         let Some((ix, m)) = best_order(&self.idx, keys) else {
             let (lo, hi) = if delta { (self.lo, self.hi) } else { (0, self.n) };
@@ -1921,7 +1934,13 @@ impl Measured {
 impl MaintMode {
     /// Whether one of `head`'s rules derives `row` over the relations now.
     fn derives(&self, head: usize, row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vector<i64>) -> Result<bool> {
-        'rules: for (_, j) in self.rechecks.iter().filter(|(h, _)| *h == head) {
+        self.derives_by(head, row, store, syms, out, false)
+    }
+
+    /// `derives`, by `head`'s rules that read a relation of the component alone where `recursive`.
+    fn derives_by(&self, head: usize, row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vector<i64>, recursive: bool) -> Result<bool> {
+        let reads_component = |j: &JoinRule| j.plan.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::Full(_) | Src::FullMulti(..) | Src::Delta(_), .. }));
+        'rules: for (_, j) in self.rechecks.iter().filter(|(h, j)| *h == head && (!recursive || reads_component(j))) {
             // The rule's head must be able to name the row: its constants equal the row's values, a slot repeated
             // the same value. Else it derives no such row (`v("CYC", i)` is not derived by `v("SEESE", i) :- …`).
             let mut preset: Vec<(usize, i64)> = Vec::with_capacity(j.out.len());
@@ -2079,8 +2098,10 @@ impl MaintMode {
         let before: Vector<usize> = store.rels.iter().map(|r| r.n).collect();
         let mut again: Vec<(usize, Vector<i64>)> = Vec::new();
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: the rows gone derived again? ({}) {}", gone.len(), self.recheck_shape(gone.first().map(|g| g.0))));
+        // A rule that reads no relation of the component read only lower strata, final, when the row went: capped or
+        // not, it derived the row no more then than now. Only the rules that read the component can derive it again.
         for (r, row) in gone {
-            if self.derives(r, &row, store, syms, &mut out)? {
+            if self.derives_by(r, &row, store, syms, &mut out, true)? {
                 again.push((r, row));
             }
         }
@@ -2928,8 +2949,10 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // The seeds' rows, into their relation (the walk's; a reader has none, decision 0561), pending (`pend`) as
         // a push puts them, where they were written: the closure's dedup tests find them before any index has them.
+        // A lattice relation's are folded into its key map as they come, which its dedup reads: none pend.
         for (r, f) in fresh.iter_mut().enumerate() {
-            store.rels[r].push_fresh(std::mem::take(f), true);
+            let pend = store.rels[r].lat.is_none();
+            store.rels[r].push_fresh(std::mem::take(f), pend);
         }
         let prep = closure::prepare(&cl, store, syms);
         match prep {
@@ -8368,6 +8391,16 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
         _ => None,
     }).collect();
     plan.edit(ordered);
+    // A ranged read of a component relation with no key (a document's rows, `Ranged::doc`) reads an order that leads
+    // with the range's column (`Rel::scan_within`): every key set has its order (`Rel::want`), this one too.
+    for (st, r) in s.steps.iter().zip(&plan.ranges) {
+        if let (Step::Atom { src: Src::Full(rel) | Src::Delta(rel), keys, .. }, Some(r)) = (st, r)
+            && keys.is_empty()
+            && !plan.multi.iter().any(|m| m.rel == *rel && m.cols.as_slice() == [r.col])
+        {
+            plan.multi.push(steps::Multi { rel: *rel, cols: [r.col].into_iter().collect() });
+        }
+    }
     let s = plan.encode();
     plan.probes = probes(&s.steps, &s.out);
     plan.fused = if fuse { rowcode::fuse(&s.steps).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
@@ -9623,7 +9656,7 @@ fn ranges_from(steps: &[Step], bound: &[usize]) -> Vec<Option<Ranged>> {
     steps.iter().enumerate().map(|(i, st)| {
         let r = match st {
             // A first scan of an input (no key) too, where its rows are in the column's order (`scan_within`).
-            Step::Atom { neg: false, keys, binds, src, .. } if !keys.is_empty() || matches!(src, Src::In(..)) => {
+            Step::Atom { neg: false, keys, binds, src, .. } if !keys.is_empty() || matches!(src, Src::In(..) | Src::Full(..) | Src::Delta(..)) => {
                 let known = |k: &Key| match *k { Key::Const(_) => true, Key::Slot(s) => before.contains(&s) };
                 let mut found: Option<Ranged> = None;
                 for later in &steps[i + 1..] {
