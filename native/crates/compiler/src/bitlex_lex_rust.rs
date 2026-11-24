@@ -6142,6 +6142,7 @@ impl Gen<'_> {
             let (live, _, codes) = self.stage1_codes();
             let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
+            by.row_firsts = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.first)).collect();
             let firsts: Vec<[bool; 256]> = row_arms.iter().map(|a| a.first).collect();
             let ask = if asking { token_tests_fn(&test_asks, &row_ids, &mark_names) } else { None };
             let mut go = || -> Result<_, String> {

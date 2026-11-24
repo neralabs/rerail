@@ -38,6 +38,25 @@ fn a_float_is_its_records() {
     assert_eq!(floats, ["1.5", "3.25"]);
 }
 
+/// Tier 1 as Rust tests a byte as the lean lexer does (decision 0655 step 15): a class of more than one byte by its bit
+/// in the byte's `CLASS` entry, one load; a number's digits, then its `.` and fraction, two runs of digits, as lean's
+/// number arm.
+#[test]
+fn tier1_tests_bytes_as_lean() {
+    let c = compiled().expect("the grammar compiles");
+    let tier1 = c.lexer_rust.clone().expect("tier 1 as Rust");
+    assert!(tier1.contains("static CLASS: [u8; 256] = {"), "lean's `CLASS` table");
+    let lexing = &tier1[..tier1.find("/// A run of pairs' first bytes").expect("the loop's end")];
+    assert!(!lexing.contains("matches!(src[l + 1]"), "a class tested by its ranges in the loop");
+    let digits = "while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; }";
+    let arm = format!("let (l, once) = {{ let mut l = s; {digits} let once = (l + 1 < n && (src[l + 1] == b'.')) && (l + 2 < n && CLASS[usize::from(src[l + 2])] & C_DIGIT != 0); if once {{ l += 2; {digits} }} (l, once) }};");
+    assert!(tier1.contains(&arm), "the number arm as lean's: two runs of digits");
+    let text = "a(1.2.3, 45, 6.75x).\n";
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+    let numbers: Vec<&str> = lx.recs.iter().filter(|r| text.as_bytes()[r.start as usize].is_ascii_digit()).map(|r| &text[r.start as usize..=r.last as usize]).collect();
+    assert_eq!(numbers, ["1.2", "3", "45", "6.75"]);
+}
+
 /// A tape's nodes, in order: each one's key (its kind, field, flags and supertype classes), start, end and size.
 type Nodes = Vec<(u32, u32, u32, usize)>;
 

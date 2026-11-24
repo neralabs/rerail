@@ -54,6 +54,12 @@ pub(super) struct Bytes<'a> {
     /// The named masks a loop of the bytes tests by a function of their own (a long test, `h4`), each written once:
     /// its name and its code.
     named: std::cell::RefCell<Vec<(String, String)>>,
+    /// The classes of more than one byte the lean lexer's loop tests of a byte, by their bit in the byte's `CLASS`
+    /// entry (`C_NAME`), in the order first tested, as the lean lexer's `CLASS` table.
+    scalar: std::cell::RefCell<Vec<String>>,
+    /// Each row's first bytes, by its kind (`// `kind`: …`), and the row the line read is in.
+    pub(super) row_firsts: HashMap<String, [bool; 256]>,
+    row: Option<String>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -77,7 +83,128 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None }
+    }
+
+    /// Class `n` tested of byte `b` (`src[i]`) by its bit in the byte's `CLASS` entry, as the lean lexer tests a class:
+    /// one load and its bit.
+    fn class_bit(&self, n: &str, b: &str) -> String {
+        if !self.scalar.borrow().iter().any(|x| x == n) {
+            self.scalar.borrow_mut().push(n.to_owned());
+        }
+        format!("CLASS[usize::from({b})] & C_{} != 0", n.to_uppercase())
+    }
+
+    /// The `CLASS` table of the classes tested by their bits (`class_bit`), built at compile time as the lean lexer's.
+    fn class_table(&self) -> String {
+        let scalar = self.scalar.borrow();
+        if scalar.is_empty() {
+            return String::new();
+        }
+        let ty = match scalar.len() {
+            0..=8 => "u8",
+            9..=16 => "u16",
+            _ => "u32",
+        };
+        let mut out = String::new();
+        for (k, n) in scalar.iter().enumerate() {
+            let _ = write!(out, "/// `{n}`: its bit in a byte's `CLASS` entry.\nconst C_{}: {ty} = {:#x};\n", n.to_uppercase(), 1u64 << k);
+        }
+        let _ = write!(out, "\n/// Each byte's classes the token loop tests of one byte, a bit a class, as the lean lexer's `CLASS`.\nstatic CLASS: [{ty}; 256] = {{\n    let mut c = [0{ty}; 256];\n    let mut i = 0;\n    while i < 256 {{\n        let b = i as u8;\n");
+        for n in scalar.iter() {
+            let rs = self.classes.get(n.as_str()).copied().unwrap_or_default();
+            let _ = write!(out, "        if {} {{\n            c[i] |= C_{};\n        }}\n", pattern_test("b", rs), n.to_uppercase());
+        }
+        out.push_str("        i += 1;\n    }\n    c\n};\n\n");
+        out
+    }
+
+    /// The bytes `e` holds at a byte, where it reads that byte alone (its classes, `~`, `&`, `|`).
+    fn byte_set(&self, e: &Expr, depth: usize) -> Option<[bool; 256]> {
+        if depth > 64 {
+            return None;
+        }
+        Some(match e {
+            Expr::Name(n) => match self.classes.get(n.as_str()) {
+                Some(rs) => std::array::from_fn(|c| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(c as u32)))),
+                None => self.byte_set(self.defs.get(n)?, depth + 1)?,
+            },
+            Expr::Not(a) => self.byte_set(a, depth + 1)?.map(|x| !x),
+            Expr::And(a, b) => {
+                let (a, b) = (self.byte_set(a, depth + 1)?, self.byte_set(b, depth + 1)?);
+                std::array::from_fn(|c| a[c] && b[c])
+            }
+            Expr::Or(a, b) => {
+                let (a, b) = (self.byte_set(a, depth + 1)?, self.byte_set(b, depth + 1)?);
+                std::array::from_fn(|c| a[c] || b[c])
+            }
+            _ => return None,
+        })
+    }
+
+    /// A run of `R` with one `D` at most (`run R once D`) in the lean lexer's form, where `R` is `A | (D & X)` and no
+    /// byte is both `A` and `D`: the run of `A`, then, where `D` and `X` hold at the byte after it, that byte and the
+    /// run of `A` again, as the lean lexer reads a number's digits and then its `.` and fraction. `X`'s `prev(A)` holds
+    /// after the run where the row's first bytes are `A`, and its `next(A)` is the byte the second run starts after.
+    /// With `hit`, whether it read its `D` too (`(l, once)`).
+    fn two_runs(&self, r: &str, d: &str, s: &str, hit: bool) -> Option<String> {
+        let (r, d) = (self.resolved(&self.expr(r).ok()?, 0)?, self.resolved(&self.expr(d).ok()?, 0)?);
+        fn ors(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::Or(a, b) => {
+                    ors(a, out);
+                    ors(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        fn ands(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::And(a, b) => {
+                    ands(a, out);
+                    ands(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        let mut alts = Vec::new();
+        ors(&r, &mut alts);
+        let same = |a: &Expr, b: &Expr| format!("{a:?}") == format!("{b:?}");
+        let k = alts.iter().position(|e| {
+            let mut c = Vec::new();
+            ands(e, &mut c);
+            c.iter().any(|x| same(x, &d))
+        })?;
+        let with_d = alts.remove(k);
+        let a = alts.into_iter().reduce(|x, y| Expr::Or(Box::new(x), Box::new(y)))?;
+        let (sa, sd) = (self.byte_set(&a, 0)?, self.byte_set(&d, 0)?);
+        if (0..256).any(|c| sa[c] && sd[c]) {
+            return None;
+        }
+        let mut x = Vec::new();
+        ands(&with_d, &mut x);
+        x.retain(|e| !same(e, &d));
+        let shifted = |e: &Expr, k: i64| matches!(e, Expr::Call(f, args) if Self::shift(f, args).is_some_and(|(b, j)| j == k && same(&b, &a)));
+        let firsts_a = self.row.as_ref().and_then(|r| self.row_firsts.get(r)).is_some_and(|f| (0..256).all(|c| !f[c] || sa[c]));
+        if firsts_a {
+            x.retain(|e| !shifted(e, -1));
+        }
+        let step = if x.iter().any(|e| shifted(e, 1)) { 2 } else { 1 };
+        let mut none = None;
+        let pa = self.pred(&a, "(l + 1)", "(l + 1)", &mut none, 0)?;
+        let mut cond = self.pred(&d, "(l + 1)", "(l + 1)", &mut none, 0)?;
+        for e in &x {
+            cond = format!("{cond} && {}", self.pred(e, "(l + 1)", "(l + 1)", &mut none, 0)?);
+        }
+        if none.is_some() {
+            return None;
+        }
+        let run = format!("while {pa} {{ l += 1; }}");
+        Some(if hit {
+            format!("{{ let mut l = {s}; {run} let once = {cond}; if once {{ l += {step}; {run} }} (l, once) }}")
+        } else {
+            format!("{{ let mut l = {s}; {run} if {cond} {{ l += {step}; {run} }} l }}")
+        })
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -108,11 +235,12 @@ impl<'a> Bytes<'a> {
             Expr::Empty => "false".to_owned(),
             Expr::Name(n) => {
                 if let Some(rs) = self.classes.get(n.as_str()) {
+                    let test = |b: &str| if self.lean && rs.iter().map(|&(lo, hi)| hi + 1 - lo).sum::<u32>() > 1 { self.class_bit(n, b) } else { pattern_test(b, rs) };
                     if at == "s" {
-                        pattern_test("src[s]", rs)
+                        test("src[s]")
                     } else {
                         let i = at.strip_prefix('(').and_then(|x| x.strip_suffix(')')).filter(|x| !x.contains('(')).unwrap_or(at);
-                        format!("({i} < n && {})", pattern_test(&format!("src[{i}]"), rs))
+                        format!("({i} < n && {})", test(&format!("src[{i}]")))
                     }
                 } else if let Some(d) = self.defs.get(n) {
                     self.at(d, at, depth + 1)?
@@ -405,6 +533,10 @@ impl<'a> Bytes<'a> {
             ("count_in", 3) => format!("{{ {esc}({}..={}).filter(|&i| {}).count() as u32 }}", a(1), a(2), test(&p)),
             ("first_clear", 3) if carry.is_none() => format!("({}..n.min({})).find(|&i| !{p})", a(1), a(2)),
             ("run_last", 2) if carry.is_none() => format!("{{ let mut l = {}; while {next} {{ l += 1; }} l }}", a(1)),
+            ("run_once_last" | "run_once_hit", 3) if carry.is_none() && args[1].trim().strip_prefix('&').is_some_and(|d| self.two_runs(m, d, &a(2), name == "run_once_hit").is_some()) => {
+                let d = args[1].trim().strip_prefix('&').unwrap_or_default();
+                self.two_runs(m, d, &a(2), name == "run_once_hit").unwrap_or_default()
+            }
             ("run_once_last", 3) if carry.is_none() => {
                 let Some(d) = args[1].trim().strip_prefix('&') else { return Ok(None) };
                 let Some((pd, None)) = self.tested_at(d, "(l + 1)") else { return Ok(None) };
@@ -560,9 +692,14 @@ impl<'a> Bytes<'a> {
         let mut out = String::new();
         self.in_region = true;
         for line in code.split_inclusive('\n') {
+            // A row's comment names its kind (`// `kind`: rule`).
+            if let Some((kind, _)) = line.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")) {
+                self.row = Some(kind.to_owned());
+            }
             out.push_str(&self.rewrite_line(line, line)?);
         }
         self.in_region = false;
+        self.row = None;
         Ok(out)
     }
 
@@ -882,7 +1019,7 @@ impl<'a> Bytes<'a> {
     /// The window functions and helpers the rewritten reads call.
     pub(super) fn code(&self) -> String {
         let named: String = self.named.borrow().iter().map(|x| x.1.as_str()).collect();
-        format!("{HELPERS}{}{named}{}", if self.fence { FENCE } else { "" }, self.code)
+        format!("{HELPERS}{}{named}{}{}", if self.fence { FENCE } else { "" }, self.class_table(), self.code)
     }
 }
 

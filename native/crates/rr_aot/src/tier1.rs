@@ -63,7 +63,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                 let (l, kind1, word) = if k_m_word >> q & 1 == 1 {
                     // A word: its run, its code by its hash (a word of one byte's by the load).
                     let (_, kind1, word1) = TOKEN[usize::from(src[s])];
-                    let l = word_last(n, base, k_m_word, s, |i: usize| (i < n && matches!(src[i], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')));
+                    let l = word_last(n, base, k_m_word, s, |i: usize| (i < n && CLASS[usize::from(src[i])] & C_WORD != 0));
                     (l, kind1, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
                 } else {
                     // An operator, one byte or a pair (`p`): its kind and code by one load, as the lean lexer's
@@ -178,13 +178,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                 },
                 3 => {
                     // `hash_word`: run word
-                    let l = { let mut l = s; while (l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) { l += 1; } l };
+                    let l = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_WORD != 0) { l += 1; } l };
                     let l = l.max(s);
                     (l, u32::from(kind1), false, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
                 },
                 5 => {
                     // `number`: run num_run once dot
-                    let (l, once) = { let (mut l, mut once) = (s, false); while ((l + 1 < n && matches!(src[l + 1], b'0'..=b'9')) || (((l + 1 < n && (src[l + 1] == b'.')) && ((l < n && matches!(src[l], b'0'..=b'9')))) && (l + 2 < n && matches!(src[l + 2], b'0'..=b'9')))) { if (l + 1 < n && (src[l + 1] == b'.')) { if once { break; } once = true; } l += 1; } (l, once) };
+                    let (l, once) = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; } let once = (l + 1 < n && (src[l + 1] == b'.')) && (l + 2 < n && CLASS[usize::from(src[l + 2])] & C_DIGIT != 0); if once { l += 2; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; } } (l, once) };
                     let l = l.max(s);
                     // `float_at`: the run's one byte read (`once`), its record's bit, as the lean lexer writes its kind.
                     (l, u32::from(kind1) | u32::from(once) << 16, false, 0)
@@ -197,7 +197,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                 },
                 8 => {
                     // `bad_char`: run cont
-                    let l = { let mut l = s; while (l + 1 < n && matches!(src[l + 1], 0x80..=0xbf)) { l += 1; } l };
+                    let l = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_CONT != 0) { l += 1; } l };
                     let l = l.max(s);
                     (l, u32::from(kind1), false, 0)
                 },
@@ -308,8 +308,50 @@ fn find_fence(b: &[u8], from: usize, fence: &[u8]) -> Option<usize> {
 /// Mask `h4` at byte `i`, a test of the bytes there.
 #[inline]
 fn h4(src: &[u8], n: usize, i: usize) -> bool {
-    ((((i + 1 < n && matches!(src[i + 1], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && matches!(src[i + 4], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')))
+    ((((i + 1 < n && CLASS[usize::from(src[i + 1])] & C_HEX != 0) && (i + 2 < n && CLASS[usize::from(src[i + 2])] & C_HEX != 0)) && (i + 3 < n && CLASS[usize::from(src[i + 3])] & C_HEX != 0)) && (i + 4 < n && CLASS[usize::from(src[i + 4])] & C_HEX != 0))
 }
+
+/// `word`: its bit in a byte's `CLASS` entry.
+const C_WORD: u8 = 0x1;
+/// `digit`: its bit in a byte's `CLASS` entry.
+const C_DIGIT: u8 = 0x2;
+/// `cont`: its bit in a byte's `CLASS` entry.
+const C_CONT: u8 = 0x4;
+/// `ctl`: its bit in a byte's `CLASS` entry.
+const C_CTL: u8 = 0x8;
+/// `jesc`: its bit in a byte's `CLASS` entry.
+const C_JESC: u8 = 0x10;
+/// `hex`: its bit in a byte's `CLASS` entry.
+const C_HEX: u8 = 0x20;
+
+/// Each byte's classes the token loop tests of one byte, a bit a class, as the lean lexer's `CLASS`.
+static CLASS: [u8; 256] = {
+    let mut c = [0u8; 256];
+    let mut i = 0;
+    while i < 256 {
+        let b = i as u8;
+        if matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') {
+            c[i] |= C_WORD;
+        }
+        if matches!(b, b'0'..=b'9') {
+            c[i] |= C_DIGIT;
+        }
+        if matches!(b, 0x80..=0xbf) {
+            c[i] |= C_CONT;
+        }
+        if matches!(b, 0x00..=0x1f) {
+            c[i] |= C_CTL;
+        }
+        if matches!(b, b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u') {
+            c[i] |= C_JESC;
+        }
+        if matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F') {
+            c[i] |= C_HEX;
+        }
+        i += 1;
+    }
+    c
+};
 
 /// `ws`: its bits in the classes' nibble tables.
 const WS: u8 = 0x03;
@@ -499,10 +541,10 @@ fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -
     let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);
     match b {
         // `json_bad`
-        13 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && matches!(src[i], 0x00..=0x1f)) || (esc && (i < n && !(i < n && matches!(src[i], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u'))))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
+        13 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && CLASS[usize::from(src[i])] & C_CTL != 0) || (esc && (i < n && !(i < n && CLASS[usize::from(src[i])] & C_JESC != 0)))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
             || (after && extra && (src[s] == b'/') && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })
-            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && ((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))))
-            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'!' | b'%'..=b'&' | b'('..=b'/' | b':'..=b'>' | b'@' | b'[' | b']'..=b'^' | b'{'..=b'~') && ((src[s] == b'-') && !(s + 1 < n && matches!(src[s + 1], b'0'..=b'9')))),
+            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && ((src[s] == b'0') && (s + 1 < n && CLASS[usize::from(src[s + 1])] & C_DIGIT != 0)))
+            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'!' | b'%'..=b'&' | b'('..=b'/' | b':'..=b'>' | b'@' | b'[' | b']'..=b'^' | b'{'..=b'~') && ((src[s] == b'-') && !(s + 1 < n && CLASS[usize::from(src[s + 1])] & C_DIGIT != 0))),
         _ => false,
     }
 }

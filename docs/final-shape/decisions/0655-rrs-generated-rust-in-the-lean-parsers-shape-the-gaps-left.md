@@ -353,6 +353,26 @@ Tests: `a_float_is_its_records` (the arm writes the bit, `TESTED` holds `json_ba
 `3.25` hold it, `2`'s not); the rr suite; the eight corpus tests; JSON's and Kotlin's suites (their Rust unchanged);
 Bitlex's own; clippy.
 
+## Step 15: a byte's classes by one load, a number by two runs (done)
+
+The last two differences from the lean lexer's arms:
+
+- **A class by its bit in `CLASS`** (`class_bit`, `class_table`): in the lean lexer's shape, a class of more than one
+  byte tested of a byte is `CLASS[usize::from(src[i])] & C_NAME != 0`, one load and its bit, as lean's `CLASS[b] &
+  DIGIT`. The table is built at compile time from the grammar's classes, a bit a class in the order first tested
+  (`C_WORD`, `C_DIGIT`, `C_CONT`, `C_CTL`, `C_JESC`, `C_HEX`). A class of one byte stays a compare (`== b'.'`). They
+  were each class's ranges (`matches!`) at every test.
+- **A number's two runs** (`two_runs`): `run R once D` where `R` is `A | (D & X)` and no byte is both `A` and `D` is
+  the run of `A`, then, where `D` and `X` hold at the byte after it, that byte and the run of `A` again, as lean's
+  number arm reads the digits, then `.` and a digit, then the digits. `X`'s `prev(A)` holds after the run where the
+  row's first bytes are all `A` (each row's first bytes, `row_firsts`), so it is no test, and its `next(A)` is the byte
+  the second run starts after (`l += 2`, lean's `end += 2`). The loop tested "a digit, or a `.` between digits" at each
+  byte, with its `once` flag.
+
+Tests: `tier1_tests_bytes_as_lean` (the table, no class's ranges in the loop, the number arm as lean's, `1.2.3` as
+`1.2`, `.`, `3`); the rr suite; the eight corpus tests; JSON's and Kotlin's suites (their Rust unchanged); Bitlex's
+own; clippy.
+
 ## The six gaps, where they stand
 
 Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers and names):
