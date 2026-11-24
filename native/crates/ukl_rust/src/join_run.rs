@@ -20,8 +20,10 @@ use core::arch::aarch64::*;
 use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
-/// A finisher's phases run itself at most, a dispatch (`JOIN_INLINE`, decision 0674).
+/// A finisher's phases run itself at most, a dispatch (`JOIN_INLINE`, decision 0674), of at most
+/// `JOIN_INLINE_GROUPS` groups each.
 const JOIN_INLINE: u32 = 256;
+const JOIN_INLINE_GROUPS: u32 = 4;
 /// A group's threads (`JOIN_TG`).
 const TG: u32 = 256;
 /// A text row's SIMD group (`SGW`): its rows and their counts are laid out by it.
@@ -2599,13 +2601,9 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     let pw = |i: usize| *p.add(i);
     let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
     let groups = pw(0);
-    // The counts past its rows, its share of them a SIMD group's lanes'.
-    for lane in 0..SGW {
-        let mut r = n.wrapping_add(sg * SGW + lane);
-        while r <= s.cap_in {
-            *counts.add(r as usize) = 0;
-            r = r.wrapping_add(groups * SGW);
-        }
+    // The count past its rows (the scan's last, its total's): its counts are its rows' and one (`level_sizes`).
+    if sg == 0 {
+        *counts.add(n as usize) = 0;
     }
     if sg >= groups {
         return;
@@ -2845,6 +2843,15 @@ impl Prog {
         at(self.ctl.add(10 + self.a.phases as usize + q as usize)).store(if ns == 0 { 0 } else { m.max(1) }, SeqCst);
         at(self.ctl.add(10 + q as usize)).store(0, SeqCst);
         (ns != 0 && m == 0) as u32
+    }
+
+    /// Whether phase `q`'s items are each at most a group's rows (`phase_light`): no segment's rows past its items'.
+    unsafe fn phase_light(&self, q: u32) -> bool {
+        let [_, _, s0, ns] = self.phase(q);
+        (0..ns).all(|s| {
+            let g = &*self.segs.add((s0 + s) as usize);
+            g.per == 0 || (*g.count as u64 + g.plus as u64).div_ceil(g.per as u64) <= g.items as u64
+        })
     }
 
     /// Phase `q`'s groups, a group an item, once reset: its items, or its segments' (its `target`).
@@ -3111,21 +3118,31 @@ impl Prog {
         }
         let (mut p, mut back) = (p, back);
         let mut item = if back != 0 { back - 1 } else { self.phase_item(p, g, mode & 1, mode & 2 != 0) };
-        // Its item, then whether it finishes its phase; a finisher whose next phase is one group runs it itself.
-        for k in 0..JOIN_INLINE {
+        // Its item, then whether it finishes its phase; a finisher whose next phase is few and light runs it itself,
+        // each of its items in turn (`gi` of its `gn` groups; 0: the dispatch's own item), all of them once begun.
+        let (mut gi, mut gn, mut ph) = (0u32, 0u32, 0u32);
+        for _ in 0..JOIN_INLINE * JOIN_INLINE_GROUPS {
             let whole = item == NONE || self.item(*self.items.add(item as usize));
-            let q = self.finish(p, item, whole, back, d, k + 1 < JOIN_INLINE);
-            if q == 0 {
+            let q = self.finish(p, item, whole, back, d, ph + 1 < JOIN_INLINE);
+            let (next, groups) = if q != 0 {
+                (0, self.phase_groups(q - 1))
+            } else if whole && gi + 1 < gn {
+                (gi + 1, gn)
+            } else {
                 return;
+            };
+            if next == 0 {
+                ph += 1;
+                p = q - 1;
             }
-            (p, back) = (q - 1, 0);
-            item = self.phase_item(p, 0, self.ctl(3).load(SeqCst) & 1, false);
+            (back, gi, gn) = (0, next, groups);
+            item = self.phase_item(p, gi, self.ctl(3).load(SeqCst) & 1, false);
         }
     }
 
     /// The group's item `item` of phase `p` counted (`prog_finish`): where it finishes its phase, the next reset and
-    /// its groups, the next dispatch's, or the phase and one where it is one group and `inline_ok` (this group runs
-    /// it); 0 where the group is done.
+    /// its groups, the next dispatch's, or the phase and one where they are few and light and `inline_ok` (this group
+    /// runs each of its items); 0 where the group is done with the phase.
     unsafe fn finish(&self, p: u32, item: u32, whole: bool, back: u32, d: u32, inline_ok: bool) -> u32 {
         if back != 0 {
             self.ctl(2).store(0, SeqCst);
@@ -3159,7 +3176,7 @@ impl Prog {
         } else {
             self.phase_next(p)
         };
-        if n == 1 && inline_ok {
+        if inline_ok && (n == 1 || (n != 0 && n <= JOIN_INLINE_GROUPS && self.phase_light(self.ctl(0).load(SeqCst)))) {
             return self.ctl(0).load(SeqCst) + 1;
         }
         self.chain_set(d + 1, n);

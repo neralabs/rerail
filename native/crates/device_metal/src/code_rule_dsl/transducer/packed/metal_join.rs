@@ -3364,15 +3364,23 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
         size_scan(prog, top, r, 256 * ss.tiles, |level, f| Late::Scan(ss.hist + level, f));
     }
     if total > 0 {
-        // Each job's counts: its placed input's room and one, else as encoded; the level's total word after them.
+        // Each job's counts: its rows' and one, where its rows are a word's (its count phase's items: the rows its
+        // level's earlier levels made, final when its size script runs); at most its placed input's room and one, else
+        // as encoded. So the level's scan is of its rows, not of its tables' rooms. The level's total word after them.
         let n_of = |prog: &mut Program, j: &Job, into: u32| -> Result<(), Error> {
             match (&j.l_place, j.n) {
                 (Some(p), n) if n > 0 => {
                     prog.op(OpAt::of(SZ_LOAD, u, 0, 0).w(Late::Abs(address(&p.rec.buffer.buffer)? + 4)));
-                    prog.op(OpAt::of(SZ_ADD, into, into, u).c(Late::Abs(1)));
+                    prog.op(OpAt::of(SZ_ADD, u, u, ZERO).c(Late::Abs(1)));
                 }
-                (_, n) => prog.op(OpAt::of(SZ_ADD, into, into, ZERO).c(Late::Abs(n as u64))),
+                (_, n) => prog.op(OpAt::of(SZ_CONST, u, 0, 0).c(Late::Abs(n as u64))),
             }
+            if let Some((word, _)) = j.rows_word() {
+                prog.op(OpAt::of(SZ_LOAD, x, 0, 0).w(Late::Abs(word)));
+                prog.op(OpAt::of(SZ_ADD, x, x, ZERO).c(Late::Abs(1)));
+                prog.op(OpAt::of(SZ_MIN, u, u, x));
+            }
+            prog.op(OpAt::of(SZ_ADD, into, into, u));
             Ok(())
         };
         prog.op(OpAt::of(SZ_CONST, 1, 0, 0).c(Late::Abs(1)));

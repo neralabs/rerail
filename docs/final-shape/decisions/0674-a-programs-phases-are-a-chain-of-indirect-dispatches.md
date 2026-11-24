@@ -158,5 +158,24 @@ What each part of `join_run`'s queue (0603) becomes:
      lines took the lines' own address as their base, a 4-byte offset in the tape (decision 0612), where `memory.h`'s
      words need an 8-byte-aligned one (CUDA faults on a misaligned 8-byte load): the base is now the word below them
      (`UKL_PTR_LOW3`, 0 on Metal). The stratum tests pass on CUDA (GB10), 27 of 27.
-   - Next: a scan one phase.
+   - **Done: a level's counts are its rows', not its tables' rooms.** Each job's counts in its level's scan were its
+     input's room and one (`level_sizes`), so every scan was of the rooms: the closure's two scans a round were 245
+     tiles each, its rows a few thousand. They are its rows and one now, where its rows are a word's (the word its
+     count phase's items are sized by, final when the level's size script runs: its producers are earlier levels'),
+     at most the room and one. Its scans are a tile or a few: their levels' phases are one group and run in their
+     finishers. `row_text` zeroed its counts from its rows up to its room for the scan of the rooms; it zeroes the
+     one past its rows now.
+   - **Done: a phase of a few light groups runs in its finisher too.** Up to `JOIN_INLINE_GROUPS` (4) groups whose
+     items are each at most a group's rows (`phase_light`: no segment's rows past its items), each item in turn in
+     the finisher's group, each counted, the last making it the phase's finisher. Once begun, all of the phase's
+     items run there (no other group has them).
+   - Measured, the CPU executor (GB10's CPU, `nowrite`), the closure's program: 2,389 phases in all, before step 3
+     in about 1,830 dispatches, now 1,373; its time 37.8 ms, then 28.6 ms. The keyed join: 35 phases, 18
+     dispatches. Not measured on CUDA: both Sparks' GPUs were busy with other work (96% before a run).
+   - **Found: a segment's width is capped by the host's guess.** What still dispatches at two groups (the dedups'
+     claim, mark and scatter, the copies: 234 dispatches each in the closure) are segments whose rows are past their
+     encoded items: a segment's items are fixed when the program is encoded, from the host's guess at its rows, so a
+     phase is no wider on the device than that guess, and each item strides the rows past it. These are not small
+     phases but too narrow ones. Next: a segment's items virtual (group `g` of a segment its `g`-th, past its
+     encoded items), so a phase is as wide as its rows.
 4. Measured: the keyed join and the closure, per phase and whole, Metal against the CPU executor.
