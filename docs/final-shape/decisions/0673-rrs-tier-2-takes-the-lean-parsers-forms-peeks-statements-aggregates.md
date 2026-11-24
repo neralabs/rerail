@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 9 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: steps 1 to 10 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -313,3 +313,35 @@ What gap 7 left:
 
 rr's `tier2.rs` is 3,079 lines, from 3,210, and `tier2_loop.rs` is 3,614, from 3,716. Kotlin's `tier2.rs` is 8,305, from
 8,317. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
+## Step 10: a mark that scans is a peek too (done)
+
+Step 5 left five rr marks as marks: `json_flat`, `paren_term`, `paren_tilde`, `paren_closes` and `agg_call`. Each scans
+to a matching bracket. Nothing reads their taken bits, but a peek's test was written inline, one condition per token,
+so a run that repeats or asks a mark of a token (`Many`, `With`, `Without`, `Starting`) could not be one. Now it can.
+Its test is a call of its scan, `self.pat_paren_term_0_0(self.i, self.n)`, with no cache, no taken bit, and no `m_`,
+`h_`, `take_` or `mark_` function. `marks` writes only the scan. `literal` decides as the lean parser's does, by
+scanning to the `)` where it decides.
+
+rr's marks are now its three gap marks, `float_at`, `line` and `newline`, which play the part of the lean parser's
+`on_line` and its float test. Kotlin has 13 marks, and 18 of its marks became peeks. The three paren peeks each scan to
+the same `)`, where the lean parser scans once and then tests the token after it. That is one scan more per
+alternative, at a `(` only.
+
+rr's `tier2.rs` is 2,949 lines, from 3,079, and `tier2_loop.rs` is 3,484, from 3,614. Kotlin's `tier2.rs` is 7,999, from
+8,305. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
+## Where the ten gaps stand
+
+1. Marks: every rr mark of tokens is a peek (steps 1, 5, 10). The gap marks remain as the lean parser's line tests.
+2. Statements: decided by the `.` and the word after it (step 4).
+3. JSON: a policy document is JSON's grammar read into one leaf (step 6).
+4. Going back: a `(` is decided past its `)` (step 5, the user's option C).
+5. Aggregates: one `aggregate` (step 5).
+6. A bare term fails where it ends (step 5).
+7. Tokens: a kind is `self.kind() == t::K`, a choice of tokens is one take, `punctuation` is `anon()`, and a tested
+   token is taken with no test (steps 2, 9).
+8. Numbered arms: none in rr, in either form (steps 3, 5, 8).
+9. Helpers: one take, a leaf's refusal checked once, depth counted where the grammar recurses, and no unused helper
+   (step 7).
+10. The loop form: its places are in the calls form's shapes (step 8).

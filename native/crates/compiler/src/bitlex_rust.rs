@@ -1611,6 +1611,12 @@ impl<'a> G<'a> {
 
     /// The token before the token a run starts at, as its first function's `prev`: found
     /// only where the run's first element reads it, a `(C)*` with an ending; else none (`self.n`), as no element reads it.
+    /// Whether a run's tokens are each one token at a place it knows (no repetition, no mark asked of a token): a peek
+    /// tests it inline.
+    fn fixed(seq: &[Vec<TokenElem>]) -> bool {
+        seq.iter().all(|e| e.iter().all(|x| !matches!(x, TokenElem::Many(..) | TokenElem::With(_) | TokenElem::Without(_) | TokenElem::Starting(_))))
+    }
+
     fn run_prev(seq: &[Vec<TokenElem>]) -> &'static str {
         match seq.first().map(Vec::as_slice) {
             Some([TokenElem::Many(_, _, ending)]) if !ending.is_empty() => "self.prev_tok(self.i)",
@@ -1783,7 +1789,7 @@ impl<'a> G<'a> {
                     && d.refuses_taken.is_empty()
                     && d.passes == 0
                     && d.hidden
-                    && d.tokens.is_some_and(|(_, seq)| !seq.is_empty() && seq.iter().all(|e| e.iter().all(|x| !matches!(x, TokenElem::Many(..) | TokenElem::With(_) | TokenElem::Without(_) | TokenElem::Starting(_)))))
+                    && d.tokens.is_some_and(|(_, seq)| !seq.is_empty())
             });
             if plain && read >> o & 1 == 0 {
                 peeks |= 1 << o;
@@ -1897,12 +1903,19 @@ impl<'a> G<'a> {
     fn peek(&self, o: usize) -> Result<String, String> {
         let name = &self.x.marks[o].name;
         let mut ors = Vec::new();
-        for d in self.x.marks.iter().filter(|x| &x.name == name) {
-            let Some((before, seq)) = d.tokens else { return Err(format!("mark {name}: a peek of no tokens")) };
+        for (d, def) in self.x.marks.iter().filter(|x| &x.name == name).enumerate() {
+            let Some((before, seq)) = def.tokens else { return Err(format!("mark {name}: a peek of no tokens")) };
             let mut c = Vec::new();
             if !before.is_empty() {
                 let p = self.elem(before, "self.i - 1")?;
                 c.push(if matches!(before, [TokenElem::Not(_)]) { format!("(self.i == 0 || {p})") } else { format!("self.i > 0 && {p}") });
+            }
+            // A run that scans (a repetition, a token with or without a mark): its function (`marks` writes it), as the
+            // lean parser's `literal` scans to the `)` where it decides.
+            if !Self::fixed(seq) {
+                c.push(format!("self.pat_{}_{d}_0(self.i, {})", ident(name), Self::run_prev(seq)));
+                ors.push(c.join(" && "));
+                continue;
             }
             for (k, e) in seq.iter().enumerate() {
                 let j = if k == 0 { "self.i".to_owned() } else { format!("self.i + {k}") };
@@ -1927,10 +1940,21 @@ impl<'a> G<'a> {
         let mut direct: std::collections::BTreeMap<String, Option<usize>> = std::collections::BTreeMap::new();
         let peeks = self.peeks();
         for (order, m) in self.x.marks.iter().enumerate() {
-            if !done.insert(m.name.as_str()) || peeks >> order & 1 == 1 {
+            if !done.insert(m.name.as_str()) {
                 continue;
             }
             let n = ident(&m.name);
+            // A peek: no functions of its own but the scans its runs that are not fixed need (`peek`).
+            if peeks >> order & 1 == 1 {
+                for (d, def) in self.x.marks.iter().filter(|x| x.name == m.name).enumerate() {
+                    if let Some((_, seq)) = def.tokens
+                        && !Self::fixed(seq)
+                    {
+                        self.run(seq, &format!("pat_{n}_{d}"), &mut fns)?;
+                    }
+                }
+                continue;
+            }
             let defs: Vec<(usize, &Mark)> = self.x.marks.iter().enumerate().filter(|(_, x)| x.name == m.name).collect();
             let mut holds = Vec::new();
             // The words the token must be for any definition to hold: a guard before the mark's cache (`held`).
