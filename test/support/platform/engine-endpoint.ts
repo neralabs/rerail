@@ -16,17 +16,27 @@ import { DAEMON_STATE_FILE, ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, enginePr
 export async function startEngineAsDaemon(home: string, options: Parameters<typeof startEngineService>[0]): Promise<{ close(): Promise<void> }> {
   const accessToken = randomBytes(16).toString("hex");
   const service = await startEngineService({ ...options, accessToken });
-  const stateFile = join(home, DAEMON_STATE_FILE);
-  await mkdir(home, { recursive: true });
-  await writeFile(stateFile, JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
-    databasePath: options.databasePath ?? defaultRerailDatabasePath(), kernelSocketPath: options.socketPath, ui: "bundled", startedAt: Date.now(),
-    packageRoot: home, accessToken }), { mode: 0o600 });
+  const stateFile = await recordAsDaemon(home, { socketPath: options.socketPath, databasePath: options.databasePath, accessToken });
   return {
     close: async () => {
       await rm(stateFile, { force: true });
       await service.close();
     },
   };
+}
+
+/**
+ * Records this process in daemon.json in `home` as the daemon whose engine listens on `engine.socketPath` holding
+ * `engine.accessToken`, with a start stamped after the process began, as the daemon stamps its own: on Windows a hook
+ * then finds Windows naming the recorded daemon as the pipe's holder and sends to it. Returns daemon.json's path.
+ */
+export async function recordAsDaemon(home: string, engine: { socketPath: string; databasePath?: string | undefined; accessToken: string }): Promise<string> {
+  const stateFile = join(home, DAEMON_STATE_FILE);
+  await mkdir(home, { recursive: true });
+  await writeFile(stateFile, JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+    databasePath: engine.databasePath ?? defaultRerailDatabasePath(), kernelSocketPath: engine.socketPath, ui: "bundled", startedAt: Date.now(),
+    packageRoot: home, accessToken: engine.accessToken }), { mode: 0o600 });
+  return stateFile;
 }
 
 /**

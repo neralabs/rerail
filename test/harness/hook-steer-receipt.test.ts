@@ -9,6 +9,7 @@ import { emitHookOutput } from "../../src/harness/hook-adapter.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { encodeRerailEventResult } from "../../src/runtime/index.js";
 import { hookOptions, sessionDatabaseQuery, temporaryDirectories } from "../support/hook-events.js";
+import { recordAsDaemon } from "../support/platform/engine-endpoint.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-receipt-");
 
@@ -38,7 +39,11 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
   return JSON.parse(text) as Record<string, unknown>;
 }
 
-/** An engine socket that answers every event with one steer crediting `rule:a`, and receipts as `receiptAnswer` says. */
+/**
+ * An engine socket that answers every event with one steer crediting `rule:a`, and receipts as `receiptAnswer` says,
+ * recorded in the home's daemon.json as its daemon's engine: on Windows a hook sends nothing to a pipe until Windows
+ * names the daemon daemon.json records as its holder.
+ */
 async function fakeDaemon(root: string, receiptAnswer: ReceiptAnswer): Promise<FakeDaemon> {
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-receipt-engine-${randomUUID()}` : join(root, "engine.sock");
   const read = Promise.withResolvers<void>();
@@ -61,6 +66,7 @@ async function fakeDaemon(root: string, receiptAnswer: ReceiptAnswer): Promise<F
   });
   server.on("connection", () => { daemon.connections += 1; });
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  await recordAsDaemon(process.env.RERAIL_HOME!, { socketPath, databasePath: hookOptions(root).databasePath, accessToken: randomUUID() });
   daemon.close = async () => {
     for (const response of held) response.destroy();
     server.closeAllConnections();
