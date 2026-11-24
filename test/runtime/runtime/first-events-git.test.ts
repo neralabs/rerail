@@ -250,7 +250,8 @@ describe("a repository's first events in a daemon", () => {
    * Disposes a runtime over a repository with twelve worktrees as soon as `open`, given the runtime and the main checkout,
    * has led it to start a Git `picks` takes by its arguments. Resolves with the arguments of each Git started since `open`
    * began that still runs once dispose returned, then, `open` settled, how many Git started after the dispose began, those
-   * the caller's thread waited on (`spawnSync`) apart.
+   * the caller's thread waited on (`spawnSync`) apart. An `open` that settles before that Git starts fails it at once, the
+   * runtime disposed: with the open's own error when it rejected.
    */
   async function disposedAtGit(open: (runtime: RerailRuntime, main: string) => Promise<unknown>, picks: (args: readonly string[]) => boolean): Promise<unknown> {
     const { root, checkouts, databasePath } = startedRepository(12);
@@ -267,7 +268,10 @@ describe("a repository's first events in a daemon", () => {
     const before = spawn.mock.calls.length;
     const opening = open(runtime, checkouts[0]!);
     try {
-      await placing.promise;
+      await Promise.race([placing.promise, opening.then(() => { throw new Error("the open settled before the chosen Git started"); })]);
+    } catch (error) {
+      await runtime.dispose();
+      throw error;
     } finally {
       spawn.mockImplementation(realSpawn);
     }
@@ -296,19 +300,26 @@ describe("a repository's first events in a daemon", () => {
   // The pass over the other worktrees waits at each linked worktree until the session's open has answered and the session
   // has ended, so the Git disposed at is one the pass started in a linked worktree after both. With no session left to
   // close, dispose returns only as soon as it has waited for the pass: a session's close outlasts a stopped Git's exit.
+  // The open ends once that Git started, as the helper takes an open to.
   it("ends the pass over the other worktrees, its Git exited, and starts no Git once it is disposed while that pass runs after a session's open and end", { timeout: 30_000 }, async () => {
     const pass = Promise.withResolvers<void>();
     submoduleReads.before = async checkout => {
       if (basename(checkout).startsWith("wt-")) await pass.promise;
     };
     let ended = false;
-    const inWorktree = (args: readonly string[]): boolean => ended && args.some((arg, i) => args[i - 1] === "-C" && basename(arg).startsWith("wt-"));
+    const chosen = Promise.withResolvers<void>();
+    const inWorktree = (args: readonly string[]): boolean => {
+      const picked = ended && args.some((arg, i) => args[i - 1] === "-C" && basename(arg).startsWith("wt-"));
+      if (picked) chosen.resolve();
+      return picked;
+    };
     const opened = async (runtime: RerailRuntime, main: string): Promise<void> => {
       const session = { host: "claude-code", sessionId: "own", cwd: main } as const;
       await runtime.ingest({ kind: "session-start", eventId: "own-start", session });
       await runtime.ingest({ kind: "session-end", eventId: "own-end", sessionId: "own", session });
       ended = true;
       pass.resolve();
+      await chosen.promise;
     };
     try {
       expect(await disposedAtGit(opened, inWorktree)).toEqual({ running: [], spawned: 0, blocked: 0 });
