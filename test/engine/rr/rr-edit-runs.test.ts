@@ -13,11 +13,14 @@ import { RerailEditRuns } from "../../../src/engine/rr/rr-edit-runs.js";
 import { RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
 import { RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
 import type { RrBudgets, RrFinding, RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
+import { defaultRerailHome } from "../../../src/engine/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
-import { repositoryPath } from "../../support/oracles.js";
+import { installPackDirectory, removeInstalledPacks, uninstallPack, versionOf } from "../../support/installed-packs.js";
+import { fixturesPath } from "../../support/oracles.js";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "rr-edit-runs-")));
+/** The fixture pack whose rules `rule` names: three `.rerail` rules, each with the title its pack.json lists. */
+const SAMPLE_PACK = fixturesPath("packs", "rr-sample");
 
 afterAll(async () => {
   removeInstalledPacks();
@@ -124,19 +127,21 @@ describe("a session's .rerail runs after its edits", () => {
     expect(steers[0]!.metadata?.generatedEdit?.violations.map(violation => violation.path)).toEqual(["app/a.py"]);
   });
 
-  it("names a pack's .rerail rule in the steer by the title its pack lists", async () => {
-    installPack("django");
-    const manifest = rulePackFileSchema.parse(JSON.parse(readFileSync(repositoryPath("packs", "django", "pack.json"), "utf8")));
-    const listed = manifest.rules.find(entry => entry.id === "django-practice-count-not-len")?.title;
+  it("names a pack's .rerail rule in the steer by the title its pack lists", async ({ onTestFinished }) => {
+    // The steer reads the installed packs, which this file's home has not read yet, so the engine reads each of the
+    // pack's `.rerail` rules here, with a test run's empty image store. A pack of three small rules keeps that well
+    // within the case's limit; one the size of Django's (27 rules) takes more than 5 s on a 16-core Linux machine.
+    installPackDirectory(SAMPLE_PACK, "rr-sample", defaultRerailHome(), versionOf(SAMPLE_PACK));
+    onTestFinished(() => uninstallPack("rr-sample"));
+    const manifest = rulePackFileSchema.parse(JSON.parse(readFileSync(join(SAMPLE_PACK, "pack.json"), "utf8")));
+    const listed = manifest.rules.find(entry => entry.id === "rr-sample-assert")?.title;
     expect(listed).toBeDefined();
-    const base = rule("django-practice-count-not-len", [{ folder: "", mode: "steer" }]);
-    const countNotLen: RerailRuleEntry = { ...base, provenance: { ...base.provenance, source: { kind: "pack", id: "django", packId: "django" } } };
-    const { runs, steers, write } = session([countNotLen]);
+    const { runs, steers, write } = session([rule("rr-sample-assert", [{ folder: "", mode: "steer" }])]);
     write(1, written("app/a.py"));
     await vi.waitFor(() => expect(runs).toHaveLength(1));
-    runs[0]!.end(completed([finding("django-practice-count-not-len", "app/a.py", 0, 0, 5)]));
+    runs[0]!.end(completed([finding("rr-sample-assert", "app/a.py", 0, 0, 5)]));
     await vi.waitFor(() => expect(steers).toHaveLength(1));
-    expect(steers[0]!.metadata?.rules).toEqual([{ id: "django-practice-count-not-len", title: listed, origin: "From the Django rule pack.", state: "steered" }]);
+    expect(steers[0]!.metadata?.rules).toEqual([{ id: "rr-sample-assert", title: listed, origin: "From the Sample rules in .rerail rule pack.", state: "steered" }]);
   });
 
   it("in ai-output scope keeps only the findings on the lines the agent wrote since the file's last run", async () => {

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Refuses release.yml's `publish` input unless it retries a release with main's core code the same as the tag's
-// (publishRetryRefusal in core-paths.mjs), and lists what did change in the run summary for whoever approves the publish
-// (retrySummary). It runs before `npm ci`, so it uses nothing but core-paths.mjs.
+// (publishRetryRefusal in core-paths.mjs) and npm has no engine package of the version yet (rebuildRefusal in
+// engine/release.mjs: a retry builds the engines again, and core would pin bytes npm does not have). It lists what did
+// change in the run summary for whoever approves the publish (retrySummary). It runs before `npm ci`, so it imports
+// only scripts that need no node_modules.
 //
 //   VERSION=0.1.2 [LATEST=<version>] GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=owner/name node scripts/release/core-retry-check.mjs
 import { execFileSync } from "node:child_process";
@@ -9,6 +11,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { coreChanges, publishRetryRefusal, retrySummary } from "./core-paths.mjs";
+import { publishedEnginePackages, rebuildRefusal } from "./engine/release.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const git = (args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
@@ -43,7 +46,12 @@ const readLock = (at) => git(["show", `${at === "release" ? tagName : "HEAD"}:pa
 const before = publishRetryRefusal({ version, ref, latest, packageVersion, tagged: true, shipped: [] });
 const tagged = before === null && fetchTag();
 const changed = tagged ? changedSinceTag() : [];
-const refusal = before ?? publishRetryRefusal({ version, ref, latest, packageVersion, tagged, shipped: coreChanges(changed, readLock) });
+// npm is asked last, and only about a retry nothing else refuses. A registry that does not answer stops the run with
+// the status it gave, since running it again may be all it needs.
+const refusal =
+  before ??
+  publishRetryRefusal({ version, ref, latest, packageVersion, tagged, shipped: coreChanges(changed, readLock) }) ??
+  rebuildRefusal(version, await publishedEnginePackages(version));
 if (refusal !== null) {
   console.error(`::error::${refusal}`);
   process.exit(1);

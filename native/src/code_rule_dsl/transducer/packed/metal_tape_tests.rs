@@ -45,7 +45,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let (mut digests, mut tapes) = (Vec::new(), Vec::new());
     for (source, lang) in SOURCES {
         // The device reads full images in place; a tree-sitter tape is stored named-only
-        // (RER-131), so the store holds the document's restored image here.
+        // (decision 0161), so the store holds the document's restored image here.
         let (tape, _stored) = document(source, lang);
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();

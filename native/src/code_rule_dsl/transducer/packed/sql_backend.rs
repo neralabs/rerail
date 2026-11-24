@@ -19,7 +19,7 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-const MODULE_NAME: &CStr = c"tempo_matches";
+const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
 
 #[derive(Clone)]
@@ -190,7 +190,7 @@ impl MatchRegistry {
 
     /// Resolve the universal FTS index in one bulk SQL lookup, widen unknown pairs to a full tape
     /// scan, and register one terminal batch. This is the bridge from persisted SQL selection to
-    /// SQL-owned relational composition through `tempo_matches(batch)`.
+    /// SQL-owned relational composition through `rerail_matches(batch)`.
     pub fn register_indexed_batch(
         &self,
         store: &crate::content_store::ContentStore,
@@ -297,7 +297,7 @@ unsafe impl<'vtab> VTab<'vtab> for MatchTable {
     ) -> SqlResult<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
         let registry = Arc::clone(aux.ok_or_else(|| {
-            rusqlite::Error::ModuleError("tempo_matches registry is missing".to_owned())
+            rusqlite::Error::ModuleError("rerail_matches registry is missing".to_owned())
         })?);
         Ok((
             Cow::Borrowed(c"CREATE TABLE x(batch HIDDEN,file_index,program_index,match_index,start_ordinal,output_label,capture_index,capture_label,capture_node,start_byte,end_byte,complete,error_code)"),
@@ -362,12 +362,12 @@ unsafe impl VTabCursor for MatchCursor<'_> {
     ) -> SqlResult<()> {
         if idx_num != 1 {
             return Err(rusqlite::Error::ModuleError(
-                "tempo_matches requires one batch equality constraint".to_owned(),
+                "rerail_matches requires one batch equality constraint".to_owned(),
             ));
         }
         let token = args.get::<i64>(0)?;
         let batch = self.registry.batch(token).ok_or_else(|| {
-            rusqlite::Error::ModuleError("tempo_matches batch is missing".to_owned())
+            rusqlite::Error::ModuleError("rerail_matches batch is missing".to_owned())
         })?;
         self.rows = batch.rows().map_err(rusqlite::Error::ModuleError)?;
         self.position = 0;

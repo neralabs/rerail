@@ -26,6 +26,7 @@ import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.
 import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
+import { UNTAKEN_EVENTS_DIR } from "../engine/storage/untaken-events.js";
 import { contentStoreFiles, contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
   AUTOSTART_CLAIM_FILE,
@@ -482,6 +483,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_STATE_FILE,
   DAEMON_PORT_FILE,
   DAEMON_ACCESS_TOKEN_FILE,
+  UNTAKEN_EVENTS_DIR,
   LOCKS_DIR,
   START_LOCK_DIR,
   AUTOSTART_CLAIM_FILE,

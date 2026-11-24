@@ -241,7 +241,7 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     // A `.rerail` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
     view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
     view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
-    // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
+    // A named-only tape (decision 0161) leaves out the tokens its grammar's automata recognize: the
     // automata, and the grammars they are built from, decide what a stored tape means.
     view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
     view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));

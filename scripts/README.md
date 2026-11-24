@@ -59,7 +59,15 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   (`.github/workflows/release-packs.yml`): which packs to release, the publish gate and packing, tagging each
   release before it is published, publishing under `latest`, putting a pack back, and the lockfile sync after
   `changeset version`. The dist-tag check after a publish,
-  and the GitHub Release of each released version from its changelog section. The release notes: core's section
+  and the GitHub Release of each released version from its changelog section. The engine packages (`engine/`): the
+  one table of the six `@neralabs/rerail-engine-<suffix>` packages core depends on, `pack`, which packs each from a
+  built engine in `native/` and writes the manifest of what it packed (`engine-packages.json`), and core's pins on
+  them (`packages.mjs`); and their part of a release (`release.mjs`): publishing the six and reading each one's
+  integrity back from npm before core is published, naming them for the dist-tag steps, and refusing a retry that
+  would rebuild engines npm already has. The shrinkwrap core ships (`shrinkwrap.mjs`, `shrinkwrap-pack.mjs`):
+  `npm pack` writes it from `package-lock.json`, pins the engine packages of the folder `RERAIL_ENGINE_PACKAGES` names
+  in it and in the packed `package.json`, and removes both afterwards, and the release checks the packed tarball
+  against that folder before publishing (docs/release.md, "Engine packages" and "Shrinkwrap"). The release notes: core's section
   written from the entries pending in `.changelog/` and each pack's from its `pack.json` and pending changesets, both by
   change type, each pack rule by rule, and the check that every pending entry and changeset names its type, that a
   changeset under Added, Removed or Fixed opens with its rule, that an entry or changeset a

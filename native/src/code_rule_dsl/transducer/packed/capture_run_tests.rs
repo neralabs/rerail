@@ -50,7 +50,7 @@ pub fn program() -> Program {
     .with_tree_sitter_query_semantics()
     .unwrap()
 }
-/// The run's root: the `ROOT` argument each source opens with. Tapes store named nodes only (RER-131), so a run
+/// The run's root: the `ROOT` argument each source opens with. Tapes store named nodes only (decision 0161), so a run
 /// starts at a named node and walks its following siblings.
 fn root(tape: &TapeDoc) -> u32 {
     let roots = (0..tape.transducer_len() as u32)
@@ -363,7 +363,7 @@ fn capture_runs_execute_a_compiled_scm_sibling_sequence() {
     let root = capture(&doc, 0, b"a").node;
     let expected = p.execute_roots(&doc, [root]).unwrap();
     // Raw path ordinals: no path through a stored comma comes before the first result (a tape leaves implied
-    // tokens out, RER-131).
+    // tokens out, decision 0161).
     assert_eq!(
         expected.iter().map(|r| r.local_ordinal).collect::<Vec<_>>(),
         [0, 4]
@@ -585,7 +585,7 @@ fn capture_runs_see_no_unnamed_events_on_a_named_only_tape() {
     let lang = SupportLang::Python.get_ts_language();
     p.words[3] = word(FOLLOWING, 0, 0);
     // The unnamed siblings are comparison operators, which a tape stores (a list's commas are implied, so not
-    // stored, RER-131).
+    // stored, decision 0161).
     for pc in [5, 13] {
         p.words[pc] = word(KIND, 0, lang.id_for_node_kind("<", false));
     }
