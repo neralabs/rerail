@@ -398,6 +398,22 @@
         assert_ne!(decl[&2], fact[&2], "a fact in its scope: top's key");
     }
 
+    /// A graph read back from the store's kept facts or the shipped image is the graph kept: its module plan and
+    /// its modules' images too (decision 0639 §1, §3). The kept facts (t33 step 2) held no plan, and every text whose
+    /// graph was composed of a module read back from them failed ("core.rerail: in no module of phase 0's plan").
+    #[test]
+    fn a_graph_kept_and_read_back_keeps_its_plan() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let seed = super::Seed::File(lib.join("core.rerail"));
+        let graph = super::graph(&seed).unwrap();
+        assert!(!graph.plan.is_empty(), "core.rerail's graph plans its own module");
+        let (facts, image) = super::through_kept_forms(&graph).expect("the forms read back");
+        for (form, g) in [("kept facts", &facts), ("image", &image)] {
+            assert!(super::same_graph(g, &graph), "{form}: {}", g.differences(&graph));
+            assert_eq!(g.plans, graph.plans, "{form}: the plans");
+        }
+    }
+
     /// T5 (decision 0639 §3): a graph whose module's image the store does not hold does not hold (`Graph::holds`), so
     /// `graphs` derives it again in that store, which asks for the lowering; a reused run of phase 0 checks its answer
     /// by the same look (`rr::planned_module_held`, the record's `p0_lower_req` entry).

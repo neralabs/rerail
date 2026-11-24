@@ -1138,12 +1138,16 @@ fn sum_and_join_lower() {
     assert!(lit.contains(" by ($n, $i) sep \"\" : "), "{lit}");
     let types: Vec<String> = p.columns_of(&rel).unwrap().into_iter().map(|(_, t)| t).collect();
     assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
-    let (lit, over, _, rel) = agg(&p, "g");
+    let (lit, over, atom, rel) = agg(&p, "g");
     let over = over.unwrap();
     assert!(lit.contains(" = sum $") && over.starts_with("rr_val"), "{lit}");
     let cols = p.columns_of(&rel).unwrap();
     assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
-    assert!(cols.contains(&(over.clone(), "int".into())), "{cols:?}");
+    // The helper is named by its content, its columns by their places (`rr_c<i>`, decision 0639 §3): the value is
+    // the atom's argument at an `int` column.
+    let args: Vec<&str> = atom.split_once('(').and_then(|(_, a)| a.strip_suffix(')')).unwrap_or_default().split(", ").collect();
+    let at = args.iter().position(|a| *a == format!("${over}")).unwrap_or_else(|| panic!("{over} in {atom}"));
+    assert_eq!(cols[at].1, "int", "{atom}: {cols:?}");
     let (_, _, _, rel) = agg(&p, "r");
     assert_ne!(rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
     let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
