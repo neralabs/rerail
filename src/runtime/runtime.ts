@@ -50,6 +50,9 @@ import { keepFolderPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { placeCheckout, placeWorktrees } from "../engine/catalog/checkouts/checkout-placement.js";
+import type { WorktreeRegistry } from "../engine/catalog/repository-identity.js";
+import { GitReads } from "../engine/git.js";
 import type { CheckoutContext } from "../engine/catalog/repository-model.js";
 import type { PendingNote } from "./merge-assist/notes.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
@@ -1303,6 +1306,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  /**
+   * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
+   * `placeWorktrees`): a disposed runtime ends them, and returns once each Git they started has exited, so none is left
+   * running in a checkout (Windows refuses to remove a folder a process holds). A read another runtime started and
+   * shares with them goes on, and is not waited for (`sharedRead`).
+   */
+  readonly #placing = new GitReads();
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /**
    * While an event that happened earlier opens its session (`IngestOptions.observedAt`), when it happened, by session id:
@@ -2391,6 +2401,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async dispose(): Promise<void> {
     this.#disposing = true;
     this.#pollControlsWhileSessionsOpen();
+    const placingEnded = this.#placing.stop();
     // No conflict change is offered to a session that is closing.
     this.#mergeAssistUnlisten?.();
     // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
@@ -2399,6 +2410,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
+    await placingEnded;
     // A Merge Assist this runtime made works over its database: its hook's late answers stop before that closes.
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
@@ -2418,7 +2430,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#failWhileWriteLockedForScan(session.sessionId);
     const recordedStart = this.#recordedStart(session.sessionId);
     const startedAt = recordedStart ?? this.#startTime(session.sessionId);
-    const ledger = await this.#openLedger(session, recordedStart === undefined);
+    // What the checkout's first events ask Git is learnt here without blocking the daemon (`placeCheckout`), so the
+    // steps below find it kept: every other session's events are answered meanwhile, and this session's wait in order.
+    const ledger = await this.#ledgerWhilePlaced(session, recordedStart === undefined);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
     const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
@@ -2659,6 +2673,31 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   #writeOwedClaim(state: RuntimeSessionState): void {
     if (state.claimOwed === true) this.#claimAgain(state.descriptor.sessionId);
+  }
+
+  /**
+   * The session's ledger ({@link #openLedger}), read while its checkout is placed ({@link #placeCheckout}): both settle
+   * before it answers or fails, so an open that fails leaves no Git of its placement running in the checkout. Once both
+   * stand, the other worktrees Git lists are placed ({@link placeWorktrees}) under the same reads, and the open does not
+   * wait for them: its first hook waits for its own checkout only, and a dispose ends that pass and waits for its Git.
+   */
+  async #ledgerWhilePlaced(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
+    const [ledger, placed] = await Promise.allSettled([this.#openLedger(session, unrecorded), this.#placeCheckout(session)]);
+    if (ledger.status === "rejected") throw ledger.reason;
+    if (placed.status === "rejected") throw placed.reason;
+    const registry = placed.value;
+    if (registry !== undefined) void this.#placing.run(signal => placeWorktrees(registry, { signal }));
+    return ledger.value;
+  }
+
+  /**
+   * {@link placeCheckout} for the session's folder, with the registry Git listed for it; a runtime disposed meanwhile
+   * fails the open before any Git finds the checkout.
+   */
+  async #placeCheckout(session: AdapterSession): Promise<WorktreeRegistry | undefined> {
+    const registry = await this.#placing.run(signal => placeCheckout(session.cwd, { signal }));
+    if (this.#placing.stopped) throw new Error(`the session ${session.sessionId} opened while Rerail was stopping`);
+    return registry;
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */

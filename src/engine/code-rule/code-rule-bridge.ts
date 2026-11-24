@@ -50,9 +50,10 @@ import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, 
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeRecords, type WorktreeSnapshot,
-  WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
+  storedRegistry, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
+  type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
 
@@ -1303,6 +1304,14 @@ function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Ite
 function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
   if (checkpoint !== "edit" || !discovery.baselineComplete || discovery.commandDuringPass) return true;
   return discovery.gaps.length > 0 || discovery.baselineRoots.size > 0;
+}
+
+/**
+ * Asks for one more pass after a baseline walk, unless one is asked for already: it reconciles changes to
+ * already-observed files made during the initial traversal.
+ */
+function passAfterBaseline(discovery: SourceDiscovery, walk: WalkStart, checkpoint: DiscoveryCheckpoint): void {
+  if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
 }
 /**
  * The paths a pass left to the pass after because a shell command of the session that began by `commandSince` ran
@@ -3188,10 +3197,11 @@ export class CodeRuleBridge {
   /**
    * The repository's other worktrees as they are now, each relative to the session folder in `WorktreeDiscovery.roots`. One
    * first seen now is a baseline but for what changed since the session opened, which Git's verdicts judge. One gone took
-   * its files with it, and none of them is an edit.
+   * its files with it, and none of them is an edit. `registry`: the list the walk's learn step gave as stored, in the same
+   * synchronous run (`worktreeRoots`).
    */
-  #syncWorktrees(discovery: SourceDiscovery): readonly string[] {
-    const worktrees = (this.#auditor.worktreeRoots?.() ?? []).filter(worktree => worktree !== discovery.root);
+  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry): readonly string[] {
+    const worktrees = (this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
     const { roots, fresh, listed } = discovery.worktrees;
     for (const worktree of current) {
@@ -3245,7 +3255,10 @@ export class CodeRuleBridge {
   #watchWorktrees(discovery: SourceDiscovery): WorktreeWatch {
     const walks = this.#sharedWorktreeWalks();
     discovery.notices.use(walks.sessionWatch());
-    return walks.watch({ clock: filesystemClock, start: () => this.#startWorktreeWalk(discovery) });
+    const auditor = this.#auditor;
+    // An auditor that learns its worktrees ahead has each walk learn them first, so the walk's start asks Git nothing.
+    const prepare = auditor.learnWorktreeRoots === undefined ? {} : { prepare: (git: GitReads) => auditor.learnWorktreeRoots?.(git) };
+    return walks.watch({ clock: filesystemClock, ...prepare, start: registry => this.#startWorktreeWalk(discovery, registry) });
   }
 
   #sharedWorktreeWalks(): WorktreeWalks {
@@ -3260,11 +3273,11 @@ export class CodeRuleBridge {
    * The session's part in a walk of the other worktrees as it begins: the worktrees it watches now, and what it takes
    * the walk's findings against. Undefined once the session has closed, or when the worktrees cannot be listed.
    */
-  #startWorktreeWalk(discovery: SourceDiscovery): WatcherWalk | undefined {
+  #startWorktreeWalk(discovery: SourceDiscovery, registry: WorktreeRegistry | undefined): WatcherWalk | undefined {
     if (this.#abandoned(discovery)) return undefined;
     let worktrees: readonly string[];
     try {
-      worktrees = this.#syncWorktrees(discovery);
+      worktrees = this.#syncWorktrees(discovery, registry);
     } catch (error) {
       discovery.worktrees.gaps = [{ reason: errorMessage(error) }];
       return undefined;
@@ -3322,7 +3335,13 @@ export class CodeRuleBridge {
     const ignores = discovery.ignoreFiles.ignoresOf(discovery.git, discovery.root);
     // Taken before the walk: a write made from here on is a notice for the next pass.
     const reads = discovery.notices.begin(whole, whole ? undefined : await ignores);
-    const worktrees = this.#syncWorktrees(discovery);
+    // What the worktrees' list would ask Git is learnt first, as a process no thread waits on, so the list below starts
+    // none; while the stored list stands there is nothing to wait for, and the list below takes it as read here. A
+    // session that closed meanwhile has its walk stop there, as at the walk's other waits.
+    const learnt = this.#auditor.learnWorktreeRoots?.(discovery.git);
+    const learning = this.#learnWorktrees(discovery, learnt);
+    if (learning !== undefined && !(await learning)) return;
+    const worktrees = this.#syncWorktrees(discovery, storedRegistry(learnt));
     const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
@@ -3338,8 +3357,16 @@ export class CodeRuleBridge {
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
     // Only once applied: a pass whose audit failed leaves the next to read whole, which finds its changes again.
     discovery.notices.ended(seen, { linked: reads.linked, files: scan.sources.size }, await ignores);
-    // Reconcile changes to already-observed files made during the initial traversal.
-    if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+    passAfterBaseline(discovery, walk, checkpoint);
+  }
+
+  /**
+   * The wait for what `learnt` learns through the session's Git reads (`learnWorktreeRoots`): resolves whether the
+   * session's walk goes on, false once the session closed meanwhile; undefined, with nothing to wait for, when there is
+   * nothing to learn or the stored list stands.
+   */
+  #learnWorktrees(discovery: SourceDiscovery, learnt: WorktreeListLearning | undefined): Promise<boolean> | undefined {
+    return learnt?.kind === "learning" ? learnt.done.then(() => !this.#abandoned(discovery)) : undefined;
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {
