@@ -40,11 +40,14 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Blade | language | Bladestan 0.11.7, tlint 9.7.0, blade-parser 2.1.0 | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | Clippy 0.1.99 (Rust 1.99.0) | 33 (17) | `*.rs` files |
 | SQL | language | SQLFluff 4.4.0 | 21 (19) | `*.sql` files |
-| Next.js | framework | @next/eslint-plugin-next 16.3.8 | 21 (21) | a `next` dependency |
+| Next.js | framework | @next/eslint-plugin-next 16.3.8, and Rerail's own App Router rules | 32 (32) | a `next` dependency |
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
 | Django | framework | none: Rerail's own rules | 27 (25) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
+| TanStack Query | framework | none: Rerail's own rules | 11 (10) | a `@tanstack/react-query`, `@tanstack/query-core` or other `@tanstack/*-query` dependency |
+| Prisma | framework | none: Rerail's own rules | 11 (11) | an `@prisma/client` or `prisma` dependency, or a `schema.prisma` |
+| Postgres migrations | framework | none: Rerail's own rules | 10 (10) | SQL migration files: `**/migrations/**/*.sql`, `**/drizzle/**/*.sql` |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
