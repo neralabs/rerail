@@ -1498,7 +1498,7 @@ pub struct TapeFrame {
 impl TapeFrame {
     /// The tape's bytes: decompressed, or read in place.
     pub fn bytes(&self) -> StoreResult<super::ObjectBytes> {
-        // The frame may name a language's dictionary (decision 0161's `compression`), which `decompress` reads.
+        // The frame may name a language's dictionary (`compression`), which `decompress` reads.
         let bytes = self
             .frame
             .bytes(usize::try_from(self.raw_length).unwrap_or(0))?;
