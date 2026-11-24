@@ -4,7 +4,8 @@
  * (`published-packs-worker.ts`): checking the fetched packs compiles every rule, seconds of CPU the thread that answers
  * requests must not spend. npm runs only when a person asks (docs/privacy.md): the daemon never reads it on its own,
  * and a coding agent's read gets what is held. Each npm call is stopped after `PUBLISHED_FETCH_TIMEOUT_MS`, so a
- * registry that never answers ends the read with why (#633).
+ * registry that never answers ends the read with why (#633). A failed read, and each pack a read leaves out, is
+ * logged to the daemon log, as the update check logs its failures.
  */
 import { Worker } from "node:worker_threads";
 import type { PublishedRulePack, PublishedRulePackReader, PublishedRulePacks } from "../engine/catalog/rule-packs.js";
@@ -13,16 +14,27 @@ import type { PackDiscovery } from "./rule-pack-store.js";
 /** How long a list read from npm is shown before a person's read asks npm again. */
 export const PUBLISHED_PACKS_MAX_AGE_MS = 24 * 60 * 60_000;
 
+/**
+ * After a read that failed, a person's read asks npm again only once this has passed: offline, a read still checks
+ * every installed pack, seconds of CPU, and a person who comes back to the page should not start one each time.
+ */
+export const PUBLISHED_RETRY_MS = 5 * 60_000;
+
 /** Each npm call of a read is stopped at this: a pack is a few MB, seconds on most lines. */
 export const PUBLISHED_FETCH_TIMEOUT_MS = 60_000;
 
-/** What `discoverPublished` posts back (`published-packs-worker.ts`): the packs, or why npm gave none. */
-export type PublishedPacksMessage = { readonly packs: readonly PublishedRulePack[] } | { readonly unread: string };
+/**
+ * What `discoverPublished` posts back (`published-packs-worker.ts`): the packs, with each one left out and why (it
+ * could not be fetched, or failed a check), or why npm gave none.
+ */
+export type PublishedPacksMessage =
+  | { readonly packs: readonly PublishedRulePack[]; readonly problems: readonly string[] }
+  | { readonly unread: string };
 
 /** What a discovery for no repository offers: the packs it found, or why npm gave none (offline, no access). */
-export function publishedPacksOf(discovery: Pick<PackDiscovery, "available" | "downloadFailures">): PublishedPacksMessage {
+export function publishedPacksOf(discovery: Pick<PackDiscovery, "available" | "problems" | "downloadFailures">): PublishedPacksMessage {
   if (discovery.downloadFailures !== undefined) return { unread: discovery.downloadFailures.join("; ") };
-  return { packs: discovery.available.map(({ pack, packageName, version, ruleCount }) => ({ pack, packageName, version, ruleCount })) };
+  return { packs: discovery.available.map(({ pack, packageName, version, ruleCount }) => ({ pack, packageName, version, ruleCount })), problems: discovery.problems };
 }
 
 /** What the worker is started with. */
@@ -37,42 +49,60 @@ export interface PublishedPackReaderOptions {
   readonly discover?: (home: string) => Promise<PublishedPacksMessage>;
   readonly now?: () => number;
   readonly maxAgeMs?: number;
+  readonly retryMs?: number;
+  /** Where failures go: the daemon's stderr, which is its log, by default. */
+  readonly log?: (line: string) => void;
 }
 
+const NOT_READ = { unread: "The published rule packs are read when a person opens Add rule packs in the dashboard, and none has yet." } as const;
+
+/** The first line of what a failed read threw. */
+const firstLine = (error: unknown): string => (error instanceof Error ? error.message.split("\n")[0]! : String(error));
+
 /**
- * The reader the daemon serves the published packs from. A read that fails is not held: the next person's read asks
- * npm again, while a list read earlier stays shown. Reads never overlap: one asked while another runs waits for it.
+ * The reader the daemon serves the published packs from. A list read is held for `maxAgeMs`; a failed read is not, but
+ * the next read waits `retryMs`, and until then reads get the list read earlier, else why it failed. Reads never
+ * overlap: one asked while another runs waits for it, or gets the list held.
  */
 export function publishedPackReader(options: PublishedPackReaderOptions): PublishedRulePackReader {
   const discover = options.discover ?? discoverPublished;
   const now = options.now ?? Date.now;
   const maxAgeMs = options.maxAgeMs ?? PUBLISHED_PACKS_MAX_AGE_MS;
+  const retryMs = options.retryMs ?? PUBLISHED_RETRY_MS;
+  const log = options.log ?? (line => process.stderr.write(line));
   let held: Extract<PublishedRulePacks, { packs: unknown }> | undefined;
+  let failed: { readonly at: number; readonly reason: string } | undefined;
   let reading: Promise<PublishedRulePacks> | undefined;
 
+  const fail = (reason: string): PublishedRulePacks => {
+    failed = { at: now(), reason };
+    log(`rerail daemon: reading the published rule packs from npm failed, and a person's read asks again after ${Math.round(retryMs / 60_000)} min: ${reason}\n`);
+    return { unread: reason };
+  };
+  const keep = (packs: readonly PublishedRulePack[], problems: readonly string[]): PublishedRulePacks => {
+    for (const problem of problems) log(`rerail daemon: Add rule packs leaves out a published rule pack: ${problem}\n`);
+    failed = undefined;
+    held = { packs, readAt: now() };
+    return held;
+  };
   const readNpm = (): Promise<PublishedRulePacks> => {
-    reading ??= (async (): Promise<PublishedRulePacks> => {
-      try {
-        const answer = await discover(options.home);
-        if ("unread" in answer) return answer;
-        held = { packs: answer.packs, readAt: now() };
-        return held;
-      } catch (error) {
-        return { unread: error instanceof Error ? error.message.split("\n")[0]! : String(error) };
-      } finally {
-        reading = undefined;
-      }
-    })();
+    reading ??= discover(options.home)
+      .then(answer => ("unread" in answer ? fail(answer.unread) : keep(answer.packs, answer.problems)), (error: unknown) => fail(firstLine(error)))
+      .finally(() => { reading = undefined; });
     return reading;
   };
+  // Nothing held or an old list, and no read failed lately.
+  const due = (): boolean => (held === undefined || now() - held.readAt >= maxAgeMs) && (failed === undefined || now() - failed.at >= retryMs);
+  const shown = (): PublishedRulePacks => held ?? (failed === undefined ? NOT_READ : { unread: failed.reason });
 
   return {
     async read(refresh) {
-      if (!refresh) return held ?? { unread: "The published rule packs are read when a person opens Add rule packs in the dashboard, and none has yet." };
-      if (held === undefined) return await readNpm();
-      // An old list is shown while the next one is read, so a person never waits on npm twice.
-      if (now() - held.readAt >= maxAgeMs) void readNpm();
-      return held;
+      if (refresh && (reading !== undefined || due())) {
+        const read = readNpm();
+        // An old list is shown while the next one is read, so a person never waits on npm twice.
+        if (held === undefined) return await read;
+      }
+      return shown();
     },
   };
 }

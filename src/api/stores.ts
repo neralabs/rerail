@@ -24,7 +24,7 @@ export interface DatabaseApiStoresOptions {
   /** The coding agent check set-up provides (`codingAgentStates`); the API answers 503 without it. */
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
   /** The published rule packs set-up reads from npm (`publishedPackReader`); the API answers 503 without them. */
-  readonly publishedRulePacks?: PublishedRulePackReader;
+  readonly publishedRulePacks?: PublishedRulePackReader | undefined;
   /** The daemon's engine service, which starts opening again a session it suspended (`RerailApiStores.resumeSession`). */
   readonly resumeSession?: (sessionId: string) => void;
   /**

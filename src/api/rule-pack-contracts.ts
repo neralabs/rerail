@@ -65,7 +65,7 @@ export const publishedRulePacksSchema = z.object({
     covers: z.string(),
     publisher: z.string().describe("As for an installed pack: rerail for Rerail's own, else the npm scope or package name."),
     packageName: z.string(),
-    version: z.string().describe("The version npm has under the update channel's tag that fits this Rerail."),
+    version: z.string().describe("The version offered: npm's under the update channel's tag, or the installed one where it stands in (npm cannot give the pack, or the one installed is newer)."),
     ruleCount: z.number().int().positive().describe("The rules on once the pack is added."),
     installedVersion: z.string().nullable().describe("The version of this package this Rerail loads now; null when it is not installed."),
     reason: z.string().optional().describe("Why the pack is suggested for the checkout; absent when it does not fit it."),

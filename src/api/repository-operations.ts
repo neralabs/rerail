@@ -758,7 +758,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "rule_packs_published",
     method: "GET",
     path: "/api/rule-packs/published",
-    summary: "List every rule pack published on npm that fits this Rerail, installed or not, as rerail packs recommend does: each with its version, rule count, the version installed if any, and why it is suggested for a checkout when it fits (matched locally, as for the recommendations). A person's read asks npm when no list is held or the one held is a day old, and the first waits for it; a coding agent's read only returns what is held. Installs nothing: rerail packs add <id>@<version> installs a pack, then repository_attachments_set adds it.",
+    summary: "List the rule packs rerail packs recommend offers, installed or not: each pack published on npm that fits this Rerail, at npm's version, or at the installed version where that stands in (npm cannot give the pack, or the one installed is newer). Each comes with its version, rule count, the version installed if any, and why it is suggested for a checkout when it fits (matched locally, as for the recommendations). A person's read asks npm when no list is held or the one held is a day old, and the first waits for it, but not within five minutes of a read that failed; a coding agent's read only returns what is held. Installs nothing: rerail packs add <id>@<version> installs a pack, then repository_attachments_set adds it.",
     query: z.object({ ...targetShape }).strict(),
     output: publishedRulePacksSchema,
     handler: async (stores, input, caller) => {

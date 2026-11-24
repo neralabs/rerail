@@ -637,7 +637,7 @@ export class RerailDaemon {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
-      ...(options.publishedRulePacks === undefined ? {} : { publishedRulePacks: options.publishedRulePacks }),
+      publishedRulePacks: options.publishedRulePacks,
       // The server listens only once the engine service runs, so a scan request always finds it. The engine service
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),

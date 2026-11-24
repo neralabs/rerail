@@ -549,7 +549,10 @@ export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): 
   };
 }
 
-/** A rule pack published on npm that fits this Rerail: what `rerail packs recommend` lists, before any is installed. */
+/**
+ * A rule pack `rerail packs recommend` offers, installed or not: one published on npm that fits this Rerail, at npm's
+ * version, or at the installed version where that stands in (npm cannot give it, or the one installed is newer).
+ */
 export interface PublishedRulePack {
   /** The pack as its published version reads it; its match definition is matched against a checkout here, offline. */
   readonly pack: RulePack;

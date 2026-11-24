@@ -92,8 +92,10 @@ function publishedItem(pack) {
     h("div.pend", null, copy));
 }
 
-function catalogItem(pack) {
-  if (pack.published) return publishedItem(pack);
+/** A pack of the catalog: one only published on npm, or one installed. */
+const catalogItem = pack => (pack.published ? publishedItem(pack) : installedItem(pack));
+
+function installedItem(pack) {
   const asking = ui.removeAsk === pack.id;
   const { status, action } = asking ? { status: null, action: null } : catalogState(pack);
   const question = asking ? h("div.rmline", null, removePackControl(pack)) : null;
@@ -205,20 +207,30 @@ export function render(root) {
 
 /**
  * The catalog opens on every kind; both it and the review read the repository for the packs Rerail suggests, once per
- * repository, and the catalog the packs published on npm, which the daemon reads when they are first asked for, again
- * on each visit while they could not be read.
+ * repository, and the catalog the packs published on npm on each visit (`readPublished`).
  */
 export function enter() {
   if (ui.view === "packs") kind = "all";
   if (ui.scope === null) return;
   const scope = captureScope(), repo = repoName() || "this repo", view = ui.view;
-  // A read that failed is tried again on each visit, as the daemon asks npm again.
-  if (view === "packs" && data.publishedPacks?.unread !== null) {
-    data.publishedPacks = null;
-    publishedPacksFor(scope).then(invalidate);
-  }
+  if (view === "packs") readPublished(scope);
   if (data.recommendations !== null) return;
   recommendationsFor(scope).then(invalidate, error => readFailed(scope, view, `Couldn’t read ${repo} to pick rule packs`, error));
+}
+
+/** Whether a read of the published packs is out, so a visit while it is does not ask again. */
+let readingPublished = false;
+
+/**
+ * The published packs, asked for on each visit to the catalog: the daemon answers with the list it holds at once, and
+ * reads npm when it holds none, its list is a day old, or its last read failed a while ago. While the last answer was
+ * a failure, the page says it is reading again.
+ */
+function readPublished(scope) {
+  if (readingPublished) return;
+  readingPublished = true;
+  if (data.publishedPacks?.unread) data.publishedPacks = null;
+  publishedPacksFor(scope).finally(() => { readingPublished = false; }).then(invalidate);
 }
 
 /**
