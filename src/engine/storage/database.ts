@@ -10,6 +10,7 @@ import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
 import { defaultRerailHome, RERAIL_DATABASE_FILE } from "./rerail-home.js";
 import { keepFilesPrivate } from "./private-files.js";
+import { apartFromLockWaits } from "./write-lock-wait.js";
 
 export type RerailDatabase = BetterSQLite3Database<typeof schema> & { readonly $client: Database.Database };
 
@@ -88,13 +89,16 @@ export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOpti
  * Throws SQLite's `SQLITE_BUSY` at once while another connection holds the write lock of the database at `path`, where
  * a write would wait for it up to `busy_timeout` (5 s) on the caller's thread; takes and gives back the lock otherwise.
  * For work that can wait for the lock without holding the thread: the daemon's reopen of a quiet session for a scan.
+ * The take never meets a lock wait of this thread taking the lock to learn it is free (`apartFromLockWaits`).
  */
 export function failWhileWriteLocked(path: string): void {
   const database = openSqliteDatabase(path);
   try {
     database.$client.pragma("busy_timeout = 0");
-    database.$client.exec("BEGIN IMMEDIATE");
-    database.$client.exec("ROLLBACK");
+    apartFromLockWaits(path, () => {
+      database.$client.exec("BEGIN IMMEDIATE");
+      database.$client.exec("ROLLBACK");
+    });
   } finally {
     database.$client.close();
   }
