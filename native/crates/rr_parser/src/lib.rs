@@ -740,9 +740,9 @@ pub mod tests {
         let lazy = lazy_bits(&c.native);
         let body = "r(x) :- a(x), \"s\". // c\n".repeat(400);
         // Refused by a mask total (no token coded: four backticks; a byte no token takes is a
-        // `bad` token now, 0650 step 5), and by a token the record pass refuses: an integer of
-        // 19 digits, the engine's (decision 0413; a float chain is read now).
-        for head in ["````a````.", "x = 1234567890123456789."] {
+        // `bad` token now, 0650 step 5; a number of 19 digits a number, 0655 step 13).
+        {
+            let head = "````a````.";
             let (bad, good) = (format!("a(x).\n{head}\n{body}"), format!("a(x).\n{body}"));
             let refs = [bad.as_bytes(), good.as_bytes()];
             let files: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
@@ -1734,32 +1734,31 @@ pub mod tests {
         }
     }
 
-    /// An integer of 19 digits or more goes to the engine, checked at its token (decision 0133's
-    /// local check: the token's first 19 bytes); 18 digits are taken, as the engine's tape, and
-    /// a float of any length. In
-    /// a block or across two, by every shape and the interpreter.
+    /// A number's digits are its text (decision 0655 step 13): an integer of 19 digits or more is
+    /// a number, as a checker reads it, and its tape the engine's with an integer of its length
+    /// the engine's `i64` holds in its place; 18 digits, and a float of any length, the engine's.
+    /// In a block or across two, by every shape and the interpreter.
     #[test]
-    fn long_numbers_go_to_the_engine() {
+    fn long_numbers_are_numbers() {
         let c = crate::compiled().expect("compiles");
         assert!(c.values.iter().all(|v| !["sig", "sig16", "long_int"].contains(&v.name.as_str())), "no mask counts digits");
         let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let d18 = "123456789012345678";
         let d19 = "1234567890123456789";
+        // Past the engine's `i64`, and what it reads in its place: the same bytes' tape.
+        let (d20, z20) = ("12345678901234567890", "00000000000000000001");
         let mut cases = Vec::new();
         for pad in [0usize, 40, 50, 60] {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
-            cases.push((format!("{head}a({d18}).\n"), true));
-            cases.push((format!("{head}a({d18}.5).\n"), true));
-            // A float's digits are its text: no limit.
-            cases.push((format!("{head}a({d19}.5).\n"), true));
-            cases.push((format!("{head}a(x) :- a(y), x = y + {d18}.\n"), true));
-            cases.push((format!("{head}a({d19}).\n"), false));
-            cases.push((format!("{head}a({d19}0).\n"), false));
-            cases.push((format!("{head}a(x) :- a(y), x = y + {d19}.\n"), false));
+            for body in [format!("a({d18}).\n"), format!("a({d18}.5).\n"), format!("a({d19}.5).\n"), format!("a(x) :- a(y), x = y + {d18}.\n"), format!("a({d19}).\n"), format!("a(x) :- a(y), x = y + {d19}.\n"), format!("a({d20}).\n"), format!("a({d20}.5).\n"), format!("a(x) :- a(y), x = y + {d20}.\n")] {
+                cases.push((format!("{head}{body}"), format!("{head}{}", body.replace(d20, z20))));
+            }
         }
-        for (src, taken) in &cases {
+        for (src, engine) in &cases {
             let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
-            reads_as_lean(src, *taken, &tapes);
+            for (who, t) in tapes {
+                assert_eq!(t.as_ref().ok(), Some(&crate::engine_tape(engine)), "{src:?}: {who}: the engine's tape of {engine:?}");
+            }
         }
     }
 
@@ -1858,7 +1857,7 @@ pub mod tests {
     /// A run rule with a short form (a number: its 16 bytes from one window, its tests from the
     /// same bits) is read in the token loop's arm for its first byte, no call, as the lean
     /// lexer reads a number in its `match` arm (`PassShape::arms`). A longer one calls the
-    /// rule's whole function (`a_numbers_checks_are_at_its_token` reads those).
+    /// rule's whole function (`a_numbers_token_takes_its_digits` reads those).
     #[test]
     fn a_short_run_is_the_loops_arm() {
         let c = crate::compiled().expect("compiles");
@@ -2575,12 +2574,12 @@ pub mod tests {
         }
         assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
         // The files tier 1 refuses at a token, whose codes are compared only up to it: the case of
-        // a number of 19 digits, after each pad, and of the corpus a file in a hundred at
-        // most (today one, a library with a number of 19 digits). A file added with such a
-        // number passes; a change that sent many files to the fallback does not.
-        let number_cases: Vec<usize> = (0..MARKS_PADS.len()).map(|p| p * MARKS_CASES.len() + MARKS_CASES.len() - 2).collect();
+        // four backticks, after each pad (a number of 19 digits is a number, 0655 step 13), and of
+        // the corpus a file in a hundred at most (today none). A change that sent many files to
+        // the fallback fails.
+        let ticks_cases: Vec<usize> = (0..MARKS_PADS.len()).map(|p| p * MARKS_CASES.len() + MARKS_CASES.len() - 1).collect();
         let (cases_at_token, corpus_at_token) = at_token.into_iter().partition::<Vec<usize>, _>(|&k| k < cased);
-        assert_eq!(cases_at_token, number_cases, "the cases tier 1 refuses at a token");
+        assert_eq!(cases_at_token, ticks_cases, "the cases tier 1 refuses at a token");
         assert!(corpus_at_token.len() * 100 <= refs.len() - cased, "{} of {} corpus files refused at a token", corpus_at_token.len(), refs.len() - cased);
         eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
     }
@@ -2589,7 +2588,7 @@ pub mod tests {
     const MARKS_PADS: [usize; 5] = [0, 40, 55, 60, 63];
 
     /// The marks test's cases.
-    const MARKS_CASES: [&str; 21] = [
+    const MARKS_CASES: [&str; 22] = [
         "r(x) :- x = ps - fe.\n",
         "r(x) :- x = ps - fe, y = \"\\\\s*\".\n",
         "r(x) :- x = {\"a\": \"b\tc\"}.\n",
@@ -2609,10 +2608,12 @@ pub mod tests {
         "r(x) :- x = 1. // \\u12\n",
         "r(x) :- x = {\"a\": 1 /* \\u12 */}.\n",
         "r(x) :- x = \"\\u12\".\n",
-        // A number tier 1 refuses at its token (19 digits), and one refused past tier 1 (a second
-        // `.`), with tokens after each.
+        // A number of 19 digits, a number (0655 step 13), and a float's second `.`, a statement
+        // recovered past tier 1, with tokens after each.
         "r(x) :- x = 1234567890123456789, y = 2.\n",
         "r(x) :- x = 1.2.3, y = 2.\n",
+        // A file tier 1 refuses at a token: four backticks, a literal no region reads.
+        "r(x) :- x = ````a````, y = 2.\n",
     ];
 
     /// The marks test's cases, each after each of `MARKS_PADS`; then a form feed in a gap across
@@ -2745,20 +2746,21 @@ pub mod tests {
         })
     }
 
-    /// A number's check at its token (`escape … at number when …`, decision 0177): an integer
-    /// of 19 digits or more refuses the file, a float's digits never, on the interpreter, the CPU and Metal
-    /// alike, with the token across a block's edge and longer than a block.
+    /// A number's token, its digits its text (decision 0655 step 13): no check refuses one, an
+    /// integer of 19 digits as a float's; a second `.` past a float is refused past tier 1, on
+    /// the interpreter, the CPU and Metal alike, with the token across a block's edge and longer
+    /// than a block.
     #[test]
-    fn a_numbers_checks_are_at_its_token() {
+    fn a_numbers_token_takes_its_digits() {
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 1, "a run, the number rule's");
+        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 0, "no token's check refuses");
         let mut cases: Vec<(String, bool)> = Vec::new();
         for pad in [0usize, 30, 40, 44, 50, 55, 58, 60, 63] {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
             cases.push((format!("{head}a(123456789012345678).\n"), true));
-            cases.push((format!("{head}a(1234567890123456789).\n"), false));
-            cases.push((format!("{head}a(0000000000000000001).\n"), false));
+            cases.push((format!("{head}a(1234567890123456789).\n"), true));
+            cases.push((format!("{head}a(0000000000000000001).\n"), true));
             cases.push((format!("{head}a(123456789012345678.5).\n"), true));
             cases.push((format!("{head}a(1234567890123456789.5).\n"), true));
             cases.push((format!("{head}a(1.{}).\n", "7".repeat(80)), true));
@@ -2774,7 +2776,7 @@ pub mod tests {
         metal_refuses_as_the_cpu(c, &refs, &cases);
     }
 
-    /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_checks_are_at_its_token`).
+    /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_token_takes_its_digits`).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn metal_refuses_as_the_cpu(c: &crate::Compiled, refs: &[&[u8]], cases: &[(String, bool)]) {
         if no_device() {

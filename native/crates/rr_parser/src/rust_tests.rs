@@ -30,6 +30,35 @@ fn image_nodes(image: &[u8]) -> Nodes {
     (0..v.len()).map(|i| (v.key(i), v.start(i), v.end(i), v.size(i))).collect()
 }
 
+/// `text` as the lean parser reads what the parser as Rust read in `ours` (its tape): where a string leaf holds a
+/// `\\u` escape, its `u` a backslash (an escaped backslash, of the escape's length), and an integer leaf past an
+/// `i64` its digits `0…01`. The lean parser writes `Bad` for a `\\u` that is no code point and an integer past
+/// an `i64`, as the engine's `unescape` and `parse` refuse them; the parser as Rust reads a string and a number, as
+/// a checker does (decision 0655 step 13). The rest of `text`, and so of the tapes, is the same.
+fn as_lean_reads(text: &str, ours: &Nodes) -> String {
+    let mut b = text.as_bytes().to_vec();
+    for &(_, start, end, size) in ours {
+        let (start, end) = (start as usize, end as usize);
+        if size != 1 || end <= start || end > b.len() {
+            continue;
+        }
+        if b[start] == b'"' {
+            let mut esc = false;
+            for c in &mut b[start + 1..end - 1] {
+                let was = *c;
+                if esc && was == b'u' {
+                    *c = b'\\';
+                }
+                esc = !esc && was == b'\\';
+            }
+        } else if b[start..end].iter().all(u8::is_ascii_digit) && text[start..end].parse::<i64>().is_err() {
+            b[start..end - 1].fill(b'0');
+            b[end - 1] = b'1';
+        }
+    }
+    String::from_utf8(b).expect("ASCII bytes for ASCII bytes")
+}
+
 /// The first node where tapes `a` and `b` of `text` differ, each named by its text.
 fn node_differs(text: &str, a: &Nodes, b: &Nodes, an: &str, bn: &str) -> Option<String> {
     // The first node whose kind or span differs (a size differs at every node around it), else whose size does.
@@ -325,7 +354,7 @@ fn a_statement_that_fails_is_one_error_leaf() {
 }
 
 /// The lean parser's edited copies of the corpus (`edited_corpus`): a tape the parser as Rust writes, a statement
-/// recovered or none, is the lean parser's, and the one loop's is the calls'. Counts the files taken whole, those taken with a statement recovered, and
+/// recovered or none, is the lean parser's (of the text as it reads the parser's strings and numbers, `as_lean_reads`), and the one loop's is the calls'. Counts the files taken whole, those taken with a statement recovered, and
 /// those refused (tier 1's errors, a limit).
 #[test]
 #[ignore = "the corpus: run by name"]
@@ -377,7 +406,7 @@ fn corpus_edited_tapes_are_the_lean_tapes() {
             refused += 1;
             continue;
         };
-        let lean = crate::rr::lean::tape(text);
+        let lean = crate::rr::lean::tape(&as_lean_reads(text, &image_nodes(&ours)));
         let nodes = image_nodes(&lean);
         if let Some(d) = node_differs(text, &nodes, &image_nodes(&ours), "the lean parser", "the parser as Rust") {
             if differ.is_empty()

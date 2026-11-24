@@ -174,13 +174,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         }
                     };
                     let l = l.max(s);
-                    if !open_bad {
-                        // a \u escape the engine checks
-                        if { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !u_ok(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } {
-                            refused = true;
-                            break 'tokens;
-                        }
-                    }
                     (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                 },
                 3 => {
@@ -193,11 +186,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     // `number`: run num_run once dot
                     let l = { let (mut l, mut once) = (s, false); while ((l + 1 < n && matches!(src[l + 1], b'0'..=b'9')) || (((l + 1 < n && (src[l + 1] == b'.')) && ((l < n && matches!(src[l], b'0'..=b'9')))) && (l + 2 < n && matches!(src[l + 2], b'0'..=b'9')))) { if (l + 1 < n && (src[l + 1] == b'.')) { if once { break; } once = true; } l += 1; } l };
                     let l = l.max(s);
-                    // a number of 19 digits or more
-                    if l + 1 - s >= 19 && (s..n.min(l + 1)).all(|i| (i < n && matches!(src[i], b'0'..=b'9'))) {
-                        refused = true;
-                        break 'tokens;
-                    }
                     (l, u32::from(kind1), false, 0)
                 },
                 6 | 13 => {
@@ -320,42 +308,6 @@ fn find_fence(b: &[u8], from: usize, fence: &[u8]) -> Option<usize> {
 #[inline]
 fn h4(src: &[u8], n: usize, i: usize) -> bool {
     ((((i + 1 < n && matches!(src[i + 1], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && matches!(src[i + 4], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')))
-}
-
-/// Mask `u_four` at byte `i`, a test of the bytes there.
-#[inline]
-fn u_four(src: &[u8], n: usize, i: usize) -> bool {
-    (h4(src, n, i) && (i < n && !((i + 1 < n && matches!(src[i + 1], b'd' | b'D')) && (i + 2 < n && matches!(src[i + 2], b'8'..=b'9' | b'a'..=b'f' | b'A'..=b'F')))))
-}
-
-/// Mask `b_short` at byte `i`, a test of the bytes there.
-#[inline]
-fn b_short(src: &[u8], n: usize, i: usize) -> bool {
-    ((((i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 3 < n && (src[i + 3] == b'}'))) || (((i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && (src[i + 4] == b'}')))) || ((((i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && matches!(src[i + 4], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 5 < n && (src[i + 5] == b'}'))))
-}
-
-/// Mask `b_four` at byte `i`, a test of the bytes there.
-#[inline]
-fn b_four(src: &[u8], n: usize, i: usize) -> bool {
-    ((((((i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && matches!(src[i + 4], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 5 < n && matches!(src[i + 5], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 6 < n && (src[i + 6] == b'}'))) && (i < n && !((i + 2 < n && matches!(src[i + 2], b'd' | b'D')) && (i + 3 < n && matches!(src[i + 3], b'8'..=b'9' | b'a'..=b'f' | b'A'..=b'F')))))
-}
-
-/// Mask `b_five` at byte `i`, a test of the bytes there.
-#[inline]
-fn b_five(src: &[u8], n: usize, i: usize) -> bool {
-    (((((((i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && matches!(src[i + 4], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 5 < n && matches!(src[i + 5], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 6 < n && matches!(src[i + 6], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 7 < n && (src[i + 7] == b'}'))) && (i < n && !(i + 2 < n && (src[i + 2] == b'0'))))
-}
-
-/// Mask `b_six` at byte `i`, a test of the bytes there.
-#[inline]
-fn b_six(src: &[u8], n: usize, i: usize) -> bool {
-    (((((((((i + 2 < n && matches!(src[i + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) && (i + 3 < n && matches!(src[i + 3], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 4 < n && matches!(src[i + 4], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 5 < n && matches!(src[i + 5], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 6 < n && matches!(src[i + 6], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 7 < n && matches!(src[i + 7], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'))) && (i + 8 < n && (src[i + 8] == b'}'))) && (i + 2 < n && (src[i + 2] == b'1'))) && (i + 3 < n && (src[i + 3] == b'0')))
-}
-
-/// Mask `u_ok` at byte `i`, a test of the bytes there.
-#[inline]
-fn u_ok(src: &[u8], n: usize, i: usize) -> bool {
-    ((u_four(src, n, i) && (i < n && !(i + 1 < n && (src[i + 1] == b'{')))) || ((i + 1 < n && (src[i + 1] == b'{')) && (((b_short(src, n, i) || b_four(src, n, i)) || b_five(src, n, i)) || b_six(src, n, i))))
 }
 
 /// `ws`: its bits in the classes' nibble tables.

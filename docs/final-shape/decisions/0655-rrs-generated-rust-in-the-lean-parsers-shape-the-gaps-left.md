@@ -304,6 +304,32 @@ JSON's and Kotlin's suites (their Rust unchanged); Bitlex's own; clippy.
 
 Tests: the rr suite, the eight corpus tests; JSON's and Kotlin's suites (their Rust unchanged); Bitlex's own; clippy.
 
+## Step 13: a string's `\u` and a long number read as written, a checker's reading (done)
+
+The user's rule (2026-11-23): tier 1 may handle errors otherwise than the engine. tree-sitter is the reference, and
+the job is to check source code, not to be pedantic. Two of the three refusals were the engine's error checks, not
+syntax:
+
+- **A `\u` in a string is the string's**, whatever its digits. A lexer reads a string to its closing quote, and
+  tree-sitter's reads a string. The grammar's `escape "a \u escape the engine checks"` and its masks (`u_four`,
+  `u_brace`, `b_short`, `b_four`, `b_five`, `b_six`, `u_ok`, three classes) are gone, and with them tier 1's six
+  functions and the string arm's refusal. JSON's `\u`, four hex digits, stays `json_bad`'s (`uesc`, `h4`): the
+  grammar's JSON check, the lean parser's.
+- **A number's digits are its text**: an integer of 19 digits or more is a number. Its `escape … at number when
+  all(digit) at least 19` is gone, and the number arm's refusal with it. No executor makes a check of a token
+  that refuses (`CheckThen::Escape`) any more.
+- The lean parser still writes `Bad` for both, as the engine's `unescape` and `parse` refuse them. The tests hold the
+  generated parser to lean's tape of the same text with each such string's escaped `u` an escaped backslash and each
+  such integer `0…01`, of the same lengths (`as_lean_reads`), and to the engine's tape the same way.
+- **Four backticks or more stay refused.** They are no error: lean and the engine read a fence of N backticks, closed
+  by the next N. The grammar's regions have fixed closers, and a closer as long as its opener would be a new region
+  reader in every executor (the interpreter, the JIT, Metal). The corpus holds no such literal. A file with one goes to
+  the engine, which reads it.
+
+Tests: the rr suite (`rr_takes_a_strings_unicode_escapes_as_written`, `long_numbers_are_numbers`,
+`a_numbers_token_takes_its_digits`; the marks test refuses four backticks at a token now), the eight corpus tests;
+JSON's and Kotlin's suites; Bitlex's own; clippy.
+
 ## The six gaps, where they stand
 
 Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers and names):
@@ -313,12 +339,9 @@ Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers a
 2. **The pick's tests once**: a group's arms test only the bytes after the one the pick says, a backtick run counted
    once (step 12).
 3. **`BAD` where lean writes it**: a block comment, string or literal open at the end, a byte no token begins with
-   and a character past ASCII are `bad` tokens, their statement recovering (decision 0650, step 11). Three
-   refusals stay, each the grammar's `escape` to the engine, whose reading tier 1's must be: a `\u` escape not one
-   of the forms the bytes say a code point (lean's `unescape` reads characters: a surrogate pair, `\u+abc`); a
-   number of 19 digits (one may fit an `i64`, which no mask says); four backticks or more (lean finds a fence of its
-   own count; a region of a closer as long as its opener is a reader every executor would need: the interpreter,
-   the JIT, Metal's).
+   and a character past ASCII are `bad` tokens, their statement recovering (decision 0650, step 11). A string's `\u`
+   and a long number are read as written (step 13). One refusal stays, four backticks or more, which is syntax, not an
+   error.
 4. **Marks**: no marks in a record and no extra's bit (step 9), no `float_after` and no check after the loop.
    `token_test`, `tested` and `gap` stay for what tier 2 asks where it reads it: `float_at` (a float's kind at its
    number's first byte would need `back_fill`, decision 0416), `json_bad` (the grammar's JSON checks, lean's
@@ -328,11 +351,7 @@ Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers a
 6. **Tables**: `TOKEN` gives a pair's kind and code by one load (`+ 256`, `+ 512` for `<:`), `WORDS` is built at
    compile time from `WORD_LIST` (step 8), and the block's classes are one pair, lean's `LO`, `HI` (step 11).
 
-### What the refusals left reach
+### What the refusal left reaches
 
-Over the corpus the corpus tests read (2,013 `.rr` files): no string holds a `\u` escape (each `\u` in one is `\\u`,
-an escaped backslash, then `u`); no file holds four backticks; three files hold a bare number of 19 digits or more,
-four numbers in all. Two of them fit an `i64` (lean's `NUM`) and two do not (lean's `BAD`). Tier 1 sends those three
-files to the engine, and the corpus tests find its tape the engine's. Closing a refusal past this would take a mask
-of an `i64`'s bound, a reader of characters, or a region whose closer is as long as its opener in every executor, for
-cases the corpus holds three files of. That is where this work stops.
+Over the corpus the corpus tests read (2,013 `.rr` files) no file holds four backticks. Since step 13 tier 1 refuses
+no corpus file at a token: the three files with a number of 19 digits or more are read whole.

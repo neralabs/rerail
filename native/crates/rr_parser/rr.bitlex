@@ -50,9 +50,6 @@ class dot       = '.'
 class comma     = ','
 class u         = 'u'
 class hex       = '0'..'9' 'a'..'f' 'A'..'F'
-class c_d       = 'd' 'D'
-class upper_hex = '8'..'9' 'a'..'f' 'A'..'F'
-class one       = '1'
 class lbrace    = '{'
 class punct     = '(' ')' ',' '.' ';' ':' '=' '<' '>' '!' '|' '@' '*' '[' ']' '-' '+' '/' '%' '~' '^' '&' '{' '}'
 class minus     = '-'
@@ -132,25 +129,12 @@ mask region     = hidden | o_str | o_line | o_block | o_tick
 
 # Four backticks: the token loop's, whose reader finds no opener at a backtick (decision 0177).
 escape "a run of four backticks or more" by tokens when ttt & next(tick, 3) & ~hidden
-# A `\u` in a string: the forms that are code points by their bytes; any other goes to the
-# engine, which checks it. `h4`: four hex digits after the `u`. An escaped `u` anywhere: the
-# check is at the string's token, so one in a comment is none.
+# A `\u` in a string is the string's, whatever its digits: a lexer reads the string to its
+# closing quote, and a string is a string (a checker's reading, as tree-sitter's, not the
+# engine's `unescape`). JSON's `\u`, four hex digits, is `json_bad`'s (below). `uesc`: an
+# escaped `u`; `h4`: four hex digits after it.
 mask uesc       = escaped & u
 mask h4         = next(hex) & next(hex, 2) & next(hex, 3) & next(hex, 4)
-# `\uXXXX`, no surrogate: not `D8` to `DF` first.
-mask u_four     = h4 & ~(next(c_d) & next(upper_hex, 2))
-# `\u{…}`: the digits from the byte after the `{`.
-mask u_brace    = next(lbrace)
-mask b_short    = (next(hex, 2) & next(rbrace, 3)) | (next(hex, 2) & next(hex, 3) & next(rbrace, 4))
-                | (next(hex, 2) & next(hex, 3) & next(hex, 4) & next(rbrace, 5))
-mask b_four     = next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & next(rbrace, 6) & ~(next(c_d, 2) & next(upper_hex, 3))
-mask b_five     = next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & next(hex, 6) & next(rbrace, 7) & ~next(zero, 2)
-mask b_six      = next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & next(hex, 6) & next(hex, 7) & next(rbrace, 8)
-                & next(one, 2) & next(zero, 3)
-mask u_ok       = (u_four & ~u_brace) | (u_brace & (b_short | b_four | b_five | b_six))
-# Checked at the string's token, as a lexer checks the escape it reads: tier 2's, at each `\u`
-# in it (a local check, `CHECK`), so tier 1 makes none of the digits' masks.
-escape "a \\u escape the engine checks" at string when count(uesc & ~u_ok) at least 1
 
 # --- Code --------------------------------------------------------------------------------------
 
@@ -185,10 +169,9 @@ mask int        = num & ~frac                   # an integer's digits
 # A float is one token, as simdjson's number is one scalar: a number with a `.`. Its own token
 # says so (`float_at`, below), and tier 2 reads it a float there, as the lean lexer's number arm
 # writes a float where it read a `.`.
-# The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
-# checked by it, so it goes to the engine, with its leading zeros (the engine's tape either
-# way). A float's digits are its text: no limit. Checked at the number's token (below): a token
-# of digits alone, 19 at least.
+# A number's digits are its text, an integer's as a float's: one of 19 digits or more is a
+# number, as a checker reads it (tree-sitter's), though the engine's i64 holds none past
+# 9223372036854775807.
 
 # Directives the engine refuses by the token after them: token marks, after the other marks.
 
@@ -248,8 +231,6 @@ token identifier = start id_first run word
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
 token number     = start int_first run num_run once dot
-# A number's check, at its token as a lexer reads it: an integer of 19 digits or more.
-escape "a number of 19 digits or more" at number when all(digit) at least 19
 token punct      = start punct & p_start pair two_start
 token bad        = start bad_first pair empty
 token bad_char   = start char_first run cont
