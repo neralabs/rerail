@@ -58,9 +58,9 @@ npm runs for the daily update check, updates, set-up, recommending and adding pa
 | When | What npm fetches |
 | --- | --- |
 | Once a day, in the daemon of an installed Rerail, unless `RERAIL_UPDATE_CHECK=0` | The newest `@neralabs/rerail` version on your channel; nothing is installed |
-| `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version |
+| `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version and this computer's engine package, `@neralabs/rerail-engine-<suffix>`, at the same version |
 | `rerail update` | The newest version of each rule pack you installed, asked by its package name on your channel (on `next` for a pack the channel has no version of) |
-| `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install |
+| `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install, with this computer's engine package, `@neralabs/rerail-engine-<suffix>` |
 | Set-up, `rerail start`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
 | `rerail packs add`, packs confirmed in set-up | The chosen packs |
 | SQLite binding fails its load check, when the daemon starts or during an update | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |

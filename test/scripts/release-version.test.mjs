@@ -37,6 +37,8 @@ function repository() {
   const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", ...args], { cwd: root, encoding: "utf8" });
   cpSync(join(REPOSITORY, "scripts/release"), join(root, "scripts/release"), { recursive: true });
   cpSync(join(REPOSITORY, "scripts/check/check-internal-refs.mjs"), join(root, "scripts/check/check-internal-refs.mjs"));
+  // core.mjs installs a released core beside its engine package, whose table reaches the build's npm command.
+  cpSync(join(REPOSITORY, "scripts/build/ensure-sqlite.mjs"), join(root, "scripts/build/ensure-sqlite.mjs"));
   write("package.json", `${JSON.stringify({ name: "core", version: "1.0.0", type: "module", scripts: { "version:packs": "node bump.mjs" } }, null, 2)}\n`);
   write("bump.mjs", BUMP);
   // The scripts' dependencies; ignored, so no commit below takes the link.

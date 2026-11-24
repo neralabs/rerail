@@ -47,9 +47,11 @@ How rule packs are built, ported, checked and extended.
 ## Release
 How core and packs are published.
 
-- [release.md](release.md): how core is built, versioned and published
+- [release.md](release.md): how core and its engine packages are built, versioned and published
 - [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first npm publish and its trusted
   publisher
+- [publishing-the-engine-packages.md](publishing-the-engine-packages.md): runbook for the first npm publish of the six
+  engine packages and their trusted publishers
 - [environment-matrix.md](environment-matrix.md): the operating systems a release is installed and exercised on, and
   what each run checks
 

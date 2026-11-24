@@ -29,7 +29,8 @@ Confirm the pack is ready and your accounts can publish it.
 
 - **Not private:** its `package.json` has no `"private": true` (remove it, add `publishConfig` with `access`
   `public`, and add the pack's changeset in one pull request).
-- **Merged** on `main` at `0.1.0` with a `patch` changeset, and listed in `src/engine/catalog/pack-list.generated.ts`.
+- **Merged** on `main` at `0.1.0` with its changeset ([pack-format.md](pack-format.md#versioning-and-release)), and
+  listed in `src/engine/catalog/pack-list.generated.ts`.
 - **Pack data published** (ported packs only), and shipped rules pass the conformance check.
 - **AWS** (ported packs only): read access to the test data bucket.
 - **npm:** `npm whoami` prints a `neralabs` member with publish rights; else `npm login` interactively with 2FA.

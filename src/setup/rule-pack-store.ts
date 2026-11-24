@@ -80,6 +80,16 @@ export interface FetchedPacks {
   release(): Promise<void>;
 }
 
+/** How `PackStore.install` reaches the registry. */
+export interface InstallOptions {
+  /**
+   * Install exact versions from npm's cache (`--prefer-offline`), where the caller expects npm to hold them: set-up's
+   * discovery has just fetched them, and a scan may run with no network. npm then takes a cached listing however old,
+   * so when it lacks the version the install asks the registry once more (#992).
+   */
+  readonly preferOffline?: boolean;
+}
+
 /** Where packs come from and go to: npm in production (`npmPackStore`); tests give their own. */
 export interface PackStore {
   /**
@@ -89,8 +99,11 @@ export interface PackStore {
   readonly home: string;
   /** Each pack in `ids` at the version under `tag`, fetched without installing it; a pack that cannot be is a problem. */
   fetch(ids: readonly string[], tag: string): Promise<FetchedPacks>;
-  /** Installs these npm specs (`<name>@<version>`, a tarball, a folder) into `home`'s packs. */
-  install(specs: readonly string[]): Promise<void>;
+  /**
+   * Installs these npm specs (`<name>@<version>`, a tarball, a folder) into `home`'s packs. With `preferOffline`, exact
+   * versions are installed from npm's cache when it lists them, without asking the registry.
+   */
+  install(specs: readonly string[], options?: InstallOptions): Promise<void>;
   /** Uninstalls these packages from `home`'s packs. */
   remove(packageNames: readonly string[]): Promise<void>;
 }
@@ -206,14 +219,14 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
       // folder is retried while Windows holds a file in it, then left for a later fetch's sweep.
       return { fetched, problems, release: () => removeScratch(run) };
     },
-    async install(specs) {
+    async install(specs, options = {}) {
       if (specs.length === 0) return;
-      // Exact versions only: the tarballs discovery just fetched are in npm's cache under their integrity, so an
-      // answer installs the version the person saw without asking the registry again. `rerail packs update` installs
-      // a version its `npm view` just read, which writes the listing this install reads from the cache. A tag or
-      // range must ask the registry. A version named by hand may be missing from an old cached listing (#992).
-      const exact = specs.every(spec => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null);
-      await npm(["install", "--prefix", prefix, ...quiet, ...(exact ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
+      const install = async (offline: boolean) => {
+        await npm(["install", "--prefix", prefix, ...quiet, ...(offline ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
+      };
+      // A tag or range must ask the registry whatever the caller wants.
+      if (options.preferOffline === true && specs.every(isExactVersionSpec)) await installCacheFirst(install);
+      else await install(false);
     },
     async remove(packageNames) {
       if (packageNames.length === 0) return;
@@ -221,6 +234,23 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
       await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
     },
   };
+}
+
+/** Whether npm spec `spec` (`<name>@<version>`) names one exact version. */
+const isExactVersionSpec = (spec: string): boolean => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null;
+
+/**
+ * Runs `install` from npm's cache, and once more asking the registry when npm finds no such version: the cached listing
+ * predates it (#992). npm says so at once, so a stopped install is never tried again, and the packs lock's wait still
+ * covers a stopped install and its put-back.
+ */
+async function installCacheFirst(install: (offline: boolean) => Promise<void>): Promise<void> {
+  try {
+    await install(true);
+  } catch (error) {
+    if (!(error instanceof Error) || !NO_VERSION_UNDER_TAG.test(error.message)) throw error;
+    await install(false);
+  }
 }
 
 /** The update channel in the Rerail home's `update-state.json`: the dist-tag packs are fetched under. */
@@ -657,6 +687,7 @@ async function installChecked(
   store: PackStore,
   specsOf: (before: ReadonlyMap<string, PrefixEntry>) => readonly string[],
   expectedOf: (changed: readonly string[]) => readonly PackVersion[],
+  options: InstallOptions = {},
 ): Promise<PackInstall> {
   const { home } = store;
   return await withPacksLock(home, async () => {
@@ -665,7 +696,7 @@ async function installChecked(
     const specs = specsOf(before);
     if (specs.length > 0) {
       try {
-        await store.install(specs);
+        await store.install(specs, options);
       } catch (error) {
         // npm usually undoes a failed install itself; one that stopped partway (a full disk) may not have.
         return { problem: `${fetchProblemReason(specs.join(", "), error)}. ${await restorePrefix(store, before)}` };
@@ -690,12 +721,16 @@ async function installChecked(
   });
 }
 
-/** Set-up's install: exactly these versions, each of which must then load. Installs only those not installed already. */
+/**
+ * Set-up's install: exactly these versions, each of which must then load. Installs only those not installed already.
+ * They are the versions discovery just fetched, so npm installs them from its cache without asking the registry again.
+ */
 export async function installPackVersions(packs: readonly PackVersion[], store: PackStore): Promise<string | undefined> {
   const result = await installChecked(
     store,
     before => packs.filter(pack => (before.get(pack.packageName)?.version ?? null) !== pack.version).map(packSpec),
     () => packs,
+    { preferOffline: true },
   );
   return "problem" in result ? result.problem : undefined;
 }

@@ -1,5 +1,6 @@
 // The release workflows' guards that live in their YAML, where no script can hold them: what a release tag publishes
-// to, and what may move `latest` (docs/release.md, "Promoting").
+// to, the order its seven packages are packed and published in (docs/release.md, "Engine packages"), and what may move
+// `latest` (docs/release.md, "Promoting").
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -10,6 +11,44 @@ import { parse } from "yaml";
 const WORKFLOWS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows");
 const workflow = (name) => parse(readFileSync(join(WORKFLOWS, name), "utf8"));
 const runs = (steps, text) => steps.findIndex((step) => String(step.run ?? "").includes(text));
+/** The folder package.yml packs the seven tarballs into and uploads. */
+const PACKED = "${{ runner.temp }}/rerail-package";
+
+describe("package.yml", () => {
+  const { jobs, on } = workflow("package.yml");
+  const steps = jobs.package.steps;
+
+  it("packs all six engine packages, then core against them, and checks the tarball before anything installs it", () => {
+    const engines = runs(steps, "scripts/release/engine/packages.mjs pack");
+    const core = runs(steps, "npm pack");
+    const check = runs(steps, "scripts/release/shrinkwrap-pack.mjs check");
+    const smoke = runs(steps, "npm install --prefix");
+    expect(engines).toBeGreaterThan(steps.findIndex((step) => step.name === "Download native engines"));
+    expect(steps[engines].run).toBe('node scripts/release/engine/packages.mjs pack --all --out "$RUNNER_TEMP/rerail-package"');
+    expect(core).toBeGreaterThan(engines);
+    expect(check).toBeGreaterThan(core);
+    expect(smoke).toBeGreaterThan(check);
+    // One folder throughout: the pins come from its manifest, and the check hashes its tarballs.
+    for (const index of [core, check, smoke]) expect(steps[index].env.RERAIL_ENGINE_PACKAGES, steps[index].name).toBe(PACKED);
+    expect(steps[core].run).toContain('npm pack --json --pack-destination "$RERAIL_ENGINE_PACKAGES"');
+    expect(steps[check].run).toBe('node scripts/release/shrinkwrap-pack.mjs check "$RERAIL_ENGINE_PACKAGES/$PACKAGE_TARBALL"');
+  });
+
+  it("installs core together with the runner's engine package, since core's tarball alone installs with no engine", () => {
+    const smoke = steps[runs(steps, "npm install --prefix")].run;
+    expect(smoke).toContain('npm install --prefix "$smoke_directory" "$RERAIL_ENGINE_PACKAGES/$PACKAGE_TARBALL" "$RERAIL_ENGINE_PACKAGES/$engine_tarball"');
+    expect(smoke).toContain("enginePackageFor().name");
+    expect(smoke.indexOf("npm install --prefix")).toBeLessThan(smoke.indexOf("nativeHealth().ok"));
+    expect(smoke).toContain('compgen -G "$installed/native/*.node"');
+  });
+
+  it("uploads the seven tarballs and the manifest as one artifact, and still names core's tarball for the workflows that call it", () => {
+    const upload = steps.at(-1);
+    expect(upload.with).toMatchObject({ name: "rerail-package", path: PACKED, "if-no-files-found": "error" });
+    expect(jobs.package.outputs.tarball).toBe("${{ steps.packed-package.outputs.tarball }}");
+    expect(on.workflow_call.outputs.tarball.value).toBe("${{ jobs.package.outputs.tarball }}");
+  });
+});
 
 describe("release.yml", () => {
   const { jobs } = workflow("release.yml");
@@ -24,9 +63,69 @@ describe("release.yml", () => {
     const steps = jobs.publish.steps;
     const refusal = runs(steps, "publishRefusal(");
     expect(refusal).toBeGreaterThan(-1);
-    expect(refusal).toBeLessThanOrEqual(runs(steps, "npm publish"));
-    const publish = steps[runs(steps, "npm publish")].run;
-    expect(publish.indexOf("publishRefusal(")).toBeLessThan(publish.indexOf("npm publish"));
+    // Before the first of the seven publishes, which is an engine package's.
+    expect(refusal).toBeLessThan(runs(steps, "engine/release.mjs publish"));
+    expect(refusal).toBeLessThan(runs(steps, "npm publish"));
+  });
+
+  it("publishes the six engine packages and reads them back before core, so core is never on npm ahead of an engine it pins", () => {
+    const steps = jobs.publish.steps;
+    const engines = runs(steps, "engine/release.mjs publish");
+    const core = runs(steps, "npm publish");
+    expect(engines).toBeGreaterThan(-1);
+    expect(core).toBeGreaterThan(engines);
+    // The one `npm publish` the workflow spells is core's; the script publishes the engine packages and reads them back.
+    expect(steps.filter((step) => String(step.run ?? "").includes("npm publish"))).toHaveLength(1);
+    expect(steps[engines].run).toBe("node scripts/release/engine/release.mjs publish release");
+    expect(steps[core].env.PACKAGE_TARBALL).toBe("release/${{ needs.package.outputs.tarball }}");
+    expect(steps[engines].env).toEqual({ RELEASE_CHANNEL: "${{ needs.metadata.outputs.channel }}", RELEASE_VERSION: "${{ needs.metadata.outputs.version }}" });
+    // Core's publish runs only when the step before it succeeded: nothing lets it run past a failed read-back.
+    for (const step of steps.slice(engines)) {
+      expect(step.if, step.name).toBeUndefined();
+      expect(step["continue-on-error"], step.name).toBeUndefined();
+    }
+    expect(jobs.publish["continue-on-error"]).toBeUndefined();
+  });
+
+  it("gives the publish job time for seven uploads and the read-back", () => {
+    expect(jobs.publish["timeout-minutes"]).toBeGreaterThanOrEqual(30);
+  });
+
+  it("checks the tarball against the engine packages of the artifact it came in, before anything is published", () => {
+    const { shrinkwrap, publish } = jobs;
+    const download = shrinkwrap.steps.find((step) => String(step.uses ?? "").startsWith("actions/download-artifact@"));
+    const check = shrinkwrap.steps[runs(shrinkwrap.steps, "shrinkwrap-pack.mjs check")];
+    expect(download.with).toEqual({ name: "rerail-package", path: "release" });
+    expect(check.env.RERAIL_ENGINE_PACKAGES).toBe("release");
+    expect(publish.needs).toContain("shrinkwrap");
+  });
+
+  it("reads back the dist-tag of core and of each engine package published with it", () => {
+    const check = jobs["dist-tags"].steps[runs(jobs["dist-tags"].steps, "dist-tags-check.mjs")];
+    expect(check.run).toContain('node scripts/release/engine/release.mjs specs "$VERSION" "$CHANNEL"');
+    expect(check.run).toContain('RELEASED="@neralabs/rerail@${VERSION}:${CHANNEL} ${engines}" node scripts/release/dist-tags-check.mjs');
+    expect(check.env).toEqual({ VERSION: "${{ needs.metadata.outputs.version }}", CHANNEL: "${{ needs.metadata.outputs.channel }}" });
+  });
+
+  it("moves latest for core and then each engine package of the version, raises next for all of them and reads all of them back", () => {
+    const steps = jobs.promote.steps;
+    const list = steps.findIndex((step) => step.id === "packages");
+    const move = runs(steps, "npm dist-tag add");
+    const raise = runs(steps, "raise-next.mjs");
+    const check = runs(steps, "dist-tags-check.mjs");
+    const specs = "${{ steps.packages.outputs.specs }}";
+    // Core first, then whatever engine packages the version has: none for one from before them, so a put-back to it
+    // moves core alone.
+    expect(steps[list].run).toContain('engines="$(node scripts/release/engine/release.mjs specs "$VERSION")"');
+    expect(steps[list].run).toContain('echo "specs=@neralabs/rerail@${VERSION} ${engines}" >> "$GITHUB_OUTPUT"');
+    expect(list).toBeGreaterThan(runs(steps, "superseded"));
+    expect([move, raise, check]).toEqual([list + 1, list + 2, list + 3]);
+    expect(steps[move].env.SPECS).toBe(specs);
+    expect(steps[move].run).toContain('for spec in "${specs[@]}"; do');
+    expect(steps[move].run).toContain('npm dist-tag add "$spec" latest');
+    expect(steps[raise].env.SPECS).toBe(specs);
+    expect(steps[raise].run).toContain('node scripts/release/raise-next.mjs "${specs[@]}"');
+    expect(steps[check].env.RELEASED).toBe(specs);
   });
 
   it("raises next only when latest moves, never on a publish", () => {
@@ -116,6 +215,15 @@ describe("release-packs.yml", () => {
 });
 
 describe("every release workflow", () => {
+  // One table names the engine packages (ENGINE_PACKAGES in scripts/release/engine/packages.mjs), and a name is
+  // permanent once published: a workflow or a host script asks the scripts for the names.
+  it("spells no engine package's name", () => {
+    const root = join(WORKFLOWS, "..", "..");
+    const scripts = ["scripts/host/azure/guest.sh", "scripts/host/azure/guest.ps1", "scripts/host/azure/matrix.mjs", "scripts/host/windows-host.ps1", "scripts/host/windows-install-smoke.ps1"];
+    const workflows = ["package.yml", "release.yml", "env-matrix.yml", "release-pr.yml"].map((name) => `.github/workflows/${name}`);
+    for (const path of [...workflows, ...scripts]) expect(readFileSync(join(root, path), "utf8").includes("@neralabs/rerail-engine-"), path).toBe(false);
+  });
+
   it("reads only the outputs of the jobs each job needs, which are all GitHub gives it", () => {
     for (const name of ["release.yml", "release-packs.yml"]) {
       for (const [id, job] of Object.entries(workflow(name).jobs)) {
