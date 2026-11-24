@@ -43,19 +43,19 @@ pub struct Kernel {
 type R<T> = Result<T, Error>;
 
 /// The kept form's first bytes, and its version: a change to the layout below changes it.
-const KEPT: &[u8; 8] = b"UKLVEC01";
+const KEPT: &[u8; 8] = b"UKLVEC02";
 
 impl Kernel {
     /// The kernel as bytes, for a store of compiled kernels (the device's): its name, its flag, then each tape's
-    /// image and words, each a length and its bytes, little-endian.
+    /// nodes (`[key, start, end, size]` each) and words, each a count and its words, little-endian.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = KEPT.to_vec();
         out.extend((self.name.len() as u64).to_le_bytes());
         out.extend(self.name.as_bytes());
         out.push(u8::from(self.lid));
         for t in [&self.tape, &self.code] {
-            out.extend((t.image.len() as u64).to_le_bytes());
-            out.extend(&t.image);
+            out.extend((t.nodes.len() as u64).to_le_bytes());
+            out.extend(t.nodes.iter().flatten().flat_map(|w| w.to_le_bytes()));
             out.extend((t.words.len() as u64).to_le_bytes());
             out.extend(t.words.iter().flat_map(|w| w.to_le_bytes()));
         }
@@ -79,12 +79,16 @@ impl Kernel {
         let lid = take(1)?[0] != 0;
         let mut tapes = Vec::new();
         for _ in 0..2 {
+            let word = |c: &[u8; 4]| u32::from_le_bytes(*c);
             let n = len(take(8)?)?;
-            let image = rerail_tape_format::Vector::from(take(n)?);
+            let nodes = take(n.checked_mul(16)?)?.as_chunks::<16>().0.iter().map(|c| std::array::from_fn(|k| word(&c.as_chunks::<4>().0[k]))).collect();
             let n = len(take(8)?)?;
-            let words = take(n.checked_mul(4)?)?.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
-            rerail_tape_format::View::new(&image).ok()?;
-            tapes.push(Tape { image, words });
+            let words = take(n.checked_mul(4)?)?.as_chunks::<4>().0.iter().map(word).collect();
+            let t = Tape { nodes, words };
+            if !t.well_formed() {
+                return None;
+            }
+            tapes.push(t);
         }
         if at != b.len() {
             return None;
@@ -127,9 +131,17 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
         }
         // The next round's bodies: at each site, those the rounds before wanted there, and what this one did.
         let at: HashMap<usize, (Spec, usize)> = e.origins.iter().map(|(call, site)| (*call, site.clone())).collect();
+        let callees: HashMap<usize, u32> = e.origins.iter().map(|(call, _)| (*call, e.b.word(*call, 0))).collect();
+        // Each call's caller's body (the last body to start before it: the tape is in preorder).
+        let starts: Vec<usize> = kids(&e.b, 0).into_iter().filter(|&c| kind(&e.b, c) == Kind::Body).collect();
+        let caller = |call: usize| starts.partition_point(|&s| s < call).checked_sub(1).map(|k| starts[k]);
         drop(e);
         for (call, c) in std::mem::take(&mut a.wanted) {
-            if !c.is_empty() {
+            // A function written once for its calls has its fallback body at a call where neither it nor its caller
+            // reaches a sync point: a context is what shows a group's lanes reach one together, and a callee's
+            // result of one value (its context's) what keeps its caller's control so.
+            let syncs = a.sync[call] || caller(call).is_none_or(|b| a.sync[b]);
+            if !c.is_empty() && (syncs || !joins(p, &kv, callees[&call])) {
                 known.entry(at[&call].clone()).or_default().insert(c);
             }
         }
@@ -146,6 +158,17 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
     let tape = b.finish();
     let code = crate::code::compile(&tape)?;
     Ok(Kernel { tape, code, name: f.name.clone(), lid, jit: Default::default(), cl: Default::default() })
+}
+
+/// The nodes past which a function is written once for its calls (`joins`).
+pub const JOIN_NODES: usize = 400;
+
+/// Whether function `id` of `p` is written once for its calls: its fallback body alone (no context's, where it
+/// reaches no sync point), its arguments' shapes joined in its Rust (rs.rs). A function the source declares a call (`Func::called`), or one of
+/// more than `JOIN_NODES` nodes, whose bodies' code would outweigh what knowing an argument one value saves.
+pub fn joins(p: &Program, kv: &View, id: u32) -> bool {
+    let f = &p.funcs[id as usize];
+    f.called || f.node.is_some_and(|n| kv.size(n) > JOIN_NODES)
 }
 
 /// The context a function is called in: each argument's level (an aggregate's, its most varying byte's). A body's
@@ -242,9 +265,9 @@ fn callee_instance(b: &Builder, call: usize) -> u32 {
 impl<'p> Emitter<'_, 'p> {
     /// Node `n`'s own payload words (before its first child's).
     fn own(&self, n: usize) -> &'p [u32] {
-        let v = &self.kv.v;
-        let s = v.start(n) as usize;
-        let e = if v.size(n) > 1 { v.start(n + 1) } else { v.end(n) } as usize;
+        let v = self.kv;
+        let s = v.start(n);
+        let e = if v.size(n) > 1 { v.start(n + 1) } else { v.end(n) };
         &self.kv.words[s..e]
     }
 

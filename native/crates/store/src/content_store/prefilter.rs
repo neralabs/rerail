@@ -29,11 +29,6 @@ use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId
 use rusqlite::{Connection, types::Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-/// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
-/// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
-/// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
-/// (`postings::segment_positions`, decision 0045). 9: kept facts (`kept`), with no edges.
-pub const PREFILTER_VERSION: i64 = 9;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -43,7 +38,7 @@ pub const UNCLEAN: u8 = 2;
 /// The kind's unclean leaves exceed the residue bounds.
 pub const TOO_BIG: u8 = 4;
 
-pub use rerail_store_base::content_store::prefilter::TapePrefilter;
+pub use rerail_store_base::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
 
 /// Terms whose publication fails in a store (`ContentStore::reject_prefilter_term_for_test`): a failed publication's
 /// rollback, tested.
@@ -220,7 +215,7 @@ impl ContentStore {
                 let (from, to) = (super::object_segments::object_dir(&self.database_path), super::object_segments::object_dir(path));
                 if let Ok(entries) = std::fs::read_dir(&from) {
                     let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten() {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }
@@ -249,7 +244,7 @@ impl ContentStore {
             for space in &spaces {
                 let (from, to) = (super::kept_facts::space_dir(&self.database_path, space), super::kept_facts::space_dir(path, space));
                 if let Ok(entries) = std::fs::read_dir(&from) {
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten().filter(|e| !e.file_name().to_string_lossy().ends_with(".new")) {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }

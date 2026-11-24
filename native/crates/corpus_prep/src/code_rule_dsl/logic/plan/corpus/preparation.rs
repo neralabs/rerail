@@ -38,14 +38,18 @@ impl<F: FnMut(&Version) -> Result<(), String>> ProgramPass for Check<F> {
     }
 }
 
-/// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one).
+/// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one). A node read
+/// (`typing::file_local::reads_a_node`) reads the long-text nodes' binding, though no atom names it.
 pub struct InputsRead;
 
 impl ProgramPass for InputsRead {
     const NAME: &'static str = "the inputs the rules read";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let read: HashSet<u32> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| a.rel().0).collect::<Vec<_>>()).collect();
+        let mut read: HashSet<u32> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| a.rel().0).collect::<Vec<_>>()).collect();
+        if let Some(long) = v.rel(crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES).filter(|_| v.rules().any(|r| crate::code_rule_dsl::typing::file_local::reads_a_node(v, r))) {
+            read.insert(long.0);
+        }
         let outputs: HashSet<&str> = v.outputs().map(|a| v.text(a)).collect();
         let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
         let kept: Vec<&str> = inputs.iter().copied().filter(|i| v.rel(i).is_some_and(|r| read.contains(&r.0)) || outputs.contains(i)).collect();

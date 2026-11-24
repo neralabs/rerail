@@ -379,14 +379,14 @@ pub struct Guests {
 struct Held {
     dialect: crate::code_rule_dsl::language::GrammarDialect,
     parse: crate::code_rule_dsl::embed::Parse,
-    text: Arc<String>,
+    text: Arc<crate::code_rule_dsl::tape::Text>,
     segments: Arc<crate::code_rule_dsl::embed::segments::SegmentMap>,
     at: Option<std::ops::Range<usize>>,
 }
 
 impl Held {
     fn made(program: crate::code_rule_dsl::embed::Program) -> Self {
-        Held { dialect: program.dialect, parse: program.parse, text: Arc::new(program.text), segments: Arc::new(program.segments), at: program.at }
+        Held { dialect: program.dialect, parse: program.parse, text: Arc::new(program.text.into()), segments: Arc::new(program.segments), at: program.at }
     }
 
     fn kept(image: &crate::code_rule_dsl::tape::DerivedImage) -> Self {
@@ -944,11 +944,11 @@ fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
-    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
+    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone().into()) };
     let built = match (&parses.store, tape_tag_of(label, fragment)) {
         // Decision 0431 R6: found among the last runs' tapes by its text, or queued earlier in this run; else parsed,
         // and queued for the store with its source, which the manifest names.
-        (Some(s), Some(tag)) if cfg!(feature = "tape-cache") => {
+        (Some(s), Some(tag)) => {
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(key.2.as_bytes()).into();
             let hash = crate::content_store::HashKey::from_sha256_digest(digest);
@@ -993,7 +993,7 @@ fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String
 /// An embedded program's facts, read off the tape or tree its embedder parsed its text into (`parse`), with its tape
 /// kept beside them (decision 0222): the rules over a view read W's values (`value`, a key's text) as over a file,
 /// and a value is read off the document's tape. Its tape is not stored (Q30).
-fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl::embed::Parse, segments: &crate::code_rule_dsl::embed::segments::SegmentMap, tape_verdict: bool) -> Result<Option<(Parsed, Tape)>, String> {
+fn taped(path: &str, label: &str, text: Arc<crate::code_rule_dsl::tape::Text>, parse: crate::code_rule_dsl::embed::Parse, segments: &crate::code_rule_dsl::embed::segments::SegmentMap, tape_verdict: bool) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: text };
     // Read off the embedder's parse, not parsed again.
     let built = core::build_parsed(&file, parse, segments, true).map_err(|e| format!("{path}: {e}"))?;

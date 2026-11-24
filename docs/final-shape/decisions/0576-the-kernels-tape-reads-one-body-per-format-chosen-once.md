@@ -1,9 +1,9 @@
 # 0576. The kernels' tape reads: one body per format, the format chosen once, 16z checked once
 
-Status: decided (2026-11-21), by the user: "we need to change it completely / include it 3 times with different
-includes, once for each format / format detection happens in one place and is implicit everywhere else / move all
-validation to a single place / have a single read helper (the compiler can inline it if it needs to) / I want simple
-and straightforward code for each one". Amends 0524 §1 (the shape of the hand-written `tape_body.h`).
+Status: built (audited 2026-11-23). Decided (2026-11-21), by the user: "we need to change it completely / include it 3
+times with different includes, once for each format / format detection happens in one place and is implicit everywhere
+else / move all validation to a single place / have a single read helper (the compiler can inline it if it needs to) /
+I want simple and straightforward code for each one". Amends 0524 §1 (the shape of the hand-written `tape_body.h`).
 
 ## Intro
 
@@ -162,7 +162,8 @@ format 16's reads alone.
    wrong. A device's gap is UKL's to work around, per backend: `ukl/backend.h` defines `UKL_SHARED` (a small read
    many places reach: the `tape_*` and `Node_*` reads, a relation's column) and `UKL_LARGE` (a large body many reach:
    the steps, the evaluators, the task, the join stages' row writers, the label walks' scans, 16z's block lookup) as
-   `UKL_INLINE` on Metal and the CPU, as these bodies were before §9; and as calls on CUDA and OpenCL, whose compilers
+   `UKL_INLINE` on Metal (but on the Apple G13, where they are calls: decision 0672) and the CPU, as these bodies were
+   before §9; and as calls on CUDA and OpenCL, whose compilers
    (NVRTC, IGC) compile each inlined copy apart. On CUDA the transducer's tests' interpreter and JIT kernels
    (`all_backends_execute_every_verified_instruction_and_mode`, `wildcard_and_missing_flags_…`) compiled in 40 s and
    26 s with both called, 187 s and 131 s with the reads inlined and the large bodies called, and over 240 s with

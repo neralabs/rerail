@@ -29,9 +29,9 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
+import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, rerailRules, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
-import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
+import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog, rerailRuleHeader } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
 
 /**
@@ -105,7 +105,8 @@ function rulesAt(pack, commit) {
   const parsed = JSON.parse(manifest);
   const entries = parsed.rules ?? [];
   const documents = read(entries.map((rule) => posix.join(directory, rule.document)));
-  const byId = new Map(entries.map((rule, index) => [rule.id, documents[index] === null ? undefined : JSON.parse(documents[index])]));
+  const parse = (rule, text) => (rule.document.endsWith(".rerail") ? rerailRuleHeader(text) : JSON.parse(text));
+  const byId = new Map(entries.map((rule, index) => [rule.id, documents[index] === null ? undefined : parse(rule, documents[index])]));
   const rules = packRules(parsed, (rule) => byId.get(rule.id));
   const unmoded = rules.find((rule) => rule.start === undefined);
   if (unmoded !== undefined) throw new Error(`${directory}: its document gives ${unmoded.id} no mode${commit === null ? "" : ` at ${commit}`}`);
@@ -205,7 +206,7 @@ function packFloor(id) {
   if (packFloors.has(id)) return packFloors.get(id);
   const directory = `packs/${id}`;
   const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
-  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)));
+  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)), rerailRules(packJson));
   const byVersion = coreRefusalsByVersion();
   const checked = acceptedFloor([...byVersion.keys()], (version) => byVersion.get(version)[id] ?? [], JSON.parse(readText("package.json")).version);
   for (const { version, rules } of checked.refusals) console.log(`${id}: core ${version} refuses ${rules.length} rule(s): ${rules.join(", ")}`);

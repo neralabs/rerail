@@ -37,7 +37,7 @@ pub fn copy_beside(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::remove_dir_all(&into)?;
     }
     let Ok(entries) = std::fs::read_dir(&segments) else { return Ok(()) };
-    std::fs::create_dir_all(&into)?;
+    crate::content_store::prepare_cache_directory(&into)?;
     for e in entries.flatten() {
         super::atoms::clone_file(&e.path(), &into.join(e.file_name()))?;
     }
@@ -48,6 +48,18 @@ pub use rerail_store_base::content_store::{ObjectBytes, ObjectFrame, TapeBytes, 
 
 /// A row's object: the range of a segment it names (`seg`, `seg_at`, `seg_len`). `None` when that segment is not
 /// there or holds no such range (`seg` -1: it went missing): the object is absent, made again.
+/// Where a source lies (`pinned_sources_by_alias`): its row's segment range and its length, read there by `source_at`.
+#[derive(Clone, Copy, Debug)]
+pub struct SourcePlace {
+    pub source: SourceId,
+    /// When the owner's pin of it ends (unix seconds).
+    pub lease_until: i64,
+    length: i64,
+    seg: i64,
+    at: i64,
+    len: i64,
+}
+
 pub(super) fn row_frame(maps: &mut SegmentMaps, seg: i64, at: i64, len: i64) -> Option<ObjectFrame> {
     if seg <= 0 {
         return None;
@@ -129,7 +141,7 @@ pub(super) struct Item {
     grammar_id: i64,
     grammar_version: i64,
     tape_format_version: i64,
-    source: Arc<String>,
+    source: Arc<rerail_tape_format::home::Text>,
     tape: TapeBytes,
     tape_identity: HashKey,
     /// Whether the run's manifest names the source once written (`ContentStore::name_sources`).
@@ -270,7 +282,7 @@ impl ContentStore {
     /// written (`name_sources`).
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
-    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
+    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<rerail_tape_format::home::Text>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
         let tape_identity = HashKey::tape_identity(canonical, (*tape).as_ref());
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named, documents });
         let dir = object_dir(&self.database_path);
@@ -442,6 +454,35 @@ impl ContentStore {
             out.push(Some((frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?, SourceId(source))));
         }
         Ok(out)
+    }
+
+    /// Every source `owner` pins, under each of its aliases, with where it lies in its segment: one
+    /// read, for a run to take before its first wave (decision 0104) and read the sources in their segments from its
+    /// waves, with no statement (`source_at`). A source not in a segment (archived, or its segment gone) is left out.
+    pub fn pinned_sources_by_alias(&self, owner: &str) -> StoreResult<HashMap<HashKey, SourcePlace>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached(
+            "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.source_id, s.raw_length, s.seg, s.seg_at, s.seg_len, p.lease_until \
+             FROM object_pins p JOIN strings o ON o.string_id = p.owner_string_id \
+             JOIN source_objects s ON s.source_id = p.object_id \
+             JOIN source_aliases a ON a.source_id = s.source_id JOIN hashes h ON h.hash_id = a.alias_hash_id \
+             WHERE p.object_kind_id = ?1 AND o.domain_id = ?2 AND o.value = ?3 AND s.seg > 0",
+        )?;
+        let rows = st.query_map(params![super::reclamation::OBJECT_SOURCE, super::STRING_OWNER, owner], |r| {
+            Ok((
+                HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] },
+                SourcePlace { source: SourceId(r.get(5)?), length: r.get(6)?, seg: r.get(7)?, at: r.get(8)?, len: r.get(9)?, lease_until: r.get(10)? },
+            ))
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StoreError::from)
+    }
+
+    /// The source at `place` (`pinned_sources_by_alias`), read in its segment, mapped: no statement. `None` where the
+    /// segment no longer holds it (compacted since), which its reader takes as not held.
+    pub fn source_at(&self, place: &SourcePlace) -> Option<ObjectBytes> {
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let frame = row_frame(&mut maps, place.seg, place.at, place.len)?;
+        frame.bytes(usize::try_from(place.length).ok()?).ok()
     }
 
     /// The source `alias` names, read where the store holds it (`sources_by_alias_in_place`).
@@ -666,7 +707,7 @@ mod tests {
     }
 
     /// A test's files: its sources, each with its tape.
-    type Files = [(Arc<String>, Arc<Vec<u8>>)];
+    type Files = [(Arc<rerail_tape_format::home::Text>, Arc<Vec<u8>>)];
 
     fn key(i: usize) -> Key {
         Key::of(&[b"a test's tape", &[i as u8]])
@@ -710,7 +751,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let big = write_back::gather_cap() + 1;
-        let files: Vec<(Arc<String>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n")), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
+        let files: Vec<(Arc<rerail_tape_format::home::Text>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n").into()), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
         queue(&store, &files);
         store.written().unwrap();
         let ids: Vec<SourceId> = files.iter().map(|(source, _)| store.source_by_hash(HashKey::sha256(source.as_bytes())).unwrap().expect("stored")).collect();

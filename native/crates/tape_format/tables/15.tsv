@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 15 (percent-format), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 15 (percent-format), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 35 codes; no node types declared: the grammar's list is the bound; no file of it counted: in the grammar's order.
 revision	4
@@ -38,3 +38,25 @@ code	8	0	4	-	-
 code	9	0	4	-	-
 code	10	0	4	-	-
 code	11	0	4	-	-
+kind	1	1	format
+kind	2	1	literal
+kind	3	1	placeholder
+kind	4	1	mapping_key
+kind	5	1	flags
+kind	6	1	width
+kind	7	1	precision
+kind	8	1	star
+kind	9	1	length
+kind	10	1	conversion
+kind	11	1	error
+lookup	1	format	1
+lookup	1	literal	2
+lookup	1	placeholder	3
+lookup	1	mapping_key	4
+lookup	1	flags	5
+lookup	1	width	6
+lookup	1	precision	7
+lookup	1	star	8
+lookup	1	length	9
+lookup	1	conversion	10
+lookup	1	error	11

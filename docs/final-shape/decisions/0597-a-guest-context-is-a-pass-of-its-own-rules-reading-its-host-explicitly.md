@@ -1,12 +1,14 @@
 # 0597. A guest context is a pass of its own rules, reading its host's finished facts explicitly
 
-Status: proposed (2026-11-21), from the user: "should we instead do another fixedpoint of annotation/template
-analysis AFTER the main program has run, with the facts from the main program as an input?"; "I was already thinking
-about having each language run in a different pass ... scan the code inside f-strings and handle DSLs like vue's
-html-like code"; "yes, an explicit pass"; "if we want to check annotations and f-strings in Python, we will need to
-run an extraction pass first as a fixedpoint or after and then check them". Would replace 0058's annotation range and
-0165's narrow copies and fold for guests; keeps 0431 (guests are tape values, no guest documents, no batch built
-again), 0353 (blocks never copied), 0442 (no global state).
+Status: built (2026-11-22; the audit's "partly built" corrected 2026-11-23: steps 1-7 are built, step 6 measured,
+below). Proposed (2026-11-21), from the user:
+"should we instead do another fixedpoint of annotation/template analysis AFTER the main program has run, with the
+facts from the main program as an input?"; "I was already thinking about having each language run in a different pass
+... scan the code inside f-strings and handle DSLs like vue's html-like code"; "yes, an explicit pass"; "if we want to
+check annotations and f-strings in Python, we will need to run an extraction pass first as a fixedpoint or after and
+then check them". Would replace 0058's annotation range and 0165's narrow copies and fold for guests; keeps 0431
+(guests are tape values, no guest documents, no batch built again), 0353 (blocks never copied), 0442 (no global
+state).
 
 ## Intro
 

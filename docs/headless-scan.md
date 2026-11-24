@@ -342,6 +342,7 @@ A detached HEAD has a null ref and no `refHex`.
       "message": "…", "fingerprint": "e7b8bfeee1c3c67007fbdad77d7df6bb" }
   ],
   "failures": [ { "code": "adapter-error", "message": "…", "path": null, "ruleId": null } ],
+  "notRun": [ { "ruleId": "eslint-no-sparse-arrays", "reason": "This Rerail no longer runs the rule as JavaScript 0.1.9 writes it: …" } ],
   "summary": { "violations": 1, "failures": 0 }
 }
 ```
@@ -356,6 +357,10 @@ A detached HEAD has a null ref and no `refHex`.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
   The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
   `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.
+- **`notRun`**: rules on in the checkouts scanned (the one it starts in, and any other it audited, such as a submodule)
+  that this Rerail does not run, each named once, with why: an installed pack's version writes them in a form it no
+  longer runs, and the pack's next version runs them again. They are neither violations nor failures, so they do not
+  fail the scan.
 
 ### Locations for commit findings
 

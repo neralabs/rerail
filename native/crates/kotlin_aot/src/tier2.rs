@@ -686,10 +686,10 @@ pub struct P<'a, L: Layout> {
 
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
-    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
+    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L, target: rerail_tape_format::Target) -> R<Self> {
         let (recs, m) = (&lx.recs[..], &lx.masks);
         let n = recs.len();
-        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(widths, src.len() / 3 + 16).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -10540,8 +10540,8 @@ impl<L: Layout> P<'_, L> {
 
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), finished by `finish` (the
-/// image, or the columns, as the grammar's lean parser finishes), or the byte it was refused at.
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), written to `finish`'s target and finished
+/// by it (decision 0434: format 16 as the parse goes), or the byte it was refused at.
 pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {
     // Where tier 1 sends the file to tree-sitter.
     if lx.refused {
@@ -10554,7 +10554,7 @@ pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed
         match at {
             Ok(c) => return Ok(c),
             Err(rerail_tape_format::Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(u32::MAX);
                 }
                 widths = w;
@@ -10566,7 +10566,7 @@ pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed
 /// `parse` at `layout`'s widths: the tape `finish` makes of the writer, or the widths to parse at again; or the byte
 /// it was refused at.
 fn parse_at<L: Layout, F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, layout: L, finish: &mut F) -> R<Result<F::Out, rerail_tape_format::Redo>> {
-    let mut p = P::new(src, lx, layout)?;
+    let mut p = P::new(src, lx, layout, finish.target())?;
     p.source_file()?;
     Ok(finish.finish(p.w))
 }

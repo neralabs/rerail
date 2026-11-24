@@ -1,13 +1,14 @@
 # 0563: A relation no rule can fill makes no stratum, and an edit's delta reaches a rule by the kinds it holds
 
-Status: designed (2026-11-21), spiked (2026-11-21, "Spike" below: each part validated on ep2, findings exact; the
-design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold where no document embeds a
-program: its language embeds none, or the store records its text as loaded with none, or (a text not loaded yet)
-its language embeds only by call argument and the text names no place's callee. So they hold on ep2. The user
-asked for it (2026-11-21): "okay, please survey and design this.
-Does it also make sense to track changes per fact type? Presumably much work could be cut out if certain fact
-deltas are empty without needing to propagate it." "This" is the 1,700 strata the merge of the serverplan-quality
-hub (2ac89a3a70) added to every cold run of ep2, which makes no guests. Follows 0101 §1, 0117, 0120 and 0431.
+Status: partly built (audited 2026-11-23). Left: A3: guest inputs counted empty once admission has closed, for corpora
+whose file-local part answers requests. Designed (2026-11-21), spiked (2026-11-21, "Spike" below: each part validated
+on ep2, findings exact; the design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold where
+no document embeds a program: its language embeds none, or the store records its text as loaded with none, or (a text
+not loaded yet) its language embeds only by call argument and the text names no place's callee. So they hold on ep2.
+The user asked for it (2026-11-21): "okay, please survey and design this. Does it also make sense to track changes per
+fact type? Presumably much work could be cut out if certain fact deltas are empty without needing to propagate it."
+"This" is the 1,700 strata the merge of the serverplan-quality hub (2ac89a3a70) added to every cold run of ep2, which
+makes no guests. Follows 0101 §1, 0117, 0120 and 0431.
 
 ## Intro
 

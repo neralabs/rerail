@@ -26,7 +26,7 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::ops::Range;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// The end of a key's chain (`Shard::chained`).
 const END: u32 = u32::MAX;
@@ -92,25 +92,46 @@ impl std::ops::Index<usize> for Blocks {
 /// made from the last copies the shards of the keys it adds alone.
 const SHARDS: usize = 256;
 
-#[derive(Clone, Default)]
-struct Keys {
-    shards: Vec<Arc<Shard>>,
+#[derive(Clone)]
+struct Keys<K: ShardKey = u32> {
+    shards: Vec<Arc<Shard<K>>>,
 }
 
 /// One shard of the keys, in blocks (decision 0353): per key, the first and last links of its chain in `chained`;
 /// each link a part and the next link of its key's chain (`END` at the last).
 #[derive(Clone, Default)]
-struct Shard {
-    by_key: rerail_blocks::maps::BlockHash<u32, [u32; 2]>,
+struct Shard<K: ShardKey> {
+    by_key: rerail_blocks::maps::BlockHash<K, [u32; 2]>,
     chained: Vector<[u32; 2]>,
 }
 
-impl Keys {
-    fn shard(k: u32) -> usize {
-        (k.wrapping_mul(0x9E37_79B9) >> 24) as usize % SHARDS
+impl<K: ShardKey> Default for Keys<K> {
+    fn default() -> Self {
+        Keys { shards: Vec::new() }
+    }
+}
+
+/// A key's shard: its bits mixed, so that keys that differ in their low bits alone (a document's nodes) spread.
+trait ShardKey: rerail_blocks::maps::Key + Default {
+    fn shard(self) -> usize;
+}
+impl ShardKey for u32 {
+    fn shard(self) -> usize {
+        (self.wrapping_mul(0x9E37_79B9) >> 24) as usize % SHARDS
+    }
+}
+impl ShardKey for i64 {
+    fn shard(self) -> usize {
+        ((self as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as usize % SHARDS
+    }
+}
+
+impl<K: ShardKey> Keys<K> {
+    fn shard(k: K) -> usize {
+        k.shard()
     }
     /// The parts that hold rows of key `k`, in the order admitted.
-    fn parts(&self, k: u32) -> impl Iterator<Item = usize> + '_ {
+    fn parts(&self, k: K) -> impl Iterator<Item = usize> + '_ {
         let shard = self.shards.get(Self::shard(k));
         let mut at = shard.and_then(|s| s.by_key.get(&k)).map_or(END, |c| c[0]);
         std::iter::from_fn(move || {
@@ -120,7 +141,7 @@ impl Keys {
         })
     }
     /// Part `i` holds rows of key `k`.
-    fn add(&mut self, k: u32, i: usize) {
+    fn add(&mut self, k: K, i: usize) {
         if self.shards.is_empty() {
             self.shards = (0..SHARDS).map(|_| Arc::default()).collect();
         }
@@ -153,6 +174,10 @@ struct Parts {
     by_key: Keys,
     /// The parts by the keys of their documents and those documents' files: a lookup by a document key (`Parts::of`).
     by_doc: Keys,
+    /// The parts that hold each node of a document not theirs (a host's node their rows name: `guest_of`'s string,
+    /// `host_node`'s host), by the node itself. Keyed by its document instead, a probe of any node of a file with
+    /// parsed strings asked every part of them (t50: `text` and `!guest_of` at 1.5–2.5 µs a probe).
+    hosted: Keys<i64>,
     /// The chunk's relation with every part's rows past its own, in one block relation, while every part is a
     /// [`Slice`] of it, each past the one before.
     whole: Option<Arc<super::Relation>>,
@@ -166,10 +191,10 @@ impl Parts {
         let p = &self.list[i];
         (row < p.start + p.src.len()).then(|| (p, row - p.start))
     }
-    /// The parts that may hold rows whose value is `v`: those that hold node ids of `v`'s key; where the column's
-    /// values are document keys (`docs`), those of the document `v` (a part is found by its documents' keys and
-    /// their files', `Values::add`): no part is read for a key it does not hold. Every part for a value no key
-    /// names (an atom, a number).
+    /// The parts that may hold rows whose value is `v`: those that hold node ids of `v`'s key, and those whose rows
+    /// name node `v` of a document not theirs (`hosted`); where the column's values are document keys (`docs`), those
+    /// of the document `v` (a part is found by its documents' keys and their files', `Values::add`): no part is read
+    /// for a key it does not hold. Every part for a value no key names (an atom, a number).
     fn of(&self, v: i64, docs: bool, each: &mut dyn FnMut(&Part)) {
         let key = if docs { u32::try_from(v).ok() } else { (1 << 32..).contains(&v).then_some((v >> 32) as u32) };
         let Some(key) = key else {
@@ -180,6 +205,11 @@ impl Parts {
         };
         for part in if docs { &self.by_doc } else { &self.by_key }.parts(key) {
             each(&self.list[part]);
+        }
+        if !docs {
+            for part in self.hosted.parts(v) {
+                each(&self.list[part]);
+            }
         }
     }
 }
@@ -210,46 +240,56 @@ pub struct Values {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
-    _batches: Vec<Arc<super::Batch>>,
+    batches: Vec<Arc<super::Batch>>,
 }
 
 impl Values {
-    /// Some values' sources, admitted together: each relation's rows of them, a part of that relation from now on.
-    /// `keys` are the keys their rows may hold: the values' own, and their places' hosts'.
-    /// The next `parts` is made from the last: a relation the values add rows to is made again from its last (its
+    /// Values `own`'s sources: each relation's rows of them, a part of that relation from now on. `own` are the
+    /// values' keys; `hosts` the keys of the documents their places are in, whose nodes their rows name.
+    /// A part is found by its own keys, and by each node of another document its rows name (`hosted`), read off its
+    /// rows once here. A relation made on lookup has no rows yet: it is found by its hosts' keys too.
+    /// The next `parts` is made from the last: a relation the value adds rows to is made again from its last (its
     /// last block of parts and the shards of the keys it adds copied, `Blocks`, `Keys`), the others shared.
-    ///
-    /// A part is found by the keys its rows hold (`filed_under`), not by every key given: filed under its places'
-    /// hosts' keys too, every relation's part was read by each probe of any node of a host file, as many parts as the
-    /// file had values (corpus0 × B-now: `text` 3 µs a lookup, `within` 29 µs).
-    pub fn add(&self, keys: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
+    pub fn add(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
         let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
-        // The keys a part is found by: its nodes' (`keys`), and its documents' and their files' (a lookup by
-        // document, `Parts::of`).
+        // The keys a part is found by in a lookup by document (`Parts::of`): the values' and their hosts', and its
+        // documents' and their files'.
         // A relation whose rows are its documents' own (`Source::rows_of_own_documents`, a view of the value's tape) is
         // found by those documents' keys alone: a probe of a host's node reads none of its values' views.
-        let given = keys;
-        let (mut keys, mut own_docs) = (keys.to_vec(), Vec::new());
+        let (mut docs, mut own_docs): (Vec<u32>, Vec<u32>) = (own.iter().chain(hosts).copied().collect(), Vec::new());
         if let Some(b) = sources.iter().find_map(|(_, s)| s.python_batch()) {
             for d in 0..b.docs.len() {
-                keys.extend([b.docs.key(d), b.file(d)]);
+                docs.extend([b.docs.key(d), b.file(d)]);
                 own_docs.push(b.docs.key(d));
             }
-            keys.sort_unstable();
-            keys.dedup();
             own_docs.sort_unstable();
             own_docs.dedup();
             self.batches.write().push(b);
         }
+        docs.sort_unstable();
+        docs.dedup();
         for (name, src) in sources {
             // A relation made on lookup (containment, an axis) has its rows only once a lookup asks. The long-text
-            // nodes are the binding a node read goes through (`LongTexts::of`): kept with none, a value's node is read
-            // in its own batch (a string's value in a Vue piece, decision 0597), not looked for in the chunk's.
+            // nodes' source holds the value's batch, which every node read of the value goes through
+            // (`LongTexts::of`): kept with no rows too, so a value's node is read in its own batch (a string's value in a
+            // Vue piece, decision 0597).
             if src.len() == 0 && !src.made_on_lookup() && name != super::LONG_TEXT_NODES {
                 continue;
             }
-            let (own, docs) = filed_under(&name, src.as_ref(), given, &keys, &own_docs);
+            // The keys its nodes are found by: the long-text nodes' the value's own alone (a host file's node read
+            // under its places' hosts' keys too, `value` of a `getattr`'s string, went to a string annotation's batch,
+            // which holds no node of the file, and found nothing); a view of the value's own documents' those
+            // documents'; any other the value's own, and the hosts' nodes its rows name (`hosted`). `own` is every
+            // value admitted together (`admit_values`, corpus.rs), the hosts apart (`hosts`): keyed by the first alone, a round's later
+            // values' nodes were read in no batch (`Optional` of R10's second annotation).
+            let (keyed, general) = if name == super::LONG_TEXT_NODES {
+                (own, false)
+            } else if src.rows_of_own_documents() && !own_docs.is_empty() {
+                (&own_docs[..], false)
+            } else {
+                (own, true)
+            };
             let p = Arc::make_mut(parts.entry(name).or_default());
             let i = p.list.len();
             // Its rows past the chunk's and the parts' before, in their block relation: the device binds that whole.
@@ -258,20 +298,42 @@ impl Values {
             p.whole = slice.filter(|_| p.sliced).map(|sl| Arc::clone(&sl.whole));
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
-            for k in docs {
+            for &k in &docs {
                 p.by_doc.add(k, i);
             }
-            for k in own {
+            for &k in keyed {
                 p.by_key.add(k, i);
+            }
+            if !general {
+                continue;
+            }
+            if src.made_on_lookup() {
+                // No rows yet: found by its hosts' keys too.
+                for &k in hosts {
+                    p.by_key.add(k, i);
+                }
+            } else {
+                // Each node of another document its rows name, read off its rows once, by the source's walk: a view
+                // read in place answers its `len` from its statistics before its rows are walked, and is not read a
+                // row at a time.
+                let columns: Vec<usize> = (0..src.columns().len()).collect();
+                let mut named: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
+                src.for_rows(&columns, &mut |_, row| {
+                    named.extend(row.iter().copied().filter(|&v| (1 << 32..).contains(&v) && !own.contains(&((v >> 32) as u32))));
+                });
+                for v in named {
+                    p.hosted.add(v, i);
+                }
             }
         }
         self.parts.store(Arc::new(parts));
-        // After the parts: a reader that counts a value admitted finds its parts (`Layered::lookup_read_at`).
+        // After the parts: a reader that counts a value admitted finds its parts (`has_parts`,
+        // `Layered::lookup_read_at`).
         self.admitted.fetch_add(1, Ordering::Release);
     }
     /// The values admitted.
     pub fn admitted(&self) -> usize {
-        self.admitted.load(Ordering::Relaxed)
+        self.admitted.load(Ordering::Acquire)
     }
     /// The source of relation `name` that holds rows of node `n`'s document: an admitted value's.
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
@@ -297,52 +359,12 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, _batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, batches: batches.clone() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
 }
 
-/// The keys a part of relation `name` is found by: by node (`Keys::parts` of an id's key) and by document (a column of
-/// document keys). The long-text nodes are the values' own nodes, the binding a node read goes through: found by the
-/// values' own documents alone, though they hold none (filed under a place's host's key too, a host file's node read,
-/// `value` of a `getattr`'s string, went to a string annotation's batch and found nothing). A view of the values' own
-/// documents (`rows_of_own_documents`) is found by those documents, and by every document key given (its rows are
-/// read off the tapes: not read here). A part made on lookup (an axis) has no rows to
-/// read before it is asked: every key given. Any other part by the keys its rows hold: each node id's key, and each
-/// of the keys given (the values', their places' hosts', their documents' and files') that a row holds as a value.
-fn filed_under(name: &str, src: &dyn Source, given: &[u32], keys: &[u32], own_docs: &[u32]) -> (Vec<u32>, Vec<u32>) {
-    if name == super::LONG_TEXT_NODES {
-        let own = if own_docs.is_empty() { given[..given.len().min(1)].to_vec() } else { own_docs.to_vec() };
-        return (own, keys.to_vec());
-    }
-    if src.rows_of_own_documents() && !own_docs.is_empty() {
-        return (own_docs.to_vec(), keys.to_vec());
-    }
-    if src.made_on_lookup() {
-        return (given.to_vec(), keys.to_vec());
-    }
-    let width = src.columns().len();
-    let candidates: rustc_hash::FxHashSet<i64> = keys.iter().map(|&k| i64::from(k)).collect();
-    let (mut ids, mut docs): (rustc_hash::FxHashSet<u32>, rustc_hash::FxHashSet<u32>) = Default::default();
-    let mut row = vec![0i64; width];
-    let columns: Vec<usize> = (0..width).collect();
-    for r in 0..src.len() {
-        src.row_at(r, &columns, &mut row);
-        for &v in &row {
-            if v >= 1 << 32 {
-                ids.insert((v >> 32) as u32);
-            } else if candidates.contains(&v) {
-                docs.insert(v as u32);
-            }
-        }
-    }
-    let mut own: Vec<u32> = ids.into_iter().collect();
-    let mut docs: Vec<u32> = docs.into_iter().collect();
-    own.sort_unstable();
-    docs.sort_unstable();
-    (own, docs)
-}
 
 /// Rows `from..` of a relation that holds a chunk's rows and then its values' (`Grower::admitted`): the rows of the
 /// values admitted together, numbered from 0, read where they were written, looked up through the relation's index.
@@ -469,18 +491,20 @@ pub struct Layered {
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made whole once per admission.
     made: Option<Made>,
     width: usize,
+    /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
+    seen: AtomicU64,
 }
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(Made::default);
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width }
+        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0) }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
     fn base_len(&self) -> usize {
-        *self.base_len.get_or_init(|| self.base.len())
+        *crate::code_rule_dsl::logic::profile::once(&self.base_len, "batch: a layered relation's rows", || self.base.len())
     }
     /// The batch's source.
     pub fn base(&self) -> &Arc<dyn Source> {
@@ -490,14 +514,38 @@ impl Layered {
     pub fn source_of(&self, n: i64) -> Arc<dyn Source> {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
+    /// The sources that may hold node `n`'s document: the chunk's batch's, then each admitted value's that names its
+    /// key (a value's rows are keyed by its places' hosts too, so a host file's key names its guests' parts).
+    pub fn sources_of(&self, n: i64) -> Vec<Arc<dyn Source>> {
+        let mut out = vec![Arc::clone(&self.base)];
+        if let Some(p) = self.values.parts.load().get(&self.name) {
+            out.extend(p.by_key.parts((n >> 32) as u32).map(|i| Arc::clone(&p.list[i].src)));
+        }
+        out
+    }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return None;
         }
         self.values.parts.load().get(&self.name).filter(|p| !p.list.is_empty()).map(|p| f(p))
     }
+    /// With no value admitted, no relation has parts: a probe of a chunk with none (most of them) reads only the
+    /// count, where the parts' load (`arc_swap`'s, a thread-local each) and the name's lookup took about 600 samples
+    /// of a 15 s sample of `all`.
+    /// Asked once per value admitted: each probe's load of the parts and hash of the name took about 1% of `all`'s
+    /// per-file phase's samples.
     fn has_parts(&self) -> bool {
-        self.values.admitted.load(Ordering::Acquire) > 0 && self.values.total(&self.name) > 0
+        let admitted = self.values.admitted() as u64;
+        if admitted == 0 {
+            return false;
+        }
+        let seen = self.seen.load(Ordering::Relaxed);
+        if seen >> 1 == admitted {
+            return seen & 1 != 0;
+        }
+        let has = self.values.total(&self.name) > 0;
+        self.seen.store(admitted << 1 | u64::from(has), Ordering::Relaxed);
+        has
     }
     /// Made on lookup, with values admitted: the values' rows (`Scan`), made up to the parts admitted now; `f` reads
     /// them. Read without a lock once made: an admission's parts are made whole by the first reader after it.
@@ -574,14 +622,13 @@ impl Layered {
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Layered {
-    /// A view's rows on the device: the chunk's batch's and its values', read in place through their directory. The
-    /// base's view as the device reads it (its kind, its block), its directory that of every document.
-    fn view_over(&self) -> Option<DeviceView<'_>> {
+    /// A view's rows on the device: the batch's and its values', read in place through their directory. The base's
+    /// view as the device reads it (its kind), its directory that of every document.
+    fn view_over(&self) -> Option<DeviceView> {
         let batch = self.base.python_batch()?;
         let mut dv = self.base.device_view();
         let dv_ref = dv.as_mut()?;
-        // A view not read in place is made from the chunk's batch alone: it holds none of the values' rows.
-        let v = dv_ref.in_place.as_mut()?;
+        let v = &mut dv_ref.in_place;
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
@@ -590,15 +637,15 @@ impl Layered {
         }
         v.dir = views.dir?;
         v.buffers = views.buffers.clone();
-        v.cache = views.cache.clone();
+        v.caches = views.caches.clone();
         v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
         v.failed = v.cache_failed();
         dv_ref.rows = self.len();
         dv
     }
 
-    /// An axis's rows on the device (a base made on lookup): the device's solve of the chunk's batch and of its
-    /// values', in one relation, made again when values are admitted after it. Its rows are more than the source
+    /// An axis's rows on the device (a base made on lookup): the device's solve of the batch and of its values', off
+    /// their tapes, in one relation, made again when values are admitted after it. Its rows are more than the source
     /// numbers (a value's are made on lookup, `MADE_AT`): a reader that binds it reads every pair.
     fn solved_in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         let base = self.base.as_any()?.downcast_ref::<super::within::Within>()?;
@@ -611,7 +658,11 @@ impl Layered {
             return made.as_ref().map(|w| w.in_block(w.len()));
         }
         let more: Option<Vec<&super::within::Within>> = p.list.iter().map(|x| x.src.as_any().and_then(|a| a.downcast_ref::<super::within::Within>())).collect();
-        let made = more.and_then(|m| base.solved_with(&m));
+        // Over the layered directory of the batch and its values (`views_over`), read off their tapes: one value's
+        // axis a batch of it, in the order admitted.
+        // The axis's own batch: an axis is no node source (`python_batch`).
+        let dir = self.values.dir(base.batch())?;
+        let made = more.filter(|m| m.len() == dir.batches.len()).and_then(|m| base.solved_with(&m, &dir.views, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>));
         solved.insert(self.name.clone(), (p.list.len(), made.clone()));
         made.map(|w| w.in_block(w.len()))
     }
@@ -621,9 +672,11 @@ impl Source for Layered {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         self.base.syntax_batch()
     }
-    /// A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
+    /// A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
+    /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too (`sources_of`), so a host file's
+    /// key names its guests' parts as well: the first of them that holds the node answers.
     fn node_read(&self, name: &str, n: i64) -> Option<String> {
-        self.source_of(n).node_read(name, n)
+        self.sources_of(n).into_iter().find_map(|s| s.node_read(name, n))
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -645,11 +698,17 @@ impl Source for Layered {
     fn estimated_len(&self) -> usize {
         self.base.estimated_len()
     }
+    fn may_hold_rows(&self) -> bool {
+        self.base.may_hold_rows() || self.values.total(&self.name) > 0
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.base.estimated_matches(column, batch)
     }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.base.lookup_cost(column)
+    }
+    fn scan_cost(&self) -> f64 {
+        self.base.scan_cost()
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.base.statistics()
@@ -700,6 +759,32 @@ impl Source for Layered {
             }
         });
         Some(out)
+    }
+    /// `lookup`'s rows by position: the base's, then the parts' that may hold `value` (a value's rows are few), at
+    /// their place past the base's. A base made on lookup numbers its values' rows as they are made (`MADE_AT`):
+    /// `lookup`'s rows.
+    fn lookup_seq(&self, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::Seq<'_>> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        if !self.has_parts() {
+            return self.base.lookup_seq(column, value);
+        }
+        if self.made.is_some() {
+            return self.lookup(column, &[value]).map(Seq::rows);
+        }
+        let base = self.base.lookup_seq(column, value)?;
+        let mut more = rerail_blocks::vector::Vector::new();
+        let docs = self.base.keys_documents(column);
+        self.parts(|p| {
+            p.of(value, docs, &mut |part| {
+                let at = self.base_len() + part.start;
+                match part.src.lookup(column, &[value]) {
+                    Some(rows) => more.extend(rows.into_iter().map(|r| at + r)),
+                    // A part that keeps no index of `column` is read whole: a value's rows are few.
+                    None => more.extend((0..part.src.len()).filter(|&r| part.src.value(r, column) == value).map(|r| at + r)),
+                }
+            });
+        });
+        Some(base.then(Seq::rows(more)))
     }
     /// The base's matches read as found, then each part's that may hold the value (`Parts::of`), numbered past the
     /// base's as `lookup` numbers them: a part with no such read is looked up and its rows read (a value's rows are
@@ -1034,7 +1119,7 @@ impl Source for Layered {
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<DeviceView<'_>> {
+    fn device_view(&self) -> Option<DeviceView> {
         if !self.has_parts() {
             return self.base.device_view();
         }
@@ -1081,26 +1166,46 @@ mod tests {
         }
     }
 
-    /// Three rows `(n, n)` of the nodes of document `key` (`key << 32 | row`).
-    struct Ids(i64);
-    impl Source for Ids {
-        fn columns(&self) -> Vec<String> {
-            vec!["n".into(), "a".into()]
-        }
-        fn len(&self) -> usize {
-            3
-        }
-        fn estimated_matches(&self, _: usize, _: bool) -> usize {
-            1
-        }
-        fn indexed(&self, _: usize) -> bool {
-            false
-        }
-        fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
-            None
-        }
-        fn value(&self, row: usize, _: usize) -> i64 {
-            self.0 << 32 | row as i64
+    /// A part is found by the host nodes its rows name, not by its host's document: a probe of another node of that
+    /// document asks no part (t50: every `text` probe of a file with parsed strings asked all of them).
+    #[test]
+    fn a_hosts_node_finds_only_the_parts_that_name_it() {
+        let values = Values::default();
+        let (host, a, b) = (5i64 << 32, 10i64 << 32, 11i64 << 32);
+        let rel = |rows: Vec<Vec<i64>>| Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut rows.into_iter().map(|r| r.into_iter().collect()))) as Arc<dyn Source>;
+        values.add(&[10], &[5], vec![("guest_of".to_owned(), rel(vec![vec![a | 1, host | 7], vec![a | 2, host | 7]]))]);
+        values.add(&[11], &[5], vec![("guest_of".to_owned(), rel(vec![vec![b | 1, host | 9]]))]);
+        let parts = values.parts.load().get("guest_of").cloned().expect("guest_of's parts");
+        let asked = |v: i64| {
+            let mut starts = Vec::new();
+            parts.of(v, false, &mut |p: &Part| starts.push(p.start));
+            starts
+        };
+        assert_eq!(asked(host | 7), vec![0], "the string its first part names");
+        assert_eq!(asked(host | 9), vec![2], "the string its second part names");
+        assert!(asked(host | 8).is_empty(), "a host node no part names");
+        assert_eq!(asked(a | 2), vec![0], "a value's own node");
+        assert_eq!(asked(b | 1), vec![2]);
+        assert!(values.source_of("guest_of", host | 8).is_none(), "a host's node is the batch's, not a value's");
+    }
+
+    /// A layered source's read in place with parts is its lookup's rows with their values: the base's, then each part's
+    /// that may hold the value, numbered past the base's.
+    #[test]
+    fn a_layered_read_in_place_is_its_lookups_rows() {
+        let values = Arc::new(Values::default());
+        let (host, a) = (5i64 << 32, 10i64 << 32);
+        let rel = |rows: Vec<Vec<i64>>| Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut rows.into_iter().map(|r| r.into_iter().collect()))) as Arc<dyn Source>;
+        let base = rel(vec![vec![host | 1, 3], vec![host | 7, 4], vec![host | 7, 5]]);
+        values.add(&[10], &[5], vec![("r".to_owned(), rel(vec![vec![a | 1, host | 7], vec![host | 7, 6]]))]);
+        let layered = Layered::new("r", base, Arc::clone(&values));
+        for (column, v) in [(0, host | 7), (0, a | 1), (1, host | 7), (0, host | 1), (0, host | 9), (1, 4)] {
+            let mut read = Vec::new();
+            assert!(layered.lookup_read(column, v, &[0, 1], &mut |r, row| read.push((r, row.to_vec()))), "read in place");
+            let mut want: Vec<(usize, Vec<i64>)> = layered.lookup(column, &[v]).expect("a lookup").into_iter().map(|r| (r, vec![layered.value(r, 0), layered.value(r, 1)])).collect();
+            read.sort();
+            want.sort();
+            assert_eq!(read, want, "column {column} = {v:#x}");
         }
     }
 
@@ -1110,12 +1215,12 @@ mod tests {
     #[test]
     fn an_add_copies_only_its_last_block_and_its_keys_shard() {
         let values = Values::default();
-        let part = |k: u32| vec![("r".to_owned(), Arc::new(Ids(i64::from(k))) as Arc<dyn Source>)];
+        let part = || vec![("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)];
         for k in 1..=200u32 {
-            values.add(&[k], part(k));
+            values.add(&[k], &[], part());
         }
         let before = values.parts.load().get("r").cloned().expect("r's parts");
-        values.add(&[201], part(201));
+        values.add(&[201], &[], part());
         let after = values.parts.load().get("r").cloned().expect("r's parts");
         let shared = |a: &[Arc<Vec<Part>>], b: &[Arc<Vec<Part>>]| a.iter().zip(b).filter(|(x, y)| Arc::ptr_eq(x, y)).count();
         assert_eq!(shared(&before.list.blocks, &after.list.blocks), before.list.blocks.len() - 1, "every block but the last shared");
@@ -1184,7 +1289,7 @@ mod tests {
         for (k, read) in [(10u32, true), (11, false), (12, true)] {
             let k64 = i64::from(k);
             let part = Arc::new(Table { rows: vec![[id(k64, 0), k64], [id(k64, 1), k64], [7, k64]], read }) as Arc<dyn Source>;
-            values.add(&[k], vec![("r".to_owned(), part)]);
+            values.add(&[k], &[], vec![("r".to_owned(), part)]);
         }
         let layered = Layered::new("r", base, Arc::clone(&values));
         for (c, v) in [(0, id(1, 1)), (0, id(11, 1)), (0, id(12, 0)), (0, 7), (1, 2), (1, 11), (1, 12), (1, 99), (0, id(99, 0))] {
@@ -1206,7 +1311,7 @@ mod tests {
         let values = Arc::new(Values::default());
         let part = || vec![("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)];
         let layered = Layered::new("r", Arc::new(Counted(AtomicUsize::new(0), true)) as Arc<dyn Source>, Arc::clone(&values));
-        values.add(&[1], part());
+        values.add(&[1], &[], part());
         assert_eq!(layered.len(), 6);
         let mut rows = Vec::new();
         layered.for_rows(&[0, 1], &mut |r, row| rows.push((r, row.to_vec())));
@@ -1215,7 +1320,7 @@ mod tests {
         assert_eq!((3..6).map(|r| layered.value(r, 1)).collect::<Vec<_>>(), [0, 1, 2]);
         assert_eq!(layered.lookup(0, &[1]), Some(rerail_blocks::vector![4]), "a lookup reads the scan's row");
         assert_eq!(layered.value(1 << 30, 0), (1 << 30) as i64, "a base's row past the scan's is the base's");
-        values.add(&[2], part());
+        values.add(&[2], &[], part());
         assert_eq!(layered.len(), 9);
         assert_eq!(layered.value(8, 0), 2);
         assert_eq!(layered.lookup(1, &[2]), Some(rerail_blocks::vector![5, 8]));
@@ -1229,7 +1334,7 @@ mod tests {
         let values = Arc::new(Values::default());
         let layered = Layered::new("r", Arc::new(Counted(AtomicUsize::new(0), true)) as Arc<dyn Source>, Arc::clone(&values));
         let part = Arc::new(Counted(AtomicUsize::new(0), true));
-        values.add(&[1], vec![("r".to_owned(), Arc::clone(&part) as Arc<dyn Source>)]);
+        values.add(&[1], &[], vec![("r".to_owned(), Arc::clone(&part) as Arc<dyn Source>)]);
         let added = part.0.load(Ordering::Relaxed);
         for v in 0..100 {
             let rows = layered.lookup(0, &[v % 3]).expect("a lookup");
@@ -1241,31 +1346,30 @@ mod tests {
         }
         assert_eq!(part.0.load(Ordering::Relaxed), added + 1, "the part read whole once");
         let other = Arc::new(Counted(AtomicUsize::new(0), true));
-        values.add(&[2], vec![("r".to_owned(), Arc::clone(&other) as Arc<dyn Source>)]);
+        values.add(&[2], &[], vec![("r".to_owned(), Arc::clone(&other) as Arc<dyn Source>)]);
         assert_eq!(layered.lookup(0, &[1]).expect("a lookup").len(), 2, "both parts' rows once the second is admitted");
         assert_eq!(part.0.load(Ordering::Relaxed), added + 1, "the first part not read again");
     }
 
     /// A value's long-text nodes, kept though it has none (a Vue piece's string reads its value in its own batch),
-    /// answer for the value's own nodes alone, not its places' hosts': a host file's node read went to a string
-    /// annotation's batch and found nothing (corpus0: B009's `getattr(b, "x")` in a file with a quoted annotation).
-    /// Another relation's part is found by the keys its rows hold: its host's, where they hold the host's nodes (a
-    /// place's), and not where they hold the value's alone. Filed under every key given, each probe of any node of a
-    /// host file read every part of the file's values (corpus0 × B-now: `text` 3 µs a lookup).
+    /// answer for the value's own nodes alone, not its places' hosts' (no relation's part does, roll-up 95): a host
+    /// file's node read went to a string annotation's batch and found nothing (corpus0: B009's `getattr(b, "x")` in a file with a quoted annotation).
     #[test]
-    fn a_values_parts_answer_for_the_nodes_their_rows_hold() {
+    fn a_values_long_text_nodes_answer_for_its_own_nodes_alone() {
         let values = Values::default();
         let nodes = Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>;
-        values.add(&[7, 1], vec![
-            (super::super::LONG_TEXT_NODES.to_owned(), nodes),
-            ("place".to_owned(), Arc::new(Ids(1)) as Arc<dyn Source>),
-            ("own".to_owned(), Arc::new(Ids(7)) as Arc<dyn Source>),
-        ]);
+        // Another relation's row of the value's node and its host's node 3.
+        let r = Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut [[7i64 << 32 | 1, 1 << 32 | 3]].iter().map(|row| row.iter().copied().collect()))) as Arc<dyn Source>;
+        values.add(&[7], &[1], vec![(super::super::LONG_TEXT_NODES.to_owned(), nodes), ("r".to_owned(), r)]);
         assert!(values.source_of(super::super::LONG_TEXT_NODES, 7 << 32).is_some(), "the value's own node");
-        assert!(values.source_of(super::super::LONG_TEXT_NODES, 1 << 32).is_none(), "its host's node is the batch's");
-        assert!(values.source_of("place", 1 << 32).is_some(), "a relation's rows of its host's nodes");
-        assert!(values.source_of("own", 7 << 32).is_some(), "a relation's rows of the value's nodes");
-        assert!(values.source_of("own", 1 << 32).is_none(), "a relation with no row of the host's nodes is not its");
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, 1 << 32 | 3).is_none(), "its host's node is the batch's");
+        // Another relation's too: a host's node is read in the batch. Its rows naming the node are found by a lookup
+        // at it (`Parts::of`, `hosted`).
+        assert!(values.source_of("r", 1 << 32 | 3).is_none(), "its host's node is the batch's, for every relation");
+        let parts = values.parts.load().get("r").cloned().expect("r's parts");
+        let mut found = 0;
+        parts.of(1 << 32 | 3, false, &mut |_: &Part| found += 1);
+        assert_eq!(found, 1, "the rows naming its host's node, by a lookup there");
     }
 
     /// Every source a chunk binds is layered (decision 0431 §8), read or not: layering one counts none of its rows,

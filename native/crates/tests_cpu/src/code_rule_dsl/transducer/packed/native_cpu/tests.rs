@@ -9,12 +9,12 @@
     use ast_grep_core::tree_sitter::LanguageExt;
     use std::sync::Arc;
 
-    /// A test's nodes as the tape the JIT reads (decision 0310): format 15's columns over `nodes` in preorder, the
-    /// tree their parent links describe (a later node with none is a child of node 0), each node its own code
-    /// (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span as
-    /// written. A node's other links (siblings, children, subtree end) are the tree's.
+    /// A test's nodes as the tape the JIT reads (decision 0310): format 16 over `nodes` in preorder, written by its
+    /// writer, the tree their parent links describe (a later node with none is a child of node 0), each node its
+    /// own code (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span
+    /// as written. A node's other links (siblings, children, subtree end) are the tree's.
     struct TestTape {
-        bytes: Vec<u8>,
+        tape: rerail_tape_format::f16::Tape16,
         view: rerail_clif::view::TapeView,
         codes: Vec<crate::code_rule_dsl::tape::resident::DeviceCode>,
     }
@@ -25,6 +25,8 @@
         }
 
         fn with_classes(nodes: &[MetalNode], classes: &[(u32, u16)]) -> Self {
+            use rerail_tape_format::f16::{Lang, Node, Written, placement, write};
+            use rerail_tape_format::tape::{CodeTable, Entry};
             let n = nodes.len();
             let parent = |i: usize| match nodes[i].parent {
                 p if i > 0 && (p == NONE || p as usize >= i) => 0,
@@ -38,23 +40,19 @@
                 let p = parent(i);
                 assert!(i < p + size[p] as usize, "node {i} lies outside its parent {p}'s subtree: the nodes are not in preorder");
             }
-            let block_base = |k: usize| nodes[k * 16..n.min(k * 16 + 16)].iter().map(|node| node.source_start).min().unwrap_or(0);
-            let words = |values: &mut dyn Iterator<Item = u32>| values.flat_map(u32::to_le_bytes).collect::<Vec<u8>>();
-            let code: Vec<u8> = (0..n as u16).flat_map(u16::to_le_bytes).collect();
-            let sizes = words(&mut size.iter().copied());
-            let base = words(&mut (0..n.div_ceil(16)).map(block_base));
-            let off = words(&mut (0..n).map(|i| nodes[i].source_start - block_base(i / 16)));
-            let tail = words(&mut nodes.iter().map(|node| node.source_end - node.source_start));
-            let mut bytes = Vec::new();
-            let mut at = [0_u32; 5];
-            for (k, column) in [code, sizes, base, off, tail].into_iter().enumerate() {
-                at[k] = bytes.len() as u32;
-                bytes.extend_from_slice(&column);
-                bytes.resize(bytes.len().next_multiple_of(8), 0);
-            }
-            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0463).
+            // Each node its own number in a table of one entry a node: its code is the test's (`codes`), by number.
+            let entries = (0..n).map(|i| Entry { kind: (i % 1024) as u16, field: (i / 1024) as u16, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), [1, 1, 1], 1).expect("a table");
+            // The source its nodes span, as the tape's header states it: its reads hold spans to it (decision 0463).
             let source_len = nodes.iter().map(|node| node.source_end).max().unwrap_or(0);
-            let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, source_len, ..Default::default() };
+            let source = vec![b' '; source_len as usize];
+            let node = |i: usize| Node { number: i as u32, start: u64::from(nodes[i].source_start), end: u64::from(nodes[i].source_end), subtree_end: i + size[i] as usize };
+            let tape = match write(&lang, n, &source, rerail_tape_format::newlines::Terminators::Lf, 0, false, node) {
+                Ok(Written::F16(tape)) => tape,
+                Ok(Written::F16Z(_)) => unreachable!("format 16 was asked for"),
+                Err(why) => panic!("the test's nodes are not a format 16 tape: {why}"),
+            };
+            let view = placement(tape.as_bytes()).and_then(|p| p.view(&lang, 0)).expect("the tape's view");
             let codes = nodes
                 .iter()
                 .enumerate()
@@ -68,12 +66,17 @@
                     code
                 })
                 .collect();
-            Self { bytes, view, codes }
+            Self { tape, view, codes }
+        }
+
+        /// The tape's bytes, where its view's offsets count from.
+        fn bytes(&self) -> &[u8] {
+            self.tape.as_bytes()
         }
 
         /// The context reads this tape, as the batch's only document.
         fn bind(&self, context: &mut NativeTaskContext) {
-            context.tape = self.bytes.as_ptr();
+            context.tape = self.bytes().as_ptr();
             context.view = &self.view;
             context.codes = self.codes.as_ptr();
             (context.node_base, context.source_base) = (0, 0);
@@ -95,7 +98,7 @@
         let native = StrDoc::new(source, SupportLang::Python);
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
     }
 
     #[test]
@@ -599,7 +602,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -659,7 +662,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -704,7 +707,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -764,7 +767,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -816,7 +819,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -876,7 +879,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 2,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: final_captures.as_mut_ptr(),
             final_capture_capacity: final_captures.len() as u32,
@@ -1003,7 +1006,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1063,7 +1066,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1131,8 +1134,9 @@
             };
             let mut nodes = vec![MetalNode { parent: NONE, ..MetalNode::default() }];
             nodes.extend((0..siblings).map(|_| MetalNode { parent: 0, ..MetalNode::default() }));
-            if let Some(third) = nodes.get_mut(3) {
-                (third.source_start, third.source_end) = (4, 4);
+            // The third sibling and those after it at 4 (a tape's starts never go back in preorder).
+            for later in nodes.iter_mut().skip(3) {
+                (later.source_start, later.source_end) = (4, 4);
             }
             if mode == NAMED {
                 (nodes[3].flags, nodes[4].flags) = (1, 1);
@@ -1145,7 +1149,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -1205,7 +1209,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -1268,7 +1272,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1328,7 +1332,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1370,7 +1374,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1430,7 +1434,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 2,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1490,7 +1494,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1550,7 +1554,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1671,7 +1675,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1731,7 +1735,7 @@
             repeat_quota_limit: 0,
             results: std::ptr::null_mut(),
             result_quota_limit: 0,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1941,7 +1945,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -2001,7 +2005,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -2173,7 +2177,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -2233,7 +2237,7 @@
             repeat_quota_limit: repeats.len() as u32,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: final_captures.as_mut_ptr(),
             final_capture_capacity: final_captures.len() as u32,
@@ -2376,6 +2380,8 @@
             nodes[2].source_end = 3;
             nodes[3].parent = 0;
             nodes[3].flags = 1;
+            // After node 2 in preorder, so not before it (a tape's starts never go back).
+            (nodes[3].source_start, nodes[3].source_end) = (3, 3);
             let mut pending = [PendingRecord::default(); 2];
             let mut query_buckets = [QueryBucketRecord::default(); 8];
             let mut query_members = [QueryMemberRecord::default(); 8];
@@ -2384,7 +2390,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -2444,7 +2450,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -2706,6 +2712,10 @@
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
+            // The document's line index (decision 0612), which every task has: a capture's line is read off it.
+            let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
+            context.lines = lines.bytes().as_ptr();
+            context.line_count = 1;
             context.current_node = 0;
             context.task_work_limit = 1 << 20;
             context.path_work_limit = 1 << 20;
@@ -2819,7 +2829,8 @@
             source_end: source.len() as u32,
             ..MetalNode::default()
         }];
-        let line_starts = [0_u32];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut captures = [LinkRecord::default(); 1];
         let mut final_captures = [FinalCaptureRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
@@ -2837,7 +2848,7 @@
         context.capture_quota_limit = 1;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
+        context.lines = lines.bytes().as_ptr();
         context.line_count = 1;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = 1;
@@ -2874,7 +2885,8 @@
             source_end: source.len() as u32,
             ..MetalNode::default()
         }];
-        let line_starts = [0_u32];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut captures = [LinkRecord::default(); 1];
         let mut final_captures = [FinalCaptureRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
@@ -2892,7 +2904,7 @@
         context.capture_quota_limit = 1;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
+        context.lines = lines.bytes().as_ptr();
         context.line_count = 1;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = 1;
@@ -2950,7 +2962,8 @@
         nodes[3].parent = 0;
         nodes[3].source_start = 5;
         nodes[3].source_end = 6;
-        let line_starts = [0_u32, 2, 3];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut pending = [PendingRecord::default(); 4];
         let mut captures = [LinkRecord::default(); 8];
         let mut final_captures = [FinalCaptureRecord::default(); 3];
@@ -2970,8 +2983,8 @@
         context.capture_quota_limit = captures.len() as u32;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
-        context.line_count = line_starts.len() as u32;
+        context.lines = lines.bytes().as_ptr();
+        context.line_count = lines.count() as u32;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = final_captures.len() as u32;
         context.status = &mut status;
@@ -3359,7 +3372,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3419,7 +3432,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -3464,7 +3477,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::with_classes(&nodes, &[(0, 9)]);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3524,7 +3537,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3580,7 +3593,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3640,7 +3653,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3696,7 +3709,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3756,7 +3769,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -3793,7 +3806,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3853,7 +3866,7 @@
             repeat_quota_limit: 0,
             results: std::ptr::null_mut(),
             result_quota_limit: 0,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -4026,4 +4039,82 @@
                 }
             }
         }
+    }
+
+    /// The executor's workload: `files` Python files, file `f` of `reps(f)` functions with `f` in each function's name
+    /// and string, and four programs that between them write every kind of output a task copies out: results,
+    /// captures, a quantified capture, captured text, static properties, and dynamic properties whose value is a span of
+    /// the source (`application/json`) or bytes the task writes (`importmap` and `module` name `json` and `javascript`).
+    fn batch_workload(files: usize, reps: impl Fn(usize) -> usize) -> (Vec<Program>, Vec<TapeDoc>) {
+        let language = SupportLang::Python.get_ts_language();
+        let programs = [
+            "(comment)+ @comment.around",
+            "(call function: (identifier) @name arguments: (argument_list) @args) @call",
+            r#"((identifier) @inner @outer (#offset! @inner 0 1 0 -1) (#downcase! @outer) (#set! role "trimmed") (#set! flag) (#set! @outer kind "raw"))"#,
+            "((string (string_content) @mime) (#set-lang-from-mimetype! @mime))",
+        ]
+        .map(|query| Program::compile_tree_sitter_query_pattern(query, &language).unwrap())
+        .to_vec();
+        let file = |f: usize| {
+            tape(&(0..reps(f))
+                .map(|i| format!("# first {f} {i}\n# second {i}\ndef f{f}_{i}(x, y):\n    return g(x, y) + h(x, \"s{f}_{i}\", 'application/json', 'importmap', 'module')\n"))
+                .collect::<String>())
+        };
+        (programs, (0..files).map(file).collect())
+    }
+
+    /// Every node of each file as a root of every program.
+    fn every_root(programs: &[Program], files: &[TapeDoc]) -> Vec<Vec<rerail_blocks::vector::Vector<u32>>> {
+        files.iter().map(|file| vec![(0..file.transducer_len() as u32).collect(); programs.len()]).collect()
+    }
+
+    /// A batch of several files gives the interpreter's outputs: each task's results, captures and properties are
+    /// copied out of its arenas and rebased onto the batch's. The workload's outputs reach static and dynamic
+    /// properties and captured text, so a copy that drops or misplaces one shows. Each file has its own size and
+    /// text, so outputs handed to the wrong file show too.
+    #[test]
+    fn multi_file_batches_give_the_interpreter_outputs() {
+        let (programs, files) = batch_workload(6, |f| 1 + f % 3);
+        for batch in files.chunks(3) {
+            let anchors = every_root(&programs, batch);
+            let expected =
+                crate::code_rule_dsl::transducer::packed::execute_batch(&programs, batch, Some(&anchors)).unwrap();
+            let outputs = || expected.iter().flatten().flatten();
+            assert!(outputs().any(|o| !o.properties.is_empty()), "the workload writes static properties");
+            let languages = outputs().flat_map(|o| &o.dynamic_properties).filter_map(|(_, value)| value.as_deref());
+            assert!(languages.filter(|l| *l == b"javascript").count() > 1, "the workload writes dynamic properties' values");
+            assert!(outputs().flat_map(|o| &o.captures).any(|c| c.text.is_some()), "the workload captures text");
+            assert_eq!(super::execute_batch(&programs, batch, &anchors).unwrap(), expected);
+        }
+    }
+
+    /// The executor's time over the workload in one-file batches (47,616 tasks), as the median and fastest of
+    /// `RERAIL_PACKED_CPU_BATCH_ITERATIONS` runs (30 by default), each checked against the first.
+    #[test]
+    #[ignore = "timing: run in a release build to compare the CPU batch executor before and after a change"]
+    fn cpu_batch_executor_timing() {
+        let iterations = std::env::var("RERAIL_PACKED_CPU_BATCH_ITERATIONS").map_or(30, |v| v.parse().unwrap());
+        let (programs, files) = batch_workload(64, |_| 5);
+        let batches = files.chunks(1).map(|batch| (batch, every_root(&programs, batch))).collect::<Vec<_>>();
+        let run = || {
+            batches
+                .iter()
+                .map(|(batch, anchors)| super::execute_batch(std::hint::black_box(&programs), batch, anchors).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let expected = run();
+        let mut seconds = (0..iterations)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(run(), expected);
+                started.elapsed().as_secs_f64()
+            })
+            .collect::<Vec<_>>();
+        seconds.sort_by(f64::total_cmp);
+        eprintln!(
+            "RERAIL_PACKED_CPU_BATCH_TIMING tasks={} median={:.6} min={:.6}",
+            files.iter().map(|file| file.transducer_len() * programs.len()).sum::<usize>(),
+            seconds[seconds.len() / 2],
+            seconds[0]
+        );
     }

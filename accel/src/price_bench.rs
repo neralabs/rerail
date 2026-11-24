@@ -15,93 +15,9 @@
 //! Each is the best of several runs: the machine is shared, and the best run is the one least disturbed.
 
 use super::*;
-use crate::cpu::tests::{bits, graph, parts, Rng};
+use crate::workloads::*;
 use crate::exec::process_cpu;
-use crate::kernel::Bits;
-use std::sync::Arc;
 use std::time::Instant;
-
-fn load() -> String {
-    std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
-}
-
-/// A graph whose condensation has about `layers` levels (the closure's spike shape, as the GPU's timing test).
-fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u32>>) {
-    let layer = |v: usize| v * layers / n;
-    let mut off = rerail_blocks::vector![0u32];
-    let mut dst = rerail_blocks::vector::Vector::new();
-    for v in 0..n {
-        let lo = (0..v).find(|&w| layer(w) == layer(v)).unwrap_or(v);
-        for _ in 0..rng.below(2 * deg + 1) {
-            let w = if rng.below(50) == 0 { lo + rng.below((v - lo + 1) as u64) as usize } else { rng.below(lo.max(1) as u64) as usize };
-            dst.push(w as u32);
-        }
-        off.push(dst.len() as u32);
-    }
-    (off.into(), dst.into())
-}
-
-/// The spike-sized workloads (`tools/matrix-offload` W1–W5), by name.
-fn workloads() -> Vec<(&'static str, Kernel)> {
-    let mut rng = Rng(42);
-    // W1: 13,088 documents' name bits against 444 rules, 12 words a row.
-    let w1 = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1).fixed(), min: None };
-    // W5: 2,048 names against 2,048 names over 13,088 document bits.
-    let b5 = bits(&mut rng, 2048, 13088, 5).fixed();
-    let w5 = Kernel::BitProduct { a: Bits { fixed: None, ..b5.clone() }, b: b5, min: None };
-    // W2: 13,088 documents, 5.8 M reads and bindings, local ids below 2,764.
-    let (loff, left) = parts(&mut rng, 13088, 540, 2764);
-    let (roff, right) = parts(&mut rng, 13088, 350, 2764);
-    let w2 = Kernel::CountTable { loff: loff.clone(), left: left.clone(), roff: roff.clone(), right: right.clone(), emit: false };
-    let w2e = Kernel::CountTable { loff, left, roff, right, emit: true };
-    // W4: 22.3 M kinds in 13,088 documents, below 128.
-    let (hoff, codes) = parts(&mut rng, 13088, 3400, 128);
-    let w4 = Kernel::Histogram { off: hoff, codes, width: 128 };
-    // W3: 12,000 nodes, about 35 levels.
-    let (coff, cdst) = layered(&mut rng, 12000, 5, 35);
-    let w3 = Kernel::Closure { n: 12000, off: coff, dst: cdst };
-    let all = vec![("W1 bit product", w1), ("W5 bit product", w5), ("W2 count table", w2), ("W2 count table, pairs", w2e), ("W4 histogram", w4), ("W3 closure", w3)];
-    // `RERAIL_PRICE_ONLY=<text>`: the workloads whose names hold it (one kernel's prices, its reference alone run).
-    let only = std::env::var("RERAIL_PRICE_ONLY").ok();
-    all.into_iter().filter(|(name, _)| only.as_deref().is_none_or(|o| name.contains(o))).collect()
-}
-
-/// The smallest launch of each form: what a launch costs beyond its work.
-fn tiny(f: Form) -> Kernel {
-    let mut rng = Rng(7);
-    match f {
-        Form::Program => unreachable!("a program prices itself"),
-        Form::BitProduct => Kernel::BitProduct { a: bits(&mut rng, 4, 64, 4), b: bits(&mut rng, 4, 64, 4), min: None },
-        Form::CountTable | Form::CountPairs => {
-            Kernel::CountTable { loff: rerail_blocks::vector![0, 2].into(), left: rerail_blocks::vector![1, 2].into(), roff: rerail_blocks::vector![0, 2].into(), right: rerail_blocks::vector![2, 1].into(), emit: f == Form::CountPairs }
-        }
-        Form::Histogram => Kernel::Histogram { off: rerail_blocks::vector![0, 2].into(), codes: rerail_blocks::vector![0, 1].into(), width: 2 },
-        Form::Closure => {
-            let (off, dst) = graph(&mut rng, 8, 1);
-            Kernel::Closure { n: 8, off, dst }
-        }
-        Form::Probe | Form::Tile => {
-            let keys: crate::kernel::Keys = vec![crate::col::Col::from(rerail_blocks::vector![1i64, 2])].into();
-            let by = if f == Form::Tile { crate::kernel::JoinBy::Tile } else { crate::kernel::JoinBy::Probe };
-            Kernel::Join { left: keys.clone(), right: keys, right_id: None, by }
-        }
-    }
-}
-
-/// The best of `n` runs of `f`, which returns the seconds it measured.
-fn best(n: usize, mut f: impl FnMut() -> f64) -> f64 {
-    (0..n).map(|_| f()).fold(f64::INFINITY, f64::min)
-}
-
-fn row(name: &str, lane: &str, k: &Kernel, secs: f64, what: &str) {
-    println!("| {name} | {lane} | {:.3e} | {:.3} ms {what} | {:.2e} |", k.units(), secs * 1e3, secs / k.units());
-}
-
-fn header() {
-    println!("load before: {}", load());
-    println!("| workload | lane | units | best | s / unit |");
-    println!("|---|---|---|---|---|");
-}
 
 #[test]
 #[ignore = "prices: release build, run alone with --ignored --nocapture"]
@@ -172,49 +88,6 @@ fn sme() {
     println!("load after: {}", load());
 }
 
-#[cfg(gpu_lane)]
-#[test]
-#[ignore = "prices: release build, run alone with --ignored --nocapture"]
-fn gpu() {
-    use crate::exec::Backend;
-    header();
-    let g = crate::gpu::gpu_backend().expect("this machine has a Metal device");
-    for (name, k) in workloads().into_iter().filter(|(_, k)| g.can(k)) {
-        let want = crate::cpu::run(&k);
-        let (out, _) = g.run(&[&k]).unwrap();
-        assert!(out[0] == want, "{name}");
-        let secs = best(7, || g.run(&[&k]).unwrap().1.device);
-        row(name, "gpu (device)", &k, secs, "device");
-    }
-    // A submission's fixed cost: one tiny launch, wall and host CPU (the device's own time is a few µs).
-    let k = tiny(Form::Histogram);
-    let (mut cpu, mut dev) = (f64::INFINITY, f64::INFINITY);
-    let w = best(50, || {
-        let (c0, t) = (process_cpu(), Instant::now());
-        let (_, s) = g.run(&[&k]).unwrap();
-        let w = t.elapsed().as_secs_f64();
-        cpu = cpu.min(process_cpu() - c0);
-        dev = dev.min(s.device);
-        w
-    });
-    // The forms one submission holds (`run`): a join runs in its space's own command buffers (`submit`'s `space::run`).
-    let ks: Vec<Kernel> = Form::ALL.iter().filter(|f| !matches!(f, Form::Probe | Form::Tile)).cycle().take(20).map(|&f| tiny(f)).collect();
-    let refs: Vec<&Kernel> = ks.iter().collect();
-    let w20 = best(50, || {
-        let t = Instant::now();
-        std::hint::black_box(g.run(&refs).unwrap());
-        t.elapsed().as_secs_f64()
-    });
-    println!(
-        "fixed: a submission of one tiny launch: wall {:.1} us, host CPU {:.1} us, device {:.1} us; of 20: wall {:.1} us ({:.2} us a launch more)",
-        w * 1e6,
-        cpu * 1e6,
-        dev * 1e6,
-        w20 * 1e6,
-        (w20 - w) * 1e6 / 19.0
-    );
-    println!("load after: {}", load());
-}
 
 #[cfg(all(feature = "ane", target_os = "macos"))]
 #[test]
@@ -223,7 +96,7 @@ fn ane() {
     use crate::ane::{Ane, MemoryStore};
     use crate::exec::Backend;
     header();
-    let lane = Ane::new(Arc::new(MemoryStore::default()));
+    let lane = Ane::new(std::sync::Arc::new(MemoryStore::default()));
     let mut ws = workloads();
     ws.retain(|(_, k)| matches!(k, Kernel::BitProduct { .. }));
     for (name, k) in &ws {
@@ -281,7 +154,7 @@ fn ane_overlap() {
     use crate::ane::{Ane, MemoryStore, Split};
     use crate::exec::Backend;
     println!("load before: {}", load());
-    let lane = Ane::new(Arc::new(MemoryStore::default()));
+    let lane = Ane::new(std::sync::Arc::new(MemoryStore::default()));
     let mut rng = Rng(42);
     // W1 (7 tiles) and W5's constant against 8,192 names (4 tiles of 2,048 rows over 13,088 bits).
     let w1 = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1).fixed(), min: None };
@@ -304,7 +177,7 @@ fn ane_overlap() {
                 splits.push(lane.last_split());
             }
             let med = |f: &dyn Fn(&Split) -> f64| {
-                let mut v: Vector<f64> = splits.iter().map(f).collect();
+                let mut v: rerail_blocks::vector::Vector<f64> = splits.iter().map(f).collect();
                 v.sort_by(f64::total_cmp);
                 v[v.len() / 2] * 1e3
             };

@@ -102,7 +102,7 @@ use rerail_blocks::vector::Vector;
         use std::sync::Arc;
         let filters: Vec<Arc<SpanPrefilter>> = ["SEC\\d+", "(?m)^class\\s+(?<c>\\w+)", "[\\p{Alphabetic}\\p{N}]+"].iter().map(|re| Arc::new(SpanPrefilter::compile(re, false).unwrap())).collect();
         let long = "x = 1  # SEC12\nclass Foo:\n    pass\n".repeat(500);
-        let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
+        let sources: Vec<Arc<crate::code_rule_dsl::tape::Text>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.into())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let ex = |device| crate::code_rule_dsl::logic::lanes::executor_for(device);
         let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
@@ -153,7 +153,7 @@ use rerail_blocks::vector::Vector;
         let filters: Vec<Arc<SpanPrefilter>> = ["QZV\\d{2}k", "(?m)^def\\s+qzv_\\w+"].iter().map(|re| Arc::new(SpanPrefilter::compile(re, false).unwrap())).collect();
         let natives: Vec<&crate::code_rule_dsl::transducer::packed::native_ir::BlockNative> = filters.iter().map(|f| f.native()).collect();
         let long = "QZV12k = 1\ndef qzv_a():\n    QZV9k\n".repeat(300);
-        let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
+        let sources: Vec<Arc<crate::code_rule_dsl::tape::Text>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.into())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let check = |what: &str, on: RanOn| {
             let (got, ran) = super::ends_on(&ex, &filters, &sources, &files, true, Some(rerail_accel::Lane::Gpu)).unwrap();

@@ -1,7 +1,8 @@
 # 0601. Every launch counts in one ledger, and past it is a hard failure
 
-Status: accepted (2026-11-22). Changes 0540's ledger (where it lives, who charges it, what a refusal does) and list
-step 13's plan-time bound; the budget itself (`KERNEL_LAUNCH_LIMIT`, 200) and 0540's reruns' budget are unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-22). Changes 0540's ledger (where it lives, who charges it, what
+a refusal does) and list step 13's plan-time bound; the budget itself (`KERNEL_LAUNCH_LIMIT`, 200) and 0540's reruns'
+budget are unchanged.
 
 ## Intro
 
@@ -84,3 +85,6 @@ They are the work below, not tests to change.
 - `gpu::join::tests::a_pass_charges_the_evaluations_launch_budget`: passes share one evaluation's budget.
 - `rerail-metal`'s launch tests: a command's launches charged by every dispatch form, and the launch past the budget
   raising `OverBudget` with nothing of the command run.
+- `gpu::tests::a_started_batch_of_joins_is_charged_on_a_thread_with_no_evaluation` (decision 0666): the GPU lane's
+  started batch of joins (`GpuBackend::start`, then `finish`) opens an evaluation in each half, as `run` does; on the
+  lanes' pool, whose threads have none, its radix sort was a launch outside any evaluation.

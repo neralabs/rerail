@@ -1,12 +1,12 @@
 //! Decision 0434 §6: what 16z's block sink needs of its compressor. The engine's format 16 tape of each file
-//! (`f16::write_from`, the shipped tables), cut into 16z's pieces as its writer cuts them (a block's column at its
+//! (as captured, the shipped tables), cut into 16z's pieces as its writer cuts them (a block's column at its
 //! rows, then that block's side-list part), each piece stored as 16z stores it (LZ4 when that shrinks it by a
 //! tenth, else raw; repeats left out, the same for every compressor), by each compressor: LZ4 HC at a level, or
 //! LZ4's fast compressor.
 
 use crate::capture::File;
-use rerail_tape_format::f16::{self, Written};
-use rerail_tape_format::tape::{F15, Tape, f15_columns};
+use rerail_tape_format::f16::{self, Lang, Node, Tape16, Written};
+use rerail_tape_format::tape::Tape;
 use std::os::raw::c_char;
 
 const Z: usize = 1024;
@@ -74,14 +74,25 @@ pub struct Report {
     pub ns: [u64; LEVELS.len()],
 }
 
+/// The capture's tape (the engine's format 16) and its language's table.
+fn captured(f: &File) -> Result<(Tape16, &'static Lang), String> {
+    let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
+    Ok((Tape16::from_bytes(f.image.clone())?, lang))
+}
+
+/// `t`'s nodes in preorder as `f16::write` takes them (a format 16 tape's codes are its language's numbers).
+fn nodes<T: Tape>(t: &T) -> impl FnMut(usize) -> Node + '_ {
+    let mut s = 0;
+    move |i| {
+        s = t.start_next(i, s);
+        Node { number: t.code(i), start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
+    }
+}
+
 pub fn run(files: &[&File]) -> Result<Report, String> {
     let mut r = Report::default();
     for f in files {
-        let (columns, table) = f15_columns(&f.image)?;
-        let t = F15::new(&f.image, columns, &table)?;
-        let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
-        let number = f16::numbers(lang, &table)?;
-        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, crate::f16::terminators(f.tag), f.tag, false)? else { unreachable!() };
+        let (t16, _) = captured(f)?;
         let bytes = t16.as_bytes();
         r.files += 1;
         r.nodes += u64::from_le_bytes(bytes[24..32].try_into().unwrap());
@@ -136,10 +147,9 @@ pub struct Ops {
 pub fn ops(files: &[&File]) -> Result<Ops, String> {
     let mut r = Ops::default();
     for f in files {
-        let (columns, table) = f15_columns(&f.image)?;
-        let t = F15::new(&f.image, columns, &table)?;
-        let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
-        let number = f16::numbers(lang, &table)?;
+        let (t16, lang) = captured(f)?;
+        let t = t16.reader(lang)?;
+        let number: Vec<u32> = (0..lang.table().entries().len() as u32).collect();
         r.files += 1;
         r.nodes += t.len() as u64;
         for (k, z) in [false, true].into_iter().enumerate() {
@@ -148,7 +158,7 @@ pub fn ops(files: &[&File]) -> Result<Ops, String> {
             r.ns_ref[k] += t0.elapsed().as_nanos() as u64;
             r.in_ref[k] += crate::measure::retired().0 - i0;
             let (t0, i0) = (std::time::Instant::now(), crate::measure::retired().0);
-            let got = f16::write_from(lang, &t, &number, &f.source, crate::f16::terminators(f.tag), f.tag, z)?;
+            let got = f16::write(lang, t.len(), &f.source, crate::f16::terminators(f.tag), f.tag, z, nodes(&t))?;
             r.ns_ops[k] += t0.elapsed().as_nanos() as u64;
             r.in_ops[k] += crate::measure::retired().0 - i0;
             let bytes = |w: &Written| match w {
@@ -268,11 +278,8 @@ fn range_parse(col: &[u8], cell: usize, ends: &[usize], side: usize, descendants
 pub fn ranges(files: &[&File]) -> Result<Ranges, String> {
     let mut r = Ranges::default();
     for f in files {
-        let (columns, table) = f15_columns(&f.image)?;
-        let t = F15::new(&f.image, columns, &table)?;
-        let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
-        let number = f16::numbers(lang, &table)?;
-        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, crate::f16::terminators(f.tag), f.tag, false)? else { unreachable!() };
+        let (t16, lang) = captured(f)?;
+        let t = t16.reader(lang)?;
         let tb = t16.as_bytes();
         r.files += 1;
         let n = t.len();

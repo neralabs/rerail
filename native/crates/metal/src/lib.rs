@@ -26,8 +26,8 @@ pub mod pp_expand;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
 pub mod pool;
 pub mod runtime;
-/// The slab residency's arena and sources (decision 0032).
-pub mod slabs;
+/// The slab residency's arena and sources (decision 0032): rerail-slabs's, below lang (crate split 10d-4).
+pub use rerail_slabs as slabs;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_pool;
 
@@ -53,8 +53,6 @@ pub(crate) fn pool_hooks() {
     rerail_context::machine::<PoolHooks>().0.get_or_init(|| {
         // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
         rerail_accel::gpu::shared::set_other_reserved(runtime::ledger);
-        // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
-        rerail_accel::gpu::shared::set_evictor(slabs::evict);
     });
 }
 
@@ -82,13 +80,19 @@ pub fn every_kernel_ahead() -> bool {
 /// preprocessor's passes (`pp_arena`), asked for as their use asks for them, so their use then finds them compiled. A
 /// block program's kernels are its own (the forward carry's, `block_program::serial`), compiled behind its first batch.
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
-    use rerail_accel::gpu::{ahead, caught, released};
+    use rerail_accel_gpu::gpu::{ahead, caught, released};
     let mut v = Vec::new();
     // The preprocessor's passes only on the CPU, where they run (every preprocessor run is the CPU's for now). A GPU's
     // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's
     // OpenCL (an Arc 140V) was still compiling at 90 s, and the CPU's compiler takes 7 s.
     if rerail_gpu::device::backend() == "CPU" || every_kernel_ahead() {
-        v.push(ahead("pp passes", || released(|| caught(|| _ = pp_arena::kernel("pp_setup")))));
+        v.push(ahead("pp passes", || released(|| caught(|| _ = pp_arena::kernel("pp_run")))));
     }
     v
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

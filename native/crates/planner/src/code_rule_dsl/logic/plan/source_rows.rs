@@ -53,39 +53,49 @@ pub fn each_row(source: &dyn Source, cells: &Cells, mut f: impl FnMut(&[i64], u6
     }
 }
 
-/// A source's rows read where they lie (a held relation's from its block, a batch at a time; another's by value), in
-/// canonical order: a stratum's rows or an input's for an entry of their own, never gathered (`kept_strata`).
+/// A source's rows read where they lie, in canonical order, by the store's writer as it packs them (`KeptPicked`,
+/// decision 0353 step 8): a stratum's rows or an input's for an entry of their own, never gathered (`kept_strata`).
+/// A row's search starts from the last one's (`Source::value_memo`; any memo is correct, so threads share it).
 pub struct SourceRows {
     pub source: Arc<dyn Source>,
+    memo: std::sync::atomic::AtomicU32,
+}
+
+impl SourceRows {
+    pub fn new(source: Arc<dyn Source>) -> SourceRows {
+        SourceRows { source, memo: std::sync::atomic::AtomicU32::new(crate::code_rule_dsl::facts::vtab::NO_MEMO) }
+    }
 }
 
 impl crate::content_store::kept_facts::KeptPicked for SourceRows {
-    fn rows(&self) -> usize {
-        self.source.len()
-    }
-    fn width(&self) -> usize {
-        self.source.columns().len()
-    }
     fn given(&self) -> bool {
         false
     }
-    fn fill(&self, cols: &mut [i64], _: Option<&mut [u32]>) {
-        let (n, k) = (self.rows(), self.width());
-        let mut r = 0;
-        let held = crate::code_rule_dsl::logic::native::component::each_held_batch(self.source.as_ref(), k, &mut |batch: &[i64]| {
-            for row in batch.chunks_exact(k.max(1)) {
-                for (c, &v) in row.iter().enumerate() {
-                    cols[c * n + r] = v;
-                }
-                r += 1;
-            }
-        });
-        if held.is_none() {
-            for c in 0..k {
-                for (i, v) in cols[c * n..(c + 1) * n].iter_mut().enumerate() {
-                    *v = self.source.value(i, c);
-                }
-            }
-        }
+}
+
+impl rerail_blocks::packed::RowsIn for SourceRows {
+    fn n(&self) -> usize {
+        self.source.len()
     }
+    fn arity(&self) -> usize {
+        self.source.columns().len()
+    }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let was = self.memo.load(Relaxed);
+        let mut memo = was;
+        let x = self.source.value_memo(r, c, &mut memo);
+        if memo != was {
+            self.memo.store(memo, Relaxed);
+        }
+        x
+    }
+}
+
+/// A relation's digest taken from its rows where they lie: the digest `rows_digest` takes of its live rows, read a
+/// batch at a time in its block (decision 0353 step 8).
+pub fn held_digest(cells: &Cells, held: &crate::code_rule_dsl::logic::native::component::InRel) -> Option<u64> {
+    Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
+        held.each_live_batch(lo, hi, |rows| f(rows));
+    }))
 }

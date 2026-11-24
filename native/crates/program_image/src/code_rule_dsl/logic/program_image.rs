@@ -56,9 +56,9 @@ pub use about::{About, AboutData, ArchivedGateRef, ArchivedNativeRef, ArchivedNa
 pub use build::{Builder, Open, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
 pub use extents::Extents;
 pub use grouped::Grouped;
-pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
+pub use handles::{AggRef, AtomRef, CmpOp, IdMap, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
-pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, same_program};
+pub use version::{DeclRef, FactsRef, Layer, Made, UnionPart, Version, differences, same_program};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows

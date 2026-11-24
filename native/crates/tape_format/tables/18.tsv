@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 18 (java), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 18 (java), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 2859 codes; numbered by how often each is a node's over 18088 files, 15492037 nodes (`rerail-engine code-counts`).
 revision	4
@@ -2862,3 +2862,571 @@ code	320	31	4	-	264
 code	320	36	4	-	-
 code	320	36	4	-	263,264
 code	320	36	4	-	264
+kind	1	1	identifier
+kind	2	1	decimal_integer_literal
+kind	3	1	hex_integer_literal
+kind	4	1	octal_integer_literal
+kind	5	1	binary_integer_literal
+kind	6	1	decimal_floating_point_literal
+kind	7	1	hex_floating_point_literal
+kind	8	1	true
+kind	9	1	false
+kind	10	1	character_literal
+kind	11	0	"
+kind	12	0	"""
+kind	13	1	string_fragment
+kind	16	0	\\{
+kind	17	0	}
+kind	19	1	escape_sequence
+kind	20	1	null_literal
+kind	21	0	(
+kind	22	0	)
+kind	23	0	&
+kind	24	0	=
+kind	25	0	+=
+kind	26	0	-=
+kind	27	0	*=
+kind	28	0	/=
+kind	29	0	&=
+kind	30	0	|=
+kind	31	0	^=
+kind	32	0	%=
+kind	33	0	<<=
+kind	34	0	>>=
+kind	35	0	>>>=
+kind	36	0	>
+kind	37	0	<
+kind	38	0	>=
+kind	39	0	<=
+kind	40	0	==
+kind	41	0	!=
+kind	42	0	&&
+kind	43	0	||
+kind	44	0	+
+kind	45	0	-
+kind	46	0	*
+kind	47	0	/
+kind	48	0	|
+kind	49	0	^
+kind	50	0	%
+kind	51	0	<<
+kind	52	0	>>
+kind	53	0	>>>
+kind	54	0	instanceof
+kind	55	0	final
+kind	56	0	->
+kind	57	0	,
+kind	58	0	?
+kind	59	0	:
+kind	60	0	!
+kind	61	0	~
+kind	62	0	++
+kind	63	0	--
+kind	64	0	new
+kind	65	0	[
+kind	66	0	]
+kind	67	0	.
+kind	68	0	class
+kind	69	0	::
+kind	70	0	extends
+kind	71	0	switch
+kind	72	0	{
+kind	73	0	case
+kind	74	0	default
+kind	75	1	underscore_pattern
+kind	76	0	when
+kind	77	0	;
+kind	78	0	assert
+kind	79	0	do
+kind	80	0	while
+kind	81	0	break
+kind	82	0	continue
+kind	83	0	return
+kind	84	0	yield
+kind	85	0	synchronized
+kind	86	0	throw
+kind	87	0	try
+kind	88	0	catch
+kind	89	0	finally
+kind	90	0	if
+kind	91	0	else
+kind	92	0	for
+kind	93	0	@
+kind	94	0	open
+kind	95	0	module
+kind	96	0	requires
+kind	97	0	transitive
+kind	98	0	static
+kind	99	0	exports
+kind	100	0	to
+kind	101	0	opens
+kind	102	0	uses
+kind	103	0	provides
+kind	104	0	with
+kind	105	0	package
+kind	106	0	import
+kind	107	0	enum
+kind	108	0	public
+kind	109	0	protected
+kind	110	0	private
+kind	111	0	abstract
+kind	112	0	strictfp
+kind	113	0	native
+kind	114	0	transient
+kind	115	0	volatile
+kind	116	0	sealed
+kind	117	0	non-sealed
+kind	118	0	implements
+kind	119	0	permits
+kind	120	0	record
+kind	121	0	@interface
+kind	122	0	interface
+kind	123	0	byte
+kind	124	0	short
+kind	125	0	int
+kind	126	0	long
+kind	127	0	char
+kind	128	0	float
+kind	129	0	double
+kind	130	1	boolean_type
+kind	131	1	void_type
+kind	132	0	...
+kind	133	0	throws
+kind	134	1	this
+kind	135	1	super
+kind	136	1	line_comment
+kind	137	1	block_comment
+kind	138	1	program
+kind	141	1	string_literal
+kind	144	1	multiline_string_fragment
+kind	145	1	string_interpolation
+kind	148	1	cast_expression
+kind	149	1	assignment_expression
+kind	150	1	binary_expression
+kind	151	1	instanceof_expression
+kind	152	1	lambda_expression
+kind	153	1	inferred_parameters
+kind	154	1	ternary_expression
+kind	155	1	unary_expression
+kind	156	1	update_expression
+kind	158	1	array_creation_expression
+kind	159	1	dimensions_expr
+kind	160	1	parenthesized_expression
+kind	161	1	class_literal
+kind	162	1	object_creation_expression
+kind	164	1	field_access
+kind	165	1	template_expression
+kind	166	1	array_access
+kind	167	1	method_invocation
+kind	168	1	argument_list
+kind	169	1	method_reference
+kind	170	1	type_arguments
+kind	171	1	wildcard
+kind	173	1	dimensions
+kind	174	1	switch_expression
+kind	175	1	switch_block
+kind	176	1	switch_block_statement_group
+kind	177	1	switch_rule
+kind	178	1	switch_label
+kind	179	1	pattern
+kind	180	1	type_pattern
+kind	181	1	record_pattern
+kind	182	1	record_pattern_body
+kind	183	1	record_pattern_component
+kind	184	1	guard
+kind	186	1	block
+kind	187	1	expression_statement
+kind	188	1	labeled_statement
+kind	189	1	assert_statement
+kind	190	1	do_statement
+kind	191	1	break_statement
+kind	192	1	continue_statement
+kind	193	1	return_statement
+kind	194	1	yield_statement
+kind	195	1	synchronized_statement
+kind	196	1	throw_statement
+kind	197	1	try_statement
+kind	198	1	catch_clause
+kind	199	1	catch_formal_parameter
+kind	200	1	catch_type
+kind	201	1	finally_clause
+kind	202	1	try_with_resources_statement
+kind	203	1	resource_specification
+kind	204	1	resource
+kind	205	1	if_statement
+kind	206	1	while_statement
+kind	207	1	for_statement
+kind	208	1	enhanced_for_statement
+kind	210	1	marker_annotation
+kind	211	1	annotation
+kind	212	1	annotation_argument_list
+kind	213	1	element_value_pair
+kind	215	1	element_value_array_initializer
+kind	217	1	module_declaration
+kind	218	1	module_body
+kind	220	1	requires_module_directive
+kind	221	1	requires_modifier
+kind	222	1	exports_module_directive
+kind	223	1	opens_module_directive
+kind	224	1	uses_module_directive
+kind	225	1	provides_module_directive
+kind	226	1	package_declaration
+kind	227	1	import_declaration
+kind	228	1	asterisk
+kind	229	1	enum_declaration
+kind	230	1	enum_body
+kind	231	1	enum_body_declarations
+kind	232	1	enum_constant
+kind	233	1	class_declaration
+kind	234	1	modifiers
+kind	235	1	type_parameters
+kind	236	1	type_parameter
+kind	237	1	type_bound
+kind	238	1	superclass
+kind	239	1	super_interfaces
+kind	240	1	type_list
+kind	241	1	permits
+kind	242	1	class_body
+kind	243	1	static_initializer
+kind	244	1	constructor_declaration
+kind	246	1	constructor_body
+kind	247	1	explicit_constructor_invocation
+kind	248	1	scoped_identifier
+kind	249	1	field_declaration
+kind	250	1	record_declaration
+kind	251	1	annotation_type_declaration
+kind	252	1	annotation_type_body
+kind	253	1	annotation_type_element_declaration
+kind	255	1	interface_declaration
+kind	256	1	extends_interfaces
+kind	257	1	interface_body
+kind	258	1	constant_declaration
+kind	260	1	variable_declarator
+kind	262	1	array_initializer
+kind	265	1	annotated_type
+kind	266	1	scoped_type_identifier
+kind	267	1	generic_type
+kind	268	1	array_type
+kind	269	1	integral_type
+kind	270	1	floating_point_type
+kind	273	1	formal_parameters
+kind	274	1	formal_parameter
+kind	275	1	receiver_parameter
+kind	276	1	spread_parameter
+kind	277	1	throws
+kind	278	1	local_variable_declaration
+kind	279	1	method_declaration
+kind	280	1	compact_constructor_declaration
+kind	320	1	type_identifier
+lookup	1	identifier	1
+lookup	1	decimal_integer_literal	2
+lookup	1	hex_integer_literal	3
+lookup	1	octal_integer_literal	4
+lookup	1	binary_integer_literal	5
+lookup	1	decimal_floating_point_literal	6
+lookup	1	hex_floating_point_literal	7
+lookup	1	true	8
+lookup	1	false	9
+lookup	1	character_literal	10
+lookup	0	"	11
+lookup	0	"""	12
+lookup	1	string_fragment	13
+lookup	0	\\{	16
+lookup	0	}	17
+lookup	1	escape_sequence	19
+lookup	1	null_literal	20
+lookup	0	(	21
+lookup	0	)	22
+lookup	0	&	23
+lookup	0	=	24
+lookup	0	+=	25
+lookup	0	-=	26
+lookup	0	*=	27
+lookup	0	/=	28
+lookup	0	&=	29
+lookup	0	|=	30
+lookup	0	^=	31
+lookup	0	%=	32
+lookup	0	<<=	33
+lookup	0	>>=	34
+lookup	0	>>>=	35
+lookup	0	>	36
+lookup	0	<	37
+lookup	0	>=	38
+lookup	0	<=	39
+lookup	0	==	40
+lookup	0	!=	41
+lookup	0	&&	42
+lookup	0	||	43
+lookup	0	+	44
+lookup	0	-	45
+lookup	0	*	46
+lookup	0	/	47
+lookup	0	|	48
+lookup	0	^	49
+lookup	0	%	50
+lookup	0	<<	51
+lookup	0	>>	52
+lookup	0	>>>	53
+lookup	0	instanceof	54
+lookup	0	final	55
+lookup	0	->	56
+lookup	0	,	57
+lookup	0	?	58
+lookup	0	:	59
+lookup	0	!	60
+lookup	0	~	61
+lookup	0	++	62
+lookup	0	--	63
+lookup	0	new	64
+lookup	0	[	65
+lookup	0	]	66
+lookup	0	.	67
+lookup	0	class	68
+lookup	0	::	69
+lookup	0	extends	70
+lookup	0	switch	71
+lookup	0	{	72
+lookup	0	case	73
+lookup	0	default	74
+lookup	1	underscore_pattern	75
+lookup	0	when	76
+lookup	0	;	77
+lookup	0	assert	78
+lookup	0	do	79
+lookup	0	while	80
+lookup	0	break	81
+lookup	0	continue	82
+lookup	0	return	83
+lookup	0	yield	84
+lookup	0	synchronized	85
+lookup	0	throw	86
+lookup	0	try	87
+lookup	0	catch	88
+lookup	0	finally	89
+lookup	0	if	90
+lookup	0	else	91
+lookup	0	for	92
+lookup	0	@	93
+lookup	0	open	94
+lookup	0	module	95
+lookup	0	requires	96
+lookup	0	transitive	97
+lookup	0	static	98
+lookup	0	exports	99
+lookup	0	to	100
+lookup	0	opens	101
+lookup	0	uses	102
+lookup	0	provides	103
+lookup	0	with	104
+lookup	0	package	105
+lookup	0	import	106
+lookup	0	enum	107
+lookup	0	public	108
+lookup	0	protected	109
+lookup	0	private	110
+lookup	0	abstract	111
+lookup	0	strictfp	112
+lookup	0	native	113
+lookup	0	transient	114
+lookup	0	volatile	115
+lookup	0	sealed	116
+lookup	0	non-sealed	117
+lookup	0	implements	118
+lookup	0	permits	119
+lookup	0	record	120
+lookup	0	@interface	121
+lookup	0	interface	122
+lookup	0	byte	123
+lookup	0	short	124
+lookup	0	int	125
+lookup	0	long	126
+lookup	0	char	127
+lookup	0	float	128
+lookup	0	double	129
+lookup	1	boolean_type	130
+lookup	1	void_type	131
+lookup	0	...	132
+lookup	0	throws	133
+lookup	1	this	134
+lookup	1	super	135
+lookup	1	line_comment	136
+lookup	1	block_comment	137
+lookup	1	program	138
+lookup	1	string_literal	141
+lookup	1	multiline_string_fragment	144
+lookup	1	string_interpolation	145
+lookup	1	cast_expression	148
+lookup	1	assignment_expression	149
+lookup	1	binary_expression	150
+lookup	1	instanceof_expression	151
+lookup	1	lambda_expression	152
+lookup	1	inferred_parameters	153
+lookup	1	ternary_expression	154
+lookup	1	unary_expression	155
+lookup	1	update_expression	156
+lookup	1	array_creation_expression	158
+lookup	1	dimensions_expr	159
+lookup	1	parenthesized_expression	160
+lookup	1	class_literal	161
+lookup	1	object_creation_expression	162
+lookup	1	field_access	164
+lookup	1	template_expression	165
+lookup	1	array_access	166
+lookup	1	method_invocation	167
+lookup	1	argument_list	168
+lookup	1	method_reference	169
+lookup	1	type_arguments	170
+lookup	1	wildcard	171
+lookup	1	dimensions	173
+lookup	1	switch_expression	174
+lookup	1	switch_block	175
+lookup	1	switch_block_statement_group	176
+lookup	1	switch_rule	177
+lookup	1	switch_label	178
+lookup	1	pattern	179
+lookup	1	type_pattern	180
+lookup	1	record_pattern	181
+lookup	1	record_pattern_body	182
+lookup	1	record_pattern_component	183
+lookup	1	guard	184
+lookup	1	block	186
+lookup	1	expression_statement	187
+lookup	1	labeled_statement	188
+lookup	1	assert_statement	189
+lookup	1	do_statement	190
+lookup	1	break_statement	191
+lookup	1	continue_statement	192
+lookup	1	return_statement	193
+lookup	1	yield_statement	194
+lookup	1	synchronized_statement	195
+lookup	1	throw_statement	196
+lookup	1	try_statement	197
+lookup	1	catch_clause	198
+lookup	1	catch_formal_parameter	199
+lookup	1	catch_type	200
+lookup	1	finally_clause	201
+lookup	1	try_with_resources_statement	202
+lookup	1	resource_specification	203
+lookup	1	resource	204
+lookup	1	if_statement	205
+lookup	1	while_statement	206
+lookup	1	for_statement	207
+lookup	1	enhanced_for_statement	208
+lookup	1	marker_annotation	210
+lookup	1	annotation	211
+lookup	1	annotation_argument_list	212
+lookup	1	element_value_pair	213
+lookup	1	element_value_array_initializer	215
+lookup	1	module_declaration	217
+lookup	1	module_body	218
+lookup	1	requires_module_directive	220
+lookup	1	requires_modifier	221
+lookup	1	exports_module_directive	222
+lookup	1	opens_module_directive	223
+lookup	1	uses_module_directive	224
+lookup	1	provides_module_directive	225
+lookup	1	package_declaration	226
+lookup	1	import_declaration	227
+lookup	1	asterisk	228
+lookup	1	enum_declaration	229
+lookup	1	enum_body	230
+lookup	1	enum_body_declarations	231
+lookup	1	enum_constant	232
+lookup	1	class_declaration	233
+lookup	1	modifiers	234
+lookup	1	type_parameters	235
+lookup	1	type_parameter	236
+lookup	1	type_bound	237
+lookup	1	superclass	238
+lookup	1	super_interfaces	239
+lookup	1	type_list	240
+lookup	1	permits	241
+lookup	1	class_body	242
+lookup	1	static_initializer	243
+lookup	1	constructor_declaration	244
+lookup	1	constructor_body	246
+lookup	1	explicit_constructor_invocation	247
+lookup	1	scoped_identifier	248
+lookup	1	field_declaration	249
+lookup	1	record_declaration	250
+lookup	1	annotation_type_declaration	251
+lookup	1	annotation_type_body	252
+lookup	1	annotation_type_element_declaration	253
+lookup	1	interface_declaration	255
+lookup	1	extends_interfaces	256
+lookup	1	interface_body	257
+lookup	1	constant_declaration	258
+lookup	1	variable_declarator	260
+lookup	1	array_initializer	262
+lookup	1	annotated_type	265
+lookup	1	scoped_type_identifier	266
+lookup	1	generic_type	267
+lookup	1	array_type	268
+lookup	1	integral_type	269
+lookup	1	floating_point_type	270
+lookup	1	formal_parameters	273
+lookup	1	formal_parameter	274
+lookup	1	receiver_parameter	275
+lookup	1	spread_parameter	276
+lookup	1	throws	277
+lookup	1	local_variable_declaration	278
+lookup	1	method_declaration	279
+lookup	1	compact_constructor_declaration	280
+lookup	1	type_identifier	320
+field	1	alternative
+field	2	arguments
+field	3	array
+field	4	body
+field	5	condition
+field	6	consequence
+field	7	constructor
+field	8	declarator
+field	9	dimensions
+field	10	element
+field	11	field
+field	12	index
+field	13	init
+field	14	interfaces
+field	15	key
+field	16	left
+field	17	modifiers
+field	18	module
+field	19	modules
+field	20	name
+field	21	object
+field	22	operand
+field	23	operator
+field	24	package
+field	25	parameters
+field	26	pattern
+field	27	permits
+field	28	provided
+field	29	provider
+field	30	resources
+field	31	right
+field	32	scope
+field	33	superclass
+field	34	template_argument
+field	35	template_processor
+field	36	type
+field	37	type_arguments
+field	38	type_parameters
+field	39	update
+field	40	value
+class	140	_literal
+class	147	expression
+class	157	primary_expression
+class	185	statement
+class	216	declaration
+class	219	module_directive
+class	263	_type
+class	264	_unannotated_type
+supertype	_literal	140
+supertype	expression	147
+supertype	primary_expression	157
+supertype	statement	185
+supertype	declaration	216
+supertype	module_directive	219
+supertype	_type	263
+supertype	_unannotated_type	264

@@ -13,9 +13,9 @@
 // signatures and tuple types are the sources' own.
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::content_store;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_adapters;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
@@ -28,7 +28,7 @@ pub mod code_rule_dsl {
         pub mod options;
     }
     pub use rerail_lang::code_rule_dsl::embed;
-    pub use rerail_facts::code_rule_dsl::facts;
+    pub use rerail_facts_base::code_rule_dsl::facts;
     pub mod file_input;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
@@ -70,7 +70,7 @@ pub mod code_rule_dsl {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
         }
         pub use rerail_prof::code_rule_dsl::logic::profile;
-        pub use rerail_facts::code_rule_dsl::logic::strings;
+        pub use rerail_facts_base::code_rule_dsl::logic::strings;
     }
     /// What of the matcher the adapters name: the file context names resolve in, the argument slots, a clause's
     /// steps. The matcher (rerail-matcher) re-exports them.
@@ -94,16 +94,14 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::module_path;
     pub mod origin;
     pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub use rerail_facts::code_rule_dsl::producers;
+    pub use rerail_facts_base::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
     pub mod scope;
-    pub use rerail_facts::code_rule_dsl::search_index;
+    pub use rerail_facts_base::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod suppress;
     pub use rerail_lang::code_rule_dsl::tape;
-    pub use rerail_facts::code_rule_dsl::text;
+    pub use rerail_facts_base::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
     pub mod value;
     #[allow(unused_imports)]

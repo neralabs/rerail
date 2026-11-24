@@ -40,12 +40,12 @@ system-allocator = ["rerail-lang/system-allocator"]
 code-rule-profile = ["rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-lang/metal-tests"]
-test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-ygraph/test-hooks"]
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-observe/test-hooks", "rerail-ygraph/test-hooks"]
 
 [dependencies]
 rerail-section = { path = "../section" }
 # A chunk's admitted values' parts, read without a lock by every probe of a layered source (`values::Values`).
-arc-swap = "=1.9.3"
+arc-swap = "=1.9.5"
 # Blocks (decision 0266): a batch's chunk block (decision 0289), the automata's block (0478 step 2c), and the
 # block `Vector`s every platform holds rows in.
 rerail-blocks = { path = "../blocks" }
@@ -93,7 +93,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-tape-format = { path = "../tape_format" }
@@ -101,7 +101,8 @@ rerail-tape-format = { path = "../tape_format" }
 rerail-clif = { path = "../clif", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
-rerail-store = { path = "../store" }
+# The store's interface and records (`content_store::FactStore`), and git.
+rerail-observe = { path = "../observe" }
 rerail-accel = { path = "../../../accel" }
 # The device layer's buffers, as a view read in place names them for the stages (`vtab::ViewInPlace`).
 rerail-device = { path = "../../../gpu/device" }
@@ -138,5 +139,7 @@ metal = "0.33.0"
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-facts-base = { path = ".", features = ["test-hooks"] }
+# The tests open stores (the library holds one through `FactStore`).
+rerail-store = { path = "../store", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

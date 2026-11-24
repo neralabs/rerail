@@ -103,6 +103,46 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],[["1","99","3","17","3","7"],["2","99","1","-2","-2","-2"],["4","99","3","9223372036854775807","-1","9223372036854775807"]]);
 }
 
+/// t52 step 3: a filter of one relation every row of which passes is that relation (`filter_of`): held as its rows
+/// under its own name, not derived (hiding's narrow twins in a run with no annotation document). Where a row fails,
+/// it is derived as before. Either way its rows are SQL's.
+#[test]
+fn a_filter_every_row_passes_is_read_as_its_relation() {
+    let p = parse_version(".decl x(a:number,b:number)\nx(1,2).\nx(3,4).\n.decl d(a:number,b:number)\nd(a,b) :- x(a,b).\n.decl all_in(a:number,b:number)\nall_in(a,b) :- d(a,b), a < 10.\n.decl some_in(a:number,b:number)\nsome_in(a,b) :- d(a,b), a < 2.\n.output all_in\n.output some_in\n").unwrap();
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::profile::set(false);
+        }
+    }
+    let _one = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let _off = Off;
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::reset();
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
+        let bound: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t.starts_with("filters every row passes")).map(|(_, x)| x).collect();
+        if modes.is_empty() {
+            assert!(bound.is_empty(), "SQL derives every filter: {bound:?}");
+        } else {
+            assert!(bound.iter().any(|x| x.contains("all_in as d")), "the filter every row passes is d: {bound:?}");
+            assert!(!bound.iter().any(|x| x.contains("some_in")), "a filter a row fails is derived: {bound:?}");
+        }
+        outputs.push(got.shown().clone());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1]["all_in"], [["1", "2"], ["3", "4"]]);
+    assert_eq!(outputs[1]["some_in"], [["1", "2"]]);
+}
+
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
 /// decision 0145's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
 /// head, so neither head loses the rows the first wave derives.
@@ -311,7 +351,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
     for modes in ["", "program"] {
         // The probes' counts are the run's (decision 0442): one run holds them.
         let _run = super::super::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
@@ -1405,7 +1445,7 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
         ran.unwrap();
         declined
     };
-    assert!(!declined.keys().any(|k| ["rr_dfs", "rr_mall", "hit", "hm", "found"].iter().any(|r| k.contains(r))), "{declined:?}");
+    assert!(!declined.keys().any(|k| ["rr_dfs", "hit", "hm", "found"].iter().any(|r| k.contains(r)) || crate::code_rule_dsl::logic::rr::lower::holds_helper(k, &["mall"])), "{declined:?}");
     assert_eq!(got["hit"], [["10", "30", "1"], ["20", "30", "5"], ["40", "30", "2"]]);
     assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
     let found = |row: [&str; 5]| got["found"].contains(&row.map(str::to_owned).to_vec());
@@ -1519,6 +1559,60 @@ PIN(s) :- spot(_, s).
 }
 
 // ---- tree axes and node sets ----
+
+/// t50 step 7: a walk up a dotted name's prefixes until one is bound (`references.rerail`'s `rf_walk`), its step a
+/// `split_dot` that keeps only the prefix, takes the split at the last "." alone. Its rows are the walk's at every ".":
+/// names with a leading ".", a doubled ".", a trailing ".", none, and several levels; and `split_dot`'s other uses
+/// split as before.
+#[test]
+fn a_prefix_walk_splits_at_the_last_dot() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prefix-walk");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl want(q: symbol)
+want("a.b.c.d"). want("a.x"). want("p.q.r"). want(".lead.z"). want("a..b"). want("tail."). want("solo"). want("m.n.o.p.q").
+.decl binder(p: symbol)
+binder("a.b"). binder("a"). binder("p.q.r"). binder("a."). binder("tail"). binder("m").
+.decl walk(q: symbol, p: symbol)
+walk(q, p) :- want(q), split_dot(q, p, _).
+walk(q, p2) :- walk(q, p), !binder(p), split_dot(p, p2, _).
+.decl hit(q: symbol, p: symbol)
+hit(q, p) :- walk(q, p), binder(p).
+.decl parts(m: symbol, x: symbol)
+parts(m, x) :- want(q), split_dot(q, m, x).
+.output walk, hit, parts
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    let rows = |r: &[[&str; 2]]| -> Vec<Vec<String>> {
+        let mut v: Vec<Vec<String>> = r.iter().map(|x| x.iter().map(|s| (*s).to_owned()).collect()).collect();
+        v.sort();
+        v
+    };
+    let sorted = |mut v: Vec<Vec<String>>| {
+        v.sort();
+        v
+    };
+    // A name's parent is its text before its last "." (none before a leading one); a name with no "." has "" as its.
+    assert_eq!(sorted(read("walk")), rows(&[
+        ["a.b.c.d", "a.b.c"], ["a.b.c.d", "a.b"],
+        ["a.x", "a"],
+        ["p.q.r", "p.q"], ["p.q.r", "p"], ["p.q.r", ""],
+        [".lead.z", ".lead"],
+        ["a..b", "a."],
+        ["tail.", "tail"],
+        ["solo", ""],
+        ["m.n.o.p.q", "m.n.o.p"], ["m.n.o.p.q", "m.n.o"], ["m.n.o.p.q", "m.n"], ["m.n.o.p.q", "m"],
+    ]));
+    assert_eq!(sorted(read("hit")), rows(&[["a.b.c.d", "a.b"], ["a.x", "a"], ["a..b", "a."], ["tail.", "tail"], ["m.n.o.p.q", "m"]]));
+    assert_eq!(sorted(read("parts")), rows(&[
+        ["a.b.c", "d"], ["a", "x"], ["p.q", "r"], [".lead", "z"], ["a.", "b"], ["tail", ""], ["", "solo"], ["m.n.o.p", "q"],
+    ]));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 
 /// The axes over a set of nodes (`fnode`) or of kinds rules derive (`fk`), read as rules; `!nearest` with the
 /// ancestor named, `!within_stop`, `!earlier` and `!split_dot`; `precedes_stop` and `next_sibling` over `child`.
@@ -2174,6 +2268,56 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// Decision 0658: a relation being solved whose values all come from one column outside it is a sample of that
+/// column's values, and a probe by them hits where that column's do. `runs_at_import`'s shape: its values are
+/// `run_scope`'s first column's (every node with a scope), and its delta rule probes `run_scope` by its second (the
+/// scopes). Priced as every binding hitting, the delta rule was 7.8 M rows for a few hundred, and the device's tables
+/// were sized for them.
+#[test]
+fn a_solved_relations_column_is_priced_by_the_column_its_values_come_from() {
+    let p = parse_version(
+        ".decl rs(n:number, s:number, k:number)\n.decl late(n:number)\n.decl ri(n:number)\n\
+         ri(n) :- rs(n, _, 1), !late(n).\n\
+         ri(n) :- rs(n, s, k), k != 1, ri(s), !late(n).\n.output ri\n",
+    )
+    .unwrap();
+    let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
+    let keys: Vec<body::RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
+    let comps = crate::code_rule_dsl::logic::front::Components::of_names([["ri"]]);
+    let scc = comps.get(0).expect("the component");
+    let sources = column_sources(&vs, scc, &keys);
+    assert_eq!(sources.get(&("ri".to_owned(), 0)), Some(&("rs".to_owned(), 0)), "ri's values are rs's first column's: {sources:?}");
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
+    model.stats.nodes = 450_000.0;
+    // Every node with a scope, 4,000 scopes of 5 kinds; 2,000 nodes run at import so far.
+    for (rel, rows, ndv) in [("rs", 400_000.0, vec![400_000.0, 4_000.0, 5.0]), ("late", 10.0, vec![10.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.card.insert("ri", 2_000.0);
+    model.stats.delta_rows.insert("ri", 2_000.0);
+    let r = 1usize;
+    // The delta rule, led by `ri(s)`: the third literal.
+    let mut plan = |sources: Sources| {
+        model.stats.solve(rerail_section::TextSet::of(scc.iter()));
+        model.stats.sourced(sources);
+        let ((_, work, rows), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(2)).unwrap();
+        (work, rows)
+    };
+    let (work, rows) = plan(Sources::new());
+    let (sourced_work, sourced_rows) = plan(sources);
+    // Each of the 2,000 bindings hits a scope's 100 nodes: 200,000 rows priced. Drawn from all 400,000 nodes, one in a
+    // hundred is a scope: 2,000.
+    assert!(rows > 100_000.0, "unsourced, every binding hits: {rows} rows, {work} work");
+    assert!(sourced_rows < rows / 50.0, "sourced, a binding hits as rs's first column's values do: {sourced_rows} rows against {rows}");
+    assert!(sourced_work < work / 10.0, "{sourced_work} work against {work}");
+}
+
 /// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than
 /// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
 /// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved
@@ -2267,7 +2411,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     assert!(work<10_000.0, "price misses as well as hits: {work}");
 
     // A cached live plan must notice a new value distribution even when every relation's size is unchanged.
-    let _plans=KeepPlans::start(None);
+    let _plans=KeepPlans::start();
     model.ndv.insert(("delta",1),1.0);
     let ((before,_,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(2)).unwrap();
     let before:Vec<_>=before.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
@@ -2512,7 +2656,7 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     model.stats.fan.insert(("walk",2),40000.0);
     model.stats.nodes=300000.0;
     let r = 0usize;
-    let _plans=KeepPlans::start(None);
+    let _plans=KeepPlans::start();
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
     let ((_,before,_),_) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
     model.stats.memo.extend("changed",&super::sql_col("changed",1),[(Constant::Int(1),0)]);
@@ -2546,7 +2690,7 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
         }
     }
     let r = 0usize;
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let explain = explaining(true);
     let (_, explained) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
     drop(explain);
@@ -2582,7 +2726,7 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let lead = |order: &[Step]| rel_at(&p, r, order[0].at);
     // Planned before the guest round: about no fragment yet (production's estimate was 0.01 rows), and the line
     // ran over none.
@@ -2615,7 +2759,7 @@ fn a_kept_plan_whose_line_ran_far_over_its_price_is_not_reused_at_it() {
         }
     }
     model.stats.nodes = 1_000_000.0;
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let placed = body::Placed::whole(p.clone());
     let fields = placed.fields().unwrap();
     let own = body::nth(&p, 0);
@@ -2650,7 +2794,7 @@ fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
     model.stats.nodes = 1_000_000.0;
     let r = p.rule(crate::code_rule_dsl::logic::program_image::RuleId(0)).unwrap();
     let lits: Vec<_> = r.body().collect();
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let placed = body::Placed::whole(p.clone());
     let fields = placed.fields().unwrap();
     let own = body::nth(&p, 0);
@@ -3252,7 +3396,7 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
             p = renamed_head(&p, h);
         }
         let model = model_for(&p, sized);
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let r = 0usize;
         let (order, _, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), first).unwrap();
         order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect()
@@ -3283,7 +3427,7 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
         {
             let p = parse_version(&shaped).unwrap();
             let model = model_for(&p, &sizes);
-            let _plans = KeepPlans::start(None);
+            let _plans = KeepPlans::start();
             let r = 0usize;
             let (_, x) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
             assert_eq!(x.map(|x| x.shaped), Some(vec!["retparam bound f".to_owned()]));
@@ -3670,7 +3814,7 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     // Another line (its delta) is not held: searched.
     assert!(model.plan_rule(f, &b, Some(0)).is_ok());
     // Found heavy on its prepared order, in a run: searched from then on, once (decision 0361 step 5 with 0203).
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
     // Horribly slow past 8 times its prepared price: 3 rows of work a node at 2,000 nodes is 6,000; 48,000 the line.
     assert!(!model.prepared_horribly_slow(&b, &[None], &odd, 40_000.0));
@@ -3896,7 +4040,7 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     // Each build is a new version of the same program, parsed again: the later run's is not the earlier one's.
     let build = prepared_program;
     let held = {
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         assert!(super::prepared_to_store().is_none(), "none made yet");
         let v = build();
         let made = prepared::Prepared::of_version(&v);
@@ -3907,7 +4051,7 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     };
     // As the store gives it back: through its rows.
     let back = prepared::of_store_rows(&prepared::store_rows(&held));
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     super::take_stored_prepared(back);
     let v = build();
     let read = prepared::Prepared::of_version(&v);
@@ -4095,6 +4239,29 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
 /// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
 /// 100 s on 300 files; probed by `child` first, a target reads a few rows.
 #[test]
+fn a_probe_by_a_cross_products_two_sides_is_not_one_combinations_rows() {
+    // `rr_narrow_tp_list($tp)`'s shape on hogql: the head bound after `tp`, a node of one kind (671) and one of another
+    // (2,437) drawn apart. `child` by both is a pair it seldom holds, not a combination's rows: led from `ty`, the
+    // cross product read 1.68 M rows of work where `child` by `$t` reads 52 K.
+    let p = parse_version(".decl tp(t:number)\n.decl ty(y:number)\n.decl child(p:number,c:number,i:number)\n.input tp, ty, child\n.decl h(t:number)\nh(t) :- tp(t), ty(y), child(t,y,_).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+    for (rel, rows, ndv) in [("tp", 671.0, vec![671.0]), ("ty", 2_437.0, vec![2_437.0]), ("child", 71_876.0, vec![24_000.0, 71_876.0, 100.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["tp", "child", "ty"], "work={work}");
+}
+
+#[test]
 fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
     let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
@@ -4173,4 +4340,254 @@ fn a_relation_goes_when_its_last_reader_to_finish_does() {
     assert_eq!(rl.passed(3, &|_| false), reads(&["a"]));
     assert!(rl.finished([2, 3]).is_empty());
     assert_eq!(rl.passed(5, &|_| false), reads(&["c"]));
+}
+
+/// A program with a rule for each way `sql_query` reads a body: `nearest` before, after and between atoms (descent
+/// and climb, on SQL or the native walk), a document range on a bound and a constant document, `@cat` split on a known
+/// prefix, a known suffix, both unknown and a constant part, negation, aggregates, comparisons and computed values,
+/// symbol and number conversions, and a repeated variable.
+const SQL_QUERY_PROBE: &str = r#"
+.decl roots(f:node)
+.decl targets(n:node)
+.decl scope(k:symbol)
+scope("function_definition").
+.decl docof(n:node, d:number)
+.decl p(n:node)
+.decl q(d:number)
+.decl name(s:symbol)
+.decl pre(s:symbol)
+.decl suf(s:symbol)
+.decl val(d:number, v:number, s:symbol)
+roots(1). targets(2). docof(2, 1). p(2). q(1). name("a.b"). pre("a"). suf("b"). val(1, 2, "s").
+.decl seen(f:node,n:node)
+seen(f,n) :- roots(f), nearest(n,f,scope).
+.decl wanted(f:node,n:node)
+wanted(f,n) :- roots(f), targets(n), nearest(n,f,scope).
+.decl early(f:node,n:node)
+early(f,n) :- nearest(n,f,scope), roots(f).
+.decl rng(v:node)
+rng(v) :- q(d), p(v), docof(v, d).
+.decl rngc(v:node)
+rngc(v) :- p(v), docof(v, 3).
+.decl sp(x:symbol)
+sp(x) :- name(w), pre(q), w = @cat(q, x).
+.decl ss(q:symbol)
+ss(q) :- name(w), suf(x), w = @cat(q, x).
+.decl se(q:symbol, x:symbol)
+se(q, x) :- name(w), w = @cat(q, x).
+.decl sk(x:symbol)
+sk(x) :- name(w), w = @cat(q, x), q = "a".
+.decl sk2(x:symbol)
+sk2(x) :- name(w), w = @cat(q, x), q = "".
+.decl ng(v:node)
+ng(v) :- p(v), !targets(v), !docof(v, 4).
+.decl ag(d:number, n:number, s:number, lo:number, hi:number)
+ag(d, n, s, lo, hi) :- q(d), n = count : {docof(_, d)}, s = sum v : {val(d, v, _)}, lo = min v : {val(d, v, _)}, hi = max v : {val(d, v, v)}.
+.decl agb(d:number)
+agb(d) :- q(d), 0 = count : {docof(_, d)}.
+.decl cmp(a:number, b:number)
+cmp(a, b) :- q(a), q(b), a < b, a != 3, b >= a, b > 1, a <= 9, c = a + b, c = 5.
+.decl str(s:symbol, t:symbol, n:number)
+str(s, t, n) :- name(s), t = @to_string(s), n = @to_number(s), s = "x" .
+.decl dup(v:node)
+dup(v) :- docof(v, v), p(v), q(3), name("a").
+.output seen,wanted,early,rng,rngc,sp,ss,se,sk,sk2,ng,ag,agb,cmp,str,dup
+"#;
+
+/// The model settings `sql_query` reads: whether a run reads fixed atoms, walks `nearest` natively, and reads a
+/// document's nodes by shift. Its label is the golden's: `a`, `n` and `s`, each 0 or 1.
+#[derive(Clone, Copy)]
+struct SqlModel {
+    atoms: bool,
+    native: bool,
+    shift: bool,
+}
+
+impl SqlModel {
+    fn all() -> Vec<SqlModel> {
+        (0..8).map(|bits| SqlModel { atoms: bits & 4 != 0, native: bits & 2 != 0, shift: bits & 1 != 0 }).collect()
+    }
+
+    fn label(self) -> String {
+        format!("a{}n{}s{}", u8::from(self.atoms), u8::from(self.native), u8::from(self.shift))
+    }
+
+    fn model(self, placed: &body::Placed) -> Model {
+        let mut inputs = Inputs::file();
+        inputs.facts.clear();
+        inputs.given = Some(Stats::empty_of(&placed.fields().unwrap()));
+        let mut model = make_plan(placed, &Connection::open_in_memory().unwrap(), inputs).unwrap();
+        let inputs = Arc::make_mut(&mut model.inputs);
+        inputs.atoms = self.atoms.then_some([7, 8, 9]);
+        if self.native {
+            inputs.native.insert("nearest".to_owned());
+        }
+        model.docs_by_shift = self.shift;
+        model.docof = model.docof.with([("docof".to_owned(), (0, 1))]);
+        model
+    }
+}
+
+/// One `sql_query` call on a rule: the modes its steps are read in (`variant` 0 and 2 descend a `nearest`, 1 and 3
+/// climb it; 2 and 3 read `p` as a document range), the step that reads the delta, and whether each relation is read
+/// from named full and delta tables. Its label is the golden's: `v`, `d` (`-` for none) and `t`.
+#[derive(Clone, Copy)]
+struct SqlCall {
+    variant: usize,
+    delta_at: Option<usize>,
+    tables: bool,
+}
+
+impl SqlCall {
+    fn all() -> Vec<SqlCall> {
+        let deltas = [None, Some(0), Some(1)];
+        (0..4)
+            .flat_map(|variant| deltas.into_iter().map(move |delta_at| (variant, delta_at)))
+            .flat_map(|(variant, delta_at)| [false, true].map(|tables| SqlCall { variant, delta_at, tables }))
+            .collect()
+    }
+
+    fn label(self) -> String {
+        let delta = self.delta_at.map_or_else(|| "-".to_owned(), |d| d.to_string());
+        format!("v{}d{delta}t{}", self.variant, u8::from(self.tables))
+    }
+
+    fn mode(self, p: &Version, literal: Lit<'_>) -> Option<Mode> {
+        match literal {
+            Lit::Nearest { .. } => Some(if self.variant.is_multiple_of(2) { Mode::Descend } else { Mode::Climb }),
+            Lit::Atom(a) => (self.variant >= 2 && p.rel_name(a.rel()) == "p").then_some(Mode::Range),
+            _ => None,
+        }
+    }
+
+    fn steps(self, p: &Version, b: &body::Body<'_>) -> Vec<Step> {
+        (0..b.len()).map(|at| Step { at, mode: self.mode(p, b.view(at)) }).collect()
+    }
+}
+
+/// The SQL `sql_query` builds for one rule under one model and call, or its error.
+fn probe_sql(model: &Model, pf: fields::Fields<'_>, p: &Version, b: &body::Body<'_>, call: SqlCall) -> String {
+    let tables: HashMap<String, (String, String)> = (0..b.len())
+        .filter_map(|at| match b.view(at) {
+            Lit::Atom(a) => {
+                let rel = p.rel_name(a.rel());
+                Some((rel.to_owned(), (format!("full_{rel}"), format!("delta_{rel}"))))
+            }
+            _ => None,
+        })
+        .collect();
+    match model.sql_query(pf, b, &call.steps(p, b), call.delta_at, call.tables.then_some(&tables)) {
+        Ok(query) => query.render(),
+        Err(e) => format!("ERR {e:?}"),
+    }
+}
+
+/// The golden's text: for each rule, each distinct SQL once, under the labels of the cases that build it.
+fn sql_query_golden() -> String {
+    let p = parse(SQL_QUERY_PROBE).unwrap();
+    let placed = body::Placed::whole(p.clone());
+    let pf = placed.fields().unwrap();
+    let models: Vec<(String, Model)> = SqlModel::all().into_iter().map(|m| (m.label(), m.model(&placed))).collect();
+    let mut text = "# sql_query_builds_the_golden_sql (plan/tests.rs; RERAIL_BLESS_SQL=1 rewrites this file): per rule of SQL_QUERY_PROBE, \
+        each distinct SQL under its cases. a, n, s: fixed atoms, native nearest, documents by shift; v: step modes; d: delta \
+        step; t: named tables.\n\n"
+        .to_owned();
+    for (k, rule) in p.rules().enumerate() {
+        let b = body::nth(&p, k);
+        let mut by_sql: IndexMap<String, Vec<String>> = IndexMap::new();
+        for ((label, model), call) in models.iter().flat_map(|m| SqlCall::all().into_iter().map(move |c| (m, c))) {
+            by_sql.entry(probe_sql(model, pf, &p, &b, call)).or_default().push(format!("{label}{}", call.label()));
+        }
+        text += &format!("## {}\n", p.rel_name(rule.head().rel()));
+        for (sql, labels) in by_sql {
+            text += &format!("{}\n{sql}\n\n", labels.join(" "));
+        }
+    }
+    text
+}
+
+/// What differs between a golden and the text a test made, as at most 20 `-`/`+` lines by position.
+fn golden_difference(golden: &str, made: &str) -> String {
+    let (old, new): (Vec<&str>, Vec<&str>) = (golden.lines().collect(), made.lines().collect());
+    let at = old.iter().zip(&new).position(|(a, b)| a != b).unwrap_or(old.len().min(new.len()));
+    let shown = |lines: &[&str], sign: char| lines.iter().skip(at).take(10).map(|l| format!("{sign} {l}")).collect::<Vec<_>>();
+    format!("from line {}:\n{}\n{}", at + 1, shown(&old, '-').join("\n"), shown(&new, '+').join("\n"))
+}
+
+/// `sql_query` builds the SQL in `golden/sql_query.txt` for every rule of `SQL_QUERY_PROBE` under every model setting
+/// and call: the SQL the planner's queries ran as when `sql_query` was split up (PR 915), held byte for byte.
+/// `RERAIL_BLESS_SQL=1` rewrites the golden.
+#[test]
+fn sql_query_builds_the_golden_sql() {
+    let path = root().join("plan/golden/sql_query.txt");
+    let made = sql_query_golden();
+    if std::env::var("RERAIL_BLESS_SQL").as_deref() == Ok("1") {
+        std::fs::write(&path, &made).unwrap();
+    }
+    let golden = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (RERAIL_BLESS_SQL=1 writes it)", path.display()));
+    assert!(golden == made, "sql_query's SQL differs from {} (RERAIL_BLESS_SQL=1 rewrites it), {}", path.display(), golden_difference(&golden, &made));
+}
+
+/// Decision 0113: a stratum issued ahead of the strata loop reads its inputs as the loop binds them. The loop binds an
+/// input at its first reader, and until then a cross-file run binds an export to an empty placeholder. Here `v` is
+/// issued with `q1` and `q2` while `p`, the producer of `f` (`e`'s first reader), is issued alone (its estimate fills a
+/// component), so `f` is not ready. `v` bound only the inputs it was the first reader of, so its job read the empty
+/// `e` whenever it ran before the loop reached `f`, and `f` then read the view of it that the job kept: the Django
+/// pack's findings varied from run to run (271, 366 or 508 on edx-platform). The run is a child process
+/// (`issued_ahead_child`) whose stream runs each job as it is submitted (`RERAIL_STREAM_AT_SUBMIT`), the schedule that
+/// read the placeholder every time.
+#[test]
+fn a_stratum_issued_ahead_reads_an_input_the_loop_binds_later() {
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::plan::tests::issued_ahead_child", "--ignored", "--nocapture"])
+        .env("RERAIL_THREADS", "2")
+        .env("RERAIL_STREAM_AT_SUBMIT", "1");
+    // The switches that take the issue-ahead path away, or reshape its components, are the test's own.
+    for switch in ["RERAIL_STRANDS", "RERAIL_STRATA_PARALLEL", "RERAIL_STRATA_MERGE", "RERAIL_STRATA_K", "RERAIL_STRATA_FIXED"] {
+        child.env_remove(switch);
+    }
+    let out = super::corpus::switches::started(|| child.output()).unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+#[ignore = "child process of a_stratum_issued_ahead_reads_an_input_the_loop_binds_later"]
+fn issued_ahead_child() {
+    let p = parse(
+        ".decl b(x: number)\n.input b\n.decl s(x: number)\n.input s\n.decl e(x: number)\n.input e\n\
+         .decl p(x: number)\np(x) :- b(x).\n.decl f(x: number)\nf(x) :- p(x), e(x).\n\
+         .decl q1(x: number)\nq1(x) :- s(x).\n.decl q2(x: number)\nq2(x) :- q1(x).\n\
+         .decl v(x: number)\nv(x) :- q2(x), e(x).\n.output f, v\n",
+    )
+    .unwrap();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let store = ContentStore::open(&path).unwrap();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+    let db = Connection::open(&path).unwrap();
+    super::super::native::register(&db).unwrap();
+    super::super::native::register_symbols(&db).unwrap();
+    let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+    let rows = |rel: &str, v: Vec<i64>| super::super::native::component::columns_source(vec![sql_col(rel, 0)], vec![Some(v.into_iter().collect::<Vector<i64>>())]);
+    let mut stats = Stats::empty_of_lowered(&lowered).unwrap();
+    // `b`'s 60,000 rows put `p`'s estimate past a component's (8 fixed costs of 136 µs, at 20 ns a row).
+    for (rel, v) in [("b", (0..60_000).collect()), ("s", vec![1, 2, 3]), ("e", vec![])] {
+        let source = rows(rel, v);
+        stats.measured(rel, crate::code_rule_dsl::facts::vtab::syntax::statistics(source.as_ref()).into_iter().map(|(c, n, d, q, qd)| (c, [n, d, q, qd])), []);
+        modules.bind(&db, rel, source).unwrap();
+    }
+    let mut load = |rels: &[String]| -> Result<()> {
+        if rels.iter().any(|r| r == "e") {
+            modules.bind(&db, "e", rows("e", vec![1, 2])).map_err(|e| Error::Plan(e.to_string()))?;
+        }
+        Ok(())
+    };
+    let got = run_atoms_native_hooked(&lowered, &db, "main", stats, BTreeSet::new(), "program", Hooks { load: Some(&mut load), ..Default::default() }).unwrap();
+    let shown = got.shown();
+    for rel in ["f", "v"] {
+        let mut o = shown[rel].clone();
+        o.sort();
+        assert_eq!(o.len(), 2, "{rel}: {o:?}");
+    }
 }

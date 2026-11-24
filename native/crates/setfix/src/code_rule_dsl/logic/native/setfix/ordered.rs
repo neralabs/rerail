@@ -13,8 +13,8 @@
 use rerail_blocks::vector::Vector;
 use std::cmp::Ordering;
 
-/// Ids a fence covers.
-pub(super) const FENCE: usize = 64;
+/// Ids a fence covers (the orders' one, `rerail_blocks::order`).
+pub(super) use rerail_blocks::order::FENCE;
 
 /// The row ids of a relation's live rows, sorted by their values in `order` (then by id), with the leading value of
 /// every `FENCE`th id.
@@ -74,8 +74,7 @@ impl Ordered {
             return self.range_hashed(rows, k, key);
         }
         // The blocks that may hold the leading value: from the last fence below it to the first fence above it.
-        let lo = self.fences.partition_point(|&f| f < lead).saturating_sub(1) * FENCE;
-        let hi = (self.fences.partition_point(|&f| f <= lead) * FENCE).min(self.ids.len());
+        let (lo, hi) = rerail_blocks::order::fence_span(&self.fences, self.ids.len(), lead);
         let block = &self.ids[lo..hi];
         let cmp = |id: u32| -> Ordering {
             let r = &rows[id as usize * k..][..k];

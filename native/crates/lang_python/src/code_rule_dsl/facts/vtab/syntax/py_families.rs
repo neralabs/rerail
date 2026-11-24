@@ -82,13 +82,13 @@ pub struct Py {
 impl Py {
     /// `p`'s place in `batch` (documents are in key order).
     pub(crate) fn at(batch: &Batch, p: &Projected) -> usize {
-        batch.docs.position(p.key).expect("a document of the batch")
+        batch.docs.position(p.key()).expect("a document of the batch")
     }
 
     /// Document `p`'s imports' screen, made on its first read.
     pub(crate) fn imports(&self, batch: &Batch, p: &Projected) -> &crate::code_rule_dsl::facts::producers::python::import_screen::Imports {
         self.imports[Self::at(batch, p)].get_or_init(|| {
-            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(p.f(), &batch.dialects[p.tag].catalog, p.module.as_ref())
+            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(p.f(), &batch.dialects[p.tag()].catalog, p.module.as_ref())
         })
     }
 }
@@ -117,9 +117,9 @@ impl Py {
             let started = std::time::Instant::now();
             let mut out: Vec<Relation> = PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect();
             let mut skipped = 0;
-            for p in batch.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
+            for p in batch.docs.iter().filter(|p| p.tag() == py.grammar.tag()) {
                 let rows = py::structure(&py.grammar, p.f());
-                let d = i64::from(p.key);
+                let d = i64::from(p.key());
                 // A node id, `-1` for none; `None` for a node the projection leaves out.
                 let id = |core: u32| -> Option<i64> {
                     if core == NONE {
@@ -160,11 +160,11 @@ impl Py {
         let py = self;
         py.argument_rows.get_or_init(|| {
             let mut out=Relation::new(PY_COLUMNS[3]);
-            for p in batch.docs.iter().filter(|p|p.tag==py.grammar.tag()) {
+            for p in batch.docs.iter().filter(|p|p.tag()==py.grammar.tag()) {
                 let rows=py::rows(&py.grammar,p.f());
                 let id=|n:u32| if n==NONE {Some(-1)}else{Some(p.local_of_node(n)).filter(|&l|l!=NONE).map(|l|p.global(l))};
                 for [c,a,i,k,s,v] in rows.arg {
-                    if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
+                    if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key() as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
                 }
             }
             out

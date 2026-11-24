@@ -34,7 +34,7 @@ fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
 }
 
 fn python_tape(source: &str) -> TapeDoc {
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -1991,7 +1991,7 @@ fn presence_bitmap_census() {
 #[test]
 fn ast_pattern_end_of_children_meets_implied_tokens() {
     use ast_grep_core::matcher::MatcherExt as _;
-    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n"));
     let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
     let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");
@@ -2198,4 +2198,32 @@ fn the_waves_labels_on_metal_are_the_cpus() {
         eprintln!("  {line}");
     }
     assert!(differ.is_empty());
+}
+
+/// A negated parent edge of any parent kind, as `!field(_, "attribute", n), !field(_, "name", n)` reads
+/// (`nameref`'s, t50 step 6): `not inside` a parent by its field alone. The lowered matcher finds W's roots.
+#[test]
+fn not_inside_a_field_of_any_parent_finds_ws_roots() {
+    let rule = r#"{"all": [{"kind": "identifier"}, {"not": {"inside": {"pattern": "$_P", "field": "attribute", "stopBy": "neighbor"}}}, {"not": {"inside": {"pattern": "$_P", "field": "name", "stopBy": "neighbor"}}}]}"#;
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "noparent", "revision": 1, "mode": "steer", "description": "t50 step 6.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{{"id": "reads", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}]}}"#
+    );
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy, "json", CAPABILITIES).expect("the policy compiles");
+    let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
+    let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+    let tape = python_tape("import os\nx = os.path\ndef f(a, k=1):\n    return g(k=a).y\n\nclass C:\n    z = x.w\n");
+    let root = Root::doc(tape.clone());
+    let mut work = usize::MAX;
+    let expected = (0..tape.transducer_len() as u32)
+        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+        .collect::<BTreeSet<_>>();
+    let all_identifiers = (0..tape.transducer_len() as u32).filter(|&o| node_at(&root, o).kind() == "identifier").count();
+    assert!(!expected.is_empty() && expected.len() < all_identifiers, "W's matcher keeps some identifiers and drops the fields: {} of {all_identifiers}", expected.len());
+    // Its root program tests the kind and reads two labels: its roots are the labels' AND, no program run per root.
+    assert_eq!(program.label_formula().map(|l| l.len()), Some(2), "the root program is a formula of two labels");
+    let wave = super::compile_matcher::LoweredWave::new(&[&program]).unwrap();
+    let (found, _) = wave.roots_batch(super::compile_matcher::Backend::Cpu, std::slice::from_ref(&tape), &[vec![true]]).unwrap();
+    assert_eq!(found[0][0], expected, "the wave's formula roots are W's");
+    assert_eq!(program.roots(&tape).unwrap(), expected);
 }

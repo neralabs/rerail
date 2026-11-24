@@ -1,8 +1,9 @@
 # 0474. A level's formulas as phases, a thread a word (a measure)
 
-Status: accepted as a measure (2026-11-19); its decision 1 superseded by 0475, where the phases are the only path Numbered 0461 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0461).
-(the switch `RERAIL_FORMULA_PHASES` is gone). Follows 0473. Its
-epilogue's rule test at set bits only (§3) is on for `label_formula` too.
+Status: built (audited 2026-11-23). Accepted as a measure (2026-11-19); its decision 1 superseded by 0475, where the
+phases are the only path Numbered 0461 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0461).
+(the switch `RERAIL_FORMULA_PHASES` is gone). Follows 0473. Its epilogue's rule test at set bits only (§3) is on for
+`label_formula` too.
 
 ## Intro
 

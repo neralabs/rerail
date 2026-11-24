@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 1 (python), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 1 (python), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 2045 codes; numbered by how often each is a node's over 26801 files, 41835995 nodes (`rerail-engine code-counts`).
 revision	4
@@ -2048,3 +2048,469 @@ code	238	0	4	-	-
 code	238	0	4	-	178
 code	239	0	4	-	-
 code	239	0	4	-	178
+kind	1	1	identifier
+kind	2	0	;
+kind	3	0	import
+kind	4	0	.
+kind	5	0	from
+kind	6	0	__future__
+kind	7	0	(
+kind	8	0	)
+kind	9	0	,
+kind	10	0	as
+kind	11	0	*
+kind	12	0	print
+kind	13	0	>>
+kind	14	0	assert
+kind	15	0	:=
+kind	16	0	return
+kind	17	0	del
+kind	18	0	raise
+kind	19	0	pass
+kind	20	0	break
+kind	21	0	continue
+kind	22	0	if
+kind	23	0	:
+kind	24	0	elif
+kind	25	0	else
+kind	26	0	match
+kind	27	0	case
+kind	28	0	async
+kind	29	0	for
+kind	30	0	in
+kind	31	0	while
+kind	32	0	try
+kind	33	0	except
+kind	35	0	finally
+kind	36	0	with
+kind	37	0	def
+kind	38	0	->
+kind	39	0	**
+kind	40	0	global
+kind	41	0	nonlocal
+kind	42	0	exec
+kind	43	0	type
+kind	44	0	=
+kind	45	0	class
+kind	46	0	[
+kind	47	0	]
+kind	48	0	@
+kind	49	0	-
+kind	50	0	_
+kind	51	0	|
+kind	52	0	{
+kind	53	0	}
+kind	54	0	+
+kind	55	0	not
+kind	56	0	and
+kind	57	0	or
+kind	58	0	/
+kind	59	0	%
+kind	60	0	//
+kind	61	0	&
+kind	62	0	^
+kind	63	0	<<
+kind	64	0	~
+kind	65	0	is
+kind	66	0	<
+kind	67	0	<=
+kind	68	0	==
+kind	69	0	!=
+kind	70	0	>=
+kind	71	0	>
+kind	72	0	<>
+kind	73	0	lambda
+kind	74	0	+=
+kind	75	0	-=
+kind	76	0	*=
+kind	77	0	/=
+kind	78	0	@=
+kind	79	0	//=
+kind	80	0	%=
+kind	81	0	**=
+kind	82	0	>>=
+kind	83	0	<<=
+kind	84	0	&=
+kind	85	0	^=
+kind	86	0	|=
+kind	87	0	yield
+kind	88	1	ellipsis
+kind	89	1	escape_sequence
+kind	90	0	\\
+kind	92	1	type_conversion
+kind	93	1	integer
+kind	94	1	float
+kind	95	0	await
+kind	96	1	true
+kind	97	1	false
+kind	98	1	none
+kind	99	1	comment
+kind	100	1	line_continuation
+kind	104	1	string_start
+kind	106	1	escape_interpolation
+kind	107	1	string_end
+kind	108	1	module
+kind	111	1	import_statement
+kind	112	1	import_prefix
+kind	113	1	relative_import
+kind	114	1	future_import_statement
+kind	115	1	import_from_statement
+kind	117	1	aliased_import
+kind	118	1	wildcard_import
+kind	119	1	print_statement
+kind	120	1	chevron
+kind	121	1	assert_statement
+kind	122	1	expression_statement
+kind	123	1	named_expression
+kind	125	1	return_statement
+kind	126	1	delete_statement
+kind	127	1	raise_statement
+kind	128	1	pass_statement
+kind	129	1	break_statement
+kind	130	1	continue_statement
+kind	131	1	if_statement
+kind	132	1	elif_clause
+kind	133	1	else_clause
+kind	134	1	match_statement
+kind	136	1	case_clause
+kind	137	1	for_statement
+kind	138	1	while_statement
+kind	139	1	try_statement
+kind	140	1	except_clause
+kind	141	1	finally_clause
+kind	142	1	with_statement
+kind	143	1	with_clause
+kind	144	1	with_item
+kind	145	1	function_definition
+kind	146	1	parameters
+kind	147	1	lambda_parameters
+kind	148	1	list_splat
+kind	149	1	dictionary_splat
+kind	150	1	global_statement
+kind	151	1	nonlocal_statement
+kind	152	1	exec_statement
+kind	153	1	type_alias_statement
+kind	154	1	class_definition
+kind	155	1	type_parameter
+kind	156	1	type_default
+kind	157	1	parenthesized_list_splat
+kind	158	1	argument_list
+kind	159	1	decorated_definition
+kind	160	1	decorator
+kind	161	1	block
+kind	162	1	expression_list
+kind	163	1	dotted_name
+kind	164	1	case_pattern
+kind	167	1	union_pattern
+kind	170	1	dict_pattern
+kind	172	1	keyword_pattern
+kind	173	1	splat_pattern
+kind	174	1	class_pattern
+kind	175	1	complex_pattern
+kind	180	1	tuple_pattern
+kind	181	1	list_pattern
+kind	182	1	default_parameter
+kind	183	1	typed_default_parameter
+kind	184	1	list_splat_pattern
+kind	185	1	dictionary_splat_pattern
+kind	186	1	as_pattern
+kind	190	1	not_operator
+kind	191	1	boolean_operator
+kind	192	1	binary_operator
+kind	193	1	unary_operator
+kind	194	0	not in
+kind	195	0	is not
+kind	196	1	comparison_operator
+kind	197	1	lambda
+kind	199	1	assignment
+kind	200	1	augmented_assignment
+kind	201	1	pattern_list
+kind	202	1	yield
+kind	203	1	attribute
+kind	204	1	subscript
+kind	205	1	slice
+kind	206	1	call
+kind	207	1	typed_parameter
+kind	208	1	type
+kind	209	1	splat_type
+kind	210	1	generic_type
+kind	211	1	union_type
+kind	212	1	constrained_type
+kind	213	1	member_type
+kind	214	1	keyword_argument
+kind	215	1	list
+kind	216	1	set
+kind	217	1	tuple
+kind	218	1	dictionary
+kind	219	1	pair
+kind	220	1	list_comprehension
+kind	221	1	dictionary_comprehension
+kind	222	1	set_comprehension
+kind	223	1	generator_expression
+kind	225	1	parenthesized_expression
+kind	227	1	for_in_clause
+kind	228	1	if_clause
+kind	229	1	conditional_expression
+kind	230	1	concatenated_string
+kind	231	1	string
+kind	232	1	string_content
+kind	233	1	interpolation
+kind	236	1	format_specifier
+kind	237	1	await
+kind	238	1	positional_separator
+kind	239	1	keyword_separator
+kind	272	1	as_pattern_target
+kind	273	1	format_expression
+lookup	1	identifier	1
+lookup	0	;	2
+lookup	0	import	3
+lookup	0	.	4
+lookup	0	from	5
+lookup	0	__future__	6
+lookup	0	(	7
+lookup	0	)	8
+lookup	0	,	9
+lookup	0	as	10
+lookup	0	*	11
+lookup	0	print	12
+lookup	0	>>	13
+lookup	0	assert	14
+lookup	0	:=	15
+lookup	0	return	16
+lookup	0	del	17
+lookup	0	raise	18
+lookup	0	pass	19
+lookup	0	break	20
+lookup	0	continue	21
+lookup	0	if	22
+lookup	0	:	23
+lookup	0	elif	24
+lookup	0	else	25
+lookup	0	match	26
+lookup	0	case	27
+lookup	0	async	28
+lookup	0	for	29
+lookup	0	in	30
+lookup	0	while	31
+lookup	0	try	32
+lookup	0	except	33
+lookup	0	finally	35
+lookup	0	with	36
+lookup	0	def	37
+lookup	0	->	38
+lookup	0	**	39
+lookup	0	global	40
+lookup	0	nonlocal	41
+lookup	0	exec	42
+lookup	0	type	43
+lookup	0	=	44
+lookup	0	class	45
+lookup	0	[	46
+lookup	0	]	47
+lookup	0	@	48
+lookup	0	-	49
+lookup	0	_	50
+lookup	0	|	51
+lookup	0	{	52
+lookup	0	}	53
+lookup	0	+	54
+lookup	0	not	55
+lookup	0	and	56
+lookup	0	or	57
+lookup	0	/	58
+lookup	0	%	59
+lookup	0	//	60
+lookup	0	&	61
+lookup	0	^	62
+lookup	0	<<	63
+lookup	0	~	64
+lookup	0	is	65
+lookup	0	<	66
+lookup	0	<=	67
+lookup	0	==	68
+lookup	0	!=	69
+lookup	0	>=	70
+lookup	0	>	71
+lookup	0	<>	72
+lookup	0	lambda	73
+lookup	0	+=	74
+lookup	0	-=	75
+lookup	0	*=	76
+lookup	0	/=	77
+lookup	0	@=	78
+lookup	0	//=	79
+lookup	0	%=	80
+lookup	0	**=	81
+lookup	0	>>=	82
+lookup	0	<<=	83
+lookup	0	&=	84
+lookup	0	^=	85
+lookup	0	|=	86
+lookup	0	yield	87
+lookup	1	ellipsis	88
+lookup	1	escape_sequence	89
+lookup	0	\\	90
+lookup	1	type_conversion	92
+lookup	1	integer	93
+lookup	1	float	94
+lookup	0	await	95
+lookup	1	true	96
+lookup	1	false	97
+lookup	1	none	98
+lookup	1	comment	99
+lookup	1	line_continuation	100
+lookup	1	string_start	104
+lookup	1	escape_interpolation	106
+lookup	1	string_end	107
+lookup	1	module	108
+lookup	1	import_statement	111
+lookup	1	import_prefix	112
+lookup	1	relative_import	113
+lookup	1	future_import_statement	114
+lookup	1	import_from_statement	115
+lookup	1	aliased_import	117
+lookup	1	wildcard_import	118
+lookup	1	print_statement	119
+lookup	1	chevron	120
+lookup	1	assert_statement	121
+lookup	1	expression_statement	122
+lookup	1	named_expression	123
+lookup	1	return_statement	125
+lookup	1	delete_statement	126
+lookup	1	raise_statement	127
+lookup	1	pass_statement	128
+lookup	1	break_statement	129
+lookup	1	continue_statement	130
+lookup	1	if_statement	131
+lookup	1	elif_clause	132
+lookup	1	else_clause	133
+lookup	1	match_statement	134
+lookup	1	block	161
+lookup	1	case_clause	136
+lookup	1	for_statement	137
+lookup	1	while_statement	138
+lookup	1	try_statement	139
+lookup	1	except_clause	140
+lookup	1	finally_clause	141
+lookup	1	with_statement	142
+lookup	1	with_clause	143
+lookup	1	with_item	144
+lookup	1	function_definition	145
+lookup	1	parameters	146
+lookup	1	lambda_parameters	147
+lookup	1	list_splat	148
+lookup	1	dictionary_splat	149
+lookup	1	global_statement	150
+lookup	1	nonlocal_statement	151
+lookup	1	exec_statement	152
+lookup	1	type_alias_statement	153
+lookup	1	class_definition	154
+lookup	1	type_parameter	155
+lookup	1	type_default	156
+lookup	1	parenthesized_list_splat	157
+lookup	1	argument_list	158
+lookup	1	decorated_definition	159
+lookup	1	decorator	160
+lookup	1	expression_list	162
+lookup	1	dotted_name	163
+lookup	1	case_pattern	164
+lookup	1	as_pattern	186
+lookup	1	union_pattern	167
+lookup	1	list_pattern	181
+lookup	1	tuple_pattern	180
+lookup	1	dict_pattern	170
+lookup	1	keyword_pattern	172
+lookup	1	splat_pattern	173
+lookup	1	class_pattern	174
+lookup	1	complex_pattern	175
+lookup	1	default_parameter	182
+lookup	1	typed_default_parameter	183
+lookup	1	list_splat_pattern	184
+lookup	1	dictionary_splat_pattern	185
+lookup	1	not_operator	190
+lookup	1	boolean_operator	191
+lookup	1	binary_operator	192
+lookup	1	unary_operator	193
+lookup	0	not in	194
+lookup	0	is not	195
+lookup	1	comparison_operator	196
+lookup	1	lambda	197
+lookup	1	assignment	199
+lookup	1	augmented_assignment	200
+lookup	1	pattern_list	201
+lookup	1	yield	202
+lookup	1	attribute	203
+lookup	1	subscript	204
+lookup	1	slice	205
+lookup	1	call	206
+lookup	1	typed_parameter	207
+lookup	1	type	208
+lookup	1	splat_type	209
+lookup	1	generic_type	210
+lookup	1	union_type	211
+lookup	1	constrained_type	212
+lookup	1	member_type	213
+lookup	1	keyword_argument	214
+lookup	1	list	215
+lookup	1	set	216
+lookup	1	tuple	217
+lookup	1	dictionary	218
+lookup	1	pair	219
+lookup	1	list_comprehension	220
+lookup	1	dictionary_comprehension	221
+lookup	1	set_comprehension	222
+lookup	1	generator_expression	223
+lookup	1	parenthesized_expression	225
+lookup	1	for_in_clause	227
+lookup	1	if_clause	228
+lookup	1	conditional_expression	229
+lookup	1	concatenated_string	230
+lookup	1	string	231
+lookup	1	string_content	232
+lookup	1	interpolation	233
+lookup	1	format_specifier	236
+lookup	1	await	237
+lookup	1	positional_separator	238
+lookup	1	keyword_separator	239
+lookup	1	as_pattern_target	272
+lookup	1	format_expression	273
+field	1	alias
+field	2	alternative
+field	3	argument
+field	4	arguments
+field	5	attribute
+field	6	body
+field	7	cause
+field	8	code
+field	9	condition
+field	10	consequence
+field	11	definition
+field	12	expression
+field	13	format_specifier
+field	14	function
+field	15	guard
+field	16	key
+field	17	left
+field	18	module_name
+field	19	name
+field	20	object
+field	21	operator
+field	22	operators
+field	23	parameters
+field	24	return_type
+field	25	right
+field	26	subject
+field	27	subscript
+field	28	superclasses
+field	29	type
+field	30	type_conversion
+field	31	type_parameters
+field	32	value
+class	178	parameter
+class	179	pattern
+class	188	expression
+class	189	primary_expression
+supertype	parameter	178
+supertype	pattern	179
+supertype	expression	188
+supertype	primary_expression	189

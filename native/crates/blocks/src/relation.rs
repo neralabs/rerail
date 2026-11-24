@@ -38,6 +38,12 @@ pub const REWRITTEN: u32 = 8;
 /// lies in the same block at `base_off` from it (`try_continue`); every read of a row by its id goes there for them
 /// (`rel_get`), so a reader binds it as one relation of `base_rows + own` rows.
 pub const CONTINUES: u32 = 16;
+/// Its rows are another relation's of the same block, where they lie (`try_link`): its row directories are that
+/// relation's, so its release gives none of them back (that relation's holder does).
+pub const ALIASED: u32 = 32;
+/// A continuation whose base lies in another block (`try_link`, decision 0353 step 6): `base_off` is the base's
+/// descriptor's offset from that block's start, which a reader binds beside its own (`rel_get`'s `far`).
+pub const FAR_BASE: u32 = 64;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
 /// Indexes and sorted orders a relation can be given after it is made (`try_add_index`, `try_add_order`): its
@@ -59,6 +65,9 @@ structure! {
         /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
         pub offs: Span<u32>,
         pub rows: Span<u32>,
+        /// A hashed index's: each place's mark (decision 0671), as many as `rows`, after them in their chunk: its
+        /// key's tag (`mark_tag`) and `MARK_SAME`. Empty in a sorted order.
+        pub marks: Span<u32>,
         /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
         /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
         /// order probed by whole keys). Empty when the order keeps none.
@@ -74,6 +83,42 @@ structure! {
         /// `DEAD` once given back (`give_back_index`): its room is the block's again, and the next reservation takes
         /// its entry.
         pub state: u32,
+    }
+}
+
+/// `Index::marks`' bit 0 (decision 0671): the place's key is its bucket's previous place of its tag's, that place
+/// among the `MARK_REACH` before it. Clear where there is none or it holds another key. A walk that met that place
+/// has its verdict; one that did not (its first place of the tag, wherever in the group the walk starts) compares.
+pub const MARK_SAME: u32 = 1;
+/// The places before one a builder looks back over for its tag (decision 0671).
+pub const MARK_REACH: usize = 8;
+
+/// A key's tag, from its hash (`key_hash`): its high 32 bits but bit 0, which is `MARK_SAME`'s. A bucket is the
+/// hash's low bits, so the two are independent.
+#[inline]
+pub fn mark_tag(h: u64) -> u32 {
+    (h >> 32) as u32 & !MARK_SAME
+}
+
+/// A hashed index's rows' chunk for `n` rows: the rows, then their marks.
+#[inline]
+pub fn index_rows_bytes(n: usize) -> usize {
+    8 * n.max(1)
+}
+
+/// The marks of an index's places (decision 0671): `tag(t)` of place `t`'s key, `same(t, u)` whether places `t` and
+/// `u` hold one key. Each place's tag, and `MARK_SAME` where its bucket's previous place of the tag is among the
+/// `MARK_REACH` before it and holds its key. The device's builder writes them as these are.
+pub fn fill_marks(offs: &[u32], marks: &mut [u32], tag: &dyn Fn(usize) -> u32, same: &dyn Fn(usize, usize) -> bool) {
+    for (t, m) in marks.iter_mut().enumerate() {
+        *m = tag(t);
+    }
+    for b in 0..offs.len().saturating_sub(1) {
+        let (lo, hi) = (offs[b] as usize, offs[b + 1] as usize);
+        for t in lo..hi {
+            let prev = (t.saturating_sub(MARK_REACH).max(lo)..t).rev().find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME);
+            marks[t] |= u32::from(prev.is_some_and(|u| same(u, t)));
+        }
     }
 }
 
@@ -142,6 +187,15 @@ structure! {
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
+        /// A continuation's jump: an ancestor down its chain in the same block (Myers' skew-binary jumps), its
+        /// descriptor's offset from this one's; 0 for none (a relation of its own, or a base in another block). A read
+        /// of an id below `jump_rows` goes there at once, so a read down a chain of `n` takes O(log n) steps, and a
+        /// chain needs no length bound (decision 0353 step 6: none of it is merged).
+        pub jump_off: AtomicI64,
+        /// The jump's `base_rows`: an id below them lies at or past the jump.
+        pub jump_rows: u32,
+        /// Its depth in its block's chain: 0 for a relation that continues none here (a full one, or a far base's link).
+        pub depth: u32,
         /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
         /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
         pub known: Span<Known>,
@@ -171,6 +225,8 @@ pub struct IndexRoom {
     pub index: usize,
     pub offs: usize,
     pub rows: usize,
+    /// Its marks' offset in the block (decision 0671): after its rows, as many.
+    pub marks: usize,
     pub mask: u64,
     pub rows_n: u32,
     /// Its key's columns: `ncols` of `key`.
@@ -247,8 +303,75 @@ impl Relation {
         }
         let off = std::ptr::from_ref(base) as i64 - std::ptr::from_ref(rel) as i64;
         rel.base_off.store(off, Release);
+        // Its jump (Myers 1983): the base's jump's jump when the base's two jumps are as long, else the base. A base
+        // with none (depth 0) jumps to itself.
+        let jump = |r: &Relation| -> *const Relation {
+            let o = r.jump_off.load(Relaxed);
+            if o == 0 { r } else { std::ptr::from_ref(r).cast::<u8>().wrapping_offset(o as isize).cast() }
+        };
+        // SAFETY: a chain's jumps lie in its block, before it (each made with its base there).
+        let (j, depth_of) = (jump(base), |p: *const Relation| unsafe { (*p).depth });
+        let jj = unsafe { jump(&*j) };
+        let to = if base.depth - depth_of(j) == depth_of(j) - depth_of(jj) && base.depth > 0 { jj } else { std::ptr::from_ref(base) };
+        // SAFETY: just made, this caller's alone; `to` is a descriptor of the chain in this block.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).depth = base.depth + 1;
+            (*me).jump_rows = (*to).base_rows;
+        }
+        rel.jump_off.store(to as i64 - std::ptr::from_ref(rel) as i64, Release);
         rel.flags.fetch_or(DELTA | CONTINUES, Release);
         Some(rel)
+    }
+
+    /// A relation of `block` that reads a relation of several parts as one, nothing copied (decision 0353 step 6):
+    /// rows `0..base_rows` its base's, read down the base's chain (`base`: the base and the block it lies in, this
+    /// one or another, `FAR_BASE`; none for a first part, `base_rows` 0), then `rows_of`'s first `len` own rows, where
+    /// they lie in `block` (`ALIASED`). `None` when `block` cannot hold its descriptor, or `rows_of` is not `block`'s.
+    pub fn try_link<'b>(block: &'b Block, spec: &Spec, base: Option<(&Block, &Relation)>, base_rows: u32, rows_of: &Relation, len: u32) -> Option<&'b Relation> {
+        if !block.holds(std::ptr::from_ref(rows_of)) || len > rows_of.rows.len() || rows_of.rows.ncols as usize != spec.widths.len() {
+            return None;
+        }
+        let rel = match base {
+            None if base_rows == 0 => Relation::try_create(block, spec, None)?,
+            None => return None,
+            Some((home, b)) if std::ptr::eq(home, block) => Relation::try_continue(block, spec, b, base_rows)?,
+            Some((home, b)) => {
+                let full = b.base_rows == 0 && !b.is_delta();
+                let at = home.offset_of(std::ptr::from_ref(b));
+                if !(full || b.continues()) || base_rows > b.len_all() || !home.holds(std::ptr::from_ref(b)) || at == 0 {
+                    return None;
+                }
+                let rel = Relation::try_create(block, spec, None)?;
+                // SAFETY: just made, this caller's alone.
+                unsafe { (*std::ptr::from_ref(rel).cast_mut()).base_rows = base_rows };
+                rel.base_off.store(at as i64, Release);
+                rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
+                rel
+            }
+        };
+        // Its rows: `rows_of`'s directories, read where they lie; none of its own (its own directories, made with
+        // its descriptor, stay unused and go back with it).
+        // SAFETY: just made, this caller's alone; `rows_of` is frozen at `len` rows for as long as this lives (its
+        // holder keeps it).
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            let (src, dst) = (&rows_of.rows, &mut (*me).rows);
+            dst.min_log = src.min_log;
+            dst.ncols = src.ncols;
+            dst.nchunks.store(src.nchunks.load(Acquire), Relaxed);
+            dst.reserved.store(len, Relaxed);
+            dst.len.store(len, Release);
+            Span::set(&dst.cols, src.cols.as_ptr(), src.cols.len());
+        }
+        rel.flags.fetch_or(ALIASED | FROZEN, Release);
+        Some(rel)
+    }
+
+    /// Whether its base lies in another block (`try_link`).
+    #[inline]
+    pub fn far_base(&self) -> bool {
+        self.flags.load(Relaxed) & FAR_BASE != 0
     }
 
     /// Whether it continues another relation's rows (`try_continue`).
@@ -260,8 +383,9 @@ impl Relation {
     /// The relation it continues (`try_continue`).
     pub fn base(&self) -> Option<&Relation> {
         let off = self.base_off.load(Acquire);
-        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's).
-        (self.continues() && off != 0).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
+        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's). A base in another
+        // block is read through that block (`far_base`).
+        (self.continues() && off != 0 && !self.far_base()).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
     }
 
     /// Rows it reads by id: its own, and a continuation's base's first `base_rows` before them.
@@ -274,14 +398,30 @@ impl Relation {
     /// its own rows from `base_rows` on (a delta's own ids count from its base's too).
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.get_far(None, id, c)
+    }
+
+    /// `get`, a base in another block (`FAR_BASE`) read in `far`, the block it lies in (`rel_get`'s `far`).
+    #[inline]
+    pub fn get_far(&self, far: Option<&Block>, id: u32, c: usize) -> i64 {
         let mut rel = self;
         loop {
             let off = rel.base_off.load(Relaxed);
             if id >= rel.base_rows || off == 0 {
                 break;
             }
-            // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
-            rel = unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() };
+            let jump = rel.jump_off.load(Relaxed);
+            rel = if jump != 0 && id < rel.jump_rows {
+                // SAFETY: its jump lies in its block `jump` bytes from it, an ancestor its holder keeps.
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(jump as isize).cast::<Relation>() }
+            } else if rel.far_base() {
+                let far = far.expect("a relation whose base lies in another block, read with that block");
+                // SAFETY: its base's descriptor lies `off` bytes into `far`, kept while it is (its holder's).
+                unsafe { &*far.ptr::<Relation>(off as usize) }
+            } else {
+                // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() }
+            };
         }
         rel.rows.get(id.wrapping_sub(rel.base_rows), c)
     }
@@ -340,7 +480,9 @@ impl Relation {
     /// # Safety
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
-        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        // Aliased rows are their own relation's, given back with it.
+        let own_rows = if self.flags.load(Acquire) & ALIASED != 0 { 0 } else { unsafe { self.rows.release(block) } };
+        let given = own_rows + unsafe { self.killed.release(block) };
         let kept = self.known_kept.load(Acquire) as usize;
         if kept > 0 {
             block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
@@ -572,7 +714,7 @@ impl Relation {
                 (*ix).state = DEAD;
                 return;
             }
-            let (offs, rows) = (4 * (*ix).offs.len(), 4 * (*ix).rows.len().max(1));
+            let (offs, rows) = (4 * (*ix).offs.len(), index_rows_bytes((*ix).rows.len()));
             let (o, r) = (block.offset_of((*ix).offs.as_ptr()), block.offset_of((*ix).rows.as_ptr()));
             if self.flags.load(Acquire) & REWRITTEN != 0 {
                 block.free_chunk_resident(o, offs);
@@ -581,9 +723,9 @@ impl Relation {
                 block.free_chunk_fit_resident(o, block.fit_kept(offs));
                 block.free_chunk_fit_resident(r, block.fit_kept(rows));
             }
-            for s in [&(*ix).offs, &(*ix).rows] {
-                s.off.store(0, Relaxed);
-                s.len.store(0, Relaxed);
+            for (off, len) in [(&(*ix).offs.off, &(*ix).offs.len), (&(*ix).rows.off, &(*ix).rows.len), (&(*ix).marks.off, &(*ix).marks.len)] {
+                off.store(0, Relaxed);
+                len.store(0, Relaxed);
             }
             (*ix).key = [0; MAX_KEY];
             (*ix).state = DEAD;
@@ -716,7 +858,7 @@ impl Relation {
         unsafe {
             // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
             // allocation is.
-            let (ob, rb) = (4 * (cap + 1), 4 * (n as usize).max(1));
+            let (ob, rb) = (4 * (cap + 1), index_rows_bytes(n as usize));
             // In a block of no free list, an index given back keeps its room for one that fits it (`give_back_index`).
             let reused = if block.has_free_list() || self.indexes.is_empty() { None } else { self.dead_room(cap + 1, n as usize) };
             let i = match reused {
@@ -758,8 +900,10 @@ impl Relation {
             (*ix).mask = (cap - 1) as u64;
             Span::set(&raw mut (*ix).offs, offs, cap + 1);
             Span::set(&raw mut (*ix).rows, rows, n as usize);
+            Span::set(&raw mut (*ix).marks, rows.add(n as usize), n as usize);
             self.nindex.fetch_max(i as u32 + 1, Release);
-            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
+            let marks = block.offset_of(rows.add(n as usize));
+            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), marks, mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
         }
     }
 
@@ -774,11 +918,11 @@ impl Relation {
         let ix = std::ptr::from_ref(&self.indexes.as_slice()[index]).cast_mut();
         // SAFETY: the caller's: the entry is ours, and no reader runs.
         unsafe {
-            let (old, len) = (block.offset_of((*ix).rows.as_ptr()), 4 * (*ix).rows.len().max(1));
+            let (old, len) = (block.offset_of((*ix).rows.as_ptr()), index_rows_bytes((*ix).rows.len()));
             if (n as usize) <= (*ix).rows.len() {
                 return Some(old);
             }
-            let rb = 4 * n as usize;
+            let rb = index_rows_bytes(n as usize);
             let rewritten = self.flags.load(Acquire) & REWRITTEN != 0;
             let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit_zeroed(rb, 8)?.0 };
             if rewritten {
@@ -787,30 +931,44 @@ impl Relation {
                 block.free_chunk_fit_resident(old, block.fit_kept(len));
             }
             Span::set(&raw mut (*ix).rows, block.ptr::<u32>(r), n as usize);
+            Span::set(&raw mut (*ix).marks, block.ptr::<u32>(r).add(n as usize), n as usize);
             Some(r)
         }
     }
 
     /// Fills index `room` on the host: each row's bucket by its key's hash, the buckets' starts, then the rows in id
-    /// order within each bucket, as the device's builder places them.
+    /// order within each bucket, as the device's builder places them, and their marks (decision 0671).
     ///
     /// # Safety
     /// `room` is this relation's, reserved and not yet built, and nothing reads it meanwhile.
     pub unsafe fn build_index(&self, room: &IndexRoom) {
         let key = &room.key[..room.ncols];
-        // A continuation's values are of every row it reads (its base's first); a delta's its own rows'.
-        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
+        // A continuation's values are of every row it reads (its base's first); a delta's its own rows'. By row id.
+        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i - self.base_rows, c as usize) };
+        let first = if self.continues() { 0 } else { self.base_rows };
+        let hash = |i: u32| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(first + i, c)));
+        let same = |a: u32, b: u32| key.iter().all(|&c| value(a, c) == value(b, c));
         // SAFETY: the caller's.
-        unsafe { self.build_index_hashed(room, &|i| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c)))) }
+        unsafe { self.build_index_with(room, &hash, &same) }
     }
 
     /// `build_index`, each row's key hash given (`hash(i)` for its row `i`: `SEED` mixed with its key's values, as
     /// `key_hash`): for a relation whose key values are read elsewhere (a view's home of no columns, decision 0478
-    /// step 5e).
+    /// step 5e). Its keys are not compared: no mark says `MARK_SAME` (decision 0671).
     ///
     /// # Safety
     /// As `build_index`'s.
     pub unsafe fn build_index_hashed(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64) {
+        // SAFETY: the caller's.
+        unsafe { self.build_index_with(room, hash, &|_, _| false) }
+    }
+
+    /// `build_index` of each row's key hash (`hash(i)` of its `i`th row from its first) and whether two rows (by id)
+    /// hold one key.
+    ///
+    /// # Safety
+    /// As `build_index`'s.
+    unsafe fn build_index_with(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64, same: &dyn Fn(u32, u32) -> bool) {
         let ix = &self.indexes.as_slice()[room.index];
         let n = room.rows_n as usize;
         // SAFETY: the caller's: the room's spans are ours to write.
@@ -833,6 +991,10 @@ impl Relation {
             rows[at[b as usize] as usize] = base + i as u32;
             at[b as usize] += 1;
         }
+        // SAFETY: the caller's: the marks are the room's, as many as its rows.
+        let marks = unsafe { std::slice::from_raw_parts_mut(ix.marks.as_slice().as_ptr().cast_mut(), ix.marks.len()) };
+        let rows = &rows[..];
+        fill_marks(offs, &mut marks[..n], &|t| mark_tag(hash(rows[t] - base)), &|t, u| same(rows[t], rows[u]));
     }
 
     /// Index `room` built (by the host or the device): `find_index` finds it from now on.
@@ -882,7 +1044,7 @@ impl Relation {
                 }
                 continue;
             }
-            let (offs, rows) = (4 * ix.offs.len(), 4 * ix.rows.len().max(1));
+            let (offs, rows) = (4 * ix.offs.len(), index_rows_bytes(ix.rows.len()));
             let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
             // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).
             if self.flags.load(Acquire) & REWRITTEN != 0 {
@@ -908,7 +1070,7 @@ impl Relation {
             (cap - n) * width,
             0,
             ix.iter().map(|i| i.offs.len() * 4).sum(),
-            ix.iter().map(|i| i.rows.len() * 4).sum(),
+            ix.iter().map(|i| i.rows.len() * 4 + i.marks.len() * 4).sum(),
             self.dead.len() * 8,
             size_of::<Relation>() + self.rows.ncols as usize * size_of::<crate::rows::ColDir>() + size_of::<crate::rows::ColDir>(),
         ]
@@ -919,7 +1081,7 @@ impl Relation {
         let cap = crate::rows::capacity(self.rows.nchunks.load(Relaxed), self.rows.min_log) as usize;
         let width: usize = (0..self.rows.ncols as usize).map(|c| self.rows.col(c).width as usize).sum();
         let ix: usize =
-            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
+            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4 + i.marks.len() * 4).sum();
         cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
     }
 
@@ -927,7 +1089,7 @@ impl Relation {
     /// rows too, decision 0384 step 7).
     pub fn bytes(&self) -> usize {
         let ix: usize =
-            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
+            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4 + i.marks.len() * 4).sum();
         self.rows.value_bytes() + self.chain_value_bytes() + self.dead.len() * 8 + ix
     }
 
@@ -1269,11 +1431,15 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
         let mask = (cap - 1) as u64;
         // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
         let bucket: &mut [u32] = scratch.take(live);
+        let tags: &mut [u32] = scratch.take(live);
         let bp: *mut u32 = block.alloc_t(cap + 1);
-        let rp: *mut u32 = block.alloc_t(live.max(1));
+        // The rows, then their marks (decision 0671).
+        let rp: *mut u32 = block.alloc_t(2 * live.max(1));
         let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
         for (j, b) in bucket.iter_mut().enumerate() {
-            *b = (key_hash(&kv(j)[..nk]) & mask) as u32;
+            let h = key_hash(&kv(j)[..nk]);
+            *b = (h & mask) as u32;
+            tags[j] = mark_tag(h);
             offs[*b as usize + 1] += 1;
         }
         for b in 0..cap {
@@ -1286,10 +1452,15 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             rows_out[at[b as usize] as usize] = (br + j) as u32;
             at[b as usize] += 1;
         }
+        let marks = unsafe { std::slice::from_raw_parts_mut(rp.add(live), live) };
+        let rows_out = &rows_out[..live];
+        let j = |t: usize| rows_out[t] as usize - br;
+        fill_marks(offs, marks, &|t| tags[j(t)], &|t, u| kv(j(t))[..nk] == kv(j(u))[..nk]);
         ix.mask = mask;
         unsafe {
             Span::set(&raw mut ix.offs, bp, cap + 1);
             Span::set(&raw mut ix.rows, rp, live);
+            Span::set(&raw mut ix.marks, rp.add(live), live);
         }
     }
 
@@ -1619,6 +1790,64 @@ mod tests {
     use super::*;
     use crate::block::kind;
     use std::collections::BTreeSet;
+
+    /// Decision 0671: a place's mark is its key's tag, with `MARK_SAME` where its bucket's previous place of the tag
+    /// (among the `MARK_REACH` before it) holds its key; another key of the tag there, or none, leaves it clear.
+    #[test]
+    fn a_places_mark_says_whether_its_previous_of_its_tag_holds_its_key() {
+        // One bucket of 13 places: keys by place, tags by key (keys 1 and 2 share tag 6).
+        let keys = [1, 1, 2, 2, 1, 3, 3, 4, 5, 6, 7, 8, 3];
+        let tag = |k: i32| if k <= 2 { 6u32 } else { 10 * k as u32 };
+        let offs = [0u32, keys.len() as u32];
+        let mut marks = [0u32; 13];
+        fill_marks(&offs, &mut marks, &|t| tag(keys[t]), &|t, u| keys[t] == keys[u]);
+        let same: Vec<u32> = marks.iter().map(|m| m & MARK_SAME).collect();
+        // A place's previous of its tag: the same key (places 1, 3, 6), another key of the tag (2, 4), none (0, 5, the
+        // single keys); place 12's is place 6, 6 places back.
+        assert_eq!(same, [0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
+        assert!(marks.iter().zip(keys).all(|(m, k)| m & !MARK_SAME == tag(k)), "each place's tag");
+    }
+
+    /// A built index's marks: each place's tag its key's hash's, and each `MARK_SAME` place's key its previous place of
+    /// its tag's.
+    #[test]
+    fn a_built_indexs_marks_are_its_keys() {
+        let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let r = Relation::try_create(&block, &spec, None).unwrap();
+        let n = 5_000u32;
+        assert!(r.rows.try_reserve(&block, u64::from(n)));
+        unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(i, 0, i64::from(i * 7 % 997));
+                r.rows.put(i, 1, i64::from(i));
+            }
+        }
+        // 1024 buckets for 997 keys, about one key a bucket (as an index is sized), some two or more.
+        let room = unsafe { r.try_reserve_index_buckets(&block, &[0], n, 1024) }.unwrap();
+        unsafe {
+            r.build_index(&room);
+            r.index_built(&room);
+        }
+        let ix = r.index_at(room.index);
+        let (offs, rows, marks) = (ix.offs.as_slice(), ix.rows.as_slice(), ix.marks.as_slice());
+        assert_eq!(marks.len(), rows.len());
+        let key = |t: usize| r.rows.get(rows[t], 0);
+        let mut known = 0;
+        for b in 0..offs.len() - 1 {
+            for t in offs[b] as usize..offs[b + 1] as usize {
+                assert_eq!(marks[t] & !MARK_SAME, mark_tag(key_hash(&[key(t)])), "place {t}'s tag");
+                if marks[t] & MARK_SAME != 0 {
+                    let lo = (offs[b] as usize).max(t.saturating_sub(MARK_REACH));
+                    let prev = (lo..t).rev().find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME).unwrap();
+                    assert_eq!(key(prev), key(t), "place {t}: its previous of its tag's key");
+                    known += 1;
+                }
+            }
+        }
+        assert!(known > n as usize / 2, "most places' keys known by the place before of their tag: {known}");
+    }
 
     /// Decision 0384 step 7: a continuation reads its ids below `base_rows` in its base (in the same block) and its
     /// own after, by the read written once (`rel_get`); its index is of every id; a kills delta of it marks any; its

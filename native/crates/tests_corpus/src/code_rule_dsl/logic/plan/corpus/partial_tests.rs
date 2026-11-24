@@ -107,8 +107,9 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
         kept += edited.memo_kept.0;
         edits.push((tail, rows));
     }
-    // Each edit's rows are a full run's, each over a corpus of its own.
-    for (k, (tail, rows)) in edits.into_iter().enumerate() {
+    // Each edit's rows are a full run's, each over a corpus of its own (the last edit's alone by default, `fresh_tier`).
+    let n = edits.len();
+    for (k, (tail, rows)) in edits.into_iter().enumerate().filter(|(k, _)| super::fresh_tier::compared(*k, n)) {
         let c = format!("{}{tail}", FILES[2].1);
         let fresh = corpus(&format!("outputs-alone-fresh-{k}"), &format!("{marker} fresh {k}"), &[FILES[0], FILES[1], ("c.py", &c)]);
         let (_, expected) = run(&fresh, &program, OUTPUTS);
@@ -159,7 +160,7 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
     assert!(cold.cross_handed > 0, "a cold run hands its cross-file relations off as it goes, not all held to its end: {} handed; strata {:?}", cold.cross_handed, cold.cross_kept);
     assert_steady(&edit("\nhelper(4)\n").0, "an edit of the first build");
-    crate::code_rule_dsl::build_ids::rebuild_for_tests();
+    let _rebuilt = crate::code_rule_dsl::build_ids::rebuild_for_tests();
     let (first, _) = edit("\nhelper(5)\n");
     assert_eq!(first.memo.0, 0, "no entry of the old build's is a hit");
     assert_eq!(first.stats_kept, Some(Ok((3, 0))), "the new build's first edit counts every file in");

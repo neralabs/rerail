@@ -48,12 +48,25 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
 }
 
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
+/// The cone's is every root's (`cone_space_shared`).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
-    let root = super::named_root(root);
     let mut h = Sha256::new();
     h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
-    h.update(root.to_string_lossy().as_bytes());
+    if !(part == "cone" && cone_space_shared()) {
+        h.update(super::named_root(root).to_string_lossy().as_bytes());
+    }
     h.finalize().into()
+}
+
+/// Whether the cone's strata are kept in one space for every root (`RERAIL_CONE_SPACE=shared`, the default), not one
+/// a root (`root`). A kept relation is clean while its identity and the digests of what it read are as they were, so
+/// a stratum over the libraries alone (`builtins`, `os`) is clean for a corpus that has not run, where another run over
+/// the same libraries kept it: a cold run from the test store's template evaluated 15 of the cone's 65 strata, not
+/// all 65, its sources phase 55-63 ms of CPU against 69-76 ms (spark2). Two roots over other libraries take turns
+/// with a stratum's entry, each deriving it again where it differs; neither reads the other's rows. The cone's
+/// rounds (decision 0145) stay a root's: their record is the root's journal.
+pub(in crate::code_rule_dsl) fn cone_space_shared() -> bool {
+    std::env::var("RERAIL_CONE_SPACE").map_or(true, |v| v != "root")
 }
 
 /// `root`'s cross part's space (`part_space(root, "cross")`).
@@ -195,7 +208,7 @@ impl KeptStrata for Kept<'_> {
         self.strata = Some((evaluated, of));
     }
 
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize, Vec<(String, u64)>)>) {
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, crate::code_rule_dsl::logic::plan::RanRows, usize, Vec<(String, u64)>)>) {
         let Some(frame) = self.rels.get(rel).cloned() else { return };
         match got {
             Some((digest, types, rows, n, reads)) => {
@@ -203,9 +216,13 @@ impl KeptStrata for Kept<'_> {
                     return;
                 }
                 let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
-                self.values += n * rows.width();
+                self.values += n * types.len();
                 self.written_rows += n;
-                self.puts.push(flat_put(&frame, digest, reads, types, rows));
+                self.puts.push(match rows {
+                    crate::code_rule_dsl::logic::plan::RanRows::Picked(rows) => flat_put(&frame, digest, reads, types, rows),
+                    // The engine's relation, lent where its rows lie (decision 0353 step 8).
+                    crate::code_rule_dsl::logic::plan::RanRows::Held(held) => super::retain::kept_put(&frame, digest, reads, types, &held),
+                });
                 if self.values >= FLUSH_VALUES {
                     self.flush();
                 }
@@ -402,9 +419,9 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let w = source.columns().len();
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
-        // Its rows read where they lie by the writer (`SourceRows`), never gathered for it.
+        // Its rows read where they lie by the writer as it packs them (`SourceRows`, decision 0353 step 8).
         written += source.len();
-        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows { source: Arc::clone(source) })));
+        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows::new(Arc::clone(source)))));
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };

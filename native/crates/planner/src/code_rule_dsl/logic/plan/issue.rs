@@ -138,6 +138,8 @@ pub(super) struct Board<'a> {
     /// ran it), and each stratum's start, end and where it ran (0 the loop's thread, 1 a job, 2 a component run at
     /// its retire).
     trace: Option<Trace>,
+    /// The strata below it had their inputs bound (`load_through`).
+    loaded: usize,
 }
 
 struct Trace {
@@ -202,6 +204,7 @@ impl<'a> Board<'a> {
             // Always kept (a few words a stratum): the run's measured critical path reads it (decision 0208), and
             // `RERAIL_STRATA_TRACE` writes it.
             trace: Some(Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], submitted: rerail_blocks::vector![-1.0; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]), spent: Default::default() }),
+            loaded: 0,
         }
     }
 
@@ -493,14 +496,25 @@ impl<'a> Board<'a> {
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
     /// relations its strand holds (`Run::strand_reads_with`).
     #[allow(clippy::too_many_arguments)]
-    fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &crate::code_rule_dsl::logic::front::Components, rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
+    fn eligible(&mut self, j: usize, run: &Run<'a, '_>, sccs: &crate::code_rule_dsl::logic::front::Components, rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
             if let Some(t) = &self.trace {
                 t.why.borrow_mut()[j] = "views only";
             }
             return Ok(None);
         }
-        load(j)?;
+        // A filter of one relation is the loop's: read as its relation where every row passes (t52 step 3, the loop's
+        // `filter_of`), derived there where one fails. Issued, its job would derive the rows the loop then reads in place.
+        if let [r] = rules_of(j).as_slice()
+            && let [rel] = sccs[j].iter().collect::<Vec<_>>().as_slice()
+            && { let (v, rule) = run.versions.rule_at(*r); super::plain_filter(&run.fields(), rel, v, rule).is_some() }
+        {
+            if let Some(t) = &self.trace {
+                t.why.borrow_mut()[j] = "a filter, read as its relation by the loop";
+            }
+            return Ok(None);
+        }
+        self.load_through(j, load)?;
         match run.strand_reads_with(&sccs[j], &rules_of(j), held) {
             Ok(reads) => Ok(Some(reads)),
             Err(why) => {
@@ -510,6 +524,16 @@ impl<'a> Board<'a> {
                 Ok(None)
             }
         }
+    }
+
+    /// Binds the inputs the loop binds at the strata up to `j` (`load`, each stratum's: those it is the first reader
+    /// of), those not bound yet. A stratum issued ahead may read an input whose first reader the loop has not reached
+    /// and that is not issued with it; until then the input's binding is the run's placeholder (a cross-file run's
+    /// export is bound empty), and the stratum's job read that.
+    fn load_through(&mut self, j: usize, load: &mut dyn FnMut(usize) -> Result<()>) -> Result<()> {
+        let from = self.loaded;
+        self.loaded = from.max(j + 1);
+        (from..=j).try_for_each(load)
     }
 
     /// Collects the components whose jobs ended, out of order (decision 0114 §1): each is absorbed and its members

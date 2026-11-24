@@ -122,15 +122,25 @@ impl<'b> Kept<'b> {
     }
 
     /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
-    /// not per cell as `row` resolves it, and the row read into one buffer the rows share.
+    /// not per cell as `row` resolves it, and decoded a chunk of rows at a time as it goes (`ColDec::fill`, a run's
+    /// value once per run), the row read into one buffer the rows share.
     pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
+        use crate::packed::FILL;
         let cols: Vec<crate::packed::ColDec<'_>> = (0..self.rows.arity as usize).map(|c| self.rows.col(c).dec()).collect();
-        let mut row = vec![0i64; cols.len()];
-        for i in 0..self.rows.len() {
-            for (v, c) in row.iter_mut().zip(&cols) {
-                *v = c.get(i);
+        let (k, n) = (cols.len(), self.rows.len());
+        let mut chunk = vec![0i64; k * FILL];
+        let mut row = vec![0i64; k];
+        for at in (0..n).step_by(FILL) {
+            let m = (n - at).min(FILL);
+            for (c, col) in cols.iter().enumerate() {
+                col.fill(at, &mut chunk[c * FILL..c * FILL + m]);
             }
-            f(&row);
+            for i in 0..m {
+                for (c, v) in row.iter_mut().enumerate() {
+                    *v = chunk[c * FILL + i];
+                }
+                f(&row);
+            }
         }
     }
 }
@@ -565,27 +575,15 @@ impl KeptW {
         })
     }
 
-    /// `n` rows of `a` columns written by `fill` straight into the calling thread's scratch (column-major, and each
-    /// row's level where `levels`), then prepared and packed as `put_cols` does: a relation's rows read where they lie
-    /// in its block, never staged on the heap.
-    pub fn put_filled<E: From<io::Error>>(&mut self, meta: Meta, n: usize, a: usize, levels: bool, given: crate::packed::Order, fill: impl FnOnce(&mut [i64], Option<&mut [u32]>) -> Result<(), E>) -> Result<Put, E> {
+    /// `rows`, read where they lie (decision 0353 step 8), packed as `put_cols` packs columns: nothing is read into
+    /// columns first.
+    pub fn put_rows(&mut self, meta: Meta, rows: &dyn crate::packed::RowsIn, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
+        let a = rows.arity();
         let order = (0..a.min(MAX_ORDER) as u16).collect();
         let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
         crate::scratch::with(|s| {
-            let raw: &mut [i64] = s.take(n * a);
-            let lv: Option<&mut [u32]> = levels.then(|| s.take(n));
-            let lv = match lv {
-                Some(l) => {
-                    fill(raw, Some(&mut *l))?;
-                    Some(&*l)
-                }
-                None => {
-                    fill(raw, None)?;
-                    None
-                }
-            };
-            let prepared = crate::packed::prepare(s, raw, n, a, &spec, lv, given);
-            Ok(self.put(meta, &prepared)?)
+            let prepared = crate::packed::prepare_rows(s, rows, &spec, levels, given);
+            self.put(meta, &prepared)
         })
     }
 
@@ -728,7 +726,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-kept-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 

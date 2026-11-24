@@ -39,13 +39,12 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
-    ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
+    ("ukl/stages.h", include_str!("../lib/ukl/stages.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
     // The tape's reads for the kernels, written by hand (decisions 0524, 0576): each format's reads, the reads made of
-    // them (included once a format) and the public reads, which `tape.h` (formats 15 and 16) and `tape_z.h` (16z too)
+    // them (included once a format) and the public reads, which `tape.h` (format 16) and `tape_z.h` (16z too)
     // include.
     ("ukl/reads/tape_common.h", include_str!("../lib/ukl/reads/tape_common.h")),
-    ("ukl/reads/tape_f15.h", include_str!("../lib/ukl/reads/tape_f15.h")),
     ("ukl/reads/tape_f16.h", include_str!("../lib/ukl/reads/tape_f16.h")),
     ("ukl/reads/tape_f16z.h", include_str!("../lib/ukl/reads/tape_f16z.h")),
     ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),

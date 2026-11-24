@@ -76,7 +76,7 @@ fn cycle_progress_rejects_restored_and_bypassed_navigation() {
 
 #[test]
 fn cycle_progress_preserves_advancing_cursor_and_navigation_loops() {
-    let source = Arc::new("f()\ng()\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("f()\ng()\n"));
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let native = StrDoc::new(source.as_str(), GrammarDialect::Python);
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
@@ -157,7 +157,7 @@ fn cycle_progress_preserves_advancing_cursor_and_navigation_loops() {
 fn cycle_progress_preserves_nested_query_loops_with_separate_entries() {
     use ast_grep_language::LanguageExt;
     use tree_sitter::StreamingIterator;
-    let source = Arc::new("f(a)\ng(b)\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("f(a)\ng(b)\n"));
     let query =
         "(module (expression_statement (call arguments: (argument_list (identifier)+)))+ @stmt)";
     let language = GrammarDialect::Python.get_ts_language();
@@ -229,7 +229,7 @@ fn cycle_progress_compiles_every_pinned_query() {
 
 #[test]
 fn cycle_progress_acceptance_implies_actual_progress_for_short_sequences() {
-    let source = Arc::new("f(a, b)\ng(c)\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("f(a, b)\ng(c)\n"));
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let native = StrDoc::new(source.as_str(), GrammarDialect::Python);
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary;

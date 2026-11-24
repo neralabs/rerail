@@ -670,7 +670,8 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             // A negated read demands as a positive one does: a node whose row is not made has no text to test, and its
             // negation held whatever its text. A negation of a constant within the bound demands no long text (a longer
             // text is not that constant, row or no row); one of a node no body fixes, every node's at any length
-            // (`negated_any`), since a twin cannot stand in for a negation.
+            // (`negated_any`), since a twin cannot stand in for a negation. A span's text is no node's: a line's or the
+            // source's is held at any length where read (`span_text_demand`), and a twin, of a node, gives none.
             match fixed {
                 _ if text.neg() && short_constant(v, text) => {}
                 Some(k) => kinds.extend(k),

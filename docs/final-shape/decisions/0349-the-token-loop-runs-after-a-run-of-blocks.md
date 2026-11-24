@@ -1,7 +1,7 @@
 # 0349: The token loop runs after a run of blocks
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 2 being the block cost
-on plain bytes). Amends 0177's "a part after each block".
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1", item 2 being the block
+cost on plain bytes). Amends 0177's "a part after each block".
 
 **Replaced by 0372** (2026-11-17): the pass is one loop again, a block's body then its tokens,
 its words handed on as values.

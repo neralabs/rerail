@@ -234,6 +234,17 @@ pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
     if ident(r0) != p.left || ident(r1) != p.right {
         return Ok(None);
     }
+    // Each pair inside its sides: its left an index into `lids`, its right a row of the second atom's. The paired
+    // walk reads `lids[left]` and the right's row unchecked; once (the M3's 300-file run, ab218) it read a pair whose
+    // left was 31,379 of 5,735, which the lanes' joins do not make (accel's
+    // `a_levels_staged_probes_are_the_hosts_joins_batch_after_batch`). Such a batch is a failed one: the seed walks
+    // on the host, as when a submission failed, and the profile counts it with its sides.
+    let (nl, nr) = (p.lids.len(), r1.len());
+    if let Some((l, r)) = pairs.iter().find(|&(l, r)| l as usize >= nl || r as usize >= nr) {
+        crate::code_rule_dsl::prof::count("level joins: a batch's pairs past their sides, its seed walked on the host", 1);
+        crate::code_rule_dsl::logic::profile::decision("a level's pairs past their sides: the seed walked on the host", || format!("pair ({l}, {r}) of {} pairs, sides {nl} left rows x {nr} right rows", pairs.len()));
+        return Err(err(format!("a level's join: pair ({l}, {r}) past its sides, {nl} x {nr}")));
+    }
     Ok(Some(Paired { lids: p.lids, pairs }))
 }
 

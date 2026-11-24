@@ -21,8 +21,8 @@
 //! (`paired`, decision 0096 step 4): the sketch is linear, so a row's delete takes out what its insert put in.
 
 use std::collections::BTreeMap;
-use rerail_blocks::vector::Vector;
 use rustc_hash::FxHashMap;
+use rerail_blocks::vector::Vector;
 
 use super::sketch::Sketch;
 
@@ -202,21 +202,98 @@ struct Cols {
     kept: Option<Kept>,
 }
 
-/// A relation's columns as kept: `encode`'s bytes, and what was given beside them.
-#[derive(Clone, Debug)]
+/// A relation's columns as kept: where `encode`'s bytes lie, and what was given beside them.
+#[derive(Clone)]
 struct Kept {
-    bytes: std::sync::Arc<[u8]>,
-    /// Where the columns start in `bytes`, and their format (`encode`'s first byte).
+    source: std::sync::Arc<dyn KeptSource>,
+    /// Where the columns start in the bytes, and their format (`encode`'s first byte).
     at: usize,
     format: u8,
     /// Per column, whether the bytes hold an exact map, and watched values.
     has_exact: Vec<bool>,
     has_watched: Vec<bool>,
-    /// Exact maps and watched values given apart (`put_exact`, `watch`), the bytes' replaced as decoding applies them.
-    exact: BTreeMap<usize, Vec<(i64, i64)>>,
-    watched: BTreeMap<usize, Vec<(i64, i64)>>,
+    /// Exact maps and watched values given apart: the source's (`KeptSource::apart`), read where first asked, then as
+    /// put or taken (`put_exact`, `watch`), the bytes' replaced as decoding applies them.
+    apart: std::sync::OnceLock<Apart>,
     /// Each column's `(ndv, sq, sqd)` as `statistics` gives them with every column held, kept with the bytes.
     summary: Option<std::sync::Arc<[(i64, i64, i64)]>>,
+}
+
+impl std::fmt::Debug for Kept {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Kept").field("bytes", &self.source.len()).field("at", &self.at).field("format", &self.format).field("apart", &self.apart.get()).finish_non_exhaustive()
+    }
+}
+
+impl Kept {
+    fn apart(&self) -> &Apart {
+        self.apart.get_or_init(|| self.source.apart())
+    }
+
+    fn apart_mut(&mut self) -> &mut Apart {
+        self.apart();
+        self.apart.get_mut().expect("read")
+    }
+}
+
+/// A relation's statistics where a store keeps them (t33 K4): `encode`'s bytes, and the exact maps and watched values
+/// kept apart from them, read where they lie as the relation is decoded or written back, never held of their own
+/// (decision 0353).
+pub trait KeptSource: Send + Sync {
+    /// The bytes' length.
+    fn len(&self) -> usize;
+    /// `f`'s answer, given a reader of the bytes: one lookup of where they lie for all its reads.
+    fn read(&self, f: &mut dyn FnMut(&dyn ReadAt) -> Option<()>) -> Option<()>;
+    /// The exact maps and watched values kept apart, by column, their values this process's atoms.
+    fn apart(&self) -> Apart;
+}
+
+/// Bytes read at an offset (`KeptSource::read`).
+pub trait ReadAt {
+    fn len(&self) -> usize;
+    /// The bytes at `at..at + out.len()`, into `out`; `None` past their end.
+    fn read_at(&self, at: usize, out: &mut [u8]) -> Option<()>;
+}
+
+impl ReadAt for [u8] {
+    fn len(&self) -> usize {
+        <[u8]>::len(self)
+    }
+    fn read_at(&self, at: usize, out: &mut [u8]) -> Option<()> {
+        out.copy_from_slice(self.get(at..at.checked_add(out.len())?)?);
+        Some(())
+    }
+}
+
+/// Exact maps and watched values given apart from the bytes, by column (`KeptSource::apart`).
+#[derive(Clone, Debug, Default)]
+pub struct Apart {
+    pub exact: BTreeMap<usize, Vec<(i64, i64)>>,
+    pub watched: BTreeMap<usize, Vec<(i64, i64)>>,
+}
+
+/// `encode`'s bytes held in memory (`RelStats::kept`), nothing kept apart.
+struct InMemory(std::sync::Arc<[u8]>);
+
+impl KeptSource for InMemory {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn read(&self, f: &mut dyn FnMut(&dyn ReadAt) -> Option<()>) -> Option<()> {
+        f(self)
+    }
+    fn apart(&self) -> Apart {
+        Apart::default()
+    }
+}
+
+impl ReadAt for InMemory {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn read_at(&self, at: usize, out: &mut [u8]) -> Option<()> {
+        self.0[..].read_at(at, out)
+    }
 }
 
 impl Cols {
@@ -369,6 +446,74 @@ impl RelStats {
     /// base relation counted off the corpus batch, cold (decision 0458).
     pub fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
         self.documents_scanned_in(source, from, sign, WINDOW);
+    }
+
+    /// `documents_scanned` of rows `lo..hi` of `source`, which hold whole documents: one chunk's own files' rows of a
+    /// relation its batch holds (decision 0458's statistics, counted where the chunk's rows lie).
+    pub fn documents_scanned_range(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize, hi: usize, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols().len());
+        let width = source.columns().len();
+        let mut at = lo;
+        while at < hi {
+            let end = window_end(source, at, hi, WINDOW).min(hi);
+            self.count(
+                end - at,
+                width,
+                &mut |c, each| {
+                    source.for_rows_in(at..end, &[c], &mut |r, row| {
+                        each(r - at, row[0]);
+                        true
+                    });
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            at = end;
+        }
+    }
+
+    /// Another set of documents' statistics in (none of them counted here already): each sum adds, each value's count
+    /// adds, and the sketches add. The same as counting both sets' rows here, whole documents at a time. `false`, and
+    /// nothing changed, when their columns differ.
+    pub fn merge(&mut self, other: &RelStats) -> bool {
+        if self.columns != other.columns {
+            return false;
+        }
+        self.rows += other.rows;
+        self.partial |= other.partial;
+        for (a, b) in self.cols_mut().iter_mut().zip(other.cols()) {
+            a.sqd += b.sqd;
+            match &b.zero {
+                Some(z) => {
+                    let pairs: Vec<(i64, i64)> = z.iter().collect();
+                    Self::zeros(a, &pairs, 1);
+                }
+                None => {
+                    a.zero = None;
+                    a.zero_sq += b.zero_sq;
+                }
+            }
+            a.local_ndv += b.local_ndv;
+            a.crossing += b.crossing;
+            match (&mut a.exact, &b.exact) {
+                (Some(x), Some(y)) => {
+                    for (v, n) in y.iter() {
+                        x.add(v, n);
+                    }
+                    if x.len() > EXACT {
+                        a.exact = None;
+                    }
+                }
+                _ => a.exact = None,
+            }
+            a.sketch.merge(&b.sketch, 1);
+            match (&mut a.pairs, &b.pairs) {
+                (Some(x), Some(y)) => x.merge(y, 1),
+                _ => a.pairs = None,
+            }
+        }
+        true
     }
 
     /// `documents_scanned`, `window` rows at a time and on to the end of a window's last document.
@@ -770,7 +915,7 @@ impl RelStats {
     /// Column `c`'s exact map taken out as (value, count) pairs, to be mapped and put back (`put_exact`).
     pub fn take_exact(&mut self, c: usize) -> Option<Vec<(i64, i64)>> {
         if let Some(k) = self.undecoded_mut() {
-            if let Some(pairs) = k.exact.remove(&c) {
+            if let Some(pairs) = k.apart_mut().exact.remove(&c) {
                 return Some(pairs);
             }
             if !k.has_exact.get(c).copied().unwrap_or(false) {
@@ -784,7 +929,7 @@ impl RelStats {
     pub fn put_exact(&mut self, c: usize, pairs: Vec<(i64, i64)>) {
         if let Some(k) = self.undecoded_mut() {
             if c < k.has_exact.len() {
-                k.exact.insert(c, pairs);
+                k.apart_mut().exact.insert(c, pairs);
             }
             return;
         }
@@ -795,7 +940,7 @@ impl RelStats {
 
     pub fn exact(&self, c: usize) -> Option<Box<dyn Iterator<Item = (i64, i64)> + '_>> {
         if let Some(k) = self.undecoded() {
-            if let Some(pairs) = k.exact.get(&c) {
+            if let Some(pairs) = k.apart().exact.get(&c) {
                 return Some(Box::new(pairs.iter().copied()));
             }
             if !k.has_exact.get(c).copied().unwrap_or(false) {
@@ -808,7 +953,7 @@ impl RelStats {
     /// Column `c`'s count of `v`, where `v` is watched (`watch`).
     pub fn watched(&self, c: usize, v: i64) -> Option<i64> {
         if let Some(k) = self.undecoded() {
-            if let Some(pairs) = k.watched.get(&c) {
+            if let Some(pairs) = k.apart().watched.get(&c) {
                 return pairs.iter().find(|p| p.0 == v).map(|p| p.1);
             }
             if !k.has_watched.get(c).copied().unwrap_or(false) {
@@ -823,7 +968,7 @@ impl RelStats {
     pub fn watch(&mut self, c: usize, counts: impl IntoIterator<Item = (i64, i64)>) {
         if let Some(k) = self.undecoded_mut() {
             if c < k.has_watched.len() {
-                k.watched.insert(c, counts.into_iter().collect());
+                k.apart_mut().watched.insert(c, counts.into_iter().collect());
             }
             return;
         }
@@ -835,7 +980,7 @@ impl RelStats {
     /// Column `c`'s watched values taken out as (value, count) pairs, to be mapped and put back (`watch`).
     pub fn take_watched(&mut self, c: usize) -> Vec<(i64, i64)> {
         if let Some(k) = self.undecoded_mut() {
-            if let Some(pairs) = k.watched.remove(&c) {
+            if let Some(pairs) = k.apart_mut().watched.remove(&c) {
                 return pairs;
             }
             if !k.has_watched.get(c).copied().unwrap_or(false) {
@@ -850,14 +995,21 @@ impl RelStats {
         self.cols.decoded.get_or_init(|| {
             let k = self.cols.kept.as_ref().expect("columns made or kept");
             crate::code_rule_dsl::prof::count("statkeep.kept_decoded", 1);
-            let mut at = k.at;
-            let mut cols = Self::columns_of(&k.bytes, &mut at, k.format, self.columns.len()).unwrap_or_else(|| vec![Column::default(); self.columns.len()]);
-            for (c, pairs) in &k.exact {
+            // Decoded where they lie: `columns_of` reads the bytes through the source's reader, nothing copied out
+            // first (decision 0353 step 8).
+            let (mut cols, mut at) = (None, k.at);
+            k.source.read(&mut |r| {
+                cols = Self::columns_of(r, &mut at, k.format, self.columns.len());
+                Some(())
+            });
+            let mut cols = cols.unwrap_or_else(|| vec![Column::default(); self.columns.len()]);
+            let apart = k.apart();
+            for (c, pairs) in &apart.exact {
                 if let Some(col) = cols.get_mut(*c) {
                     col.exact = Some(pairs.iter().copied().collect());
                 }
             }
-            for (c, pairs) in &k.watched {
+            for (c, pairs) in &apart.watched {
                 if let Some(col) = cols.get_mut(*c) {
                     col.watched = pairs.iter().copied().collect();
                 }
@@ -894,7 +1046,7 @@ impl RelStats {
     /// Bytes `encode` takes, near enough (the exact maps and sketches dominate).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         if let Some(k) = self.undecoded() {
-            return k.bytes.len() + 16 * k.exact.values().chain(k.watched.values()).map(Vec::len).sum::<usize>();
+            return k.source.len() + 16 * k.apart.get().map_or(0, |a| a.exact.values().chain(a.watched.values()).map(Vec::len).sum::<usize>());
         }
         self.cols().iter().map(|c| 32 + [&c.exact, &c.zero].iter().map(|e| e.as_ref().map_or(0, |e| 16 * e.len())).sum::<usize>() + 16 * c.watched.len() + c.sketch.bytes() + c.pairs.as_ref().map_or(0, Sketch::bytes)).sum::<usize>() + self.columns.iter().map(|c| c.len() + 4).sum::<usize>()
     }
@@ -924,9 +1076,13 @@ impl RelStats {
         int(out, self.rows);
         out.push(u8::from(self.partial));
         // As kept, not decoded, and every map given apart taken out again: its columns' bytes as they were read.
-        if let Some(k) = self.undecoded().filter(|k| k.format == 4 && k.exact.is_empty() && k.watched.is_empty()) {
-            out.extend_from_slice(&k.bytes[k.at..]);
-            return;
+        if let Some(k) = self.undecoded().filter(|k| k.format == 4 && k.apart().exact.is_empty() && k.apart().watched.is_empty()) {
+            let n = out.len();
+            out.resize(n + k.source.len().saturating_sub(k.at), 0);
+            if k.source.read(&mut |r| r.read_at(k.at, &mut out[n..])).is_some() {
+                return;
+            }
+            out.truncate(n);
         }
         for col in self.cols() {
             int(out, col.sqd);
@@ -958,6 +1114,12 @@ impl RelStats {
 
     /// `encode`'s statistics back from `bytes` at `*at`, which moves past them; `None` if they are not.
     pub fn decode(bytes: &[u8], at: &mut usize) -> Option<RelStats> {
+        RelStats::decode_in(bytes, at)
+    }
+
+    /// `decode` of bytes read where they lie (`ReadAt`): a blob in a kept entry's words is not read into bytes first
+    /// (decision 0353 step 8).
+    pub fn decode_in<R: ReadAt + ?Sized>(bytes: &R, at: &mut usize) -> Option<RelStats> {
         // Format 3: format 2's `sqd` held the document-key rows' part, summed by document (not to be patched).
         // Format 4: format 3 with each column's watched values; a format 3 column watches none.
         let (format, columns, rows, partial) = Self::header(bytes, at)?;
@@ -968,24 +1130,61 @@ impl RelStats {
     /// `encode`'s statistics in `bytes`, whole, as kept (t33 K4): their columns decoded where first read, `summary`
     /// (each column's, `summary`) answering `statistics` until then. `None` if they are not statistics.
     pub fn kept(bytes: std::sync::Arc<[u8]>, summary: Option<Vec<(i64, i64, i64)>>) -> Option<RelStats> {
-        let mut at = 0;
-        let (format, columns, rows, partial) = Self::header(&bytes, &mut at)?;
-        let start = at;
-        let (has_exact, has_watched) = Self::walk(&bytes, &mut at, format, columns.len())?;
-        (at == bytes.len()).then_some(())?;
-        let kept = Kept { bytes, at: start, format, has_exact, has_watched, exact: BTreeMap::new(), watched: BTreeMap::new(), summary: summary.map(Into::into) };
+        Self::kept_in(std::sync::Arc::new(InMemory(bytes)), summary)
+    }
+
+    /// `encode`'s statistics where `source` keeps them, as kept (`kept`): only their header read here, and the
+    /// lengths that lead past their columns.
+    pub fn kept_in(source: std::sync::Arc<dyn KeptSource>, summary: Option<Vec<(i64, i64, i64)>>) -> Option<RelStats> {
+        let mut read = None;
+        source.read(&mut |r| {
+            let mut at = 0;
+            let (format, columns, rows, partial) = Self::header(r, &mut at)?;
+            let start = at;
+            let (has_exact, has_watched) = Self::walk(r, &mut at, format, columns.len())?;
+            (at == r.len()).then_some(())?;
+            read = Some((format, columns, rows, partial, start, has_exact, has_watched));
+            Some(())
+        })?;
+        let (format, columns, rows, partial, at, has_exact, has_watched) = read?;
+        let kept = Kept { source, at, format, has_exact, has_watched, apart: std::sync::OnceLock::new(), summary: summary.map(Into::into) };
         Some(RelStats { columns, rows, partial, cols: Cols { decoded: std::sync::OnceLock::new(), kept: Some(kept) } })
     }
 
+    /// `encode`'s statistics where `source` keeps them, their header given apart from them (`columns`, `rows`,
+    /// `partial`: what `encode` wrote first) and every exact map and watched value apart (`KeptSource::apart`): nothing
+    /// of the bytes read until they are decoded or written back.
+    pub fn kept_with(source: std::sync::Arc<dyn KeptSource>, columns: Vec<String>, rows: i64, partial: bool, summary: Option<Vec<(i64, i64, i64)>>) -> RelStats {
+        // Past `encode`'s format byte, its columns' count and names, its rows and its partial byte.
+        let at = 1 + 8 + columns.iter().map(|c| 8 + c.len()).sum::<usize>() + 8 + 1;
+        let k = columns.len();
+        let kept = Kept { source, at, format: 4, has_exact: vec![false; k], has_watched: vec![false; k], apart: std::sync::OnceLock::new(), summary: summary.map(Into::into) };
+        RelStats { columns, rows, partial, cols: Cols { decoded: std::sync::OnceLock::new(), kept: Some(kept) } }
+    }
+
+    /// Whether it was patched by rows that are not whole documents (`partial`).
+    pub fn partial(&self) -> bool {
+        self.partial
+    }
+
     /// `encode`'s first part: its format, columns, rows and whether it is partial.
-    fn header(bytes: &[u8], at: &mut usize) -> Option<(u8, Vec<String>, i64, bool)> {
-        let take = |at: &mut usize, n: usize| -> Option<&[u8]> {
-            let b = bytes.get(*at..*at + n)?;
-            *at += n;
-            Some(b)
+    fn header<R: ReadAt + ?Sized>(bytes: &R, at: &mut usize) -> Option<(u8, Vec<String>, i64, bool)> {
+        let take = |at: &mut usize, out: &mut [u8]| -> Option<()> {
+            bytes.read_at(*at, out)?;
+            *at += out.len();
+            Some(())
         };
-        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(at, 8)?.try_into().ok()?)) };
-        let format = take(at, 1)?[0];
+        let int = |at: &mut usize| -> Option<i64> {
+            let mut b = [0u8; 8];
+            take(at, &mut b)?;
+            Some(i64::from_le_bytes(b))
+        };
+        let byte = |at: &mut usize| -> Option<u8> {
+            let mut b = [0u8; 1];
+            take(at, &mut b)?;
+            Some(b[0])
+        };
+        let format = byte(at)?;
         if format != 3 && format != 4 {
             return None;
         }
@@ -993,24 +1192,28 @@ impl RelStats {
         let mut columns = Vec::with_capacity(k.min(1024));
         for _ in 0..k {
             let l = usize::try_from(int(at)?).ok()?;
-            columns.push(String::from_utf8(take(at, l)?.to_vec()).ok()?);
+            let mut name = vec![0u8; l.min(bytes.len())];
+            (name.len() == l).then_some(())?;
+            take(at, &mut name)?;
+            columns.push(String::from_utf8(name).ok()?);
         }
         let rows = int(at)?;
-        let partial = take(at, 1)?[0] != 0;
+        let partial = byte(at)? != 0;
         Some((format, columns, rows, partial))
     }
 
     /// `k` columns' bytes at `*at` walked over, nothing made: whether each holds an exact map, and watched values.
-    fn walk(bytes: &[u8], at: &mut usize, format: u8, k: usize) -> Option<(Vec<bool>, Vec<bool>)> {
+    fn walk<R: ReadAt + ?Sized>(bytes: &R, at: &mut usize, format: u8, k: usize) -> Option<(Vec<bool>, Vec<bool>)> {
         let skip = |at: &mut usize, n: usize| -> Option<()> {
-            bytes.get(*at..*at + n)?;
+            (at.checked_add(n)? <= bytes.len()).then_some(())?;
             *at += n;
             Some(())
         };
         let int = |at: &mut usize| -> Option<i64> {
-            let b = bytes.get(*at..*at + 8)?;
+            let mut b = [0u8; 8];
+            bytes.read_at(*at, &mut b)?;
             *at += 8;
-            Some(i64::from_le_bytes(b.try_into().ok()?))
+            Some(i64::from_le_bytes(b))
         };
         let pairs = |at: &mut usize| -> Option<bool> {
             let e = int(at)?;
@@ -1031,25 +1234,43 @@ impl RelStats {
             if let Ok(l) = usize::try_from(int(at)?) {
                 skip(at, l)?;
             }
-            has_watched.push(format == 4 && pairs(at)?);
+            // Watched values, where there are any: an empty list (the keeper's, which keeps them apart) is none, and
+            // asking one of its values decodes nothing.
+            has_watched.push(format == 4 && {
+                let e = int(at)?;
+                skip(at, usize::try_from(e).ok()?.checked_mul(16)?)?;
+                e > 0
+            });
         }
         Some((has_exact, has_watched))
     }
 
-    /// `k` columns of format `format` decoded from `bytes` at `*at`, which moves past them.
-    fn columns_of(bytes: &[u8], at: &mut usize, format: u8, k: usize) -> Option<Vec<Column>> {
-        fn take<'a>(bytes: &'a [u8], at: &mut usize, n: usize) -> Option<&'a [u8]> {
-            let b = bytes.get(*at..*at + n)?;
-            *at += n;
-            Some(b)
-        }
-        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(bytes, at, 8)?.try_into().ok()?)) };
+    /// `k` columns of format `format` decoded from `bytes` at `*at`, which moves past them: read where they lie, a
+    /// sketch by position (`Sketch::decode_at`).
+    fn columns_of<R: ReadAt + ?Sized>(bytes: &R, at: &mut usize, format: u8, k: usize) -> Option<Vec<Column>> {
+        let n = bytes.len();
+        let take = |at: &mut usize, l: usize| -> Option<usize> {
+            let start = *at;
+            (start.checked_add(l)? <= n).then_some(())?;
+            *at += l;
+            Some(start)
+        };
+        let int = |at: &mut usize| -> Option<i64> {
+            let mut b = [0u8; 8];
+            bytes.read_at(*at, &mut b)?;
+            *at += 8;
+            Some(i64::from_le_bytes(b))
+        };
+        let byte = |i: usize| -> u8 {
+            let mut b = [0u8; 1];
+            bytes.read_at(i, &mut b).map_or(0, |()| b[0])
+        };
         let exact = |at: &mut usize| -> Option<Option<Exact>> {
             let e = int(at)?;
             if e < 0 {
                 return Some(None);
             }
-            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(bytes.len() / 16));
+            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(n / 16));
             for _ in 0..e {
                 let v = int(at)?;
                 m.insert(v, int(at)?);
@@ -1063,10 +1284,13 @@ impl RelStats {
             let (local_ndv, crossing) = (int(at)?, int(at)?);
             let exact = exact(at)?;
             let l = usize::try_from(int(at)?).ok()?;
-            let sketch = Sketch::decode(take(bytes, at, l)?)?;
+            let sketch = Sketch::decode_at(&byte, take(at, l)?, l)?;
             let pairs = match int(at)? {
                 l if l < 0 => None,
-                l => Some(Sketch::decode(take(bytes, at, usize::try_from(l).ok()?)?)?),
+                l => {
+                    let l = usize::try_from(l).ok()?;
+                    Some(Sketch::decode_at(&byte, take(at, l)?, l)?)
+                }
             };
             let mut watched = FxHashMap::default();
             if format == 4 {

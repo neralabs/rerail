@@ -319,8 +319,8 @@ pub fn run(tag: u8, files: &[&crate::capture::File], scratch: &Path) -> Result<R
     }
     let mut seen: HashMap<Tuple, u64> = HashMap::new();
     for f in files {
-        let tree = crate::v15::read(&f.image)?;
-        let aliases = crate::v15::aliases(&f.image);
+        let tree = crate::captured::read(&f.image)?;
+        let aliases = crate::captured::aliases(&f.image);
         for n in &tree.nodes {
             r.nodes += 1;
             let kind = if n.kind & 0x8000 != 0 {

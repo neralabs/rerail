@@ -205,7 +205,7 @@ impl Tw {
     /// A writer of `nodes` nodes at `widths`, writing to `target` (`Writer::to`) for `src`.
     pub fn new(widths: Widths, nodes: usize, target: rerail_tape_format::Target, src: &[u8]) -> Self {
         Tw {
-            w: Writer::new(0, widths, nodes).to(target, src),
+            w: Writer::new(widths, nodes).to(target, src),
             frames: Vec::with_capacity(64),
             held: Vec::with_capacity(64),
             extras: Vec::with_capacity(16),

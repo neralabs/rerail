@@ -44,6 +44,9 @@ pub mod code_rule_dsl {
             pub mod kept_analyses;
             pub mod replanning;
             pub mod select;
+            /// A rule read as a filter of one relation (decision 0611).
+            pub mod filters;
+            pub use filters::{filter_of, plain_filter};
             // `plan.rs`'s imports, for the children' `use super::*`.
             #[allow(unused_imports)]
             use super::front::Value;

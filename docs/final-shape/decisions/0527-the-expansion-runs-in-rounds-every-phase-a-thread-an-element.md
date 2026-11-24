@@ -1,10 +1,10 @@
 # 0527: The expansion runs in rounds, every phase a thread an element
 
-Status: accepted (2026-11-20). Replaces 0448 §3's work queue. The user: "We are still laughably
-slow because YOU ENTIRELY FORGOT THAT GPUS NEED TO BE PARALLEL. at each phase, all work needs to be
-parallel"; "you may not run tests over 1 second; none of these cases should take more than a few
-milliseconds"; then, to the plan below, "go ahead". Numbered past the highest in any worktree
-(0522); 0527 in the hub, past its 0526 (0523 on Go-C-and-C-support).
+Status: superseded by 0588 (audited 2026-11-23). Accepted (2026-11-20). Replaces 0448 §3's work queue. The user: "We
+are still laughably slow because YOU ENTIRELY FORGOT THAT GPUS NEED TO BE PARALLEL. at each phase, all work needs to
+be parallel"; "you may not run tests over 1 second; none of these cases should take more than a few milliseconds";
+then, to the plan below, "go ahead". Numbered past the highest in any worktree (0522); 0527 in the hub, past its 0526
+(0523 on Go-C-and-C-support).
 
 ## Intro
 

@@ -4,7 +4,7 @@
 //! path name's digest finds its source (`families::blob_source`).
 
 use crate::code_rule_dsl::language::label_of_path;
-use crate::content_store::{ContentStore, GitTree, GitTreeEntry, HashKey, StoreError, StoreResult};
+use crate::content_store::{FactStore, GitTree, GitTreeEntry, HashKey, StoreError, StoreResult};
 use crate::git_workspace;
 use std::path::Path;
 
@@ -19,7 +19,7 @@ fn git_hash(kind: gix::objs::Kind, bytes: &[u8]) -> StoreResult<[u8; 20]> {
 }
 
 /// Stores `bytes` under the Git blob id `blob` unless a source has that alias already.
-fn store_source(store: &ContentStore, blob: HashKey, bytes: &[u8]) -> StoreResult<()> {
+fn store_source(store: &dyn FactStore, blob: HashKey, bytes: &[u8]) -> StoreResult<()> {
     if store.source_by_alias(blob)?.is_none() {
         store.put_source(bytes, &[blob])?;
     }
@@ -30,14 +30,14 @@ fn store_source(store: &ContentStore, blob: HashKey, bytes: &[u8]) -> StoreResul
 /// clean checkout's snapshot is its `HEAD` tree), stores them and the sources of its files with a
 /// language, and returns the root tree's id. `.git` and symbolic links are left out, and so are
 /// empty directories, as Git leaves them out.
-pub fn directory_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
+pub fn directory_root(store: &dyn FactStore, root: &Path) -> StoreResult<HashKey> {
     buffered_root(store, root, &std::collections::BTreeMap::new())
 }
 
 /// `directory_root` with editor buffers over it (the buffers observer, O2): each buffer's bytes
 /// stand for the file at its path (relative, `/`-separated), on disk or not yet, in place of what
 /// is on disk.
-pub fn buffered_root(store: &ContentStore, root: &Path, buffers: &std::collections::BTreeMap<String, Vec<u8>>) -> StoreResult<HashKey> {
+pub fn buffered_root(store: &dyn FactStore, root: &Path, buffers: &std::collections::BTreeMap<String, Vec<u8>>) -> StoreResult<HashKey> {
     let mut trees = Vec::new();
     let id = directory_tree(store, Some(root), "", buffers, &mut trees)?.unwrap_or(git_hash(gix::objs::Kind::Tree, b"")?);
     if trees.is_empty() {
@@ -50,7 +50,7 @@ pub fn buffered_root(store: &ContentStore, root: &Path, buffers: &std::collectio
 /// The tree of `dir` at `prefix` (`None`: a directory only buffers hold), with `buffers` over
 /// it, pushed onto `trees` after its subtrees; `None` when empty.
 fn directory_tree(
-    store: &ContentStore,
+    store: &dyn FactStore,
     dir: Option<&Path>,
     prefix: &str,
     buffers: &std::collections::BTreeMap<String, Vec<u8>>,
@@ -138,7 +138,7 @@ fn executable(_: &Path) -> StoreResult<bool> {
 /// The `HEAD` tree of the Git checkout containing `root` (W's discovery), stored with the
 /// committed sources of its files with a language, as Git holds them; worktree edits are not
 /// part of `HEAD` (a directory snapshot observes them).
-pub fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
+pub fn git_root(store: &dyn FactStore, root: &Path) -> StoreResult<HashKey> {
     let workspace = git_workspace::discover(root).map_err(|error| StoreError::Invalid(format!("{error:?}")))?;
     store.put_git_trees_bulk(&workspace.trees)?;
     let repository = crate::git_access::opener::open(&workspace.worktree_root)

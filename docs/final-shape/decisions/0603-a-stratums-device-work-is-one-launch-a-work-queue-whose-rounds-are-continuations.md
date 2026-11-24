@@ -1,6 +1,6 @@
 # 0603. A stratum's device work is one launch: a work queue whose phases and rounds are continuations
 
-Status: accepted (2026-11-22), steps open. Follows 0601 (every launch counts, and past the budget is a hard failure)
+Status: accepted (2026-11-22); done (2026-11-22): its steps, its tests, and its rooms mapped as reached. Its single launch superseded by 0648 (2026-11-23): its phases are stacked dispatches, one launch a stack. Follows 0601 (every launch counts, and past the budget is a hard failure)
 and takes 0540 step 6's scheme (a level's formulas as a work queue with continuations) to the device joins
 (`metal_join::Batch`, `setfix::device`).
 
@@ -602,10 +602,147 @@ whole (0295 §7), so the reach was real memory there. They are now mapped as the
   The first run found the two templates' gates of a head growing it apart: one gate's growth took 3,350 rows and the
   other 1,204, and its index kept the first. Its anti-join then missed rows, and the device made rows twice. A head's
   gates now share one mapped size.
-- **What is still committed on Metal:**
-  - A lattice head's room is its bound: its key map (`KeyMap`, twice its bound's slots) is a hash table placed by
-    key, which grows only by placing every key again (`Batch::lattice_grow`), a device job of its own.
-  - A non-recursive stratum's heads' rooms (`encode_place`, within `PLACE_ROOM_BYTES`).
+- **What is still committed on Metal:** a lattice head's room was its bound, and a non-recursive stratum's heads'
+  rooms (`encode_place`, within `PLACE_ROOM_BYTES`). Both are done below.
 - **OpenCL runs no join program.** Its memory wrapped in place has no address, and a program names every buffer by
   one (`metal_join::address`): a stratum there is refused (`UnsupportedBackend: a stage's space for 1 rows`, on
   the mini's OpenCL) and runs on the host. The strict check has no launch of it to check.
+
+## Done (2026-11-22): a lattice head's rooms and key map mapped as its rounds reach them
+
+A lattice head's rows, its deltas' and its key map were reserved for its bound. They are now mapped as its rounds
+reach them, as a set head's are (above):
+
+- **Its first room** is `LiveHead::mapped`, a set head's. Its key map has room for those rows at half full (twice
+  them, a power of two), not for its bound's.
+- **Its gate's room check** parks the program as a set head's does. Its growth (`room_growth`) reserves its rows
+  and its deltas further. Where its places grow, it also makes a new key map in its block (`KeyMap::of`, unwritten)
+  and records it (`mj::MapGrown`: the new map's offset and places, the old one's).
+- **Its keys are placed again by the program, not the host:**
+  - The program has a tail (`Batch::lattice_tail`), past its last round's phases. For each growing lattice head, it
+    is a fold job's growth alone: its new map emptied (`lat_hclear_one`), then its old map's keys placed in it
+    (`lat_rehash_one`). Its items are for its bound's places, clamped by the map's masks.
+  - Then a jump (a round job, `Job::jump`) back to the phase after the gate.
+  - The tail's parameters say "nothing" (`omask` all ones) until a growth patches them: `hmask`, `omask`, `h_at`
+    and `h0_at`. The folds of the rounds after it read the new map (`hmask`, `h_at`, patched in `Kit::grow_rooms`).
+  - Released where a map grew (`Kit::release`), the program goes on at the tail, with the jump's next phase set to
+    the gate's next phase. Where none grew, it goes on after the gate as before. A head whose map did not grow keeps
+    its tail's `omask` all ones.
+  - The host evaluates nothing. Once the program is done, the head adopts the last map, and the maps it grew from
+    are kept to the program's end (`Kept::maps`).
+- **Counted:** `Done::maps_grown` and `Report::maps_grown`.
+- **The test:** `a_leveled_recursion_on_the_device_has_the_cpus_levels` runs again with each room one row past its
+  rows (`RERAIL_ROOMS_MAPPED=1`), for the set head and for the `min` lattice head. It asserts one program, no rerun,
+  a room remap, a key map grown (for the lattice), and the rows and levels the CPU's.
+- **Measured** (the setfix device, join and parity tests, 49; every stratum strict):
+
+  | Backend | Rooms | Tests |
+  |---|---|---|
+  | spark2's CPU backend | as reached, one row first | 49 of 49 |
+  | spark2's CUDA (GB10) | as reached, one row first | 49 of 49 |
+  | The mini's Metal (M1) | as reached, one row first | 49 of 49 |
+  | The mini's Metal (M1) | as reached (the setfix device tests) | 39 of 39 |
+
+  One earlier forced run on the mini failed one non-recursive text case of `parity_random_mixed` (#311: 15 rows
+  against the CPU's 141). That case's program has no gate room, and `RERAIL_ROOMS_MAPPED` does not reach it. 21
+  runs after it passed, and its failure message now carries the device's report.
+- **Point 3 on OpenCL:** a program names every buffer by its device address. OpenCL has addresses only for the
+  buffers it allocates itself, through Intel's unified shared memory (`RERAIL_OPENCL_USM`). Memory wrapped in place
+  (a block) has none there, and Apple's OpenCL 1.2 (the mini's) has neither USM nor SVM. A stratum there is refused
+  and runs on the host, so OpenCL has no launches to check.
+  Decided (2026-11-22, the user): OpenCL is out of point 3's scope. Point 3 holds on the backends that run
+  programs (the CPU backend, CUDA, Metal), and an OpenCL stratum stays on the host.
+- **#311 again:** the forced setfix device set three more times on the mini, 39 of 39 each: 24 runs without it.
+
+## Done (2026-11-22): a non-recursive stratum's heads' rooms mapped as their rows reach them
+
+A head placed in its stratum's own program (`encode_place`) reserved room for its bound: the rows it can reach,
+within `PLACE_ROOM_BYTES`. Where a mapped page is real memory (`mj::rooms_mapped`), it now reserves a first room
+only, and the program grows it as the head's rows reach it:
+
+- **Its first room** (`place_first`): twice the rows its rules' tables were encoded for, at least `ALONE_ROWS`, within
+  its bound. A bound under `ALONE_ROWS` stays whole: a few pages in the run's block. A test build's
+  `RERAIL_ROOMS_MAPPED=N`: `N` rows.
+- **Its room's place** (`head_room`, its first room reserved, its relation bound for the writes at its bound):
+  - in a relation of its own, the block has address space for the bound, and its first room is reserved
+    (`Part::with_index_room_for`);
+  - after a tail's rows, only where the tail's block could hold its bound (`Part::could_hold`). Otherwise its bound
+    is reserved now, as before.
+  - Both are sized as `Rows::try_reserve_keeping` reserves: rows rounded to its chunks' steps, with its indexes'
+    room kept for them. The first try sized the block for the bound's rows exactly, and the room kept for its
+    indexes at the next chunk's rows did not fit.
+- **The gate's room check** (`Batch::gate_rooms`): past the first room, the program parks after the gate.
+  `place_growth` reserves the head's rows in place (`Part::reserve_room`), twice what they need, within the bound.
+  The program goes on, as a recursive head's does. Where its block has no more room, the program stops there, and
+  `place` places the head, as past the bound.
+- **The test:** `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts` runs again with each head's room one row
+  past its rows, with the head held and not. It asserts one program, no rerun, a room remap, and the CPU's rows and
+  counts.
+- **Measured** (the setfix device, join and parity tests, 49; every stratum strict):
+
+  | Backend | Rooms | Tests |
+  |---|---|---|
+  | spark2's CPU backend | its bound / one row first | 49 of 49 / 49 of 49 |
+  | spark2's CUDA (GB10) | one row first | 49 of 49 |
+  | The mini's Metal (M1) | as reached / one row first | 49 of 49 / 49 of 49 |
+
+## Without sparse buffers: the M3 (2026-11-22)
+
+The M3 runs macOS 15, whose Metal has no sparse buffers (they need Metal 4). `reserve` then fell back to a fixed
+allocation of the first bytes. That broke the rooms mapped as reached in two places:
+
+- **The arena** could not grow, and the floor its claims asked for was dropped where mapping commits memory. A stopped
+  closure ran again in an arena as small, until 64 runs refused it.
+- **A level sort's room** could not grow either. The reach gate stopped.
+
+The fix:
+
+- **The fallback** is now the host's pages wrapped (`wrapped()`), as a reservation the host reads already was. It grows,
+  but each `map` makes a new wrap at another address (`Reserved::grows`, `Reserved::grows_in_place`).
+- **The arena** follows a moved address already (`Kit::rebase`). Where a reservation cannot grow at all (`!grows()`),
+  its first room is the floor.
+- **A sort's room** holds its addresses, so where its reservation cannot grow in place, its bytes are reserved whole,
+  as before rooms were mapped as reached. A first try let them move, and a recursion's sorted rows came out
+  duplicated (5,995 rows against the CPU's 5,941).
+- **Measured:** the M3 passes 49 of 49, at its rooms as reached and at one row first.
+
+## What one program costs on the GPU (2026-11-22)
+
+0603's steps were measured in counts: launches, reruns, remaps. This measures GPU time per stratum against the
+launch a level before them (a7e1fc4f1b). The test is `measure_one_program_against_a_launch_a_level` (ignored; a
+measurement). It runs each stratum seven times after two warm-ups, on the M3, and takes the medians. Both builds
+produce the same rows.
+
+| Stratum | Rows | A launch a level: wall, GPU, launches | One program: wall, GPU, launches |
+|---|---|---|---|
+| seeds | 68,477 | 73.9 ms, 11.3 ms, 46 | 131.6 ms, 65.0 ms, 1 |
+| seeds ×10 | 695,098 | 600.7 ms, 47.0 ms, — | 1,246.0 ms, 664.6 ms, 1 |
+| closure | 8,620 | 49.8 ms, 11.3 ms, 533 | 138.2 ms, 111.3 ms, 9 |
+| leveled reach | 3,319 | 68.5 ms, 9.0 ms, 1,209 | 68.1 ms, 53.2 ms, 11 |
+| leveled dist (min) | 81 | 51.6 ms, 5.8 ms, 757 | 27.1 ms, 20.0 ms, 8 |
+
+The one program takes 3.4 to 14 times the GPU time of the launches it replaced. Its wall time is lower only for
+the lattice stratum, where the launches' submissions dominated. Fewer launches do not pay for themselves until the
+program's own work costs what the launches' work did. That is the next step, before more is built on the program.
+
+### Why: after its first phase, one group runs the program
+
+A temporary trace counted, for each launch, the groups that took any item and the most items one group took (M3, one
+run each):
+
+| Stratum | Groups launched | Items | Groups that took any | Most by one group |
+|---|---|---|---|---|
+| seeds | 904 | 2,202 | 1 | 2,202 |
+| seeds ×10 | 16,384 | 51,435 | 706 | 47,986 |
+| closure (each launch) | 16 | 256 | 1 | 256 |
+| leveled reach (first launch) | 104 | 778 | 1 | 778 |
+
+The cause is in `join_run`'s rule that a group which finds nothing to take ends. A phase's items are pushed only
+once the phase before is done, by the group that finished its last item. By then every other group found the queue
+empty and ended, so the finisher takes the next phase's items alone, and every phase after. The groups launched
+for "any phase's items at once" (`workers`, the largest phase's items) are there only for the first phase. Where
+groups are launched past what the GPU holds at once (seeds ×10), the late ones take some items as they start.
+
+So the program's GPU time is its items run one after another by one group. That is not a cost of the kernel's code.
+The program has to keep workers for a phase pushed after its first, and the rule that a group with nothing to take
+ends rules out the usual way (idle workers polling the queue, bounded). That choice is open.

@@ -70,13 +70,16 @@ fn a_sessions_outputs_are_overlays_of_the_rows_an_edit_changed() {
             std::fs::write(src.join("m5.py"), if step % 4 == 1 { "x = 1\n".to_owned() } else { "import pickle\npickle.loads(b'5')\n".to_owned() }).unwrap();
         }
         run(&out);
-        full(|| run(&fresh));
         let stack = output::read(&out).unwrap();
         assert!(stack.len() <= output::MAX_DEPTH, "step {step}: folded at its depth");
         partly |= stack.iter().any(|i| i.entry("violation", output::kind::GONE).is_some());
-        assert_eq!(names(&out), names(&fresh), "step {step}");
-        for rel in names(&fresh) {
-            assert_eq!(output::shown(&out, &rel).unwrap(), output::shown(&fresh, &rel).unwrap(), "step {step}: {rel}");
+        // Read as a fresh run's at its last step, at every step in the full tier (`fresh_tier`).
+        if super::super::fresh_tier::compared(step, output::MAX_DEPTH + 2) {
+            full(|| run(&fresh));
+            assert_eq!(names(&out), names(&fresh), "step {step}");
+            for rel in names(&fresh) {
+                assert_eq!(output::shown(&out, &rel).unwrap(), output::shown(&fresh, &rel).unwrap(), "step {step}: {rel}");
+            }
         }
     }
     assert!(partly, "an edit's overlay holds the rows it changed");

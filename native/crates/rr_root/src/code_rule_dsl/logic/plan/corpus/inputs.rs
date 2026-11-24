@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug)]
-struct Failure {
+pub(super) struct Failure {
     kind: &'static str,
     detail: String,
 }
-type ReadResult<T> = std::result::Result<T, Failure>;
+pub(super) type ReadResult<T> = std::result::Result<T, Failure>;
 fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into() } }
 
 pub fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
@@ -216,7 +216,7 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
 
 /// Reads repository-relative files as they are at the base revision, from the object store; the repository is
 /// opened on the first read. A path the base tree lacks is `missing`, as a file the tree lacks is.
-fn base_reader<'a>(root: &'a Path, rev: Option<&'a str>) -> impl FnMut(&str) -> ReadResult<String> + 'a {
+pub(super) fn base_reader<'a>(root: &'a Path, rev: Option<&'a str>) -> impl FnMut(&str) -> ReadResult<String> + 'a {
     let mut tree: Option<ReadResult<(gix::Repository, gix::ObjectId, PathBuf)>> = None;
     move |path| {
         let rev = rev.ok_or_else(|| Failure { kind: "missing", detail: "no base revision: run with --base REV".into() })?;
@@ -365,7 +365,7 @@ pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Ve
         .collect();
     names.sort();
     names.dedup();
-    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    crate::content_store::prepare_cache_directory(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut report = String::new();
     for name in names {
         let globs = declared.get(&name).ok_or_else(|| format!("{name}: no policy declares .artifact {name:?}"))?;
@@ -415,18 +415,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
     sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn of_result(result: &ReadResult<String>) -> String {
+pub(super) fn of_result(result: &ReadResult<String>) -> String {
     match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => f.kind.to_string() }
 }
 
-fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
+pub(super) fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
     crate::git_workspace::snapshot::read_to_string(root.join(name)).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(),
     })
 }
 
 /// An artifact's reading: the stamped file's text, and the digest of its declared inputs now.
-fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &str) -> (ReadResult<String>, ReadResult<String>) {
+pub(super) fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &str) -> (ReadResult<String>, ReadResult<String>) {
     let text = crate::git_workspace::snapshot::read_to_string(facts_dir(root).join(format!("{name}.json"))).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "malformed" },
         detail: format!("{}: {e}", facts_dir(root).join(format!("{name}.json")).display()),
@@ -436,7 +436,7 @@ fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &s
     (text, digest)
 }
 
-fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> String {
+pub(super) fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> String {
     format!("{}:{}", of_result(text), digest.as_ref().map_or_else(|f| f.kind.to_owned(), Clone::clone))
 }
 
@@ -533,37 +533,8 @@ fn git_revisions(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Pat
     }
 }
 
-/// Whether the reads `populate` recorded (`take_consulted`) would read the same now, for `program`'s artifact
-/// declarations. A base read names its revision as it was given (a reference may move), and is read again.
-pub(super) fn still(program: &dyn ProgramFields, root: &Path, consulted: &[(String, String, String)]) -> bool {
-    let Ok(declared) = artifacts(&program.settings()) else { return false };
-    consulted.iter().all(|(what, path, digest)| {
-        let now = match what.as_str() {
-            "package_marker" => crate::git_workspace::snapshot::is_file(root.join(path).join("__init__.py")).to_string(),
-            "input" => of_result(&read_repository_file(root, path)),
-            "input_dir" => listing(root, path),
-            "artifact" => {
-                let (text, inputs) = read_artifact(root, &declared, path);
-                artifact_entry(&text, &inputs)
-            }
-            "git_object_predicate" => return crate::code_rule_dsl::logic::strings::git::predicate_still(root, path, digest),
-            super::analysis_history::INPUT => return super::analysis_history::Read::from_key(path)
-                .is_some_and(|read| read.records().is_ok_and(|(_, current)| current == *digest)),
-            super::git::SELECTED_DIRECTORY => super::git::selection_stamp(root),
-            "git_root_repo" => return super::git::still(root, path, digest),
-            "git_rev" | "git_index" | "git_tracking_index" | "git_revision_rows" => return crate::code_rule_dsl::logic::strings::git::still(root, what, path, digest),
-            "base" => {
-                let Some((rev, file)) = path.split_once('\t') else { return false };
-                of_result(&base_reader(root, (!rev.is_empty()).then_some(rev))(file))
-            }
-            _ => return false,
-        };
-        now == *digest
-    })
-}
-
 /// The file names of a `dir=` input's directory, as its reader lists them.
-fn listing(root: &Path, dir: &str) -> String {
+pub(super) fn listing(root: &Path, dir: &str) -> String {
     let mut names: Vec<String> = crate::git_workspace::snapshot::listing(root.join(dir)).into_iter().flatten()
         .filter(|(name, _)| crate::git_workspace::snapshot::is_file(root.join(dir).join(name))).map(|(name, _)| name).collect();
     names.sort();
@@ -1000,7 +971,7 @@ grew(e) :- now_entry(e), !was(_, e).
             }
             let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(root).args(args).output().unwrap().status.success(), "git {args:?}");
             git(&["init", "-q"]);
-            git(&["add", "-A"]);
+            git(&["add", "docs", "shared"]);
             git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "files"]);
             work
         };

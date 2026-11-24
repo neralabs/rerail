@@ -298,8 +298,12 @@ impl ContentStore {
         )?;
         if ended > 0 {
             // What they hold may be archived (decision 0450 step 4).
-            execute_collect(&transaction, "UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
-            super::corpus_runs::kept::sync_at(&transaction, &super::corpus_runs::kept::Touch::default())?;
+            super::corpus_runs::kept::write_at(&transaction, |c, w| {
+                let mut state = c.state();
+                state.archive_due = 1;
+                w.state(state);
+                Ok(())
+            })?;
         }
         // An ended workspace is released (state 3) once it ended `backstop` ago, or once the sessions that ended after
         // it hold the budget; one with no session (a store of an older binary) at once.

@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 6 (javascript), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 6 (javascript), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 2419 codes; numbered by how often each is a node's over 65810 files, 80951311 nodes (`rerail-engine code-counts`).
 revision	4
@@ -2422,3 +2422,489 @@ code	270	0	4	-	-
 code	270	23	4	-	-
 code	271	0	4	-	-
 code	271	22	4	-	-
+kind	1	1	identifier
+kind	2	1	hash_bang_line
+kind	3	0	export
+kind	4	0	*
+kind	5	0	default
+kind	6	0	as
+kind	7	0	{
+kind	8	0	,
+kind	9	0	}
+kind	10	0	import
+kind	11	0	from
+kind	12	0	with
+kind	13	0	var
+kind	14	0	let
+kind	15	0	const
+kind	16	0	using
+kind	17	0	await
+kind	18	0	of
+kind	19	0	else
+kind	20	0	if
+kind	21	0	switch
+kind	22	0	for
+kind	23	0	(
+kind	24	0	;
+kind	25	0	)
+kind	26	0	in
+kind	27	0	while
+kind	28	0	do
+kind	29	0	try
+kind	30	0	break
+kind	31	0	continue
+kind	32	0	debugger
+kind	33	0	return
+kind	34	0	throw
+kind	35	0	yield
+kind	36	0	:
+kind	37	0	case
+kind	38	0	catch
+kind	39	0	finally
+kind	40	0	=
+kind	41	0	[
+kind	42	0	]
+kind	43	1	html_character_reference
+kind	44	0	<
+kind	45	0	>
+kind	47	0	.
+kind	48	0	</
+kind	49	0	/
+kind	50	0	/>
+kind	51	0	"
+kind	52	0	'
+kind	56	0	class
+kind	57	0	extends
+kind	58	0	async
+kind	59	0	function
+kind	60	0	=>
+kind	61	1	optional_chain
+kind	62	0	new
+kind	63	0	+=
+kind	64	0	-=
+kind	65	0	*=
+kind	66	0	/=
+kind	67	0	%=
+kind	68	0	^=
+kind	69	0	&=
+kind	70	0	|=
+kind	71	0	>>=
+kind	72	0	>>>=
+kind	73	0	<<=
+kind	74	0	**=
+kind	75	0	&&=
+kind	76	0	||=
+kind	77	0	??=
+kind	78	0	...
+kind	79	0	&&
+kind	80	0	||
+kind	81	0	>>
+kind	82	0	>>>
+kind	83	0	<<
+kind	84	0	&
+kind	85	0	^
+kind	86	0	|
+kind	87	0	+
+kind	88	0	-
+kind	89	0	%
+kind	90	0	**
+kind	91	0	<=
+kind	92	0	==
+kind	93	0	===
+kind	94	0	!=
+kind	95	0	!==
+kind	96	0	>=
+kind	97	0	??
+kind	98	0	instanceof
+kind	99	0	!
+kind	100	0	~
+kind	101	0	typeof
+kind	102	0	void
+kind	103	0	delete
+kind	104	0	++
+kind	105	0	--
+kind	108	1	escape_sequence
+kind	109	1	comment
+kind	110	0	`
+kind	112	0	${
+kind	114	1	regex_pattern
+kind	115	1	regex_flags
+kind	116	1	number
+kind	117	1	private_property_identifier
+kind	118	0	target
+kind	119	0	meta
+kind	120	1	this
+kind	121	1	super
+kind	122	1	true
+kind	123	1	false
+kind	124	1	null
+kind	125	1	undefined
+kind	126	0	@
+kind	127	0	static
+kind	128	0	get
+kind	129	0	set
+kind	131	1	string_fragment
+kind	132	0	?
+kind	133	1	html_comment
+kind	134	1	jsx_text
+kind	139	1	program
+kind	140	1	export_statement
+kind	141	1	namespace_export
+kind	142	1	export_clause
+kind	143	1	export_specifier
+kind	146	1	import
+kind	147	1	import_statement
+kind	148	1	import_clause
+kind	150	1	namespace_import
+kind	151	1	named_imports
+kind	152	1	import_specifier
+kind	153	1	import_attribute
+kind	155	1	expression_statement
+kind	156	1	variable_declaration
+kind	157	1	lexical_declaration
+kind	158	1	using_declaration
+kind	159	1	variable_declarator
+kind	160	1	statement_block
+kind	161	1	else_clause
+kind	162	1	if_statement
+kind	163	1	switch_statement
+kind	164	1	for_statement
+kind	165	1	for_in_statement
+kind	167	1	while_statement
+kind	168	1	do_statement
+kind	169	1	try_statement
+kind	170	1	with_statement
+kind	171	1	break_statement
+kind	172	1	continue_statement
+kind	173	1	debugger_statement
+kind	174	1	return_statement
+kind	175	1	throw_statement
+kind	176	1	empty_statement
+kind	177	1	labeled_statement
+kind	178	1	switch_body
+kind	179	1	switch_case
+kind	180	1	switch_default
+kind	181	1	catch_clause
+kind	182	1	finally_clause
+kind	183	1	parenthesized_expression
+kind	186	1	yield_expression
+kind	187	1	object
+kind	188	1	object_pattern
+kind	189	1	assignment_pattern
+kind	190	1	object_assignment_pattern
+kind	191	1	array
+kind	192	1	array_pattern
+kind	193	1	jsx_element
+kind	194	1	jsx_expression
+kind	195	1	jsx_opening_element
+kind	197	1	jsx_namespace_name
+kind	198	1	jsx_closing_element
+kind	199	1	jsx_self_closing_element
+kind	200	1	jsx_attribute
+kind	202	1	class
+kind	203	1	class_declaration
+kind	204	1	class_heritage
+kind	205	1	function_expression
+kind	206	1	function_declaration
+kind	207	1	generator_function
+kind	208	1	generator_function_declaration
+kind	209	1	arrow_function
+kind	210	1	call_expression
+kind	211	1	new_expression
+kind	212	1	await_expression
+kind	213	1	member_expression
+kind	214	1	subscript_expression
+kind	215	1	assignment_expression
+kind	217	1	augmented_assignment_expression
+kind	220	1	spread_element
+kind	221	1	ternary_expression
+kind	222	1	binary_expression
+kind	223	1	unary_expression
+kind	224	1	update_expression
+kind	225	1	sequence_expression
+kind	226	1	string
+kind	227	1	template_string
+kind	228	1	template_substitution
+kind	229	1	regex
+kind	230	1	meta_property
+kind	231	1	arguments
+kind	232	1	decorator
+kind	235	1	class_body
+kind	236	1	field_definition
+kind	237	1	formal_parameters
+kind	238	1	class_static_block
+kind	240	1	rest_pattern
+kind	241	1	method_definition
+kind	242	1	pair
+kind	243	1	pair_pattern
+kind	245	1	computed_property_name
+kind	268	1	property_identifier
+kind	269	1	shorthand_property_identifier
+kind	270	1	shorthand_property_identifier_pattern
+kind	271	1	statement_identifier
+lookup	1	identifier	1
+lookup	1	hash_bang_line	2
+lookup	0	export	3
+lookup	0	*	4
+lookup	0	default	5
+lookup	0	as	6
+lookup	0	{	7
+lookup	0	,	8
+lookup	0	}	9
+lookup	0	import	10
+lookup	0	from	11
+lookup	0	with	12
+lookup	0	var	13
+lookup	0	let	14
+lookup	0	const	15
+lookup	0	using	16
+lookup	0	await	17
+lookup	0	of	18
+lookup	0	else	19
+lookup	0	if	20
+lookup	0	switch	21
+lookup	0	for	22
+lookup	0	(	23
+lookup	0	;	24
+lookup	0	)	25
+lookup	0	in	26
+lookup	0	while	27
+lookup	0	do	28
+lookup	0	try	29
+lookup	0	break	30
+lookup	0	continue	31
+lookup	0	debugger	32
+lookup	0	return	33
+lookup	0	throw	34
+lookup	0	yield	35
+lookup	0	:	36
+lookup	0	case	37
+lookup	0	catch	38
+lookup	0	finally	39
+lookup	0	=	40
+lookup	0	[	41
+lookup	0	]	42
+lookup	1	html_character_reference	43
+lookup	0	<	44
+lookup	0	>	45
+lookup	0	.	47
+lookup	0	</	48
+lookup	0	/	49
+lookup	0	/>	50
+lookup	0	"	51
+lookup	0	'	52
+lookup	1	string_fragment	131
+lookup	0	class	56
+lookup	0	extends	57
+lookup	0	async	58
+lookup	0	function	59
+lookup	0	=>	60
+lookup	1	optional_chain	61
+lookup	0	new	62
+lookup	0	+=	63
+lookup	0	-=	64
+lookup	0	*=	65
+lookup	0	/=	66
+lookup	0	%=	67
+lookup	0	^=	68
+lookup	0	&=	69
+lookup	0	|=	70
+lookup	0	>>=	71
+lookup	0	>>>=	72
+lookup	0	<<=	73
+lookup	0	**=	74
+lookup	0	&&=	75
+lookup	0	||=	76
+lookup	0	??=	77
+lookup	0	...	78
+lookup	0	&&	79
+lookup	0	||	80
+lookup	0	>>	81
+lookup	0	>>>	82
+lookup	0	<<	83
+lookup	0	&	84
+lookup	0	^	85
+lookup	0	|	86
+lookup	0	+	87
+lookup	0	-	88
+lookup	0	%	89
+lookup	0	**	90
+lookup	0	<=	91
+lookup	0	==	92
+lookup	0	===	93
+lookup	0	!=	94
+lookup	0	!==	95
+lookup	0	>=	96
+lookup	0	??	97
+lookup	0	instanceof	98
+lookup	0	!	99
+lookup	0	~	100
+lookup	0	typeof	101
+lookup	0	void	102
+lookup	0	delete	103
+lookup	0	++	104
+lookup	0	--	105
+lookup	1	escape_sequence	108
+lookup	1	comment	109
+lookup	0	`	110
+lookup	0	${	112
+lookup	1	regex_pattern	114
+lookup	1	regex_flags	115
+lookup	1	number	116
+lookup	1	private_property_identifier	117
+lookup	0	target	118
+lookup	0	meta	119
+lookup	1	this	120
+lookup	1	super	121
+lookup	1	true	122
+lookup	1	false	123
+lookup	1	null	124
+lookup	1	undefined	125
+lookup	0	@	126
+lookup	0	static	127
+lookup	0	get	128
+lookup	0	set	129
+lookup	0	?	132
+lookup	1	html_comment	133
+lookup	1	jsx_text	134
+lookup	1	program	139
+lookup	1	export_statement	140
+lookup	1	namespace_export	141
+lookup	1	export_clause	142
+lookup	1	export_specifier	143
+lookup	1	import	146
+lookup	1	import_statement	147
+lookup	1	import_clause	148
+lookup	1	namespace_import	150
+lookup	1	named_imports	151
+lookup	1	import_specifier	152
+lookup	1	import_attribute	153
+lookup	1	expression_statement	155
+lookup	1	variable_declaration	156
+lookup	1	lexical_declaration	157
+lookup	1	using_declaration	158
+lookup	1	variable_declarator	159
+lookup	1	statement_block	160
+lookup	1	else_clause	161
+lookup	1	if_statement	162
+lookup	1	switch_statement	163
+lookup	1	for_statement	164
+lookup	1	for_in_statement	165
+lookup	1	while_statement	167
+lookup	1	do_statement	168
+lookup	1	try_statement	169
+lookup	1	with_statement	170
+lookup	1	break_statement	171
+lookup	1	continue_statement	172
+lookup	1	debugger_statement	173
+lookup	1	return_statement	174
+lookup	1	throw_statement	175
+lookup	1	empty_statement	176
+lookup	1	labeled_statement	177
+lookup	1	switch_body	178
+lookup	1	switch_case	179
+lookup	1	switch_default	180
+lookup	1	catch_clause	181
+lookup	1	finally_clause	182
+lookup	1	parenthesized_expression	183
+lookup	1	yield_expression	186
+lookup	1	object	187
+lookup	1	object_pattern	188
+lookup	1	assignment_pattern	189
+lookup	1	object_assignment_pattern	190
+lookup	1	array	191
+lookup	1	array_pattern	192
+lookup	1	jsx_element	193
+lookup	1	jsx_expression	194
+lookup	1	jsx_opening_element	195
+lookup	1	member_expression	213
+lookup	1	jsx_namespace_name	197
+lookup	1	jsx_closing_element	198
+lookup	1	jsx_self_closing_element	199
+lookup	1	jsx_attribute	200
+lookup	1	string	226
+lookup	1	class	202
+lookup	1	class_declaration	203
+lookup	1	class_heritage	204
+lookup	1	function_expression	205
+lookup	1	function_declaration	206
+lookup	1	generator_function	207
+lookup	1	generator_function_declaration	208
+lookup	1	arrow_function	209
+lookup	1	call_expression	210
+lookup	1	new_expression	211
+lookup	1	await_expression	212
+lookup	1	subscript_expression	214
+lookup	1	assignment_expression	215
+lookup	1	augmented_assignment_expression	217
+lookup	1	spread_element	220
+lookup	1	ternary_expression	221
+lookup	1	binary_expression	222
+lookup	1	unary_expression	223
+lookup	1	update_expression	224
+lookup	1	sequence_expression	225
+lookup	1	template_string	227
+lookup	1	template_substitution	228
+lookup	1	regex	229
+lookup	1	meta_property	230
+lookup	1	arguments	231
+lookup	1	decorator	232
+lookup	1	class_body	235
+lookup	1	field_definition	236
+lookup	1	formal_parameters	237
+lookup	1	class_static_block	238
+lookup	1	rest_pattern	240
+lookup	1	method_definition	241
+lookup	1	pair	242
+lookup	1	pair_pattern	243
+lookup	1	computed_property_name	245
+lookup	1	property_identifier	268
+lookup	1	shorthand_property_identifier	269
+lookup	1	shorthand_property_identifier_pattern	270
+lookup	1	statement_identifier	271
+field	1	alias
+field	2	alternative
+field	3	argument
+field	4	arguments
+field	5	attribute
+field	6	body
+field	7	close_tag
+field	8	condition
+field	9	consequence
+field	10	constructor
+field	11	declaration
+field	12	decorator
+field	13	finalizer
+field	14	flags
+field	15	function
+field	16	handler
+field	17	increment
+field	18	index
+field	19	initializer
+field	20	key
+field	21	kind
+field	22	label
+field	23	left
+field	24	member
+field	25	name
+field	26	object
+field	27	open_tag
+field	28	operator
+field	29	optional_chain
+field	30	parameter
+field	31	parameters
+field	32	pattern
+field	33	property
+field	34	right
+field	35	source
+field	36	value
+class	145	declaration
+class	154	statement
+class	184	expression
+class	185	primary_expression
+class	239	pattern
+supertype	declaration	145
+supertype	statement	154
+supertype	expression	184
+supertype	primary_expression	185
+supertype	pattern	239

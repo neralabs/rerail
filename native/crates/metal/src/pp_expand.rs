@@ -3,7 +3,7 @@
 
 use crate::Error;
 use crate::pp_arena::{Arena, Buf, Lay, Scan, Sort};
-use crate::pp_eval::{Front, TO_ALL, TO_DEFS, TO_VIS, Unit, name_key, on_grid};
+use crate::pp_eval::{Front, TO_ALL, TO_DEFS, TO_VIS, Unit, name_key, on_unit, preempted_again};
 
 /// A definition (`PpDef` in the UKL): the unit's nodes of its name, its `params` node (0: none)
 /// and its body's first leaf; the leaves of each; its flags; its first parameter slot and item.
@@ -84,7 +84,7 @@ impl Defs {
     /// The definitions' slots of the layout: S1 (`pd_defs`, a thread a row), the scans of the
     /// counts, S2 (`pd_params`, a thread a parameter list's leaf), S4 (`pd_items`, a thread a
     /// body leaf) and the `__VA_OPT__`s (`pd_va_opt`, a thread a body leaf), as phases of
-    /// `pp_setup`.
+    /// the unit's program (`pp_grid.uglykl`).
     pub fn lay(&self, l: &mut Lay) {
         let va = name_key(b"__VA_ARGS__");
         let vo = name_key(b"__VA_OPT__");
@@ -109,18 +109,18 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    crate::pp_eval::at_resident(crate::pp_arena::groups_for(unit.node_bound), |groups| definitions_at(unit, rung, groups))
+    preempted_again(|| definitions_at(unit, rung))
 }
 
-fn definitions_at(unit: &Unit, rung: u32, groups: u64) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
+fn definitions_at(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
     let arena = Arena::new();
-    let front = Front::new(&arena, unit, false, groups)?;
+    let front = Front::new(&arena, unit, false)?;
     let defs = Defs::new(&arena, unit, rung)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, TO_DEFS);
     defs.lay(&mut l);
-    on_grid(&arena, unit, &front, &l, groups)?;
+    on_unit(&arena, unit, &front, &l)?;
     // SAFETY: the device finished writing `room`.
     if unsafe { *defs.room.host().cast::<u32>() } != 0 {
         if rung + 1 >= RUNGS {
@@ -527,15 +527,12 @@ pub struct Sizes {
     /// What the last run's P1 used (`NEED_*`, its rooms' high water), and the first rooms of the
     /// unit it ran on: the next round's are sized from them (decision 0486 §8).
     pub used: Option<([u32; NEEDS], Caps)>,
-    /// The loop's work in the unit's last run that reached its text: the pieces' steps summed (`TRN` 25), the
-    /// lines' and the text's. A batch's teams take their groups by it (`expand_teams`).
-    pub work: Option<u64>,
 }
 
 impl Sizes {
     pub fn first(unit: &Unit, lay: &Layout) -> Sizes {
         let p1 = Caps::first(unit, lay);
-        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None, work: loop_work(unit) }
+        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None }
     }
 
     /// These rooms for `unit` (laid out as `lay`): from what the last run used where it says,
@@ -546,7 +543,7 @@ impl Sizes {
             Some((need, was)) => Caps::from_use(need, was, b, a.rung),
             None => Caps { nodes: a.nodes.max(b.nodes), dirs: a.dirs.max(b.dirs), gaps: a.gaps.max(b.gaps), top: a.top.max(b.top), reqs: a.reqs.max(b.reqs), names: a.names.max(b.names), rung: a.rung },
         };
-        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None, work: self.work.or_else(|| loop_work(unit)) }
+        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None }
     }
 }
 
@@ -929,7 +926,7 @@ impl Vis {
 
     /// The visibility's slots of the layout (the text map is the front's): the rows (a flag and
     /// a scan, then a sort by name), the stretches
-    /// (a sort of their keys, their counts and a scan) and the lookups, as phases of `pp_setup`.
+    /// (a sort of their keys, their counts and a scan) and the lookups, as phases of the unit's program.
     pub fn lay(&self, l: &mut Lay) {
         l.at("INSTS", &self.insts).at("N_INSTS", &self.n_insts).at("DSLOT", &self.dslot).at("DACTIVE", &self.dactive).at("N_DIRS", &self.n_dirs);
         l.at("GSLOT", &self.gslot).at("GACTIVE", &self.gactive).at("N_GAPS", &self.n_gaps).at("FLOORS", &self.floors).word("N_UNITS", self.n_units);
@@ -1066,14 +1063,15 @@ pub const X_QUEUE: u32 = 64;
 const P_TOP: u32 = 0;
 const P_BODY: u32 = 1 << 30;
 const P_KIND: u32 = 3 << 30;
+/// A piece of a source in the tokens' store (`pp_loop.uglykl`'s `P_SPAN`), the top text's (`LP_TOPSRC`).
+const P_SPAN: u32 = 3 << 30;
+const LP_TOPSRC: u32 = 0x3fff_ffff;
 const PN_LEN: u32 = 0xff_ffff;
 pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
 pub const X_RELEX: u32 = 1024;
 pub const X_SPLICE: u32 = 2048;
-/// A grid barrier's bound reached: the grid's groups were not resident together (decision 0468 §4).
-pub const X_BARRIER: u32 = 4096;
 /// `#` or `##` of `__COUNTER__`'s value (decision 0485 §3).
 pub const X_COUNTER_SPELLED: u32 = 8192;
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
@@ -1125,6 +1123,12 @@ pub struct Exp {
     /// The tokens' columns, `tok_cap` words each: the source, the length and flags, the start and
     /// the origin (decision 0520).
     tokens: Buf,
+    /// The loop's queue and its pieces' words (`LPQ`, decision 0613 §4), for tops of `lpq_top` tokens.
+    lpq: Buf,
+    lpq_top: u32,
+    /// The expansions' rows (`XROWS`, decision 0613 §6: `lp_roll_rows`), 3 words each, `xrows_cap` of them.
+    xrows: Buf,
+    xrows_cap: u32,
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
@@ -1220,7 +1224,13 @@ impl Exp {
             opv: zeroed(top)?,
             opbase: zeroed(top)?,
             opscan: Scan::new(arena)?,
-            tokens: zeroed(tok * 4)?,
+            tokens: zeroed(tok * 5)?,
+            // The queue's slots (`lpq_cap`: the pieces', the requests' and their ends', a request's record
+            // `RQ_ENTRIES` of the tokens' rows), then the pieces' three words.
+            lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 5 * top)?,
+            xrows: zeroed(3 * tok)?,
+            xrows_cap: tok as u32,
+            lpq_top: top as u32,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1237,7 +1247,7 @@ impl Exp {
             lb_cap: lb_cap as u32,
             // The output's pieces: five columns, `out` words each (decision 0520 §3), their order and
             // the loop's chunks (`lp_flush`).
-            out: zeroed(7 * out)?,
+            out: zeroed(9 * out)?,
             sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?,
             sc_ckeys: arena.zeroed::<u64>(sc)?,
             sc_sort: Sort::new(arena, sc)?,
@@ -1253,6 +1263,8 @@ impl Exp {
         l.at("XPOS", &self.xpos).at("V", &self.v).at("OBASE", &self.obase).at("LOB", &self.lob).at("PLAST", &self.plast).at("VTOTAL", &self.vscan.total);
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
+        l.at("LPQ", &self.lpq).word("LPQ_TOP", self.lpq_top);
+        l.at("XROWS", &self.xrows).word("XROWS_CAP", self.xrows_cap);
         l.word("OUT_CAP", self.out_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
@@ -1335,6 +1347,38 @@ impl Exp {
     }
 
     /// The longest piece's steps in the run (`TRN[16]`, decision 0588).
+    /// The expansions' rows (decision 0613 §6), numbered from 1 in their order here: each one's definition's name,
+    /// its parent (0 the text) and its root call's name (`Expanded::expansions`).
+    pub fn expansions(&self) -> Vec<[u32; 3]> {
+        // SAFETY: the device finished; `ctl` holds 32 words and `xrows` 3 a row for its `xrows_cap` rows.
+        let (n, rows) = unsafe { (*self.ctl.host().cast::<u32>().add(26) as usize, std::slice::from_raw_parts(self.xrows.host().cast::<u32>(), 3 * self.xrows_cap as usize)) };
+        let n = n.min(self.xrows_cap as usize);
+        let mut id = vec![0u32; n + 1];
+        let mut out = Vec::new();
+        for g in 0..n {
+            if rows[3 * g] != 0 {
+                out.push([rows[3 * g] - 1, rows[3 * g + 1], rows[3 * g + 2]]);
+                id[g + 1] = out.len() as u32;
+            }
+        }
+        for r in &mut out {
+            r[1] = id.get(r[1] as usize).copied().unwrap_or(0);
+        }
+        out
+    }
+
+    /// The requests posted (`LPQ` 5).
+    pub fn posted(&self) -> u32 {
+        // SAFETY: the device finished; `lpq` holds the queue's control words.
+        unsafe { *self.lpq.host().cast::<u32>().add(5) }
+    }
+
+    /// The rows the roll-up walked (`CTL` 26, `lp_roll_rows`).
+    pub fn log_rows(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` holds 32 words.
+        unsafe { *self.ctl.host().cast::<u32>().add(26) }
+    }
+
     pub fn steps(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { *self.trn.host().cast::<u32>().add(16) }
@@ -1353,12 +1397,6 @@ impl Exp {
     }
 
     /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
-    /// The pieces' steps summed over the run (`TRN` 25): the loop's work.
-    pub fn steps_summed(&self) -> u64 {
-        // SAFETY: the device finished; `trn` holds 32 words.
-        u64::from(unsafe { *self.trn.host().cast::<u32>().add(25) })
-    }
-
     pub fn passes(&self) -> (u32, u32) {
         // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { (*self.trn.host().cast::<u32>().add(11), *self.trn.host().cast::<u32>().add(10)) }
@@ -1390,7 +1428,7 @@ impl Exp {
         let n = *words(&self.vscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let cap = self.out_cap as usize;
         let np = (*words(&self.opscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize).min(cap);
-        let o = words(&self.out).get(..6 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let o = words(&self.out).get(..8 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let n_gaps = *words(&vis.n_gaps).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let gat = words(&vis.gat).get(..n_gaps).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let firsts = words(&vis.gfirsts);
@@ -1399,13 +1437,38 @@ impl Exp {
         let d = unsafe { std::slice::from_raw_parts(defs.defs.host().cast::<PpDef>(), defs.defs.byte_length() / std::mem::size_of::<PpDef>()) };
         let mut out = Vec::with_capacity(n);
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
+        if show {
+            // The roll-up's words, a top token each (the first 24): what the order and places are made from.
+            let col = |b: &Buf| words(b).iter().take(24).map(|w| w.to_string()).collect::<Vec<_>>().join(" ");
+            eprintln!("roll: n {n} np {np}\n  xflag {}\n  v {}\n  opv {}\n  obase {}\n  opbase {}\n  theads {}", col(&self.xflag), col(&self.v), col(&self.opv), col(&self.obase), col(&self.opbase), col(&self.theads));
+            let c = |k: usize| o[k * cap..k * cap + 16].iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" ");
+            eprintln!("  out src {}\n  out len {}\n  out st {}\n  out place {}\n  order {}\n  chunks {}", c(0), c(1), c(2), c(3), c(5), c(6));
+        }
+        // The tokens' store: its columns (`Ar`'s), the leaves of the requests' results among its entries.
+        let tw = words(&self.tokens);
+        let tc = tw.len() / 5;
         for i in 0..np {
-            // The loop's order of its pieces (`lp_place`).
+            // The loop's order of its pieces (`lp_roll_place`): an output piece of its own, or (`cap` past its
+            // entry's) a leaf of a request's result in the tokens' store (decision 0613 §6), read in place.
             let e = o[5 * cap + i] as usize;
-            if e >= cap {
-                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
-            }
-            let (src, len, st) = (o[e], o[cap + e] & PN_LEN, o[2 * cap + e]);
+            let (src, len, st) = if e < cap {
+                (o[e], o[cap + e] & PN_LEN, o[2 * cap + e])
+            } else {
+                let x = e - cap;
+                if x >= tc {
+                    return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
+                }
+                // A hit's leaves of the text are its own call's tokens, its `(` this far past the first's (the
+                // order's eighth column, `lp_rq_post`).
+                let (src, fl, st) = (tw[x], tw[tc + x], tw[2 * tc + x]);
+                let (src, len) = if src & P_KIND == P_SPAN {
+                    let sub = src & !P_KIND;
+                    (if sub == LP_TOPSRC { P_TOP } else { P_BODY | sub }, fl >> 4)
+                } else {
+                    (src, 1)
+                };
+                (src, len, if src & P_KIND == P_TOP { st.wrapping_add(o[7 * cap + i]) } else { st })
+            };
             if show {
                 eprintln!("piece {i}: kind {} def {} start {st} len {len} at {}", src >> 30, src & !P_KIND, o[3 * cap + e]);
             }
@@ -1444,10 +1507,8 @@ pub struct Expanded {
     pub refused: u32,
     pub out: Vec<u32>,
     pub rung: u32,
-    /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0468 §4, 0485 §1).
+    /// A command's launches: `2 * PP_LAUNCHES` for every unit, `pp_run` and `pp_rebase` (decision 0653).
     pub launches: usize,
-    /// The groups of the grid it ran on: those of the dispatch's that joined it (`ukl_grid_join`).
-    pub groups: u64,
     /// The command buffer's time on the GPU (its last run's), in seconds.
     pub gpu_seconds: f64,
     /// Where each unit of the batch begins in `out`, and its end.
@@ -1478,6 +1539,15 @@ pub struct Expanded {
     /// A round that made requests: the tree its P1 settled at, the next round's start (`Layout::entered`).
     pub tree: Option<Tree>,
     pub def_rung: u32,
+    /// The unit's expansions (decision 0613 §6, the sink's `Expansion` rows), in the roll-up's order: each one's
+    /// definition (its name's top token), its parent (a row's number from 1, 0 the text), and the top token its
+    /// root call's name is.
+    pub expansions: Vec<[u32; 3]>,
+    /// The rows the roll-up walked (`CTL` 26: each run's log, an occurrence's rows each time it is read): the
+    /// logs' use of the tokens' store, as the output's is the output's.
+    pub log_rows: u32,
+    /// The requests posted (`LPQ` 5): the calls read in a run of their own (decision 0613 §4).
+    pub posted: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
 }
@@ -1499,81 +1569,45 @@ pub const SCRATCH: u32 = 0x8000_0000;
 /// The front passes, the definitions, the lookups and the expansion over `unit` laid out as
 /// `lay`, in one command buffer; from rung `rung`, and at the next where a store's room ran out.
 pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Error> {
-    expand_at(unit, lay, rung, crate::pp_arena::groups())
-}
-
-/// `expand_from`, `groups` groups dispatched (the grid the groups of them that join it).
-pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Expanded, Error> {
     let mut sizes = Sizes::first(unit, lay);
     sizes.x = XCaps::at(sizes.p1.top, rung);
-    expand_sized(unit, lay, &mut sizes, groups)
+    expand_sized(unit, lay, &mut sizes)
 }
 
-/// `expand_at` from the rooms `sizes` (a unit's last run's), which it leaves at the rooms this
-/// run settled at. Each room grows a bounded number of times a call. Refused past the grid's
-/// residency, and run again at it where a barrier failed (`pp_eval::at_resident`, decision 0568).
-pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
-    crate::pp_eval::at_resident(groups, |groups| expand_sized_at(unit, lay, sizes, groups))
+/// `expand_from` from the rooms `sizes` (a unit's last run's), which it leaves at the rooms this
+/// run settled at. Each room grows a bounded number of times a call. A run the system stopped runs
+/// again (`pp_eval::preempted_again`).
+pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<Expanded, Error> {
+    preempted_again(|| expand_sized_once(unit, lay, sizes))
 }
 
-fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
+fn expand_sized_once(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<Expanded, Error> {
     let mut r = Runs::new(unit, lay, sizes);
     loop {
-        // At most `groups`, one a small grid's work: the unit's nodes, or its expansion's tokens, whose room each
-        // refused run grows (`pp_arena::groups_for`).
-        let groups = groups.min(crate::pp_arena::groups_for(unit.node_bound.max(r.x.fit(r.p1.top).tok)));
         let arena = Arena::new();
-        let m = match r.make(&arena, groups) {
+        let m = match r.make(&arena) {
             Ok(m) => m,
-            Err(done) => return done,
+            Err(done) => return *done,
         };
         match arena.lease() {
             Ok(()) => {}
             Err(Error::BackendCapacity) if r.short.is_some() => return Ok(r.short.take().unwrap()),
             Err(e) => return Err(e),
         }
-        let (launches, gpu_seconds) = on_grid(&arena, unit, &m.front, &m.l, groups)?;
-        let joined = m.front.joined();
-        if let Some(done) = r.after(m, launches, gpu_seconds, joined, next_run(), sizes) {
+        let (launches, gpu_seconds) = on_unit(&arena, unit, &m.front, &m.l)?;
+        if let Some(done) = r.after(m, launches, gpu_seconds, next_run(), sizes) {
             return done;
         }
     }
 }
 
-/// The loop's work of each unit last evaluated on this machine (`Sizes::work`), by its documents' digests: a
-/// unit's first run in a batch takes its team's groups by it (a round that ends at its requests measures none).
-#[derive(Default)]
-struct LoopWork(std::sync::Mutex<std::collections::HashMap<Vec<[u8; 32]>, u64>>);
-
-fn documents_key(unit: &Unit) -> Vec<[u8; 32]> {
-    unit.documents.iter().map(|d| d.digest).collect()
-}
-
-/// The loop's work `unit` took when last evaluated here, if it was.
-pub fn loop_work(unit: &Unit) -> Option<u64> {
-    let held = rerail_context::machine::<LoopWork>();
-    let held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    held.get(&documents_key(unit)).copied()
-}
-
-fn keep_loop_work(unit: &Unit, work: u64) {
-    let held = rerail_context::machine::<LoopWork>();
-    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    // Bounded: a long process's units past it start again from none.
-    if held.len() >= 1 << 16 {
-        held.clear();
-    }
-    held.insert(documents_key(unit), work);
-}
-
-/// A batch's units expanded together, a team each (decision 0588 §6): each round of runs is one
-/// command (`pp_eval::on_teams`) over the units still running, each in stores of its own in one
-/// arena, its setup a group's, and a unit that runs again (a room grown) does so in the next. Each
-/// unit's answer, by its index, from the rooms `sizes` (its last round's), which it leaves at the
-/// rooms each settled at. `Err(BackendCapacity)` for the batch where a round's arena is past the
-/// budget, or its documents are where a batch cannot read them together: the caller runs it in
-/// halves.
-pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<Vec<Result<Expanded, Error>>, Error> {
+/// A batch's units expanded together (decisions 0588 §6, 0653): each round of runs is one program run
+/// (`pp_eval::on_program`) over the units still running, each in stores of its own in one arena, their programs on
+/// one queue, and a unit that runs again (a room grown) does so in the next. Each unit's answer, by its index, from
+/// the rooms `sizes` (its last round's), which it leaves at the rooms each settled at. `Err(BackendCapacity)` for the
+/// batch where a round's arena is past the budget, or its documents are where a batch cannot read them together: the
+/// caller runs it in halves.
+pub fn expand_batch(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<Vec<Result<Expanded, Error>>, Error> {
     let n = units.len();
     let Some(&(first, _)) = units.first() else { return Ok(Vec::new()) };
     // Every unit's views from the first unit's slab, the one the command binds.
@@ -1590,97 +1624,60 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
     let mut out: Vec<Option<Result<Expanded, Error>>> = (0..n).map(|_| None).collect();
     let mut stopped = 0;
     let (run, mut gpu) = (next_run(), 0f64);
-    let most = crate::pp_arena::groups();
-    // A team's groups at most: the grid's, or one after its barrier failed.
-    let mut alone = vec![false; n];
     loop {
-        // Each unit's team: its share of the grid by its work, at least one group. The loop's measured work
-        // (`Sizes::work`) where every unit has one: the loop's pass is what sets a round's last team (a unit
-        // of 19k nodes with the batch's most expansion ran 1.5 times the next team, 2026-11-22). Else its
-        // nodes, or its expansion's tokens.
-        let live: Vec<usize> = (0..n).filter(|&k| out[k].is_none()).collect();
-        let measured = live.iter().all(|&k| sizes[k].work.is_some());
-        // A step holds a SIMD group's 32 lanes, a node's phase a lane: the loop's steps at 32 nodes each, beside
-        // the nodes every phase reads.
-        let work: Vec<usize> = (0..n)
-            .map(|k| {
-                let items = members[k].node_bound.max(runs[k].x.fit(runs[k].p1.top).tok);
-                if measured { items + 32 * sizes[k].work.unwrap_or(0) as usize } else { items }
-            })
-            .collect();
-        let all: usize = live.iter().map(|&k| work[k]).sum::<usize>().max(1);
         let arena = Arena::new();
-        let mut made: Vec<(usize, Made, u64)> = Vec::new();
-        for &k in &live {
-            let share = (most as usize * work[k]).div_ceil(all) as u64;
-            let team = if alone[k] { 1 } else { share.clamp(1, most) };
-            match runs[k].make(&arena, team) {
-                Ok(m) => made.push((k, m, team)),
-                Err(done) => out[k] = Some(done),
+        let mut made: Vec<(usize, Made)> = Vec::new();
+        for k in 0..n {
+            if out[k].is_some() {
+                continue;
+            }
+            match runs[k].make(&arena) {
+                Ok(m) => made.push((k, m)),
+                Err(done) => out[k] = Some(*done),
             }
         }
         if made.is_empty() {
             break;
         }
-        // The longest first, by its work over its groups: past the grid's groups the teams queue, and a team that
-        // starts last should be a short one (a unit of 17k nodes on 1 group started 1.6 ms into a round sorted
-        // by team size, and set its end, 2026-11-22).
-        made.sort_by_key(|(k, _, team)| (std::cmp::Reverse(work[*k] as u64 / (*team).max(1)), std::cmp::Reverse(*team)));
-        let seats: u64 = made.iter().map(|(_, _, t)| t).sum();
-        let mut words = vec![made.len() as u32, 0, seats as u32];
-        let mut first = 0u32;
-        for (_, m, team) in &made {
-            words.push(u32::try_from(m.front.lay.offset()).map_err(|_| crate::pp_arena::capacity(concat!(file!(), ":", line!())))?);
-            words.extend([first, *team as u32]);
-            first += *team as u32;
-        }
-        let teams = arena.from_slice(&words)?;
+        let tiles: Vec<u32> = made.iter().map(|(_, m)| m.l.get("TMAX")).collect();
+        let queue = crate::pp_eval::Queue::new(&arena, &tiles)?;
         arena.lease()?;
-        let groups = most.min(seats);
         let ran = {
-            let refs: Vec<(&Front, &Lay)> = made.iter().map(|(_, m, _)| (&m.front, &m.l)).collect();
+            let refs: Vec<(&Front, &Lay)> = made.iter().map(|(_, m)| (&m.front, &m.l)).collect();
             let data: &dyn crate::pp_arena::Bound = match members[0].data() {
                 Some(b) => b,
                 None => &made[0].1.front.files,
             };
-            crate::pp_eval::on_teams(&arena, &teams, &refs, data, &resident, groups)
+            crate::pp_eval::on_program(&arena, &queue, &refs, data, &resident)
         };
         match ran {
             Ok((launches, gpu_seconds)) => {
                 gpu += gpu_seconds;
-                // `RERAIL_PP_TRACE`: the first team's phases (its unit's trace: the longest expected).
+                // `RERAIL_PP_TRACE`: every unit's start and end on the device's clock, from the round's first start:
+                // the latest ends.
                 if std::env::var_os("RERAIL_PP_TRACE").is_some() {
-                    let (k, m, team) = &made[0];
-                    eprintln!("TRACE the first of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
-                    crate::pp_eval::report_trace(&m.front.trace(), gpu_seconds, m.front.barriers());
-                    // Every team's start and end on the device's clock, from the round's first start: the latest ends.
-                    let spans: Vec<(usize, u64, u64, usize, u64)> = made
+                    let spans: Vec<(usize, u64, u64, usize)> = made
                         .iter()
-                        .filter_map(|(k, m, team)| {
+                        .filter_map(|(k, m)| {
                             let t = m.front.trace();
-                            Some((*k, t.first()?.1, t.last()?.1, t.len(), *team))
+                            Some((*k, t.first()?.1, t.last()?.1, t.len()))
                         })
                         .collect();
                     let t0 = spans.iter().map(|s| s.1).min().unwrap_or(0);
                     let mut by_end = spans.clone();
                     by_end.sort_by_key(|s| std::cmp::Reverse(s.2));
-                    eprintln!("TEAMS {} teams on {groups} groups ({seats} seats); the latest ends (unit: start..end us, phases, groups, nodes):", spans.len());
-                    for (k, a, b, n, team) in by_end.iter().take(6) {
-                        eprintln!("TEAMS   unit {k}: {:.1}..{:.1}, {n} phases, {team} groups, nodes {}", (a - t0) as f64 / 1e3, (b - t0) as f64 / 1e3, members[*k].node_bound);
+                    eprintln!("UNITS {} units; the latest ends (unit: start..end us, phases, nodes):", spans.len());
+                    for (k, a, b, p) in by_end.iter().take(6) {
+                        eprintln!("UNITS   unit {k}: {:.1}..{:.1}, {p} phases, nodes {}", (a - t0) as f64 / 1e3, (b - t0) as f64 / 1e3, members[*k].node_bound);
                     }
                 }
-                for (k, m, team) in made {
-                    // A team's barrier past its bound: the unit again, its team one group.
-                    if team > 1 && m.front.barrier_failed() {
-                        alone[k] = true;
-                        continue;
-                    }
-                    if let Some(done) = runs[k].after(m, launches, gpu_seconds, team, run, &mut sizes[k]) {
+                for (k, m) in made {
+                    if let Some(done) = runs[k].after(m, launches, gpu_seconds, run, &mut sizes[k]) {
                         out[k] = Some(done);
                     }
                 }
             }
-            // The system stopped the command (`pp_eval::at_resident`'s rule): the round again.
+            // The system stopped the command (`pp_eval::preempted_again`'s rule): the round again.
             Err(Error::BackendPreempted) if stopped + 1 < crate::pp_eval::PREEMPTED_RUNS => stopped += 1,
             Err(Error::BackendPreempted) => return Err(crate::pp_arena::failure(concat!(file!(), ":", line!(), ": stopped by the system each run"))),
             Err(e) => return Err(e),
@@ -1697,7 +1694,7 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
         .collect())
 }
 
-/// One unit's runs toward its expansion (`expand_sized_at`, `expand_teams`): its rooms, the rooms'
+/// One unit's runs toward its expansion (`expand_sized_once`, `expand_batch`): its rooms, the rooms'
 /// tries so far, and the last run's answer where it refused for the expansion's room (it stands
 /// where the next run's room is past the device's: the serial pass takes the unit).
 struct Runs<'u> {
@@ -1718,6 +1715,8 @@ struct Made {
     vis: Vis,
     exp: Exp,
     l: Lay,
+    /// Its runs (`LPRUN`, `pp_arena::runs`), kept while it is read.
+    _runs: Buf,
 }
 
 impl<'u> Runs<'u> {
@@ -1725,36 +1724,40 @@ impl<'u> Runs<'u> {
         Runs { unit, lay, def_rung: sizes.defs, p1: sizes.p1, x: sizes.x, p1_tries: 0, x_tries: 0, short: None }
     }
 
-    /// The next run's stores in `arena`, for a grid of `groups`; or the unit's answer, where they
-    /// are past the device's room.
-    fn make(&mut self, arena: &Arena, groups: u64) -> Result<Made, Result<Expanded, Error>> {
+    /// The next run's stores in `arena`; or the unit's answer, where they are past the device's room.
+    fn make(&mut self, arena: &Arena) -> Result<Made, Box<Result<Expanded, Error>>> {
         let (unit, lay) = (self.unit, self.lay);
         self.x = self.x.fit(self.p1.top);
         let rung = self.x.rung;
+        let tiles = crate::pp_arena::tiles_for(unit.node_bound.max(self.x.tok));
         let made = (|| -> Result<_, Error> {
-            let front = Front::new(arena, unit, false, groups)?;
+            let front = Front::new(arena, unit, false)?;
             let defs = Defs::new(arena, unit, self.def_rung)?;
             let vis = Vis::new(arena, unit, lay, self.p1, rung)?;
             let exp = Exp::new(arena, unit, lay, self.x, self.p1)?;
-            Ok((front, defs, vis, exp))
+            let runs = crate::pp_arena::runs(arena, tiles)?;
+            Ok((front, defs, vis, exp, runs))
         })();
-        let (front, defs, vis, exp) = match made {
+        let (front, defs, vis, exp, runs) = match made {
             Ok(m) => m,
-            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Ok(self.short.take().unwrap())),
-            Err(e) => return Err(Err(e)),
+            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Box::new(Ok(self.short.take().unwrap()))),
+            Err(e) => return Err(Box::new(Err(e))),
         };
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
+        // A phase's tiles at most: the unit's nodes, or its expansion's tokens, whose room each refused run grows.
+        l.word("TMAX", tiles);
+        l.at("LPRUN", &runs);
         arena_log(arena, &l, format_args!("expansion at rung {rung}, p1 rung {}, defs rung {}", self.p1.rung, self.def_rung));
-        Ok(Made { front, defs, vis, exp, l })
+        Ok(Made { front, defs, vis, exp, l, _runs: runs })
     }
 
-    /// The run `m` read (its `launches` and GPU time; the groups that ran it): the unit's answer,
-    /// or `None` where it runs again (a room grown). `sizes` is left at the rooms it ran at.
-    fn after(&mut self, m: Made, launches: usize, gpu_seconds: f64, groups: u64, run: u64, sizes: &mut Sizes) -> Option<Result<Expanded, Error>> {
+    /// The run `m` read (its command's `launches` and GPU time): the unit's answer, or `None` where it runs again (a
+    /// room grown). `sizes` is left at the rooms it ran at.
+    fn after(&mut self, m: Made, launches: usize, gpu_seconds: f64, run: u64, sizes: &mut Sizes) -> Option<Result<Expanded, Error>> {
         let (unit, lay) = (self.unit, self.lay);
         let Made { front, defs, vis, exp, .. } = m;
         let (p1, x, def_rung) = (self.p1, self.x, self.def_rung);
@@ -1762,20 +1765,14 @@ impl<'u> Runs<'u> {
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
             // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29));
+            // SAFETY: as `w`: the queue's control words (`LPQ`, 16), 5 to 7 the requests posted, the pieces read
+            // again and the requests' steps.
+            let q = |k: usize| unsafe { *exp.lpq.host().cast::<u32>().add(k) };
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; arguments taken {}, read by their caller {}, read twice {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), q(8), q(9), q(10), exp.room()[0], x.rung, p1.top);
         }
-        // The loop's work, where the run reached the text (a round that ends at its requests did not): the
-        // unit's, kept for its next run and its next evaluation.
-        let work = if exp.passes().1 > 0 {
-            let w = exp.steps_summed();
-            keep_loop_work(unit, w);
-            Some(w)
-        } else {
-            sizes.work
-        };
-        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
+        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), posted: exp.posted(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {
@@ -1828,7 +1825,7 @@ impl<'u> Runs<'u> {
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.
         if refused & X_ROOM != 0 && self.x_tries + 1 < EXP_RUNGS {
-            why("the expansion");
+            why(&format!("the expansion: {:?} (tok, sb, st, out: used, room)", exp.room()));
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }
@@ -1875,10 +1872,10 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
 /// `lookups` from the rooms `sizes` (the unit's last round's), which it leaves at the rooms this
 /// run settled at.
 pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    crate::pp_eval::at_resident(crate::pp_arena::groups_for(unit.node_bound), |groups| lookups_at(unit, lay, sizes, groups))
+    preempted_again(|| lookups_at(unit, lay, sizes))
 }
 
-fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
+fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
     let Sizes { p1, x, defs: rung, .. } = *sizes;
     let (mut rung, mut p1, mut x) = (rung, p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
@@ -1886,20 +1883,22 @@ fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Resu
         x = x.fit(p1.top);
         let x_rung = x.rung;
         let arena = Arena::new();
-        let front = Front::new(&arena, unit, false, groups)?;
+        let front = Front::new(&arena, unit, false)?;
         let defs = Defs::new(&arena, unit, rung)?;
         let vis = Vis::new(&arena, unit, lay, p1, x_rung)?;
         // The expansion's stores: the tests' lines are expanded in P1 (decision 0467 §4).
         let exp = Exp::new(&arena, unit, lay, x, p1)?;
+        let runs = crate::pp_arena::runs(&arena, front.tiles)?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
+        l.at("LPRUN", &runs);
         arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
-        on_grid(&arena, unit, &front, &l, groups)?;
-        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work: sizes.work };
+        on_unit(&arena, unit, &front, &l)?;
+        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;
@@ -1964,57 +1963,54 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
     Ok(unsafe { std::slice::from_raw_parts(out.host().cast::<u32>(), texts.len()).to_vec() })
 }
 
-/// For measurements: the GPU time of a run over `unit` at `groups` groups that ends after stage
-/// `last` (`TO_FRONT`, `TO_DEFS`, `TO_VIS`; `TO_ALL` with the expansion; `TO_ALL + 1` the whole
-/// setup without it), in seconds; `BackendFailure` where a barrier failed.
-pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u64) -> Result<f64, Error> {
+/// For measurements: the GPU time of a run over `unit` that ends after stage `last` (`TO_FRONT`, `TO_DEFS`,
+/// `TO_VIS`; `TO_ALL` with the expansion; `TO_ALL + 1` the whole setup without it), or before its phase `stop` (0:
+/// none), in seconds.
+pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32) -> Result<f64, Error> {
     let caps = Caps::first(unit, lay);
-    stage_run(unit, lay, (last, stop, 0), groups, (caps, XCaps::at(caps.top, 0), 0))
+    stage_run(unit, lay, (last, stop, 0), (caps, XCaps::at(caps.top, 0), 0))
 }
 
 /// `stage_seconds` at the rooms the run `x` settled at, with P1's iterations bounded by `iters`
 /// (`P1_ITERS` where 0).
 pub fn stage_seconds_as(unit: &Unit, lay: &Layout, last: u32, stop: u32, iters: u32, x: &Expanded) -> Result<f64, Error> {
-    stage_run(unit, lay, (last, stop, iters), x.groups, (x.caps, x.xcaps, x.def_rung))
+    stage_run(unit, lay, (last, stop, iters), (x.caps, x.xcaps, x.def_rung))
 }
 
-fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), groups: u64, (caps, xcaps, def_rung): (Caps, XCaps, u32)) -> Result<f64, Error> {
-    crate::pp_arena::refuse_past(groups)?;
+/// A run over `unit` at the rooms given, laid out to its stage `last` and `stop`, P1's iterations bounded by `iters`
+/// where not 0: its front, to read its program's words (`Front::trace`), and its GPU time.
+fn stage_front(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), (caps, xcaps, def_rung): (Caps, XCaps, u32)) -> Result<(Front, f64), Error> {
     let arena = Arena::new();
-    let front = Front::new(&arena, unit, false, groups)?;
+    let front = Front::new(&arena, unit, false)?;
     let defs = Defs::new(&arena, unit, def_rung)?;
     let vis = Vis::new(&arena, unit, lay, caps, xcaps.rung)?;
     let exp = Exp::new(&arena, unit, lay, xcaps, caps)?;
+    let tiles = crate::pp_arena::tiles_for(unit.node_bound.max(xcaps.tok));
+    let runs = crate::pp_arena::runs(&arena, tiles)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, last);
     defs.lay(&mut l);
     vis.lay(&mut l);
     exp.lay(&mut l);
+    l.word("TMAX", tiles);
+    l.at("LPRUN", &runs);
     l.word("STOP", stop);
     if iters != 0 {
         l.word("P1_ITERS", iters);
     }
-    Ok(on_grid(&arena, unit, &front, &l, groups)?.1)
+    let seconds = on_unit(&arena, unit, &front, &l)?.1;
+    Ok((front, seconds))
+}
+
+fn stage_run(unit: &Unit, lay: &Layout, run: (u32, u32, u32), rooms: (Caps, XCaps, u32)) -> Result<f64, Error> {
+    Ok(stage_front(unit, lay, run, rooms)?.1)
 }
 
 /// The phases a run over `unit` passes, each its source line in the evaluator (a traced run, `STOP` at
 /// `PP_TRACE_ON`), at the rooms its run `x` settled at: decision 0588's count of the expansion's phases.
 pub fn phase_lines(unit: &Unit, lay: &Layout, x: &Expanded) -> Result<Vec<u32>, Error> {
-    crate::pp_arena::refuse_past(x.groups)?;
-    let arena = Arena::new();
-    let front = Front::new(&arena, unit, false, x.groups)?;
-    let defs = Defs::new(&arena, unit, x.def_rung)?;
-    let vis = Vis::new(&arena, unit, lay, x.caps, x.xcaps.rung)?;
-    let exp = Exp::new(&arena, unit, lay, x.xcaps, x.caps)?;
-    arena.lease()?;
-    let mut l = Lay::new();
-    front.lay(&mut l, TO_ALL);
-    defs.lay(&mut l);
-    vis.lay(&mut l);
-    exp.lay(&mut l);
-    l.word("STOP", u32::MAX);
-    on_grid(&arena, unit, &front, &l, x.groups)?;
+    let (front, _) = stage_front(unit, lay, (TO_ALL, u32::MAX, 0), (x.caps, x.xcaps, x.def_rung))?;
     Ok(front.trace().into_iter().map(|(line, _)| line).collect())
 }
 

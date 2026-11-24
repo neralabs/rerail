@@ -390,6 +390,18 @@ impl Vocabulary {
 }
 
 impl Vocabulary {
+    /// What a text test's input relation tests, as text: `strtest_<k>`'s operator and patterns, `matchall_<k>`'s and
+    /// `matchgroup_<k>`'s regex. None for any other relation. The rows of these relations are the batch's, made from
+    /// the run's vocabulary, so a key over a program that reads them is a key over these too (the per-file memo's).
+    pub fn pattern_of(&self, rel: &str) -> Option<String> {
+        if let Some(k) = rel.strip_prefix(RELATION).and_then(|k| k.parse::<usize>().ok()) {
+            let (op, patterns) = self.specs.get(k)?;
+            return Some(format!("{op}{SET_SEP}{}", patterns.join(&SET_SEP.to_string())));
+        }
+        let k = rel.strip_prefix(MATCHES).or_else(|| rel.strip_prefix(GROUPS)).and_then(|k| k.parse::<usize>().ok())?;
+        self.matches.get(k).map(|m| m.as_str().to_owned())
+    }
+
     /// The same tests for another run, with nothing tested yet.
     pub fn again(&self) -> Vocabulary {
         Vocabulary {

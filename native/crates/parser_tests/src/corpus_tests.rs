@@ -880,10 +880,10 @@ fn corpus_trees_compiled_equal_the_interpreters() {
         for bytes in tree_inputs(p, k as u64) {
             let want1 = program.block_programs[0].run_files(&[&bytes]).remove(0);
             let got1 = tier1.extract(&bytes);
-            let want = stream::run(&program, &bytes, &want1).map_err(|r| r.pc);
-            let got = tier2.run(&bytes, &got1).map_err(|r| r.pc);
+            let (got, want) = tier2.against(&bytes, &got1, stream::run(&program, &bytes, &want1));
             let same1 = got1.without(&made) == want1.without(&made);
             if !same1 || got != want {
+                let (got, want) = (got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
                 differ.push(format!("{name}: {:?}: tier 1 same {same1}, tier 2 {got:?}, the interpreter {want:?}", String::from_utf8_lossy(&bytes)));
                 break;
             }

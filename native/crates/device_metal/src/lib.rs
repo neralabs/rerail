@@ -38,7 +38,6 @@ pub mod code_rule_dsl {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
-                pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::facts::vtab::{Modules, Relation, Source};
                 #[allow(unused_imports)]
@@ -136,7 +135,7 @@ pub mod code_rule_dsl {
     pub use rerail_rules::code_rule_dsl::literal;
     #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "logic")]
     pub mod logic {
-        pub use rerail_logic::code_rule_dsl::logic::*;
+        pub use rerail_rr_root::code_rule_dsl::logic::*;
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
             pub mod caches {
@@ -166,10 +165,10 @@ pub mod code_rule_dsl {
         }
         #[cfg_attr(any(target_os = "macos", target_os = "linux", windows), path = "native")]
         pub mod native {
-            pub use rerail_logic::code_rule_dsl::logic::native::*;
+            pub use rerail_rr_root::code_rule_dsl::logic::native::*;
             #[cfg_attr(any(target_os = "macos", target_os = "linux", windows), path = "setfix")]
             pub mod setfix {
-                pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
+                pub use rerail_rr_root::code_rule_dsl::logic::native::setfix::*;
                 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 pub mod device;
                 #[allow(unused_imports)]
@@ -237,9 +236,9 @@ pub mod code_rule_dsl {
             use std::time::Instant;
         }
         pub mod plan {
-            pub use rerail_logic::code_rule_dsl::logic::plan::*;
+            pub use rerail_rr_root::code_rule_dsl::logic::plan::*;
             pub mod corpus {
-                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
+                pub use rerail_rr_root::code_rule_dsl::logic::plan::corpus::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
                 #[allow(unused_imports)]
@@ -308,8 +307,8 @@ pub mod code_rule_dsl {
         }
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
-            pub use rerail_logic::code_rule_dsl::logic::profile::report;
-            pub use rerail_logic::code_rule_dsl::logic::profile::watch;
+            pub use rerail_rr_root::code_rule_dsl::logic::profile::report;
+            pub use rerail_rr_root::code_rule_dsl::logic::profile::watch;
             #[allow(unused_imports)]
             use std::collections::BTreeMap;
             #[allow(unused_imports)]
@@ -324,7 +323,7 @@ pub mod code_rule_dsl {
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
         }
         pub mod rr {
-            pub use rerail_logic::code_rule_dsl::logic::rr::*;
+            pub use rerail_rr_root::code_rule_dsl::logic::rr::*;
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
@@ -399,8 +398,6 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_rules::code_rule_dsl::soundness;
     pub use rerail_transducer::code_rule_dsl::space;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_rules::code_rule_dsl::suppress;
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
@@ -567,10 +564,10 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tree;
     #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
     pub mod typing {
-        pub use rerail_logic::code_rule_dsl::typing::*;
+        pub use rerail_rr_root::code_rule_dsl::typing::*;
         #[cfg_attr(any(test, feature = "test-hooks"), path = "file_local")]
         pub mod file_local {
-            pub use rerail_logic::code_rule_dsl::typing::file_local::*;
+            pub use rerail_rr_root::code_rule_dsl::typing::file_local::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub mod tests;
             #[allow(unused_imports)]
@@ -588,11 +585,11 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_rules::code_rule_dsl::walks;
     pub mod waves {
-        pub use rerail_logic::code_rule_dsl::waves::owner;
+        pub use rerail_rr_root::code_rule_dsl::waves::owner;
         #[cfg(any(test, feature = "test-hooks"))]
         pub use rerail_rules::code_rule_dsl::waves::relational;
-        pub use rerail_logic::code_rule_dsl::waves::schedule;
-        pub use rerail_logic::code_rule_dsl::waves::storage;
+        pub use rerail_rr_root::code_rule_dsl::waves::schedule;
+        pub use rerail_rr_root::code_rule_dsl::waves::storage;
     }
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;
@@ -614,8 +611,14 @@ pub mod code_rule_dsl {
     #[allow(unused_imports)]
     use std::sync::Arc;
 }
-pub use rerail_logic::threads;
+pub use rerail_rr_root::threads;
 // cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 
 /// The language packs this crate's tests read through the load-time registry (`language::base`), registered as the
 /// test binary loads (`device_metal::test_load`), as the engine registers them as it loads (`install_languages`).

@@ -8,7 +8,7 @@
 //! read a relation), declarations, facts, inputs and outputs. A version's digest is kept as it is made: its parent's,
 //! less what the edit removes or replaces, plus what it adds.
 use rerail_blocks::vector::Vector;
-use super::handles::{AtomRef, RuleRef};
+use super::handles::{AtomRef, IdMap, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
 use crate::code_rule_dsl::logic::front::name::Lists;
 use std::collections::{BTreeMap, HashSet};
@@ -34,6 +34,52 @@ pub enum Version {
     /// Ranges of `parent`'s rule ids, ascending; `parent` is never a view (a view of a view is of its parent).
     View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Held },
     Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Held },
+    /// The union of versions encoded apart (decision 0639 §4, a program linked from its modules' images): `header`, a
+    /// version of no rules, holds every name of every part and the program's fields, and its ids are the union's;
+    /// each part's kept rules are the union's, read through its `IdMap`, part `k`'s rule `j` the union's rule
+    /// `base_k + j`. No rule is copied.
+    Union { header: Arc<Version>, parts: Vec<(Arc<UnionPart>, u32)>, end: u32, size: usize, digest: u64, analyses: Held },
+}
+
+/// A part of a union (`Version::Union`): a version of ids of its own, the ranges of its rule ids the union keeps
+/// (ascending), its ids in the union's, and the union's relations in its own.
+pub struct UnionPart {
+    pub version: Arc<Version>,
+    pub keep: Vec<(u32, u32)>,
+    pub map: IdMap,
+    back: std::collections::HashMap<u32, u32>,
+}
+
+impl UnionPart {
+    /// Part `version`, its rules in `keep` kept, its ids in the union's `map`.
+    pub fn new(version: Arc<Version>, keep: Vec<(u32, u32)>, map: IdMap) -> Result<UnionPart, String> {
+        if matches!(*version, Version::Union { .. }) {
+            return Err(bad("a union's part is no union"));
+        }
+        if map.atoms.len() != version.atom_end() as usize || map.rels.len() != version.rel_end() as usize {
+            return Err(bad("a union's part's map is not of its ids"));
+        }
+        let back = map.rels.iter().enumerate().map(|(local, &u)| (u, local as u32)).collect();
+        Ok(UnionPart { version, keep, map, back })
+    }
+    /// Part `version` as the union of header `header` names it: each of its atoms and relations found there by its
+    /// text (a stored union read back).
+    pub fn found_in(header: &Version, version: Arc<Version>, keep: Vec<(u32, u32)>) -> Result<UnionPart, String> {
+        let atoms = (0..version.atom_end()).map(|a| header.find(version.text(AtomId(a))).map(|x| x.0).ok_or_else(|| bad("a union's part names a text its header does not"))).collect::<Result<_, _>>()?;
+        let rels = (0..version.rel_end()).map(|r| header.rel(version.rel_name(RelId(r))).map(|x| x.0).ok_or_else(|| bad("a union's part names a relation its header does not"))).collect::<Result<_, _>>()?;
+        UnionPart::new(version, keep, IdMap { atoms, rels })
+    }
+    /// The whole of `version`'s rules, as `keep` ranges.
+    pub fn all(version: &Version) -> Vec<(u32, u32)> {
+        vec![(0, version.rule_end())]
+    }
+    fn kept(&self, id: RuleId) -> bool {
+        Version::in_ranges(&self.keep, id.0)
+    }
+    /// The union's relation `rel` in this part's ids.
+    fn local(&self, rel: RelId) -> Option<RelId> {
+        self.back.get(&rel.0).map(|&r| RelId(r))
+    }
 }
 
 /// A version as its size and digest: what tells two apart (`differences` shows them).
@@ -48,6 +94,8 @@ pub enum Layer<'v> {
     Base(&'v [u8]),
     Overlay(&'v Arc<Version>, &'v [u8]),
     View(&'v Arc<Version>, &'v [(u32, u32)]),
+    /// A union's header and its parts, each with its base.
+    Union(&'v Arc<Version>, &'v [(Arc<UnionPart>, u32)]),
 }
 
 /// What made a version: which form an edit took.
@@ -120,6 +168,8 @@ impl<'v> Iterator for Down<'v> {
                     self.0 = Some(parent);
                     return Some(delta);
                 }
+                // A union's names are its header's.
+                Version::Union { header, .. } => self.0 = Some(header),
             }
         }
     }
@@ -225,6 +275,43 @@ impl Version {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
         Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
+    /// The union of `parts` named by `header` (`Version::Union`): `header` holds no rules, and every part's map is
+    /// into its ids. Its digest is the header's and each kept rule's, as a fold of it has.
+    pub fn union(header: Arc<Version>, parts: Vec<Arc<UnionPart>>) -> Result<Arc<Version>, String> {
+        if header.size() != 0 {
+            return Err(bad("a union's header holds no rules"));
+        }
+        let mut digest = header.digest();
+        let (mut size, mut end) = (0, 0u32);
+        let mut out = Vec::with_capacity(parts.len());
+        for p in parts {
+            if p.map.atoms.iter().any(|&a| a >= header.atom_end()) || p.map.rels.iter().any(|&r| r >= header.rel_end()) {
+                return Err(bad("a union's part's map is past its header"));
+            }
+            for r in p.version.rules().filter(|r| p.kept(r.id())) {
+                size += 1;
+                digest = digest.wrapping_add(r.hash());
+            }
+            let base = end;
+            end += p.version.rule_end();
+            out.push((p, base));
+        }
+        Ok(Arc::new(Version::Union { header, parts: out, end, size, digest, analyses: Held::default() }))
+    }
+    /// A union's header and parts (`Version::union`); `None` for any other version.
+    pub fn union_parts(&self) -> Option<(&Arc<Version>, impl Iterator<Item = &Arc<UnionPart>>)> {
+        match self {
+            Version::Union { header, parts, .. } => Some((header, parts.iter().map(|(p, _)| p))),
+            _ => None,
+        }
+    }
+    /// The part of a union that numbers rule `id`, and its base.
+    fn part_of(parts: &[(Arc<UnionPart>, u32)], id: RuleId) -> Option<(&UnionPart, u32)> {
+        let at = parts.partition_point(|(_, base)| *base <= id.0);
+        let (p, base) = parts.get(at.checked_sub(1)?)?;
+        (id.0 - base < p.version.rule_end()).then_some((&**p, *base))
+    }
+
     /// Its twin: the same layer (its image or delta, its parent, its ranges, its digest), as a version of its own
     /// with an empty slot (`held`). What a version's analysis makes over it is made over its twin: kept in the
     /// version's slot, it would hold its parent, the version itself, which then never drops (Q377).
@@ -235,6 +322,7 @@ impl Version {
             Version::Overlay { parent, delta, size, depth, digest, .. } => {
                 Version::Overlay { parent: parent.clone(), delta: delta.clone(), size: *size, depth: *depth, digest: *digest, analyses: Held::default() }
             }
+            Version::Union { header, parts, end, size, digest, .. } => Version::Union { header: header.clone(), parts: parts.clone(), end: *end, size: *size, digest: *digest, analyses: Held::default() },
         })
     }
     /// Whether rule id `k` is in `ranges`.
@@ -255,6 +343,7 @@ impl Version {
         match self {
             Version::Base { image, .. } => image,
             Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.root(),
+            Version::Union { header, .. } => header.root(),
         }
     }
     /// Whether `im` is one of this version's images: its ids are this version's.
@@ -266,19 +355,22 @@ impl Version {
     /// (`manager::VersionAnalyses`).
     pub fn held(&self) -> &Held {
         match self {
-            Version::Base { analyses, .. } | Version::View { analyses, .. } | Version::Overlay { analyses, .. } => analyses,
+            Version::Base { analyses, .. } | Version::View { analyses, .. } | Version::Overlay { analyses, .. } | Version::Union { analyses, .. } => analyses,
         }
     }
     /// The number of rules.
     pub fn size(&self) -> usize {
         match self {
             Version::Base { image, .. } => image.rules(),
-            Version::View { size, .. } | Version::Overlay { size, .. } => *size,
+            Version::View { size, .. } | Version::Overlay { size, .. } | Version::Union { size, .. } => *size,
         }
     }
     /// Every rule its stack numbers, by id, ascending: its own and those an overlay above removed (decision 0385,
     /// `build::flat`).
     pub(crate) fn stack_rules(&self) -> Vec<RuleRef<'_>> {
+        if let Version::Union { parts, .. } = self {
+            return parts.iter().flat_map(|(p, base)| p.version.rules().map(move |r| r.in_union(RuleId(base + r.id().0), &p.map))).collect();
+        }
         let mut layers: Vec<&Image> = self.down().collect();
         layers.reverse();
         layers.into_iter().flat_map(|im| {
@@ -292,6 +384,7 @@ impl Version {
             Version::Base { .. } => 0,
             Version::View { parent, .. } => parent.depth(),
             Version::Overlay { depth, .. } => *depth,
+            Version::Union { header, .. } => header.depth(),
         }
     }
     /// A base's image bytes, as they are stored (`program_text::encode_version`); `None` for a view or an overlay.
@@ -307,7 +400,7 @@ impl Version {
         match self {
             Version::Base { image, .. } => Some(image),
             Version::Overlay { delta, .. } => Some(delta),
-            Version::View { .. } => None,
+            Version::View { .. } | Version::Union { .. } => None,
         }
     }
     /// What it is made of over its parent (decision 0333 §2): a base's image bytes, an overlay's parent and delta
@@ -317,6 +410,7 @@ impl Version {
             Version::Base { image, .. } => Layer::Base(image.bytes()),
             Version::Overlay { parent, delta, .. } => Layer::Overlay(parent, delta.bytes()),
             Version::View { parent, ranges, .. } => Layer::View(parent, ranges),
+            Version::Union { header, parts, .. } => Layer::Union(header, parts),
         }
     }
     /// The view of `parent` less its rules `removed` (ascending): a view stored by what it leaves out, reopened.
@@ -331,13 +425,18 @@ impl Version {
         self.top().rel_end()
     }
     pub fn rule_end(&self) -> u32 {
-        self.top().rule_end()
+        match self {
+            Version::Union { end, .. } => *end,
+            // A view's ids are its parent's, which may be a union's (past its header's image).
+            Version::View { parent, .. } => parent.rule_end(),
+            _ => self.top().rule_end(),
+        }
     }
     /// The version's digest: the sum of its rules', declarations', fact relations' hashes, and its inputs' and
     /// outputs'. Kept as the version is made; equal programs have equal digests, whatever their stacks.
     pub fn digest(&self) -> u64 {
         match self {
-            Version::Base { digest, .. } | Version::View { digest, .. } | Version::Overlay { digest, .. } => *digest,
+            Version::Base { digest, .. } | Version::View { digest, .. } | Version::Overlay { digest, .. } | Version::Union { digest, .. } => *digest,
         }
     }
 
@@ -382,6 +481,7 @@ impl Version {
                 let base = delta.rule_base();
                 Box::new(parent.rules().filter(move |r| removed.binary_search(&r.id().0).is_err()).chain((0..delta.rules() as u32).map(move |k| RuleRef::new(delta, k, RuleId(base + k)))))
             }
+            Version::Union { parts, .. } => Box::new(parts.iter().flat_map(|(p, base)| p.version.rules().filter(|r| p.kept(r.id())).map(move |r| r.in_union(RuleId(base + r.id().0), &p.map)))),
         }
     }
     /// Whether rule `id` is one of this version's.
@@ -402,6 +502,14 @@ impl Version {
                     parent.rule(id)
                 }
             }
+            Version::Union { parts, .. } => {
+                let (p, base) = Self::part_of(parts, id)?;
+                let local = RuleId(id.0 - base);
+                if !p.kept(local) {
+                    return None;
+                }
+                p.version.rule(local).map(|r| r.in_union(id, &p.map))
+            }
         }
     }
     /// The rules whose head is relation `rel`, in the order `rules` gives them.
@@ -414,6 +522,9 @@ impl Version {
                 let base = delta.rule_base();
                 Box::new(parent.heads(rel).filter(move |r| removed.binary_search(&r.id().0).is_err()).chain(delta.heads(rel).iter().map(move |&k| RuleRef::new(delta, k, RuleId(base + k)))))
             }
+            Version::Union { parts, .. } => Box::new(parts.iter().flat_map(move |(p, base)| {
+                p.local(rel).into_iter().flat_map(move |local| p.version.heads(local).filter(|r| p.kept(r.id())).map(move |r| r.in_union(RuleId(base + r.id().0), &p.map)))
+            })),
         }
     }
     /// The rules that came from rule `src` of the derivation's input (§9), in the order `rules` gives them.
@@ -426,6 +537,8 @@ impl Version {
                 let base = delta.rule_base();
                 Box::new(parent.derived(src).filter(move |r| removed.binary_search(&r.id().0).is_err()).chain(delta.derived(src).map(move |k| RuleRef::new(delta, k, RuleId(base + k)))))
             }
+            // A union's parts are encoded apart: none is a derivation of an input of the union's ids.
+            Version::Union { .. } => Box::new(std::iter::empty()),
         }
     }
     /// The atoms in rules' bodies that read relation `rel` (an aggregate's included), each with its rule.
@@ -438,6 +551,11 @@ impl Version {
                 let base = delta.rule_base();
                 Box::new(parent.readers(rel).filter(move |(r, _)| removed.binary_search(&r.id().0).is_err()).chain(delta.reads(rel).map(move |(k, n)| (RuleRef::new(delta, k, RuleId(base + k)), AtomRef::new(delta, n)))))
             }
+            Version::Union { parts, .. } => Box::new(parts.iter().flat_map(move |(p, base)| {
+                p.local(rel).into_iter().flat_map(move |local| {
+                    p.version.readers(local).filter(|(r, _)| p.kept(r.id())).map(move |(r, a)| (r.in_union(RuleId(base + r.id().0), &p.map), AtomRef::mapped(r.image(), a.node(), Some(&p.map))))
+                })
+            })),
         }
     }
 

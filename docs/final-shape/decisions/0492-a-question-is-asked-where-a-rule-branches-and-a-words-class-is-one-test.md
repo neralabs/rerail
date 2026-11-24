@@ -1,8 +1,8 @@
 # 0492: A question is asked where a rule branches, and a word's class is one test
 
-Status: decided (the user, 2026-11-19: "rules written as sequences and loops rather than
-labelled-block states … judge based on the structure of the code"). Follows 0489 (Kotlin's
-generated parser in the lean parser's shape). The first step of that item.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-19: "rules written as sequences and loops rather than
+labelled-block states … judge based on the structure of the code"). Follows 0489 (Kotlin's generated parser in the
+lean parser's shape). The first step of that item.
 
 ## Intro
 

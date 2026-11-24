@@ -1,8 +1,8 @@
 # 0533: The writer is one Rust source written directly; a direct run's one stack is the writer's
 
-Status: decided (the user, 2026-11-20: "complete the work", of page 40 step 38's order after 0532). Follows 0532,
-0434 §6. Supersedes the translation of the writer's CLIF to Rust (`rerail_clif::writer::rust_source`,
-`tape_format/src/generated_writer.rs`).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "complete the work", of page 40 step 38's order
+after 0532). Follows 0532, 0434 §6. Supersedes the translation of the writer's CLIF to Rust
+(`rerail_clif::writer::rust_source`, `tape_format/src/generated_writer.rs`).
 
 ## Intro
 

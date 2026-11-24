@@ -37,6 +37,7 @@ pub mod journal;
 pub mod kept;
 pub mod ledger;
 pub mod maps;
+pub mod mapped;
 pub use rerail_vector::vector;
 pub mod mem;
 pub mod packed;
@@ -44,6 +45,7 @@ pub mod ranged;
 pub mod program;
 pub mod refs;
 pub mod region;
+pub mod order;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
@@ -172,3 +174,9 @@ pub fn footprint() -> u64 {
     }
     0
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

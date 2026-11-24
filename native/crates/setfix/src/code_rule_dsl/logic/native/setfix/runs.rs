@@ -58,8 +58,9 @@ impl RowData for [i64] {
     }
 }
 
-/// Ids between fences.
-const FENCE: usize = 64;
+
+pub(super) use rerail_blocks::order::{FENCE, gallop, print_span, print_vals, tag, tag_span};
+use rerail_blocks::order::{print_of_key, split_at_pos};
 
 /// A probe over a run costs about this many times the merge's cost of an id (O125: ~40 ns a run's probe, ~5 ns an
 /// id merged).
@@ -216,15 +217,6 @@ impl Iterator for PartIter<'_> {
     }
 }
 
-/// The first position in `lo..hi` where `less` stops holding (it holds before it, not from it).
-#[inline]
-pub(super) fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> usize {
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if less(mid) { lo = mid + 1 } else { hi = mid }
-    }
-    lo
-}
 
 /// A relation's row ranges known to be in an order already (decision 0180): each `lo..hi` sorted by its columns
 /// (`cmp_vals`, tagged when they are every column). Its writer records them: a wave's new rows are written sorted by
@@ -371,81 +363,24 @@ impl Sorted {
     }
 }
 
-/// A key's print: 8 bits of a hash of its values in `cols` (another multiplier than `tag`'s, so a tagged run's span
-/// of one tag still spreads over the prints).
-#[inline]
-fn print_vals(vals: impl Iterator<Item = i64>) -> u8 {
-    let h = vals.fold(0x2545_F491_4F6C_DD1Du64, |h, v| (h ^ v as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
-    (h >> 56) as u8
-}
 
-/// A whole key's print (its values in the order's column order), as its rows' are.
-#[inline]
-fn print_of_key(key: &[i64]) -> u8 {
-    print_vals(key.iter().copied())
-}
 
-/// Each byte of `w` equal to `b`, as its top bit (the lowest set bit marks the first exactly).
-#[inline]
-fn bytes_eq(w: u64, b: u8) -> u64 {
-    let x = w ^ (b as u64 * 0x0101_0101_0101_0101);
-    x.wrapping_sub(0x0101_0101_0101_0101) & !x & 0x8080_8080_8080_8080
-}
-
-/// The word of `prints` at `at` (bytes past `to` read as `pad`): eight prints a word.
-#[inline]
-fn word(prints: &[u8], at: usize, to: usize, pad: u8) -> u64 {
-    if at + 8 <= to {
-        return u64::from_le_bytes(prints[at..at + 8].try_into().expect("eight prints"));
-    }
-    let mut b = [pad; 8];
-    b[..to - at].copy_from_slice(&prints[at..to]);
-    u64::from_le_bytes(b)
-}
-
-/// The first position in `from..to` whose print is `p` (`eq`) or is not (`!eq`); `to` if none.
-#[inline]
-fn first_print(prints: &[u8], from: usize, to: usize, p: u8, eq: bool) -> usize {
-    let mut at = from;
-    while at < to {
-        let w = word(prints, at, to, if eq { !p } else { p });
-        let m = if eq { bytes_eq(w, p) } else { !bytes_eq(w, p) & 0x8080_8080_8080_8080 };
-        if m != 0 {
-            return (at + (m.trailing_zeros() / 8) as usize).min(to);
+/// A lab's counts of what probes read (`find_at`, every thread): [probes of a run, rows compared, tags or fences read].
+#[cfg(test)]
+pub(super) mod probe_reads {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+    static READS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+    /// Whether they count (a lab's counting rounds alone: counted, every compare writes one of three shared words).
+    pub(in super::super) static ON: AtomicBool = AtomicBool::new(false);
+    pub(in super::super) fn add(i: usize, n: u64) {
+        if ON.load(Relaxed) {
+            READS[i].fetch_add(n, Relaxed);
         }
-        at += 8;
     }
-    to
-}
-
-/// The span of positions `lo..hi` whose ids hold the whole key printed `p` (`is_key` reads a position's row): the
-/// first print `p` that is the key starts it, and it ends at the last such before the prints stop being `p`. A
-/// key's ids are next to each other in the order, so only prints equal by chance (one in 256) are read besides
-/// the span's ends.
-#[inline]
-fn print_span(prints: &[u8], lo: usize, hi: usize, p: u8, is_key: impl Fn(usize) -> bool) -> (usize, usize) {
-    let mut at = lo;
-    let s = loop {
-        let q = first_print(prints, at, hi, p, true);
-        if q >= hi {
-            return (hi, hi);
-        }
-        if is_key(q) {
-            break q;
-        }
-        at = q + 1;
-    };
-    let mut e = first_print(prints, s + 1, hi, p, false);
-    while e > s + 1 && !is_key(e - 1) {
-        e -= 1;
+    /// The counts, zeroed.
+    pub(in super::super) fn take() -> [u64; 3] {
+        [0, 1, 2].map(|i| READS[i].swap(0, Relaxed))
     }
-    (s, e)
-}
-
-/// 16 bits of a value's hash (Fibonacci hashing: the product's high bits).
-#[inline]
-pub(super) fn tag(v: i64) -> u16 {
-    ((v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48) as u16
 }
 
 /// Whether an order on `cols` of a relation of `k` columns is tagged: the order on every column, of two or more.
@@ -475,20 +410,6 @@ pub(super) fn cmp_ids<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], t
     cmp_with(cols, tagged, |c| data.value(a, k, c), |c| data.value(b, k, c))
 }
 
-/// The span of `tags` (sorted) equal to `t`, at or past `from`: its start by a galloping search from `from`, or (with
-/// `place`) from where an even spread of tags would put it, back or forward; its end by a galloping search from its
-/// start. A span costs reads logarithmic in its length: its end was walked, so a tag thousands of rows share (a leading
-/// value most rows hold) was read to its end once per row a sorted batch searched. Generic so a test counts the reads.
-#[inline]
-fn tag_span<T: Copy + Ord + Into<u64>>(tags: &[T], t: T, from: usize, place: bool) -> (usize, usize) {
-    let n = tags.len();
-    if from >= n {
-        return (n, n);
-    }
-    let at = if place { from.max(((t.into() as usize) * n) >> 16) } else { from };
-    let s = from + gallop(&tags[from..], at - from, |&x| x < t);
-    (s, s + gallop(&tags[s..], 0, |&x| x == t))
-}
 
 /// An order on the columns `cols` (every key set it answers is a prefix of them).
 pub(super) struct Index {
@@ -636,26 +557,14 @@ impl Run {
     #[inline]
     fn find<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], key: &[i64]) -> Part<'_> {
         // No columns: every row (a relation of no columns holds one row at most).
-        let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
+        if key.is_empty() {
+            return self.ids.part(0, self.ids.len());
+        }
         let cmp = |id: u32| -> Ordering {
             cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
-        let (lo, hi) = if !self.tags.is_empty() {
-            // The leading value's tag among the tags: only its ids are read.
-            tag_span(&self.tags, tag(lead), 0, true)
-        } else {
-            // The rows of `lead` start in the block before the first fence at or past it, and end before the first
-            // fence past it.
-            let a = self.fences.partition_point(|&f| f < lead);
-            let b = a + self.fences[a..].partition_point(|&f| f == lead);
-            (a.saturating_sub(1) * FENCE, (b * FENCE).min(self.ids.len()))
-        };
-        if !self.prints.is_empty() && key.len() == cols.len() {
-            let (s, e) = print_span(&self.prints, lo, hi, print_of_key(key), |i| cmp(self.ids.get(i)).is_eq());
-            return self.ids.part(s, e);
-        }
-        let s = split_at_pos(lo, hi, |i| cmp(self.ids.get(i)) == Ordering::Less);
-        let e = split_at_pos(s, hi, |i| cmp(self.ids.get(i)) == Ordering::Equal);
+        // The order's one search (`rerail_blocks::order::find`): the tags or fences, then the prints or a bisection.
+        let (s, e) = rerail_blocks::order::find(self.ids.len(), &self.fences, &self.tags, &self.prints, key, key.len() == cols.len(), |i| cmp(self.ids.get(i)));
         self.ids.part(s, e)
     }
 
@@ -667,15 +576,19 @@ impl Run {
         let Some(&lead) = key.first() else { return self.ids.part(0, self.ids.len()) };
         let n = self.ids.len();
         let cmp = |id: u32| -> Ordering {
+            #[cfg(test)]
+            probe_reads::add(1, 1);
             cols.iter().zip(key).map(|(&c, v)| data.value(id, k, c).cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
+        #[cfg(test)]
+        probe_reads::add(0, 1);
         let (lo, hi) = if !self.tags.is_empty() {
             let t = tag(lead);
-            let s = gallop(&self.tags, (*hint as usize).min(n), |&x| x < t);
-            (s, s + gallop(&self.tags[s..], 0, |&x| x == t))
+            let s = gallop(&self.tags, (*hint as usize).min(n), |&x| { #[cfg(test)] probe_reads::add(2, 1); x < t });
+            (s, s + gallop(&self.tags[s..], 0, |&x| { #[cfg(test)] probe_reads::add(2, 1); x == t }))
         } else {
-            let a = gallop(&self.fences, (*hint as usize / FENCE).min(self.fences.len()), |&f| f < lead);
-            let b = a + gallop(&self.fences[a..], 0, |&f| f == lead);
+            let a = gallop(&self.fences, (*hint as usize / FENCE).min(self.fences.len()), |&f| { #[cfg(test)] probe_reads::add(2, 1); f < lead });
+            let b = a + gallop(&self.fences[a..], 0, |&f| { #[cfg(test)] probe_reads::add(2, 1); f == lead });
             (a.saturating_sub(1) * FENCE, (b * FENCE).min(n))
         };
         if !self.prints.is_empty() && key.len() == cols.len() {
@@ -694,7 +607,7 @@ impl Run {
     /// distinct rows sorted as this run is (`cmp_vals`), so each row's search starts where the last one's ended. Its
     /// block is found by the fences (leading values, inline), or in a tagged run its tag's span by the tags; within it
     /// the search gallops, so rows near each other in the order read few rows of `data`.
-    fn held_sorted<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
+    fn held_sorted<D: RowData + ?Sized, R: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], rows: &R, order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
             // No columns: one row at most, held when a live id is.
@@ -712,7 +625,7 @@ impl Run {
             if held[i] {
                 continue;
             }
-            let row = &rows[q as usize * k..][..k];
+            let row = rows.row(q, k);
             let cmp = |id: u32| -> Ordering { cmp_with(cols, tagged, |c| data.value(id, k, c), |c| row[c]) };
             if tagged {
                 // The row's tag span, from where the last row's search ended; within it, the rows read in order.
@@ -935,34 +848,6 @@ impl<'a> Found<'a> {
     }
 }
 
-/// The first position of `v` (partitioned: `less` holds before it, not from it) not `less`: a galloping search from
-/// `start`, forward or back, so its cost grows with the distance from `start`, not with `v`'s length.
-#[inline]
-fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
-    let n = v.len();
-    let start = start.min(n);
-    if start < n && less(&v[start]) {
-        // Forward: the first not `less` is past `start`.
-        let mut step = 1;
-        let mut lo = start + 1;
-        while lo + step <= n && less(&v[lo + step - 1]) {
-            lo += step;
-            step *= 2;
-        }
-        let hi = (lo + step).min(n);
-        lo + v[lo..hi].partition_point(|x| less(x))
-    } else {
-        // Back: the first not `less` is at or before `start`.
-        let mut step = 1;
-        let mut hi = start;
-        while hi >= step && !less(&v[hi - step]) {
-            hi -= step;
-            step *= 2;
-        }
-        let lo = hi.saturating_sub(step);
-        lo + v[lo..hi].partition_point(|x| less(x))
-    }
-}
 
 thread_local! {
     /// How deep this thread is in builds other jobs of the pool may wait for (`inline`).
@@ -1719,7 +1604,7 @@ impl Index {
     /// Sets `held[i]` when a live id (`live`) of this order holds row `order[i]` of `rows` (flat, `k` columns each):
     /// `order` lists distinct rows sorted by this order's columns, which are every column (the first order, the dedup
     /// test). Each run is searched once, in order (decision 0112: the dedup test a wave at a time).
-    pub(super) fn held_sorted<D: RowData + ?Sized>(&self, data: &D, k: usize, rows: &[i64], order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
+    pub(super) fn held_sorted<D: RowData + ?Sized, R: RowData + ?Sized>(&self, data: &D, k: usize, rows: &R, order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
         debug_assert_eq!(self.cols.len(), k, "the dedup test is the order on every column");
         for (run, _) in &self.runs {
             run.held_sorted(data, k, &self.cols, rows, order, &live, held);
@@ -2127,8 +2012,8 @@ pub mod tests {
                 let mut order: Vector<u32> = (0..200).collect();
                 order.sort_by(|&a, &b| cmp_vals(&cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
                 let (mut ha, mut hb) = (vec![false; 200], vec![false; 200]);
-                plain.held_sorted(&rows[..], k, &probe, &order, |_| true, &mut ha);
-                placed.held_sorted(&rows[..], k, &probe, &order, |_| true, &mut hb);
+                plain.held_sorted(&rows[..], k, &probe[..], &order, |_| true, &mut ha);
+                placed.held_sorted(&rows[..], k, &probe[..], &order, |_| true, &mut hb);
                 assert_eq!(ha, hb);
                 assert!(ha.iter().any(|&h| h) && ha.iter().any(|&h| !h));
             }
@@ -2346,7 +2231,7 @@ pub mod tests {
         let mut order: Vector<u32> = (0..4).collect();
         order.sort_by(|&a, &b| cmp_vals(&ix.cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
         let mut held = vec![false; 4];
-        ix.held_sorted(&rows, k, &probe, &order, |_| true, &mut held);
+        ix.held_sorted(&rows, k, &probe[..], &order, |_| true, &mut held);
         let by: Vec<bool> = (0..4u32).map(|q| held[order.iter().position(|&o| o == q).unwrap()]).collect();
         assert_eq!(by, [true, false, true, false]);
         let (mut groups, mut seen) = (0, 0);

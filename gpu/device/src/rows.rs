@@ -105,7 +105,7 @@ pub fn basic_type(code: u64, size: u64) -> Option<KernelBaseType> {
 /// A list's items at its top level: split at commas outside quotes, parentheses and brackets, each trimmed.
 pub fn split_top(s: &str) -> Vec<&str> {
     // `<` and `>` are a template's brackets outside parentheses only: inside them they are comparisons, as in a size
-    // expanded before it is stringized (`(A > B ? A : B)`, `UKL_GRID_SORT_WORDS`).
+    // expanded before it is stringized (`(A > B ? A : B)`, `UKL_SORT_WORDS`).
     let (mut out, mut depth, mut parens, mut quoted, mut start) = (Vec::new(), 0i32, 0i32, false, 0);
     let b = s.as_bytes();
     let mut i = 0;

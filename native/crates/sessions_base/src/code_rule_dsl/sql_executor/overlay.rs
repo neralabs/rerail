@@ -52,6 +52,12 @@ impl Source for Overlay {
     fn lookup_cost(&self, c: usize) -> f64 {
         self.current.lookup_cost(c)
     }
+    fn scan_cost(&self) -> f64 {
+        self.current.scan_cost()
+    }
+    fn may_hold_rows(&self) -> bool {
+        self.deleted.len() > 0 || self.current.may_hold_rows()
+    }
     fn indexed(&self, c: usize) -> bool {
         self.current.indexed(c)
     }

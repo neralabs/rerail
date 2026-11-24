@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 13 (rr), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 13 (rr), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 14896 codes; no node types declared: the grammar's list is the bound; numbered by how often each is a node's over 1782 files, 1506377 nodes (`rerail-engine code-counts`).
 revision	4
@@ -14899,3 +14899,267 @@ code	110	41	4	-	-
 code	110	42	4	-	-
 code	110	43	4	-	-
 code	110	44	4	-	-
+kind	1	1	source_file
+kind	2	1	include
+kind	3	1	declaration
+kind	4	1	edit_declaration
+kind	5	1	functor_declaration
+kind	6	1	type_declaration
+kind	7	1	io_directive
+kind	8	1	io_relation
+kind	9	1	lattice_declaration
+kind	10	1	lattice_operation
+kind	11	1	pragma
+kind	12	1	violation_declaration
+kind	13	1	code_column
+kind	14	1	tag_column
+kind	15	1	fix_line
+kind	16	1	suppress_line
+kind	17	1	policy_document
+kind	18	1	setting
+kind	19	1	test_block
+kind	20	1	fixtures_block
+kind	21	1	clause
+kind	22	1	head
+kind	23	1	conjunction
+kind	24	1	disjunction
+kind	25	1	atom
+kind	26	1	negation
+kind	27	1	comparison
+kind	28	1	pattern_match
+kind	29	1	group
+kind	30	1	call
+kind	31	1	functor_call
+kind	32	1	binary_expression
+kind	33	1	unary_expression
+kind	34	1	parenthesized_expression
+kind	35	1	aggregate
+kind	36	1	named_argument
+kind	37	1	argument_list
+kind	38	1	column_list
+kind	39	1	column
+kind	40	1	type
+kind	41	1	identifier
+kind	42	1	variable
+kind	43	1	wildcard
+kind	44	1	number
+kind	45	1	float
+kind	46	1	string
+kind	47	1	code_literal
+kind	48	1	json_object
+kind	49	1	raw_text
+kind	50	1	comment
+kind	51	0	:-
+kind	52	0	=>
+kind	53	0	!=
+kind	54	0	<=
+kind	55	0	>=
+kind	56	0	<:
+kind	57	0	->
+kind	58	0	(
+kind	59	0	)
+kind	60	0	,
+kind	61	0	.
+kind	62	0	;
+kind	63	0	:
+kind	64	0	=
+kind	65	0	<
+kind	66	0	>
+kind	67	0	!
+kind	68	0	{
+kind	69	0	}
+kind	70	0	|
+kind	71	0	@
+kind	72	0	*
+kind	73	0	[
+kind	74	0	]
+kind	75	0	-
+kind	76	0	+
+kind	77	0	/
+kind	78	0	%
+kind	79	0	~
+kind	80	0	^
+kind	81	0	&
+kind	82	0	#include
+kind	83	0	.decl
+kind	84	0	.edit
+kind	85	0	.functor
+kind	86	0	.type
+kind	87	0	.input
+kind	88	0	.output
+kind	89	0	.lattice
+kind	90	0	.pragma
+kind	91	0	.violation
+kind	92	0	.policy
+kind	93	0	must
+kind	94	0	may
+kind	95	0	code
+kind	96	0	in
+kind	97	0	tag
+kind	98	0	fix
+kind	99	0	safe
+kind	100	0	suppress
+kind	101	0	over
+kind	102	0	options
+kind	103	0	by
+kind	104	0	sep
+kind	105	0	count
+kind	106	0	min
+kind	107	0	max
+kind	108	0	sum
+kind	109	0	mean
+kind	110	0	join
+lookup	1	source_file	1
+lookup	1	include	2
+lookup	1	declaration	3
+lookup	1	edit_declaration	4
+lookup	1	functor_declaration	5
+lookup	1	type_declaration	6
+lookup	1	io_directive	7
+lookup	1	io_relation	8
+lookup	1	lattice_declaration	9
+lookup	1	lattice_operation	10
+lookup	1	pragma	11
+lookup	1	violation_declaration	12
+lookup	1	code_column	13
+lookup	1	tag_column	14
+lookup	1	fix_line	15
+lookup	1	suppress_line	16
+lookup	1	policy_document	17
+lookup	1	setting	18
+lookup	1	test_block	19
+lookup	1	fixtures_block	20
+lookup	1	clause	21
+lookup	1	head	22
+lookup	1	conjunction	23
+lookup	1	disjunction	24
+lookup	1	atom	25
+lookup	1	negation	26
+lookup	1	comparison	27
+lookup	1	pattern_match	28
+lookup	1	group	29
+lookup	1	call	30
+lookup	1	functor_call	31
+lookup	1	binary_expression	32
+lookup	1	unary_expression	33
+lookup	1	parenthesized_expression	34
+lookup	1	aggregate	35
+lookup	1	named_argument	36
+lookup	1	argument_list	37
+lookup	1	column_list	38
+lookup	1	column	39
+lookup	1	type	40
+lookup	1	identifier	41
+lookup	1	variable	42
+lookup	1	wildcard	43
+lookup	1	number	44
+lookup	1	float	45
+lookup	1	string	46
+lookup	1	code_literal	47
+lookup	1	json_object	48
+lookup	1	raw_text	49
+lookup	1	comment	50
+lookup	0	:-	51
+lookup	0	=>	52
+lookup	0	!=	53
+lookup	0	<=	54
+lookup	0	>=	55
+lookup	0	<:	56
+lookup	0	->	57
+lookup	0	(	58
+lookup	0	)	59
+lookup	0	,	60
+lookup	0	.	61
+lookup	0	;	62
+lookup	0	:	63
+lookup	0	=	64
+lookup	0	<	65
+lookup	0	>	66
+lookup	0	!	67
+lookup	0	{	68
+lookup	0	}	69
+lookup	0	|	70
+lookup	0	@	71
+lookup	0	*	72
+lookup	0	[	73
+lookup	0	]	74
+lookup	0	-	75
+lookup	0	+	76
+lookup	0	/	77
+lookup	0	%	78
+lookup	0	~	79
+lookup	0	^	80
+lookup	0	&	81
+lookup	0	#include	82
+lookup	0	.decl	83
+lookup	0	.edit	84
+lookup	0	.functor	85
+lookup	0	.type	86
+lookup	0	.input	87
+lookup	0	.output	88
+lookup	0	.lattice	89
+lookup	0	.pragma	90
+lookup	0	.violation	91
+lookup	0	.policy	92
+lookup	0	must	93
+lookup	0	may	94
+lookup	0	code	95
+lookup	0	in	96
+lookup	0	tag	97
+lookup	0	fix	98
+lookup	0	safe	99
+lookup	0	suppress	100
+lookup	0	over	101
+lookup	0	options	102
+lookup	0	by	103
+lookup	0	sep	104
+lookup	0	count	105
+lookup	0	min	106
+lookup	0	max	107
+lookup	0	sum	108
+lookup	0	mean	109
+lookup	0	join	110
+field	1	path
+field	2	name
+field	3	columns
+field	4	modifier
+field	5	return_type
+field	6	definition
+field	7	relation
+field	8	parameters
+field	9	base
+field	10	operation
+field	11	value
+field	12	argument
+field	13	code
+field	14	tag
+field	15	message
+field	16	fix
+field	17	suppress
+field	18	options
+field	19	column
+field	20	codes
+field	21	description
+field	22	tool
+field	23	rule
+field	24	over
+field	25	document
+field	26	head
+field	27	body
+field	28	edit
+field	29	modal
+field	30	arguments
+field	31	literal
+field	32	alternative
+field	33	operand
+field	34	left
+field	35	operator
+field	36	right
+field	37	subject
+field	38	pattern
+field	39	function
+field	40	expression
+field	41	key
+field	42	separator
+field	43	type
+field	44	selector

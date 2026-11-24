@@ -1,6 +1,7 @@
 # 0422: The Bitlex ladders keep their last step only
 
-Status: decided (the user, 2026-11-18: "get rid of all of the old grammars"). Follows 0416.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "get rid of all of the old grammars"). Follows
+0416.
 
 ## Intro
 

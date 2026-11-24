@@ -280,18 +280,18 @@ impl Drop for MetalWorkspaceLease {
 const BATCH_ENTRY: &str = include_str!("../../../../../../src/code_rule_dsl/transducer/packed/batch_runtime.uglykl");
 /// The interpreter of resident label batches (tasks from roots, not records: decision 0033), over a batch of tapes in
 /// `format` (0: mixed) as the label kernels read it ([`tape_view`]): the format told once, at the compile (decision
-/// 0576). A run places its tapes in format 15 or 16 (a 16z tape as 16), so its interpreter and sweep hold one
-/// format's reads, and no 16z read.
+/// 0576). A run places its tapes in format 16 (a 16z tape as 16), so its interpreter and sweep hold one format's
+/// reads, and no 16z read.
 fn resident_prefix(format: u32) -> String {
     format!("#define RERAIL_RESIDENT 1\n{}", tape_view(format))
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
 /// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF,
-/// then the readers. The reads are format 15's and 16's (`<ukl/reads/tape.h>`), or 16z's too, through the
+/// then the readers. The reads are format 16's (`<ukl/reads/tape.h>`), or 16z's too, through the
 /// batch's cache (`<ukl/reads/tape_z.h>`, decision 0353 step 4b) for a batch of 16z or of mixed formats
-/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a format
-/// 15 label kernel's compile.
+/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a label
+/// kernel's compile.
 ///
 /// The batch's tape format is the program's specialization constant (`tape_format`, `UKL_CONSTANT_U32`: Metal's
 /// function constant 0, a define elsewhere; 0 for a mixed batch): each view load of the format field reads it, so a
@@ -680,7 +680,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
     fn made(name: &str, make: impl Fn() -> Result<(), Error> + Send + Sync + 'static) -> super::device::KernelAhead {
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = make().map_err(|e| format!("{e:?}"))))?;
+            rerail_accel::gpu::released(|| rerail_accel_gpu::gpu::caught(|| made = make().map_err(|e| format!("{e:?}"))))?;
             made
         };
         (name.to_owned(), Box::new(make))

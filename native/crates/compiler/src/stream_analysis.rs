@@ -165,7 +165,7 @@ pub fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } | Op::MadeIs { .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -415,12 +415,10 @@ pub enum Mem {
     Live,
     /// The count of tokens (`COUNT`).
     Depth,
-    /// The tape: the last block's base; the nodes committed (their codes written) and the
-    /// codes; the flags of values that did not fit their widths (`native_cpu_tape::WIDE_OFF`).
-    BlockBase,
+    /// The tape: the commit point (the nodes before it final) and the nodes passed to the writer's ops
+    /// (`native_cpu_tape::pass`).
     Coded,
     Codes,
-    Wide,
     /// A region tier 2 splits (`Split::Tier2`, decision 0323): the byte its next part starts at
     /// (0: none), and its closer's last byte.
     PartAt,
@@ -438,8 +436,21 @@ pub enum Mem {
 }
 
 impl Mem {
-    pub const COUNT: u32 = 32;
+    pub const COUNT: u32 = 30;
+    /// Every field, in order: what a statement's mark keeps (decision 0650).
+    pub const ALL: [Mem; Mem::COUNT as usize] = [
+        Mem::Supers, Mem::Pending, Mem::Keep, Mem::Moved, Mem::Sel, Mem::Shift, Mem::LastMade, Mem::Word, Mem::Flags, Mem::Next, Mem::Taken, Mem::Lw, Mem::Start, Mem::End, Mem::Limit, Mem::LastEnd,
+        Mem::Nodes, Mem::Open, Mem::Ret, Mem::Need, Mem::Live, Mem::Depth, Mem::Coded, Mem::Codes, Mem::PartAt, Mem::PartEnd, Mem::PartClose, Mem::PartRd, Mem::Lost, Mem::Strings,
+    ];
 }
+
+const _: () = {
+    let mut k = 0;
+    while k < Mem::COUNT as usize {
+        assert!(Mem::ALL[k] as usize == k);
+        k += 1;
+    }
+};
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
 /// back with their results (`Cut::pass`): none. The whole state stays in memory, read and
@@ -451,12 +462,11 @@ pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
 /// token reads and writes (the next token's index, its start, limit and code, the end of the
-/// token before, the nodes made and open, the tape block's base every leaf's start is coded
-/// from, a split region's cursor), as simdjson's stage 2
+/// token before, the nodes made and open, a split region's cursor), as simdjson's stage 2
 /// keeps `next_structural` and `src` in registers. The loop's cold calls keep the caller's
 /// general registers (`preserve_most`), and the values from far away are made again where used
 /// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
-pub const HELD_IN_ONE: [u32; 9] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::BlockBase as u32, Mem::PartAt as u32];
+pub const HELD_IN_ONE: [u32; 8] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
 
 /// The token's last bytes at which a token's check can hold (decision 0428), where its test is
 /// at its last byte (`token_ops_past`: `Last` read `delay` back from the test, in a conjunct).
@@ -687,7 +697,7 @@ pub fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
 }
 
 /// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
-/// a code's key (`native_cpu_tape::commit`). Past `MAX_CLASSES`, refused.
+/// a key's slot (`id_slots`). Past `MAX_CLASSES`, refused.
 pub fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
     let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind } = b.operation { Some(kind) } else { None }).collect();
     c.sort_unstable();
@@ -875,13 +885,19 @@ pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>
 /// `lang`'s numbers by a program's keys, `u32::MAX` where the table has none: each entry of its table that a key names
 /// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
 /// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
-/// 16`). The JIT's run reads them at run time (`Ctx::numbers`).
+/// 16`). The table's ERROR code (`stream::entry_of`'s) is at a recovered statement's row kind
+/// (`stream_ir::ERROR_ROW`, decision 0650). The JIT's run reads them at run time (`Ctx::numbers`).
 pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
     use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
     let mut by = rerail_tape_format::Vector::new();
     by.resize(id_slots(classes.len()), u32::MAX);
+    let error = crate::stream::entry_of(crate::stream_ir::ERROR_LEAF, 0, &[], false);
     for e in lang.table().entries() {
         let Some(n) = lang.number(e) else { continue };
+        if e.to_owned() == error {
+            by[usize::from(crate::stream_ir::ERROR_ROW)] = n;
+            continue;
+        }
         let extra = if extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
         if e.alias.is_some() || e.kind >= 1 << KIND_BITS || e.field >= 1 << 6 || e.flags != extra {
             continue;
@@ -902,10 +918,3 @@ pub const fn id_slots(classes: usize) -> usize {
 /// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
 pub const MAX_CLASSES: usize = 4;
 
-/// No code for a key yet (`id_of`).
-pub const NO_CODE: i64 = 0xffff;
-
-/// The flags of a value that did not fit its width (`Mem::Wide`): an offset, a tail (or an end
-/// before the last descendant's start, from the last descendant).
-pub const WIDE_OFF: i64 = 1;
-pub const WIDE_TAIL: i64 = 2;

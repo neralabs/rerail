@@ -45,8 +45,8 @@ typedef uint32_t ukl_mask_t;
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
@@ -56,7 +56,15 @@ typedef uint32_t ukl_mask_t;
 // here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
 // backend but OpenCL: `UKL_RARE`.
 #define UKL_SHARED UKL_INLINE
+// On the Apple G13 (the M1s: the `apple7-g13` target's `UKL_METAL_G13`, decision 0645) a large body is a call:
+// inlined, the interpreter's task, steps and evaluators numbered their loops' exits past 255 in one function (412 in
+// `run_batch`, 807 in `label_sweep`), and the G13's back end tests an exit's number by its low byte, so a thread past
+// 255 left its loop as though it had returned (decision 0672). Called, each function's highest is under 190.
+#if defined(UKL_METAL_G13)
+#define UKL_LARGE UKL_ONCE
+#else
 #define UKL_LARGE UKL_INLINE
+#endif
 #define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
@@ -148,8 +156,8 @@ UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>(
 #ifndef UKL_COLD
 #define UKL_COLD static __device__ __noinline__
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __device__ __noinline__
@@ -171,13 +179,16 @@ UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>(
 #define UKL_TABLE_SPACE
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return __popc(x); }
-UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll(x); }
+// The 64-bit intrinsics take their argument as CUDA declares it (`unsigned long long`, `long long`): HIP declares a
+// signed and an unsigned overload, and Linux's `uint64_t` (`unsigned long`) converts to both equally, which hiprtc
+// refuses ("call to '__ffsll' is ambiguous"); Windows' `uint64_t` is `unsigned long long`.
+UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll((unsigned long long)x); }
 UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return __clz(x); }
-UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return __clzll(x); }
+UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return __clzll((long long)x); }
 UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return __mul64hi(a, b); }
 UKL_INLINE uint64_t ukl_umulhi64(uint64_t a, uint64_t b) { return __umul64hi(a, b); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)(__ffs(x) - 1); }
-UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll(x) - 1); }
+UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll((long long)x) - 1); }
 
 #if defined(UKL_HIP)
 // HIP (AMD's wavefronts, 32 or 64 lanes): the shuffles take no mask, as every lane of a wavefront runs them together;
@@ -227,8 +238,7 @@ UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
-// The same atomics on a coherent word (`UKL_COHERENT`, volatile here): the overloads after the backends' sections,
-// Metal's and these, one definition.
+// The atomics on a coherent word (`UKL_COHERENT`, volatile here) are the C++ backends' overloads, after the sections.
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
@@ -284,14 +294,25 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 // The CPU (ukl_cpu_shim.h): a threadgroup's threads are coroutines on one host thread, so every barrier and SIMD-group
 // operation is a suspension, and memory is the host's.
 #define UKL_INLINE static inline
+// The device's clock for a trace (`ukl_clock_ns`): on arm64 the CPU's virtual counter and its frequency, which a user
+// thread reads (the shim includes no system headers); elsewhere none.
+#if defined(__aarch64__)
+UKL_INLINE uint64_t __ukl_cpu_clock_ns(void) {
+    uint64_t c, f;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(c));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    return f == 0u ? 0u : (uint64_t)((unsigned __int128)c * 1000000000u / f);
+}
+#define ukl_clock_ns() __ukl_cpu_clock_ns()
+#endif
 // A function the compiler inlines or calls as it chooses (`UKL_FUNC`): a generated program's (`clif_ukl`), large and
 // many, and a small read that should inline where it is called (`clif_t_ld`).
 #define UKL_FUNC static
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
@@ -362,16 +383,9 @@ UKL_INLINE uint32_t ukl_sg_seg_inclusive_ex_native(bool add, uint32_t f, uint32_
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
 UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
-// A poll of another group's progress (a grid barrier's): the thread suspends, and once its whole group polls, the
-// group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group, and
-// a grid barrier's bound is a thousand rounds, not a GPU's million spins.
+// A poll of another group's progress (a bounded wait's): the thread suspends, and once its whole group polls, the
+// group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group.
 #define ukl_poll_yield() __ukl_cpu_wait(__UKL_YIELD)
-// The groups that run together, known exactly (the launch's `resident`): a grid's join closes when they all have
-// joined, with no window (decision 0540 §3).
-#define UKL_GRID_RESIDENT() __ukl_cpu_resident()
-#ifndef UKL_GRID_SPINS
-#define UKL_GRID_SPINS 1000u
-#endif
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 // A poll of a word another group writes (Metal's comment): the host's loads are coherent.
@@ -474,11 +488,8 @@ UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_sg
 UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __ukl_sg_min(v); }
 UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __ukl_sg_max(v); }
 // A poll of another group's progress: the group yields to the groups that run with it, as the CPU's coroutines
-// do (a persistent grid's barrier is met there by its resident groups taking turns).
+// do.
 #define ukl_poll_yield() __ukl_yield()
-#ifndef UKL_GRID_SPINS
-#define UKL_GRID_SPINS 1000u
-#endif
 
 // Relaxed atomics on a word, and a fence.
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __ukl_atomic_load(p); }
@@ -507,8 +518,8 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __uk
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
@@ -543,13 +554,16 @@ UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0ul ? 64u : 63u - (uint3
 UKL_INLINE void ukl_tg_barrier() { barrier(CLK_LOCAL_MEM_FENCE); }
 UKL_INLINE void ukl_tg_barrier_device() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 
-// ukl/dot.h: an f16's conversion, OpenCL C's own (`vload_half`, which needs no `cl_khr_fp16`).
+// ukl/dot.h: an f16's conversion, OpenCL C's own (`vload_half`, which needs no `cl_khr_fp16`). The CPU's vector code
+// (`__UKL_VEC`, rerail-ukl-vec) reads this dialect with no `half` type: it converts by dot.h's reference, in lanes.
+#if !defined(__UKL_VEC)
 #define UKL_NATIVE_F16 1
 UKL_INLINE float ukl_f16_to_f32_native(uint32_t h)
 {
     ushort v = (ushort)h;
     return vload_half(0, (const __private half*)&v);
 }
+#endif
 #if defined(UKL_OPENCL_AMD_DOT)
 // AMD's dot products (RDNA2, `gfx103x`: the host defines `UKL_OPENCL_AMD_DOT` for those alone, whose instructions
 // these are): `v_dot4_i32_i8`, `v_dot4_u32_u8` and `v_dot2_f32_f16`, none clamping. The last rounds the exact sum once
@@ -820,10 +834,13 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 #define ukl_poll_yield() ((void)0)
 #endif
 
-// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer. 0 where the backend gives a kernel
-// no clock (Metal, OpenCL C).
+// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer; on AMD's GPUs the constant-rate
+// counter HIP reads (`wall_clock64`, 100 MHz: `the_device_clock_counts_nanoseconds`); the CPU's counter on arm64
+// (above). 0 where the backend gives a kernel no clock (Metal, OpenCL C).
 #ifndef ukl_clock_ns
-#if defined(UKL_CUDA)
+#if defined(UKL_HIP)
+UKL_INLINE uint64_t ukl_clock_ns(void) { return (uint64_t)wall_clock64() * 10u; }
+#elif defined(UKL_CUDA)
 UKL_INLINE uint64_t ukl_clock_ns(void) { uint64_t t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t; }
 #else
 #define ukl_clock_ns() ((uint64_t)0)

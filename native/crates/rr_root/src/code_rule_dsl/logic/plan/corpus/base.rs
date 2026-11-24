@@ -49,6 +49,13 @@ pub const COMBINING: &[&str] = &[
     // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
     "RERAIL_ASOF",
     "RERAIL_FIRST",
+    // The passes combining replays to judge an answer as preparation's own demand leaves it (`demanded`), and runs
+    // again in preparing: `simplify` and the reach index.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    "RERAIL_REACH_INDEX",
 ];
 
 pub fn text(v: &SqlValue) -> String {
@@ -64,8 +71,6 @@ pub struct CorpusDocs {
     pub from_tape: usize,
     /// The memo hits' documents whose file was parsed again (the store kept no tape of it).
     pub parsed: usize,
-    /// The documents a session held from its last run, unchanged.
-    pub held: usize,
     /// The batch's documents whose rows were made (`Batch::documents_made`), and all it holds.
     pub made: usize,
     pub documents: usize,
@@ -112,6 +117,8 @@ pub struct Report {
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
     pub prepared: &'static str,
+    /// The run's frame (`frame`, t33 K4): the one it was answered from, or kept under as it ended.
+    pub frame: Option<[u8; 32]>,
     /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
     pub cross_strata: Option<(usize, usize)>,
     /// A run with no session, its strata kept in the tape cache (decision 0077 §4): the cross-file strata it
@@ -308,8 +315,8 @@ impl ProgramFields for Summary {
 /// The run's settings (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the command line's `--env`),
 /// and whether the run reads no file (`true`): a run of a workspace's language paths, or a program over a Git snapshot
 /// whose outputs read the snapshot's metadata alone and no setting (the selected commit may have no tree to read the
-/// file from). `masked` are `programs` as the run's keys read them (`masked`). The one decision, the run's and its
-/// record's summary's (`combined_with_settings`).
+/// file from). `masked` are `programs` as the run's keys read them (`masked`). The run's: its key and its record's
+/// summary read the file as `settings_as_read` does (`combined_with_settings`), without the program (t33 K4).
 pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<(Vec<(String, String)>, bool)> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
@@ -327,13 +334,16 @@ pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32
     Ok((settings, metadata_without_env))
 }
 
-/// The program `programs` combine to, as `changes` combines them: the run's settings (`run_settings`) as the rows the
-/// run adds (decision 0249), the texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3).
+/// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
+/// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
+/// (`texts_digest`, decision 0225 §3).
 pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+    // As the run reads them: a snapshot's settings file that does not read is none, for a program that reads Git's
+    // metadata alone (any other's run fails on it).
+    let (settings, _) = crate::code_rule_dsl::logic::settings::settings_as_read(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
-    let masked: Vec<&str> = masked.iter().map(|t| t.as_ref()).collect();
-    let (settings, _) = run_settings(programs, &masked, graphs, read, root, options)?;
-    Ok(combine_version(programs, &masked, graphs, &added::Added::of(&settings, options), read)?.0)
+    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
 /// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off
@@ -376,19 +386,23 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
         trace(format!("the documents differ: {} files, {} kept", files.len(), workspace.len()));
         return Ok(None);
     }
-    // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
-    let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 12] = ["git_object_predicate", "package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_tracking_index", "git_revision_rows", "git_root_repo", analysis_history::INPUT];
-    let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    let mut world = world::World::new(root, &prog);
-    let moved = world.changed(&requests);
-    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), moved.is_none());
-    if !(inputs_still && world_still) {
-        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests; first changed {moved:?})", read.len(), requests.len()));
-    } else if !changed.is_empty() {
+    // Every leaf by its reader (`leaves`): a changed document is the run's delta, any other leaf changed none can say.
+    let mut leaves = leaves::Leaves::new(root, &prog);
+    let mut changed = Vec::new();
+    for leaf in consulted {
+        if leaves.still(leaf) {
+            continue;
+        }
+        if leaf.0 != "doc" {
+            trace(format!("a leaf changed: {} {}", leaf.0, leaf.1));
+            return Ok(None);
+        }
+        changed.push(leaf.1.clone());
+    }
+    if !changed.is_empty() {
         trace(format!("{} documents changed: {:?}", changed.len(), changed.iter().take(3).collect::<Vec<_>>()));
     }
-    Ok((inputs_still && world_still).then_some(changed))
+    Ok(Some(changed))
 }
 
 /// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
@@ -528,7 +542,7 @@ pub fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<c
 /// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
 /// entry (`combined::record_version`).
 pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let store = if cfg!(feature = "tape-cache") && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+    let store = if keeps_store() && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
@@ -833,6 +847,11 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
         if last.delta.touched != Reads::RULES || !Arc::ptr_eq(last.input, last.output) {
             return Ok(false);
         }
+        // Where the program's own demand can change an answer (`demanded`), what places it is more than what the answers
+        // read: judged again whole.
+        if demand_reaches_an_answer(cx.v()) {
+            return Ok(false);
+        }
         // The split places a relation from its rules and what they read, down: where the edit defines none of the
         // answers' relations nor what they read, it places them as it did, file-local, and is not asked for.
         let v = cx.v();
@@ -872,7 +891,8 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
 /// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager. Each round whose function's answer a cross-file reader asks for is undone
+/// cross-file reader asks for is eager, and so is one whose answer the program's own demand puts in the cross-file part
+/// (`demanded`): preparation applies that demand after combining, so it is judged here as it will run. Each round whose function's answer a cross-file reader asks for is undone
 /// (`rr::lower::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
 /// (decision 0281's path, step 7b).
 pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
@@ -880,12 +900,104 @@ pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logi
     loop {
         let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).map_err(Error::Plan)?;
         let declared = |rel: &str| v.declares(rel);
-        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))) else {
+        let written = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))).map(|(round, rel)| (round, rel, "a cross-file reader asks"));
+        let found = match written {
+            Some(found) => Some(found),
+            None => demanded_answer(&v)?.map(|(round, rel)| (round, rel, "the program's demand reads across files for its request")),
+        };
+        let Some((round, rel, why)) = found else {
             return Ok(v);
         };
-        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local ({why}), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
         v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| undo_round(head, rules, round)).map_err(Error::Plan)?;
     }
+}
+
+/// One round of the attributes answered on request (`rr::lower::ON_REQUEST`).
+type OnRequestRound = &'static [crate::code_rule_dsl::logic::rr::lower::OnRequest];
+
+/// The first round with an attribute answered by a function of the node's document that `v` declares, whose answer
+/// is cross-file in `v` as preparation makes it with its own demand (`demanded`), where the attribute is still
+/// answered as preparation's check asks; and that attribute. None where the demand cannot change an answer.
+fn demanded_answer(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Option<(OnRequestRound, &'static str)>> {
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+    let Some(d) = demanded(v) else { return Ok(None) };
+    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&d).map_err(Error::Plan)?;
+    let derived = |rel: &str| d.rel(rel).is_some_and(|id| d.heads(id).next().is_some());
+    Ok(ON_REQUEST.iter().find_map(|round| {
+        round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && v.declares(a.req) && !split.local.contains(a.rel) && derived(a.rel)).map(|a| (*round, a.rel))
+    }))
+}
+
+/// `v` as preparation makes it up to its own demand (`.pragma "magic-transform"`, decision 0145), demand included,
+/// when that demand can change an attribute's answer by a function (`demand_reaches_an_answer`). The transform leaves
+/// a derived literal out of a demand rule where keeping it would close a negative cycle, and a request reading the
+/// demanded relation can close one through the attribute's readers. RUF034 alone: `rr_value_req` reads `unparen`, whose
+/// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
+/// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
+/// cross-file, and preparation refused the program. The passes are `preparation::front`'s before the demand, in its
+/// order (the combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the
+/// demand, the prune after it, and the closures the demand put in cycles made rows again (`demand::UndoInCycles`). Not
+/// `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not know (the prepared key
+/// names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make an answer eager, so the
+/// combined program is not a function of it. None when the demand cannot change an answer, or when a pass fails or the
+/// demand is not applied (preparation then fails, or leaves the demand out).
+fn demanded(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Option<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::{demand, magic, prune, simplify};
+    if !demand_reaches_an_answer(v) {
+        return None;
+    }
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("demanded", Arc::clone(v));
+    p.program(&mut simplify::CpythonFunctors);
+    p.program(&mut simplify::BaseInputs);
+    p.program(&mut prune::Prune::default());
+    simplify::passes(&mut p).ok()?;
+    p.program(&mut prune::Prune::default());
+    p.program(&mut demand::ReachForm::default());
+    p.program(&mut demand::NegatedDemand::default());
+    let mut own = magic::ProgramDemand::default();
+    p.program(&mut own);
+    if !matches!(own.outcome, Some(Ok(_))) {
+        return None;
+    }
+    p.program(&mut prune::Prune::default());
+    p.program(&mut demand::UndoInCycles::default());
+    p.current().ok().cloned()
+}
+
+/// Whether `v` has its own demand, and an attribute answered by a function whose answer reads a demanded relation: the
+/// demand can change only what reads what it demands.
+fn demand_reaches_an_answer(v: &crate::code_rule_dsl::logic::program_image::Version) -> bool {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+    let demand = v.demand();
+    if demand.is_empty() {
+        return false;
+    }
+    let reading = reading_demanded(v, &demand);
+    ON_REQUEST.iter().flat_map(|r| r.iter()).any(|a| matches!(a.answer, Answer::Function(_)) && v.declares(a.req) && reading.contains(a.rel))
+}
+
+/// The relations `demand` lists and those whose rules in `v` read one, directly or through others: what its demand can
+/// change.
+fn reading_demanded(v: &crate::code_rule_dsl::logic::program_image::Version, demand: &[String]) -> std::collections::BTreeSet<String> {
+    let mut readers: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        for read in rule.body().filter_map(|l| l.atom()) {
+            readers.entry(v.rel_name(read.rel())).or_default().push(head);
+        }
+    }
+    let mut seen: std::collections::BTreeSet<String> = demand.iter().cloned().collect();
+    let mut todo: Vec<String> = seen.iter().cloned().collect();
+    while let Some(rel) = todo.pop() {
+        for h in readers.get(rel.as_str()).into_iter().flatten() {
+            if seen.insert((*h).to_owned()) {
+                todo.push((*h).to_owned());
+            }
+        }
+    }
+    seen
 }
 
 /// The programs `programs` linked into one (`link::Part`: versions, `link::Versioned`, decision 0281's path, step
@@ -1755,6 +1867,17 @@ impl ThreadStore {
         crate::code_rule_dsl::logic::profile::with_bound(|s: &SelectedStore| f(s.0.as_ref()))
     }
 
+    /// The selection bound now, to bind again later (`again`): a session's full run is its caller's, on the store
+    /// selected outside the session.
+    pub fn current() -> SelectedStore {
+        crate::code_rule_dsl::logic::profile::bound::<SelectedStore>()
+    }
+
+    /// Binds `selected` (`current`'s) until the guard is dropped.
+    pub fn again(selected: SelectedStore) -> Self {
+        Self { _bound: crate::code_rule_dsl::logic::profile::bind(selected) }
+    }
+
     pub fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
         Self::with(|store| {
             let (expected, owner) = store?.ownership.as_ref()?;
@@ -1769,6 +1892,14 @@ impl ThreadStore {
     pub fn git_reads() -> Option<Arc<crate::git_workspace::snapshot::InventoryReads>> {
         Self::with(|store| store.map(|selected| Arc::clone(&selected.git_reads)))
     }
+}
+
+/// Whether this thread's runs keep a store: the build keeps the tape cache (`tape-cache`), or the caller selected a
+/// store for its runs (`ThreadStore::select`): a session's (decision 0063), whose runs are its store's in every
+/// build (t33 step 3). A build without the feature (the browser's) keeps no store of its own, and a session's
+/// there as the CLI's.
+pub fn keeps_store() -> bool {
+    cfg!(feature = "tape-cache") || ThreadStore::with(|store| store.is_some_and(|store| store.path.is_some()))
 }
 
 /// Run with an explicitly selected cache on this thread.
@@ -1846,13 +1977,27 @@ pub fn default_store() -> &'static std::path::PathBuf {
 
 /// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
-/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`).
+/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`):
+/// looked for when this build's store there is new. Another build's files go stale when a new build comes, so its
+/// first store sweeps them; each run looked at every file there (510 in the images' directory, 18 ms a run).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
-    let _ = crate::content_store::prepare_cache_directory(&dir);
     let build = crate::code_rule_dsl::build_ids::engine();
     let build = &build[..build.len().min(16)];
+    let path = match key {
+        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
+        Some(key) => {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
+        }
+        None => dir.join(format!("{build}.sqlite")),
+    };
+    if path.exists() {
+        return path;
+    }
+    let _ = crate::content_store::prepare_cache_directory(&dir);
     let day = std::time::Duration::from_secs(24 * 3600);
     let old: Vec<String> = std::fs::read_dir(&dir)
         .into_iter()
@@ -1863,15 +2008,7 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
         .filter(|name| !name.starts_with(build))
         .collect();
     owner::remove_unowned(&dir, &old);
-    match key {
-        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
-        Some(key) => {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            key.hash(&mut h);
-            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
-        }
-        None => dir.join(format!("{build}.sqlite")),
-    }
+    path
 }
 
 /// The process's store, for what asks off a test's thread (a test's is its own, `test_store`): the machine's is
@@ -2205,7 +2342,7 @@ pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) ->
 /// `run_fact_image`, with the memo plans its run (and the phases it ran) recorded manifests of: what a later run that
 /// reuses its image in memory (a Git view's inventory) owns again for its own scope (`own_recorded_manifests`).
 pub fn run_fact_image_planned(source: &str, root: &Path, options: &serde_json::Value) -> Result<(Vec<u8>, Vector<[u8; 32]>)> {
-    let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
+    let store = if keeps_store() { phases::reading_store() } else { None };
     let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
     let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;
     let program_entry = program_entry.as_ref();
@@ -2466,7 +2603,7 @@ Hit(n) :- e(n).
         let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let heads: Vec<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
         assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::FOUND_NODE), "the finding's node by its clause: {heads:?}");
-        let own = super::own_names(&super::super::link::Versioned::of_version(v).unwrap(), &crate::code_rule_dsl::logic::rr::core_names());
+        let own = super::own_names(&super::super::link::Versioned::of_version(v).unwrap(), crate::code_rule_dsl::logic::rr::core_names());
         for shared in [crate::code_rule_dsl::logic::rr::FOUND_NODE, crate::code_rule_dsl::logic::rr::FOUND_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::PLACED_AT, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
             assert!(!own.contains(shared), "{shared} is the pack's: {own:?}");
         }

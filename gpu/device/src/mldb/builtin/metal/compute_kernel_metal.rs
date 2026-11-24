@@ -26,6 +26,78 @@ pub use crate::compute_kernel::*;
 
 use metal::{ArgumentRef, ArrayTypeRef, ComputePipelineDescriptor, ComputePipelineState, DeviceRef, Function, Library, MTLArgumentAccess, MTLArgumentType, MTLDataType, MTLPipelineOption, StructTypeRef};
 
+/// A file URL of `path`, owned. Not `metal::URL::new_with_string`: it wraps `URLWithString:`'s autoreleased URL as
+/// owned, so dropping it releases the URL once too often (a crash in the next autorelease drain).
+pub fn file_url(path: &std::path::Path) -> metal::URL {
+    use metal::foreign_types::ForeignType;
+    use objc::class;
+    use objc::runtime::Object;
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("a path without a NUL");
+    // SAFETY: an NSString of the path (autoreleased: the caller's pool), and a URL made by alloc/init (+1, owned).
+    unsafe {
+        let s: *mut Object = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+        let u: *mut Object = msg_send![class!(NSURL), alloc];
+        let u: *mut Object = msg_send![u, initFileURLWithPath: s];
+        metal::URL::from_ptr(u.cast())
+    }
+}
+
+/// Whether `device` is an Apple G13 (the M1 family and the A14): Metal's `Apple7` family, not `Apple8`.
+pub fn is_g13(device: &DeviceRef) -> bool {
+    device.supports_family(metal::MTLGPUFamily::Apple7) && !device.supports_family(metal::MTLGPUFamily::Apple8)
+}
+
+/// Refuses `binary` (a serialized dynamic library or binary archive, `what`) on a G13 whose back end numbered a
+/// function's loop exits past 255, which its tests miss (`crate::agx`, decision 0672); and one whose G13 code does
+/// not read. Elsewhere every binary passes.
+pub fn refuse_exit_codes(device: &DeviceRef, binary: &[u8], what: &str) -> Result<(), String> {
+    if !is_g13(device) {
+        return Ok(());
+    }
+    let e = crate::agx::exits(binary).map_err(|e| format!("{what}: its Apple G13 code does not read, so its exits are not known to be right (decision 0672): {e}"))?;
+    if e.wrapped.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::agx::refusal(what, &e))
+    }
+}
+
+/// Reads the binary archive at `path` (`what`) on a G13 (`refuse_exit_codes`).
+pub fn refuse_exit_codes_in(device: &DeviceRef, path: &std::path::Path, what: &str) -> Result<(), String> {
+    if !is_g13(device) {
+        return Ok(());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{what}: {}: {e}", path.display()))?;
+    refuse_exit_codes(device, &bytes, what)
+}
+
+/// The pipeline of `descriptor` (`what`): on a G13, compiled into a binary archive, which is serialized to a
+/// temporary file and read (`refuse_exit_codes`) before the pipeline is made from it (no second compile); a
+/// pipeline the archive does not take (one linking dynamic libraries, each read as it was made) compiled plainly.
+/// Elsewhere a plain compile.
+pub fn checked_pipeline(device: &DeviceRef, descriptor: &metal::ComputePipelineDescriptorRef, options: MTLPipelineOption, what: &str) -> Result<(ComputePipelineState, metal::ComputePipelineReflection), String> {
+    if !is_g13(device) {
+        return device.new_compute_pipeline_state_with_reflection(descriptor, options);
+    }
+    let archive = device.new_binary_archive_with_descriptor(&metal::BinaryArchiveDescriptor::new())?;
+    if archive.add_compute_pipeline_functions_with_descriptor(descriptor).is_err() {
+        return device.new_compute_pipeline_state_with_reflection(descriptor, options);
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = std::env::temp_dir().join(format!("rerail-g13-{}-{}.archive", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let read = archive
+        .serialize_to_url(&file_url(&tmp))
+        .map_err(|e| format!("{what}: its binary archive is not serialized, so its Apple G13 code is not read (decision 0672): {e}"))
+        .and_then(|_| std::fs::read(&tmp).map_err(|e| format!("{what}: {}: {e}", tmp.display())));
+    let _ = std::fs::remove_file(&tmp);
+    refuse_exit_codes(device, &read?, what)?;
+    descriptor.set_binary_archives(&[&archive]);
+    let p = device.new_compute_pipeline_state_with_reflection(descriptor, options | MTLPipelineOption::FailOnBinaryArchiveMiss).or_else(|_| device.new_compute_pipeline_state_with_reflection(descriptor, options));
+    descriptor.set_binary_archives(&[]);
+    p
+}
+
 fn convert_access(access: MTLArgumentAccess) -> MemoryRegionAccess {
     match access {
         MTLArgumentAccess::ReadOnly => MemoryRegionAccess::Read,
@@ -109,6 +181,23 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
         Pointer => basic("u64", 8, &[1]),
         other => return Err(format!("getKernelTypeFromDataType: unknown type {other:?}")),
     })
+}
+
+/// The name of the device's target (decision 0645, `rerail_ukl::Target`): Metal's highest tier the device has,
+/// `apple10` on Apple's GPU family 10 (the M5: Metal 4's `matmul2d`), `apple7-g13` on a G13 (the M1s, `is_g13`: its
+/// large bodies called, decision 0672), else `apple7`. `RERAIL_METAL_MATRIX_UNITS=0`
+/// takes `apple7` on any device (`RERAIL_METAL_UNITS` is decision 0571's).
+pub fn target_name(device: &DeviceRef) -> &'static str {
+    let off = std::env::var("RERAIL_METAL_MATRIX_UNITS").is_ok_and(|v| v == "0");
+    // `MTLGPUFamilyApple10` (1010), which the metal crate does not name.
+    let apple10: bool = !off && unsafe { msg_send![device, supportsFamily: 1010_i64] };
+    if apple10 {
+        "apple10"
+    } else if is_g13(device) {
+        "apple7-g13"
+    } else {
+        "apple7"
+    }
 }
 
 // `StructMemberRef::struct_type`/`array_type` and `ArrayTypeRef::element_struct_type`/`element_array_type` in the
@@ -211,6 +300,8 @@ impl MetalComputeFunction {
         // from, where it holds the function's (a compiler's code run in place of this OS's, `metal-tt`); a function
         // it does not hold is compiled as usual. Each says which.
         if let Some(path) = std::env::var_os("RERAIL_METAL_BINARY_ARCHIVE") {
+            // Its G13 code read first, as every archive's is there (decision 0672).
+            refuse_exit_codes_in(device, std::path::Path::new(&path), &function.name())?;
             let ad = metal::BinaryArchiveDescriptor::new();
             ad.set_url(&metal::URL::new_with_string(&format!("file://{}", path.to_string_lossy())));
             match device.new_binary_archive_with_descriptor(&ad) {
@@ -228,7 +319,7 @@ impl MetalComputeFunction {
                 Err(e) => eprintln!("RERAIL_METAL_BINARY_ARCHIVE: {}: {e}", path.to_string_lossy()),
             }
         }
-        let (state, reflection) = device.new_compute_pipeline_state_with_reflection(&desc, options).map_err(|e| format!("Error making pipeline state for function: {e}"))?;
+        let (state, reflection) = checked_pipeline(device, &desc, options, &function.name()).map_err(|e| format!("Error making pipeline state for function: {e}"))?;
         Self::from_reflection(function, state, &reflection)
     }
 
@@ -313,8 +404,15 @@ impl MetalComputeFunctionLibrary {
         }
         let lib = objc::rc::autoreleasepool(|| device.new_library_with_source(preprocessed_source, &metal::CompileOptions::new()));
         let mtl_library = lib.map_err(|e| format!("Error compiling Metal library from source ({file_name_to_appear_in_error_messages}): {e}"))?;
-        // Compiled: the device layer keeps no Metal form (the engine's Metal kernels are `rerail_accel::gpu::kernels`').
+        // Compiled: the device layer keeps no Metal form (the engine's Metal kernels are `rerail_accel_gpu::gpu::kernels`').
         crate::store::count(false);
+        Ok(MetalComputeFunctionLibrary { mtl_library })
+    }
+
+    /// A library of AIR compiled ahead of time for a tier this device runs (decision 0645: a shipped kernel).
+    pub fn from_compiled(device: &DeviceRef, code: &[u8]) -> Result<Self, String> {
+        let mtl_library = objc::rc::autoreleasepool(|| device.new_library_with_data(code)).map_err(|e| format!("a compiled Metal library does not load: {e}"))?;
+        crate::store::count(true);
         Ok(MetalComputeFunctionLibrary { mtl_library })
     }
 
@@ -322,6 +420,46 @@ impl MetalComputeFunctionLibrary {
         let function = self.mtl_library.get_function(function_name, None).map_err(|e| format!("Error getting function '{function_name}' from Metal library ({}): {e}", self.mtl_library.function_names().join(", ")))?;
         MetalComputeFunction::new(device, function)
     }
+}
+
+/// The Metal language standard a text prepared for `__METAL_VERSION__` `version` is compiled with ahead of time, and
+/// the oldest macOS its library loads on. The device's own compile takes the newest its system has: a text of
+/// `apple7` (310) uses Metal 3.2's coherent memory and thread scopes (UKL's atomics), so Metal 3.2 and macOS 15;
+/// `apple10`'s (400) Metal 4 and macOS 26.
+fn standard(version: u32) -> (&'static str, &'static str) {
+    if version >= 400 { ("metal4.0", "26.0") } else { ("metal3.2", "15.0") }
+}
+
+/// Compiles Metal source (prepared for `__METAL_VERSION__` `version`) ahead of time to a library of AIR, without a
+/// device (decision 0645 step 3), by Xcode's Metal compiler (`xcrun metal`, `xcrun metallib`).
+pub fn compile_offline(version: u32, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    let (std, macos) = standard(version);
+    let stem: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let dir = std::env::temp_dir().join(format!("rerail-ship-{}-{}-{stem}", std::process::id(), crate::store::unique()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (src, air, lib) = (dir.join("k.metal"), dir.join("k.air"), dir.join("k.metallib"));
+    let run = |args: &[&std::ffi::OsStr]| -> Result<(), String> {
+        let out = std::process::Command::new("xcrun").args(args).output().map_err(|e| format!("xcrun: {e} (shipping Metal kernels needs Xcode's Metal compiler)"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let lines: Vec<&str> = err.lines().filter(|l| l.contains("error")).take(20).collect();
+            Err(format!("{name} ({std}): {} (the Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`)", if lines.is_empty() { err.trim().to_owned() } else { lines.join("\n") }))
+        }
+    };
+    let result = std::fs::write(&src, source).map_err(|e| e.to_string()).and_then(|()| {
+        let (std, min) = (format!("-std={std}"), format!("-mmacosx-version-min={macos}"));
+        // The device's compile (`newLibraryWithSource:`) includes Metal's standard library itself; a prepared text
+        // leaves it to the compiler (UKL's shim, under `__UKL_METAL_PREPROCESSING`).
+        let args: [&std::ffi::OsStr; 12] =
+            ["-sdk".as_ref(), "macosx".as_ref(), "metal".as_ref(), std.as_ref(), min.as_ref(), "-include".as_ref(), "metal_stdlib".as_ref(), "-c".as_ref(), src.as_os_str(), "-o".as_ref(), air.as_os_str(), "-w".as_ref()];
+        run(&args)?;
+        run(&["-sdk".as_ref(), "macosx".as_ref(), "metallib".as_ref(), air.as_os_str(), "-o".as_ref(), lib.as_os_str()])?;
+        std::fs::read(&lib).map_err(|e| e.to_string())
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 /// A queue of operations on the shared device (`MetalComputeQueue`): kernel launches, each in its own compute
@@ -337,6 +475,8 @@ pub struct MetalComputeQueue {
     /// The command buffer's staging memory for `enqueue_copy_from_host` (filled up, then another), and how much is
     /// used: one allocation a command buffer, not one a copy. The command buffer keeps it until it completes.
     staging: std::cell::RefCell<Option<(metal::Buffer, u64)>>,
+    /// The compute encoders it opened: what a launch made resident (`use_buffer`) stays so for the open one's life.
+    encoders: std::cell::Cell<u64>,
 }
 
 /// A command buffer's open encoder.
@@ -420,7 +560,7 @@ fn pooled<R>(f: impl FnOnce() -> R) -> R {
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default() }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default(), encoders: std::cell::Cell::new(0) }
     }
 
     /// The open compute encoder (ending an open blit encoder first).
@@ -432,7 +572,14 @@ impl MetalComputeQueue {
         Self::end(&mut open);
         let e = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
         *open = Open::Compute(e.clone());
+        self.encoders.set(self.encoders.get() + 1);
         e
+    }
+
+    /// The compute encoders it opened so far: a buffer made resident for a launch stays resident for the launches
+    /// after it while this is the same (Metal's `useResource` holds for its encoder's life).
+    pub fn encoders(&self) -> u64 {
+        self.encoders.get()
     }
 
     /// The open blit encoder (ending an open compute encoder first).

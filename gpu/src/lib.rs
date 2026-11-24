@@ -8,6 +8,8 @@
 
 // The device layer, below the preprocessor (`rerail-device`): its paths are this crate's too.
 pub use rerail_device::{compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, os, shared, store, Pod};
+/// The preprocessor and its targets (decision 0645), for a caller that names one.
+pub use rerail_ukl as ukl;
 #[cfg(not(target_os = "macos"))]
 pub use rerail_device::compute_kernel_cuda;
 #[cfg(target_os = "macos")]
@@ -26,33 +28,42 @@ mod matrix_tests;
 
 /// A device's preprocessing of UKL (`rerail_ukl`), which the device layer, below the preprocessor, does not do.
 pub trait Preprocessing {
+    /// What this device's kernels' text is prepared for (decision 0645): its target's name's
+    /// (`device::Device::target_name`), else, on OpenCL and the CPU, what the device reports.
+    fn target(&self) -> rerail_ukl::Target;
     /// What `rerail_ukl` preprocesses this device's kernels for.
     fn ukl_backend(&self) -> rerail_ukl::Backend;
-    /// A preprocessing of UKL for this device: its backend, and the defines its compile takes (the CPU's knobs,
-    /// `compute_kernel_cpu::defines`; OpenCL's width and largest threadgroup).
+    /// A preprocessing of UKL for this device: its target's (decision 0645, `device::Device::target`).
     fn preprocess(&self) -> rerail_ukl::Preprocess;
 }
 
 impl Preprocessing for device::Device {
-    fn ukl_backend(&self) -> rerail_ukl::Backend {
+    fn target(&self) -> rerail_ukl::Target {
+        let local = |backend| rerail_ukl::Target::local(backend, self.local_defines().into_iter().map(|(n, v)| (n.to_string(), v)).collect());
         match self {
-            device::Device::Cpu(_) => rerail_ukl::Backend::Cpu,
-            device::Device::OpenCl(_) => rerail_ukl::Backend::OpenCl,
-            #[cfg(target_os = "macos")]
-            device::Device::Native(_) => rerail_ukl::Backend::Metal { version: 310 },
-            #[cfg(not(target_os = "macos"))]
-            device::Device::Native(d) => match d.vendor {
-                compute_kernel_cuda::Vendor::Cuda => rerail_ukl::Backend::Cuda { sm: d.sm },
-                compute_kernel_cuda::Vendor::Hip => rerail_ukl::Backend::Hip { wave: d.simd_width },
-            },
+            device::Device::Cpu(_) => local(rerail_ukl::Backend::Cpu),
+            device::Device::OpenCl(_) => local(rerail_ukl::Backend::OpenCl),
+            device::Device::Native(d) => {
+                let name = self.target_name().expect("a native device's target");
+                let named = rerail_ukl::Target::named(&name).unwrap_or_else(|| panic!("{name}: no target of that name"));
+                // HIP's wave is the name's (`Target::named`); a device that runs another takes a local target, its
+                // text no shipped one's.
+                #[cfg(not(target_os = "macos"))]
+                if d.vendor == compute_kernel_cuda::Vendor::Hip && named.backend != (rerail_ukl::Backend::Hip { wave: d.simd_width }) {
+                    return local(rerail_ukl::Backend::Hip { wave: d.simd_width });
+                }
+                #[cfg(target_os = "macos")]
+                let _ = d;
+                named
+            }
         }
     }
 
+    fn ukl_backend(&self) -> rerail_ukl::Backend {
+        self.target().backend
+    }
+
     fn preprocess(&self) -> rerail_ukl::Preprocess {
-        let mut p = rerail_ukl::Preprocess::new(self.ukl_backend());
-        for (name, value) in self.compile_defines() {
-            p = p.define(name, Some(&value));
-        }
-        p
+        self.target().preprocess()
     }
 }

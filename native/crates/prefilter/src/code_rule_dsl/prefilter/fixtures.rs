@@ -4,7 +4,12 @@
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 
-pub use crate::code_rule_dsl::fixtures::{document, open, temp};
+pub use crate::code_rule_dsl::fixtures::{document, temp};
+
+/// The store at `path`, opened (created if it is not there).
+pub fn open(path: &std::path::Path) -> ContentStore {
+    ContentStore::open(path).unwrap()
+}
 
 /// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
 pub fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {

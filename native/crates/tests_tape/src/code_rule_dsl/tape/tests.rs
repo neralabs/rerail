@@ -26,7 +26,7 @@ fn a_tape_persists_abstract_tree_sitter_supertypes() {
 
     let persisted = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     let restored = TapeDoc::restore(
-        Arc::new(source.to_owned()),
+        Arc::new(source.to_owned().into()),
         Arc::clone(&grammar),
         &persisted,
         &|| false,
@@ -79,7 +79,7 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
     assert!(image.aliased_nodes() > 0);
     let persisted = TapeImage::from_bytes(&image.to_bytes().unwrap(), &grammar).unwrap();
     let tape =
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &persisted, &|| false).unwrap();
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &persisted, &|| false).unwrap();
 
     fn native_nodes<'a>(node: TsNode<'a>, output: &mut Vec<TsNode<'a>>) {
         output.push(node);
@@ -186,7 +186,7 @@ fn bytes_edited(image: &TapeImage, grammar: &Arc<Grammar>, edit: impl FnOnce(&mu
 
 /// Whether `candidate` (a tape, or the reason none was made) never restores a document of `source`.
 fn refused(candidate: Result<TapeImage, String>, grammar: &Arc<Grammar>, source: &str) -> bool {
-    !candidate.is_ok_and(|c| TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(grammar), &c, &|| false).is_ok())
+    !candidate.is_ok_and(|c| TapeDoc::restore(Arc::new(source.to_owned().into()), Arc::clone(grammar), &c, &|| false).is_ok())
 }
 
 /// The last node of `image` in preorder whose second child ends before it does, and its first child's subtree end:
@@ -223,7 +223,7 @@ fn fixture(
         .unwrap()
         .primary;
     let tape = TapeDoc::restore(
-        Arc::new(source.to_owned()),
+        Arc::new(source.to_owned().into()),
         Arc::clone(&grammar),
         &image,
         &|| false,
@@ -314,7 +314,7 @@ fn persisted_image_round_trips_without_parsing() {
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert_eq!(decoded.to_bytes().unwrap(), bytes);
     let restored =
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &decoded, &|| false).unwrap();
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &decoded, &|| false).unwrap();
     assert_eq!(
         matches(native, "call($A)", GrammarDialect::TypeScript),
         matches(restored, "call($A)", GrammarDialect::TypeScript)
@@ -329,7 +329,7 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`, Patch 30's `using`
     // declarations, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; so does the language's format 16
-    // table (its codes, from the grammar, decision 0626, and their numbering, by two corpora's counts: revision 4), and a
+    // table (its codes, from the grammar, decision 0631, and their numbering, by two corpora's counts: revision 4), and a
     // change of format 16's layout (decision 0434) or of what its home holds (its auxiliary index, decision 0656).
     assert_eq!(
         digest,
@@ -367,7 +367,7 @@ fn file_documents_persist_apart_and_are_checked() {
     let tape = document.tape.to_bytes().unwrap();
     assert_eq!(read.derived[0].tape.to_bytes().unwrap(), tape);
     let restored = TapeDoc::restore(
-        Arc::new(source.to_owned()),
+        Arc::new(source.to_owned().into()),
         Arc::clone(&grammar),
         &read,
         &|| false,
@@ -492,7 +492,7 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert!(
         TapeDoc::restore(
-            Arc::new("x = 22 # extra\n".to_owned()),
+            Arc::new("x = 22 # extra\n".to_owned().into()),
             grammar,
             &decoded,
             &|| false,
@@ -585,7 +585,7 @@ fn positions_count_only_line_feeds_in_every_dialect() {
             .unwrap()
             .unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         let tree_sitter_point = |byte: usize| {
             let before = &source.as_bytes()[..byte];
             let row = before.iter().filter(|&&b| b == b'\n').count();
@@ -1077,7 +1077,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
     // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
     let nodes = native.tree.root_node().descendant_count();
-    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
     assert_eq!(image.primary.node_count(), doc.transducer_len());
     assert!(doc.transducer_len() < nodes);
@@ -1095,7 +1095,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
     };
     assert!(
         TapeDoc::restore(
-            Arc::new(source.clone()),
+            Arc::new(source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &interrupt
@@ -1103,7 +1103,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
         .is_err()
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
-    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
 }
 
@@ -1428,7 +1428,7 @@ fn a_php_template_tapes_its_php_view() {
             .unwrap()
             .unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         assert_eq!(
             tape.syntax_error_ranges(),
             Vec::<Range<usize>>::new(),
@@ -1538,7 +1538,7 @@ fn a_blade_tapes_errors_are_blades_reading() {
         let image = TapeImage::parse(&grammar, source, &|| false)
             .expect("parses")
             .expect("encodes");
-        let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+        let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
             .expect("restores");
         assert_eq!(
             tape.syntax_error_ranges(),
@@ -1603,7 +1603,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
         };
         let image = TapeImage::from_bytes(&encoded.primary.to_bytes().unwrap(), &grammar).unwrap();
         let tape = TapeDoc::restore(
-            Arc::new(source.clone()),
+            Arc::new(source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -1810,18 +1810,19 @@ fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn rr_parse_costs() {
-    use crate::code_rule_dsl::transducer::packed::rr_parser;
+    // The `.rerail` parser (rerail-rr-parser): the Bitlex grammar compiled.
+    use rerail_rr_parser as rr_parser;
     let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
     let mut files: Vec<String> = rr_files().into_iter().map(|(_, t)| t).collect();
     let all = files.len();
     files.retain(|f| rr_parser::compiled_tape(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
-    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
+    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).map_or(0, |t| t.len())).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     #[allow(clippy::type_complexity)]
     let steps: Vec<CostStep<'_>> = vec![
-        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
+        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).map_or(0, |t| t.len()))),
         (
             "lean: the tape (the engine's path)",
             Box::new(|f| {
@@ -2296,7 +2297,9 @@ fn simdjson_tapes_over_files() {
         match simdjson_tapes(&source) {
             Err(_) => refused.push(path.to_owned()),
             Ok((ours, theirs)) if ours == theirs => {
-                if rerail_simdjson::tape_with(kernel, source.as_bytes(), kinds).is_ok() {
+                if rerail_simdjson::events_with(kernel, source.as_bytes(), kinds, false, |_, _| ())
+                    .is_ok()
+                {
                     strict += 1
                 } else {
                     jsonc += 1
@@ -2331,7 +2334,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     // Refused by restore and by the facts read off the tape alike.
     let reject = |label: &str, candidate: Result<TapeImage, String>, text: &str| {
         assert!(refused(candidate.clone(), &grammar, text), "{label}: restored");
-        assert!(candidate.map_or(true, |image| core::from_image(Arc::new(text.to_owned()), &grammar, image, lines(text)).is_err()), "{label}: facts");
+        assert!(candidate.map_or(true, |image| core::from_image(Arc::new(text.into()), &grammar, image, lines(text)).is_err()), "{label}: facts");
     };
     let mut corrupt = image.clone();
     corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1;
@@ -2393,7 +2396,7 @@ fn json_parse_costs() {
     let nodes: usize = files
         .iter()
         .map(|f| {
-            rerail_simdjson::tape(f.as_bytes(), kinds)
+            rerail_simdjson::walk_from_index(f.as_bytes(), kinds)
                 .unwrap()
                 .node_count()
         })
@@ -2414,19 +2417,23 @@ fn json_parse_costs() {
             Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap()),
         ),
         (
-            "simdjson: DOM parse, columns from index",
+            "simdjson: DOM parse, events from index",
             Box::new(|f| {
-                rerail_simdjson::tape_from_index(f.as_bytes(), kinds)
-                    .unwrap()
-                    .node_count()
+                let mut n = 0;
+                rerail_simdjson::events_from_index(f.as_bytes(), kinds, |_, w| n += w.len() / 3)
+                    .unwrap();
+                n
             }),
         ),
         (
             "simdjson: stage 1 (hashed), stage 2",
             Box::new(|f| {
-                rerail_simdjson::tape_with(kernel, f.as_bytes(), kinds)
-                    .unwrap()
-                    .node_count()
+                let mut n = 0;
+                rerail_simdjson::events_with(kernel, f.as_bytes(), kinds, false, |_, w| {
+                    n += w.len() / 3
+                })
+                .unwrap();
+                n
             }),
         ),
         // Through the router's `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
@@ -3360,8 +3367,8 @@ fn python_parse_costs() {
             Box::new(|f| rerail_python_lean::token_count(f.as_bytes()).unwrap_or(0)),
         ),
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -3823,7 +3830,7 @@ fn using_as_a_name_reads_without_an_error_on_the_products_path() {
                 .expect("read to its end")
                 .unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
             let doc = TapeDoc::restore(
-                Arc::new(source.to_owned()),
+                Arc::new(source.to_owned().into()),
                 Arc::clone(&grammar),
                 &product.primary,
                 &|| false,
@@ -3890,8 +3897,8 @@ fn ecma_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4116,8 +4123,8 @@ fn rust_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4331,8 +4338,8 @@ fn java_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4525,8 +4532,8 @@ fn go_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4639,8 +4646,8 @@ fn cpp_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5190,7 +5197,7 @@ fn html_css_and_markdown_files_are_read_by_their_grammars() {
             .round_trip(&grammar)
             .unwrap();
         let doc = TapeDoc::restore(
-            Arc::new(source.to_owned()),
+            Arc::new(source.to_owned().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -5326,8 +5333,8 @@ fn php_parse_costs() {
     type IndexStep<'a> = (&'static str, Box<dyn Fn(usize) -> usize + 'a>);
     let steps: Vec<IndexStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5434,8 +5441,8 @@ fn csharp_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5660,8 +5667,8 @@ fn html_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5867,8 +5874,8 @@ fn css_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6113,8 +6120,8 @@ fn sql_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6319,8 +6326,8 @@ fn markdown_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6609,8 +6616,8 @@ fn vue_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6857,9 +6864,9 @@ fn markdown_inline_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
+            "lean: the parser's tape",
             Box::new(|f| {
-                rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())
+                rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())
             }),
         ),
         (
@@ -7005,7 +7012,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
-        let text = Arc::new(source.clone());
+        let text = Arc::new(crate::code_rule_dsl::tape::Text::from(source.clone()));
         // Each read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
         let batch = |image: TapeImage| {
             let cache = image.own_cache().map(Arc::new);
@@ -7104,7 +7111,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_16() {
             .unwrap()
             .unwrap();
         let reference = TapeDoc::restore(
-            Arc::new(source.clone()),
+            Arc::new(source.clone().into()),
             Arc::clone(&grammar),
             &image,
             &|| false,
@@ -7122,7 +7129,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_16() {
                 );
             }
             let doc = TapeDoc::restore(
-                Arc::new(source.clone()),
+                Arc::new(source.clone().into()),
                 Arc::clone(&grammar),
                 &stored,
                 &|| false,
@@ -7265,7 +7272,7 @@ fn the_cursor_walk_writes_each_format_directly() {
             let image = as_run(format, encode).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
             let at = format!("{lang:?} in {}", format.name());
             assert_eq!(image.format(), format, "{at}: written in the run's format");
-            let tape = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap());
+            let tape = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone().into()), Arc::clone(&grammar), &image, &|| false).unwrap());
             let actual = tape.root().dfs().collect::<Vec<_>>();
             assert_eq!(expected.len(), actual.len(), "{at}: nodes");
             for (native, restored) in expected.iter().zip(&actual) {
@@ -7359,7 +7366,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             let grammar = Grammar::new(*lang).unwrap();
             let doc = as_run(format, || {
                 let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+                TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).unwrap()
             });
             assert_eq!(
                 doc.doc_tape().image().format(),
@@ -7541,6 +7548,8 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
             "val xs = List(1, 2).map(_ * 2).filter { x => x > 1 }\n",
             "def g(a: Any) = a match {\n  case s: String => s.length\n  case _ => 0\n}\n",
             "trait T {\n  val s = s\"$x ${y + 1}\"\n  lazy val n = 0x1FL\n}\n",
+            // A constructor annotation's `(`: id 40, named `arguments`, under its contextual alias `(` (decision 0631).
+            "class A @Inject() (x: Int)\n",
         ],
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
     );
@@ -7708,7 +7717,7 @@ fn a_file_that_embeds_code_is_read_by_its_lean_parser() {
 fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
-    let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
 }
 

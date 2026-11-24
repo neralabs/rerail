@@ -4,6 +4,28 @@
 
 use rerail_store::Canonical as _;
 pub use super::logic::profile::watch::watch;
+
+/// The launch's check of the folders the run maps files from (`rerail_blocks::mapped`, through the store's): each that is there already must
+/// be the user's alone, no group or world write or search (`0700`); one missing is made so when it is first used.
+/// The run's tape store (`RERAIL_TAPE_CACHE`), its atoms and memo folders, the cost store (`RERAIL_COSTS`), the image
+/// store (`RERAIL_IMAGE_STORE`) and the build's stores (`corpus::build_store`'s folders).
+pub fn launch_checks() -> Result<(), String> {
+    use std::path::PathBuf;
+    let mut folders: Vec<PathBuf> = Vec::new();
+    let file = |var: &str| std::env::var_os(var).filter(|v| v != "off" && v != "project" && !v.is_empty()).map(PathBuf::from);
+    for db in [file("RERAIL_TAPE_CACHE"), super::logic::costs::file(), file("RERAIL_IMAGE_STORE")].into_iter().flatten() {
+        folders.push(db.parent().map_or_else(|| PathBuf::from("."), |p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_owned() }));
+        folders.push(crate::content_store::atoms_dir(&db));
+        folders.push(crate::content_store::pack_dir(&db));
+    }
+    for name in ["rerail-stores", "rerail-images"] {
+        folders.push(std::env::temp_dir().join(name));
+    }
+    for dir in folders.iter().filter(|d| d.exists()) {
+        crate::content_store::check_mapped_folder(dir).map_err(|e| format!("refusing to launch: {e}"))?;
+    }
+    Ok(())
+}
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, program_texts_read, read_program_file, settings};
 pub use super::logic::settings::process_counters;
@@ -862,7 +884,7 @@ fn run_pack(
     let mut done = Vec::with_capacity(group.members.len());
     for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
         let own = out.join(k.to_string());
-        std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
+        crate::content_store::prepare_cache_directory(&own).map_err(|e| format!("{}: {e}", own.display()))?;
         // Its own outputs, a base of its findings alone (decision 0239).
         let mut image = output::Builder::new(flags, false);
         for (rel, rows) in &rows {
@@ -1018,6 +1040,12 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 }
 
 fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
+    logic_framed(programs, root, t_facts, out, run).map(|(text, _)| text)
+}
+
+/// `logic_checked`, with the run's frame (`Report::frame`) where the command is one run whatever its corpus holds: no
+/// program names a language of several dialects, so a command's frame may lead to it (`reuse::command`).
+fn logic_framed(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<(String, Option<[u8; 32]>), ProgramRunError> {
     let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -1064,10 +1092,24 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
         }
     }
     let report = report.ok_or_else(|| "no programs".to_owned())?;
+    let one_run = runs.len() == 1 && !programs.iter().any(|t| names_dialects(t));
+    let frame = report.frame.filter(|_| one_run);
+    Ok((report_text(programs.len(), &report, modes, binding, t_facts), frame))
+}
+
+/// Whether `text` names a language of several dialects (`.language typescript`): its run may split by the dialects a
+/// corpus holds (`dialect_runs`).
+fn names_dialects(text: &str) -> bool {
+    use super::language::CodeRuleLanguage;
+    text.lines().map(str::trim_start).find_map(|l| l.strip_prefix(".language ")).map(|n| n.trim().trim_matches('"')).is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1))
+}
+
+/// A `logic` command's report as text.
+fn report_text(programs: usize, report: &super::logic::plan::corpus::Report, modes: &str, binding: super::typing::file_local::Binding, t_facts: Option<&std::path::Path>) -> String {
     let execution = if modes.is_empty() { "sql" } else { modes };
     let mut text = format!(
         "{} programs; {} files, {} nodes in {} chunks, {} components native ({execution}, nearest on {binding:?})\n",
-        programs.len(),
+        programs,
         report.files,
         report.nodes,
         report.chunks,
@@ -1117,7 +1159,7 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
     if t_facts.is_some() {
         text += "  (planner statistics and node ids read from the T facts file)\n";
     }
-    Ok(text)
+    text
 }
 
 
@@ -1159,7 +1201,7 @@ pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -
     let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
-        rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
+        rerail_accel_gpu::gpu::kernels::set_mode(shared.machine(), rerail_accel_gpu::gpu::kernels::Mode::Defer);
     }
     let (out, incomplete) = cli_in(args, &mut Default::default(), &shared);
     // The kernels this run went without (its machine's), compiled after it by the engine in a process of its own, at
@@ -1167,7 +1209,7 @@ pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -
     #[cfg(target_os = "macos")]
     if let Ok(engine) = std::env::current_exe() {
         let _on = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&shared));
-        rerail_accel::gpu::kernels::spawn_maintenance(&engine);
+        rerail_accel_gpu::gpu::kernels::spawn_maintenance(&engine);
     }
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
     // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
@@ -1550,7 +1592,7 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     if files.is_empty() {
         return Err(usage.into());
     }
-    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    crate::content_store::prepare_cache_directory(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let translator = json_rules::Translator::new();
     let mut failed = 0;
     let mut counts = serde_json::Map::new();
@@ -1586,6 +1628,7 @@ use crate::code_rule_dsl::logic::profile::timeline_mark;
 
 fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
+    let command_args = args.to_vec();
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
     let mut revision = None;
@@ -1629,11 +1672,13 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
         _ => return Err(USAGE.into()),
     };
-    // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
-    // `#include`s are read in.
-    let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
-    let _sources;
-    let programs = if Path::new(program.as_str()).is_dir() {
+    if revision.is_none() && analysis_scope.is_some() {
+        return Err("--analysis-scope requires --revision".into());
+    }
+    use super::logic::plan::corpus::{Typing, reuse};
+    // The rule files: a directory's every `.rerail` (and JSON policy), run as one program; or the one file named.
+    let is_dir = Path::new(program.as_str()).is_dir();
+    let listed: Vec<std::path::PathBuf> = if is_dir {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
             .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -1641,43 +1686,85 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rerail") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
             .collect();
         files.sort();
-        // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone it
-        // has neither the declarations it reads nor the rules that fill its inputs.
-        // Each read once, as the run observes it, and its text handed on to `program_texts_read`.
-        let read: Vec<Result<String, String>> = files.iter().map(|path| crate::tools::read_program_file(path)).collect();
-        let included: std::collections::BTreeSet<std::ffi::OsString> = read
-            .iter()
-            .filter_map(|text| text.as_ref().ok())
-            .flat_map(|text| {
-                text.lines()
-                    .filter_map(|l| l.trim().strip_prefix("#include"))
-                    .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
-                    .flatten()
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
-        timeline_mark("the program files listed");
-        let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
-        _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
-        timeline_mark("the program texts read");
-        texts
+        files
     } else {
-        let path = Path::new(program.as_str());
-        let text = crate::tools::program_text(path)?;
-        _sources = super::logic::rr::profile_join_sources(&[path]);
-        vec![text]
+        vec![std::path::PathBuf::from(program.as_str())]
     };
-    drop(reading);
-    if programs.is_empty() {
-        return Err(format!("{program} has no .rerail programs"));
-    }
-    if revision.is_none() && analysis_scope.is_some() {
-        return Err("--analysis-scope requires --revision".into());
-    }
-    let eval = |root: &Path| {
-        let run = || logic_checked(&programs, root, facts, Path::new(out), &crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env });
-        if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+    // The command's frame (t33 K4, `reuse::command`): its rule files as the observer sees them (a `stat` each) lead to
+    // its run's frame, checked before any rule text is read. Not for a run of a revision (its root is a view made for
+    // the run), a session's full run, or one reproducing T.
+    let options = serde_json::json!({ "env": env, "reuse": true });
+    let command = (revision.is_none() && !full && facts.is_none() && reuse::wanted(&options, &Typing::default(), None))
+        .then(|| -> Result<_, String> {
+            let dir = if is_dir { Some(dunce::canonicalize(program).map_err(|e| format!("{program}: {e}"))?) } else { None };
+            let files: Vec<std::path::PathBuf> = match &dir {
+                Some(d) => listed.iter().filter_map(|f| f.file_name()).map(|n| d.join(n)).collect(),
+                None => vec![dunce::canonicalize(program).map_err(|e| format!("{program}: {e}"))?],
+            };
+            // Everything on the command line but its output directory, which changes no output.
+            let extra = format!("{program}\0{modes}\0{metal}\0{chunk}\0{:?}", command_args.iter().filter(|a| *a != out).collect::<Vec<_>>());
+            let key = reuse::command::key(&files, Path::new(root), &options, &modes, &Typing::default(), &extra).map_err(|e| e.to_string())?;
+            Ok((key, dir, files))
+        })
+        .transpose()?;
+    // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
+    // `#include`s are read in.
+    let read_programs = || -> Result<(Vec<String>, _), String> {
+        let _reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
+        let (programs, sources) = if is_dir {
+            let files = listed.clone();
+            // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone
+            // it has neither the declarations it reads nor the rules that fill its inputs.
+            // Each read once, as the run observes it, and its text handed on to `program_texts_read`.
+            let read: Vec<Result<String, String>> = files.iter().map(|path| crate::tools::read_program_file(path)).collect();
+            let included: std::collections::BTreeSet<std::ffi::OsString> = read
+                .iter()
+                .filter_map(|text| text.as_ref().ok())
+                .flat_map(|text| {
+                    text.lines()
+                        .filter_map(|l| l.trim().strip_prefix("#include"))
+                        .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
+                        .flatten()
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
+            timeline_mark("the program files listed");
+            let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
+            let sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
+            timeline_mark("the program texts read");
+            (texts, sources)
+        } else {
+            let path = Path::new(program.as_str());
+            let text = crate::tools::program_text(path)?;
+            (vec![text], super::logic::rr::profile_join_sources(&[path]))
+        };
+        if programs.is_empty() {
+            return Err(format!("{program} has no .rerail programs"));
+        }
+        Ok((programs, sources))
+    };
+    // Without a command's frame, read before the run begins, as ever.
+    let early = if command.is_none() { Some(read_programs()?) } else { None };
+    let eval = |root: &Path| -> Result<String, ProgramRunError> {
+        let logic_run = crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env };
+        let Some((key, dir, files)) = &command else {
+            let (programs, _sources) = early.as_ref().expect("read early");
+            let run = || logic_checked(programs, root, facts, Path::new(out), &logic_run);
+            return if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() };
+        };
+        let binding = if metal { super::typing::file_local::Binding::Metal } else { super::typing::file_local::Binding::Cpu };
+        if let Some((report, programs)) = reuse::command::reused(key, root, Path::new(out), &Typing::default(), &options)? {
+            return Ok(report_text(programs, &report, &modes, binding, None));
+        }
+        let (programs, _sources) = read_programs()?;
+        // The run's manifest names the command's frame, kept once the run ends.
+        let _naming = reuse::Naming::enter(*key);
+        let (text, frame) = logic_framed(&programs, root, facts, Path::new(out), &logic_run)?;
+        if let Some(then) = frame {
+            reuse::command::record(key, dir.as_deref(), files, &then, programs.len());
+        }
+        Ok(text)
     };
     let mut invocation = PolicyInvocation::begin(Path::new(root), revision.as_deref(), analysis_scope.as_deref())?;
     let report = invocation.evaluate(eval)?;
@@ -1777,16 +1864,16 @@ fn gc_command(args: &[String]) -> Result<String, String> {
 }
 
 /// Every fixed kernel of the engine (a kernel whose source is the same for every rule set), to compile ahead of its
-/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel::gpu::kernels_ahead`), the GPU
+/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel_gpu::gpu::kernels_ahead`), the GPU
 /// runtime's (`rerail_metal::kernels_ahead`), the device's (`MatcherDevice::kernels_ahead`) and, in a build with the
 /// tests' hooks, the tape format's tests' (`rerail_tape_format::f16::kernels`). Each entry asks for its kernel
 /// as its use does, so its use finds it: in this process, in the store, or shipped.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
-    let mut v = rerail_accel::gpu::kernels_ahead();
+    let mut v = rerail_accel_gpu::gpu::kernels_ahead();
     v.extend(rerail_metal::kernels_ahead());
     if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
-        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel::gpu::ahead(name, make)));
+        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel_gpu::gpu::ahead(name, make)));
     }
     #[cfg(feature = "test-hooks")]
     v.extend(rerail_tape_format::f16::kernels().into_iter().map(|(name, text)| {
@@ -1797,7 +1884,7 @@ pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
 
 /// `rerail-engine kernels` (decision 0395): the compiled kernels, on every backend. The device layer's store
 /// (`rerail_device::store`: CUDA's cubins, OpenCL's binaries, the CPU's shared objects) and, on macOS, Metal's
-/// archive store (`rerail_accel::gpu::kernels`).
+/// archive store (`rerail_accel_gpu::gpu::kernels`).
 ///
 /// ```text
 /// kernels [list]                   the stores, the shipped kernels, the device, and (Metal) the kernels runs went
@@ -1808,11 +1895,15 @@ pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
 ///                                  seconds and none waited for past <s> + 60 (the next goes on from the store), then
 ///                                  (Metal) the last run's (--all: every run's) wanted kernels
 ///                                  (--idle: at the background priority, as after a run)
-/// kernels ship <dir> [--from <s>] [--air]
+/// kernels ship <dir> [--from <s>] [--air] [--targets <t,...>|metal|cuda|amd|all]
 ///                                  the fixed kernels as the engine's bundle: this device's forms under
 ///                                  <dir>/<backend>/ by the store's keys (compiled first where the store lacks them);
 ///                                  Metal: the archives a run compiled (store <s>, else this machine's); --air: AIR
-///                                  libraries too (Xcode's Metal Toolchain)
+///                                  libraries too (Xcode's Metal Toolchain); --targets: each kernel compiled ahead
+///                                  of time for each target (decision 0645: `apple7`, `sm_80`, `compute_80`,
+///                                  `gfx1035`; metal, cuda, amd: that backend's of `rerail_ukl::target::SHIPPED`;
+///                                  all: this system's, Metal's on macOS, CUDA's and AMD's elsewhere), under
+///                                  <dir>/gpu/<target>/; CUDA's from two toolkits by RERAIL_SHIP_CUDA_HOMES
 /// kernels prune [--mb <n>]         each store within n MB (default RERAIL_GPU_KERNELS_MB and RERAIL_METAL_KERNELS_MB,
 ///                                  2048)
 /// ```
@@ -1884,7 +1975,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             }
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let s = k::size();
                 out += &format!("metal store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
                 out += &format!("metal shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
@@ -1921,7 +2012,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             let made = compile(&mut out);
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
                 let started = std::time::Instant::now();
                 // Past `--within`, none (the next run's step compiles them).
@@ -1946,8 +2037,33 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             }
         }
         Some("ship") => {
-            let dir = Path::new(args.get(1).ok_or("kernels ship <dir> [--from <store dir>] [--air]")?);
+            let dir = Path::new(args.get(1).ok_or("kernels ship <dir> [--from <store dir>] [--air] [--targets <t,...>|metal|cuda|amd|all]")?);
             let started = std::time::Instant::now();
+            // `--targets`: every program compiled below is shipped for each (decision 0645 step 3). Metal's tiers ship
+            // from macOS, CUDA's and AMD's from Linux or Windows: `all` is this system's.
+            let targets: Vec<rerail_gpu::ukl::Target> = match args.iter().position(|a| a == "--targets") {
+                None => Vec::new(),
+                Some(i) => {
+                    let list = args.get(i + 1).ok_or("--targets takes a list of targets, or all")?;
+                    // A backend's group of the shipped targets, or `all` of this system's.
+                    let group = |g: &str| -> Option<Vec<&str>> {
+                        let of = |f: fn(&str) -> bool| rerail_gpu::ukl::target::SHIPPED.iter().copied().filter(|n| f(n)).collect();
+                        Some(match g {
+                            "metal" => of(|n| n.starts_with("apple")),
+                            "cuda" => of(|n| n.starts_with("sm_") || n.starts_with("compute_")),
+                            "amd" => of(|n| n.starts_with("gfx")),
+                            "all" if cfg!(target_os = "macos") => of(|n| n.starts_with("apple")),
+                            "all" => of(|n| !n.starts_with("apple")),
+                            _ => return None,
+                        })
+                    };
+                    let names: Vec<&str> = list.split(',').filter(|n| !n.is_empty()).flat_map(|n| group(n).unwrap_or_else(|| vec![n])).collect();
+                    names.iter().map(|n| rerail_gpu::ukl::Target::named(n).ok_or_else(|| format!("--targets: {n} is no target (rerail_ukl::Target::named)"))).collect::<Result<_, _>>()?
+                }
+            };
+            if !targets.is_empty() {
+                rerail_gpu::kernels::ship_for(dir, targets.clone())?;
+            }
             // The device layer's forms: each fixed kernel's entries as its compile looked them up (in the store,
             // or shipped already), by their own names under the backend's directory. Metal's device layer keeps
             // none (its archives are below).
@@ -1970,19 +2086,32 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
                 shipped += 1;
             }
             out += &format!("{shipped} device-layer kernels shipped into {}\n", dir.display());
+            let (counts, failed) = rerail_gpu::kernels::shipped_counts();
+            for (target, made, there) in &counts {
+                out += &format!("{target:>16}: {made} programs compiled ahead of time, {there} shipped already\n");
+            }
+            // The engine's Metal kernels (`rerail_accel_gpu::gpu::kernels`): their archives are a Metal device's, and their
+            // manifest a Metal run's. Without one (`RERAIL_GPU=cpu`, a build machine without a GPU), the device layer's
+            // programs above are what ships for Metal's tiers.
             #[cfg(target_os = "macos")]
-            {
-                use rerail_accel::gpu::kernels as k;
+            if rerail_gpu::device::backend() != "Metal" {
+                out += "the engine's Metal kernels (accel): no Metal device, not shipped\n";
+            } else {
+                use rerail_accel_gpu::gpu::kernels as k;
                 let from = match args.iter().position(|a| a == "--from") {
                     Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
                     None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
                 };
-                for line in k::ship(dir, &from, args.iter().any(|a| a == "--air"))? {
+                for line in k::ship(dir, &from, args.iter().any(|a| a == "--air"), &targets)? {
                     out += &line;
                     out += "\n";
                 }
             }
             out += &format!("shipped into {} in {:.2} s\n", dir.display(), started.elapsed().as_secs_f64());
+            // A target a program did not compile for is a failed build: the release ships no part of a target.
+            if !failed.is_empty() {
+                return Err(format!("{out}{} programs did not compile for their targets:\n{}", failed.len(), failed.join("\n")));
+            }
             Ok(out)
         }
         Some("prune") => {
@@ -1993,7 +2122,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             out += &format!("{} device-layer kernels removed\n", store::prune(mb.unwrap_or_else(store::max_bytes)));
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 out += &format!("{} archives removed\n", k::prune(mb.unwrap_or_else(k::max_bytes)));
             }
             Ok(out)
@@ -2131,7 +2260,7 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
     use crate::code_rule_dsl::language::GrammarDialect;
     let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
-    // A name escaped, so each kind and field is one line of four cells: C's and Go's tokens hold a newline and a NUL.
+    // A name escaped, so each kind and field is one line of cells: C's and Go's tokens hold a newline and a NUL.
     let escaped = |name: &str| {
         let mut s = String::with_capacity(name.len());
         for c in name.chars() {
@@ -2155,14 +2284,16 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
         }
         tags += 1;
         // Each kind's public symbol: the id a node of its name and kind has (`ts_node_symbol`). A grammar's symbols of
-        // one name and kind share one; an own parser's kinds are their own.
+        // one name and kind share one; an own parser's kinds are their own. Then the id its name looks up as a named
+        // kind: a supertype's, by which a parser names its classes (C#'s `type` token is 24, its supertype 294).
         let grammar = lang.kinds().grammar();
         for id in 0..lang.kind_count() {
             let id = id as u16;
             if let Some(name) = lang.kind_name(id) {
                 let named = lang.kinds().kind_is_named(id);
                 let public = grammar.map_or(id, |g| g.id_for_node_kind(name, named));
-                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\n", escaped(name), u8::from(named)));
+                let as_named = grammar.map_or(id, |g| g.id_for_node_kind(name, true));
+                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\t{as_named}\n", escaped(name), u8::from(named)));
             }
         }
         for id in 1..=lang.kinds().field_count() {
@@ -2239,7 +2370,7 @@ fn tape_files(root: &Path) -> Vec<(std::path::PathBuf, crate::code_rule_dsl::lan
 /// `code-counts <root>... --out <counts.tsv>`: how often each code of each language's format 16 table is a node's,
 /// over every file under the roots the engine parses (as `capture-tapes` walks them): `tag<TAB>number<TAB>count`, the
 /// number the shipped table's, and a `nodes` line per language. The lab's `tape16 table --counts` numbers a
-/// language's codes by it (most frequent first); what a table holds is the grammar's alone (decision 0626).
+/// language's codes by it (most frequent first); what a table holds is the grammar's alone (decision 0631).
 fn code_counts_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::tape_tag;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage};
@@ -2775,5 +2906,108 @@ subject(s) :- git_source_commit(r, c), git_subject(r, c, s).
             "--revision".into(), commit, "--analysis-scope".into(), "review".into()], &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap();
         let facts = super::super::logic::plan::output::Outputs::open(&output).unwrap();
         assert_eq!(facts.rows("subject")[0].get(0).text(), Some("message without a tree"));
+    }
+}
+
+/// The launch refuses a run whose store's folder group or world may write or search (`launch_checks`), and takes one
+/// of the user's alone. Its own process under nextest: the environment it sets is its own.
+#[cfg(all(test, unix))]
+mod launch_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_shared_store_folder_refuses_the_launch() {
+        let dir = std::env::temp_dir().join(format!("rerail-launch-{}", std::process::id()));
+        crate::content_store::prepare_cache_directory(&dir).unwrap();
+        // SAFETY: this test's process alone reads its environment (nextest runs each test in a process of its own).
+        unsafe {
+            std::env::set_var("RERAIL_TAPE_CACHE", dir.join("store.sqlite"));
+            std::env::set_var("RERAIL_COSTS", "off");
+            std::env::set_var("RERAIL_IMAGE_STORE", "project");
+        }
+        super::launch_checks().unwrap();
+        for bad in [0o755, 0o770, 0o711, 0o702] {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(bad)).unwrap();
+            let e = super::launch_checks().unwrap_err();
+            assert!(e.contains("refusing to launch") && e.contains("group or world"), "mode {bad:o}: {e}");
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        super::launch_checks().unwrap();
+    }
+}
+
+/// The command's frame (t33 K4, `reuse::command`): a `logic` command whose rule files, and their directory's listing,
+/// are as the last run of it found them takes its run's frame without reading a rule text; an edited rule file, or one
+/// added to the directory, runs it again. Each run's outputs are a cold run's.
+#[cfg(test)]
+mod command_frame_tests {
+    use super::*;
+
+    const PROGRAM: &str = r#"
+.decl named(t: symbol)
+named(t) :- kind(a, "identifier"), text(a, t), contains("o", t).
+.output named
+"#;
+
+    struct Command {
+        dir: std::path::PathBuf,
+        runs: usize,
+    }
+
+    impl Command {
+        /// A run of `logic <rules> <src> <out>` over the store `store`: its report, and `named`'s rows.
+        fn run(&mut self, store: &str) -> (String, Vec<String>) {
+            self.runs += 1;
+            let out = self.dir.join(format!("out{}", self.runs));
+            crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join(store)));
+            let args: Vec<String> = ["logic", "rules", "src"].iter().map(|a| if *a == "logic" { (*a).to_owned() } else { self.dir.join(a).display().to_string() }).chain([out.display().to_string()]).collect();
+            let text = cli_in(&args, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap();
+            let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "named").unwrap_or_default().into_iter().map(|r| r.join(",")).collect();
+            rows.sort();
+            (text, rows)
+        }
+    }
+
+    impl Drop for Command {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    const TAKEN: &str = "the command's frame";
+
+    #[test]
+    fn an_unchanged_command_is_answered_by_its_frame_and_a_rule_edit_or_new_rule_runs_it() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("command-frame");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("rules")).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("rules/a.rerail"), PROGRAM).unwrap();
+        std::fs::write(dir.join("src/a.py"), "def foo(x):\n    return x\n").unwrap();
+        std::fs::write(dir.join("src/b.py"), "def solo(z):\n    return bar\n").unwrap();
+        let mut c = Command { dir, runs: 0 };
+        let (cold, rows) = c.run("kept.sqlite");
+        assert!(!cold.contains(TAKEN), "a cold run has no frame: {cold}");
+        assert!(!rows.is_empty(), "the program finds names: {cold}");
+        let (warm, warm_rows) = c.run("kept.sqlite");
+        assert!(warm.contains(TAKEN), "an unchanged command takes its frame: {warm}");
+        assert_eq!(warm_rows, rows, "the frame's outputs are the cold run's");
+        // A rule file edited: its text differs, so its run does.
+        std::fs::write(c.dir.join("rules/a.rerail"), PROGRAM.replace("contains(\"o\", t)", "contains(\"a\", t)")).unwrap();
+        let (edited, edited_rows) = c.run("kept.sqlite");
+        assert!(!edited.contains(TAKEN), "an edited rule file runs the command: {edited}");
+        assert_eq!(edited_rows, c.run("fresh-1.sqlite").1, "the edited run's outputs are a cold run's");
+        let (again, again_rows) = c.run("kept.sqlite");
+        assert!(again.contains(TAKEN), "the run after the edit takes the edit's frame: {again}");
+        assert_eq!(again_rows, edited_rows);
+        // A rule file added to the directory: the command runs more programs.
+        std::fs::write(c.dir.join("rules/b.rerail"), PROGRAM.replace("named", "other").replace("contains(\"o\", t)", "contains(\"z\", t)")).unwrap();
+        let (added, added_rows) = c.run("kept.sqlite");
+        assert!(!added.contains(TAKEN), "a rule file added runs the command: {added}");
+        assert!(added.starts_with("2 programs"), "both programs run: {added}");
+        assert_eq!(added_rows, c.run("fresh-2.sqlite").1, "the run's outputs are a cold run's");
+        let (last, _) = c.run("kept.sqlite");
+        assert!(last.contains(TAKEN) && last.starts_with("2 programs"), "the frame keeps the programs' count: {last}");
     }
 }

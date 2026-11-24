@@ -1075,7 +1075,7 @@ mod tests {
         let lang = crate::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
         let number: Vec<u32> = crate::f16::numbers(&lang, &d.table).unwrap();
         for z in [false, true] {
-            let mut w = crate::f16::write_from_with_presence(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, z).unwrap().tape;
+            let mut w = crate::f16::write_from_present(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, z).unwrap();
             let (tape, presence) = (match &w { Written::F16(t) => t.as_bytes().to_vec(), Written::F16Z(t) => t.as_bytes().to_vec() }, w.presence_bytes().unwrap().to_vec());
             assert!(w.aux_bytes().is_none());
             let aux = build(&d, &d.source, 7, &sample::codes(), Sections::ALL).unwrap();
@@ -1109,7 +1109,7 @@ mod tests {
         let lang = crate::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
         let number: Vec<u32> = crate::f16::numbers(&lang, &d.table).unwrap();
         let named_r = sample::renumbered(&sample::codes(), &number);
-        let mut w = crate::f16::write_from_with_presence(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, false).unwrap().tape;
+        let mut w = crate::f16::write_from_present(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, false).unwrap();
         let crate::f16::Written::F16(t) = &w else { panic!("format 16") };
         let aux = build(&t.reader(&lang).unwrap(), &d.source, 7, &named_r, Sections::ALL).unwrap();
         w.lay_aux(&aux).unwrap();

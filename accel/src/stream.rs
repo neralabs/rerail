@@ -25,6 +25,9 @@
 //!
 //! The jobs may borrow what outlives the stream ([`Executor::stream`] runs it as a scope), and a job that panics is an
 //! error to its waiter.
+//!
+//! `RERAIL_STREAM_AT_SUBMIT=1` (a test aid) runs each job on its caller as it is submitted: the schedule in which every
+//! job has ended before its caller goes on, as when the workers claim each at once and the caller is slow.
 
 use crate::exec::{Executor, help_once, on_pool, threads, cores_slowdown};
 use crate::lanes::Lane;
@@ -34,6 +37,11 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 type Slot<R> = Arc<Mutex<Option<std::thread::Result<R>>>>;
+
+/// `RERAIL_STREAM_AT_SUBMIT` (the module's note): a setting of the run (`rerail_context::setting`).
+fn at_submit() -> bool {
+    rerail_context::setting(|| std::env::var_os("RERAIL_STREAM_AT_SUBMIT").is_some())
+}
 
 thread_local! {
     /// Stream jobs running on this thread now (a waiter or a helper may run one inside another's wait).
@@ -149,7 +157,10 @@ impl<'s> Stream<'s, '_> {
         });
         let ticket = st.board.queue(Lane::Cpu, vec![Item { form: st.name, units: 0.0, estimate, host: estimate }]);
         st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, rank, job, ticket, run: rerail_context::job_run() });
-        self.start_workers();
+        match at_submit().then(|| st.claim(Some(id), true)).flatten() {
+            Some(j) => st.run(j, true),
+            None => self.start_workers(),
+        }
         Handle { id, slot }
     }
 

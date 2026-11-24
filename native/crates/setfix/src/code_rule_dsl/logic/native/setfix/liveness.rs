@@ -22,6 +22,7 @@ impl Step {
                 b,
                 ka,
                 kb,
+                ..
             } => key(whole) || a.is_none() && key(ka) || b.is_none() && key(kb),
             Step::Eq { a, b }
             | Step::Ne { a, b }
@@ -126,6 +127,7 @@ pub(super) fn sums(steps: &[Step], head: &[Term]) -> Vec<Edit> {
                 b,
                 ka,
                 kb,
+                ..
             } => {
                 read(whole);
                 if a.is_none() {

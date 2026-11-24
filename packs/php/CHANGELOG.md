@@ -10,7 +10,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `phpcs-generic-php-backtick-operator` runs again with Rerail 0.2.0, which skips the previous version's: it now matches the backtick shell command as a whole instead of its closing backtick. It reports the same commands.
+- `phpcs-generic-php-backtick-operator` runs again with Rerail 0.2.1, which skips the previous version's: it now matches the backtick shell command as a whole instead of its closing backtick. It reports the same commands.
 
 ## 0.1.7 (2026-11-17)
 

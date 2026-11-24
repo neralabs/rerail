@@ -1,17 +1,17 @@
 # Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).
 # programs	probe	gap	programs by pack
 739	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	python-main 462, lib 72, python 50, data-layer 30, javascript 30, rerail 27, typescript 18, next 8, django 6, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
-469	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 17, rerail 13, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, django 1, php 1, rule-syntax 1
+469	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 16, rerail 13, rust 4, next 3, react 3, django 2, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
 98	function @replace_all/3	not on the device: no computed term	lib 33, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, sql 1, vue 1
 98	functor @replace_all/3	not on the device: no computed term	lib 33, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, sql 1, vue 1
-96	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	lib 27, data-layer 25, python-main 13, python 11, django 3, next 3, rust 3, sql 3, rerail 2, vue 2, engine 1, node 1, react 1, typescript 1
+96	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	lib 26, data-layer 25, python-main 13, python 11, django 4, next 3, rust 3, sql 3, rerail 2, vue 2, engine 1, node 1, react 1, typescript 1
 64	aggregate min bounded by >	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, rust 2, javascript 1, node 1, rule-syntax 1
 64	aggregate min bounded by >=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, rust 2, javascript 1, node 1, rule-syntax 1
 61	aggregate max bounded by <	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
 61	aggregate max bounded by <=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
 37	function @to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
-31	aggregate join	not on the device: no string join	lib 10, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
+32	aggregate join	not on the device: refused: a string join not ordered by one number column has no device form	lib 11, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
 19	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18, lib 1
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1
 11	shipped functor @trim/1	not on the device: no computed term	data-layer (engine) 10, lib 1
@@ -20,7 +20,6 @@
 10	shipped functor @instr/2	not on the device: no computed term	data-layer (engine) 9, lib 1
 9	function @rx_extract/3	not on the device: no computed term	data-layer (engine) 8, lib 1
 8	function @count_matches/2	not on the device: no computed term	lib 4, data-layer 2, python 2
-8	function @pkg_up/2	not on the device: no computed term	lib 4, engine 2, django 1, typing 1
 7	arithmetic of floats	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
 7	function @to_float/1	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
 7	shipped functor @length/1	not on the device: no computed term	data-layer (engine) 7
@@ -34,10 +33,10 @@
 6	function @semver_subset/2	not on the device: no computed term	node 5, lib 1
 6	functor @rx_replace/3	not on the device: no computed term	data-layer (engine) 5, lib 1
 4	function @join/2	not on the device: no computed term	lib 4
+4	function @sha256/1	not on the device: no computed term	lib 3, data-layer 1
 4	shipped functor @cast_int/1	not on the device: no computed term	data-layer (engine) 4
 3	function @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
 3	function @json_str/1	not on the device: no computed term	lib 2, data-layer 1
-3	function @sha256/1	not on the device: no computed term	lib 2, data-layer 1
 3	functor @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
 3	functor @json_str/1	not on the device: no computed term	lib 2, data-layer 1
 2	function @convert/3	not on the device: no computed term	python-main 1, vue 1

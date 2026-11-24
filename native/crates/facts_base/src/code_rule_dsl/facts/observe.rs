@@ -43,7 +43,7 @@ pub fn observe_root(store: &(impl Graph + ?Sized), scope: &str, new: HashKey) ->
 }
 
 /// One push: observe the new root, then recompute every derivation the rebound names dirty.
-pub(crate) fn push_root(
+pub fn push_root(
     store: &(impl Graph + ?Sized),
     scope: &str,
     new: HashKey,

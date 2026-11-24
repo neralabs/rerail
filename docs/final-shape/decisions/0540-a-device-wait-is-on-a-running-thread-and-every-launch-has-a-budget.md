@@ -1,11 +1,16 @@
 # 0540. A device wait is on a thread that is running, and every persistent launch has a budget
 
-Status: decided (2026-11-20), by the user: "It sounds like we need a better solution for device-side enqueuing than
-busy waits. What can we do? can we make the kernels discover their order based on an atomic counter and do the work
-in those? Can we make a thread which wants to spin instead cooperatively take on part of the work it's waiting for?",
-then "please do 2 and 3 first": 2, the 16z cache's waits; 3, the persistent grid's and a budget for each launch.
-Amends `view::cache` (decision 0353 step 4b): "a miss waits for no thread" becomes a bounded wait for a writer.
-Follows 0524 point 5 (a wait is a turn of its function's one loop).
+Status: partly built (audited 2026-11-23). Left: Step 4 (a 16z block decoded by its SIMD group together); the resident
+interpreter's Metal gate; the preprocessor's own MSL still waits by polling. Decided (2026-11-20), by the user: "It
+sounds like we need a better solution for device-side enqueuing than busy waits. What can we do? can we make the
+kernels discover their order based on an atomic counter and do the work in those? Can we make a thread which wants to
+spin instead cooperatively take on part of the work it's waiting for?", then "please do 2 and 3 first": 2, the 16z
+cache's waits; 3, the persistent grid's and a budget for each launch. Amends `view::cache` (decision 0353 step 4b): "a
+miss waits for no thread" becomes a bounded wait for a writer. Follows 0524 point 5 (a wait is a turn of its
+function's one loop).
+
+> **0653 (2026-11-23):** §3's grid join and the preprocessor's last grid barrier are gone with `ukl/grid.h`; step 6's
+> scheme (continuations on a work queue) runs the preprocessor's setup.
 
 ## Intro
 
@@ -226,7 +231,8 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
          `redundant-beside-complex` sat in it past the test's 240 s on the M3; with the views dropped before the
          write, 1.6 s. `sweeps_needed` (the probe) did the same per marked node, and drops its view too. The whole
          gate then passes on the M3: 492 of 492 clauses equal on 60 fixtures, 41 s, at most 96 launches a clause.
-       - *Open: the resident interpreter's gate* (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter`,
+       - *Was open, fixed 2026-11-22 (below): the resident interpreter's gate*
+         (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter`,
          every walk interpreted). With reruns funded it passed once on the M1 Max (134 s, the host loaded). With the
          same GPU code, its next run there was killed by the farm's GPU watchdog (no one-thread dispatch finished for
          15 s) after the clause `ruff-e711-none-comparison/none-comparison-equal`. On the M3 it finishes in 18 s with
@@ -235,6 +241,23 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
          had a budget, a clause that needed one was refused, and a refused clause is counted, not compared. Not run
          on Metal again until the cause is found in code. Also open on the M3 only: the two step-budget tests
          (`a_misplanned_label_sweep_…`, `on_metal_an_unfinished_pass_goes_to_w_…`): no task runs over its budget.
+       - *Fixed (2026-11-22): the gate, from the code on CPU runs.* On spark2's CPU backend, after 0601, the gate
+         stopped at the launch budget's hard failure on its eighth clause. Two causes in `metal_label_passes::run`:
+         - *The plan priced an interpreted group's rounds at nothing.* It counted every group of micro walks as
+           fused, one dispatch to its fixpoint. On the interpreter (`micro` false: `INTERPRET_ONLY`, or a run whose
+           walks outgrew their frames) no group fuses, and each round launches its levels. So a clause planned at 6
+           launches took 56, one at 20 took 138, and `dtz003` spent its evaluation's 200 with its plan within them.
+           A plan now prices a group by whether its walks run as micro walks (`per_group_of`), and an interpreted
+           run's rounds are capped within its launches as a fused run's are.
+         - *An overrun without a W reran at the rate it ran over.* `replanned` observed a misprediction only on the
+           path that weighs W against running again. A run with no W (`matcher_roots`, this gate) observed none, so
+           each rerun only doubled the budget. `d416`'s walks over a file of 2,158 nodes ran six times and spent the
+           reruns' launches. Every overrun is now observed first, and its program repriced at once: `d416` takes four
+           runs (its rate 6, 48, then 194 steps a node).
+         - *Measured* (one run each): the gate 123 of 123 equal, none refused, on spark2's CPU backend, the mini's Metal
+           (M1) and the M3's. The M3's two step-budget tests pass (12 clauses checked, 1 rerun with twice the budget;
+           2 evaluations given to W). The Metal parity gate is 492 of 492 on spark2's CPU backend and the M3, at most
+           52 launches a clause. The 14 clauses that differed on the M3 do not differ.
        - *Fixed: the wave tests aborted on the M3* on a pool thread's read of the machine's jobs' walls outside any
          run (decision 0442): the label kernels' warm-up, and `threads::spawn_in`, read them before they entered
          their caller's run. They enter first now.

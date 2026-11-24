@@ -63,7 +63,7 @@
         let file = FileInput::new(
             "seed.py".into(),
             "python".into(),
-            Arc::new("value = 1\n".repeat(64)),
+            Arc::new("value = 1\n".repeat(64).into()),
             None,
             None,
             "test",

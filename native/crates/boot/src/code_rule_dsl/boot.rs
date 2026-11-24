@@ -239,6 +239,8 @@ pub fn install_languages(tests: bool) {
     compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
+    // The learned models (the cost model, the join model): rerail-forest's, on the device (crate split 10d-2).
+    rerail_accel_gpu::install();
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
     // Every crate's vectors and maps made with no room take the run's open relation block (decision 0628 §3, §8).
@@ -255,6 +257,7 @@ pub fn install_languages(tests: bool) {
     facts::rows::install_heap_peak(heap_peak, heap_peak_reset);
     // `core.rerail`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
+    facts::core::install_core_node_columns(logic::rr::core_node_columns);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
     // core.rerail's functors whose meaning is W's or a language's.

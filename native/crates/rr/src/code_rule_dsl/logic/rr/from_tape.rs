@@ -53,7 +53,7 @@ impl RrFile {
     /// `src` and its tape, ERRORs and all: a reader that reads a file that may not parse (`rr::message_masked`).
     pub fn parsed(src: impl Into<String>) -> Result<RrFile, Error> {
         use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-        let src = std::sync::Arc::new(src.into());
+        let src = std::sync::Arc::new(crate::code_rule_dsl::tape::Text::from(src.into()));
         let grammar = Grammar::embedded(crate::code_rule_dsl::language::GrammarDialect::Rr).map_err(Error::Syntax)?;
         let image = TapeImage::encode_rr(&grammar, &src, &|| false).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
         // Its own batch's cache: the file is read alone (`TapeDoc::alone`'s).
@@ -302,7 +302,7 @@ fn bad<T>(what: &str) -> Result<T, Error> {
 }
 
 impl<'a> Tape<'a> {
-    /// Code `code`, as the language's table (or format 15's own) holds it: the parser's kind, field and flags.
+    /// Code `code`, as the language's table holds it: the parser's kind, field and flags.
     fn entry(&self, code: u32) -> EntryRef<'_> {
         self.t.table().entry(code)
     }
@@ -353,14 +353,12 @@ impl<'a> Tape<'a> {
         &self.src[start as usize..end as usize]
     }
 
-    /// Its line, from 1: the newlines before its first byte, by the tape's newline index. Format 15 holds none (a run
-    /// that stores it, a measurement's), so there they are counted.
+    /// Its line, from 1: the newlines before its first byte, by the tape's newline index.
     pub fn line(&self, n: u32) -> usize {
         let x = self.start(n);
         1 + match self.t {
             AnyTape::F16(t) => t.line(x as u32) as usize,
             AnyTape::F16Z(t) => t.line(x as u32) as usize,
-            AnyTape::F15(_) => self.src.as_bytes()[..x].iter().filter(|&&b| b == b'\n').count(),
         }
     }
 
@@ -406,7 +404,8 @@ impl<'a> Tape<'a> {
     }
 
     /// Whether a node of the tape is an ERROR: a statement that does not parse. Format 16's writer lists its faults
-    /// in the tape's home as it writes (`TapeImage::faults`), so only those are read; format 15's are looked for.
+    /// in the tape's home as it writes (`TapeImage::faults`), so only those are read; a tape without the list is
+    /// looked through.
     fn has_error(&self, faults: Option<&[u32]>) -> bool {
         match faults {
             Some(faults) => faults.iter().any(|&i| self.kind(i) == ERROR),

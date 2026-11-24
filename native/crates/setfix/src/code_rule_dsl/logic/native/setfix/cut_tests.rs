@@ -5,7 +5,7 @@ use super::*;
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db
@@ -408,6 +408,64 @@ fn a_profiled_walk_times_each_step_and_its_heads_rows() {
         close(&db, "clock").unwrap();
     }
     crate::code_rule_dsl::logic::profile::set(false);
+}
+
+/// t56 step 1: a probe that makes something inside it (a batch's rows, an index, a solve: a span) does not charge
+/// that to its step. The span has the make, and the step has the reads alone. Before, a step was charged everything
+/// its probes ran, and `text`'s 709 ns a row on `all` was mostly the batch made inside its first probe.
+#[test]
+fn a_make_inside_a_probe_is_its_spans_not_the_steps() {
+    use crate::code_rule_dsl::facts::vtab::{Relation, Source};
+    use crate::code_rule_dsl::logic::profile;
+    /// Spins until this thread has taken `seconds` of CPU.
+    fn burn(seconds: f64) {
+        let start = profile::now();
+        let mut x = 0u64;
+        while profile::now() - start < seconds {
+            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+        }
+    }
+    /// A relation whose first probe makes something first, in a span (as `Batch::ensure` makes the batch's rows).
+    struct Slow(Relation, std::sync::OnceLock<()>);
+    impl Slow {
+        fn made(&self) {
+            profile::once(&self.1, "test: made inside a probe", || burn(0.2));
+        }
+    }
+    impl Source for Slow {
+        fn columns(&self) -> Vec<String> { self.0.columns() }
+        fn len(&self) -> usize { self.0.len() }
+        fn estimated_matches(&self, column: usize, batch: bool) -> usize { self.0.estimated_matches(column, batch) }
+        fn indexed(&self, column: usize) -> bool { self.0.indexed(column) }
+        fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            self.made();
+            self.0.lookup(column, values)
+        }
+        fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+            self.made();
+            self.0.lookup_read(column, value, columns, each)
+        }
+        fn value(&self, row: usize, column: usize) -> i64 { self.0.value(row, column) }
+    }
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let mut r = Relation::new(&["c0", "c1"]);
+    for i in 0..300i64 {
+        r.push(&[i, i + 1]);
+    }
+    let db = connection();
+    db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};", (0..300).map(|i| format!("({i}, {})", (i * 7) % 300)).collect::<Vec<_>>().join(", "))).unwrap();
+    hold_source(&db, "slow", Arc::new(Slow(r, std::sync::OnceLock::new())), b"ii".to_vec());
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    let body = format!("pos {input} v0 v1\npos r:{} v1 v2\nhead v0 v2", hex("slow"));
+    open(&db, &format!("name probed\nrel probed_out ii empty\nnowrite\nseed 0 {}", hex(&body))).unwrap();
+    run(&db, "probed", 0).unwrap();
+    let steps: f64 = step_cpu(&db, "probed").unwrap().iter().flatten().sum();
+    close(&db, "probed").unwrap();
+    let made = profile::merged().spans.iter().filter(|(p, _)| p.ends_with("test: made inside a probe")).map(|(_, t)| t.total).sum::<f64>();
+    profile::set(false);
+    assert!(made >= 0.18, "the make is its span's: {made} s");
+    assert!(steps < 0.1, "the steps are charged their reads, not the make inside a probe: {steps} s");
 }
 
 /// A literal that makes two steps (`$k = @sub(@strlen($d), 1)`) is one plan step: its counts are the bindings into

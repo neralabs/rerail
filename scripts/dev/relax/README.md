@@ -291,6 +291,74 @@ slot address made at the first lowering, in the first alternative's blocks, and 
 alternatives read that register undefined: a segfault in safe code (rerail-rr-parser). The
 lowering now makes those addresses at the arm's start (`guard_slots` in `lower.rs`).
 
+### 18. A share's paths are the disk's, to std and to the program's own C calls
+
+A share's mount is a disk folder under another path, but std answered its paths as virtual files:
+a synthetic stat (no device, inode or change time; a folder's time 0), and listings from the
+loader. A program's own C library calls (`libc::open`) found nothing there at all, since the mount
+is on no disk. So the observer (`rerail-observe`) recorded stats from std, then listed the same
+folders with `open` and `getattrlistbulk`, found no folder, and named every entry changed:
+`tests_corpus`'s `the_run_after_a_cold_one_with_tape_values_writes_nothing` failed under Relax
+with "the observer forgot answers its listings named changed" over the 22 paths of
+`docs/rule-syntax/lib`.
+
+Now a path under a folder mount is the disk's:
+
+- **std** (Unix) hands every syscall the disk path (`run_path_with_cstr`, by the loader's
+  `relax_vfs_folder_disk`), so stats, listings and descriptors are the disk's. `canonicalize`
+  gives the mount's path back (`relax_vfs_folder_virtual`), so the paths a program holds, and its
+  stores' keys, stay the mount's. A program's current folder in the mount stays virtual.
+- **The program's own C calls** that take a path (`open`, `openat`, `creat`, `opendir`, `stat`,
+  `lstat`, `fstatat`, `access`, `statfs`, `readlink`, `mkdir`, `unlink`, `rename`, `getattrlist`,
+  `clonefile`, ...) are the run's interposers (`libc_paths.rs`, beside `domain_res.rs`'s), which
+  replace a mount path argument by its disk path.
+
+The fork's `tests/share_folder_disk` checks both under `RELAX_SHARE`. It fails on the earlier
+Relax with "a synthetic stat: ino 0 dev 0 ctime 0". Windows' std keeps a folder mount virtual.
+
+### 19. NEON's narrowing high halves, 48-byte table, `vclzq_s32`/`_u8`, `vdupq_laneq_u32`, 8-lane sums
+
+`rerail-simd` calls `vclzq_s32`, `vclzq_u8`, `vmovn_high_u64` and `vqtbl3q_u8`, and
+`rerail-ukl-rust`'s `join_run.rs` calls `vdupq_laneq_u32`; Relax's std had none of them, so no
+test linking either crate could run. Also added: `vshrn_high_n_u16`, `vpadd_u8` and `vaddv_u8`,
+which generated Rust on another branch calls. The fork's `tests/neon_narrow_count_lane.rs`
+checks each one's lanes against rustc's on an M-series Mac.
+
+### 20. A `pub(in …)` re-export keeps its restricted visibility
+
+The resolver counted a `pub(in path) use` (or `pub(crate) use`) as fully `pub`. A module that
+glob-imported both the re-exporting module and the original then saw the name twice, and the check
+stopped on E0252 (`rerail-sessions-base`'s `translate`). An import now records its restricted
+visibility, and the binding's visibility is that one. The fork's `tests/import_pub_in_other_crate`
+fails with E0252 on the earlier Relax.
+
+### 21. A proc macro's statics belong to the compile that calls it
+
+Relax runs every proc macro of a run in one JIT "macro world", so a macro's statics outlived the
+crate that called it. napi-derive keeps a `static STRUCTS: OnceLock<…>` registry, and the
+engine's test build, compiled after the engine itself, stopped on "Constructor has already been
+defined for struct `PackageFactsReader`". rustc runs each crate's macros in a process of its own.
+Now a macro crate that defines statics keeps each compile's static bytes apart (a compile is the
+calling crate, and its `cfg(test)` build is another), and calls switch them in and out; a macro
+crate without statics is called as before.
+
+Freeing a macro world also left the stdout flush it had registered with `atexit` pointing into
+freed code, so the run took a bus error at exit ("no image"). Retiring a world now drops the exit
+handlers whose code is the world's. The fork's `tests/proc_macro_state_per_crate` checks both: on
+the earlier Relax its second crate's check fails and the run exits on signal 10.
+
+### 22. A guard run once per or-alternative keeps its locals where every alternative reaches
+
+Change 17 lowers a guarded or-arm's guard once per alternative. A local the guard binds to an
+aggregate rvalue took over that rvalue's slot, whose address only the first alternative's blocks
+made; the other alternatives then wrote through an undefined register. `format!` in a guard binds
+its argument array so. In the Bitlex compiler's `brief` (`bitlex_lex_rust.rs`, an
+`And | Or | Xor` arm whose guard formats the expression) that freed a stale pointer, which took a
+live `String`'s block: `rerail-kotlin-parser`'s `rust_is_current` panicked in `decode_at`, aborted
+in a `Vec`'s drop, or wrote garbage node names, from run to run. Such a local now takes the slot
+made at the arm's start. The fork's `tests/guard_or_alternative_rvalue_local` (an edition-2024
+crate) segfaults on the earlier Relax.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

@@ -1,5 +1,7 @@
 # 0342. One block allocator, and blocks with a free list
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-17. Status: decided (user, 2026-11-17); built in steps below.
 
 ## Intro

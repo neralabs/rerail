@@ -1,7 +1,7 @@
 # 0460. A pass starts within its demand: one formula read in its anchor, not a seed label
 
-Status: accepted (2026-11-18; 0406 on q178, renumbered in the roll-up). Supersedes 0459 item 5's seed labels. Follows Q288 (numbered Q187 where it was
-written; the hub's Q187 is another item).
+Status: built (audited 2026-11-23). Accepted (2026-11-18; 0406 on q178, renumbered in the roll-up). Supersedes 0459
+item 5's seed labels. Follows Q288 (numbered Q187 where it was written; the hub's Q187 is another item).
 
 ## Intro
 

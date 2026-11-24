@@ -332,7 +332,7 @@ mod tests {
     fn native_walk_probes_each_bloom_positive_exactly() {
         use super::super::{InRel, Interner, parse_join, run_join_collect, symbols};
         let path = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&path));
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
@@ -361,7 +361,7 @@ mod tests {
     fn walk(spec: &str) -> (Option<(usize, bool)>, Vector<i64>) {
         use super::super::{InRel, Interner, parse_join, run_join_collect, symbols};
         let path = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&path));
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
@@ -412,7 +412,7 @@ mod tests {
             }
         }
         let path = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&path));
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
@@ -495,7 +495,7 @@ mod tests {
     fn a_probe_side_with_kept_keys_is_screened_by_its_own_filter() {
         use super::super::{InRel, Interner, parse_join, run_join_collect, symbols};
         let path = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&path));
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         let db = rusqlite::Connection::open(&path).unwrap();
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);

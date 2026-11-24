@@ -697,6 +697,9 @@ struct Stage1Text {
     ret: String,
 }
 
+/// A row's read of its token's word (`RowArm::word`): `word_at` in its place where the word table is made.
+const WORD_READ: &str = "word(&src[s..=l])";
+
 struct RowArm {
     row: usize,
     /// Its first bytes, and those after its first it may hold.
@@ -712,6 +715,12 @@ struct RowArm {
     /// A row whose regions resume a string's (decision 0600): in place of its record, its last
     /// the open record's, and the loop on past it.
     resume: Option<String>,
+    /// Whether a word may be its token: a grammar token's whose first byte may be its first and the rest its tail's.
+    /// Only such a row reads its token's word, as the lean lexer reads only a word run's.
+    word: bool,
+    /// Whether it reads a region with `open K` (`Region::open`): its record, where `open_bad` is set, `K`'s, with no
+    /// word and no marks.
+    open: bool,
 }
 
 /// `dispatch`'s choices, by the first byte's group: the region opened, and the row.
@@ -789,6 +798,17 @@ impl Ctx {
 
     fn at(&self, o: i64) -> [bool; 256] {
         usize::try_from(o + 4).ok().and_then(|i| self.0.get(i)).copied().unwrap_or([true; 256])
+    }
+
+    /// Its bytes as bits, offset by offset: a memo's key.
+    fn key(&self) -> [u64; 36] {
+        let mut k = [0u64; 36];
+        for (o, set) in self.0.iter().enumerate() {
+            for (i, &b) in set.iter().enumerate() {
+                k[o * 4 + i / 64] |= u64::from(b) << (i % 64);
+            }
+        }
+        k
     }
 
     /// Its byte's set narrowed to `b`'s.
@@ -1077,6 +1097,10 @@ struct Gen<'a> {
     ends: Option<Vec<End>>,
     /// The fills shown to hold only in a body's bytes (`fill_kept`), by their key.
     fill_proofs: std::cell::RefCell<HashMap<String, bool>>,
+    /// `in_region_of`'s values, by the mask's key, the region, its part and the bytes about it: a
+    /// mask's parts and the shifts' values at each part are asked again and again, so without
+    /// it the walk grows as the parts' count to the depth of the shifts.
+    region_values: std::cell::RefCell<HashMap<(String, Option<usize>, u8, [u64; 36]), Option<Expr>>>,
     opener_at: [[bool; 256]; 4],
     /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
     start_checks: Vec<(String, Expr, [bool; 256])>,
@@ -2271,6 +2295,8 @@ impl Gen<'_> {
             let xg = if matches!(xg, Expr::Empty) { None } else { Some(self.val(&xg)?) };
             let start0 = if prev { Expr::Call("prev".into(), vec![Arg::E(x0.clone())]) } else { x0.clone() };
             self.fills.push(LoopFill { name: name.clone(), key, shown: show(e), prev, x, xg, eg, within: None, rows: codes, info, start0, stop0: e0.clone() });
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
         }
         Ok(())
     }
@@ -2347,6 +2373,8 @@ impl Gen<'_> {
             codes.push((*row, g_l.code(), Known::No.code()));
         }
         self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, within: Some(j), rows: codes, info, start0: (**y).clone(), stop0: Expr::Empty });
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         Ok(true)
     }
 
@@ -2593,6 +2621,17 @@ impl Gen<'_> {
     /// `in_region` where the byte is one of `ctx` (the bytes the rest of a `&` holds at): a mask
     /// that holds at none of them is none there.
     fn in_region_of(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
+        let key = (format!("{e:?}"), k, part, ctx.key());
+        if let Some(v) = self.region_values.borrow().get(&key) {
+            return v.clone();
+        }
+        let v = self.in_region_once(e, k, part, ctx, memo);
+        self.region_values.borrow_mut().insert(key, v.clone());
+        v
+    }
+
+    /// `in_region_of`, worked out.
+    fn in_region_once(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
         let all = || Expr::Not(Box::new(Expr::Empty));
         let opens = self.opens.as_ref()?;
         // A region's start is its opener's first byte.
@@ -3042,6 +3081,8 @@ impl Gen<'_> {
         }
         self.opener_at = opener_at;
         self.ends = Some(ends);
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         Ok(())
     }
 
@@ -4034,6 +4075,8 @@ impl Gen<'_> {
         let Some(x) = self.of_code(e) else { return Ok(false) };
         if !self.regional.contains("code_l") {
             self.regional.insert("code_l".to_owned());
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
             self.names.insert("code_l".to_owned(), "code_l".to_owned());
         }
         let before = std::mem::take(&mut self.body);
@@ -4363,6 +4406,8 @@ impl Gen<'_> {
     fn regions(&mut self, rg: &::bitlex::syntax::Regions) -> Result<(), String> {
         let ks = &rg.kinds;
         self.kinds = ks.clone();
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         self.hidden = rg.hidden.clone();
         let mut opens = Vec::new();
         let mut closers = Vec::new();
@@ -4382,6 +4427,8 @@ impl Gen<'_> {
                 v.push((r.kind.clone(), opens[k].clone(), after));
             }
             self.opens = Some(v);
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
         }
         // One region whose closer is its opener, one byte, nothing else (a JSON string): its bytes are the parity of
         // the openers up to each (simdjson's `prefix_xor`), in stage 1, and so is every mask made of it.
@@ -4479,6 +4526,8 @@ impl Gen<'_> {
                 self.regional.insert(e.clone());
             }
         }
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         Ok(())
     }
 
@@ -4642,7 +4691,7 @@ impl Gen<'_> {
             let kept: Vec<&str> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.as_str()).collect();
             let _ = write!(
                 out,
-                "/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    // Stage 1: the records, and whether an escape holds.\n    let Stage1 {{ {}starts, count, refused }} = stage1_best(buf, n);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n",
+                "/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    // Stage 1: the records, and whether an escape holds.\n    let Stage1 {{ {}starts, count, refused }} = stage1_best(buf, n);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n",
                 kept.iter().map(|k| format!("{k}, ")).collect::<String>()
             );
             out.push_str(&used_helpers(&out));
@@ -4680,6 +4729,8 @@ impl Gen<'_> {
                 }
                 self.class(name, &set);
                 self.class_bytes.insert(name.clone(), set);
+                // What `in_region_of` read has changed.
+                self.region_values.get_mut().clear();
             }
         }
         let mut skip: Option<Expr> = None;
@@ -4698,6 +4749,8 @@ impl Gen<'_> {
                 // A mask not made of the regions: stage 1's.
                 Stmt::Mask(name, e) if !self.regional(e) => {
                     self.defs.insert(name.clone(), e.clone());
+                    // What `in_region_of` read has changed.
+                    self.region_values.get_mut().clear();
                     let id = match e {
                         Expr::Name(_) => self.node(e)?,
                         _ => {
@@ -4715,6 +4768,8 @@ impl Gen<'_> {
                 }
                 Stmt::Mask(name, e) => {
                     self.defs.insert(name.clone(), e.clone());
+                    // What `in_region_of` read has changed.
+                    self.region_values.get_mut().clear();
                     let _ = writeln!(self.body, "    // mask {name} = {}", show(e));
                     // Its expression reads the names before it, so it is made before it is a name of the regions.
                     let v = match e {
@@ -4728,6 +4783,8 @@ impl Gen<'_> {
                         }
                     };
                     self.regional.insert(name.clone());
+                    // What `in_region_of` read has changed.
+                    self.region_values.get_mut().clear();
                     self.bind(name, v);
                 }
                 Stmt::Rounds { regions: Some(rg), .. } => self.regions(rg)?,
@@ -5010,11 +5067,17 @@ impl Gen<'_> {
         self.skipped = skipped;
         let mut gaps: Vec<Gap> = Vec::new();
         let mut unplaced_code = String::new();
+        // The same where tier 2 asks the token tests (`tested`, decision 0655 step 6): each `else escape` mark's bit and
+        // why; whether one reads a gap mask besides (then the tests stay the loop's).
+        let mut unplaced_asks: Vec<(u8, String, String)> = Vec::new();
+        let mut mark_names: HashMap<u8, String> = HashMap::new();
+        let mut unplaced_masked = false;
         // Each mark's token tests: the kind, `after`, the test, the mask, the least, the bit.
         let mut tests: Vec<(String, bool, TokenTest, Expr, u32, u8)> = Vec::new();
         for (m, s) in marks.iter().enumerate() {
             let Stmt::Mark { kind, at, unless, unplaced, checks, .. } = s else { continue };
             let Some(bit) = x.mark_bits.get(m).copied().flatten() else { continue };
+            mark_names.insert(bit, kind.clone());
             // A mask made of the regions: kept by the loop where it is known in each place.
             let mut acc = None;
             if !matches!(at, Expr::Empty) && self.regional(at) && self.opens.is_some() {
@@ -5070,6 +5133,8 @@ impl Gen<'_> {
             };
             // `else escape`: a bit of it with no grammar token at or after it refuses, at the file's end.
             if let Some(why) = unplaced {
+                unplaced_asks.push((bit, kind.clone(), why.clone()));
+                unplaced_masked |= mask.is_some();
                 let left = match &mask {
                     Some(m) => format!("pending >> {bit} & 1 == 1 || any_in(&{m}, from, n)"),
                     None => format!("pending >> {bit} & 1 == 1"),
@@ -5121,6 +5186,17 @@ impl Gen<'_> {
         let mut tails: std::collections::BTreeSet<usize> = Default::default();
         // Each row's start, its test build's checks and its code: picked by `dispatch`.
         let mut row_arms: Vec<RowArm> = Vec::new();
+        // The marks' token tests, for tier 2 to ask where it reads a mark (decision 0655 step 6): each one's bit, `after`,
+        // its row's kind and its test; and each row's kind, whether an extra, its extra bits, its first bytes, its kind.
+        let mut test_asks: Vec<(u8, bool, String, String)> = Vec::new();
+        // The token tests a row's own read decides (`run R once D`, its test a count of `D` of one at least, at the
+        // token): the run read its one `D` (`once`), as the lean lexer's number arm knows it read a `.`. Each its row's
+        // kind and the test's bit.
+        let mut once_asks: Vec<(String, u8)> = Vec::new();
+        let mut row_ids: Vec<(String, bool, u32, [bool; 256], String)> = Vec::new();
+        // Each row's rule where a common token's (decision 0655 step 4): a run of one mask (`run M`), a pair (`pairs F`:
+        // the pairs mask `k_F`; `pair M`), one byte (`one`).
+        let mut row_shapes: Vec<Option<String>> = Vec::new();
         for (row, s) in &rows {
             let Stmt::Token { kind, start, last, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
@@ -5147,6 +5223,7 @@ impl Gen<'_> {
                 st = format!("{{{check}\n            {st}\n        }}");
             }
             let k = self.kind_of(*row);
+            let mut open_k: Option<String> = None;
             let (how, l) = match rule {
                 Some(TokenRule::Run(r)) => {
                     // Its run as its kind's assumptions read it (`in KIND`, decision 0607).
@@ -5163,6 +5240,8 @@ impl Gen<'_> {
                     }
                 }
                 Some(TokenRule::RunOnce(r, d)) => (format!("run {} once {}", show(r), show(d)), format!("run_once_last(&{}, &{}, s)", self.val(r)?, self.val(d)?)),
+                // `pair empty`: no byte pairs, the token its first byte.
+                Some(TokenRule::Pair(Expr::Empty)) => ("one byte".to_owned(), "s".to_owned()),
                 Some(TokenRule::Pair(p)) => (format!("pair {}", show(p)), format!("s + usize::from(bit(&{}, s))", self.val(p)?)),
                 Some(TokenRule::Pairs { pairs, .. }) => {
                     let f = format!("pair_{row}");
@@ -5187,6 +5266,33 @@ impl Gen<'_> {
                 }
                 Some(TokenRule::Read(rs)) => {
                     let mut code = String::new();
+                    // `open K`: `K`'s record kind, the kind of a byte it begins with (`KINDS`), or its row's own.
+                    let open_kind = |this: &mut Self, name: &str| -> Result<String, String> {
+                        let Some((r, start)) = rows.iter().find_map(|(r, q)| match q {
+                            Stmt::Token { kind, start, .. } if kind == name => Some((*r, start.clone())),
+                            _ => None,
+                        }) else {
+                            return Err(format!("tier 1 as Rust: `open {name}`, no such token"));
+                        };
+                        if let Some(k) = this.x.row_kinds.get(r).copied().flatten() {
+                            return Ok(format!("{k}"));
+                        }
+                        let at = this.bytes_at(&start, 0, &mut HashMap::new());
+                        let mut ks: Vec<u8> = (0..256).filter(|&i| at[i] && !this.skipped[i]).map(|i| this.x.kinds[i]).collect();
+                        ks.sort_unstable();
+                        ks.dedup();
+                        match ks.as_slice() {
+                            [k] => Ok(format!("{k}")),
+                            _ => Err(format!("tier 1 as Rust: `open {name}`, a token of one record kind, not {}", ks.len())),
+                        }
+                    };
+                    for r in rs.iter().filter(|r| r.open.is_some()) {
+                        let k = open_kind(&mut self, r.open.as_deref().unwrap_or_default())?;
+                        match &open_k {
+                            Some(o) if *o != k => return Err(format!("tier 1 as Rust: `{kind}`'s regions open as two kinds")),
+                            _ => open_k = Some(k),
+                        }
+                    }
                     for (i, r) in rs.iter().enumerate() {
                         // A region with `else E bytes M`: its opener with no closer after it is `E`'s, a token of `M` bytes
                         // (the records' reader's `ReadNone::Bytes`).
@@ -5210,6 +5316,9 @@ impl Gen<'_> {
                             // once every block is made: before, the token is read again.
                             Some((_, m)) if fused => format!("{{\n                    if made < nw {{\n                        wait = (2 * made - b).min(nw);\n                        continue 'pass;\n                    }}\n                    s + {}\n                }}", m.saturating_sub(1)),
                             Some((_, m)) => format!("s + {},", m.saturating_sub(1)),
+                            // `open K`: to the file's end, `K`'s token (the lean lexer's `Bad`), once every block is made.
+                            None if r.open.is_some() && fused => "{\n                    if made < nw {\n                        wait = (2 * made - b).min(nw);\n                        continue 'pass;\n                    }\n                    open_bad = true;\n                    n - 1\n                }".to_owned(),
+                            None if r.open.is_some() => "{\n                    open_bad = true;\n                    n - 1\n                }".to_owned(),
                             None => "{\n                    refused = true;\n                    break;\n                }".to_owned(),
                         };
                         let c = self.val(&r.closers())?;
@@ -5255,6 +5364,13 @@ impl Gen<'_> {
                 },
                 Some(TokenRule::Inside(..)) => unreachable!(),
             };
+            let row_shape: Option<String> = match rule {
+                Some(TokenRule::Run(r)) if l == format!("run_last(&{}, s)", self.val(r)?) => Some(format!("run {}", self.val(r)?)),
+                Some(TokenRule::Pairs { .. }) if l == format!("pair_{row}(src, s)") && pair_rows.iter().any(|(f, _)| *f == format!("pair_{row}")) => Some(format!("pairs pair_{row}")),
+                Some(TokenRule::Pair(p)) if l == format!("s + usize::from(bit(&{}, s))", self.val(p)?) => Some(format!("pair {}", self.val(p)?)),
+                None | Some(TokenRule::Pair(Expr::Empty)) if l == "s" => Some("one".to_owned()),
+                _ => None,
+            };
             // Its kind's extra bits; its marks' token tests.
             let extra = extras.contains(&kind);
             let mut bits = 0u32;
@@ -5281,6 +5397,15 @@ impl Gen<'_> {
                 };
                 let at = if *after { 16 + u32::from(*bit) } else { u32::from(*bit) };
                 let _ = write!(hits, "            if {holds} {{\n                hits |= 1 << {at};\n            }}\n");
+                if let Some(TokenRule::RunOnce(_, d)) = rule
+                    && !*after
+                    && matches!(test, TokenTest::Count)
+                    && *least == 1
+                    && v == self.val(d)?
+                {
+                    once_asks.push((kind.clone(), *bit));
+                }
+                test_asks.push((*bit, *after, kind.clone(), holds));
             }
             // The gap masks the loop keeps, over a token of code's bytes after its start.
             if !matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) {
@@ -5427,7 +5552,15 @@ impl Gen<'_> {
                     let _ = write!(scans, "            // scan {name}: its bits in the token's bytes, all of them code\n            let mut q = s;\n            while let Some(i) = first_in(&{both}, q, l) {{\n                if bit(&{u}, i) {{\n                    c_{name} += 1;\n                    if c_{name} > {max} {{\n                        refused = true;\n                        break;\n                    }}\n                }} else {{\n                    c_{name} = c_{name}.saturating_sub(1);\n                }}\n                q = i + 1;\n            }}\n", name = ident(name));
                 }
             }
-            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
+            let word = !extra && x.words.iter().any(|w| w.first().is_some_and(|&c| sb[usize::from(c)]) && w[1..].iter().all(|&c| tail[usize::from(c)]));
+            // A region open at the file's end (`open K`): `K`'s record, no word, no marks, none of the tests.
+            let (decl, k, extra_is, hits) = match &open_k {
+                Some(o) => ("            let mut open_bad = false;\n".to_owned(), if *o == k { k } else { format!("if open_bad {{ {o} }} else {{ {k} }}") }, if extra { "!open_bad".to_owned() } else { "false".to_owned() }, if hits.is_empty() { hits } else { format!("            if !open_bad {{\n{}            }}\n", indent(&hits, "    ")) }),
+                None => (String::new(), k, extra.to_string(), hits),
+            };
+            row_ids.push((kind.clone(), extra, bits, sb, self.kind_of(*row)));
+            row_shapes.push(row_shape);
+            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -5435,6 +5568,9 @@ impl Gen<'_> {
         // The same where tier 2 asks the one-byte gap marks (`asked`) of the bytes: only the token tests' hits of them.
         let mut gap_asked = String::new();
         let mut asked: Vec<(u8, u8, String, String)> = Vec::new();
+        // The same where tier 2 asks the token tests too (`tested`): no hits; and each gap mark's `unless`, by its bit.
+        let mut gap_tested = String::new();
+        let mut unless_of: HashMap<u8, String> = HashMap::new();
         for g in &gaps {
             let since = match (&g.mask, g.acc) {
                 (_, Some(j)) => format!("tested >> {0} & 1 == 1 || acc_{j}{1}", g.bit, if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") }),
@@ -5442,6 +5578,17 @@ impl Gen<'_> {
                 (None, None) => format!("tested >> {} & 1 == 1", g.bit),
             };
             let unless = if g.unless.is_empty() { String::new() } else { format!(" && !matches!(before, {})", g.unless.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | ")) };
+            if !unless.is_empty() {
+                unless_of.insert(g.bit, unless.clone());
+            }
+            let untested = match (&g.mask, g.acc, g.byte) {
+                (_, _, Some(_)) | (None, None, None) => None,
+                (_, Some(j), None) => Some(format!("acc_{j}{}", if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") })),
+                (Some(m), None, None) => Some(format!("any_in(&{m}, from, s)")),
+            };
+            if let Some(since) = untested {
+                let _ = write!(gap_tested, "                // `{}`\n                if ({since}){unless} {{\n                    marks |= 1 << {};\n                }}\n", g.name, g.bit);
+            }
             let _ = write!(gap_code, "                // `{}`\n                if ({since}){unless} {{\n                    marks |= 1 << {};\n                }}\n", g.name, g.bit);
             match g.byte {
                 Some(b) => {
@@ -5711,10 +5858,14 @@ impl Gen<'_> {
                 return Err(format!("tier 1 as Rust: row {} reads the region opened, which the rows' pick does not make", arm.row));
             }
         }
-        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
+        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no row takes: its group's tests, none of which holds.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
             // The body up to its record's tuple, then the resume.
             Some(r) => format!("{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0)),
-            None => format!("{}{:#x})\n        }}", a.body, a.bits),
+            None if a.open => {
+                let or_none = |x: String| if x == "0" || x == "0x0" { x } else { format!("if open_bad {{ 0 }} else {{ {x} }}") };
+                format!("{}{}, {})\n        }}", a.body, or_none(format!("{:#x}", a.bits)), or_none(if a.word { WORD_READ.to_owned() } else { "0".to_owned() }))
+            }
+            None => format!("{}{:#x}, {})\n        }}", a.body, a.bits, if a.word { WORD_READ } else { "0" }),
         }, "        ").trim_start())).collect::<String>());
         let mut fill_top = String::new();
         let mut fill_end = String::new();
@@ -5911,13 +6062,13 @@ impl Gen<'_> {
         out.push_str("// Generated by native/crates/compiler/src/bitlex_lex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's lexer statements.\n\n");
         if fields.is_empty() {
             // No region tier 2 reads in parts (decision 0619, as 0586's): no mask for it.
-            out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a token, and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
+            out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and\n/// whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
         } else {
             out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.\npub struct Masks {\n");
             for f in &fields {
                 let _ = writeln!(out, "    pub {f}: Vec<u64>,");
             }
-            out.push_str("}\n\n/// Tier 1's records, one a token, the masks tier 2 reads, and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
+            out.push_str("}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; the\n/// masks tier 2 reads; and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
         }
         let kinds: Vec<String> = x.kinds.iter().map(|k| k.to_string()).collect();
         let _ = write!(out, "/// Each byte's record kind, as a token's first byte.\nconst KINDS: [u8; 256] = [{}];\n\n", kinds.join(", "));
@@ -5929,14 +6080,17 @@ impl Gen<'_> {
         out.push_str(&word_fn);
         out.push_str(&pair_fns);
         let s1 = self.stage1_parts(fused);
+        // Stage 1 as a function of its own, for the test build's walk: none where the loop reads the bytes (below).
+        let mut alone_text = String::new();
         if fused {
             let alone = self.stage1_parts(false);
             // Stage 1 as a function of its own too, for the test build's walk alone.
             let test = "#[cfg(feature = \"test-hooks\")]\n";
+            // Its nibble tables are the loop's too.
+            out.push_str(&alone.tables);
             let _ = write!(
-                out,
-                "{}{test}{}{test}{}{}    let mut refused = false;\n    for t in 0..{} {{\n{}    }}\n{}{}",
-                alone.tables,
+                alone_text,
+                "{test}{}{test}{}{}    let mut refused = false;\n    for t in 0..{} {{\n{}    }}\n{}{}",
                 alone.record,
                 alone.header,
                 alone.decls,
@@ -5945,6 +6099,7 @@ impl Gen<'_> {
                 alone.finals,
                 alone.ret.replacen("rerail_simd8::dispatch!", &format!("{test}rerail_simd8::dispatch!"), 1)
             );
+            out.push_str(&alone_text);
         } else {
             out.push_str(&self.stage1());
         }
@@ -5968,21 +6123,76 @@ impl Gen<'_> {
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
         // A token's row and record kind by one load (decision 0623 step 3, the lean lexer's `TOKEN`): its row where its first
         // byte picks one, else the arm of its group's tests. Where the rows' pick makes no region of its own.
-        let token_form = picks.by_byte.as_ref().filter(|_| self.opens.is_none() || picks.fused).and_then(|(by, arms)| {
+        let token_form = picks.by_byte.as_ref().filter(|_| (self.opens.is_none() || picks.fused) && x.words.len() < 255).and_then(|(by, arms)| {
             let head = format!("let row = match group {{\n{}                _ => usize::MAX,\n            }};", tokens(&picks.rows));
             let pick = format!("let row = match pick {{\n                p if usize::from(p) < {} => usize::from(p),\n{}                _ => usize::MAX,\n            }};", row_arms.len(), tokens(arms));
-            let one = "        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).\n        let (pick, kind1) = TOKEN[usize::from(src[s])];\n";
+            let one = "        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).\n        let (pick, kind1, word1) = TOKEN[usize::from(src[s])];\n";
             (open_code.contains(GROUP_LINE) && branches.contains(&head)).then(|| (open_code.replacen(GROUP_LINE, one, 1), branches.replacen(&head, &pick, 1).replace("u32::from(KINDS[usize::from(src[s])])", "u32::from(kind1)"), *by))
         });
         // The one pass with its masks read from the bytes where the loop reads them (decision 0623 step 1), as the lean
         // lexer's window: no stage 1, no mask of the whole file, and so no block to wait for. Where stage 1 tests
         // nothing of its own and every mask the loop reads has that form.
+        // Tier 2 asks the marks' token tests where it reads a mark (decision 0655 step 6), as the lean parser asks what it
+        // reads of a token: where the loop reads the bytes alone, each byte's kind is `TOKEN`'s, an `else escape` reads
+        // no gap mask, and a token's row is known by its first byte (no two grammar rows with tests share one).
+        let asking = token_form.is_some() && readers(x.stmts).is_empty() && !test_asks.is_empty() && !unplaced_masked && {
+            let tested: Vec<&(String, bool, u32, [bool; 256], String)> = row_ids.iter().filter(|r| !r.1 && test_asks.iter().any(|a| a.2 == r.0)).collect();
+            tested.iter().enumerate().all(|(i, a)| tested[i + 1..].iter().all(|b| (0..256).all(|c| !(a.3[c] && b.3[c]))))
+        };
+        // The loop in the lean lexer's shape (decision 0655 steps 4, 5): a block's token starts at once, the common tokens
+        // (a word's run, an operator) before each rare start written by one load, and only the rare ones read by their
+        // rows' `match`. Where tier 2 asks the marks (the loop keeps no gap state) and the loop keeps nothing else between
+        // tokens: the rows each common, their rare starts' bytes, the run's mask, the pairs' rule.
+        let lean_rows: Option<(Vec<bool>, [bool; 256], String, String)> = (|| {
+            let (_, _, by) = token_form.as_ref()?;
+            if !asking || [&token_read, &own_code, &gap_tested, &acc_after].iter().any(|c| !c.trim().is_empty()) || !plain_decl_text.is_empty() || !fw_decl.is_empty() || !span_after.is_empty() || !fields.is_empty() {
+                return None;
+            }
+            // A row of one byte that records no word is common too, where none of its bytes is a word alone: the load's
+            // word is none at them (the lean lexer's `BAD` of one byte, by its `TOKEN`).
+            let wordless = |i: usize| row_shapes[i].as_deref() == Some("one") && (0..256).all(|c| !row_arms[i].first[c] || !x.words.iter().any(|w| w.as_slice() == [c as u8]));
+            let mut common: Vec<bool> = row_arms.iter().enumerate().map(|(i, a)| row_shapes[i].is_some() && !row_ids[i].1 && a.bits == 0 && (a.word || wordless(i)) && !a.open && a.resume.is_none() && a.starts.is_empty()).collect();
+            // One run's mask; one pairs' rule, else one-byte rows.
+            // A word's run holds its first byte.
+            let run = (0..common.len()).find(|&i| common[i] && row_shapes[i].as_deref().is_some_and(|s| s.starts_with("run ")) && (0..256).all(|c| !row_arms[i].first[c] || row_arms[i].tail[c]))?;
+            let w = row_shapes[run].as_deref()?.strip_prefix("run ")?.to_owned();
+            let pair = (0..common.len()).find(|&i| common[i] && row_shapes[i].as_deref().is_some_and(|s| s.starts_with("pair")));
+            for i in 0..common.len() {
+                let s = row_shapes[i].as_deref().unwrap_or_default();
+                if common[i] && ((s.starts_with("run ") && i != run) || (s.starts_with("pair") && Some(i) != pair) || (s == "one" && pair.is_some_and(|p| (0..256).any(|c| row_arms[i].first[c] && row_arms[p].first[c])))) {
+                    common[i] = false;
+                }
+            }
+            // No other common token holds a byte of a word.
+            let word = row_arms[run].tail;
+            for i in 0..common.len() {
+                if common[i] && i != run && (0..256).any(|c| (row_arms[i].first[c] || (row_shapes[i].as_deref() != Some("one") && row_arms[i].tail[c])) && word[c]) {
+                    common[i] = false;
+                }
+            }
+            let pair = match pair.filter(|&i| common[i]) {
+                Some(i) => row_shapes[i].clone()?,
+                None => "none".to_owned(),
+            };
+            let rare: [bool; 256] = std::array::from_fn(|c| !self.skipped[c] && !(usize::from(by[c]) < common.len() && common[usize::from(by[c])]));
+            Some((common, rare, w, pair))
+        })();
+        // In the lean lexer's shape, a test its row's read decides is its record's bit, not tier 2's to ask (`once_hits`),
+        // where tier 2 asks others still.
+        if lean_rows.is_some() && test_asks.iter().any(|a| !once_asks.iter().any(|(k, b)| a.2 == *k && a.0 == *b && !a.1)) {
+            test_asks.retain(|a| !once_asks.iter().any(|(k, b)| a.2 == *k && a.0 == *b && !a.1));
+        } else {
+            once_asks.clear();
+        }
         let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
             let (live, _, codes) = self.stage1_codes();
             let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
+            by.row_firsts = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.first)).collect();
+            let firsts: Vec<[bool; 256]> = row_arms.iter().map(|a| a.first).collect();
+            let ask = if asking { token_tests_fn(&test_asks, &row_ids, &mark_names) } else { None };
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
                 // An operator's last byte by its bit in the block's pairs mask (`k_pairs_K`).
@@ -5992,17 +6202,63 @@ impl Gen<'_> {
                     Some((o, b, _)) => (o, b),
                     None => (&open_code, &branches),
                 };
-                for t in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
-                    let t = bytes::fuse_tests(&by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t))))?);
+                // Where tier 2 asks the token tests (decision 0655 step 6), the loop makes no hits of them.
+                let (branches_t, gap_t) = match &ask {
+                    Some(_) => (&no_hits(branches_t), &gap_tested),
+                    None => (branches_t, if alone { &gap_asked } else { &gap_code }),
+                };
+                // In the lean lexer's shape (decision 0655 steps 4, 5): the rows' `match` reads the rare tokens only (and the
+                // common rows a group's tests pick), each read of the bytes from its first (its windows, its bytes), not of
+                // the block's masks.
+                // Each read of a mask in the lean lexer's form: its micro-lexer, or the bytes in a loop (decision 0655 step 7).
+                by.lean = lean_rows.is_some();
+                let branches_t = &match &lean_rows {
+                    Some((common, ..)) => {
+                        let picked = group_rows(branches_t);
+                        once_hits(&without_rows(branches_t, &(0..common.len()).filter(|&i| common[i] && !picked.contains(&i)).collect::<Vec<_>>()), &once_asks, &mark_names)?
+                    }
+                    None => branches_t.clone(),
+                };
+                for (i, t) in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, gap_t, &acc_after].into_iter().enumerate() {
+                    let t = bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t)));
+                    let t = if i == 1 && lean_rows.is_some() { by.rewrite_windows(&t)? } else { by.rewrite(&t)? };
+                    let t = bytes::fuse_tests(&t, &by.escapes);
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
                     }
                     pieces.push(t);
                 }
+                // A row's region end and its tests in one window loop, where its first bytes start no escape.
+                pieces[1] = bytes::fuse_read(&pieces[1], &firsts, &by.escapes, &by.escape_bytes);
+                // The token tests tier 2 asks: each a test of the windows from the token's first byte.
+                pieces.push(match &ask {
+                    Some(a) => by.rewrite_windows(a)?,
+                    None => String::new(),
+                });
                 let starts = by.starts(&skip)?;
-                let pair_words: String = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).map(|(f, _)| format!("        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};\n")).collect();
+                // The lean lexer's loop: its four masks, the bytes `skip` holds, a word's, a rare token's first, a pair's.
+                pieces.push(match &lean_rows {
+                    Some((_, rare, w, pair)) => {
+                        let space = starts.strip_prefix('!').ok_or("the starts are no mask's complement")?.to_owned();
+                        let kw = by.block_word(w);
+                        let wfn = by.byte_test(w)?;
+                        let kp = match pair.as_str() {
+                            "none" => "0u64".to_owned(),
+                            p if p.starts_with("pairs ") => format!("k_{}", &p[6..]),
+                            p => by.block_word(&p[5..]),
+                        };
+                        by.rare = Some(*rare);
+                        // (Each arm's `,` and the match's `;` on the line they end.)
+                        let branches = indent(&pieces[1], "    ").replace("}\n    ,\n", "},\n").replace("}\n,\n", "},\n");
+                        lean_loop(&space, &kw, &wfn, &kp, &indent(&pieces[0], "    "), branches.trim())
+                    }
+                    None => String::new(),
+                });
+                // The pairs masks the loop reads: of the block's classes, as its other masks (`Bytes::pairs`).
+                by.pairs = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).cloned().collect();
                 let (decl, words) = by.block_words();
-                Ok((pieces, format!("{words}{pair_words}        let mut firsts = {starts}"), decl))
+                let head = if pieces[7].is_empty() { format!("{words}        let mut firsts = {starts}") } else { words };
+                Ok((pieces, head, decl))
             };
             go().ok().map(|(p, st, decl)| (p, st, by.code(), decl))
         } else {
@@ -6027,18 +6283,13 @@ impl Gen<'_> {
             };
             out = out.replacen(LEX_HEAD, &head, 1);
         }
-        // A token's word from one load where the source is padded (decision 0623 step 4).
-        let word_table = from_bytes.as_ref().and_then(|_| bytes::word_table(x.words));
+        // A token's word from one load (decision 0623 step 4): the padded source's, or one that stops at the file's end.
+        let word_table = bytes::word_table(x.words, from_bytes.is_some());
         let (walk, loop_head, pass_end) = if fused && from_bytes.is_some() {
-            // No stage 1: the test build's walk alone, of its own stage 1 over the file.
-            let walk = walk.replacen("    let mut refused = escapes;\n", "", 1);
-            let walk = walk.replacen(
-                " = {\n",
-                &format!(" = {{\n        let Stage1 {{ {}, refused: _ }} = stage1_best(&src[..n]);\n        // Each word's bits inside the file.\n        let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", kept.join(", ")),
-                1,
-            );
+            // No stage 1, and no walk of the regions: the lean lexer's loop holds no checker. The tests hold the records
+            // to the interpreter's (decision 0655 step 3).
             let decl = from_bytes.as_ref().map_or("", |f| f.3.as_str());
-            (walk, format!("{decl}    'tokens: while b < nw {{\n"), "")
+            (String::new(), format!("{decl}    'tokens: while b < nw {{\n"), "")
         } else if fused {
             // Stage 1 to the blocks the token loop waits for (every one, once it waits for the file's end), then its
             // tests once after its last step; a test build's walk; then the token loop, to a token in a block not made.
@@ -6068,21 +6319,79 @@ impl Gen<'_> {
         if !fused {
             out.push_str(&walk);
         }
+        let lean = from_bytes.as_ref().map_or("", |f| f.0[7].as_str());
+        if !lean.is_empty() {
+            let _ = write!(
+                out,
+                "    // The tokens: each block's starts at once, the lean lexer's `lex_blocks`.\n    // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.\n    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);\n    let out = recs.as_mut_ptr();\n    // The comments, apart from the tokens, as the lean lexer's `comments`.\n    let mut extras: Vec<Rec> = Vec::new();\n    let mut len = 0usize;\n    // No token starts before `at`.\n    let mut at = 0usize;\n    let mut b = 0usize;\n{loop_head}        let base = b * 64;\n{words}{lean}        b += 1;\n    }}\n    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n    Lexed {{\n        recs,\n        extras,\n        refused,\n    }}\n}}\n",
+                words = from_bytes.as_ref().map_or(String::new(), |f| f.1.clone()),
+            );
+            out.push_str(LEFT_TO_RIGHT);
+        } else {
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.\n    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);\n    let out = recs.as_mut_ptr();\n    let mut len = 0usize;\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n{block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ {word_read} }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        debug_assert!(len < n && l >= s, \"a token a byte at most\");\n        // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.\n        unsafe {{ out.add(len).write(Rec {{ start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }}) }};\n        len += 1;\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n    Lexed {{\n        recs,\n{masks_init}        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.\n    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);\n    let out = recs.as_mut_ptr();\n    // The comments, apart from the tokens, as the lean lexer's `comments`.\n    let mut extras: Vec<Rec> = Vec::new();\n    let mut len = 0usize;\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n{block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {branches};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        let rec = Rec {{ start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }};\n        if extra {{\n            extras.push(rec);\n        }} else {{\n            debug_assert!(len < n && l >= s, \"a token a byte at most\");\n            // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.\n            unsafe {{ out.add(len).write(rec) }};\n            len += 1;\n        }}\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n    Lexed {{\n        recs,\n        extras,\n{masks_init}        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = plain_decl_text,
             stage = if fused { walk.as_str() } else { "" },
-            word_read = if word_table.is_some() { "word_at(src, s, l + 1 - s)" } else { "word(&src[s..=l])" },
             block_starts = match &from_bytes {
                 Some((_, st, ..)) => st.clone(),
                 None => format!("        let mut firsts = !{skip}[b]"),
             },
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
         );
+        }
+        if from_bytes.is_some() {
+            out = out.replacen(&alone_text, "", 1);
+            out = no_test_checks(&out);
+        }
+        // Where tier 2 asks the token tests: no hits, nothing carried to the next grammar token; an `else escape` asks
+        // them at the file's end.
+        let asked_tests = from_bytes.as_ref().is_some_and(|f| !f.0[6].is_empty());
+        if asked_tests {
+            for (from, to) in [
+                ("    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n", "    // The gap's start, since the grammar token before and since the record before; the grammar token before's word.\n    let (mut from, mut from_record, mut before) = (0usize, 0usize, 0u32);\n"),
+                ("        let mut hits = 0u32;\n", ""),
+                ("        // The token marks: tier 2 tests the rest of each.\n", "        // The token marks: tier 2 asks the rest of each, and the marks' token tests (`tested`).\n"),
+                ("            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n", "            // An extra keeps the marks of its own gap.\n"),
+                ("            pending |= hits & 0xffff | hits >> 16;\n", ""),
+                ("            let tested = pending | hits;\n", ""),
+                ("            pending = hits >> 16;\n", ""),
+                ("    let _ = (from, from_record, before, pending);\n", "    let _ = (from, from_record, before);\n"),
+            ] {
+                out = out.replacen(from, to, 1);
+            }
+            if !unplaced_code.is_empty() {
+                out = out.replacen(&unplaced_code, "", 1);
+                let mut end = String::new();
+                for (bit, kind, why) in &unplaced_asks {
+                    let _ = write!(end, "    // `{kind}`, else escape: {why}\n    if tested(&src[..n], &recs, &extras, len, {bit}) {{\n        refused = true;\n    }}\n");
+                }
+                out = out.replacen("    // SAFETY: `len` records written.\n    unsafe { recs.set_len(len) };\n", &format!("    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n{end}"), 1);
+            }
+            let body = &out[out.find("unsafe fn lex_on<").unwrap_or(0)..];
+            if !body[..body.find("\n}\n").unwrap_or(body.len())].contains("marks |=") {
+                out = out.replacen("let (l, kind, extra, mut marks, word)", "let (l, kind, extra, marks, word)", 1);
+            }
+            // The gap's start and the word before, where nothing in the loop reads them: the lean lexer keeps neither.
+            let kept = [
+                "    // The gap's start, since the grammar token before and since the record before; the grammar token before's word.\n    let (mut from, mut from_record, mut before) = (0usize, 0usize, 0u32);\n",
+                "        // The token marks: tier 2 asks the rest of each, and the marks' token tests (`tested`).\n        if extra {\n            // An extra keeps the marks of its own gap.\n        } else {\n            from = s + 1;\n            before = word;\n        }\n        from_record = s + 1;\n",
+                "    let _ = (from, from_record, before);\n",
+            ];
+            if kept.iter().all(|k| out.contains(k)) {
+                let none = kept.iter().fold(out.clone(), |o, k| o.replacen(k, "", 1));
+                let at = none.find("unsafe fn lex_on<").unwrap_or(0);
+                let body = &none[at..];
+                // Its code, not its comments.
+                let body: String = body[..body.find("\n}\n").unwrap_or(body.len())].lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n").replace("::from(", "");
+                if !["from", "from_record", "before"].iter().any(|v| uses(&body, v)) {
+                    out = none;
+                }
+            }
+        }
         if fused {
-            out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
+            out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
         if let Some((_, _, code, _)) = &from_bytes {
             out.push_str(code);
@@ -6094,41 +6403,121 @@ impl Gen<'_> {
                 let pairs: Vec<String> = two.iter().map(|(a, b)| format!("S::and(S::eq(v, S::splat({a:#04x})), S::eq(w, S::splat({b:#04x})))")).collect();
                 let joined = pairs.iter().skip(1).fold(pairs.first().cloned().unwrap_or_default(), |acc, p| format!("S::or({acc},\n            {p})"));
                 let test = [format!("S::to_bitmask({joined})")];
-                let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
+                // Its own loads only where the block's classes are not made (`Bytes::block_words`).
+                if out.contains(&format!("w_{f}::<S>")) {
+                    let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
+                }
                 // The function the mask replaces, where nothing calls it.
-                if !out.contains(&format!("{f}(src, s)")) {
-                    if let Some(at) = out.find(&format!("`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}(")) {
-                        let start = out[..at].rfind("/// `").unwrap_or(at);
-                        let end = at + out[at..].find("\n}\n\n").map_or(0, |e| e + 4);
-                        out.replace_range(start..end, "");
-                    }
+                if !out.contains(&format!("{f}(src, s)"))
+                    && let Some(at) = out.find(&format!("`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}("))
+                {
+                    let start = out[..at].rfind("/// `").unwrap_or(at);
+                    let end = at + out[at..].find("\n}\n\n").map_or(0, |e| e + 4);
+                    out.replace_range(start..end, "");
                 }
             }
             if let Some((_, _, by)) = &token_form {
-                let row: Vec<String> = (0..256).map(|c| format!("({}, {})", by[c], x.kinds[c])).collect();
-                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the\n/// byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`, none.\nstatic TOKEN: [(u8, u8); 256] = [{}];\n", row_arms.len(), row.join(", "));
+                let one = |c: usize| x.words.iter().position(|w| w.as_slice() == [c as u8]).map_or(0, |i| i + 1);
+                let mut rows: Vec<(u8, u8, u8)> = (0..256).map(|c| (by[c], x.kinds[c], one(c) as u8)).collect();
+                // A pair's entry (`256 + c`, `c` its first byte): its word by the load, as the lean lexer's `TOKEN[c +
+                // 256]`. Where a first byte starts two pairs, the second byte picks (`+ 512`), as lean's `<:`.
+                let mut alt = String::new();
+                if out.contains("/*PAIR_ALT ") {
+                    let pairs: Vec<(u8, u8)> = pair_rows.iter().flat_map(|(_, two)| two.iter().copied()).collect();
+                    let code = |a: u8, b: u8| x.words.iter().position(|w| w.as_slice() == [a, b]).map_or(0, |i| i + 1) as u8;
+                    // The second bytes that pick `+ 512`: the second pair's of each first byte that starts two.
+                    let mut seconds: Vec<u8> = Vec::new();
+                    for &(a, b) in &pairs {
+                        if pairs.iter().take_while(|&&q| q != (a, b)).any(|q| q.0 == a) {
+                            seconds.push(b);
+                        }
+                    }
+                    let picks = |a: u8| pairs.iter().filter(|q| q.0 == a).map(|q| seconds.contains(&q.1)).collect::<Vec<_>>();
+                    let ok = pairs.iter().all(|&(a, _)| {
+                        let p = picks(a);
+                        p.len() <= 2 && (p.len() < 2 || p[0] != p[1])
+                    });
+                    if !ok {
+                        return Err("a first byte's pairs the second byte does not pick apart".into());
+                    }
+                    if !seconds.is_empty() {
+                        rows.resize(1024, (u8::MAX, 0, 0));
+                        let test = if seconds.len() == 1 { format!("src[s + 1] == {}", bytes::lit(seconds[0])) } else { format!("matches!(src[s + 1], {})", seconds.iter().map(|&b| bytes::lit(b)).collect::<Vec<_>>().join(" | ")) };
+                        alt = format!(" | ({{p}} & usize::from({test})) << 9");
+                    } else {
+                        rows.resize(512, (u8::MAX, 0, 0));
+                    }
+                    for &(a, b) in &pairs {
+                        let at = 256 + a as usize + if seconds.contains(&b) { 512 } else { 0 };
+                        rows[at] = (by[a as usize], x.kinds[a as usize], code(a, b));
+                    }
+                }
+                // A pair row's arm: its word by the load too, its pair `l - s`.
+                if out.contains("/*PAIR_ALT ") {
+                    let mut from = 0;
+                    while let Some(at) = out[from..].find(" >> (s - base) & 1) as usize;\n").map(|a| a + from) {
+                        from = at + 1;
+                        let line = out[..at].rfind('\n').map_or(0, |l| l + 1);
+                        if !out[line..at].trim_start().starts_with("let l = s + (") {
+                            continue;
+                        }
+                        let end = out[at..].find(" => {").map_or(out.len(), |e| e + at);
+                        if let Some(w) = out[at..end].find(WORD_READ).map(|w| w + at) {
+                            out.replace_range(w..w + WORD_READ.len(), "u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8/*PAIR_ALT (l - s)*/].2)");
+                        }
+                    }
+                }
+                while let Some(at) = out.find("/*PAIR_ALT ") {
+                    let end = at + out[at..].find("*/").ok_or("an unclosed pair mark")? + 2;
+                    let v = out[at + "/*PAIR_ALT ".len()..end - 2].to_owned();
+                    out.replace_range(at..end, &alt.replace("{p}", &v));
+                }
+                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's\n/// `TOKEN`): the token's row where the byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`,\n/// none.{}\nstatic TOKEN: [(u8, u8, u8); {}] = {};\n", row_arms.len(), if rows.len() > 256 { " A pair's at `256 + c`, `c` its first byte, its code its word's (`+ 512` where its second byte picks it)." } else { "" }, rows.len(), table_block(&rows));
                 // The tables the one load replaces, where nothing else reads them.
                 if !out.contains("DISPATCH_LO[") {
                     out = out.replacen(&tables, "", 1);
                 }
-                if !out.contains("KINDS[") {
-                    if let Some(at) = out.find("/// Each byte's record kind, as a token's first byte.\nconst KINDS") {
-                        let end = at + out[at..].find("];\n\n").map_or(0, |e| e + 4);
-                        out.replace_range(at..end, "");
-                    }
+                if !out.contains("KINDS[")
+                    && let Some(at) = out.find("/// Each byte's record kind, as a token's first byte.\nconst KINDS")
+                {
+                    let end = at + out[at..].find("];\n\n").map_or(0, |e| e + 4);
+                    out.replace_range(at..end, "");
                 }
             }
         }
         if let Some(t) = &word_table {
+            // A token of one byte's word by `TOKEN`'s load, as the lean lexer's operators; a longer one's by the table.
+            let read = if out.contains("let (pick, kind1, word1) = TOKEN[") { "if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) }" } else { "word_at(src, s, l + 1 - s)" };
+            out = out.replace(WORD_READ, read);
             out = out.replacen(&word_fn, "", 1);
             out.push_str(t);
+        }
+        if !out.contains("u32::from(word1)") {
+            out = out.replace("let (pick, kind1, word1) = TOKEN[", "let (pick, kind1, _) = TOKEN[");
         }
         // The gap marks tier 2 asks of the bytes (decision 0623 step 5): where the loop reads the bytes, and no region is
         // read in parts (a piece's start is not its record's).
         let alone = from_bytes.is_some() && readers(x.stmts).is_empty();
         let (asked, unread) = if alone { (asked, unread) } else { (Vec::new(), 0) };
         let bits = asked.iter().fold(0u32, |m, a| m | 1 << a.0);
-        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only\n/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | unread);
+        // The marks whose token tests tier 2 asks (decision 0655 step 6).
+        let tested_bits = match &from_bytes {
+            Some((p, ..)) if !p[6].is_empty() => test_asks.iter().fold(0u32, |m, a| m | 1 << a.0),
+            _ => 0,
+        };
+        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose\n/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | tested_bits | unread);
+        match &from_bytes {
+            Some((p, ..)) if !p[6].is_empty() => {
+                let unless: String = (0..32u8).filter(|b| tested_bits >> b & 1 == 1).filter_map(|b| unless_of.get(&b).map(|u| format!("        {b} => {},\n", u.trim_start_matches(" && ")))).collect();
+                let unless = if unless.is_empty() { String::new() } else { format!("    // A mark's `unless after`: none at a token after those words.\n    let before = j.checked_sub(1).map_or(0, |p| recs[p].code >> 8 & 0xff);\n    let unless = match b {{\n{unless}        _ => true,\n    }};\n    if !unless {{\n        return false;\n    }}\n") };
+                let _ = write!(
+                    out,
+                    "\n/// The marks whose token tests tier 2 asks where a rule reads the mark (decision 0655 step 6), as the lean parser asks\n/// what it reads of a token where it reads it: no record holds them.\npub const TESTED: u32 = {tested_bits:#x};\n\n/// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else\n/// one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn token_test_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {{\n    let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);\n    let _ = (l, kind);\n{}}}\n\nrerail_simd8::dispatch! {{\n    fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool = token_test_on, on token_test_on_best;\n}}\n\n/// Whether a token test of mark `b` holds at grammar token `j` of `recs` (`recs.len()`: the file's end), as tier 1's loop\n/// carried them: `j`'s own, or one of the token after it at the grammar token before or at an extra (`xs`) between.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {{\n    let n = src.len();\n{unless}    let p = j.checked_sub(1);\n    let (from, to) = (p.map_or(0, |p| recs[p].start + 1), recs.get(j).map_or(u32::MAX, |r| r.start));\n    let k = xs.partition_point(|x| x.start < from);\n    (j < recs.len() && token_test(src, n, &recs[j], false, b, false))\n        || p.is_some_and(|p| token_test(src, n, &recs[p], false, b, true))\n        || xs[k..].iter().take_while(|x| x.start < to).any(|x| token_test(src, n, x, true, b, false) || token_test(src, n, x, true, b, true))\n}}\n",
+                    p[6]
+                );
+            }
+            _ => out.push_str("\n/// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.\npub const TESTED: u32 = 0;\n\n/// Whether a token test of mark `b` holds at grammar token `j`: never asked.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {\n    let _ = (src, recs, xs, j, b);\n    false\n}\n"),
+        }
         let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");
@@ -6145,6 +6534,20 @@ impl Gen<'_> {
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {
             out.push_str(TOGGLE);
+        }
+        // Only what the loop calls, where it reads the bytes (decision 0655 step 3).
+        if from_bytes.is_some() {
+            out = drop_uncalled_fns(&out);
+        }
+        // One `match` of the rare tokens' first byte, a group's tests its guards (decision 0655 step 7).
+        if let Some(o) = one_pick(&out) {
+            out = tidy_lean(&o);
+        }
+        // The lean lexer's micro-lexers, where a read is one (decision 0655 step 7).
+        if out.contains("micro::")
+            && let Some(at) = out.find("\n\n")
+        {
+            out.insert_str(at + 2, "use rerail_simd8::micro;\n\n");
         }
         Ok(out)
     }
@@ -7059,7 +7462,827 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new() }.source()
+}
+
+/// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the
+/// comment that says why, and a block left holding its value alone (`if {\n    E\n} {`) as that value (`if E {`), as
+/// the lean lexer holds no checker.
+/// The lean lexer's `left_to_right`: a run of pairs' first bytes (`=>=`) read left to right.
+const LEFT_TO_RIGHT: &str = "\n/// A run of pairs' first bytes (`=>=`), read left to right, as the lean lexer's: one whose first byte is the second of\n/// the one before is none.\n#[inline(always)]\nfn left_to_right(mut m: u64) -> u64 {\n    if m & m << 1 == 0 {\n        return m;\n    }\n    let mut kept = 0;\n    while m != 0 {\n        let i = m.trailing_zeros();\n        kept |= 1 << i;\n        m &= !(1 << i);\n        if i < 63 {\n            m &= !(1 << (i + 1));\n        }\n    }\n    kept\n}\n";
+
+/// The token loop's block in the lean lexer's shape (decision 0655 steps 4, 5): the block's starts at once from its four
+/// masks (`space`, the word's `kw`, `k_rare`, the pairs' `kp`); the run of common tokens before each rare start, each
+/// by one load (`TOKEN`) and its word's run or its pair; each rare token by the rows' `match` (`open`, `branches`).
+fn lean_loop(space: &str, kw: &str, wfn: &str, kp: &str, open: &str, branches: &str) -> String {
+    format!(
+        "        // The block's starts from its byte `k` on, as the lean lexer's: a byte `skip` does not hold, not a word's after its
+        // first, not a pair's second (the pairs read left to right); and byte `k`, the byte after a token.
+        let lv = valid(n, base as isize);
+        let starts_from = |k: usize| {{
+            let s = !{space} & lv & (!({kw} & {kw} << 1) & (!0u64 << k) | 1u64 << k);
+            s & !(left_to_right({kp} & s) << 1)
+        }};
+        let mut starts = starts_from(at.saturating_sub(base));
+        loop {{
+            let rare = starts & k_rare;
+            // The run: the starts before the next rare one, each a word or an operator, by one load (the lean lexer's
+            // `TOKEN`): its kind, its word alone; a word's last byte by its run, an operator's by its pair.
+            let mut run = starts & (rare.wrapping_sub(1) & !rare);
+            while run != 0 {{
+                let q = run.trailing_zeros() as usize;
+                run &= run - 1;
+                let s = base + q;
+                let (l, kind1, word) = if {kw} >> q & 1 == 1 {{
+                    // A word: its run, its code by its hash (a word of one byte's by the load).
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s])];
+                    let l = word_last(n, base, {kw}, s, {wfn});
+                    (l, kind1, if l == s {{ u32::from(word1) }} else {{ word_at(src, s, l + 1 - s) }})
+                }} else {{
+                    // An operator, one byte or a pair (`p`): its kind and code by one load, as the lean lexer's
+                    // `TOKEN[c + 256]`.
+                    let p = ({kp} >> q & 1) as usize;
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s]) | p << 8/*PAIR_ALT p*/];
+                    (s + p, kind1, u32::from(word1))
+                }};
+                debug_assert!(len < n, \"a token a byte at most\");
+                // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+                unsafe {{ out.add(len).write(Rec {{ start: s as u32, last: l as u32, code: u32::from(kind1) | word << 8 }}) }};
+                len += 1;
+                if l + 1 >= base + 64 {{
+                    // A token on past the block: the blocks from its end.
+                    at = l + 1;
+                    b = at / 64;
+                    continue 'tokens;
+                }}
+            }}
+            if rare == 0 {{
+                break;
+            }}
+            // A rare token, read by its row: the lean lexer's `match` on its first byte.
+            let s = base + rare.trailing_zeros() as usize;
+{open}            let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = {branches};
+            let rec = Rec {{ start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }};
+            if extra {{
+                extras.push(rec);
+            }} else {{
+                debug_assert!(len < n && l >= s, \"a token a byte at most\");
+                // SAFETY: as the run's.
+                unsafe {{ out.add(len).write(rec) }};
+                len += 1;
+            }}
+            at = l + 1;
+            if at >= base + 64 {{
+                b = at / 64;
+                continue 'tokens;
+            }}
+            starts = starts_from(at - base);
+        }}
+"
+    )
+}
+
+/// The rows a group's tests pick, in the rows' `match` (`branches`): each a line of its own in the picks' arms.
+fn group_rows(branches: &str) -> Vec<usize> {
+    let picks = branches.split("match row {").next().unwrap_or_default();
+    picks.lines().filter_map(|l| l.trim().parse::<usize>().ok()).collect()
+}
+
+/// The rows' `match` in the lean lexer's shape (decision 0655 step 7): one `match` on the first byte's pick (`TOKEN`), a
+/// group's tests its arms' guards, and a region's openers (`//` or `/*`, one, two or three backticks) an arm each, as lean's
+/// `b'/' if d == b'/'`: no row picked by the tests, then the same tests again in the row. None where the loop's text is
+/// not of that form.
+fn one_pick(out: &str) -> Option<String> {
+    let head = "let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = {\n";
+    let at = out.find(head)?;
+    let open = at + head.len() - 2;
+    let close = closing_brace(out, open)?;
+    let lines: Vec<&str> = out[open + 2..close].lines().collect();
+    let pad = |l: &str| l.len() - l.trim_start().len();
+    // The picks: `p if usize::from(p) < K => usize::from(p),`, each group's `G => if C {` chain of rows, `_ => usize::MAX`.
+    let p0 = lines.iter().position(|l| l.trim() == "let row = match pick {")?;
+    let ind = pad(lines[p0]);
+    let p1 = (p0 + 1..lines.len()).find(|&i| pad(lines[i]) == ind && lines[i].trim() == "};")?;
+    let mut direct = 0usize;
+    // Each group: its comment, its byte's pick, its rows by their tests, its row where none holds.
+    let mut groups: Vec<(String, String, Vec<(String, usize)>, Option<usize>)> = Vec::new();
+    let mut comment = String::new();
+    let mut i = p0 + 1;
+    while i < p1 {
+        let t = lines[i].trim();
+        if let Some(k) = t.strip_prefix("p if usize::from(p) < ").and_then(|r| r.strip_suffix(" => usize::from(p),")) {
+            direct = k.parse().ok()?;
+        } else if t.starts_with("//") {
+            comment = lines[i].to_owned();
+        } else if t == "_ => usize::MAX," {
+        } else if let Some((g, c)) = t.split_once(" => if ") {
+            let mut chain = Vec::new();
+            let mut cond = c.strip_suffix(" {")?.to_owned();
+            let dflt;
+            i += 1;
+            loop {
+                let v = lines[i].trim();
+                let row = if v == "usize::MAX" { None } else { Some(v.parse::<usize>().ok()?) };
+                let next = lines.get(i + 1)?.trim();
+                match next.strip_prefix("} else if ").and_then(|c| c.strip_suffix(" {")) {
+                    Some(c2) => {
+                        chain.push((std::mem::replace(&mut cond, c2.to_owned()), row?));
+                        i += 2;
+                    }
+                    None if next == "} else {" => {
+                        chain.push((cond.clone(), row?));
+                        dflt = if lines.get(i + 2)?.trim() == "usize::MAX" { None } else { Some(lines[i + 2].trim().parse().ok()?) };
+                        if lines.get(i + 3)?.trim() != "}," {
+                            return None;
+                        }
+                        i += 3;
+                        break;
+                    }
+                    None => return None,
+                }
+            }
+            groups.push((std::mem::take(&mut comment), g.to_owned(), chain, dflt));
+        } else {
+            return None;
+        }
+        i += 1;
+    }
+    // The rows: `K => {` … `},` and the last, `_ => {` … `}`.
+    let m0 = (p1 + 1..lines.len()).find(|&i| lines[i].trim() == "match row {")?;
+    let ai = pad(lines[m0]) + 4;
+    let mut rows: Vec<(usize, Vec<&str>)> = Vec::new();
+    let mut none_arm: Vec<&str> = Vec::new();
+    let mut i = m0 + 1;
+    while i < lines.len() && pad(lines[i]) >= ai {
+        let t = lines[i].trim();
+        let end = (i + 1..lines.len()).find(|&j| pad(lines[j]) == ai && lines[j].trim_start().starts_with('}'))?;
+        if let Some(k) = t.strip_suffix(" => {").and_then(|k| k.parse::<usize>().ok()) {
+            rows.push((k, lines[i + 1..end].to_vec()));
+        } else if t == "_ => {" {
+            none_arm = lines[i + 1..end].to_vec();
+        } else {
+            return None;
+        }
+        i = end + 1;
+    }
+    // Which rows a byte picks itself (`TOKEN`'s first of each byte under `direct`).
+    // Its entries, `(pick, kind, word)`, in its `const` block (`table_block`).
+    let table = out.split_once("static TOKEN: [(u8, u8, u8); ")?.1.split_once("\n};")?.0;
+    let picked: Vec<usize> = table.split('(').skip(1).filter_map(|e| e.split_once(", ")?.0.parse::<usize>().ok()).filter(|&p| p < direct).collect();
+    let norm = |c: &str| c.chars().filter(|c| !matches!(c, '(' | ')' | ' ')).collect::<String>();
+    let body = |r: usize| rows.iter().find(|x| x.0 == r).map(|x| x.1.clone());
+    let arm = |pat: &str, b: &[&str]| format!("{}{pat} => {{\n{}\n{}}},\n", " ".repeat(ai), b.join("\n"), " ".repeat(ai));
+    let mut arms = String::new();
+    let mut split: Vec<usize> = Vec::new();
+    for (comment, g, chain, _) in &groups {
+        if !comment.is_empty() {
+            let _ = writeln!(arms, "{}{}", " ".repeat(ai), comment.trim());
+        }
+        for (c, r) in chain {
+            let b = body(*r)?;
+            // A region read by its openers' alternatives, which are the group's test: an arm each.
+            let l0 = b.iter().position(|l| l.trim().starts_with("let l = if ") && l.trim().ends_with(" {"));
+            let alts = l0.and_then(|l0| {
+                let li = pad(b[l0]);
+                let l1 = (l0 + 1..b.len()).find(|&j| pad(b[j]) == li && b[j].trim() == "};")?;
+                let mut alts: Vec<(String, Vec<&str>)> = vec![(b[l0].trim().strip_prefix("let l = if ")?.strip_suffix(" {")?.to_owned(), Vec::new())];
+                for &l in &b[l0 + 1..l1] {
+                    if pad(l) == li && l.trim().starts_with("} else") {
+                        let c = l.trim().strip_prefix("} else if ").and_then(|c| c.strip_suffix(" {")).unwrap_or("").to_owned();
+                        alts.push((c, Vec::new()));
+                    } else if !l.trim().is_empty() {
+                        alts.last_mut()?.1.push(l);
+                    }
+                }
+                // The last, none of the openers: a refusal, as the byte no token begins with.
+                let last = alts.pop()?;
+                (last.0.is_empty() && last.1.iter().any(|l| l.contains("refused = true"))).then_some(())?;
+                (norm(c) == norm(&alts.iter().map(|a| a.0.as_str()).collect::<Vec<_>>().join("||"))).then_some((l0, l1, li, alts))
+            });
+            match alts {
+                Some((l0, l1, li, alts)) => {
+                    for (a, x) in alts {
+                        let mut nb: Vec<String> = b[..l0].iter().map(|l| (*l).to_owned()).collect();
+                        let mut first = true;
+                        for (k, l) in x.iter().enumerate() {
+                            let rel = pad(l).saturating_sub(li + 4);
+                            let mut s = if first { format!("{}let l = {}", " ".repeat(li), l.trim_start()) } else { format!("{}{}", " ".repeat(li + rel), l.trim_start()) };
+                            if k + 1 == x.len() {
+                                s.push(';');
+                            }
+                            first = false;
+                            nb.push(s);
+                        }
+                        nb.extend(b[l1 + 1..].iter().map(|l| (*l).to_owned()));
+                        let mut text = nb.join("\n");
+                        // A read that is never open: no `open_bad`, its record as when closed.
+                        if !text.contains("open_bad = true") {
+                            text = text.lines().filter(|l| l.trim() != "let mut open_bad = false;").collect::<Vec<_>>().join("\n").replace("!open_bad", "true");
+                            while let Some(k) = text.find("if open_bad { 0 } else { ") {
+                                let from = k + "if open_bad { 0 } else { ".len();
+                                let Some(e) = text[from..].find(" }").map(|e| from + e) else { break };
+                                let x = text[from..e].to_owned();
+                                text.replace_range(k..e + 2, &x);
+                            }
+                        }
+                        let _ = write!(arms, "{}{g} if {a} => {{\n{text}\n{}}},\n", " ".repeat(ai), " ".repeat(ai));
+                    }
+                    split.push(*r);
+                }
+                None => arms.push_str(&arm(&format!("{g} if {c}"), &b)),
+            }
+        }
+    }
+    // Each row: the bytes that pick it, and the groups it is the row of where none of their tests holds.
+    for (r, b) in &rows {
+        let mut pats: Vec<String> = Vec::new();
+        if picked.contains(r) {
+            pats.push(r.to_string());
+        }
+        pats.extend(groups.iter().filter(|g| g.3 == Some(*r)).map(|g| g.1.clone()));
+        if pats.is_empty() {
+            if !split.contains(r) && !groups.iter().any(|g| g.2.iter().any(|x| x.1 == *r)) {
+                return None;
+            }
+            continue;
+        }
+        arms.push_str(&arm(&pats.join(" | "), b));
+    }
+    let _ = write!(arms, "{}_ => {{\n{}\n{}}}\n", " ".repeat(ai), none_arm.join("\n"), " ".repeat(ai));
+    let new = format!("let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = match pick {{\n{arms}{}}}", " ".repeat(ind));
+    // Each arm a level out: the `match row` arms were one deeper than the one `match`'s.
+    let new = dedent_from(&new, 4);
+    Some(format!("{}{}{}", &out[..at], new, &out[close + 1..]))
+}
+
+/// The rare tokens' `match` with each group's tests as the lean lexer's arms make them (decision 0655 step 12): no
+/// test of the first byte where the pick says it (one byte picks the group: `b'/' if d == b'/'`), and a group whose arms
+/// are runs of one byte (one backtick, two, three) one arm that counts the run once and reads by its count (lean's
+/// `k`), its arm of none the `match`'s. Else `out`.
+fn counted_runs(out: &str) -> String {
+    let Some(h) = out.find(" = match pick {\n") else { return out.to_owned() };
+    let open = h + " = match pick {".len() - 1;
+    let Some(close) = closing_brace(out, open) else { return out.to_owned() };
+    let body = &out[open + 2..close];
+    // The `}` line's indent, after the arms.
+    let tail = &body[body.rfind('\n').map_or(0, |k| k + 1)..];
+    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+    let pad = |l: &str| l.len() - l.trim_start().len();
+    let Some(ai) = lines.first().map(|l| pad(l)) else { return out.to_owned() };
+    let table = out.split_once("static TOKEN: [(u8, u8, u8); ").and_then(|x| x.1.split_once("\n};")).map_or("", |x| x.0);
+    // The one byte that picks group `g`, where one does (`t[b'/' as usize] = (13, `, no range of them).
+    let alone = |g: &str| {
+        let tag = format!(" = ({g}, ");
+        let hits: Vec<&str> = table.lines().filter(|l| l.contains(&tag)).collect();
+        match hits.as_slice() {
+            [l] => l.trim().strip_prefix("t[").and_then(|r| r.split_once(" as usize]")).map(|x| x.0.to_owned()).filter(|b| b.starts_with("b'") || b.starts_with("0x")),
+            _ => None,
+        }
+    };
+    let norm = |c: &str| c.chars().filter(|c| !matches!(c, '(' | ')' | ' ')).collect::<String>();
+    let strip = |mut c: String| {
+        while c.starts_with('(') && c.ends_with(')') && closing_paren(&c, 0) == Some(c.len() - 1) {
+            c = c[1..c.len() - 1].to_owned();
+        }
+        c
+    };
+    // The arms: their header lines, bodies and the comments before them.
+    struct Arm {
+        head: Vec<String>,
+        pick: String,
+        cond: Option<String>,
+        body: Vec<String>,
+    }
+    let mut arms: Vec<Arm> = Vec::new();
+    let mut lead: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        if pad(l) == ai && l.trim().starts_with("//") {
+            lead.push(l.to_owned());
+            i += 1;
+            continue;
+        }
+        let t = l.trim();
+        let Some(h) = t.strip_suffix(" => {").filter(|_| pad(l) == ai) else { return out.to_owned() };
+        let Some(end) = (i + 1..lines.len()).find(|&j| pad(lines[j]) == ai && lines[j].trim_start().starts_with('}')) else { return out.to_owned() };
+        let (pick, cond) = match h.split_once(" if ") {
+            Some((p, c)) => (p.to_owned(), Some(c.to_owned())),
+            None => (h.to_owned(), None),
+        };
+        arms.push(Arm { head: std::mem::take(&mut lead), pick, cond, body: lines[i + 1..end].iter().map(|x| (*x).to_owned()).collect() });
+        i = end + 1;
+    }
+    // No test of the byte the pick says.
+    for a in &mut arms {
+        let (Some(c), Some(b)) = (a.cond.clone(), alone(&a.pick)) else { continue };
+        let first = format!("(src[s] == {b}) && ");
+        if let Some(k) = c.find(&first) {
+            let mut c2 = c.clone();
+            c2.replace_range(k..k + first.len(), "");
+            a.cond = Some(strip(c2));
+        }
+    }
+    // A group of runs: arm `j` of its arms in order a run of `j` of byte `B` from the first.
+    let run_of = |b: &str, j: usize| {
+        let at = |i: usize| format!("s+{i}<n&&src[s+{i}]=={b}");
+        let mut v: Vec<String> = (1..j).map(at).collect();
+        v.push(format!("!{}", at(j)));
+        v.join("&&")
+    };
+    let mut text = String::new();
+    let none_body = arms.iter().find(|a| a.pick == "_").map(|a| a.body.clone());
+    let mut k = 0;
+    while k < arms.len() {
+        let g = arms[k].pick.clone();
+        let group: Vec<usize> = (k..arms.len()).take_while(|&x| arms[x].pick == g && arms[x].cond.is_some()).collect();
+        let byte = alone(&g);
+        let counted = group.len() >= 2 && byte.as_ref().is_some_and(|b| group.iter().enumerate().all(|(j, &x)| arms[x].cond.as_deref().map(norm) == Some(run_of(b, j + 1))));
+        let sp = " ".repeat(ai);
+        match (counted, &none_body) {
+            (true, Some(none)) => {
+                let b = byte.unwrap_or_default();
+                for l in &arms[k].head {
+                    let _ = writeln!(text, "{l}");
+                }
+                let _ = write!(text, "{sp}{g} => {{\n{sp}    // Its run of {b} counted once, read by its count (the lean lexer's `k`).\n{sp}    let mut k = 1;\n{sp}    while s + k < n && src[s + k] == {b} {{\n{sp}        k += 1;\n{sp}    }}\n{sp}    match k {{\n");
+                for (j, &x) in group.iter().enumerate() {
+                    let _ = writeln!(text, "{sp}        {} => {{", j + 1);
+                    for l in &arms[x].body {
+                        let _ = writeln!(text, "{}{l}", if l.is_empty() { "" } else { "        " });
+                    }
+                    let _ = writeln!(text, "{sp}        }}");
+                }
+                let _ = writeln!(text, "{sp}        _ => {{\n{sp}            // A run no arm reads.");
+                for l in none.iter().filter(|l| !l.trim().starts_with("//")) {
+                    let _ = writeln!(text, "{}{l}", if l.is_empty() { "" } else { "        " });
+                }
+                let _ = writeln!(text, "{sp}        }}\n{sp}    }}\n{sp}}},");
+                k += group.len();
+            }
+            _ => {
+                let a = &arms[k];
+                for l in &a.head {
+                    let _ = writeln!(text, "{l}");
+                }
+                let head = match &a.cond {
+                    Some(c) => format!("{} if {c}", a.pick),
+                    None => a.pick.clone(),
+                };
+                let _ = writeln!(text, "{sp}{head} => {{");
+                for l in &a.body {
+                    let _ = writeln!(text, "{l}");
+                }
+                let _ = writeln!(text, "{sp}}}{}", if a.pick == "_" { "" } else { "," });
+                k += 1;
+            }
+        }
+    }
+    format!("{}{}{}{}", &out[..open + 2], text, tail, &out[close..])
+}
+
+/// The lean form's reads as hand-written Rust: a count that asks for one as `any`, a test of every byte as `all`, a
+/// region's end found as it is (`c`, not `c + 0`), the run's next byte by its index (`l + 1`).
+fn tidy_lean(out: &str) -> String {
+    let out = counted_runs(out);
+    let mut out = out.replace("Some(c) => c + 0,", "Some(c) => c,").replace("(l + 1) >= 1 && ", "").replace("(l + 1) - 1", "l").replace("(l + 1) + 1", "l + 2").replace("((l + 1) < n", "(l + 1 < n");
+    // `(a..=b).filter(|&i| P).count() as u32 } >= 1`: whether one holds.
+    while let Some(e) = out.find(".count() as u32 } >= 1") {
+        let Some(f) = out[..e].rfind(".filter(|&i| ") else { break };
+        out.replace_range(e..e + ".count() as u32 } >= 1".len(), " }");
+        out.replace_range(f..f + ".filter(|&i| ".len(), ".any(|i| ");
+    }
+    // `(a..b).find(|&i| !(P)).is_none()`: whether every byte holds.
+    while let Some(f) = out.find(".find(|&i| !(") {
+        let open = f + ".find(|&i| !".len();
+        let Some(close) = closing_paren(&out, open) else { break };
+        if !out[close + 1..].starts_with(").is_none()") {
+            break;
+        }
+        let p = out[open..=close].to_owned();
+        out.replace_range(f..close + 1 + ").is_none()".len(), &format!(".all(|i| {p})"));
+    }
+    // `(!(P)).then_some(s).is_none()`: whether `P` holds.
+    let mut from = 0;
+    while let Some(f) = out[from..].find("(!(").map(|f| f + from) {
+        from = f + 1;
+        let open = f + 2;
+        let Some(close) = closing_paren(&out, open) else { break };
+        if out[close + 1..].starts_with(").then_some(s).is_none()") {
+            let p = out[open..=close].to_owned();
+            out.replace_range(f..close + 1 + ").then_some(s).is_none()".len(), &p);
+        }
+    }
+    // A run of one byte at least from the token's first: always.
+    out = out.replace(" && l + 1 - s >= 1 && ", " && ");
+    // The token's last byte and kind, where the tests read both.
+    if let Some(a) = out.find("    let _ = (l, kind);\n")
+        && let Some(e) = out[a..].find("\n}\n").map(|e| e + a)
+        && out[a..e].contains("kind ==")
+        && out[a..e].contains("..=l)")
+    {
+        out.replace_range(a..a + "    let _ = (l, kind);\n".len(), "");
+    }
+    // A record's marks: none but an extra's own bit, which the extras' list says (decision 0655 step 9). The record is
+    // its kind and word, as the lean lexer's `Tok`, and an extra its span in the list, as its `comments`.
+    out = no_record_marks(&out);
+    if out.contains("code: kind | word << 8 }") && !out.contains("marks << 16") {
+        out = out.replace("its code (its kind, its word and its marks).", "its code (its kind and its word).");
+    }
+    // The token tests read no vector: a plain function, as the lean parser's tests of a token.
+    if let Some(a) = out.find("unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(")
+        && let Some(d) = out[a..].find("\nrerail_simd8::dispatch! {\n    fn token_test(").map(|d| d + a)
+        && let Some(e) = out[d..].find("\n}\n").map(|e| e + d + 3)
+        && !out[a..d].contains("S::")
+        && !out[a..d].contains("<S>")
+    {
+        out.replace_range(d..e, "");
+        out.replace_range(a..a + "unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(".len(), "fn token_test(");
+        out = out.replace("one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nfn token_test(", "one of its own. Its row by its first byte, its kind and whether it is an extra.\nfn token_test(");
+    }
+    out
+}
+
+/// `out` with no marks in the rare tokens' records, where each arm's are none (`0x0`) or, at an extra, the extra's
+/// bit alone (`true, B` or `!open_bad, if open_bad { 0 } else { B }`): the tuple's marks gone, the record its kind and
+/// word, and the token tests' `r.code >> 16 & B == B` (an extra's bit) the `extra` before it. Else `out`.
+fn no_record_marks(out: &str) -> String {
+    const HEAD: &str = "let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = match pick {";
+    let Some(h) = out.find(HEAD) else { return out.to_owned() };
+    let Some(e) = closing_brace(out, h + HEAD.len() - 1) else { return out.to_owned() };
+    let mut bit: Option<String> = None;
+    let mut arms: Vec<(usize, usize, String)> = Vec::new();
+    let from = h + HEAD.len();
+    for (at, _) in out[from..e].match_indices("(l, ") {
+        let at = from + at;
+        // An arm's record, a line of its own; not a binding's pattern (`let (l, once) =`).
+        if !out[..at].rsplit('\n').next().is_some_and(|p| p.chars().all(char::is_whitespace)) {
+            continue;
+        }
+        let Some(close) = closing_paren(out, at) else { return out.to_owned() };
+        // Its five parts, split at its own commas.
+        let inner = &out[at + 1..close];
+        let mut parts = Vec::new();
+        let (mut depth, mut from) = (0i32, 0usize);
+        for (i, ch) in inner.char_indices() {
+            match ch {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(inner[from..i].trim());
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(inner[from..].trim());
+        if parts.len() != 5 {
+            return out.to_owned();
+        }
+        let (extra, marks) = (parts[2], parts[3]);
+        let own = match (extra, marks) {
+            (_, "0x0" | "0") => None,
+            ("true", b) if b.starts_with("0x") => Some(b.to_owned()),
+            ("!open_bad", m) => m.strip_prefix("if open_bad { 0 } else { ").and_then(|r| r.strip_suffix(" }")).map(str::to_owned),
+            _ => return out.to_owned(),
+        };
+        if let Some(b) = own {
+            if bit.as_ref().is_some_and(|x| *x != b) {
+                return out.to_owned();
+            }
+            bit = Some(b);
+        }
+        arms.push((at, close, format!("({}, {}, {}, {})", parts[0], parts[1], parts[2], parts[4])));
+    }
+    let mut s = out.to_owned();
+    for (at, close, t) in arms.into_iter().rev() {
+        s.replace_range(at..=close, &t);
+    }
+    s = s.replace(HEAD, "let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {");
+    s = s.replace("let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };", "let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 };");
+    if let Some(b) = bit {
+        s = s.replace(&format!("extra && r.code >> 16 & {b} == {b} && "), "extra && ");
+    }
+    s
+}
+
+/// The index of the `)` closing the `(` at `open`.
+fn closing_paren(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s[open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The index of the `}` closing the `{` at `open`.
+fn closing_brace(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `s`'s lines after its first, `k` spaces less indented.
+fn dedent_from(s: &str, k: usize) -> String {
+    let mut out = String::new();
+    for (i, l) in s.split_inclusive('\n').enumerate() {
+        let lead = l.len() - l.trim_start_matches(' ').len();
+        out.push_str(if i == 0 { l } else { &l[lead.min(k)..] });
+    }
+    out
+}
+
+/// The rows' `match` (`branches`) without the arms of rows `drop`.
+fn without_rows(branches: &str, drop: &[usize]) -> String {
+    let mut out = branches.to_owned();
+    for i in drop {
+        let Some(at) = out.find("match row {") else { break };
+        let head = format!("\n                {i} => {{\n");
+        let Some(s) = out[at..].find(&head).map(|k| at + k + 1) else { continue };
+        let Some(e) = out[s..].find("\n,\n").map(|k| s + k + 3) else { continue };
+        out.replace_range(s..e, "");
+    }
+    out
+}
+
+/// A byte's test of being in `set`, as a `matches!` of its ranges.
+fn byte_set_test(b: &str, set: &[bool; 256]) -> String {
+    let mut arms = Vec::new();
+    let mut c = 0;
+    while c < 256 {
+        if !set[c] {
+            c += 1;
+            continue;
+        }
+        let lo = c;
+        while c + 1 < 256 && set[c + 1] {
+            c += 1;
+        }
+        arms.push(if lo == c { bytes::lit(lo as u8) } else { format!("{}..={}", bytes::lit(lo as u8), bytes::lit(c as u8)) });
+        c += 1;
+    }
+    match arms.as_slice() {
+        [] => "false".to_owned(),
+        [one] if !one.contains("..=") => format!("({b} == {one})"),
+        _ => format!("matches!({b}, {})", arms.join(" | ")),
+    }
+}
+
+/// `rows` as a `const` block, as the lean lexer builds its tables: a byte's most common entry everywhere, then each run
+/// of bytes of the same entry (a loop where it is longer than one byte), each pair's entry.
+fn table_block(rows: &[(u8, u8, u8)]) -> String {
+    let mut counts: HashMap<(u8, u8, u8), usize> = HashMap::new();
+    for r in &rows[..rows.len().min(256)] {
+        *counts.entry(*r).or_default() += 1;
+    }
+    let dflt = *counts.iter().max_by_key(|&(r, c)| (*c, std::cmp::Reverse(*r))).map(|(r, _)| r).unwrap_or(&(0, 0, 0));
+    let name = |i: usize| match i {
+        0..=255 => format!("{} as usize", bytes::lit(i as u8)),
+        _ => format!("{} + {} as usize", i & !0xff, bytes::lit(i as u8)),
+    };
+    let mut out = format!("{{\n    let mut t = [{dflt:?}; {}];\n", rows.len());
+    let mut i = 0;
+    while i < rows.len() {
+        // A pair's slot no pair has is never read.
+        if rows[i] == dflt || (i >= 256 && rows[i] == (u8::MAX, 0, 0)) {
+            i += 1;
+            continue;
+        }
+        let lo = i;
+        while i + 1 < rows.len() && (i + 1) % 256 != 0 && rows[i + 1] == rows[lo] {
+            i += 1;
+        }
+        if lo == i {
+            let _ = writeln!(out, "    t[{}] = {:?};", name(lo), rows[lo]);
+        } else {
+            let _ = writeln!(out, "    let mut c = {};\n    while c <= {} {{\n        t[c] = {:?};\n        c += 1;\n    }}", name(lo), name(i), rows[lo]);
+        }
+        i += 1;
+    }
+    out.push_str("    t\n}");
+    out
+}
+
+/// The body of the token tests tier 2 asks (`token_test_on`, decision 0655 step 6): a `match` on the mark's bit, each arm
+/// its tests at the rows they are of, each row known by its first byte, its kind and whether it is an extra (its extra
+/// bits). In the whole file's form: the bytes' form rewrites it. None where a test's row is not found.
+fn token_tests_fn(asks: &[(u8, bool, String, String)], rows: &[(String, bool, u32, [bool; 256], String)], names: &HashMap<u8, String>) -> Option<String> {
+    let mut bits: Vec<u8> = asks.iter().map(|a| a.0).collect();
+    bits.sort_unstable();
+    bits.dedup();
+    let mut out = String::from("    match b {\n");
+    for b in bits {
+        // Each row's tests of the mark, `after` or not: one arm, its tests joined.
+        let mut rows_of: Vec<(&String, bool, Vec<&String>)> = Vec::new();
+        for (_, after, kind, holds) in asks.iter().filter(|a| a.0 == b) {
+            match rows_of.iter_mut().find(|r| r.0 == kind && r.1 == *after) {
+                Some(r) => r.2.push(holds),
+                None => rows_of.push((kind, *after, vec![holds])),
+            }
+        }
+        let mut arms = Vec::new();
+        for (kind, after, holds) in rows_of {
+            let (_, extra, xb, first, k) = rows.iter().find(|r| r.0 == *kind)?;
+            let who = if *extra { format!("extra && r.code >> 16 & {xb:#x} == {xb:#x}") } else { format!("!extra && kind == {}", k.replace("u32::from(KINDS[usize::from(src[s])])", "u32::from(TOKEN[usize::from(src[s])].1)")) };
+            let holds = if holds.len() == 1 { holds[0].clone() } else { format!("({})", holds.iter().map(|h| h.as_str()).collect::<Vec<_>>().join(" || ")) };
+            arms.push(format!("({}after && {who} && {} && {holds})", if after { "" } else { "!" }, byte_set_test("src[s]", first)));
+        }
+        let name = names.get(&b).map_or(String::new(), |n| format!("        // `{n}`\n"));
+        let _ = writeln!(out, "{name}        {b} => {},", arms.join("\n            || "));
+    }
+    out.push_str("        _ => false,\n    }\n");
+    Some(out)
+}
+
+/// `code` (the rows' `match`) with no hits of the marks' token tests (`if T { hits |= 1 << B; }`), which tier 2 asks
+/// (decision 0655 step 6), nor a test of an open region left with nothing in it.
+/// The rows' arms with each test its row's read decides (`once_asks`: its row's kind, its mark's bit) its record's bit:
+/// the run read with its one `D` (`run_once_hit`, `once`), and the bit in the record's kind, as the lean lexer's number
+/// arm writes `FLOAT` where it read a `.`. Tier 2 reads the bit from the record (`TESTED` holds it not).
+fn once_hits(code: &str, once_asks: &[(String, u8)], names: &HashMap<u8, String>) -> Result<String, String> {
+    let mut out = code.to_owned();
+    for (kind, bit) in once_asks {
+        let head = format!("// `{kind}`: run ");
+        let at = out.find(&head).ok_or_else(|| format!("`{kind}`'s arm is not its run's"))?;
+        let read = out[at..].find("let l = run_once_last(&").map(|r| r + at).ok_or_else(|| format!("`{kind}`'s arm reads no run once"))?;
+        out.replace_range(read..read + "let l = run_once_last(&".len(), "let (l, once) = run_once_hit(&");
+        let past = read + "let (l, once) = run_once_hit(&".len();
+        let tuple = out[past..].find("(l, ").map(|t| t + past).ok_or_else(|| format!("`{kind}`'s arm has no record"))?;
+        let line = out[..tuple].rfind('\n').map_or(0, |i| i + 1);
+        let pad = out[line..tuple].to_owned();
+        if !pad.chars().all(char::is_whitespace) {
+            return Err(format!("`{kind}`'s record is not a line of its own"));
+        }
+        let k_from = tuple + "(l, ".len();
+        let mut depth = 0i32;
+        let k_len = out[k_from..]
+            .char_indices()
+            .find(|&(_, c)| {
+                depth += i32::from(matches!(c, '(' | '{' | '[')) - i32::from(matches!(c, ')' | '}' | ']'));
+                c == ',' && depth == 0
+            })
+            .map(|(i, _)| i)
+            .ok_or_else(|| format!("`{kind}`'s record has no kind"))?;
+        let k = out[k_from..k_from + k_len].trim().to_owned();
+        let name = names.get(bit).map_or_else(|| format!("mark {bit}"), |n| format!("`{n}`"));
+        out.replace_range(line..k_from + k_len, &format!("{pad}// {name}: the run's one byte read (`once`), its record's bit, as the lean lexer writes its kind.\n{pad}(l, {k} | u32::from(once) << {}", 16 + u32::from(*bit)));
+    }
+    Ok(out)
+}
+
+fn no_hits(code: &str) -> String {
+    let lines: Vec<&str> = code.split_inclusive('\n').collect();
+    let mut keep: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if i + 2 < lines.len() && lines[i].trim_end().ends_with(" {") && lines[i + 1].trim_start().starts_with("hits |= 1 << ") && lines[i + 2].trim() == "}" {
+            i += 3;
+            continue;
+        }
+        keep.push(lines[i]);
+        i += 1;
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < keep.len() {
+        if i + 1 < keep.len() && keep[i].trim() == "if !open_bad {" && keep[i + 1].trim() == "}" {
+            i += 2;
+            continue;
+        }
+        out.push_str(keep[i]);
+        i += 1;
+    }
+    out
+}
+
+fn no_test_checks(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if t == "#[cfg(feature = \"test-hooks\")]" && lines.get(i + 1).is_some_and(|n| n.trim_start().starts_with("assert")) {
+            if kept.last().is_some_and(|l| l.trim_start().starts_with("//") && l.contains("test build")) {
+                kept.pop();
+            }
+            i += 2;
+            continue;
+        }
+        kept.push(lines[i].to_owned());
+        i += 1;
+    }
+    let mut out: Vec<String> = Vec::with_capacity(kept.len());
+    let mut i = 0;
+    while i < kept.len() {
+        if kept[i].ends_with("if {") && i + 2 < kept.len() && kept[i + 2].trim_start() == "} {" {
+            let head = &kept[i][..kept[i].len() - 1];
+            out.push(format!("{head}{} {{", kept[i + 1].trim()));
+            i += 3;
+            continue;
+        }
+        out.push(kept[i].clone());
+        i += 1;
+    }
+    let mut s = out.join("\n");
+    if code.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
+/// `code` with no top-level function that nothing names: its doc and attributes with it, again until none is left, as
+/// the lean lexer holds only what its loop calls.
+fn drop_uncalled_fns(code: &str) -> String {
+    let mut lines: Vec<String> = code.lines().map(str::to_owned).collect();
+    loop {
+        // Each top-level function and one-line `static`: its first line (its doc's), its last line, its name.
+        let mut items: Vec<(usize, usize, String)> = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let l = &lines[i];
+            let name = l.strip_prefix("unsafe fn ").or_else(|| l.strip_prefix("fn ")).map(|r| r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or("").to_owned());
+            let table = l.strip_prefix("static ").filter(|_| l.ends_with(';')).and_then(|r| r.split_once(':')).map(|(n, _)| n.to_owned());
+            if let Some(name) = table {
+                let mut first = i;
+                while first > 0 && lines[first - 1].starts_with("///") {
+                    first -= 1;
+                }
+                items.push((first, i, name));
+                i += 1;
+                continue;
+            }
+            if let Some(name) = name.filter(|n| !n.is_empty()) {
+                let mut first = i;
+                while first > 0 && (lines[first - 1].starts_with("///") || lines[first - 1].starts_with("#[")) {
+                    first -= 1;
+                }
+                let Some(end) = (i..lines.len()).find(|&j| lines[j] == "}") else { break };
+                items.push((first, end, name));
+                i = end + 1;
+                continue;
+            }
+            i += 1;
+        }
+        // A call of the function: its name and `(`, `::<S>(`, or the name given (`= lex_on, on …;`, as `dispatch!` takes
+        // it); a table's name read (`&LO_0,`, `RARE_0.0`). Not in a comment, not a method's (`.any(`), not in its own
+        // body (a variable of the same name is no call, nor is the function calling itself).
+        let named = |n: &str, own: (usize, usize)| {
+            lines
+                .iter()
+                .enumerate()
+                .filter(|&(j, l)| !(own.0..=own.1).contains(&j) && !l.trim_start().starts_with("//"))
+                .map(|(_, l)| {
+                    l.match_indices(n)
+                        .filter(|&(k, _)| {
+                            let before = l[..k].chars().next_back();
+                            !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') && {
+                                let rest = &l[k + n.len()..];
+                                rest.starts_with(['(', ',', ';']) || rest.starts_with("::<") || (n.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_') && !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+                            }
+                        })
+                        .count()
+                })
+                .sum::<usize>()
+        };
+        let gone: Vec<(usize, usize)> = items.iter().filter(|(a, b, n)| named(n, (*a, *b)) == 0).map(|&(a, b, _)| (a, b)).collect();
+        if gone.is_empty() {
+            break;
+        }
+        for &(a, b) in gone.iter().rev() {
+            // The blank line after it too.
+            let b = if lines.get(b + 1).is_some_and(|l| l.is_empty()) { b + 1 } else { b };
+            lines.drain(a..=b);
+        }
+    }
+    // The blank line before a last function gone too.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let mut s = lines.join("\n");
+    if code.ends_with('\n') {
+        s.push('\n');
+    }
+    s
 }
 
 #[cfg(test)]

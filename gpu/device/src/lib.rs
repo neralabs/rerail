@@ -15,6 +15,8 @@
 pub mod compute_kernel;
 #[path = "mldb/block/compute_kernel_grid.rs"]
 pub mod compute_kernel_grid;
+#[path = "mldb/builtin/metal/agx.rs"]
+pub mod agx;
 #[cfg(target_os = "macos")]
 #[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
 pub mod compute_kernel_metal;
@@ -29,7 +31,6 @@ pub mod device;
 pub mod os;
 pub mod rows;
 pub mod store;
-pub mod grid;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///
@@ -123,12 +124,23 @@ pub mod shared {
     /// OpenCL's (`OpenCL.dll`, the ICD loader every GPU driver installs): an Intel GPU, or an AMD one without HIP.
     #[cfg(windows)]
     fn open() -> Option<Shared> {
-        open_cuda().or_else(|| opencl().ok())
+        open_cuda().or_else(|| opencl().ok()).or_else(say_needs)
     }
 
     #[cfg(target_os = "linux")]
     fn open() -> Option<Shared> {
-        open_cuda()
+        open_cuda().or_else(say_needs)
+    }
+
+    /// A process left without a GPU says what the user must install for one, where it found a GPU it could not use
+    /// (decision 0645: no GPU compiler ships with Rerail; `compute_kernel_cuda::needs`). Once a process: the device
+    /// is opened once.
+    #[cfg(not(target_os = "macos"))]
+    fn say_needs() -> Option<Shared> {
+        if let Some(needs) = crate::compute_kernel_cuda::needs() {
+            eprintln!("rerail: GPU support: {needs}");
+        }
+        None
     }
 
     #[cfg(not(target_os = "macos"))]

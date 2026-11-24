@@ -494,7 +494,7 @@ pub mod tests {
             run_join(&rule, 2, &store, &mut syms, &mut fresh).unwrap(),
             1
         );
-        assert_eq!(syms.name(fresh[2].data[0]), "7");
+        assert_eq!(syms.name(fresh[2].data()[0]), "7");
     }
     #[test]
     fn native_sum_range_checks_follow_observation_after_aliases_and_filters() {
@@ -544,7 +544,7 @@ pub mod tests {
             run_join(&observed, 1, &store, &mut syms, &mut fresh).unwrap(),
             1
         );
-        assert_eq!(fresh[1].data, vec![i64::MAX]);
+        assert_eq!(fresh[1].data(), vec![i64::MAX]);
     }
     #[test]
     fn shared_native_fold_preserves_duplicates_empty_results_and_range_checks() {
@@ -634,11 +634,11 @@ pub mod tests {
         };
         let mut counted = vec![Fresh::default(); 2];
         run_join(&counts, 1, &store, &mut syms, &mut counted).unwrap();
-        assert_eq!(counted[1].data, vec![1, 3, 2, 1, 3, 0]);
+        assert_eq!(counted[1].data(), vec![1, 3, 2, 1, 3, 0]);
         for j in [&j, &j2] {
             let mut fresh = vec![Fresh::default()];
             assert_eq!(run_join(j, 0, &store, &mut syms, &mut fresh).unwrap(), 2);
-            assert_eq!(fresh[0].data, vec![1, 3, 17, 3, 7, 2, 1, -2, -2, -2]);
+            assert_eq!(fresh[0].data(), vec![1, 3, 17, 3, 7, 2, 1, -2, -2, -2]);
         }
         let Step::Scalar {
             src: Src::In(rel, _),
@@ -660,7 +660,7 @@ pub mod tests {
         let next = parse_join(&db, &spec, &mut syms).unwrap();
         let mut fresh = vec![Fresh::default()];
         run_join(&next, 0, &store, &mut syms, &mut fresh).unwrap();
-        assert_eq!(fresh[0].data, vec![1, 3, 3, 1, 1, 2, 1, 1, 1, 1]);
+        assert_eq!(fresh[0].data(), vec![1, 3, 3, 1, 1, 2, 1, 1, 1, 1]);
     }
 
     #[test]
@@ -691,7 +691,7 @@ pub mod tests {
         let mut run = |store: &Store, j: &JoinRule| {
             let mut fresh = vec![Fresh::default(); 2];
             run_join(j, 1, store, &mut syms, &mut fresh).unwrap();
-            fresh[1].data.clone()
+            fresh[1].data()
         };
         assert_eq!(run(&store, &full), vec![2, 10, 7]);
         assert_eq!(run(&store, &delta), vec![2, 10, 7]);
@@ -729,7 +729,7 @@ pub mod tests {
         let mut run = |store: &Store, j: &JoinRule| {
             let mut fresh = vec![Fresh::default(); 2];
             run_join(j, 1, store, &mut syms, &mut fresh).unwrap();
-            fresh[1].data.clone()
+            fresh[1].data()
         };
         assert_eq!(run(&store, &full), vec![3, 22, 12]);
         assert!(super::kill(&mut store.rels[0].dead, 2));
@@ -761,7 +761,7 @@ pub mod tests {
         );
         assert!(
             fresh[0]
-                .data
+                .data()
                 .as_chunks::<5>().0.iter()
                 .all(|row| row[1..] == [3, 17, 3, 7])
         );
@@ -828,7 +828,7 @@ pub mod tests {
         let mut run = |j: &JoinRule| {
             let mut fresh = vec![Fresh::default()];
             run_join(j, 0, &store, &mut syms, &mut fresh).unwrap();
-            fresh[0].data.clone()
+            fresh[0].data()
         };
         assert_eq!(run(&first), vec![2, 10]);
         forget_inputs(&db);

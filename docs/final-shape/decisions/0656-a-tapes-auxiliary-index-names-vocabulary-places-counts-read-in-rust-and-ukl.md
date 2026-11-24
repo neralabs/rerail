@@ -178,6 +178,19 @@ prototype's rule, "never key postings to known rules".
      shape now reading places in the index), and the facts' tests of every format
      (`every_format_reads_the_same_facts_off_the_tape`).
 
+## In the hub (roll-up 111)
+
+- **A third reader of places.** The hub reads the views on the host in Rust written directly (0353 step 3,
+  `rerail_tape_format::view_reads`), beside the CLIF and UKL reads. Its `child` view reads a place in the tape's
+  auxiliary index where the entry says so (`ViewDoc::places_by_index`), by the same steps as `tape_place`
+  (`view_reads::Tape::place`: the index found after the presence, then `aux_index::place`'s walk). Without it, every
+  document of core.rerail's shape read an empty `places` run. `the_views_read_through_the_directory_are_the_projections`
+  now also asserts that core.rerail's shape reads its places in the index, and T's shape does not.
+- **`ViewDoc`** holds both sides' fields: the hub's derived columns' runs, then `places_by_index` and its pad. view.h
+  and relation.h are regenerated from clif.
+- **Its tests' tapes.** f16's test writers (`write_from`, `numbers`, with presence `write_from_present` over the hub's
+  `write_present`) are the crate's test helpers, which the auxiliary index's tests use too.
+
 ## Follow-up: steps 3 and 4 on PostHog, profiled (2026-11-24)
 
 A cold profiled PostHog run (the M3, base b8e270700a against 827049b60e) gave the same findings (29,965) at about

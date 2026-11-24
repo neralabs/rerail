@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 250 (test-html), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 250 (test-html), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 47 codes; no file of it counted: in the grammar's order.
 revision	4
@@ -50,3 +50,59 @@ code	17	0	4	-	-
 code	21	0	4	-	-
 code	23	0	4	-	-
 code	26	0	4	-	-
+kind	1	0	<!
+kind	3	0	>
+kind	4	0	doctype
+kind	5	0	<
+kind	6	0	/>
+kind	7	0	</
+kind	8	0	=
+kind	9	1	attribute_name
+kind	10	1	attribute_value
+kind	11	1	entity
+kind	12	0	'
+kind	14	0	"
+kind	16	1	text
+kind	17	1	tag_name
+kind	21	1	erroneous_end_tag_name
+kind	23	1	raw_text
+kind	24	1	comment
+kind	25	1	document
+kind	26	1	doctype
+kind	28	1	element
+kind	29	1	script_element
+kind	30	1	style_element
+kind	31	1	start_tag
+kind	34	1	self_closing_tag
+kind	35	1	end_tag
+kind	36	1	erroneous_end_tag
+kind	37	1	attribute
+kind	38	1	quoted_attribute_value
+lookup	0	<!	1
+lookup	0	>	3
+lookup	0	doctype	4
+lookup	0	<	5
+lookup	0	/>	6
+lookup	0	</	7
+lookup	0	=	8
+lookup	1	attribute_name	9
+lookup	1	attribute_value	10
+lookup	1	entity	11
+lookup	0	'	12
+lookup	0	"	14
+lookup	1	text	16
+lookup	1	tag_name	17
+lookup	1	erroneous_end_tag_name	21
+lookup	1	raw_text	23
+lookup	1	comment	24
+lookup	1	document	25
+lookup	1	doctype	26
+lookup	1	element	28
+lookup	1	script_element	29
+lookup	1	style_element	30
+lookup	1	start_tag	31
+lookup	1	self_closing_tag	34
+lookup	1	end_tag	35
+lookup	1	erroneous_end_tag	36
+lookup	1	attribute	37
+lookup	1	quoted_attribute_value	38

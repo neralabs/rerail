@@ -640,13 +640,35 @@ pub(super) struct Crossing {
     pub(super) projected: BTreeSet<String>,
 }
 
+/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`):
+/// a read of the long-text nodes' binding (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from.
+pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
+    fn calls(v: &Version, t: TermRef<'_>) -> bool {
+        match t {
+            TermRef::Call(f, mut args) => crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) || args.any(|a| calls(v, a)),
+            _ => false,
+        }
+    }
+    r.body().any(|l| match l.view() {
+        L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
+        _ => false,
+    })
+}
+
 pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> Crossing {
     let is_local = |rel: &str| local.contains(rel);
     let head = |r: &RuleRef<'_>| v.rel_name(r.head().rel());
-    // By relation id, each named once (a name made per atom read, twice over the rules, was 5 ms of a warm run).
+    // A rule's reads: its atoms', by relation id, each named once (a name made per atom read, twice over the rules,
+    // was 5 ms of a warm run); and the long-text nodes' binding where it reads a node's text or value
+    // (`syntax::NODE_READS`: the binding holds the batch every node read goes through, the corpus batch's in the
+    // cross-file part).
     let read = |keep: &dyn Fn(&str) -> bool| -> BTreeSet<String> {
         let ids: std::collections::HashSet<_> = v.rules().filter(|r| keep(head(r))).flat_map(|r| r.reads().map(|a| a.rel())).collect();
-        ids.into_iter().map(|r| v.rel_name(r).to_owned()).collect()
+        let mut names: BTreeSet<String> = ids.into_iter().map(|r| v.rel_name(r).to_owned()).collect();
+        if v.rules().filter(|r| keep(head(r))).any(|r| reads_a_node(v, r)) {
+            names.insert(crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES.to_owned());
+        }
+        names
     };
     let cross_reads = read(&|h| !is_local(h));
     let projection = |rel: &str| {
@@ -656,8 +678,12 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
             && !f.lattice(rel)
             && rules.all(|r| {
                 let mut body = r.body();
+                // Not over a matcher's relation (`rr_ast_<k>`): its rows are made by a wave over each document's tape,
+                // which the chunks run already; read in the cross part, the corpus batch ran the wave again over every
+                // file and made every document's rows for it (`raw_all_name` on t50's product run, 24 s of CPU).
+                // Its projection is exported instead.
                 match (body.next().map(|l| l.view()), body.next()) {
-                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())),
+                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())) && !v.rel_name(a.rel()).starts_with(crate::code_rule_dsl::facts::core::ast_matches::PREFIX),
                     _ => false,
                 }
             })

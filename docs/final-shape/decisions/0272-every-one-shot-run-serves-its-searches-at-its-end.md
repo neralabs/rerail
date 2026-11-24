@@ -1,6 +1,6 @@
 # 0272. Every one-shot run serves its waiting join searches at its end
 
-Status: decided (2026-11-15). Closes O167. Amends decision 0243 (`drain_at_end`).
+Status: built (audited 2026-11-23). Decided (2026-11-15). Closes O167. Amends decision 0243 (`drain_at_end`).
 
 ## Intro
 

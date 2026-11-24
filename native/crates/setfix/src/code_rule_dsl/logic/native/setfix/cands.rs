@@ -115,6 +115,34 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
     Cands::Stream(Stream { view: v, cols, lead, key: k, len: key.len() })
 }
 
+/// The key columns a probe of `src` (by its key columns, all bound) matches exactly, which its rows need not be read
+/// or checked for:
+/// - a view's: the sorted index's column, a lookup on one key column, every column of a composite lookup. A view's
+///   column may be a search on the tape (decision 0353 step 2: a node's parent). Where the probe is a membership test
+///   (`membership`: the caller reads nothing else), a view's test by several columns (`View::tests_keys`) compares
+///   every key there.
+/// - an order's (a derived input's own, or a kept chain, `Csr::runs`): its leading columns that are key columns. Its
+///   search compared each row it finds on them (`Index::find_at`), and the step read and compared them again: a
+///   sealed chunk's decode a column a candidate (t56 step 7).
+pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
+    let Src::In(rel, ix) = src else { return 0 };
+    let (rel, ix) = j.src_in(rel, ix);
+    if let Some(index) = ix.runs(rel) {
+        return index.cols.iter().take_while(|c| ix.cols.contains(c)).fold(0, |m, &c| m | 1 << c);
+    }
+    if rel.view.is_none() {
+        0
+    } else if ix.composite {
+        ix.cols.iter().fold(0, |m, &c| m | 1 << c)
+    } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
+        1 << ix.cols[ix.lead]
+    } else if ix.source && membership && rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
+        ix.cols.iter().fold(0, |m, &c| m | 1 << c)
+    } else {
+        0
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
@@ -251,8 +279,8 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
     }
     if r.sorted.within(&[c], r.k, lo, hi) == [(lo, hi)] {
         let at = |p: usize| rows.row(p as u32).at(c);
-        let s = a.map_or(lo as usize, |(x, eq)| runs::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
-        let e = b.map_or(hi as usize, |(x, eq)| runs::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));
+        let s = a.map_or(lo as usize, |(x, eq)| rerail_blocks::order::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
+        let e = b.map_or(hi as usize, |(x, eq)| rerail_blocks::order::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));
         return (rows, Cands::Range(s as u32, e.max(s) as u32));
     }
     if (lo, hi) == (0, r.len() as u32)
@@ -287,27 +315,31 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     };
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
-    // As the join's step: the key columns a view's probe matched exactly, which its rows need not be checked for.
-    let exact: u64 = match src {
-        _ if keys.is_empty() => 0,
-        Src::In(rel, ix) if { let (rel, ix) = j.src_in(rel, ix); rel.view.is_some() && ix.runs(rel).is_none() } => {
-            let (in_rel, ix) = j.src_in(rel, ix);
-            if ix.composite {
-                ix.cols.iter().fold(0, |m, &c| m | 1 << c)
-            } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
-                1 << ix.cols[ix.lead]
-            } else if ix.source && tests.is_empty() && in_rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
-                // A view's test by several columns: the source's (`View::tests_keys`), every key compared there.
-                ix.cols.iter().fold(0, |m, &c| m | 1 << c)
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
+    // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
+    let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    // A whole key of a derived input's index: its sorted hash's candidates (t50 step 5), each checked against its row.
+    if let Src::In(rel, ix) = src
+        && !keys.is_empty()
+        && sorted_hash_on()
+    {
+        let (rel, ix) = j.src_in(rel, ix);
+        if rel.view.is_none() && keys.len() == ix.cols.len() && ix.runs_kind() {
+            let h = super::sorted_hash::hash_key(ix.cols.iter().map(|&c| keys.iter().find(|&&(kc, _)| kc == c).map_or(i64::MIN, |&(_, k)| val(k))));
+            return ix.hashed(rel).candidates(h).iter().any(|&id| {
+                let row = rel.at(id as usize);
+                !is_dead(&rel.dead, id) && keys.iter().all(|&(c, k)| row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+            });
+        }
+    }
     let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
     rows.each(cands, need, &mut asked.last, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
+}
+
+/// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,
+/// the run's setting) asks its index runs, as before.
+fn sorted_hash_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SORTED_HASH").map_or(true, |v| v != "off"))
 }

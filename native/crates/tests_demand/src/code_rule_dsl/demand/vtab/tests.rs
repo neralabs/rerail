@@ -21,7 +21,7 @@
     }
 
     fn python_tape(source: &str) -> TapeDoc {
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
         let image = TapeImage::parse(&grammar, &source, &|| false)
             .expect("parser completed")
@@ -73,7 +73,7 @@
 
     #[test]
     fn sparse_task_grid_rejects_roots_for_an_excluded_file_producer_pair() {
-        let source = Arc::new("value\n".to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from("value\n"));
         let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
         let image = TapeImage::parse(&grammar, &source, &|| false)
             .expect("parser completed")
@@ -97,7 +97,7 @@
     /// A connection to a new content store: the relations run where their statistics live.
     fn store_connection() -> Connection {
         let path = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&path));
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         Connection::open(path).expect("content store connection")
     }
 

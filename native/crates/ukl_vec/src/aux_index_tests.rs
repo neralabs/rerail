@@ -89,7 +89,7 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
     let lang = rerail_tape_format::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
     let number = rerail_tape_format::f16::numbers(&lang, &d.table).unwrap();
     // A format 16 tape's home: the tape, its presence, and its auxiliary index laid after it, as the engine stores it.
-    let mut w = rerail_tape_format::f16::write_from_with_presence(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false).unwrap().tape;
+    let mut w = rerail_tape_format::f16::write_from_present(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false).unwrap();
     let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
     let bytes = aux_index::build(&t16.reader(&lang).unwrap(), &d.source, 3, &aux_index::sample::renumbered(&aux_index::sample::codes(), &number), Sections::ALL).unwrap();
     w.lay_aux(&bytes).unwrap();

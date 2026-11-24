@@ -2,9 +2,10 @@
 
 Numbered 0551 where it was written (Swift-Kotlin-Scala-support); renumbered at the merge into Parser-generators-final-shape, whose 0551 is JSON's Rust from the grammar.
 
-Status: decided (the user, 2026-11-21: "do 1 and 2 first", the first of the steps that bring the Rust the
-Bitlex compiler writes for tier 1, `bitlex_lex_rust`, to the lean lexer's shape). Follows 0415 (Kotlin's
-generated parser in the lean parser's shape) and 0550 (Rust from the grammar, not from an intermediate form).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-21: "do 1 and 2 first", the first of the steps that
+bring the Rust the Bitlex compiler writes for tier 1, `bitlex_lex_rust`, to the lean lexer's shape). Follows 0415
+(Kotlin's generated parser in the lean parser's shape) and 0550 (Rust from the grammar, not from an intermediate
+form).
 
 ## What
 

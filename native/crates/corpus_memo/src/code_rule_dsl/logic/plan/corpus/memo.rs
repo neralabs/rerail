@@ -139,16 +139,17 @@ pub fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32
 /// stratum's rules and of what they read down to the inputs, with the inputs whose rows are not in the program's
 /// text digested with their values where a relation's rules reach them: the run's options (`option_input`) and the
 /// earlier phases' exports (`phased`), and the projection the base rows are made under (`base`,
-/// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
-/// documents' rows are made of, and only then.
+/// `Projection::rows_digest`), and the text tests' patterns (`patterns`, `Vocabulary::pattern_of`). So an export's
+/// identity changes when a rule it is derived from does, or what the documents' rows are made of, and only then.
 pub(in crate::code_rule_dsl) fn identities(
     local: &crate::code_rule_dsl::logic::plan::body::Placed,
     rels: &BTreeSet<String>,
     options: &serde_json::Value,
     phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
     base: &[u8; 32],
+    patterns: &dyn Fn(&str) -> Option<String>,
 ) -> Result<BTreeMap<String, [u8; 32]>, String> {
-    Ok(strata(local, rels)?.identities(options, phased, base))
+    Ok(strata(local, rels)?.identities(options, phased, base, patterns))
 }
 
 /// What a relation's memo identity is made of in a file-local program (`identities`): its strata's identity (a
@@ -209,7 +210,10 @@ impl Strata {
     /// phases' exports (`phased`), and the projection the base rows are made under (`base`,
     /// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
     /// documents' rows are made of, and only then.
-    pub fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32]) -> BTreeMap<String, [u8; 32]> {
+    /// `patterns`: what a text test's input relation tests (`Vocabulary::pattern_of`). Its rows are the batch's, made
+    /// from the run's tests, so its relation's name says nothing of them: `strtest_0` is `contains("o")` in one program
+    /// and `contains("a")` in its edit, whose rules are otherwise the same.
+    pub fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32], patterns: &dyn Fn(&str) -> Option<String>) -> BTreeMap<String, [u8; 32]> {
         let mut out = BTreeMap::new();
         for (rel, (id, reached)) in &self.by_rel {
             let mut hash = Sha256::new();
@@ -218,6 +222,13 @@ impl Strata {
             hash.update(base);
             if reached.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r)) {
                 hash.update(options.to_string().as_bytes());
+            }
+            for (r, pattern) in reached.iter().filter_map(|r| Some((r, patterns(r)?))) {
+                hash.update(b"pattern\0");
+                hash.update(r.as_bytes());
+                hash.update([0]);
+                hash.update(pattern.as_bytes());
+                hash.update([0]);
             }
             let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r)).collect();
             out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
@@ -415,6 +426,20 @@ pub fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
 }
 
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
+/// `digest` with the text tests a part reads folded in, each relation with what it tests (`Vocabulary::pattern_of`).
+pub fn with_patterns<'a>(digest: [u8; 32], patterns: impl Iterator<Item = (&'a str, &'a str)>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-patterns/v1\0");
+    hash.update(digest);
+    for (rel, pattern) in patterns {
+        hash.update(rel.as_bytes());
+        hash.update([0]);
+        hash.update(pattern.as_bytes());
+        hash.update([0]);
+    }
+    hash.finalize().into()
+}
+
 pub fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-options/v1\0");
@@ -442,17 +467,8 @@ pub fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a 
     hash.finalize().into()
 }
 
-/// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
-/// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
-pub fn off() {
-    if !cfg!(feature = "tape-cache") {
-        unreachable!("the corpus memo is off in a build without `tape-cache`");
-    }
-}
-
 /// The stored source of `text`, stored if it is not.
 pub fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
-    off();
     let hash = HashKey::sha256(text.as_bytes());
     // Held (O95): a source the run finds is pinned with it, as one it stores is.
     match store.source_by_hash(hash)? {
@@ -464,7 +480,6 @@ pub fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
 /// The source of `text` when the store holds it: one read, nothing written (the run's collection lease keeps it until
 /// the manifest names it, decision 0306 step 4). `None`: not stored yet; `source`, run on the writer, stores it.
 pub fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
-    off();
     Ok(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten())
 }
 
@@ -690,7 +705,6 @@ pub fn decode_frame(frame: &Frame) -> StoreResult<Entry> {
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
-    off();
     match found_all(store, program, &[(source, path)])?.pop().flatten() {
         Some(found) => found.entry(key),
         None => Ok(None),
@@ -699,16 +713,14 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 
 /// `lookup` of many documents, each `(source, path, key)`, in their order: one statement whatever their number.
 pub(super) fn lookup_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
-    off();
     let keys: Vec<(SourceId, &str)> = docs.iter().map(|(s, p, _)| (*s, *p)).collect();
     found_all(store, program, &keys)?.into_iter().zip(docs).map(|(f, (_, _, key))| f.map_or(Ok(None), |f| f.entry(*key))).collect()
 }
 
-/// A memo entry found before it is decoded: held in memory (a queued write's, or a session's), or its stored frame.
+/// A memo entry found before it is decoded: its frame, stored or in a queued write's segment (decision 0295 §1).
 /// A run finds its documents' entries before its first wave and decodes each in its wave (decision 0104).
 #[derive(Clone)]
 pub enum Found {
-    Held(std::sync::Arc<Entry>),
     Frame(Frame),
 }
 
@@ -726,9 +738,6 @@ impl Found {
     /// Decode only demanded relations. Skipped relations' rows are checked, not kept.
     pub fn projected(&self, key: i64, keep: &dyn Fn(&str) -> bool) -> StoreResult<Option<Entry>> {
         let entry = match self {
-            Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
-                rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
-                outputs: e.outputs.clone() },
             Found::Frame(f) => f.projected(keep)?,
         };
         Ok(Some(entry).filter(|e| e.key == key))
@@ -739,7 +748,6 @@ impl Found {
 /// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. A
 /// lookup writes nothing, and marks nothing (decisions 0104, 0227).
 pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
-    off();
     let atoms = store.atoms_handle();
     let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
     let asked: Vector<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
@@ -806,13 +814,11 @@ fn queued_content(content: Content, path: &str, program: &[u8; 32]) -> Option<cr
     match content {
         Content::Stored(id) => Some(queued(id, path, program)),
         Content::Unstored(d) => Some(queued_unstored(&d, path, program)),
-        Content::Held(_) => None,
     }
 }
 
 /// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
 pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
-    off();
     let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
     let found = store.sources_by_hashes(&hashes)?;
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
@@ -821,7 +827,6 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
 /// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
 /// lookup writes nothing, decision 0104; the run's collection lease keeps them, decision 0306 step 4).
 pub fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
-    off();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
     store.sources_by_hashes(&hashes)
 }
@@ -842,7 +847,6 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
     let known: HashMap<String, [u8; 32]> = entries.iter().filter_map(|e| Some((e.1.clone(), e.5?))).collect();
     let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _, _)| (c, p, k, e)).collect();
-    off();
     let plan = plan_digest(program);
     // The atom table the entries' symbols are numbered by: the writer reads their strings from it.
     let made_under = store.atoms_handle();
@@ -855,7 +859,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
         tally(entries.iter().map(|e| &e.3));
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "write the entries into their segments".into());
-    let held: Vec<(Content, String, Entry)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, Entry { key, ..entry })).collect();
+    let held: Vec<(Content, String, Entry)> = entries.into_iter().map(|(content, path, key, entry)| (content, path, Entry { key, ..entry })).collect();
     // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
     if held.is_empty() {
         return Ok(());
@@ -891,7 +895,6 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
                 None => stored.next().flatten(),
             },
             Content::Unstored(d) => Some(*d),
-            Content::Held(_) => None,
         })
         .collect();
     // Written here, by the run (decision 0295 §1): each entry's image made into the segment's mapped pages, its
@@ -901,12 +904,25 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     let mut w = crate::content_store::SegmentWriter::new(&store.memo_dir(), digests.iter().flatten().count(), estimate);
     let mut rows: Vec<crate::content_store::MemoRow> = Vec::with_capacity(held.len());
     let mut contents: Vec<Content> = Vec::with_capacity(held.len());
-    for ((content, path, e), digest) in held.into_iter().zip(digests) {
-        let Some(digest) = digest else { continue };
-        let over = standing.contains(&(path.clone(), e.key));
-        let key = e.key;
-        let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
-        drop(e);
+    // Each entry's image encoded in parallel (they are independent), then written in order (t50 step 8: on the run's
+    // thread, about 30 ms a chunk).
+    let encoded: Vec<StoreResult<(Content, String, i64, [u8; 32], bool, crate::code_rule_dsl::logic::plan::output::Finished)>> = {
+        use rayon::prelude::*;
+        let items: Vec<((Content, String, Entry), [u8; 32])> = held.into_iter().zip(digests).filter_map(|(h, d)| Some((h, d?))).collect();
+        // On the machine's cores, as every parallel loop of the engine (`check_machine_pool.py`).
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            items
+                .into_par_iter()
+                .map(|((content, path, e), digest)| {
+                    let over = standing.contains(&(path.clone(), e.key));
+                    let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
+                    Ok((content, path, e.key, digest, over, image))
+                })
+                .collect()
+        })
+    };
+    for done in encoded {
+        let (content, path, key, digest, over, image) = done?;
         w.put(image.len(), key, &digest, |out| image.write(out))?;
         rows.push(crate::content_store::MemoRow { part: part_of(&digest, &path), path, digest, key, over });
         contents.push(content);
@@ -974,69 +990,18 @@ pub fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
     crate::code_rule_dsl::logic::run::local_if_any::<Sizes>().map(|s| std::mem::take(&mut *s.0.lock().expect("the memo's sizes"))).unwrap_or_default()
 }
 
-/// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
-/// rows are under the session store's atoms and live as long as the session.
+/// Where a run's memo is: the tape cache's store (decision 0052), a session's as a new process's (t33 step 3).
 #[derive(Clone, Copy)]
 pub enum Memo<'a> {
     Stored(&'a ContentStore),
-    Held(&'a Held),
-}
-
-/// A session's memo: each entry under its content's digest, its path and the file-local program's digest. Shared
-/// (an `Arc`): a hit, and an input's change read from the changed documents' entries, read it in place (0364 R2).
-pub type Held = std::sync::Mutex<HeldEntries>;
-
-/// The session memo's entries. Per file and program it holds two: its current content's, and the one before it,
-/// which an edit's input deltas read as the file's old rows (`input_delta::changed`, after the run remembered the
-/// new one). An entry older than those two goes when a newer one comes. So the memo is bounded by the tree: two
-/// entries a file, whatever the session's length, with no count to pass. (It held at most 4,096 entries and was
-/// emptied past them: the data layer's 2,410 files and two programs passed that within each run, so no edit's run
-/// found a file in it, and an edit cost a first run.)
-#[derive(Default)]
-pub struct HeldEntries {
-    entries: std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>,
-    /// Per (path, program): the current content's digest, and the one before.
-    files: std::collections::HashMap<(String, [u8; 32]), ([u8; 32], Option<[u8; 32]>)>,
-}
-
-impl HeldEntries {
-    pub fn get(&self, key: &([u8; 32], String, [u8; 32])) -> Option<&std::sync::Arc<Entry>> {
-        self.entries.get(key)
-    }
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-    /// `entry` as `path`'s under `program` for content `digest`: it becomes the file's current entry, its current
-    /// one the one before, and the one before that goes.
-    pub fn insert(&mut self, digest: [u8; 32], path: &str, program: [u8; 32], entry: std::sync::Arc<Entry>) {
-        let file = (path.to_owned(), program);
-        let gone = match self.files.get_mut(&file) {
-            None => {
-                self.files.insert(file, (digest, None));
-                None
-            }
-            Some((now, _)) if *now == digest => None,
-            Some((now, before)) => {
-                let gone = before.filter(|b| *b != digest);
-                *before = Some(*now);
-                *now = digest;
-                gone
-            }
-        };
-        if let Some(g) = gone {
-            self.entries.remove(&(g, path.to_owned(), program));
-        }
-        self.entries.insert((digest, path.to_owned(), program), entry);
-    }
 }
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
-/// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
+/// (its source is written by the store's writer, behind the run, with its tape: decision 0104).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Content {
     Stored(SourceId),
     Unstored([u8; 32]),
-    Held([u8; 32]),
 }
 
 impl Content {
@@ -1044,13 +1009,8 @@ impl Content {
     pub fn stored(self) -> Option<SourceId> {
         match self {
             Content::Stored(id) => Some(id),
-            Content::Unstored(_) | Content::Held(_) => None,
+            Content::Unstored(_) => None,
         }
-    }
-
-    /// Whether the store holds the content or will (its source is queued): a stored memo's content.
-    fn in_store(self) -> bool {
-        matches!(self, Content::Stored(_) | Content::Unstored(_))
     }
 
     /// The source on the store's writer, where a content queued before is written by now.
@@ -1058,7 +1018,6 @@ impl Content {
         match self {
             Content::Stored(id) => Ok(Some(id)),
             Content::Unstored(d) => store.source_by_hash(HashKey::from_sha256_digest(d)),
-            Content::Held(_) => Ok(None),
         }
     }
 }
@@ -1068,7 +1027,6 @@ impl Memo<'_> {
     pub(super) fn content(self, text: &str) -> StoreResult<Content> {
         match self {
             Memo::Stored(store) => source(store, text).map(Content::Stored),
-            Memo::Held(_) => Ok(Content::Held(Sha256::digest(text.as_bytes()).into())),
         }
     }
 
@@ -1076,7 +1034,6 @@ impl Memo<'_> {
     pub(super) fn contents(self, texts: &[&str]) -> StoreResult<Vec<Content>> {
         match self {
             Memo::Stored(store) => Ok(sources(store, texts)?.into_iter().map(Content::Stored).collect()),
-            Memo::Held(_) => Ok(texts.iter().map(|t| Content::Held(Sha256::digest(t.as_bytes()).into())).collect()),
         }
     }
 
@@ -1085,7 +1042,6 @@ impl Memo<'_> {
     pub fn found(self, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<Content>>> {
         match self {
             Memo::Stored(store) => Ok(found_sources(store, digests)?.into_iter().map(|id| id.map(Content::Stored)).collect()),
-            Memo::Held(_) => Ok(digests.iter().map(|d| Some(Content::Held(*d))).collect()),
         }
     }
 
@@ -1100,12 +1056,11 @@ impl Memo<'_> {
                 }
                 Ok(out)
             }
-            Memo::Held(_) => docs.iter().map(|(c, p, k)| self.lookup(*c, p, *k, program)).collect(),
         }
     }
 
     /// The entries of many documents, each `(content, path)`, found and not decoded (`Found`): stored ones in one
-    /// statement, held ones from memory.
+    /// statement, queued ones from their segment.
     pub fn found_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
         match self {
             Memo::Stored(store) => {
@@ -1132,16 +1087,6 @@ impl Memo<'_> {
                 }
                 Ok(out)
             }
-            Memo::Held(held) => {
-                let held = held.lock().expect("the session memo");
-                Ok(docs
-                    .iter()
-                    .map(|(c, p)| match c {
-                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::clone(e))),
-                        Content::Stored(_) | Content::Unstored(_) => None,
-                    })
-                    .collect())
-            }
         }
     }
 
@@ -1163,10 +1108,6 @@ impl Memo<'_> {
                     None => Ok(None),
                 },
             },
-            (Memo::Held(held), Content::Held(digest)) => {
-                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).map(|e| (**e).clone()))
-            }
-            _ => Ok(None),
         }
     }
 
@@ -1177,29 +1118,13 @@ impl Memo<'_> {
 
     /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
     pub fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
-        if let Memo::Stored(store) = self {
-            return remember_all_but(store, program, entries);
-        }
-        let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _, _)| (c, p, k, e)).collect();
-        match self {
-            Memo::Stored(store) => remember_all(store, program, entries),
-            Memo::Held(_) => {
-                for (content, path, key, entry) in &entries {
-                    self.remember(*content, path, *key, program, entry)?;
-                }
-                Ok(())
-            }
-        }
+        let Memo::Stored(store) = self;
+        remember_all_but(store, program, entries)
     }
 
     pub(super) fn remember(self, content: Content, path: &str, key: i64, program: &Program, entry: &Entry) -> StoreResult<()> {
         match (self, content) {
-            (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]),
-            (Memo::Held(held), Content::Held(digest)) => {
-                held.lock().expect("the session memo").insert(digest, path, program.id, std::sync::Arc::new(Entry { key, ..entry.clone() }));
-                Ok(())
-            }
-            _ => Ok(()),
+            (Memo::Stored(store), c) => remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]),
         }
     }
 }
