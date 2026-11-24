@@ -331,6 +331,21 @@ impl Ledger {
         given
     }
 
+    /// Every free chunk's whole pages with no live byte, to the OS, small ones too: what a run leaves on the lists
+    /// when it ends (`trim_all`). A free keeps a chunk under `GIVE_MIN` resident for the next of its class; once the
+    /// run is over no next one comes, and its fragments held 12 MB after the cost cases' run. The bytes given.
+    pub fn trim(&self) -> usize {
+        if !self.pages {
+            return 0;
+        }
+        let mut s = self.lock();
+        if !s.listed {
+            return 0;
+        }
+        let chunks: Vec<(usize, usize)> = s.lists.iter().enumerate().flat_map(|(c, l)| l.iter().map(move |&at| (at, 1usize << (MIN_LOG as usize + c)))).collect();
+        chunks.into_iter().map(|(at, size)| self.give_free_pages(&mut s, at, size)).sum()
+    }
+
     /// The tail `at + keep..at + size` of a chunk just handed out is not the holder's (never written).
     pub(crate) fn untaken_tail(&self, at: usize, size: usize, keep: usize) {
         let mut s = self.lock();
@@ -576,6 +591,12 @@ static BLOCKS: Mutex<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = Mutex::new(
 
 fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>> {
     BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.
+pub fn trim_all() -> usize {
+    let ledgers: Vec<Arc<Ledger>> = blocks().iter().filter_map(|(_, _, l)| l.upgrade()).collect();
+    ledgers.iter().map(|l| l.trim()).sum()
 }
 
 /// The ledger of the live block whose memory holds `addr`: the innermost, where one ledger's memory lies in
@@ -997,6 +1018,26 @@ mod tests {
         for k in 0..per {
             assert!(!crate::mem::tests::modified(b.ptr::<u8>(w + k * size)), "merged to GIVE_MIN: given back");
         }
+    }
+
+    /// A run's end gives back what its frees kept (`Ledger::trim`): a small free chunk's pages go then, and a live
+    /// chunk's stay.
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn a_trim_gives_back_the_small_free_chunks_pages() {
+        let b = listed();
+        let size = crate::free::class_of(4 * PAGE).1;
+        let (kept, live) = (b.try_alloc_chunk(4 * PAGE, 64).unwrap(), b.try_alloc_chunk(4 * PAGE, 64).unwrap());
+        for c in [kept, live] {
+            unsafe { std::ptr::write_bytes(b.ptr::<u8>(c), 0xcd, 4 * PAGE) };
+        }
+        assert!(size < GIVE_MIN);
+        b.free_chunk(kept, 4 * PAGE);
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(kept)), "a small free keeps its pages");
+        assert!(b.ledger().trim() >= 4 * PAGE);
+        assert!(!crate::mem::tests::modified(b.ptr::<u8>(kept)), "trimmed: given back");
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(live)), "a live chunk's pages stay");
+        assert_eq!(b.ledger().trim(), 0, "pages given already are passed over");
     }
 
     /// A buffer bound for a kernel is found to be its block's by its address, and holds the block's memory as any
