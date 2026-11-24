@@ -42,7 +42,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     let text = p.current()?.decl_of("text").is_some();
     if text {
         p.rules(&mut NodeSubjects);
-        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() });
+        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() });
         p.rules(&mut Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 });
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
@@ -85,7 +85,7 @@ pub fn long_text_twins(v: Arc<Version>, matchers: &Matchers) -> Result<(Arc<Vers
 /// step 3), `matchers` its matchers' relations: that version and the number of atoms read so.
 pub fn text_by_node(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("text by node", v);
-    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
     p.rules(&mut pass);
     Ok((p.finish()?.0, pass.made))
 }
@@ -534,8 +534,14 @@ struct NodeReads {
     /// relations themselves: their atoms are what is read, and bind no node (`r(v, "x")` alone is a lookup by value).
     nodes: HashMap<String, BTreeSet<usize>>,
     made: usize,
-    /// By relation, the heads of the rules whose atoms of it stay (their node not known to be bound), for the decision.
-    kept: BTreeMap<&'static str, BTreeSet<String>>,
+    /// By relation, the heads of the rules whose atoms of it stay (their node not known to be bound), each with why
+    /// (`why_unbound`), for the decision.
+    kept: BTreeMap<&'static str, BTreeMap<String, String>>,
+    /// The split's file-local relations and its causes (`FileLocal`), for why a node is not known to be one.
+    local: BTreeSet<String>,
+    causes: BTreeMap<String, String>,
+    /// `kept` as the decision reported it, at the pass's end (`text_rows_kept`).
+    reported: BTreeMap<&'static str, BTreeMap<String, String>>,
     /// The per-node relations and their reads, as the program's shape states them (`node_reads_of`).
     of: Vec<(&'static str, &'static str)>,
     /// The node tests (`node_tests`): each relation `h` whose one rule is `h(v) :- r(v, _)` of a per-node relation `r`,
@@ -673,6 +679,83 @@ fn node_bound(v: &Version, r: RuleRef<'_>, cols: &HashMap<String, BTreeSet<usize
     }
 }
 
+/// What `why_unbound` reads of a `NodeReads`: its fields, borrowed apart from the ones its rules write.
+struct Known<'a> {
+    of: &'a [(&'static str, &'static str)],
+    tests: &'a HashMap<String, (&'static str, Vec<(CmpOp, i64)>)>,
+    nodes: &'a HashMap<String, BTreeSet<usize>>,
+    local: &'a BTreeSet<String>,
+    causes: &'a BTreeMap<String, String>,
+}
+
+impl Known<'_> {
+    /// Why term `t`, the node of a per-node atom of rule `r` of relation `read`, is not known to be a node (`node_bound`): each positive
+    /// atom that binds it, and why its column holds no node alone (`node_columns`). The decision names it, so a read
+    /// left as rows says what would let it be read in place.
+    fn why_unbound(&self, v: &Version, r: RuleRef<'_>, t: TermRef<'_>, read: &str) -> String {
+        let TermRef::Var(x) = t else { return "its node is not a variable".to_owned() };
+        let derived = |rel: &str| v.rules().any(|q| v.rel_name(q.head().rel()) == rel);
+        let mut binders: Vec<String> = Vec::new();
+        for l in r.body() {
+            let Lit::Atom(a) = l.view() else { continue };
+            if a.neg() {
+                continue;
+            }
+            let rel = v.rel_name(a.rel());
+            if rel == read {
+                continue;
+            }
+            for (c, term) in a.args().enumerate() {
+                if term.var() != Some(x) {
+                    continue;
+                }
+                let why = if self.of.iter().any(|(p, _)| *p == rel) || self.tests.contains_key(rel) {
+                    "a per-node value: a lookup by value".to_owned()
+                } else if derived(rel) && self.nodes.get(rel).is_some_and(|cols| !cols.contains(&c)) {
+                    format!("not every rule of it fills column {c} with a node")
+                } else if derived(rel) && !self.local.contains(rel) {
+                    format!("cross-file: {}", self.cross_root(rel))
+                } else if derived(rel) {
+                    "file-local, but not every rule of it fills it with a node".to_owned()
+                } else {
+                    format!("column {c} is not a node column")
+                };
+                binders.push(format!("{rel}[{c}]: {why}"));
+            }
+        }
+        if binders.is_empty() {
+            return format!("no positive atom binds ${}", name(v, r, x));
+        }
+        format!("${} bound by {}", name(v, r, x), binders.join(", "))
+    }
+    /// Relation `rel`'s cross-file cause, followed through the relations it reads to the one cross-file of its own:
+    /// `a <- b <- c: c's cause`.
+    fn cross_root(&self, rel: &str) -> String {
+        let (mut at, mut chain) = (rel.to_owned(), vec![rel.to_owned()]);
+        for _ in 0..32 {
+            let Some(why) = self.causes.get(&at) else { return format!("{} (no cause recorded)", chain.join(" <- ")) };
+            match why.strip_prefix("reads cross-file ").map(|r| r.split_whitespace().next().unwrap_or(r).to_owned()) {
+                Some(next) if !chain.contains(&next) => {
+                    chain.push(next.clone());
+                    at = next;
+                }
+                _ => return format!("{}: {}", chain.join(" <- "), why.lines().next().unwrap_or(why)),
+            }
+        }
+        chain.join(" <- ")
+    }
+}
+
+/// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`NodeReads`), and, by
+/// per-node relation, the heads whose atoms of it stay rows, each with why its node is not known to be one.
+pub fn text_rows_kept(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let mut p = Pipeline::new("text by node", v);
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
+    p.rules(&mut pass);
+    p.finish()?;
+    Ok(pass.reported.into_iter().map(|(rel, heads)| (rel.to_owned(), heads)).collect())
+}
+
 impl RulePass for NodeReads {
     const NAME: &'static str = "a bound node's per-node values are read";
     fn begin(&mut self, cx: &Cx<'_>) -> Result<Select> {
@@ -684,6 +767,7 @@ impl RulePass for NodeReads {
         }
         let split = cx.get::<crate::code_rule_dsl::typing::file_local::FileLocal>()?;
         self.nodes = node_columns(v, &self.matchers, &split.local);
+        (self.local, self.causes) = (split.local.clone(), split.causes.iter().map(|(r, c)| (r.clone(), c.clone())).collect());
         let of = &self.of;
         self.nodes.retain(|rel, _| !of.iter().any(|(r, _)| r == rel));
         self.tests = node_tests(v, &self.of);
@@ -731,7 +815,9 @@ impl RulePass for NodeReads {
                         }
                         && (!neg || matches!(a[2], TermRef::Wild | TermRef::Str(_)));
                     if !ok {
-                        self.kept.entry("op_at").or_default().insert(v.rel_name(r.head().rel()).to_owned());
+                        let known = Known { of: &self.of, tests: &self.tests, nodes: &self.nodes, local: &self.local, causes: &self.causes };
+                        let why = if matches!(a[0], TermRef::Var(x) if bound.contains(&x)) { "its place is not known".to_owned() } else { known.why_unbound(v, r, a[0], "op_at") };
+                        self.kept.entry("op_at").or_default().entry(v.rel_name(r.head().rel()).to_owned()).or_insert(why);
                     }
                     ok
                 }
@@ -744,7 +830,14 @@ impl RulePass for NodeReads {
             match of(l) {
                 Some((_, f, true)) => read.push((i, f)),
                 Some((rel, _, false)) => {
-                    self.kept.entry(rel).or_default().insert(v.rel_name(r.head().rel()).to_owned());
+                    let why = match l.view() {
+                        Lit::Atom(a) => match args(a).first() {
+                            Some(&t) => Known { of: &self.of, tests: &self.tests, nodes: &self.nodes, local: &self.local, causes: &self.causes }.why_unbound(v, r, t, rel),
+                            None => "it has no node column".to_owned(),
+                        },
+                        _ => unreachable!("a per-node atom"),
+                    };
+                    self.kept.entry(rel).or_default().entry(v.rel_name(r.head().rel()).to_owned()).or_insert(why);
                 }
                 None => {}
             }
@@ -813,9 +906,13 @@ impl RulePass for NodeReads {
     }
     fn finish(&mut self, cx: &Cx<'_>, b: &mut Builder<'_>) -> Result<()> {
         let (made, kept) = (self.made, std::mem::take(&mut self.kept));
-        for (rel, heads) in kept {
-            cx.decide("a bound node's per-node values are read (decision 0353 step 3)", || format!("{rel} read as rows (a location not known to be a node) by {}", heads.into_iter().collect::<Vec<_>>().join(", ")));
+        for (rel, heads) in &kept {
+            cx.decide("a bound node's per-node values are read (decision 0353 step 3)", || {
+                let heads: Vec<String> = heads.iter().map(|(h, why)| format!("{h} ({why})")).collect();
+                format!("{rel} read as rows (a location not known to be a node) by {}", heads.join("; "))
+            });
         }
+        self.reported = kept;
         if made == 0 {
             return Ok(());
         }

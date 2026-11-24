@@ -1852,6 +1852,28 @@ fn per_node_values_of_a_bound_node_are_read_in_place() {
     }
 }
 
+/// A `text` atom left as rows says why its node is not known to be one (`text_rows_kept`, the decision's line): the
+/// atoms that bind it, each with the reason its column holds no node alone, a cross-file one with its root cause.
+#[test]
+fn a_text_read_left_as_rows_says_why_its_node_is_not_known() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    for (rules, want) in [
+        ("out(s) :- text(n, s).", "no positive atom binds $n"),
+        ("out(s) :- name(n, \"x\"), text(n, s).", "name[0]: a per-node value"),
+        ("out(s) :- kind(n, k), text(k, s).", "kind[1]: not every rule of it fills column 1 with a node"),
+        (".decl d(x: node)\nd(x) :- kind(x, \"call\").\nd(x) :- kind(_, x).\nout(s) :- d(n), text(n, s).", "d[0]: cross-file: d: reads kind with no location"),
+        (
+            ".decl def(s: symbol)\ndef(s) :- kind(d, \"function_definition\"), name(d, s).\n.decl call(c: node) cross_file\ncall(c) :- kind(c, \"call\"), name(c, s), def(s).\nout(s) :- call(n), text(n, s).",
+            "call[0]: cross-file: call",
+        ),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let kept = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_rows_kept(program, Default::default()).unwrap();
+        let why = kept.get("text").and_then(|heads| heads.get("out")).unwrap_or_else(|| panic!("{rules}: text kept by out: {kept:?}"));
+        assert!(why.contains(want), "{rules}: {why}");
+    }
+}
+
 /// A relation that only tests a per-node relation of its node (`c(e) :- text(e, _), e < 100`, an aggregate's cover)
 /// is read in its readers' place, its guards with it: where they bind the node, a read of its tape, not every node's
 /// `text` rows. A node bound through `n = a` is bound. A negated test stays a relation; a reader that binds no node
