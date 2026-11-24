@@ -705,6 +705,36 @@ So:
    would not have bounded `seq.c` either: 326 of its 816 posts have no key, so they act again on every reading.
    What bounds it is a reading that waits for a result, then reads it in place.
 
+   **A hole read in place, the design** (2026-11-23). The reading of a piece again is what passes the work bound:
+   it posts nothing, and every hole that decided something made it. A hole decides something at four places:
+   - a name before it that looks for `(`;
+   - a call's arguments read through it where the callee reads a parameter raw, or where its delimiters guess
+     was wrong;
+   - a rescan passing a result with live names;
+   - a `(` after it.
+
+   Each of the four reads the hole's result in place, as a caller takes an argument's request (`lp_arg_take`,
+   `lp_arg_occ`). The pieces:
+   - **Done: read in place.** The run logs an occurrence with room for the request's rows (`LG_TAKE`). It then
+     pushes a node frame over the result's entries, with `xp` the room's base and `def` the hole's shift (a node
+     frame's `def` is unused). `lp_xin` adds the shift to a text token's `st` and to a nested hole's, and a nested
+     node's frame inherits it, as `lp_memo_emit` and `lp_leaves` shift a kept result's text tokens. The frame is
+     then read as any node's: a name's look for `(` goes into it, a call's arguments read through it, a live
+     name in it acts. The serial pass rescans the argument's expanded tokens, painted as they were, and these
+     are those tokens.
+   - **Not done, not started: claimed and read here.** The run claims the record (`pst` of row 6, as an
+     argument's request is claimed), pushes a dead-list frame (`FK_DEAD`) with the record's disabled macros
+     (`lp_dead_list`'s), then the call's raw entries, and reads them inline. The record's queue item is then
+     nothing to read. Its waiters wait on it, so a claimed record with waiters is read by its taker too (`DUP`,
+     as an argument another group reads).
+   - **Being read by another group: the run reads its piece again,** as now. That is no wait across groups.
+   - **The reading again of a piece posts.** Its holes' records are done by then, so each decision above reads in
+     place, and no hole makes it stop. Only an unkeyed record still being read stops it, and the reading after
+     that one posts nothing, which bounds it.
+
+   `seq.c` is the measure: its readings again have to stay under the work bound. The eval tests, the corpus and
+   Boost's other tests stay the serial pass's on the CPU backend, CUDA and the M3.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
