@@ -885,8 +885,10 @@ let packageRootNamed = false;
 
 /**
  * The engine this process loaded, with the `RERAIL_ENGINE_PATH` it was found under. Every call into the engine goes
- * through `loadNativeBinding`, a walk once per file and per Git ignore question, and Node never unloads an addon: so the
- * file is found and required once, and found again only where `RERAIL_ENGINE_PATH` has changed since.
+ * through `loadNativeBinding`, a walk once per file and per Git ignore question. Node never unloads an addon, so a later
+ * look could only hand back this engine or load a second one beside it: the engine is kept from the first call that
+ * loads one, and looked for again only where `RERAIL_ENGINE_PATH` has changed since. A look that fails keeps nothing:
+ * the next call looks again, and the engine loaded before comes back with its own value.
  */
 let loaded: { readonly configuredPath: string | undefined; readonly binding: NativeBinding } | undefined;
 
