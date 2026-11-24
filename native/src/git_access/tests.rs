@@ -1465,3 +1465,105 @@ fn a_linked_worktree_include_loop_is_refused_as_git_refuses_it() {
     assert!(message.starts_with("cannot read the Git config's includes"), "{message}");
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// The repository's config includes a file under a condition only the main checkout meets, and
+/// `damage` then makes that file one Git cannot read, returning whether this process cannot read
+/// it either. Git refuses the main checkout and opens the linked worktree, reading there the file
+/// a condition on the worktree's own Git folder names; the opener does the same, though gix's own
+/// open reads the damaged file in both.
+fn only_the_main_checkout_reads(name: &str, damage: fn(&Path) -> bool) {
+    let (root, main, linked) = linked_fixture(name);
+    let damaged = root.join("damaged.gitconfig");
+    std::fs::write(&damaged, "").unwrap();
+    let key = format!("includeIf.gitdir:{}.path", git_dir(&main));
+    git(&main, &["config", &key, &config_path(&damaged)]);
+    include_setting(&main, Some(&format!("gitdir:{}", git_dir(&linked))), "linked");
+    if damage(&damaged) {
+        let lists = |checkout: &Path| git_output(checkout, &["config", "--list"], &[]).status;
+        assert!(!lists(&main).success(), "Git reads the damaged file in the main checkout");
+        assert!(lists(&linked).success(), "Git opens the linked worktree");
+        assert!(matches!(opener::discover(&main), Err(OpenError::Failed(_))));
+        let (ours, git) = setting(&linked, "linked");
+        assert_eq!(ours.as_deref(), Some("yes"), "test.linked in the linked worktree");
+        assert_eq!(ours, git, "test.linked in the linked worktree");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A file that includes itself, under a condition only the main checkout meets.
+#[test]
+fn a_main_checkout_include_loop_leaves_the_linked_worktree_open_as_git_does() {
+    only_the_main_checkout_reads("main-loop", |file| {
+        let text = format!("[include]\n\tpath = {}\n", config_path(file));
+        std::fs::write(file, text).unwrap();
+        true
+    });
+}
+
+/// A file Git cannot parse, under a condition only the main checkout meets.
+#[test]
+fn an_unparsable_main_checkout_include_leaves_the_linked_worktree_open_as_git_does() {
+    only_the_main_checkout_reads("main-unparsable", |file| {
+        std::fs::write(file, "[test\n").unwrap();
+        true
+    });
+}
+
+/// A file of mode 000, under a condition only the main checkout meets. Unix only; a superuser
+/// reads the file anyway, and the case then checks nothing.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_main_checkout_include_leaves_the_linked_worktree_open_as_git_does() {
+    only_the_main_checkout_reads("main-unreadable", |file| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::read(file).is_err()
+    });
+}
+
+/// In a linked worktree of a repository another user owns, an include only the main checkout's
+/// condition selects, which gix's open fails on, still refuses the worktree: an open with
+/// includes off would miss an included file that empties `safe.directory`, which Git reads and
+/// then refuses that worktree.
+#[test]
+fn another_owners_linked_worktree_keeps_the_safe_directory_an_include_empties() {
+    const NAME: &str =
+        "another_owners_linked_worktree_keeps_the_safe_directory_an_include_empties";
+    if in_child(NAME) {
+        opener::ASSUME_ANOTHER_OWNER.store(true, std::sync::atomic::Ordering::Relaxed);
+        let opened = opener::discover(&fixture().join("linked"));
+        assert!(matches!(opened, Err(OpenError::Failed(_))), "the linked worktree opened");
+        return;
+    }
+    let (root, main, linked) = linked_fixture("owner-emptied");
+    let looped = root.join("loop.gitconfig");
+    let key = format!("includeIf.gitdir:{}.path", git_dir(&main));
+    git(&main, &["config", &key, &config_path(&looped)]);
+    std::fs::write(&looped, format!("[include]\n\tpath = {}\n", config_path(&looped))).unwrap();
+    let global = root.join("global-gitconfig");
+    let emptied = root.join("emptied.gitconfig");
+    std::fs::write(&emptied, "[safe]\n\tdirectory =\n").unwrap();
+    let global_value = global.to_string_lossy().into_owned();
+    // No system file: CI runners' `/etc/gitconfig` names every folder safe.
+    let env = [
+        ("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1"),
+        ("GIT_CONFIG_GLOBAL", global_value.as_str()),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ];
+    let git_code = |text: String| {
+        std::fs::write(&global, text).unwrap();
+        git_output(&linked, &["rev-parse", "--git-dir"], &env).status.code()
+    };
+    let safe = "[safe]\n\tdirectory = *\n";
+    assert_eq!(git_code(safe.to_owned()), Some(0), "Git opens it once safe");
+    let include = format!("[include]\n\tpath = {}\n", config_path(&emptied));
+    assert_eq!(git_code(format!("{safe}{include}")), Some(128), "Git refuses it");
+    let mut child_env = clean_env();
+    child_env.extend([
+        ("GIT_CONFIG_GLOBAL", Some(global.clone().into())),
+        ("GIT_CONFIG_NOSYSTEM", Some("1".into())),
+        (FIXTURE, Some(root.clone().into())),
+    ]);
+    run_child(NAME, &child_env);
+    std::fs::remove_dir_all(root).unwrap();
+}

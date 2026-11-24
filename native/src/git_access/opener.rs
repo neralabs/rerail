@@ -12,7 +12,12 @@
 //!   `GIT_CONFIG_GLOBAL` for the global files.
 //! - It reads the files those name by `include` and `includeIf` as Git does in the worktree it
 //!   opens: in a linked worktree a `gitdir:` condition holds for the worktree's own Git folder
-//!   ([`include_as_git_does`]), where gix alone tests the main checkout's.
+//!   ([`include_as_git_does`]), where gix alone tests the main checkout's. An include that only the
+//!   main checkout's condition selects and that Git cannot read (a loop, an unreadable or
+//!   unparsable file) refuses the main checkout, as Git does. In a repository the user owns it
+//!   leaves the linked worktree open, as Git does ([`open_without_includes`]); in one another user
+//!   owns it refuses that worktree too, where Git opens it, since an open that skips the include
+//!   would also skip an included `safe.directory`.
 //! - It refuses a config, exclude or attribute file it can name before the read when the file is
 //!   larger than [`MAX_GIT_FILE_BYTES`], so a damaged or hostile repository cannot make the daemon
 //!   read a gigabyte into memory.
@@ -95,7 +100,7 @@ pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
         .map_err(|error| discovery_error("cannot discover Git repository", &error))?;
     let (git_dir, _) = found.into_repository_and_work_tree_directories();
     let after = measure_before_open(&sources, &git_dir, trust)?;
-    let repository = open_as_git_does(root, &sources)?;
+    let repository = open_as_git_does(root, &sources, trust)?;
     check_sizes(after.into_iter().chain(global_files(&repository)))?;
     Ok(repository)
 }
@@ -142,12 +147,46 @@ fn check_sizes(files: impl IntoIterator<Item = PathBuf>) -> Result<(), OpenError
 }
 
 /// The repository around `root`, opened by gix with the config files `sources` names, then given
-/// the includes Git reads for a command run there ([`include_as_git_does`]).
-fn open_as_git_does(root: &Path, sources: &Sources) -> Result<gix::Repository, OpenError> {
+/// the includes Git reads for a command run there ([`include_as_git_does`]). Where gix's open
+/// fails, a linked worktree of a repository the user owns opens again with no include followed
+/// ([`open_without_includes`]), and the second pass follows them.
+fn open_as_git_does(
+    root: &Path,
+    sources: &Sources,
+    trust: gix::sec::Trust,
+) -> Result<gix::Repository, OpenError> {
     let mut repository = gix::discover_opts(root, upwards_options(), sources.options())
+        .or_else(|error| open_without_includes(root, sources, trust).ok_or(error))
         .map_err(|error| discovery_error("cannot open Git repository", &error))?;
     include_as_git_does(&mut repository)?;
     Ok(repository)
+}
+
+/// The linked worktree around `root` opened by gix with no include followed, for a caller whose
+/// open with includes failed: gix tests a `gitdir:` condition against the main checkout's Git
+/// folder, so an include only that condition selects fails its open (a loop, an unreadable or
+/// unparsable file) where Git, testing the worktree's own folder, never reads it. The caller's
+/// [`include_as_git_does`] then follows the includes Git follows there.
+///
+/// `None`, so the first error stands, where this open fails too, where it opens a main checkout
+/// (Git reads the include there), or where `trust` is below full. In a repository another user
+/// owns, gix's open checks `safe.directory`; with includes off it would miss an included
+/// `safe.directory =` that empties the list, and open a worktree Git refuses. Where the user owns
+/// the repository neither Git nor gix reads `safe.directory`, so the fallback gives up nothing
+/// there. The repository keeps these options: one gix opens from it (a submodule) would follow no
+/// include, and the engine opens none that way.
+fn open_without_includes(
+    root: &Path,
+    sources: &Sources,
+    trust: gix::sec::Trust,
+) -> Option<gix::Repository> {
+    if trust != gix::sec::Trust::Full {
+        return None;
+    }
+    let mut options = sources.options();
+    options.permissions.config.includes = false;
+    let repository = gix::discover_opts(root, upwards_options(), options).ok()?;
+    (repository.git_dir() != repository.common_dir()).then_some(repository)
 }
 
 /// Gives `repository` the config files Git reads for a command run in its worktree.
