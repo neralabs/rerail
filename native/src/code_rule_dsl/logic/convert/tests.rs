@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 mod reference_tests;
 mod reference_stage_tests;
+mod cost_shape_tests;
 
 /// The rules converted: the pack as rewritten by PIAT (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
