@@ -83,5 +83,19 @@ port the preprocessor, then remove it.
   recorded at the merge 8e3ba68cbb). Fixed since (0613, "A line's expansion is requests"): 47 of 47, 0.63 s.
 - The UKL library's stage tests (`rerail-gpu`): the scan, the segmented scans and the sort equal the host's at 1,
   8 and 32 tiles.
-- The setup's Metal source splits into 13 units: the 11 stages, `pp_step` and `pp_advance`.
+- The setup's Metal source splits into 14 units: the 11 stages, the loop's phase (`lp_loop_run`), `pp_step` and
+  `pp_advance`.
 - No test or source names `grid.h`, `ukl_grid_` or `UKL_GRID_` (the arena's test of its source).
+
+**On Metal** (2026-11-23, the first Metal run since the 2026-11-20 order, one filtered run a host). This change was
+checked on the CPU backend only, and it broke Metal: on m3, where 0613's commits had passed every eval test (the merge
+8e3ba68cbb: 47 of 47), 7 failed at this commit and 5 at dc71ebe625. The loop's phase was inlined into `pp_step` with
+every other phase, where before it was a function of its own (`lp_loop`, `lp_help`), and the M3's back end miscompiled
+it: a piece read again wrote half its output entries with their words exchanged (`src` and `st`); the CPU backend ran
+the same loop, the same steps and requests, and wrote them all. With the phase its own `UKL_ONCE` function
+(`lp_loop_run`) m3 passes 47 of 47. One group (`RERAIL_PP_GROUPS=1`) failed alike, so no race between groups.
+- m1max fails 18 of the eval tests, and 20 at the merge 8e3ba68cbb: older than this change, and its own (wrong
+  pastes and stringizes, `X_PAST_END` refusals, results past their stores).
+- On Metal every eval test passes its 1 s (nextest's profile `second`) only past its kernels' setup: a test's process
+  makes its pipelines (seconds) before its first run, so each times out at 1 s; one process (`cargo test`) runs the
+  47 in 88 s on m3, its compile included.

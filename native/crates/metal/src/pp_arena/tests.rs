@@ -251,10 +251,12 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     // The look for a `(` is called, never inlined (inlined with the node frames' reads it crashed the M3's back end):
     // a `UKL_ONCE` function, a unit of its own or, small and barrier-free, kept noinline in its callers' units.
     assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen") || split.local.iter().any(|n| n == "lp_next_is_lparen"), "the look for a `(` is called");
-    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), `pp_step` and
-    // `pp_advance`, which runs the afters.
-    assert_eq!(split.units.len(), 13);
-    assert_eq!(split.depth, 5);
+    // The loop's phase is a unit of its own (`lp_loop_run`): inlined into `pp_step`, the M3's back end miscompiled it.
+    assert!(split.units.iter().any(|u| u.name == "lp_loop_run"), "the loop's phase is a unit");
+    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase,
+    // `pp_step` and `pp_advance`, which runs the afters.
+    assert_eq!(split.units.len(), 14);
+    assert_eq!(split.depth, 6);
     assert!(split.kernel.contains("kernel void pp_run") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 

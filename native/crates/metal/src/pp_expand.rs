@@ -1431,6 +1431,13 @@ impl Exp {
         let d = unsafe { std::slice::from_raw_parts(defs.defs.host().cast::<PpDef>(), defs.defs.byte_length() / std::mem::size_of::<PpDef>()) };
         let mut out = Vec::with_capacity(n);
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
+        if show {
+            // The roll-up's words, a top token each (the first 24): what the order and places are made from.
+            let col = |b: &Buf| words(b).iter().take(24).map(|w| w.to_string()).collect::<Vec<_>>().join(" ");
+            eprintln!("roll: n {n} np {np}\n  xflag {}\n  v {}\n  opv {}\n  obase {}\n  opbase {}\n  theads {}", col(&self.xflag), col(&self.v), col(&self.opv), col(&self.obase), col(&self.opbase), col(&self.theads));
+            let c = |k: usize| o[k * cap..k * cap + 16].iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" ");
+            eprintln!("  out src {}\n  out len {}\n  out st {}\n  out place {}\n  order {}\n  chunks {}", c(0), c(1), c(2), c(3), c(5), c(6));
+        }
         // The tokens' store: its columns (`Ar`'s), the leaves of the requests' results among its entries.
         let tw = words(&self.tokens);
         let tc = tw.len() / 5;

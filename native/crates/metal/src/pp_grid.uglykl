@@ -351,6 +351,17 @@ UKL_INLINE uint32_t pp_lib_tiles(ROBUFFER(uint32_t) lay, uint32_t n, uint32_t ls
            AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),                                           \
            AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG),                \
            AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS)
+// The loop's phase (`PH_LP_RUN`), a function of its own apart from the program's step (`pp_step`), as it was before
+// decision 0653 (`lp_loop`, `lp_help`). Inlined into the step with every other phase, the M3's Metal back end
+// miscompiled it (2026-11-23): a piece read again wrote half its output entries, their words exchanged (`src` and
+// `st`), where the CPU backend wrote them all; 5 eval tests failed on m3, 47 pass with it apart.
+UKL_ONCE void lp_loop_run(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg, UklTiles g, bool is_if __UKL_PARAMS)
+{
+    UKL_GLOBAL const PpFile* files = IN(const PpFile, FILES);
+    (void)files;
+    PX_UA(DR);
+    LP_RUN_CALL;
+}
 
 // The arena made ready for another top: its fronts back to the file literals' (`CTL` 6 and 7 keep them). The
 // refusals stay. One thread, in an after.
@@ -1112,8 +1123,7 @@ UKL_ONCE uint32_t pp_step(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUF
     // A piece a SIMD group at a time, claimed from the list (`lp_run`): its lanes look ahead for it (`lp_piece`). Each
     // thread once: its SIMD group claims until the list is empty.
     PHASE(PH_LP_RUN, nt)
-        PX_UA(DR);
-        EACH(s, g.tiles * g.lsz) LP_RUN_CALL;
+        EACH(s, g.tiles * g.lsz) lp_loop_run(arena, data, lay, tg, g, is_if __UKL_ARGS);
     AFTER
         // Items left or the queue past its room: refused.
         ONE(x) if (AT(const uint32_t, LPQ)[2] != 0u || AT(const uint32_t, LPQ)[3] != 0u) px_refuse(AT(uint32_t, CTL), X_ROOM);
