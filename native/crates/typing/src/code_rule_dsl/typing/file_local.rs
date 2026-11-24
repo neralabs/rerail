@@ -611,7 +611,7 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     let mut refused: Vec<String> = p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| crossing_shown(v, rel, why)).collect();
     for rel in moved_in(&f) {
         // A function of strings (`match_all`) moved for a cross-file reader joins no documents.
-        let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::NativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);
+        let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::ArchivedNativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);
         if !functional && !placement_only(v, &f, rel) && !meant(rel) {
             refused.push(crossing_shown(v, rel, "its rows name no document (moved by `locate`), and are read on"));
         }

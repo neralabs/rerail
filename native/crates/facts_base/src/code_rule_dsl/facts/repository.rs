@@ -386,11 +386,11 @@ pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Val
     make("package_field", &["dir", "key", "v"], field);
     let pfor: Vec<Vector<i64>> = rows.package_for.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
-    let tsconfig: Vec<Vec<i64>> = rows.tsconfig.iter().map(|_| vec![sym(), sym()]).collect();
+    let tsconfig: Vec<Vector<i64>> = rows.tsconfig.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("tsconfig", &["dir", "base_url"], tsconfig);
-    let tfor: Vec<Vec<i64>> = rows.tsconfig_for.iter().map(|_| vec![sym(), sym()]).collect();
+    let tfor: Vec<Vector<i64>> = rows.tsconfig_for.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("tsconfig_for", &["path", "dir"], tfor);
-    let tpath: Vec<Vec<i64>> = rows.tsconfig_path.iter().map(|_| vec![sym(), sym(), sym()]).collect();
+    let tpath: Vec<Vector<i64>> = rows.tsconfig_path.iter().map(|_| rerail_blocks::vector![sym(), sym(), sym()]).collect();
     make("tsconfig_path", &["dir", "pattern", "target"], tpath);
     Ok(out)
 }

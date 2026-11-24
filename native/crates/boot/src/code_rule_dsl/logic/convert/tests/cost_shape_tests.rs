@@ -471,16 +471,82 @@ fn filters_are_no_steps_of_their_own() {
 
 // -- the parts (W: one pass a file, then the link)
 
-/// E5. A relation the per-file part can make is made there (decision 0652): none of `references.rerail`'s per-file
-/// relations (above its "across files" line) joins in the cross-file session, which holds every file's rows at once.
+/// The relations of `text` (a library's rule text) whose rules may run in the cross-file part (decision 0652): those
+/// declared `cross_file` and those that read one (they inherit it), and the constants (facts, and relations read only
+/// from constants), which read no document. Every other relation the text declares is per-file.
+fn crossing_or_constant(text: &str) -> (std::collections::HashSet<String>, std::collections::HashSet<String>) {
+    use std::collections::{HashMap, HashSet};
+    let mut statements: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let line = line.split("//").next().unwrap_or("");
+        if line.starts_with([' ', '\t']) && !line.trim().is_empty() {
+            if let Some(last) = statements.last_mut() {
+                last.push(' ');
+                last.push_str(line.trim());
+                continue;
+            }
+        }
+        if !line.trim().is_empty() {
+            statements.push(line.trim().to_owned());
+        }
+    }
+    let name = |s: &str| s.split('(').next().unwrap_or("").trim().to_owned();
+    let mut declared = HashSet::new();
+    let mut crossing = HashSet::new();
+    let mut facts = HashSet::new();
+    let mut bodies: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+    for st in &statements {
+        if let Some(d) = st.strip_prefix(".decl ") {
+            declared.insert(name(d));
+            if d.contains(") cross_file") {
+                crossing.insert(name(d));
+            }
+        } else if let Some((head, body)) = st.split_once(":-") {
+            let reads: Vec<String> = body
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '('))
+                .filter_map(|w| w.strip_suffix('(').or_else(|| w.split_once('(').map(|x| x.0)))
+                .filter(|w| !w.is_empty() && w.bytes().next().is_some_and(|b| b.is_ascii_lowercase()))
+                .map(str::to_owned)
+                .collect();
+            bodies.entry(name(head)).or_default().push(reads);
+        } else if st.ends_with('.') && st.contains('(') && !st.starts_with('.') {
+            facts.insert(name(st));
+        }
+    }
+    let mut constant: HashSet<String> = facts.iter().filter(|f| !bodies.contains_key(*f)).cloned().collect();
+    loop {
+        let before = (crossing.len(), constant.len());
+        for (h, rules) in &bodies {
+            if rules.iter().any(|r| r.iter().any(|x| crossing.contains(x))) {
+                crossing.insert(h.clone());
+            }
+            if rules.iter().all(|r| r.iter().all(|x| constant.contains(x))) {
+                constant.insert(h.clone());
+            }
+        }
+        if (crossing.len(), constant.len()) == before {
+            break;
+        }
+    }
+    let _ = declared;
+    (crossing, constant)
+}
+
+/// E5. A relation the per-file part can make is made there (decision 0652): none of `names.rerail`'s and
+/// `references.rerail`'s per-file relations (above its "across files" line, not declared `cross_file`, reading no
+/// relation that is, no constant, and holding a node) joins in the cross-file session, which holds every file's rows at once.
 #[test]
 fn per_file_relations_join_in_the_per_file_part() {
     let (c, _) = case();
     let lib = rerail_store::source_tree::native().join("../docs/rule-syntax/lib/python");
     let refs = std::fs::read_to_string(lib.join("references.rerail")).unwrap();
     let names = std::fs::read_to_string(lib.join("names.rerail")).unwrap();
+    let imports = std::fs::read_to_string(lib.join("imports.rerail")).unwrap_or_default();
     let (before, _) = refs.split_once("// ==== across files").expect("references.rerail's across-files line");
-    let local: std::collections::HashSet<String> = before.lines().chain(names.lines()).filter_map(|l| l.strip_prefix(".decl ")).filter_map(|l| l.split_once('(')).map(|(h, _)| h.trim().to_owned()).collect();
+    let (crossing, constant) = crossing_or_constant(&format!("{imports}\n{names}\n{refs}"));
+    // A relation whose rows name no document (symbols alone: a file's summary by name) is placed by the engine
+    // (decision 0290), and is the link's to read.
+    let local: std::collections::HashSet<String> = before.lines().chain(names.lines()).filter_map(|l| l.strip_prefix(".decl ")).filter(|l| l.contains(": node")).filter_map(|l| l.split_once('(')).map(|(h, _)| h.trim().to_owned()).filter(|h| !crossing.contains(h) && !constant.contains(h)).collect();
     let crossed: Vec<(String, u64)> = c.cross_work().into_iter().filter(|(h, (x, _))| *x > 0 && local.contains(h)).map(|(h, (x, _))| (h, x)).collect();
     let all: u64 = crossed.iter().map(|x| x.1).sum();
     assert!(crossed.is_empty(), "{} per-file relations join in the cross-file part, {all} units of work: {crossed:?}", crossed.len());

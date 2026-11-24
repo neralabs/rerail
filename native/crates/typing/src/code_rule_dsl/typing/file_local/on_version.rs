@@ -485,12 +485,12 @@ impl<'v> Program<'v> {
                     return Vec::new();
                 }
                 match was(r) {
-                    Some(p) => p.nullable.get(self.name(r as u32)).cloned().unwrap_or_default(),
+                    Some(p) => p.nullable.get(self.name(r as u32)).map(|v| v.iter().copied().collect()).unwrap_or_default(),
                     None => (0..self.f.width(self.name(r as u32))).filter(|c| !locs[r].contains(c)).collect(),
                 }
             })
             .collect();
-        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && !nulls[r as usize].is_empty()).collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && !nulls[r as usize].is_empty()).collect();
         while !round.is_empty() {
             let changed: Vec<(u32, Vec<usize>)> = round
                 .iter()
@@ -719,7 +719,7 @@ impl<'v> Program<'v> {
             let derived = self.f.derives(rel);
             let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.placeless_input(rel);
             let chunk_value = !derived && CHUNK_VALUES.contains(&rel);
-            let functional = local(rel) && (self.f.native(rel).is_some_and(|nat| matches!(nat.spec, NativeSpec::MatchAll { .. })) || self.f.qualified(rel, super::STRATEGY));
+            let functional = local(rel) && (self.f.native(rel).is_some_and(|nat| matches!(nat.spec, ArchivedNativeSpec::MatchAll { .. })) || self.f.qualified(rel, super::STRATEGY));
             if constant || chunk_value || functional || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
                 continue;
             }
@@ -909,7 +909,7 @@ impl<'v> Rels<'v> {
         }
         let base = |r: usize| !derived[r] && read[r];
         let test = |r: &str| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
-        let functional = |r: &str| f.native(r).is_some_and(|nat| matches!(nat.spec, NativeSpec::MatchAll { .. })) || f.qualified(r, super::STRATEGY);
+        let functional = |r: &str| f.native(r).is_some_and(|nat| matches!(nat.spec, ArchivedNativeSpec::MatchAll { .. })) || f.qualified(r, super::STRATEGY);
         Rels {
             n,
             derived_count: derived.iter().filter(|d| **d).count(),
