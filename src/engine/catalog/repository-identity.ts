@@ -30,8 +30,18 @@ import {
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
+import { forgetGoneSubmodules } from "./checkouts/declared-submodules.js";
+import {
+  forgetGoneRemotes,
+  keepRemote,
+  keptRemote,
+  remoteSource,
+  remoteSourceWithoutBlocking,
+  type RemoteAddress,
+  type RemoteSource,
+} from "./checkouts/kept-remote.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit, runGitAsync } from "../git.js";
+import { GitUnavailableError, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -123,12 +133,73 @@ function placed(requested: string, lastAnswer: boolean): RepositoryIdentityLocat
 
 /** {@link placed} for a folder whose placement inputs were read: the kept answer, else the files' or Git's. */
 function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer: boolean): RepositoryIdentityLocation {
+  return keptOrFromFiles(requested, inputs, lastAnswer) ?? settled(requested, inputs, locatedByGit(requested, true));
+}
+
+/** {@link placedFromInputs} where no Git is asked: the kept answer, else the files' answer, held; undefined when Git is to be asked. */
+function keptOrFromFiles(requested: string, inputs: PlacementInputs, lastAnswer: boolean): RepositoryIdentityLocation | undefined {
   const held = heldTopLevels.get(requested);
   if (held?.stamp === inputs.stamp && (inputs.owned || lastAnswer)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
-  const located = fromFiles === undefined ? locatedByGit(requested, true) : { location: fromFiles, byGit: false, searched: [] };
+  return fromFiles === undefined ? undefined : settled(requested, inputs, { location: fromFiles, byGit: false, searched: [] });
+}
+
+/** `located`, held under `inputs` when it answers them ({@link holdTopLevel}). */
+function settled(requested: string, inputs: PlacementInputs, located: Located): RepositoryIdentityLocation {
   holdTopLevel(requested, inputs, located);
   return { ...located.location };
+}
+
+/** The placements asking Git without blocking, by folder: two asks for one folder meanwhile share one Git process ({@link sharedRead}). */
+const placingWithoutBlocking = new Map<string, SharedRead<RepositoryIdentityLocation>>();
+
+/**
+ * {@link repositoryIdentityLocation} of `workspace` without blocking the caller's thread: the same kept answers and
+ * files, and where Git is to be asked, Git run as a process no thread waits on ({@link runGitAsync}), its answer kept
+ * as {@link placed} keeps it, so the placements and the worktree registry after it find it. Undefined, with no Git
+ * started, where no placement after it could take Git's answer ({@link keptForPlacements}). Once `options.signal` is
+ * aborted it starts no Git, and an answer from a Git that did not run to its end is kept by nothing.
+ */
+export function placeWithoutBlocking(workspace: string, options: GitReadOptions = {}): Promise<RepositoryIdentityLocation | undefined> {
+  const requested = resolve(workspace);
+  const inputs = placementInputs(requested);
+  if (!keptForPlacements(inputs)) return Promise.resolve(undefined);
+  const known = inputs === undefined ? undefined : keptOrFromFiles(requested, inputs, false);
+  if (known !== undefined) return Promise.resolve(known);
+  const asking = sharedRead(placingWithoutBlocking, requested, options, async () => (inputs === undefined ? await acceptedWithoutBlocking(requested, options) : settled(requested, inputs, await locatedWithoutBlocking(requested, true, options))));
+  return asking.then(location => (location === undefined ? undefined : { ...location }));
+}
+
+/**
+ * Whether Git's placement of a folder with `inputs` could serve the asks after it: not while a lookup variable moves
+ * Git's lookup, when each placement asks Git, and not for a folder another account owns, each of whose placements asks
+ * Git. A folder whose files cannot describe it is placed by Git each time too, and its answer still names the checkout
+ * above it, which the worktree registry keeps ({@link acceptedByGit}).
+ */
+function keptForPlacements(inputs: PlacementInputs | undefined): boolean {
+  return inputs === undefined ? lookupEnvironment() === undefined : inputs.owned;
+}
+
+/** {@link acceptedByGit} with Git run as a process no thread waits on. */
+async function acceptedWithoutBlocking(requested: string, options: GitReadOptions): Promise<RepositoryIdentityLocation> {
+  heldTopLevels.delete(requested);
+  const facts = ownFacts(requested);
+  const located = await locatedWithoutBlocking(requested, false, options);
+  keepAcceptance(requested, facts, located);
+  return { ...located.location };
+}
+
+/**
+ * {@link locatedByGit} with Git run as a process no thread waits on; what Git's search reads is read before it runs.
+ * Where Git would answer none ({@link gitFindsNone}), no Git starts, and a linked worktree whose Git folder is gone is
+ * answered so, as on the caller's thread.
+ */
+async function locatedWithoutBlocking(requested: string, gitFolderThere: boolean, options: GitReadOptions): Promise<Located> {
+  const searched = searchedUp(requested);
+  const none = gitFindsNone(requested, gitFolderThere);
+  const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, options).catch(noGitInstalled) : undefined;
+  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  return { location, byGit: true, searched };
 }
 
 /** An answer for a folder, and whether Git gave it (else the folder's files did). */
@@ -410,7 +481,8 @@ function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly 
 /**
  * Drops each answer kept for a folder whose answer names `common`, a common Git folder in its {@link storedForm}, once
  * the folder is gone, and the config facts kept for files in `common` that are gone: a removed worktree's answers, its
- * own and those of the folders in it, leave with it, and a checkout that stays keeps its own. Each answer is matched by
+ * own and those of the folders in it, its remote and its submodules among them, leave with it, and a checkout that
+ * stays keeps its own. Each answer is matched by
  * the stored form of its common Git folder, read when it was kept, since an answer Git printed and one read from the
  * files can spell that folder two ways (on macOS a letter case, on Windows a drive letter's case or an 8.3 short
  * name), and a config file's path is spelt from the folder as asked. No ask takes an answer kept for
@@ -420,6 +492,8 @@ function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly 
  */
 function forgetGone(common: string): void {
   for (const kept of [heldTopLevels, gitAcceptances]) forgetGoneFrom(kept, common);
+  forgetGoneRemotes(common);
+  forgetGoneSubmodules(common);
   forgetGoneConfigs(common);
 }
 
@@ -582,10 +656,89 @@ function upToTop(searched: readonly Searched[], top: string): readonly Searched[
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {
-  const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
+  return listed(commonDirectory, contents, runGit(checkout, WORKTREE_LIST_ARGS));
+}
+
+const WORKTREE_LIST_ARGS: readonly string[] = ["worktree", "list", "--porcelain"];
+
+/** The registry `git worktree list --porcelain` gave in `result`; undefined when Git did not answer. */
+function listed(commonDirectory: string, contents: string, result: GitResult): WorktreeRegistry & { readonly contents: string } | undefined {
   if (result.status !== 0) return undefined;
   const worktrees = result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
   return { commonDirectory, worktrees, contents };
+}
+
+/**
+ * {@link worktreeRegistry} of `checkout` learnt without blocking the caller's thread: the checkout placed
+ * ({@link placeWithoutBlocking}) and Git's list read as a process no thread waits on, stored as the registry stores it
+ * ({@link keepList}), so the registry after it starts no Git while the registry's contents stand. Nothing is learnt
+ * where that placement is left to the calls after it, nor from a list of another repository's registry
+ * ({@link listsRegistryOf}). A checkout placed by an acceptance kept with no stamp, whose list Git gives at each ask
+ * ({@link storedList}), still has its listed worktrees placed from this list, as the registry stores it.
+ */
+export async function learnWorktreeRegistry(checkout: string, options: GitReadOptions = {}): Promise<WorktreeRegistry | undefined> {
+  if (!existsSync(checkout) || (await placeWithoutBlocking(checkout, options))?.git !== true) return undefined;
+  const place = registryPlace(checkout);
+  if (place === undefined) return undefined;
+  return await sharedRead(listingWithoutBlocking, place.commonDirectory, options, async () => await listedWithoutBlocking(checkout, place, options));
+}
+
+/**
+ * What {@link learnWorktreeList} found: the list stored for the registry's contents as they are now, read with the
+ * checkout's placement and no Git, or Git's list being learnt as a process no thread waits on.
+ */
+export type WorktreeListLearning =
+  | { readonly kind: "stored"; readonly registry: WorktreeRegistry }
+  | { readonly kind: "learning"; readonly done: Promise<void> };
+
+/**
+ * {@link learnWorktreeRegistry} of `checkout` through `git`, where the registry's next ask would start Git and would take
+ * what it learns. While the list stored for the registry's contents stands, that list, with nothing started
+ * ({@link storedRegistry}): the caller takes it in place of placing the checkout and reading the registry again.
+ * Undefined, with nothing started, for a checkout placed by a kept acceptance, whose list the registry reads as before,
+ * and where the checkout's placement cannot be read, which the registry then meets as before. Never throws, and what it
+ * gives to wait on never rejects.
+ */
+export function learnWorktreeList(checkout: string, git: GitReads): WorktreeListLearning | undefined {
+  if (gitAcceptances.has(resolve(checkout))) return undefined;
+  let registry: WorktreeRegistry | undefined;
+  try {
+    registry = storedRegistry(checkout);
+  } catch {
+    return undefined;
+  }
+  if (registry !== undefined) return { kind: "stored", registry };
+  return { kind: "learning", done: git.run(async signal => {
+    await learnWorktreeRegistry(checkout, { signal }).catch(() => undefined);
+  }) };
+}
+
+/**
+ * The list stored for the registry of `checkout` while it stands for that registry's contents now, told with no Git:
+ * undefined where the checkout's placement is not known from its files or a kept answer ({@link keptOrFromFiles}).
+ */
+function storedRegistry(checkout: string): WorktreeRegistry | undefined {
+  const requested = resolve(checkout);
+  const inputs = placementInputs(requested);
+  const location = inputs === undefined ? undefined : keptOrFromFiles(requested, inputs, false);
+  if (location?.git !== true) return undefined;
+  const commonDirectory = physicalPath(dirname(location.identityPath));
+  return storedList({ commonDirectory, unstamped: false }, registryContents(commonDirectory));
+}
+
+/** The lists of a registry read without blocking, by common directory: sessions opening together share one Git process ({@link sharedRead}). */
+const listingWithoutBlocking = new Map<string, SharedRead<WorktreeRegistry | undefined>>();
+
+async function listedWithoutBlocking(checkout: string, place: RegistryPlace, options: GitReadOptions): Promise<WorktreeRegistry | undefined> {
+  // Read before Git runs, as the registry reads it.
+  const contents = registryContents(place.commonDirectory);
+  const known = storedList(place, contents);
+  if (known !== undefined) return known;
+  const registry = listed(place.commonDirectory, contents, await runGitAsync(checkout, WORKTREE_LIST_ARGS, options));
+  // A Git that did not answer, or listed another repository's registry, leaves the registry to the calls after it.
+  if (registry === undefined || !listsRegistryOf(registry)) return undefined;
+  keepList(place, registry);
+  return registry;
 }
 
 /** The repository's own folder name: the main checkout's folder for a linked worktree, else the checkout's folder. */
@@ -705,31 +858,74 @@ export function resolveCloneId(
   return { cloneId: readOrCreateIdentity(location.identityPath, () => recordedIdAt?.(location) ?? randomUUID()), location };
 }
 
-export interface RemoteAddress {
-  name: string;
-  url: string;
-}
+export type { RemoteAddress } from "./checkouts/kept-remote.js";
 
-/** The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. */
+/**
+ * The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. Git's
+ * answer, "no remote" included, is kept while the configuration it comes from reads the same ({@link remoteSource}),
+ * so a remote added later is found, and recording every worktree of a clone with no remote asks Git once, not twice
+ * per worktree. It is kept only while the engine's owner of its Git reads stands, or under `GIT_CONFIG_NOSYSTEM`:
+ * before that, as in a process that has made no engine read, each call asks Git.
+ */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
-  const origin = originUrl(root);
-  return origin === undefined ? soleRemote(root) : { name: "origin", url: origin };
+  const source = remoteSource(root);
+  const kept = keptRemote(source);
+  if (kept !== undefined) return kept.remote;
+  const answers: GitResult[] = [];
+  for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
+  return answeredRemote(source, answers);
 }
 
-/** `origin`'s address; `ls-remote --get-url` gives the name back when no remote has it. */
-function originUrl(root: string): string | undefined {
-  const origin = gitText(root, ["ls-remote", "--get-url", "origin"]);
-  return origin === undefined || origin === "" || origin === "origin" ? undefined : origin;
+/** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
+export async function learnRemoteAddress(root: string, options: GitReadOptions = {}): Promise<void> {
+  const source = await remoteSourceWithoutBlocking(root, options);
+  if (source === undefined || keptRemote(source) !== undefined) return;
+  const answers: GitResult[] = [];
+  // Each question depends on the answer before it.
+  for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(await runGitAsync(root, step.ask, options));
+  answeredRemote(source, answers);
 }
 
-function soleRemote(root: string): RemoteAddress | undefined {
-  const names = (gitText(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
-  if (names.length !== 1) return undefined;
-  const [name] = names as [string];
-  const url = gitText(root, ["remote", "get-url", "--", name]);
-  return url === undefined || url === "" ? undefined : { name, url };
+/** The next Git question on the way to a checkout's remote, given the answers so far, or the remote they give. */
+type RemoteStep = { readonly ask: readonly string[] } | { readonly remote: RemoteAddress | undefined };
+
+/** Trimmed stdout of an answer Git gave, or undefined when it failed. */
+function textOf(answer: GitResult): string | undefined {
+  return answer.status === 0 ? answer.stdout.trim() : undefined;
 }
 
+/**
+ * `origin`'s address (`ls-remote --get-url` gives the name back when no remote has it), else the address of the only
+ * remote `git remote` lists.
+ */
+function remoteStep(answers: readonly GitResult[]): RemoteStep {
+  const [origin, names, url] = answers;
+  if (origin === undefined) return { ask: ["ls-remote", "--get-url", "origin"] };
+  const originUrl = textOf(origin);
+  if (originUrl !== undefined && originUrl !== "" && originUrl !== "origin") return { remote: { name: "origin", url: originUrl } };
+  if (names === undefined) return { ask: ["remote"] };
+  return soleRemoteStep(names, url);
+}
+
+function soleRemoteStep(names: GitResult, url: GitResult | undefined): RemoteStep {
+  const remotes = (textOf(names) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
+  if (remotes.length !== 1) return { remote: undefined };
+  const [name] = remotes as [string];
+  if (url === undefined) return { ask: ["remote", "get-url", "--", name] };
+  const address = textOf(url);
+  return { remote: address === undefined || address === "" ? undefined : { name, url: address } };
+}
+
+/**
+ * The remote the answers give, kept under the source's facts only when Git answered every question: a Git that failed
+ * answers no remote, as before, and is asked again next time.
+ */
+function answeredRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
+  const step = remoteStep(answers);
+  const remote = "remote" in step ? step.remote : undefined;
+  if (source !== undefined && answers.every(answer => answer.status === 0)) keepRemote(source, remote);
+  return remote;
+}
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const SCP_FORM = /^(?:[^@/]+@)?([^:/]+):(.*)$/;
 

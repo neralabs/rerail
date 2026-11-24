@@ -14,12 +14,16 @@ import {
   CodeRuleBridge,
   filesystemClock,
   generatedEditPaths,
+  inputTextEdits,
   isCommandTool,
   ledgerPreimage,
   MAX_TOLD_AT_ONCE,
   MAX_TOLD_GAPS,
   type Preimage,
   type SourceObservationCache,
+  type TextEdit,
+  undoTextEdits,
+  unreadAfter,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { type CallPlace, MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import { claudeCodeReportedPreimage, type ReportedPreimage } from "../../../src/engine/code-rule/tool-result/reported-preimage.js";
@@ -32,6 +36,7 @@ import { readGitHead } from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { WorktreeWalks } from "../../../src/engine/code-rule/worktree-walks.js";
+import type { WorktreeListLearning } from "../../../src/engine/catalog/repository-identity.js";
 import { holdDeletePending } from "../../support/platform/delete-pending.js";
 import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -547,6 +552,28 @@ describe("CodeRuleBridge", () => {
       "src/secrets.py": { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
       "src/a.py": { text: "before\n" },
     });
+  });
+
+  it("reads a call begun with nothing captured, as from a ledger, whole, as nothing it holds gives its file's earlier text", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    // The session's first walk has run, so what it read of the file comes before the calls' sightings, not after them.
+    await bridge.checkpoint("turn");
+    await bridge.begin("edit-1", "write", { path: "src/a.py" });
+    await writeFile(path, "middle\n");
+    await bridge.finish("edit-1");
+    // The session last saw the file as the call before left it, but another write may have come since: no "before" is
+    // certain without the call's own text edits, so the rules read the whole text it left.
+    await expect(bridge.begin("edit-2", "write", { path: "src/a.py" }, {})).resolves.toEqual({});
+    await writeFile(path, "after\n");
+    await bridge.finish("edit-2");
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/a.py", language: "python", previousReadError: "Original source was not captured for this tool call", generatedText: "after\n" },
+    ]);
   });
 
   // A link to a folder named like one holding secrets leads to the same files: `conf/config.py`, with `conf` a link (a
@@ -4790,6 +4817,83 @@ async function withWorktree(root: string, place: string, branch = "other") {
   return { worktree, roots, extra };
 }
 
+const once = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: false });
+const everywhere = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: true });
+
+describe("the text edits a tool call's input asks for", () => {
+  it("reads an Edit's one edit, made once unless it asks for every place", () => {
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2" })).toEqual([once("1", "2")]);
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2", replace_all: true })).toEqual([everywhere("1", "2")]);
+  });
+
+  it("reads a MultiEdit's edits in the order they are made", () => {
+    const input = { file_path: "a.py", edits: [{ old_string: "a", new_string: "b" }, { old_string: "b", new_string: "c", replace_all: true }] };
+    expect(inputTextEdits(input)).toEqual([once("a", "b"), everywhere("b", "c")]);
+  });
+
+  it("reads none from an input that asks for no text edit, or one whose fields are not of their kind", () => {
+    expect(inputTextEdits({ file_path: "a.py", content: "x" })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", edits: [] })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", edits: [{ old_string: "a", new_string: "b" }, { old_string: "b" }] })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: 2 })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2", replace_all: "yes" })).toBeUndefined();
+    expect(inputTextEdits("a.py")).toBeUndefined();
+    expect(inputTextEdits(null)).toBeUndefined();
+  });
+});
+
+describe("the text a tool call's edits were made on, from the text they left", () => {
+  it("puts an edit's old text back where the text holds its new text once", () => {
+    expect(undoTextEdits("def a():\n    print(1)\n    return 1\n", [once("    return 1", "    print(1)\n    return 1")])).toBe("def a():\n    return 1\n");
+  });
+
+  it("gives none where the text holds the new text more than once, or not at all, as the place is then unknown", () => {
+    expect(undoTextEdits("print(1)\nx\nprint(1)\n", [once("pass", "print(1)")])).toBeUndefined();
+    expect(undoTextEdits("aaa\n", [once("b", "aa")])).toBeUndefined();
+    expect(undoTextEdits("print(3)\n", [once("pass", "print(2)")])).toBeUndefined();
+  });
+
+  it("puts an edit made at every place back at every place, and gives none where the text no longer holds it", () => {
+    expect(undoTextEdits("y = 2\nz = 2\n", [everywhere("1", "2")])).toBe("y = 1\nz = 1\n");
+    expect(undoTextEdits("y = 3\n", [everywhere("1", "2")])).toBeUndefined();
+  });
+
+  it("gives none for an edit that removed its old text, as nothing marks where it was", () => {
+    expect(undoTextEdits("a\nb\n", [once("x\n", "")])).toBeUndefined();
+    expect(undoTextEdits("a\nb\n", [everywhere("x\n", "")])).toBeUndefined();
+  });
+
+  it("gives none where the tool could not have made the edits on the text undoing gives", () => {
+    // Undone, the text holds the old text twice, where the tool makes an edit of one place only on a text holding it once.
+    expect(undoTextEdits("b\nx\na\n", [once("a", "b")])).toBeUndefined();
+    // An Edit with an empty old text created its file: nothing was there to make it on.
+    expect(undoTextEdits("def a():\n", [once("", "def a():\n")])).toBeUndefined();
+  });
+
+  it("undoes a MultiEdit's edits from the last to the first", () => {
+    expect(undoTextEdits("c\n", [once("a", "b"), once("b", "c")])).toBe("a\n");
+    expect(undoTextEdits("b\n", [once("a", "b"), once("x", "y")])).toBeUndefined();
+  });
+
+  it("matches the edit's lines with CRLF in a text with CRLF line breaks, as an editor keeping them writes them", () => {
+    const edit = once("    return 1", "    print(1)\n    return 1");
+    expect(undoTextEdits("def a():\r\n    print(1)\r\n    return 1\r\n", [edit])).toBe("def a():\r\n    return 1\r\n");
+    expect(undoTextEdits("x = 2\r\n", [once("x = 1\ny = 1", "x = 2")])).toBe("x = 1\r\ny = 1\r\n");
+  });
+});
+
+describe("the files a session could not read, after a pass of noticed paths", () => {
+  const tooLarge = (stamp: string): { stamp: string; readError: string } => ({ stamp, readError: "too large to read" });
+
+  it("takes out each path the pass read, keeps the others as the last walk found them, and adds what the pass found unread", () => {
+    const unread = new Map([["src/big.ts", tooLarge("1")], ["src/other.ts", tooLarge("2")]]);
+
+    const after = unreadAfter(unread, new Map([["src/big.ts", undefined], ["src/new.ts", undefined]]), new Map([["src/new.ts", tooLarge("3")]]));
+
+    expect([...after].sort()).toEqual([["src/new.ts", tooLarge("3")], ["src/other.ts", tooLarge("2")]]);
+  });
+});
+
 /**
  * Puts a worktree of `third` at `worktree` in place of the one there, as `git worktree remove` then `git worktree add`
  * do, and writes `src/a.py` in it.
@@ -4804,6 +4908,34 @@ function recordedIn(root: string, worktree: string, batches: readonly CodeRuleEd
   const prefix = `${repositoryPath(root, worktree)}/`;
   return batches.flatMap(batch => batch.edits).filter(edit => edit.path.startsWith(prefix))
     .map(edit => [basename(edit.path), edit.previousReadError ?? "none"]);
+}
+/**
+ * An auditor's list of the other worktrees that learns Git's list before a walk takes it, as the router does
+ * (`learnWorktreeRoots`): `roots` stands for Git's registry. A list taken where none was learnt for the registry as it is
+ * now would start Git on the daemon's thread: `blocking` counts those.
+ */
+function learningRoots(roots: readonly string[]) {
+  const state: { blocking: number; learnt?: { readonly key: string; readonly list: readonly string[] } } = { blocking: 0 };
+  const key = (): string => roots.join("\0");
+  const learnWorktreeRoots = (git: Git.GitReads): WorktreeListLearning | undefined => {
+    if (state.learnt?.key === key()) return undefined;
+    // Read before Git runs, as the registry is: a change meanwhile leaves the list taken after it to Git.
+    const learnt = { key: key(), list: [...roots] };
+    return { kind: "learning", done: git.run(async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      state.learnt = learnt;
+    }) };
+  };
+  const worktreeRoots = (): string[] => {
+    let learnt = state.learnt;
+    if (learnt?.key !== key()) {
+      state.blocking += 1;
+      learnt = { key: key(), list: [...roots] };
+      state.learnt = learnt;
+    }
+    return [...learnt.list];
+  };
+  return { state, auditor: { learnWorktreeRoots, worktreeRoots } };
 }
 
 describe("CodeRuleBridge and every worktree of the repository", () => {
@@ -5884,6 +6016,38 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // a preimage, and a write there after is measured from the new worktree's text.
     expect(recordedIn(root, worktree, batches)).toEqual([]);
     expect(await writtenThere(bridge, worktree, () => batches)).toEqual([["a.py", "old\nmine\n"]]);
+  });
+
+  // Each walk learns Git's list of the worktrees before it takes it (`learnWorktreeRoots`), so the lists that let go of a
+  // removed worktree and find another at its path start no Git on the daemon's thread, and each list taken still decides
+  // what the session holds of a worktree (`walkHeld`): what the walk running meanwhile read of the removed worktree is
+  // none of the new one's, which the walk after reads as new.
+  it("reads as new a worktree Git listed again at its path while a walk ran, each list learnt off the daemon's thread", async () => {
+    const root = await twoBranches();
+    git(root, "branch", "third", "main");
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const place = join(await workspace(), "kept");
+    git(root, "worktree", "add", "--quiet", "--detach", place, "main");
+    const kept = await realpath(place);
+    roots.push(kept);
+    const file = join(kept, "src", "a.py");
+    const registry = learningRoots(roots);
+    const { bridge, auditGeneratedEdits } = await opened(root, { ...extra, ...registry.auditor });
+    discovery.lstats.set(file, [async () => {
+      roots.splice(roots.indexOf(worktree), 1);
+      await bridge.checkpoint("turn");
+      await addedAgain(root, worktree);
+      roots.push(worktree);
+      await bridge.checkpoint("turn");
+    }]);
+    await shell(bridge, () => writeFile(file, "old\nmine\n"));
+    await bridge.settleWorktreeWalk();
+    expect(discovery.lstats.get(file)).toEqual([]);
+    // Its first read is its baseline, as of any worktree new to the session: a write there after is measured from the
+    // new worktree's text.
+    const batches = () => auditGeneratedEdits.mock.calls.map(([, batch]) => batch);
+    expect({ blocking: registry.state.blocking, recorded: recordedIn(root, worktree, batches()) }).toEqual({ blocking: 0, recorded: [] });
+    expect(await writtenThere(bridge, worktree, batches)).toEqual([["a.py", "old\nmine\n"]]);
   });
 
   // A session folder walk re-syncs the worktrees while a walk of the other worktrees reads them, so Git can stop listing

@@ -343,9 +343,9 @@ describe("Rerail daemon CLI", () => {
 
   // A daemon killed without its cleanup leaves daemon.json and the home lock's holder record naming its pid, which the
   // OS can give to any process started since. On Windows a lookup asks about that pid only while the recorded engine
-  // pipe is there, so the test keeps it open; there `rerail status` has used its 2 s on the pipe before it could read
-  // when the process started, so it keeps the record, and the stop, which has its own wait, removes it. macOS reads no
-  // start time, so there the stop ends nothing and says it could not prove whose process it is.
+  // pipe is there, so the test keeps it open; `rerail status` has used its 2 s on the pipe by then, and reads when the
+  // process started through the engine all the same, which needs no time left, so it removes the record there too.
+  // macOS reads no start time, so there the stop ends nothing and says it could not prove whose process it is.
   test.runIf(process.platform !== "darwin")("ends no process a dead daemon's records name, and says the record named no daemon of the home", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-not-daemon-cli-"));
     const stateFile = join(root, "daemon.json");
@@ -383,14 +383,9 @@ describe("Rerail daemon CLI", () => {
 
       await recordsName(unrelated.pid!);
       const status = await cli("status");
-      if (process.platform === "win32") {
-        expect(status.code).toBe(4);
-        expect(existsSync(stateFile)).toBe(true);
-      } else {
-        expect(status.code).toBe(3);
-        expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running`);
-        expect(existsSync(stateFile)).toBe(false);
-      }
+      expect(status.code).toBe(3);
+      expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running`);
+      expect(existsSync(stateFile)).toBe(false);
       await recordsName(unrelated.pid!);
       expect(await cli("daemon", "stop")).toEqual({ code: 0, stdout: `${note}\nThe Rerail daemon is not running.\n` });
       expect(existsSync(stateFile)).toBe(false);

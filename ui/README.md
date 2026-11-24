@@ -34,7 +34,9 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
   sheet (`pack-panel.js`: why Rerail suggested it, and until it is added its rules under Start on and Start off), the
   session timeline (`timeline.js`), and a command to copy (`command.js`).
-- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
+- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`) whenever the daemon's
+  change stream (`GET /api/changes`, followed through `api.js`) says something changed, at most every 5 s while changes
+  keep coming;
   `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
   rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
   and `settings-writes.js` writes rule settings. Merge Assist's writes go through `writeMergeAssist` in `poll.js`:

@@ -101,6 +101,50 @@ pub fn detached_exit_code(pid: u32) -> Result<Option<u32>> {
     }
 }
 
+/// Windows only: when the process holding `pid` started, in milliseconds since the Unix epoch, or null where Windows
+/// does not say (no process holds `pid`, or this user may not query it). Windows keeps a process's creation time for
+/// its life and gives its pid to no other process while its object lives, so the time tells the process that holds a
+/// pid now from one that held it before. The read starts no process: a policy that blocks Windows PowerShell does not
+/// stop it, and it costs a system call where a PowerShell start costs a second.
+#[napi]
+pub fn process_started_at(pid: u32) -> Result<Option<f64>> {
+    #[cfg(windows)]
+    {
+        Ok(windows::process_started_at(pid))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Err(Error::new(
+            Status::GenericFailure,
+            "processStartedAt is only needed on Windows; /proc gives a process's start elsewhere",
+        ))
+    }
+}
+
+/// Windows only: ends the process holding `pid` if it started no later than `started_at` (milliseconds since the Unix
+/// epoch), and waits up to `wait_ms` for it to exit. It opens the process once, then reads its creation time, ends it
+/// and waits through that one handle, so the process ended is the one whose start was read: a pid Windows gives to
+/// another process between two calls is never ended for the one that held it. It answers `ended`, `running` (ended,
+/// still running after the wait), `later` (started after `started_at`, let alone) or `unread` (not opened, as when no
+/// process holds `pid`, its start not read, the wait for its exit failed, or `started_at` no finite number or more than
+/// 10 s past this machine's clock).
+#[napi]
+pub fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> Result<String> {
+    #[cfg(windows)]
+    {
+        Ok(windows::end_process_started_by(pid, started_at, wait_ms).to_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (pid, started_at, wait_ms);
+        Err(Error::new(
+            Status::GenericFailure,
+            "endProcessStartedBy is only needed on Windows, to end a daemon of Rerail 0.1.4 or earlier",
+        ))
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use super::{Error, HashMap, Result, Status, windows_command_line};
@@ -109,8 +153,10 @@ mod windows {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::{null, null_mut};
     use std::sync::{Mutex, PoisonError};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        CloseHandle, FILETIME, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -120,9 +166,11 @@ mod windows {
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
         DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
-        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
-        STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+        GetProcessTimes, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+        OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+        WaitForSingleObject,
     };
 
     /// The process handles of the children `spawn_detached` started, by pid. A handle keeps its process object, and
@@ -328,6 +376,112 @@ mod windows {
         launched.swap_remove(index);
         Ok(Some(code))
     }
+
+    /// Milliseconds from 1601-01-01 UTC, where a FILETIME counts from, to the Unix epoch.
+    const FILETIME_EPOCH_MS: u64 = 11_644_473_600_000;
+
+    pub(super) fn process_started_at(pid: u32) -> Option<f64> {
+        created_ms(&open_process(PROCESS_QUERY_LIMITED_INFORMATION, pid)?)
+    }
+
+    /// `pid`'s process opened with only `access`; none where Windows refuses it or no process holds `pid`.
+    fn open_process(access: u32, pid: u32) -> Option<OwnedHandle> {
+        // SAFETY: opens the process by id with `access`; a null handle is a refusal or a pid no process holds.
+        let handle = unsafe { OpenProcess(access, 0, pid) };
+        if handle.is_null() {
+            None
+        } else {
+            Some(OwnedHandle(handle))
+        }
+    }
+
+    /// How far the clock may have moved since a daemon stamped its start, as the TypeScript side allows
+    /// (`START_CLOCK_SLACK_MS`): one set back since then puts the stamp up to this far past now.
+    const START_CLOCK_SLACK_MS: f64 = 10_000.0;
+
+    /// Whether `started_at` can name the time a process started: a finite number of milliseconds since the Unix epoch
+    /// no more than the slack past this machine's clock. Every creation time compares no later than Infinity, or than
+    /// a start further ahead, and none compares to NaN, so any process at the pid would pass for the one it names. A
+    /// clock that reads before the epoch reads as the epoch, so nothing then passes but a start within the slack of it.
+    fn names_a_start(started_at: f64) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1_000.0);
+        started_at.is_finite() && started_at <= now + START_CLOCK_SLACK_MS
+    }
+
+    pub(super) fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> &'static str {
+        // A start that names no time a process started ends nothing.
+        if !names_a_start(started_at) {
+            return "unread";
+        }
+        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE;
+        let Some(handle) = open_process(access, pid) else {
+            return "unread";
+        };
+        match created_ms(&handle) {
+            None => return "unread",
+            Some(created) if created > started_at => return "later",
+            Some(_) => {}
+        }
+        // SAFETY: `handle` is open with PROCESS_TERMINATE. A process already ending refuses it, and the wait tells.
+        unsafe { TerminateProcess(handle.0, 1) };
+        exit_within(&handle, wait_ms)
+    }
+
+    /// Whether the process `handle` names exits within `wait_ms`: `ended`, `running` once the wait timed out, or
+    /// `unread` when the wait fails, as it does on a handle opened without PROCESS_SYNCHRONIZE.
+    fn exit_within(handle: &OwnedHandle, wait_ms: u32) -> &'static str {
+        // SAFETY: `handle` is an open process handle; one without the right to wait makes the wait fail.
+        match unsafe { WaitForSingleObject(handle.0, wait_ms) } {
+            WAIT_OBJECT_0 => "ended",
+            WAIT_TIMEOUT => "running",
+            _ => "unread",
+        }
+    }
+
+    /// When the process `handle` names was created, in whole milliseconds since the Unix epoch; none where it is not read.
+    fn created_ms(handle: &OwnedHandle) -> Option<f64> {
+        let [mut created, mut exited, mut kernel, mut user] = [FILETIME::default(); 4];
+        // SAFETY: `handle` is an open process handle with a right GetProcessTimes takes, and the four times outlive the
+        // call.
+        let read =
+            unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) };
+        if read == 0 {
+            return None;
+        }
+        // 100 ns ticks since 1601, to whole milliseconds since 1970: a double holds them exactly.
+        let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+        (ticks / 10_000)
+            .checked_sub(FILETIME_EPOCH_MS)
+            .map(|ms| ms as f64)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, exit_within, open_process,
+        };
+        use std::process::{Command, Stdio};
+
+        #[test]
+        fn a_wait_that_fails_reads_as_unread_and_one_that_times_out_as_running() {
+            let mut child = Command::new("ping")
+                .args(["-n", "120", "127.0.0.1"])
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("ping starts");
+            // A handle without PROCESS_SYNCHRONIZE cannot be waited on: the wait fails.
+            let unwaitable = open_process(PROCESS_QUERY_LIMITED_INFORMATION, child.id())
+                .expect("the child opens");
+            assert_eq!(exit_within(&unwaitable, 0), "unread");
+            let waitable = open_process(PROCESS_SYNCHRONIZE, child.id()).expect("the child opens");
+            assert_eq!(exit_within(&waitable, 0), "running");
+            child.kill().expect("the child ends");
+            child.wait().expect("the child exits");
+            assert_eq!(exit_within(&waitable, 0), "ended");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -394,5 +548,87 @@ mod tests {
         // The handle is closed once its exit code is read; the pid is no longer this process's to ask about.
         assert!(detached_exit_code(pid).is_err());
         let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reads_when_this_process_started_and_nothing_for_a_pid_no_process_holds() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the clock is after 1970")
+            .as_millis() as f64;
+        let started = super::process_started_at(std::process::id())
+            .expect("the read runs")
+            .expect("this process's start");
+        assert!(
+            started <= now && now - started < 600_000.0,
+            "started {started}, now {now}"
+        );
+        // Pid 0 is the idle process, which OpenProcess refuses to every caller.
+        assert_eq!(super::process_started_at(0).expect("the read runs"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ends_a_process_only_when_it_started_no_later_than_the_time_given() {
+        use super::{end_process_started_by, process_started_at};
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("ping")
+            .args(["-n", "120", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("ping starts");
+        let started = process_started_at(child.id())
+            .expect("the read runs")
+            .expect("the child's start");
+        // A process that started after the time given is not the one that time names: it runs on.
+        let later =
+            end_process_started_by(child.id(), started - 1.0, 5_000).expect("the call runs");
+        assert_eq!(later, "later");
+        assert!(child.try_wait().expect("the child is asked").is_none());
+        // A start that is no finite number, or an hour past now, names no process: it runs on.
+        for nonsense in [f64::INFINITY, f64::NAN, started + 3_600_000.0] {
+            let end = end_process_started_by(child.id(), nonsense, 0).expect("the call runs");
+            assert_eq!(end, "unread");
+        }
+        assert!(child.try_wait().expect("the child is asked").is_none());
+        // One 5 s past now, as a clock set back since the start was stamped leaves it, still names it: it ends.
+        let ended =
+            end_process_started_by(child.id(), started + 5_000.0, 5_000).expect("the call runs");
+        assert_eq!(ended, "ended");
+        assert!(child.try_wait().expect("the child is asked").is_some());
+        assert_eq!(
+            end_process_started_by(0, started, 0).expect("the call runs"),
+            "unread"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_process_that_already_exited_reads_as_ended_without_a_wait() {
+        use super::{end_process_started_by, process_started_at};
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        let mut child = Command::new("cmd")
+            .args(["/d", "/c", "exit 0"])
+            .spawn()
+            .expect("cmd starts");
+        let started = process_started_at(child.id())
+            .expect("the read runs")
+            .expect("the child's start");
+        child.wait().expect("cmd exits");
+        // `child` keeps its handle, so the exited process's object and start stay readable by its pid.
+        let asked = Instant::now();
+        let end = end_process_started_by(child.id(), started, 60_000).expect("the call runs");
+        assert_eq!(end, "ended");
+        assert!(
+            asked.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
+        );
     }
 }
