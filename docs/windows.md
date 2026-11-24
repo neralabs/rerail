@@ -208,8 +208,11 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   process: a second or more each on a busy machine where every process start stalls. The daemon starts each Git that
   does not block, and each `icacls` it does not wait for, in a starter thread (`src/engine/git-thread.ts`), up to four
   at once, so its own thread goes on answering hooks, `rerail status` and health probes while those starts wait. A Git
-  that blocks, such as the one that lists a repository's worktrees, and the `icacls` that makes a new session records
-  folder outside the profile folder private before its first record, still start on the daemon's thread. A read's
+  that blocks, such as the worktree list or a clone's remote where the daemon keeps no answer for it, and the `icacls`
+  that makes a new session records folder outside the profile folder private before its first record, still start on
+  the daemon's thread. Git's two asks that name the config files the engine's own Git reads take start as the daemon
+  starts, as Git that does not block, so a session's first hooks wait for neither, however slowly Git starts or
+  answers; until Git answers, the engine's reads take no system file Git named. A read's
   time limit counts from its Git's start, not from its wait for a thread, and a read stopped while its start waits
   never starts its Git. A starter thread that fails before it runs is replaced; after two such failures in a row the
   daemon makes no more, and starts Git on its own thread while no starter thread runs. `daemon.log` gets a line for
