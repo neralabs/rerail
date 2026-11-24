@@ -517,6 +517,16 @@ impl Source for LongTexts {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
+    /// Its batch's `node` view in place, where the device reads every document's source (decision 0287 §2): a node's
+    /// text read where it lies, as `node_read` reads it on the host.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_view(&self) -> Option<(usize, crate::code_rule_dsl::facts::vtab::ViewInPlace)> {
+        use device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        let v = views_in_place(&self.batch).filter(|v| v.sources)?;
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        view.failed = view.cache_failed();
+        Some((self.batch.nodes().total(), view))
+    }
     fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<String> {
         // T's per-node relations (`TRel`): in T's shape each, in core.rerail's `intval` and `op_t`, which `NodeRows`
         // makes there too. `str`'s is `str_any`'s, which answers `str` on request in either shape.

@@ -124,8 +124,10 @@ enum Kind {
     Names,
     /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text function, a text test of one), a SIMD
     /// group a row, its symbols' bytes read in place (decision 0478 step 2e), with its automaton; `kept`, the id its
-    /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none).
-    RowText { auto: RowAuto, kept: u32 },
+    /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none);
+    /// `nodes`, a node's text's (`mj::TEXTFN_NODE_TEXT*`): the run's binding of the nodes it reads, whose batch's `node`
+    /// view the stage reads the node's text through, where it lies (decision 0287 §2).
+    RowText { auto: RowAuto, kept: u32, nodes: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
     /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
     /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
@@ -169,7 +171,7 @@ fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &Ha
     if !matches!(st.kind, Kind::Names) {
         return Err("a made text's operands of no names".into());
     }
-    st.kind = Kind::RowText { auto, kept: 0 };
+    st.kind = Kind::RowText { auto, kept: 0, nodes: None };
     Ok(st)
 }
 
@@ -228,6 +230,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         ZeroPad => mj::TEXTFN_ZERO_PAD,
         StrBetween => mj::TEXTFN_STR_BETWEEN,
         PkgUp => mj::TEXTFN_PKG_UP,
+        NodeTextAny => mj::TEXTFN_NODE_TEXT_ANY,
+        NodeText => mj::TEXTFN_NODE_TEXT,
         Replace => mj::TEXTFN_REPLACE,
     };
     Some((f, texts, nums))
@@ -966,7 +970,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let mut st = row_stage(i, mj::ROW_REPLACE, args[0], Key::Const(with), RowAuto::Replace { pattern, with }, &deferred, &origin, &known)?;
                 st.desc.bind_slot[0] = *out as u32;
                 if let Some((id, chain)) = keep_text(&mut st.desc, args[0], Some(rerail_blocks::vector![pattern, with]), name, &origin, &kept_texts) {
-                    st.kind = Kind::RowText { auto: RowAuto::Replace { pattern, with }, kept: id };
+                    st.kind = Kind::RowText { auto: RowAuto::Replace { pattern, with }, kept: id, nodes: None };
                     kept_texts.insert(*out, chain);
                 }
                 stages.push(st);
@@ -980,7 +984,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Step::Func { name, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") => {
                 return Err(format!("the function {name} of a constant text, or of a regex or replacement not a constant, has no device form"));
             }
-            Step::Func { name, args, out, bind, .. } if text_function(name).is_some() => {
+            Step::Func { name, args, out, bind, texts, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
                 // symbol), as a held cat's text is. Compared with a bound slot (not bound), it is made into a slot of
@@ -1046,14 +1050,26 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = target as u32;
+                // A node's text: read through the run's binding of the nodes (`texts`), whose batch's `node` view the
+                // stage reads it by (decision 0287 §2).
+                let node_text = matches!(f, mj::TEXTFN_NODE_TEXT_ANY | mj::TEXTFN_NODE_TEXT);
+                let nodes = if node_text {
+                    let nodes = texts.as_ref().and_then(|h| match &**j.plan.bound(h) {
+                        super::NodeTexts::Held(n) => Some(Arc::clone(n)),
+                        super::NodeTexts::At(at) => at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES)),
+                    });
+                    Some(nodes.ok_or_else(|| format!("the function {name} with no binding of the nodes it reads has no device form"))?)
+                } else {
+                    None
+                };
                 let konst = |k: &Key| match *k {
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
                 };
-                let mut kind = kind;
+                let mut kind = if node_text { Kind::RowText { auto: RowAuto::None, kept: 0, nodes } } else { kind };
                 if ntexts > 0
                     && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
-                        kind = Kind::RowText { auto: RowAuto::None, kept: id };
+                        kind = Kind::RowText { auto: RowAuto::None, kept: id, nodes: None };
                         kept_texts.insert(target, chain);
                     }
                 if target >= bound.len() {
@@ -1800,6 +1816,15 @@ impl<'p> Run<'p> {
                         (Kind::Own { rel, delta, cols }, None) => {
                             self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
                         }
+                        (Kind::RowText { nodes: Some(nodes), .. }, None) => {
+                            // A node's text is read through its batch's `node` view in place (decision 0287 §2): the
+                            // stage's probed relation, which binds the directory and makes its slabs, the sources'
+                            // among them, resident. Where the device does not read every source, the host does.
+                            let (n, view) = nodes.node_view().ok_or("a node's text where the device does not read its batch's sources")?;
+                            let dev = mj::DevRel::view(5, n, view).map_err(|e| format!("{e:?}: the node view a node's text is read through"))?;
+                            rep.in_place += 1;
+                            self.rels[k] = Some((Rc::new(dev), None));
+                        }
                         _ => {}
                     }
                     let right = self.rels[k].as_ref().map(|(r, ix)| (&**r, ix.as_deref()));
@@ -1840,7 +1865,7 @@ impl<'p> Run<'p> {
                         // Its automaton, and its id in the one rolling cache: a test's (its verdicts) or the
                         // functions' (their texts).
                         let (auto, id) = match &s.kind {
-                            Kind::RowText { auto, kept } => (row_automaton(auto, names)?, *kept),
+                            Kind::RowText { auto, kept, .. } => (row_automaton(auto, names)?, *kept),
                             Kind::Verdict { table, test } => {
                                 let a = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
                                 (Some((a, [table.states, table.states, table.classes, table.start])), *test)

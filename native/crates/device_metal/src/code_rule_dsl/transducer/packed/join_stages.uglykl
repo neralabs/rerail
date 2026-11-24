@@ -574,6 +574,35 @@ UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JS
     return x;
 }
 
+// Node `key`'s text, read where its document's source lies (decision 0287 §2): its document by the directory's search
+// on its key (`clif_dir_doc_of_key`), its numbered node (`clif_view_number`), its bytes' range in its own source
+// (`clif_view_text_span`), read at the source's home (`view_source`). The stage's `node` view binds the directory
+// (`Stage::v_dir`). A node the directory does not hold (another batch's, a comment span, no node) sets `unheld`: the
+// stratum runs on the host.
+UKL_INLINE Txt node_txt(StageP s, JSPACE const uint8_t* D, int64_t key, UKL_PRIVATE bool* unheld) {
+    Txt x;
+    x.a = D;
+    x.al = 0;
+    x.b = D;
+    x.bl = 0;
+    x.dot = 0;
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    if (key < 0 || d == 0 || d->ndocs == 0u) { *unheld = true; return x; }
+    uint32_t m = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
+    if (m == NONE) { *unheld = true; return x; }
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[m];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
+    if (l == NONE) { *unheld = true; return x; }
+    uint64_t span = clif_view_text_span(ch, e->entry, t, e->view, ls, e->lines, l);
+    uint32_t from = (uint32_t)(span >> 32), to = (uint32_t)span;
+    x.a = (JSPACE const uint8_t*)view_source(d, e) + from;
+    x.al = to >= from ? to - from : 0u;
+    return x;
+}
+
 // Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
 // agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
 UKL_INLINE bool textop_one(uint32_t op, Txt x, uint32_t xs, uint32_t lx, Txt y, uint32_t ly) {
@@ -1200,9 +1229,12 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
         }
         return;
     }
+    // A node's text (`TEXTFN_NODE_TEXT_ANY`, `TEXTFN_NODE_TEXT`): X is key 5's node's, read where its source lies.
+    uint32_t fn = (s->agg[0] >> 16) & 255;
+    bool node_text = op == 4 && (fn == 14u || fn == 15u);
     for (uint32_t row = sg; row < n; row += groups) {
         bool unheld = false;
-        Txt x = txt_of(s, L, row, D, A, 0, s->agg[1] & 15, &unheld);
+        Txt x = node_text ? node_txt(s, D, key_value(s, L, row, 5), &unheld) : txt_of(s, L, row, D, A, 0, s->agg[1] & 15, &unheld);
         if (unheld) {
             // A symbol the atoms directory does not hold: `TEXTFN_UNHELD`, the stratum on the host.
             if (lane == 0) {
@@ -1251,7 +1283,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 continue;
             }
         }
-        Txt y = txt_of(s, L, row, D, A, 2, s->agg[1] >> 4, &unheld), z = y;
+        Txt y = node_text ? x : txt_of(s, L, row, D, A, 2, s->agg[1] >> 4, &unheld), z = y;
         uint32_t f = (s->agg[0] >> 16) & 255;
         uint32_t lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         uint64_t u = 0;
@@ -1319,6 +1351,19 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             from = 0;
             to = cut;
             len = cut;
+        } else if (f == 14 || f == 15) {
+            // A node's text whole; `rr_node_text`'s only past `text`'s inline bound (`core_rr::TEXT_INLINE`, 256 bytes):
+            // no row for a shorter one, as the host's `long_text` has none.
+            if (f == 15 && lx <= 256u) {
+                if (lane == 0) {
+                    V[row] = -1;
+                    counts[row] = 0;
+                }
+                continue;
+            }
+            from = 0;
+            to = lx;
+            len = lx;
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);

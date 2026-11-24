@@ -436,6 +436,13 @@ pub trait Source: Send + Sync {
     fn has_walk(&self) -> Option<HasWalk> {
         None
     }
+    /// The `node` view of the batch whose nodes' texts this source reads (`node_read`), where the device reads every
+    /// one of its documents' sources in place (decision 0287 §2, `ViewsInPlace::sources`): its rows and directory,
+    /// through which a stage reads a node's text where it lies. `None` for any other source.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_view(&self) -> Option<(usize, ViewInPlace)> {
+        None
+    }
     /// A view the device reads in place (decision 0353 step 4): its code (`syntax::device_chunk::VIEW_*`), its rows,
     /// its directory. `None`: the device does not read it where it lies.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]

@@ -2185,6 +2185,86 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// Decision 0287 §2: a node's text (`@rr_node_text_any`, at any length, and the long-text twin's `@rr_node_text`,
+    /// past `text`'s inline bound alone) is read by the device where its document's source lies, through the batch's
+    /// `node` view, and made a text of the arena: the CPU's rows are the host's reads (`node_read`), and the device's
+    /// rows and counts per step are the CPU's. A comment span, no node, is read on the host.
+    #[test]
+    fn a_nodes_text_on_the_device_is_read_where_its_source_lies() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES;
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        // A function body past 256 bytes, so `@rr_node_text` has rows; names past ASCII; an empty document.
+        let long = format!("def big(a):\n{}    return a\n", (0..12).map(|i| format!("    a = a + {i} * len('ü{i}')\n")).collect::<String>());
+        let texts = ["import os\nx = f(1, y=[2, g(3)])  # note\n".to_owned(), long, String::new(), "class Ç(B):\n    def m(self, é):\n        return [é for é in self]\n".to_owned()];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            // Its source in a room the device reads, as a loader reads a file's (`placed::read_text`).
+            let text = crate::code_rule_dsl::tape::placed::housed(Arc::new(source.clone().into()));
+            let file = FileInput::new(path.clone(), "python".to_owned(), text, None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-node-text-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
+        let nodes = Arc::clone(&all.iter().find(|(n, _)| *n == LONG_TEXT_NODES).expect("the long-text nodes").1);
+        assert!(nodes.node_view().is_some(), "the batch's sources are read in place");
+        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        for &id in &ids {
+            db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
+        }
+        // The run's binding of the long-text nodes, which a node read finds on the connection (`bound_source`).
+        let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+        modules.bind(&db, LONG_TEXT_NODES, Arc::clone(&nodes)).unwrap();
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        for f in ["rr_node_text_any", "rr_node_text"] {
+            let mut want: Vec<(String, i64)> = ids.iter().filter_map(|&id| nodes.node_read(f, id, &[]).map(|t| (t, id))).collect();
+            want.sort_unstable();
+            assert!(want.len() > if f == "rr_node_text" { 0 } else { 50 }, "{f}: {} texts", want.len());
+            let rule = format!("pos {q} v0\nfunc {f} v1 v0\nhead v1 v0");
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name node_text".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 si empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "node_text", 0).unwrap();
+                let report = super::take_report();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "{f}: read on the device: {r:?}");
+                }
+                let counts = super::super::step_counts(&db, "node_text").unwrap();
+                super::super::close(&db, "node_text").unwrap();
+                let mut rows: Vec<(String, i64)> = db.prepare("SELECT sym_text(c0), c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push((rows, counts));
+            }
+            assert_eq!(got[0].0, want, "{f}: the CPU's rows are the host's reads");
+            assert_eq!(got[1].0, got[0].0, "{f}: the device's rows are the CPU's");
+            assert_eq!(got[1].1, got[0].1, "{f}: the device's counts per step are the CPU's");
+        }
+    }
+
     /// `child` probed by its parent is walked on the tape (`by_parent`) over a chunk's documents and the tape values
     /// admitted after them (decision 0431 §8), whose directory is in row order: the chunk's documents, then the
     /// values', so not in key order where a value's key is below the chunk's. A parent's document is found by its key
