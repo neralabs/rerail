@@ -4609,7 +4609,7 @@ fn made_text_columns(j: &JoinRule) -> Vec<usize> {
     use crate::code_rule_dsl::logic::device::caps::{self, DeviceFn};
     let makes = |s: usize| {
         j.steps.iter().any(|st| match st {
-            Step::Cat { out, bind: true, .. } => *out == s,
+            Step::Cat { out, bind: true, .. } | Step::StrJoin { out, bind: true, .. } => *out == s,
             Step::Func { name, out, bind: true, .. } => *out == s && (*name == "str_concat" || matches!(caps::device_fn(name), Some(DeviceFn::Text { .. } | DeviceFn::RegexReplace))),
             _ => false,
         })

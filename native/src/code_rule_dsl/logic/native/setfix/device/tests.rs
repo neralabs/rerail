@@ -478,6 +478,83 @@
         assert_eq!(got[1], got[0], "the device's made texts are the CPU's rows");
     }
 
+    /// Decision 0661: a string join on the device. Each group's parts are joined in their order by a number, with a
+    /// separator, into the canonical arena; a group of no parts has "". The joins are copied along alias edges, a
+    /// recursive set head's text column. Clean, the component runs on the device; with a group of more parts than a
+    /// SIMD group's lanes, two names at one place and a part twice, those are the host's. Either way its rows are the
+    /// CPU's, each once.
+    #[test]
+    fn a_string_join_on_the_device_is_the_cpus() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let parts = ["ab", "c", "déf", "g", "hi", "j_k", ""];
+        let groups = 600i64;
+        for dirty in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.g; DROP TABLE IF EXISTS temp.p; DROP TABLE IF EXISTS temp.a; CREATE TEMP TABLE g (c0); CREATE TEMP TABLE p (c0, c1, c2); CREATE TEMP TABLE a (c0, c1);").unwrap();
+            for e in 0..groups {
+                db.execute("INSERT INTO g VALUES (?1)", [e]).unwrap();
+                // 0 to 6 parts, at places out of order.
+                for i in 0..e % 7 {
+                    db.execute("INSERT INTO p VALUES (?1, ?2, ?3)", rusqlite::params![e, (i * 5 + e) % 11 + 11 * i, parts[((e + i) % 7) as usize]]).unwrap();
+                }
+                // Each join copied to a node of its own, and on again: a node reached in two rounds.
+                db.execute("INSERT INTO a VALUES (?1, ?2)", [e, groups + e]).unwrap();
+                if e % 3 == 0 {
+                    db.execute("INSERT INTO a VALUES (?1, ?2)", [groups + e, 2 * groups + e]).unwrap();
+                }
+            }
+            if dirty {
+                let e = groups;
+                db.execute("INSERT INTO g VALUES (?1), (?2), (?3)", [e, e + 1, e + 2]).unwrap();
+                for i in 0..40 {
+                    db.execute("INSERT INTO p VALUES (?1, ?2, ?3)", rusqlite::params![e, 40 - i, parts[(i % 6) as usize]]).unwrap();
+                }
+                db.execute("INSERT INTO p VALUES (?1, 1, 'zz'), (?1, 1, 'aa'), (?2, 2, 'q'), (?2, 2, 'q'), (?2, 0, 'r')", [e + 1, e + 2]).unwrap();
+            }
+            let g = format!("t:x:{}:{}:i", hex("temp.g"), hex("c0"));
+            let pv = format!("t:x:{}:{}:iis", hex("temp.p"), hex("c0, c1, c2"));
+            let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+            // q(e, v) :- g(e), v = join s by i sep ", " : { p(e, i, s) }.  q(y, v) :- q(x, v), a(x, y).
+            let join = format!("pos {g} v0\nstrjoin {pv} v0 _ _ 2:1 1:0 x:{} v1\nhead v0 v1", hex(", "));
+            let alias = format!("pos d0 v0 v1\npos {a} v0 v2\nhead v2 v1");
+            let mut got = Vec::new();
+            for device in [false, true] {
+                let name = format!("strjoin_{}", if device { "dev" } else { "cpu" });
+                db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1);").unwrap();
+                let mut spec = vec![format!("name {name}")];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.extend(["rel q is empty".to_owned(), format!("seed 0 {}", hex(&join)), format!("join 0 0 {}", hex(&alias))]);
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, &name, 0).unwrap();
+                if device {
+                    let r = super::take_report().expect("a device report");
+                    assert!(r.refused.is_none(), "dirty {dirty}: a string join has a device form: {r:?}");
+                    if !dirty {
+                        assert!(!r.handed && r.rounds >= 2, "the component on the device: {r:?}");
+                    }
+                }
+                super::super::close(&db, &name).unwrap();
+                let rows: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.q").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                let mut sorted = rows.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                assert_eq!(sorted.len(), rows.len(), "dirty {dirty}, device {device}: each row once");
+                got.push(sorted);
+            }
+            assert!(got[0].len() > 2 * groups as usize, "the CPU's rows: {}", got[0].len());
+            assert!(got[0].contains(&(0, String::new())), "a group of no parts has \"\"");
+            assert_eq!(got[1], got[0], "dirty {dirty}: the device's joins are the CPU's");
+        }
+    }
+
     /// Decisions 0603 and 0638's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
     /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
     /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past
@@ -1327,6 +1404,10 @@
             // A cat of a made text compared with a bound name; a head's cat of a made text.
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v0 v2 {}\nhead v0 v1", sym("/lib")),
             format!("pos {n} v0 v1\nlt v1 i:300\nfunc head v2 v0\nhead cat:v2:v0 v1"),
+            // A text function's value compared with a bound slot, not bound: another relation's symbol, and (as
+            // `literal_key` does) a made text, the function's text made of it.
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v1\nfunc str_between v0 v3 {} {}\nhead v1 v2", sym("<"), sym("<"), sym("")),
+            format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v3 {} v2\nfunc str_concat v4 v3 {}\nfunc str_between v2 v4 {} {}\nhead v4 v1", sym("("), sym(",)"), sym("("), sym(",)")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false)] {

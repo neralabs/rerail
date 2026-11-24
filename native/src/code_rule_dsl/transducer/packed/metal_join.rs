@@ -125,6 +125,9 @@ pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
 /// A text test of a symbol (key 0) by its table, its verdict read from and kept in the one rolling cache (decision
 /// 0478 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
 pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
+/// A string join (decision 0661): each binding's matching rows of the stage's relation, their names (column
+/// `col_idx[0]`) ordered by a number (`col_idx[1]`) and joined by the separator `par_const[0]` into the arena.
+pub(in crate::code_rule_dsl) const ROW_STRJOIN: u32 = 6;
 /// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
 /// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
@@ -2348,8 +2351,21 @@ impl Batch {
     /// in the automata block), and `id`: a test's (its verdicts) or the functions' (their texts, `ROW_KEPT`) in the
     /// batch's rolling cache; then its rows scattered.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32,
-                                              in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+    /// `right`: the relation a string join (`ROW_STRJOIN`) reads by its keys, as a stage's (`stage`), with its screen.
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32, right: Option<(&DevRel, Option<&DevIndex>)>,
+                                              screen: Option<&Screen>, in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+        // A view's format only where it reads a relation: a made text per row reads none.
+        let format = right.map_or(0, |(rel, index)| views_format(Some(probed(rel, index))));
+        let rbuf: Buffer = match right {
+            Some((rel, index)) => {
+                let rel = index.map_or(rel, |ix| ix.of(rel));
+                bind_right(&mut stage, rel, index);
+                rel.resident_in(self.open()?);
+                index.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone()
+            }
+            None => self.dummy.buffer.clone(),
+        };
+        let fbuf = self.screen(&mut stage, screen);
         stage.cap_in = left.room() as u32;
         stage.cap_out = out.room() as u32;
         stage.in_slot = in_slot as u32;
@@ -2369,7 +2385,7 @@ impl Batch {
         let atoms = self.atoms.clone().ok_or(Error::BackendCapacity)?;
         let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
         atoms.resident_in(self.open()?);
-        let mut job = Job::new(JobKind::Row, 0, stage);
+        let mut job = Job::new(JobKind::Row, format, stage);
         job.reads_placed(left, &[(0, CAP_IN)]);
         job.makes_placed(out, &[(0, CAP_OUT)]);
         job.v_place = left.placed();
@@ -2384,7 +2400,9 @@ impl Batch {
         job.desc.s = job.reach(&work.buffer, 0, true)?;
         job.desc.d = job.reach(&atoms.dir.0, atoms.dir.1, false)?;
         job.desc.vc = job.reach(&cache.cache.0, cache.cache.1, true)?;
-        // Its arena's canonical table, where its texts are kept one value a content (decision 0659): P[6] says so.
+        job.desc.r = job.reach(&rbuf, 0, false)?;
+        job.desc.f = job.reach(&fbuf, 0, false)?;
+        // Its arena's canonical table, where its texts are kept one value a content (decision 0661): P[6] says so.
         let canon = self.arena()?.canon_buffer();
         job.desc.h = job.reach(canon.as_ref().unwrap_or(&self.dummy.buffer), 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
@@ -2393,7 +2411,7 @@ impl Batch {
         job.m = (Some(job.desc.totals + 4 * in_slot as u64), left.room());
         job.own.extend([work, values]);
         let (l, o) = (left.key(job.desc.l), out.key(job.desc.o));
-        job.order(&[l, job.desc.totals], &[o, job.desc.totals]);
+        job.order(&[l, job.desc.r, job.desc.totals], &[o, job.desc.totals]);
         self.queue(job)
     }
 

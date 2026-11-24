@@ -652,6 +652,58 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
+            Step::StrJoin { src, keys, tests, x, by, sep, out, bind } => {
+                // A string join (decision 0661): each binding's matching rows of `src`, found as an aggregate's are,
+                // their names joined in the order of one number column into the arena, a SIMD group a binding
+                // (`mj::ROW_STRJOIN`). A name ordered by its text, or past a group's lanes, is the host's at run time.
+                if !*bind {
+                    return Err("a string join's value tested (not bound) has no device form".into());
+                }
+                if !x.1 {
+                    return Err("a string join of numbers has no device form".into());
+                }
+                let [(byc, false)] = by[..] else { return Err("a string join not ordered by one number column has no device form".into()) };
+                if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
+                    return Err("a string join with more keys or tests than a stage holds".into());
+                }
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
+                for (k, &(c, key)) in keys.iter().enumerate() {
+                    d.key_rcol[k] = c as u32;
+                    match key {
+                        Key::Slot(s) => { d.key_kind[k] = mj::SLOT; d.key_slot[k] = s as u32; }
+                        Key::Const(v) => { d.key_kind[k] = mj::CONST; d.key_const[k] = v; }
+                    }
+                }
+                d.nkeys = keys.len() as u32;
+                for (k, &(a, b)) in tests.iter().enumerate() {
+                    d.test_a[k] = a as u32;
+                    d.test_b[k] = b as u32;
+                }
+                d.ntests = tests.len() as u32;
+                (d.col_kind[0], d.col_idx[0]) = (mj::RIGHT, x.0 as u32);
+                (d.col_kind[1], d.col_idx[1]) = (mj::RIGHT, byc as u32);
+                d.ncols = 2;
+                d.par_const[0] = *sep;
+                d.agg = [mj::ROW_STRJOIN, 0];
+                d.bind_slot[0] = *out as u32;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                ARENA.with_borrow_mut(|a| a.push(*out));
+                let cols = keys.iter().map(|&(c, _)| c).collect();
+                let kind = match src {
+                    Src::In(rel, _) => {
+                        readable(rel, keys.len())?;
+                        Kind::Atom { rel: rel.clone(), cols }
+                    }
+                    Src::Delta(r) => Kind::Own { rel: *r, delta: true, cols },
+                    Src::Full(r) => Kind::Own { rel: *r, delta: false, cols },
+                    Src::FullMulti(..) => return Err("a string join over the component's own relation by several indexes".into()),
+                };
+                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                i += 1;
+            }
             Step::Test { op, s, p, want, .. }
                 if literal_test(op).is_some() && (matches!(p, Key::Slot(_)) || [s, p].iter().any(|k| matches!(k, Key::Slot(x) if deferred.contains_key(x) || is_arena(*x)))) =>
             {
@@ -879,18 +931,26 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Step::Func { name: name @ ("replace_all" | "rx_replace"), .. } => {
                 return Err(format!("the function {name} of a constant text, or of a regex or replacement not a constant, has no device form"));
             }
-            Step::Func { name, args, out, bind: true, .. } if text_function(name).is_some() => {
+            Step::Func { name, args, out, bind, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
-                // symbol), as a held cat's text is.
+                // symbol), as a held cat's text is. Compared with a bound slot (not bound), it is made into a slot of
+                // its own (past the rule's slots, a stage that counts no step), then compared with it as texts
+                // (`TEXTOP`), as a cat of a made text is.
                 let (f, ntexts, nnums) = text_function(name).expect("a text function");
                 if args.len() != ntexts + nnums {
                     return Err(format!("the function {name} of {} arguments", args.len()));
                 }
-                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
-                if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
-                    return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
-                }
+                let target = if *bind {
+                    let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
+                        return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
+                    }
+                    *out
+                } else {
+                    extra += 1;
+                    extra - 1
+                };
                 let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
                 let mut xk = mj::OPND_SYM;
                 let kind = if ntexts > 0 {
@@ -936,7 +996,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     }
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
-                d.bind_slot[0] = *out as u32;
+                d.bind_slot[0] = target as u32;
                 let konst = |k: &Key| match *k {
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
@@ -945,14 +1005,19 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if ntexts > 0
                     && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
                         kind = Kind::RowText { auto: RowAuto::None, kept: id };
-                        kept_texts.insert(*out, chain);
+                        kept_texts.insert(target, chain);
                     }
-                if *out >= bound.len() {
-                    bound.resize(*out + 1, false);
+                if target >= bound.len() {
+                    bound.resize(target + 1, false);
                 }
-                bound[*out] = true;
-                ARENA.with_borrow_mut(|a| a.push(*out));
-                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                bound[target] = true;
+                ARENA.with_borrow_mut(|a| a.push(target));
+                if *bind {
+                    stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                } else {
+                    stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(target), Key::Slot(*out), &deferred, &origin, &known)?);
+                }
                 i += 1;
             }
             Step::Func { name, kinds, args, out, bind, .. } => {
@@ -1143,7 +1208,10 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         // A cat of it, bound or compared with a bound slot (made into the arena, then compared as texts).
         Step::Cat { .. } | Step::Func { name: "str_concat", .. } => true,
         Step::Func { name, args, bind: true, .. } if caps::device_fn(name) == Some(caps::DeviceFn::RegexReplace) => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
-        Step::Func { name, args, bind: true, .. } => text_function(name).is_some_and(|(_, nt, _)| nt > 0) && me(&args[0]) && !args[1..].iter().any(me),
+        // A text function of it, bound or compared with a bound slot; or compared with it (as texts).
+        Step::Func { name, args, out, bind, .. } => {
+            text_function(name).is_some_and(|(_, nt, _)| nt > 0) && (me(&args[0]) && !args[1..].iter().any(me) || !*bind && *out == x && !args.iter().any(me))
+        }
         _ => false,
     }
 }
@@ -1776,7 +1844,14 @@ impl<'p> Run<'p> {
                             }
                             _ => (None, 0),
                         };
-                        batch.row_stage(s.desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), id, i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        // A string join reads its relation by its keys, as a stage does (narrowed to the columns the
+                        // device holds, its view's constants as keys).
+                        let desc = if s.desc.agg[0] & 15 == mj::ROW_STRJOIN {
+                            with_consts(self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at)), &self.consts[k])?
+                        } else {
+                            s.desc
+                        };
+                        batch.row_stage(desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), id, right, None, i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
                         let desc = with_consts(self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at)), &self.consts[k])?;
                         if let Some(probes) = &self.probes[k] {
@@ -4001,7 +4076,7 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
             (Kind::Pass | Kind::Map, _) => vec![n_in; s.span],
             // One witness per binding: every step of the rest passes the bindings that have one.
             (Kind::Witness { .. }, _) => vec![n_out; s.span],
-            _ if s.desc.mode == mj::AGG => vec![n_out],
+            _ if matches!(s.desc.mode, mj::AGG | mj::ROWTEXT) => vec![n_out],
             (Kind::Atom { .. } | Kind::Own { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             (Kind::Filter, Some(c)) => (1..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             _ => vec![n_out],

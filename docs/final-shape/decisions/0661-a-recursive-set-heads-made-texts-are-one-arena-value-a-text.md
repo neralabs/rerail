@@ -1,6 +1,7 @@
 # 0661. A recursive set head's made texts are one arena value a text
 
-Status: in progress (2026-11-23). Five of the eight strata run on the device; three need the forms listed at the end.
+Status: in progress (2026-11-23). Six of the eight strata run on the device, and `literal_key` beside them; two need the
+forms listed at the end.
 
 ## Intro
 
@@ -86,6 +87,32 @@ then one value however they came: made, copied or constant.
 - Placement no longer marks a made text in a recursive stratum's head or comparison as a computed term. A cat of made
   texts in a head (`is_made_cat`) is row code.
 
+### A string join
+
+`v = join x by i sep s : { … }` is a row stage (`ROW_STRJOIN`, `row_strjoin`), a SIMD group a binding:
+
+- The stage reads its relation by its keys as an aggregate does (`candidates`): the relation bound as a stage's `R`,
+  narrowed to the columns the device holds, a view's constants as keys past its own. Lane k takes the k-th match's
+  number (`by`) and name (`x`).
+- A bitonic sort over the group's lanes orders the matches by (`by`, `x`). Equal pairs are one, as the CPU's dedup
+  makes them.
+- Each kept name's place is the lengths of the kept names before it, and a separator after each. The group claims the
+  text's room in the arena at once, and each lane copies its name and a separator. In a canonical arena the text is
+  then found or kept (`canon_text`). A binding of no matches has "".
+- What the device cannot order is the host's at run time (the counter's bit 2, as a text function's): more matches
+  than a group's lanes, or two names at one number (the CPU orders those by their bytes, which their ids are not).
+- The compile refuses, named, a join it has no form for: its value compared (not bound), a join of numbers, an order by
+  other than one number column.
+
+Placement now counts a string join among the device's forms (`DEVICE_FORMS`).
+
+### A text function's value compared with a bound slot
+
+`literal_key` compares a made text with a function of another: `j = @str_between(k, "(", ",)")`, `j` bound already
+(the string join's text) and `k` a cat of it. A text function whose value is compared, not bound, is made into a
+slot of its own (past the rule's slots), then compared with the bound slot as texts (`TEXTOP`), as a compared cat of a
+made text is. Its compared slot may itself be a made text (`arena_reader`).
+
 ## Tests
 
 - `a_recursive_set_heads_made_texts_are_one_value_a_text` (setfix::device):
@@ -95,8 +122,13 @@ then one value however they came: made, copied or constant.
   - The device's rows are the CPU's, each once. The canonical table grows (`remaps`).
   - With the kernel told the arena is not canonical, it fails.
 - `text_functions_on_the_device_are_the_cpus` gained `str_between`, `pkg_up`, a cat of a made text compared with a
-  bound name, and a head's cat of a text function's value.
-- The 44 device tests pass on Metal (M3) and on the CPU's device (a Linux host, `RERAIL_GPU=cpu`). The planner's 108
+  bound name, and a head's cat of a text function's value. Then a text function's value compared with another
+  relation's symbol, and `literal_key`'s shape: a function of a cat of a made text, compared with that made text.
+- `a_string_join_on_the_device_is_the_cpus`: groups of 0 to 6 parts at places out of order, joined with a separator,
+  and copied along alias edges (a recursive set head's text column). Clean, the component runs on the device. With a
+  group of 40 parts, two names at one place and a part twice, those go to the host. Both runs' rows are the CPU's,
+  each once.
+- The 45 device tests pass on Metal (M3) and on the CPU's device (a Linux host, `RERAIL_GPU=cpu`). The planner's 108
   tests pass.
 
 ## The real run
@@ -112,8 +144,14 @@ the device can run goes to it and stays there. Its findings are the CPU run's (C
 | `qn` | CPU | device | 8.9 ms | 4 |
 | `class_chain` | CPU | device | 9.0 ms | 2 |
 | `ann_private` | CPU | CPU: refused at compile | | |
-| `literal` | CPU | CPU: string join | | |
+| `literal` | CPU | device | 8.1 ms | 2 |
 | `ask_c_found_by_bbf…` | CPU | CPU: computed terms | | |
+
+`literal_key`, not recursive, also moved to the device: its string join, and its function's value compared.
+
+A first run with the string join's row stage bound to the run's view format, where before a row stage had format 0,
+found one more RUF059 finding on the device. A row stage reads no view unless it is a string join, so its format is
+0 again otherwise. The two runs since have the CPU's findings. Which stage read the format wrongly was not found.
 
 Under the default binding, placement still puts these strata on the CPU at this scale (0657's threshold). That is
 the intended outcome: they can run on the device; at 10 files they should not.
@@ -124,7 +162,5 @@ the intended outcome: they can run on the device; at 10 files they should not.
   `x = str_between(q, …)` and looks `def_name` up by `x`. The device refuses a made text read by an atom. The made
   text must be found as a symbol. The atoms blocks hold a table from hash to id (decision 0478), so the lookup can read
   them in place.
-- **`literal`: a string join on the device.** For each binding, the matching rows are joined in their order, with a
-  separator, into the arena.
 - **The `ask_c` component**: `@rx_group` (a regex's capture group, which the device's automata do not give), and
   `@concat` and `@substr` in comparisons.

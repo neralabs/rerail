@@ -74,8 +74,9 @@ impl Form {
 /// `device::fixpoint`; one that keeps levels is refused at open, named), and aggregates (count, sum, min, max folded
 /// per binding over the relation's sort by the keys), and text tests with constant patterns of a slot an input
 /// relation's column binds (verdicts per distinct symbol by the test's automaton, `text::table`; any other text test
+/// is refused at open, named), and string joins of names ordered by one number column (decision 0661; any other
 /// is refused at open, named). A stratum that needs any other form stays on the CPU, named in the profile.
-const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest];
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest, Form::StringJoin];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).
