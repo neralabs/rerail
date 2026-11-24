@@ -198,9 +198,12 @@ Measured on spark2 (pinned to a big core, 100 runs each; spikes P2 and P3), the 
 | react (539–923 rules) | 2,357 µs | 175–234 µs | 7–11 µs |
 | sql (53–63 rules) | 1,110 µs | 87 µs | 0.8 µs |
 
-What is left is the step's own edit, the same for every program of a library: writing it (python 91 µs, sql
-53 µs), the fields and kind sets read (52 µs and 7 µs), and the axes over derived sets (41 µs and 16 µs). Kept
-maintenance, the library's edit kept with the library and a program's applied over it, is the next lever.
+What is left is mostly the library's kind sets, made again by every program. The union carries no kind sets of its
+own, so each program finds the kinds of the library's sets (`kinds_of`: python 50 µs, sql 4 µs), writes the whole
+`Kindsets` field (40 µs and 15 µs), and copies the staged fields onto its edit (`state_fields_of`: 87 µs and
+50 µs). Taking the sets out (2.4 µs and 0.4 µs) and the frame read are small. The next lever is kept maintenance:
+the library's kind-set map kept with its union, so that a program finds and writes only the sets its own module
+adds.
 
 ## Prior art
 
