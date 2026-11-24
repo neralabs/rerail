@@ -615,13 +615,9 @@ fn lease(bytes: usize, life: Life) -> Result<Block, String> {
 /// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
 fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
-    let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
+    let device = rerail_blocks::alloc::run_device();
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
-
-/// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
-/// above this crate, installed by `install_block_device`); `May` until one is installed.
-static BLOCK_DEVICE: std::sync::OnceLock<fn() -> rerail_blocks::alloc::Device> = std::sync::OnceLock::new();
 
 /// A code table's words (`rerail_tape_format::tape::CodeTable`, decision 0628 §2) in a block: what the tape crate,
 /// below the blocks, places a table it makes in (`place_tables_with`).
@@ -632,9 +628,10 @@ pub fn place_table(words: &[u32]) -> rerail_tape_format::tape::Words {
     Arc::new(v)
 }
 
-/// Installs what a block of relations asks about the device (`placement::block_device`); the first one stays.
+/// Installs what a block of relations, and a tape's room (`tape::placed::place`), asks about the device
+/// (`placement::block_device`): `rerail_blocks::alloc::run_device`'s answer; the first one stays.
 pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
-    let _ = BLOCK_DEVICE.set(device);
+    rerail_blocks::alloc::install_run_device(device);
 }
 
 /// The batches' relations held now, the most bytes first (`syntax::made::sources_held`, above this crate, installed by

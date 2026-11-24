@@ -94,6 +94,9 @@ unsafe fn zero(p: *mut u8, len: usize) {
 pub struct Extent {
     pub top: AtomicUsize,
     pub free: AtomicUsize,
+    /// The bytes of its free chunks whose pages went to the OS (`Ledger::give_free_pages`), until a chunk handed out
+    /// takes them again: `free` less these is what its free lists keep resident.
+    pub given: AtomicUsize,
 }
 
 pub struct Block {
@@ -200,7 +203,7 @@ impl Block {
 
     fn make(base: *mut u8, reserved: usize, top: usize, file: Option<File>, writable: bool, backing: Option<Box<dyn Backing>>) -> Block {
         let dirty = backing.is_some();
-        let ext = Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) });
+        let ext = Arc::new(Extent { top: AtomicUsize::new(top), ..Extent::default() });
         // Only an anonymous block's pages go to the OS: a slab's are the device buffer's, and a file's are written back.
         let ledger = crate::ledger::Ledger::new(base, reserved, file.is_none() && backing.is_none(), ext.clone());
         Block {

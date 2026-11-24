@@ -300,6 +300,7 @@ impl Ledger {
                 p += 1;
             }
             set(&mut s.given, q0, p, false);
+            self.ext.given.fetch_sub((p - q0) * PAGE, Relaxed);
             // SAFETY: pages of the block given back earlier; their chunk is the taker's now.
             unsafe { crate::mem::reuse_pages((self.base + q0 * PAGE) as *mut u8, (p - q0) * PAGE) };
         }
@@ -323,6 +324,7 @@ impl Ledger {
                 p += 1;
             }
             set(&mut s.given, q0, p, true);
+            self.ext.given.fetch_add((p - q0) * PAGE, Relaxed);
             // SAFETY: whole pages of the block, none live (above).
             given += unsafe { crate::mem::give_back((self.base + q0 * PAGE) as *mut u8, (p - q0) * PAGE) };
         }
@@ -537,7 +539,7 @@ pub struct Tracked<T: Send + 'static> {
 impl<T: Send + 'static> Tracked<T> {
     /// `value`, whose memory is the `len` bytes at `base`: found by any address in them while it lives.
     pub fn new(value: T, base: *mut u8, len: usize) -> Tracked<T> {
-        let ext = Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+        let ext = Arc::new(crate::block::Extent::default());
         Tracked { value: Some(value), ledger: Ledger::new(base, len.max(1), false, ext) }
     }
 

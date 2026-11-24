@@ -46,7 +46,7 @@ pub struct Scratch {
 }
 
 fn ledger_of(base: *mut u8, len: usize) -> std::sync::Arc<crate::ledger::Ledger> {
-    let ext = std::sync::Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+    let ext = std::sync::Arc::new(crate::block::Extent::default());
     crate::ledger::Ledger::new(base, len.max(1), false, ext)
 }
 

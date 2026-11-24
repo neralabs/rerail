@@ -670,8 +670,10 @@ fn the_matcher_wave_allocates_little() {
 #[test]
 fn freed_blocks_are_given_back() {
     let (_c, _) = case();
+    // What the free lists keep resident: their chunks whose pages went to the OS are no memory of the run's.
     let (held, free) = rerail_accel::blocks::host_held();
-    assert!(free <= 4 << 20, "{} MB of blocks free on their lists after the run ({} MB held)", free >> 20, held >> 20);
+    let resident = rerail_accel::blocks::host_free_resident();
+    assert!(resident <= 4 << 20, "{} MB of blocks free on their lists and resident after the run ({} MB free, {} MB held)", resident >> 20, free >> 20, held >> 20);
 }
 
 /// A run bound to the CPU leases no device memory (`all`'s CPU run held 190 MB of the Metal pool).

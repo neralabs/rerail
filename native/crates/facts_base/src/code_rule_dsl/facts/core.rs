@@ -364,6 +364,12 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
     {
         return TapeImage::from_home((*home).clone(), grammar);
     }
+    // A parse's image the writer took as it lies (`placed_parse` with no device room): the image itself.
+    if let crate::content_store::ObjectBytes::Tape(held) = stored
+        && let Ok(image) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<crate::code_rule_dsl::tape::StoredImage>()
+    {
+        return Ok(image.0.clone());
+    }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
     const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
     APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
@@ -379,8 +385,19 @@ fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc
     Ok(image)
 }
 
+/// A parse's tape and the bytes the store's writer takes: in a slab's room where a device reads tapes (one write, read
+/// there by the host and the device), else the image as the parser made it, its bytes taken where they lie
+/// (`StoredImage`): a CPU run copied every tape into a vector for the writer alone (t57 §8, the cost case
+/// `a_tape_is_not_copied_into_its_room`).
 fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
     use crate::code_rule_dsl::tape::TapeImage;
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    let roomless = crate::code_rule_dsl::tape::placed::device().is_none();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    let roomless = true;
+    if roomless {
+        return Ok((Arc::new(crate::code_rule_dsl::tape::StoredImage(image.clone())), image));
+    }
     let home = image.place_stored()?;
     if !home.placed() {
         return Ok((Arc::new(home), image));
