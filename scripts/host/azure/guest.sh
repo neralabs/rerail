@@ -6,8 +6,9 @@
 # As root it provisions what a user brings (Node from nodejs.org; Git from the distribution, or the Command Line Tools
 # on a Mac) and the package under test, then runs itself again as the machine's ordinary user through a login shell,
 # the way a person opens a terminal. That run installs Rerail with `npx @neralabs/rerail setup`, answers set-up's
-# questions, checks npm read the package's shrinkwrap, and checks the managed runtime: launcher, daemon and native
-# engine, PATH in new shells, the Claude Code and Codex hooks as those agents spawn them, daemon restart, and removal.
+# questions, checks npm read the package's shrinkwrap and the managed install holds this machine's engine package
+# alone, and checks the managed runtime: launcher, daemon and native engine, PATH in new shells, the Claude Code and
+# Codex hooks as those agents spawn them, daemon restart, and removal.
 # It uploads results.json and a log to the blob URLs it was given, or leaves them in $WORK when it was given none; the
 # driver judges them against the environment's expectation. Bash 3.2, which is macOS's /bin/bash.
 set -uo pipefail
@@ -162,8 +163,9 @@ collect_facts() {
   ' >"$facts"
 }
 
-# Packages under test (core and every published rule pack) from a registry on this VM, as npmjs will serve them after
-# launch, a shrinkwrap marked so npm reads it (mark_shrinkwrap); everything else still comes from npmjs.
+# Packages under test (core, the engine packages it pins and every published rule pack) from a registry on this VM, as
+# npmjs will serve them after launch, a shrinkwrap marked so npm reads it (mark_shrinkwrap); everything else still comes
+# from npmjs.
 start_registry() {
   local port password token
   port="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})')"
@@ -279,6 +281,10 @@ run_setup() {
 # npm installs a shrinkwrapped package's dependencies inside it (docs/release.md, "Shrinkwrap"). Beside it, npm
 # resolved them fresh, and this install says nothing about one from npmjs. npx's install runs install scripts; the
 # managed one under versions/ does not.
+#
+# npx's copy is also the one install npm made of core by name alone, so its engine is the one npm chose from the
+# entries of core's shrinkwrap and put inside core: what `npm install -g` and an update run by Rerail 0.1.5 get. The
+# managed install names its engine package, and set-up finishes without loading the copy's, so it is loaded here.
 check_shrinkwrap() {
   local install installs=()
   for install in "$(npm config get cache)"/_npx/*/node_modules/@neralabs/rerail \
@@ -290,7 +296,40 @@ check_shrinkwrap() {
     [ -d "$install/node_modules/better-sqlite3/prebuilds" ] \
       || { echo "npm did not read the shrinkwrap for $install: better-sqlite3 is not inside it"; return 1; }
     echo "shrinkwrap read: $install/node_modules/better-sqlite3"
+    case "$install" in */_npx/*) ;; *) continue ;; esac
+    (cd "$install/../../.." && node --input-type=module --eval 'import { nativeHealth } from "@neralabs/rerail"; if (!nativeHealth().ok) process.exit(1);') \
+      || { echo "the engine npm installed for $install from core's shrinkwrap does not load"; return 1; }
+    echo "engine loaded: $install"
   done
+}
+
+# The managed install holds one engine package, this machine's, beside core: set-up installs core without its optional
+# dependencies and names that one package itself, where npm alone installs all six inside core (docs/release.md,
+# "Engine packages"). The engine packages are the optional dependencies core's own package.json pins, and each says in
+# its package.json which system and processor it is for. A core from before they existed pins none, which only a
+# version installed from npmjs can be. scripts/host/windows-host.ps1 makes the same check on Windows.
+check_engine_package() {
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [current, packed] = process.argv.slice(1);
+    const core = fs.realpathSync(current);
+    const prefix = path.resolve(core, "..", "..", "..");
+    const read = (folder) => JSON.parse(fs.readFileSync(path.join(folder, "package.json"), "utf8"));
+    const { version, optionalDependencies = {} } = read(core);
+    const pinned = Object.keys(optionalDependencies);
+    if (pinned.length === 0) {
+      console.log(`core ${version} pins no engine package${packed ? "" : ": a version from before they existed, which carries its engines itself"}`);
+      process.exit(packed ? 1 : 0);
+    }
+    const held = pinned.flatMap((name) => [path.join(prefix, "node_modules", name), path.join(core, "node_modules", name)]).filter((folder) => fs.existsSync(path.join(folder, "package.json")));
+    console.log(`engine packages in ${prefix}: ${held.map((folder) => path.relative(prefix, folder)).join(", ") || "none"}`);
+    const own = held.filter((folder) => read(folder).os.includes(process.platform) && read(folder).cpu.includes(process.arch));
+    if (held.length !== 1 || own.length !== 1) {
+      console.log(`expected one of the ${pinned.length} core ${version} pins: the one for ${process.platform} ${process.arch}`);
+      process.exit(1);
+    }
+  ' "${RERAIL_HOME:-$HOME/.rerail}/current" "${RERAIL_ENV_BUNDLE_URL:+packed}"
 }
 
 check_status() {
@@ -377,6 +416,7 @@ step setup run_setup
 if [ "$setup_ok" = 1 ]; then
   # The package under test ships a shrinkwrap, which this registry marks; a version on npmjs may predate it.
   if [ -n "${RERAIL_ENV_BUNDLE_URL:-}" ]; then step shrinkwrap check_shrinkwrap; else skip shrinkwrap "installed from npmjs"; fi
+  step engine-package check_engine_package
   step status check_status
   step path-login-shell check_path_login
   step path-interactive-shell check_path_interactive
@@ -384,7 +424,7 @@ if [ "$setup_ok" = 1 ]; then
   step daemon-restart check_daemon_restart
   step uninstall check_uninstall
 else
-  for name in shrinkwrap status path-login-shell path-interactive-shell hooks daemon-restart uninstall; do skip "$name"; done
+  for name in shrinkwrap engine-package status path-login-shell path-interactive-shell hooks daemon-restart uninstall; do skip "$name"; done
 fi
 [ -x "$LAUNCHER" ] && timeout 60 "$LAUNCHER" daemon stop >/dev/null 2>&1
 pkill -u "$(id -u)" -f verdaccio >/dev/null 2>&1

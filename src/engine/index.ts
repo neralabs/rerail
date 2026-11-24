@@ -109,9 +109,11 @@ export {
   encodeCodeRuleWorkspaceRequest,
   RESULT_PAGE_BYTES,
   loadNativeBinding,
+  NATIVE_ENGINE_SYSTEMS,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
   type NativeCompiledCodeRuleDsl,
+  nativeEnginePackageName,
   nativePlatformSuffix,
   resolveNativeBindingPath,
 } from "./native/native.js";

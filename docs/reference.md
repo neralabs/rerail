@@ -269,7 +269,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 <summary>Why these prerequisites</summary>
 
 - Rerail reads every repository through Git. It skips a `git` inside the repository or `node_modules`, so a repository's `bin/` can't shadow it. With none on `PATH`, it falls back to the usual install locations.
-- Linux needs glibc 2.28 because Node 24 does. The package carries prebuilt native kernels for every supported target; nothing is compiled on your machine.
+- Linux needs glibc 2.28 because Node 24 does. Each supported target has a prebuilt engine package, installed with Rerail; nothing is compiled on your machine.
 - The package is public, so npm needs no login.
 
 </details>

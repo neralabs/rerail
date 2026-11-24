@@ -96,6 +96,17 @@ export async function readPublishedManifest(name, version) {
   return await response.json();
 }
 
+/**
+ * `version` of `name`, as readPublishedManifest reads it, or null when the registry has none: never published, or
+ * published minutes ago and not served yet. Any other answer throws.
+ */
+export async function readPublishedManifestOrNone(name, version) {
+  const response = await fetch(`${REGISTRY}/${name.replace("/", "%2f")}/${encodeURIComponent(version)}`, { headers: { accept: "application/json" } });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`${name}@${version} answers an anonymous request with ${response.status}`);
+  return await response.json();
+}
+
 /** `name`'s dist-tags, as readPublicDistTags reads them, or none (`{}`) when the package was never published. */
 export async function readDistTagsOrNone(name) {
   const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });
