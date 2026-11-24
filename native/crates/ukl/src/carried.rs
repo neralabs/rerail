@@ -50,9 +50,9 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/reads/tape_f16z.h", include_str!("../lib/ukl/reads/tape_f16z.h")),
     ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
     ("ukl/reads/tape_z.h", include_str!("../lib/ukl/reads/tape_z.h")),
-    // A tape's sidecar (decision 0656), written by hand: its reads, and those of the tape and the sidecar together.
-    ("ukl/reads/sidecar.h", include_str!("../lib/ukl/reads/sidecar.h")),
-    ("ukl/reads/sidecar_tape.h", include_str!("../lib/ukl/reads/sidecar_tape.h")),
+    // A tape's auxiliary index (decision 0656), written by hand: its reads, and those of the tape and the auxiliary index together.
+    ("ukl/reads/aux_index.h", include_str!("../lib/ukl/reads/aux_index.h")),
+    ("ukl/reads/aux_index_tape.h", include_str!("../lib/ukl/reads/aux_index_tape.h")),
     // The other reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here
     // so that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),

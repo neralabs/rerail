@@ -1,6 +1,6 @@
-//! A batch of tapes' sidecars built on the device (decision 0656 step 2): the plan of launches over `sidecar.uglykl`'s
-//! kernels and the library's scans, compactions and stable radix sorts. Its bytes are `rerail_tape_format::sidecar::
-//! build`'s, every section, document after document (`the_device_builds_each_sidecar_as_the_crate_does`).
+//! A batch of tapes' auxiliary indexes built on the device (decision 0656 step 2): the plan of launches over `aux_index.uglykl`'s
+//! kernels and the library's scans, compactions and stable radix sorts. Its bytes are `rerail_tape_format::aux_index::
+//! build`'s, every section, document after document (`the_device_builds_each_aux_index_as_the_crate_does`).
 //!
 //! The launches are fixed for any batch: none per document, none per node. The one wait is for the output's size,
 //! which the device computes (each document's sections' lengths, scanned) before the output is made.
@@ -14,14 +14,14 @@ use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
 use crate::library::{compact_u32, radix_sort_pairs, scan_exclusive_u32, Sorted};
 use crate::Pod;
 
-const SOURCE: &str = include_str!("sidecar.uglykl");
+const SOURCE: &str = include_str!("aux_index.uglykl");
 
 fn kernels() -> Result<&'static Program, String> {
-    program("sidecar.uglykl", SOURCE)
+    program("aux_index.uglykl", SOURCE)
 }
 
 /// A document of a batch: its tape at byte `tape` of the tapes' buffer (8-byte aligned), its source at byte `src` of
-/// the sources', its tape's digest (the sidecar's header), its nodes, and its view's words (its offsets from `tape`).
+/// the sources', its tape's digest (the auxiliary index's header), its nodes, and its view's words (its offsets from `tape`).
 #[derive(Clone, Copy)]
 pub struct Doc {
     pub tape: u32,
@@ -54,13 +54,13 @@ unsafe impl Pod for ScArgs {}
 /// The words of a document's record (`I_WORDS`).
 const INFO: usize = 28;
 
-/// The sidecars of a batch: one buffer, each document's at its offset (`at[d]..at[d + 1]`).
+/// The auxiliary indexes of a batch: one buffer, each document's at its offset (`at[d]..at[d + 1]`).
 pub struct Built {
     pub out: Buffer,
     pub at: Vec<u32>,
 }
 
-/// Why a batch's sidecars were not built on the device, where the host builds them (`sidecar::build`).
+/// Why a batch's auxiliary indexes were not built on the device, where the host builds them (`aux_index::build`).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Refused {
     /// Two texts of a document have one hash.
@@ -69,7 +69,7 @@ pub enum Refused {
     Limits,
 }
 
-/// The sidecars of `docs`, their tapes in `tapes` and sources in `sources`, every section. `Ok(Err(_))` where the
+/// The auxiliary indexes of `docs`, their tapes in `tapes` and sources in `sources`, every section. `Ok(Err(_))` where the
 /// batch is one the device does not build (`Refused`).
 pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, docs: &[Doc]) -> Result<Result<Built, Refused>, String> {
     let k = kernels()?;
@@ -93,9 +93,9 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
     block_at.push(b);
     let args = ScArgs { docs: d as u32, nodes: n, blocks: b, pad: 0 };
     let nn = n as usize;
-    let sc_docs: Vec<ScDoc> = docs.iter().map(|x| ScDoc { tape: x.tape, src: x.src, digest_lo: x.digest as u32, digest_hi: (x.digest >> 32) as u32 }).collect();
+    let aux_docs: Vec<ScDoc> = docs.iter().map(|x| ScDoc { tape: x.tape, src: x.src, digest_lo: x.digest as u32, digest_hi: (x.digest >> 32) as u32 }).collect();
     let views: Vec<u32> = docs.iter().flat_map(|x| x.view).collect();
-    let (docs_b, node_at_b, block_at_b, views_b) = (buffer_of(&sc_docs)?, buffer_of(&node_at)?, buffer_of(&block_at)?, buffer_of(&views)?);
+    let (docs_b, node_at_b, block_at_b, views_b) = (buffer_of(&aux_docs)?, buffer_of(&node_at)?, buffer_of(&block_at)?, buffer_of(&views)?);
     let bad = buffer_of(&[0u32; 4])?;
     let u32s = |len: usize| alloc::<u32>(len);
     let u64s = |len: usize| alloc::<u64>(len);
@@ -105,7 +105,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
 
     // The nodes.
     let (leaf, code_key, iota, sib_n) = (u32s(nn)?, u32s(nn)?, u32s(nn)?, u32s(nn)?);
-    launch(q, k.function("sc_nodes")?)
+    launch(q, k.function("aux_nodes")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
         .buffer("nodeAt", &node_at_b)
@@ -124,7 +124,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
 
     // The leaves, sorted by (document, hash, leaf).
     let (hash_key, leaf_hash, leaf_doc, l_iota) = (u64s(nn)?, u64s(nn)?, u32s(nn)?, u32s(nn)?);
-    launch(q, k.function("sc_leaf_hash")?)
+    launch(q, k.function("aux_leaf_hash")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
         .buffer("nodeAt", &node_at_b)
@@ -140,7 +140,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .run(&grid(n), &BLOCK)?;
     let o = sort_by_doc::<u64>(q, k, &args, n, &hash_key, l_iota, 64, &leaf_doc)?;
     let (head, p_iota, run_of, run_start) = (u32s(nn)?, u32s(nn)?, u32s(nn + 1)?, u32s(nn + 1)?);
-    launch(q, k.function("sc_term_heads")?)
+    launch(q, k.function("aux_term_heads")?)
         .value("args", &args)
         .buffer("leafAt", &leaf_at)
         .buffer("o", &o)
@@ -153,7 +153,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
 
     // The terms, sorted by (document, count descending, first leaf): their numbers.
     let (freq_key, run_doc, r_iota) = (u64s(nn)?, u32s(nn)?, u32s(nn)?);
-    launch(q, k.function("sc_term_runs")?)
+    launch(q, k.function("aux_term_runs")?)
         .value("args", &args)
         .buffer("nodeAt", &node_at_b)
         .buffer("leafAt", &leaf_at)
@@ -167,7 +167,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .run(&grid(n + 1), &BLOCK)?;
     let freq = sort_by_doc::<u64>(q, k, &args, n, &freq_key, r_iota, 64, &run_doc)?;
     let number = u32s(nn)?;
-    launch(q, k.function("sc_numbers")?)
+    launch(q, k.function("aux_numbers")?)
         .value("args", &args)
         .buffer("runOf", &run_of)
         .buffer("freq", &freq)
@@ -175,7 +175,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("number", &number)
         .run(&grid(n), &BLOCK)?;
     let (leaf_term, esc) = (u32s(nn)?, u32s(nn)?);
-    launch(q, k.function("sc_leaf_terms")?)
+    launch(q, k.function("aux_leaf_terms")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
         .buffer("nodeAt", &node_at_b)
@@ -204,7 +204,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         Sorted::InTemp => (co_tmp_k, co_tmp_v),
     };
     let (c_head, c_iota, code_of, code_start) = (u32s(nn)?, u32s(nn)?, u32s(nn + 1)?, u32s(nn + 1)?);
-    launch(q, k.function("sc_code_heads")?)
+    launch(q, k.function("aux_code_heads")?)
         .value("args", &args)
         .buffer("key", &ck)
         .buffer("head", &c_head)
@@ -212,7 +212,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .run(&grid(n), &BLOCK)?;
     compact_u32(q, &c_iota, &c_head, &code_start, &code_of, n)?;
     let (code_doc, rare, rare_n) = (u32s(nn)?, u32s(nn)?, u32s(nn)?);
-    launch(q, k.function("sc_code_runs")?)
+    launch(q, k.function("aux_code_runs")?)
         .value("args", &args)
         .buffer("nodeAt", &node_at_b)
         .buffer("key", &ck)
@@ -228,7 +228,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
 
     // The layout, and the one wait: the output's size.
     let (info, size, out_at) = (u32s(d * INFO)?, u32s(d + 1)?, u32s(d + 1)?);
-    launch(q, k.function("sc_layout")?)
+    launch(q, k.function("aux_layout")?)
         .value("args", &args)
         .buffer("nodeAt", &node_at_b)
         .buffer("leafAt", &leaf_at)
@@ -256,10 +256,10 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
     let words = (at[d] / 4) as usize;
     let out = u32s(words)?;
     let q: &ComputeQueue = queue;
-    launch(q, k.function("sc_zero")?).value("args", &args).buffer("outAt", &out_at).buffer("out", &out).run(&grid(words as u32), &BLOCK)?;
+    launch(q, k.function("aux_zero")?).value("args", &args).buffer("outAt", &out_at).buffer("out", &out).run(&grid(words as u32), &BLOCK)?;
 
     // The sections, each where it lies.
-    launch(q, k.function("sc_header")?)
+    launch(q, k.function("aux_header")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
         .buffer("info", &info)
@@ -268,7 +268,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("escLeaf", &esc_leaf)
         .buffer("out", &out)
         .run(&grid(d as u32), &BLOCK)?;
-    launch(q, k.function("sc_leaves")?)
+    launch(q, k.function("aux_leaves")?)
         .value("args", &args)
         .buffer("nodeAt", &node_at_b)
         .buffer("blockAt", &block_at_b)
@@ -277,7 +277,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("outAt", &out_at)
         .buffer("out", &out)
         .run(&grid(b), &BLOCK)?;
-    launch(q, k.function("sc_names")?)
+    launch(q, k.function("aux_names")?)
         .value("args", &args)
         .buffer("leafAt", &leaf_at)
         .buffer("leafDoc", &leaf_doc)
@@ -287,7 +287,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("outAt", &out_at)
         .buffer("out", &out)
         .run(&grid(n), &BLOCK)?;
-    launch(q, k.function("sc_vocab")?)
+    launch(q, k.function("aux_vocab")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
         .buffer("nodeAt", &node_at_b)
@@ -304,7 +304,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("outAt", &out_at)
         .buffer("out", &out)
         .run(&grid(n), &BLOCK)?;
-    launch(q, k.function("sc_siblings")?)
+    launch(q, k.function("aux_siblings")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
         .buffer("nodeAt", &node_at_b)
@@ -315,7 +315,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("outAt", &out_at)
         .buffer("out", &out)
         .run(&grid(n), &BLOCK)?;
-    launch(q, k.function("sc_counts")?)
+    launch(q, k.function("aux_counts")?)
         .value("args", &args)
         .buffer("key", &ck)
         .buffer("codeOf", &code_of)
@@ -327,7 +327,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("outAt", &out_at)
         .buffer("out", &out)
         .run(&grid(n), &BLOCK)?;
-    launch(q, k.function("sc_rare_nodes")?)
+    launch(q, k.function("aux_rare_nodes")?)
         .value("args", &args)
         .buffer("nodeAt", &node_at_b)
         .buffer("co", &co)
@@ -364,7 +364,7 @@ fn sort_by_doc<K: crate::library::RadixKey>(
         Sorted::InTemp => tv,
     };
     let (doc_key, tk2, tv2) = (alloc::<u32>(nn)?, alloc::<u32>(nn)?, alloc::<u32>(nn)?);
-    launch(q, k.function("sc_gather_doc")?)
+    launch(q, k.function("aux_gather_doc")?)
         .value("args", args)
         .buffer("order", &order)
         .buffer("of", of)
@@ -379,26 +379,26 @@ fn sort_by_doc<K: crate::library::RadixKey>(
 /// `0..n`, as a buffer.
 fn identity(q: &ComputeQueue, k: &Program, args: &ScArgs, n: u32) -> Result<Buffer, String> {
     let iota = alloc::<u32>(n as usize)?;
-    launch(q, k.function("sc_iota")?).value("args", args).buffer("iota", &iota).run(&[u64::from(n.div_ceil(256)).max(1)], &[256])?;
+    launch(q, k.function("aux_iota")?).value("args", args).buffer("iota", &iota).run(&[u64::from(n.div_ceil(256)).max(1)], &[256])?;
     Ok(iota)
 }
 
 #[cfg(test)]
 mod tests {
-    use rerail_tape_format::sidecar;
+    use rerail_tape_format::aux_index;
     use rerail_tape_format::tape::Tape;
 
-    /// Decision 0656 step 2: the device builds each document's sidecar as `sidecar::build` does, byte for byte: a
+    /// Decision 0656 step 2: the device builds each document's auxiliary index as `aux_index::build` does, byte for byte: a
     /// batch of the sample document and smaller cuts of it (one node; a few; one leaf family), format 16 tapes, on the
     /// process's device. Without a device it passes, saying so.
     #[test]
-    fn the_device_builds_each_sidecar_as_the_crate_does() {
+    fn the_device_builds_each_aux_index_as_the_crate_does() {
         let Some(shared) = crate::shared::get() else {
-            eprintln!("no device: the sidecar's builder did not run");
+            eprintln!("no device: the auxiliary index's builder did not run");
             return;
         };
         let mut queue = crate::device::ComputeQueue::new(&shared.queue);
-        let sample = sidecar::sample::Doc::new();
+        let sample = aux_index::sample::Doc::new();
         let lang = rerail_tape_format::f16::Lang::new(sample.table.clone(), [1, 1, 1], 1).unwrap();
         let number = rerail_tape_format::f16::numbers(&lang, &sample.table).unwrap();
         // Documents: the sample, and its first subtrees as documents of their own.
@@ -413,14 +413,14 @@ mod tests {
         }
         let (mut tapes, mut sources, mut want, mut ins) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (k, (nodes, source)) in docs.iter().enumerate() {
-            let doc = sidecar::sample::Doc { nodes: nodes.clone(), source: source.clone(), table: sample.table.clone() };
+            let doc = aux_index::sample::Doc { nodes: nodes.clone(), source: source.clone(), table: sample.table.clone() };
             let Ok(rerail_tape_format::f16::Written::F16(t)) =
                 rerail_tape_format::f16::write_from(&lang, &doc, &number, source, rerail_tape_format::newlines::Terminators::Lf, 0, false)
             else {
                 panic!("format 16")
             };
             let r = t.reader(&lang).unwrap();
-            want.push(sidecar::build(&r, source, 100 + k as u64, sidecar::Sections::ALL).unwrap());
+            want.push(aux_index::build(&r, source, 100 + k as u64, aux_index::Sections::ALL).unwrap());
             let view = rerail_tape_format::f16::placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
             // SAFETY: the view is plain u32s (`repr(C)`, 128 bytes).
             let words: [u32; 32] = unsafe { std::ptr::read(std::ptr::from_ref(&view).cast::<[u32; 32]>()) };
@@ -441,12 +441,12 @@ mod tests {
                 let at = got.iter().zip(w.iter()).position(|(a, b)| a != b).unwrap_or(got.len().min(w.len()));
                 panic!("{}: document {k} ({} nodes): {} bytes, want {}; first difference at byte {at}", crate::device::backend(), ins[k].nodes, got.len(), w.len());
             }
-            assert!(sidecar::Sidecar::read(got).is_ok());
+            assert!(aux_index::AuxIndex::read(got).is_ok());
         }
-        eprintln!("{}: {} sidecars built, {} bytes", crate::device::backend(), ins.len(), bytes.len());
+        eprintln!("{}: {} auxiliary indexes built, {} bytes", crate::device::backend(), ins.len(), bytes.len());
     }
 
-    /// A text's hash on the device (`ukl_sc_text_hash`) is `sidecar::text_hash`: texts of every length to 40 bytes,
+    /// A text's hash on the device (`ukl_aux_text_hash`) is `aux_index::text_hash`: texts of every length to 40 bytes,
     /// at every alignment of their start and of the base they are read through.
     #[test]
     fn the_device_hashes_texts_as_the_crate_does() {
@@ -455,10 +455,10 @@ mod tests {
             return;
         };
         let mut queue = crate::device::ComputeQueue::new(&shared.queue);
-        const K: &str = "#include <ukl/reads/sidecar.h>\n\
+        const K: &str = "#include <ukl/reads/aux_index.h>\n\
             DEFINE_KERNEL2(t, t_hash, ROBUFFER, uint8_t, src, \"[bytes]\", ROBUFFER, uint32_t, at, \"[n * 3]\", RWBUFFER, uint64_t, out, \"[n]\", GID0, uint32_t, i, )\n\
-            { if (i < at[0]) out[i] = ukl_sc_text_hash(src + at[3u * i + 1u], at[3u * i + 2u], at[3u * i + 3u]); }\n";
-        let p = crate::kernels::program("sidecar_hash", K).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+            { if (i < at[0]) out[i] = ukl_aux_text_hash(src + at[3u * i + 1u], at[3u * i + 2u], at[3u * i + 3u]); }\n";
+        let p = crate::kernels::program("aux_index_hash", K).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
         let src: Vec<u8> = (0..256u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
         let mut at = vec![0u32];
         let mut want = Vec::new();
@@ -466,7 +466,7 @@ mod tests {
             for start in 0..9u32 {
                 for len in 0..41u32 {
                     at.extend([base, start, len]);
-                    want.push(sidecar::text_hash(&src[(base + start) as usize..][..len as usize]));
+                    want.push(aux_index::text_hash(&src[(base + start) as usize..][..len as usize]));
                 }
             }
         }

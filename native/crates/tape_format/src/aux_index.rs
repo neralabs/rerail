@@ -1,9 +1,9 @@
-//! A tape's sidecar (decision 0656): what the format does not hold yet, made once from a tape and its source, kept
+//! A tape's auxiliary index (decision 0656): what the format does not hold yet, made once from a tape and its source, kept
 //! beside the tape as its presence is, and read in place: by these reads in Rust, and by the same reads in UKL
-//! (`<ukl/reads/sidecar.h>`, `<ukl/reads/sidecar_tape.h>`) on every device and on the CPU's vector path. A test
-//! (`rerail-ukl-vec`'s `sidecar_tests`) holds every UKL read equal to these on every node, leaf, term and code.
+//! (`<ukl/reads/aux_index.h>`, `<ukl/reads/aux_index_tape.h>`) on every device and on the CPU's vector path. A test
+//! (`rerail-ukl-vec`'s `aux_index_tests`) holds every UKL read equal to these on every node, leaf, term and code.
 //!
-//! The sidecar is generic: each section covers its whole document, whatever the rules are. The rules choose which
+//! The auxiliary index is generic: each section covers its whole document, whatever the rules are. The rules choose which
 //! sections a run needs (`Sections`), never which keys a section holds. Its sections:
 //!
 //! - **LEAVES**: which nodes are leaves, a bitmap per 256-node block, with the leaves before each block: a node's
@@ -19,14 +19,14 @@
 //!
 //! The layout: a header, a directory of sections (kind, version, parameters, offset, length), then each section,
 //! 16-byte aligned, starting with four u32s of its own. Every value lies at its own alignment; all are little-endian.
-//! A reader finds a section by its kind, and a sidecar without it answers `None` (or `NONE`) for its reads; a newer
+//! A reader finds a section by its kind, and an auxiliary index without it answers `None` (or `NONE`) for its reads; a newer
 //! section's kind is skipped by a reader that does not know it. A section is a pure function of the tape, the source
-//! and its version, so one can be added to a sidecar without the others made again.
+//! and its version, so one can be added to an auxiliary index without the others made again.
 
 use crate::tape::Tape;
 
-/// The sidecar's first four bytes.
-pub const MAGIC: u32 = u32::from_le_bytes(*b"RSC1");
+/// The auxiliary index's first four bytes.
+pub const MAGIC: u32 = u32::from_le_bytes(*b"RAX1");
 /// The layout's version: the header's and the directory's.
 pub const VERSION: u16 = 1;
 /// No node, leaf or term.
@@ -64,7 +64,7 @@ impl Kind {
     }
 }
 
-/// The sections a sidecar is made with. NAMES and VOCAB are made together (a name is a term's number), and both
+/// The sections an auxiliary index is made with. NAMES and VOCAB are made together (a name is a term's number), and both
 /// need LEAVES (a leaf's rank).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sections(u32);
@@ -88,8 +88,8 @@ impl Sections {
     }
 }
 
-/// A text's hash, as the sidecar keys a term: eight bytes at a time (little-endian, the last zero-filled), each
-/// folded in by a multiply, the length first and a finish after. `ukl_sc_text_hash` is the same in UKL.
+/// A text's hash, as the auxiliary index keys a term: eight bytes at a time (little-endian, the last zero-filled), each
+/// folded in by a multiply, the length first and a finish after. `ukl_aux_text_hash` is the same in UKL.
 pub fn text_hash(text: &[u8]) -> u64 {
     let mut h = 0x9E37_79B9_7F4A_7C15u64 ^ (text.len() as u64).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     for c in text.chunks(8) {
@@ -105,12 +105,12 @@ pub fn text_hash(text: &[u8]) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
-/// The bytes of a sidecar of `t` (over `source`, the document's), with `want`'s sections (and those they need).
-/// `digest` is the tape's content id, as the store keys it, kept in the header so a sidecar is matched to its tape.
+/// The bytes of an auxiliary index of `t` (over `source`, the document's), with `want`'s sections (and those they need).
+/// `digest` is the tape's content id, as the store keys it, kept in the header so an auxiliary index is matched to its tape.
 pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, want: Sections) -> Result<Vec<u8>, String> {
     let n = t.len();
     if n >= NONE as usize || source.len() >= NONE as usize {
-        return Err(format!("a document of {n} nodes and {} bytes: past a sidecar's u32s", source.len()));
+        return Err(format!("a document of {n} nodes and {} bytes: past an auxiliary index's u32s", source.len()));
     }
     let want = want.closed();
     let blocks = n.div_ceil(BLOCK as usize);
@@ -291,33 +291,33 @@ fn head(w: [u32; 4]) -> Vec<u8> {
 
 // ---- the reads -------------------------------------------------------------------------------------------
 
-/// A sidecar read in place.
+/// An auxiliary index read in place.
 #[derive(Clone, Copy)]
-pub struct Sidecar<'a> {
+pub struct AuxIndex<'a> {
     b: &'a [u8],
     /// Each kind's section offset (0: none), by kind.
     at: [u32; 8],
 }
 
-impl<'a> Sidecar<'a> {
-    /// The sidecar `b` holds, its header and directory checked.
+impl<'a> AuxIndex<'a> {
+    /// The auxiliary index `b` holds, its header and directory checked.
     pub fn read(b: &'a [u8]) -> Result<Self, String> {
         if b.len() < HEADER || u32_at(b, 0) != MAGIC {
-            return Err("no sidecar".into());
+            return Err("no auxiliary index".into());
         }
         if u16_at(b, 4) != VERSION {
-            return Err(format!("a sidecar of version {}, not {VERSION}", u16_at(b, 4)));
+            return Err(format!("an auxiliary index of version {}, not {VERSION}", u16_at(b, 4)));
         }
         let count = u16_at(b, 6) as usize;
         if b.len() < HEADER + ENTRY * count {
-            return Err("a sidecar's directory past its bytes".into());
+            return Err("an auxiliary index's directory past its bytes".into());
         }
         let mut at = [0u32; 8];
         for e in 0..count {
             let d = HEADER + ENTRY * e;
             let (kind, version, off, len) = (u16_at(b, d), u16_at(b, d + 2), u32_at(b, d + 8), u32_at(b, d + 12));
             if off as usize % 16 != 0 || off as usize + len as usize > b.len() || len < 16 {
-                return Err(format!("section {kind}'s bytes {off}+{len} out of the sidecar's {}", b.len()));
+                return Err(format!("section {kind}'s bytes {off}+{len} out of the auxiliary index's {}", b.len()));
             }
             match Kind::ALL.iter().find(|k| **k as u16 == kind) {
                 Some(k) if k.version() == version => at[kind as usize] = off,
@@ -325,7 +325,7 @@ impl<'a> Sidecar<'a> {
                 None => {}
             }
         }
-        Ok(Sidecar { b, at })
+        Ok(AuxIndex { b, at })
     }
 
     pub fn bytes(&self) -> &'a [u8] {
@@ -601,13 +601,13 @@ impl<'a> Sidecar<'a> {
     }
 }
 
-// ---- reads of the tape and the sidecar together ---------------------------------------------------------
+// ---- reads of the tape and the auxiliary index together ---------------------------------------------------------
 
 /// `node`'s place among its siblings (0 for the first child, and for the root): from the last every-K-th sibling at
-/// or before it, at most K - 1 steps of the tape. `ukl_sc_place` is the same in UKL.
-pub fn place<T: Tape + ?Sized>(t: &T, sc: &Sidecar, node: u32) -> u32 {
+/// or before it, at most K - 1 steps of the tape. `ukl_aux_place` is the same in UKL.
+pub fn place<T: Tape + ?Sized>(t: &T, aux: &AuxIndex, node: u32) -> u32 {
     let Some(p) = t.parent(node as usize) else { return 0 };
-    let (k, from) = match sc.eighth_at_or_before(p as u32, node) {
+    let (k, from) = match aux.eighth_at_or_before(p as u32, node) {
         (_, NONE) => (0, p as u32 + 1),
         (k, e) => (k * K, e),
     };
@@ -619,10 +619,10 @@ pub fn place<T: Tape + ?Sized>(t: &T, sc: &Sidecar, node: u32) -> u32 {
     i
 }
 
-/// `parent`'s child `i`, or `None`: from its every-K-th child, at most K - 1 steps. `ukl_sc_child` is the same in UKL.
-pub fn child<T: Tape + ?Sized>(t: &T, sc: &Sidecar, parent: u32, i: u32) -> Option<u32> {
+/// `parent`'s child `i`, or `None`: from its every-K-th child, at most K - 1 steps. `ukl_aux_child` is the same in UKL.
+pub fn child<T: Tape + ?Sized>(t: &T, aux: &AuxIndex, parent: u32, i: u32) -> Option<u32> {
     let end = t.subtree_end(parent as usize);
-    let mut c = if i < K { parent as usize + 1 } else { sc.eighth(parent, i / K) as usize };
+    let mut c = if i < K { parent as usize + 1 } else { aux.eighth(parent, i / K) as usize };
     if c == NONE as usize || c >= end {
         return None;
     }
@@ -652,7 +652,7 @@ fn u64_at(b: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(b[at..at + 8].try_into().expect("eight bytes"))
 }
 
-/// A document for the sidecar's tests, here and in the UKL reads' (`rerail-ukl-vec`): nodes `(code, start, end,
+/// A document for the auxiliary index's tests, here and in the UKL reads' (`rerail-ukl-vec`): nodes `(code, start, end,
 /// subtree end)` in preorder over its source. Families of every width (to 300 children, so SIBLINGS has entries,
 /// nested), leaves named from a vocabulary of 700 identifiers at Zipf-like frequencies (so some escape), and rare
 /// and common codes.
@@ -758,65 +758,65 @@ mod tests {
     /// term found by its text and its leaves, each node's place and each parent's children, each code's count and
     /// its rare nodes.
     #[test]
-    fn the_sidecar_reads_every_node_as_the_document_says() {
+    fn the_aux_index_reads_every_node_as_the_document_says() {
         let d = sample::Doc::new();
         let b = build(&d, &d.source, 7, Sections::ALL).unwrap();
-        let sc = Sidecar::read(&b).unwrap();
-        assert_eq!((sc.nodes() as usize, sc.digest()), (d.len(), 7));
-        assert!(Kind::ALL.iter().all(|&k| sc.has(k)));
+        let aux = AuxIndex::read(&b).unwrap();
+        assert_eq!((aux.nodes() as usize, aux.digest()), (d.len(), 7));
+        assert!(Kind::ALL.iter().all(|&k| aux.has(k)));
         let mut rank = 0;
         let mut seen: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
         let mut per_term: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
         for i in 0..d.len() as u32 {
             if d.subtree_end(i as usize) == i as usize + 1 {
-                assert_eq!(sc.leaf_rank(i), rank, "node {i}'s rank");
-                assert_eq!(sc.leaf_node(rank), i, "leaf {rank}'s node");
+                assert_eq!(aux.leaf_rank(i), rank, "node {i}'s rank");
+                assert_eq!(aux.leaf_node(rank), i, "leaf {rank}'s node");
                 let text = &d.source[d.start(i as usize) as usize..d.end(i as usize) as usize];
-                let t = sc.term_of_node(i);
-                assert_eq!(sc.term_text(t, &d.source), Some(text), "node {i}'s term");
+                let t = aux.term_of_node(i);
+                assert_eq!(aux.term_text(t, &d.source), Some(text), "node {i}'s term");
                 assert_eq!(*seen.entry(text).or_insert(t), t, "one term a text");
                 per_term.entry(t).or_default().push(i);
                 rank += 1;
             } else {
-                assert_eq!((sc.leaf_rank(i), sc.term_of_node(i)), (NONE, NONE), "inner node {i}");
+                assert_eq!((aux.leaf_rank(i), aux.term_of_node(i)), (NONE, NONE), "inner node {i}");
             }
         }
-        assert_eq!(sc.leaves(), rank);
-        assert!(sc.terms() > 300 && sc.terms() as usize == seen.len(), "{} terms: some escape", sc.terms());
+        assert_eq!(aux.leaves(), rank);
+        assert!(aux.terms() > 300 && aux.terms() as usize == seen.len(), "{} terms: some escape", aux.terms());
         // Most frequent first.
-        let counts: Vec<usize> = (0..sc.terms()).map(|t| per_term[&t].len()).collect();
+        let counts: Vec<usize> = (0..aux.terms()).map(|t| per_term[&t].len()).collect();
         assert!(counts.windows(2).all(|w| w[0] >= w[1]), "terms by frequency");
         for (&text, &t) in &seen {
-            assert_eq!(sc.term_of_text(text, &d.source), t);
-            assert_eq!(sc.term_by_hash(text_hash(text)), t);
-            assert_eq!(sc.nodes_with_term(t).collect::<Vec<_>>(), per_term[&t], "term {t}'s nodes");
+            assert_eq!(aux.term_of_text(text, &d.source), t);
+            assert_eq!(aux.term_by_hash(text_hash(text)), t);
+            assert_eq!(aux.nodes_with_term(t).collect::<Vec<_>>(), per_term[&t], "term {t}'s nodes");
         }
-        assert_eq!(sc.term_of_text(b"absent", &d.source), NONE);
+        assert_eq!(aux.term_of_text(b"absent", &d.source), NONE);
         // Places and children.
         let mut wide = 0;
         for p in 0..d.len() as u32 {
             let mut c = p as usize + 1;
             let mut k = 0;
             while c < d.subtree_end(p as usize) {
-                assert_eq!(place(&d, &sc, c as u32), k, "node {c}'s place");
-                assert_eq!(child(&d, &sc, p, k), Some(c as u32), "{p}'s child {k}");
+                assert_eq!(place(&d, &aux, c as u32), k, "node {c}'s place");
+                assert_eq!(child(&d, &aux, p, k), Some(c as u32), "{p}'s child {k}");
                 c = d.subtree_end(c);
                 k += 1;
             }
-            assert_eq!(child(&d, &sc, p, k), None, "{p} has {k} children");
+            assert_eq!(child(&d, &aux, p, k), None, "{p} has {k} children");
             wide += usize::from(k > 200);
         }
         assert!(wide > 0);
-        assert_eq!(place(&d, &sc, 0), 0);
+        assert_eq!(place(&d, &aux, 0), 0);
         // Counts and rare codes.
         let mut by_code = std::collections::BTreeMap::<u32, Vec<u32>>::new();
         (0..d.len() as u32).for_each(|i| by_code.entry(d.code(i as usize)).or_default().push(i));
-        assert_eq!(sc.counts().collect::<Vec<_>>(), by_code.iter().map(|(c, v)| (*c, v.len() as u32)).collect::<Vec<_>>());
+        assert_eq!(aux.counts().collect::<Vec<_>>(), by_code.iter().map(|(c, v)| (*c, v.len() as u32)).collect::<Vec<_>>());
         let limit = rare_limit(d.len());
         let mut rare = 0;
         for c in 0..64 {
             let want = by_code.get(&c).cloned().unwrap_or_default();
-            match sc.rare(c) {
+            match aux.rare(c) {
                 Some(it) => {
                     assert!(want.len() as u32 <= limit);
                     assert_eq!(it.collect::<Vec<_>>(), want, "code {c}'s rare nodes");
@@ -828,10 +828,10 @@ mod tests {
         assert!(rare > 0);
     }
 
-    /// A sidecar of a format 16 tape is the same bytes as one of the document it was written from: the sidecar is a
+    /// An auxiliary index of a format 16 tape is the same bytes as one of the document it was written from: the auxiliary index is a
     /// function of what the tape reads, whatever the tape's format.
     #[test]
-    fn a_format_16_tapes_sidecar_is_its_documents() {
+    fn a_format_16_tapes_aux_index_is_its_documents() {
         let d = sample::Doc::new();
         let lang = crate::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
         let number: Vec<u32> = crate::f16::numbers(&lang, &d.table).unwrap();
@@ -851,16 +851,16 @@ mod tests {
 
     /// Sections are chosen: one made without others reads `NONE` for theirs; names bring their vocabulary and leaves.
     #[test]
-    fn a_sidecar_without_a_section_answers_none_for_it() {
+    fn an_aux_index_without_a_section_answers_none_for_it() {
         let d = sample::Doc::new();
         let b = build(&d, &d.source, 0, Sections::of(&[Kind::Names])).unwrap();
-        let sc = Sidecar::read(&b).unwrap();
-        assert!(sc.has(Kind::Leaves) && sc.has(Kind::Vocab) && !sc.has(Kind::Siblings) && !sc.has(Kind::Counts));
-        assert_eq!((sc.eighth(0, 1), sc.count(10)), (NONE, NONE));
-        assert!(sc.rare(40).is_none());
+        let aux = AuxIndex::read(&b).unwrap();
+        assert!(aux.has(Kind::Leaves) && aux.has(Kind::Vocab) && !aux.has(Kind::Siblings) && !aux.has(Kind::Counts));
+        assert_eq!((aux.eighth(0, 1), aux.count(10)), (NONE, NONE));
+        assert!(aux.rare(40).is_none());
         let b = build(&d, &d.source, 0, Sections::of(&[Kind::Counts])).unwrap();
-        let sc = Sidecar::read(&b).unwrap();
-        assert_eq!((sc.leaf_rank(1), sc.term_of_text(b"n0_", &d.source)), (NONE, NONE));
-        assert!(Sidecar::read(&b[..8]).is_err());
+        let aux = AuxIndex::read(&b).unwrap();
+        assert_eq!((aux.leaf_rank(1), aux.term_of_text(b"n0_", &d.source)), (NONE, NONE));
+        assert!(AuxIndex::read(&b[..8]).is_err());
     }
 }
