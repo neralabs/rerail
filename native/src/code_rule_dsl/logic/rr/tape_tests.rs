@@ -503,6 +503,56 @@ fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alon
     assert_eq!(together(&second), [2, 2], "one pack: {second:#}");
 }
 
+/// A policy that reads the file system (`dir_entry`) finds in a pack, in either order, what it finds alone. Its
+/// requests (`rr_dir_req`, from a key a rule binds and from a constant one) took the policy's prefix when the programs
+/// were combined (`p1_rr_dir_req`), the runner answers `rr_dir_req` by name, and the pack's `dir_entry` stayed empty:
+/// `next-practice-revalidate-unknown-target` found nothing beside `next-practice-redirect-in-try`. A key is read from
+/// what the file system gave (a walk from the root), as decision 0065 §2a has a request read no base relation.
+#[test]
+fn a_policy_that_reads_the_file_system_finds_in_a_pack_in_either_order_what_it_finds_alone() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrworldpack");
+    // The repository apart from the policies and the runs' outputs: its root lists `sub` alone.
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("sub")).unwrap();
+    std::fs::write(src.join("sub/x.txt"), "x\n").unwrap();
+    std::fs::write(src.join("a.js"), "let s;\ndebugger;\n").unwrap();
+    let policy = |name: &str, body: &str| {
+        let path = dir.join(format!("{name}.rerail"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language javascript\n{body}\n")).unwrap();
+        path
+    };
+    let lists = policy(
+        "lists",
+        ".decl walk(d: symbol)\nwalk(\"\").\nwalk(@join(d, n)) :- walk(d), dir_entry(d, n, 1).\n\
+         .violation Listed(at: node, name: symbol) code \"listed\" \"{name}\"\nListed(c, n) :- kind(c, \"debugger_statement\"), walk(d), dir_entry(d, n, 0).\n\
+         .violation Top(at: node, name: symbol) code \"top\" \"{name}\"\nTop(c, n) :- kind(c, \"debugger_statement\"), dir_entry(\"\", n, 1).",
+    );
+    let stops = policy("stops", ".violation Stop(at: node) code \"stop\" \"stop\"\nStop(n) :- kind(n, \"debugger_statement\").");
+    let found = |report: &serde_json::Value| -> Vec<(String, String, u64)> {
+        let mut found: Vec<(String, String, u64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["message"].as_str().unwrap_or("").to_owned(), d["line"].as_u64().unwrap_or(0)))
+            .collect();
+        found.sort();
+        found
+    };
+    let run = |paths: &[std::path::PathBuf], out: &str| crate::code_rule_dsl::tools::run_policies(paths, &src, &dir.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("{out}: {e}"));
+    let mut alone: Vec<_> = [&lists, &stops].into_iter().enumerate().flat_map(|(k, p)| found(&run(std::slice::from_ref(p), &format!("alone{k}")))).collect();
+    alone.sort();
+    let first = run(&[lists.clone(), stops.clone()], "first");
+    let second = run(&[stops.clone(), lists.clone()], "second");
+    let _ = std::fs::remove_dir_all(&dir);
+    let e = |c: &str, m: &str, l: u64| (c.to_owned(), m.to_owned(), l);
+    assert_eq!(alone, [e("listed", "a.js", 2), e("listed", "x.txt", 2), e("stop", "stop", 2), e("top", "sub", 2)]);
+    assert_eq!(found(&first), alone, "{first:#}");
+    assert_eq!(found(&second), alone, "{second:#}");
+    let together = |report: &serde_json::Value| -> Vec<u64> { report["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect() };
+    assert_eq!(together(&first), [2, 2], "one pack: {first:#}");
+    assert_eq!(together(&second), [2, 2], "one pack: {second:#}");
+}
+
 /// A pack's programs make one set of guests (decision 0055), and a rule that reaches a guest reads every one the run
 /// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and C408, which reads
 /// string annotations, found a `dict({})` call there once a policy that only includes that file ran beside it. A
