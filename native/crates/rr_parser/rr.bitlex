@@ -317,6 +317,18 @@ mark paren_closes = tokens "(" (string | code_literal | hash_word | identifier |
 # `-` or a `(`.
 mark count_on    = tokens "count" ":"
 mark agg_call    = tokens "min" | "max" | "sum" | "product" | "mean" | "join" "(" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char)* nest ("(" to ")") ")" ":"
+# The lean parser's peeks before a token it writes: a type's `<>` (`ty`), an I/O relation's `()` (`io_relation`), a
+# violation's `code` and a string, a fix's `safe` before its relation, a head's modal before its relation, a `-` and a
+# number (`primary`), a name and a `(` (a call) or a `:` (a named argument), and `by` and a `(` (an aggregate's keys).
+mark empty_angle = tokens "<" ">"
+mark empty_parens = tokens "(" ")"
+mark code_str    = tokens "code" string
+mark safe_on     = tokens "safe" identifier
+mark modal_on    = tokens "must" | "may" identifier
+mark neg_number  = tokens "-" number
+mark call_on     = tokens identifier "("
+mark named_on    = tokens identifier ":"
+mark by_list     = tokens "by" "("
 mark agg_word    = tokens "min" | "max" | "sum" | "product" | "mean" | "join" number | string | code_literal | identifier | "{" | "@"
 
 # --- The tree ----------------------------------------------------------------------------------
@@ -355,13 +367,13 @@ tree rr {
   node pragma           = '.' 'pragma' (argument: string)*
   node lattice_declaration = '.' 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
   node policy_document  = '.' 'policy' document: leaf json_object json_document
-  node violation_declaration = '.' 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
+  node violation_declaration = '.' 'violation' name: identifier columns: column_list (code_part | tag: tag_column)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
   # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
   # the type first).
-  node functor_type nested = retag type name: identifier ['<' (drop argument: identifier '>' | angle_close)]
+  node functor_type nested = retag type name: identifier [empty_angle '<' '>' | implied '<' argument: identifier implied '>']
   # `.type`'s definition: the rest of the line, one leaf; none, and the name takes its field.
   choice raw_line       = any as raw_text (merge raw_text any)* line
-  node io_relation      = name: identifier ['(' (drop parameters: io_parameters ')' | relabel parameters paren_close)]
+  node io_relation      = name: identifier [empty_parens parameters: '(' ')' | implied '(' parameters: io_parameters implied ')']
   # The tokens inside the parentheses, pairs counted: one leaf.
   choice io_parameters nested = (any except '(' ')' as raw_text | '(' as raw_text io_inner) (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)*
   choice io_inner nested = (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)* merge raw_text ')'
@@ -376,27 +388,24 @@ tree rr {
   choice json_value     = string | number | '-' number | 'true' | 'false' | 'null' | json_document | json_array
   choice json_array nested = '[' [json_value (',' json_value)*] ']'
   refuse json_bad in json_document json_array
-  # `code "X"`; `code {c}`, the word and the column in a node, which takes the word's field.
-  choice code_part      = 'code' (drop code: string | relabel code (wrap code_column _ drop braced_column ['in' codes: string]))
-  choice tag_part       = 'tag' relabel tag (wrap tag_column _ drop braced_column)
+  # `code "X"`; `code {c}` and `tag {c}`, a node of the column, as the lean parser's `violation`.
+  choice code_part      = code_str implied 'code' code: string | code: code_column
+  node code_column      = implied 'code' braced_column ['in' codes: string]
+  node tag_column       = implied 'tag' braced_column
   # `{c}`: the name between the braces; any other braces, one `raw_text` leaf.
   choice braced_column  = one_name '{' column: identifier '}' | column: raw_braces
   choice raw_braces     = balanced raw_text '{' '}'
-  # `fix safe rel "…"`; before a string `safe` is the relation.
-  node fix_line         = 'fix' ('safe' (relation: identifier description: string | relabel relation as identifier description: string)
-                               | relation: identifier description: string)
+  # `fix safe rel "…"`; before a string `safe` is the relation, as the lean parser's.
+  node fix_line         = 'fix' [safe_on 'safe'] relation: identifier description: string
   node suppress_line    = 'suppress' tool: identifier rule: string (comma_rule ',' rule: string)* [over_on 'over' (one_name '{' over: identifier '}' | over: raw_braces)]
   choice json           = balanced json_object '{' '}'
   node column_list      = '(' [column: column (',' column: column)*] ')'
   node column           = name: identifier ':' type: type
-  node type             = name: identifier ['<' (drop argument: identifier '>' | angle_close)]
+  node type             = name: identifier [empty_angle '<' '>' | implied '<' argument: identifier implied '>']
   choice value          = identifier | numeric | string
   node clause           = head: head (',' head: head)* [':-' body: body] ['=>' edit: term (',' edit: term)*] '.'
-  # A head's modal: `must` or `may`, then the relation. Before a `(` it was the relation: the
-  # `(` relabels it, an identifier.
-  node head             = modal: ('must' | 'may') (relation: identifier arguments: argument_list
-                                                  | relabel relation as identifier arguments: argument_list)
-                        | relation: identifier arguments: argument_list
+  # A head's modal: `must` or `may` before its relation, as the lean parser's; before a `(` it is the relation.
+  node head             = [modal_on modal: ('must' | 'may')] relation: identifier arguments: argument_list
   node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
   # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
   choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
@@ -454,34 +463,29 @@ tree rr {
   choice numeric nested = float_at number as float | number
   choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
                         | count_on aggregate | agg_call aggregate | agg_word aggregate
-                        | aggregate_word as variable [wrap call function as identifier arguments: argument_list]
-                        | identifier as variable [wrap call function as identifier arguments: argument_list
-                                                 | unless no_named (wrap named_argument name as identifier ':' value: term)]
+                        | call_on ('_' as wildcard | identifier wrap call function arguments: argument_list)
+                        | unless no_named (named_on ('_' as wildcard | identifier wrap named_argument name ':' value: term))
+                        | identifier as variable
                         | parenthesized_expression
   # `-` and a number: one number leaf (a float, where its token says so). Else `-` and its
   # operand, a primary that is no number.
-  choice minus          = '-' (float_at merge float number | merge number number | wrap unary_expression _ drop operand: unsigned)
+  choice minus          = neg_number '-' (float_at merge float number | merge number number) | unary_expression
+  node unary_expression nested = implied '-' operand: unsigned
   node parenthesized_expression = '(' expression: term ')'
   node functor_call     = '@' function: identifier arguments: argument_list
-  # The aggregates' words but `count`. `product`, the one past `join`, has no kind of its own: an identifier, as the
-  # engine stores it.
-  choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join' | 'product' as identifier
-  # An aggregate, as the lean parser's `aggregate`: `count` and its body alone (`count` implied); else its word, its
-  # value, then `by` and its keys, `sep` and its separator, and its body. Its value and a single key are terms with no
-  # named argument in them (`no_named`, down through all they hold), as the lean parser's `agg_part`. Its `:` is
-  # stored, and its `{` after a key list's `)` with no `sep` after it.
+  # An aggregate, as the lean parser's `aggregate`: `count` and its body alone (`count` implied); else its word (`product`,
+  # the one past `join`, an identifier, as the engine stores it), its value, then `by` and its keys, `sep` and its
+  # separator, and its body. Its value and a single key are terms with no named argument in them (`no_named`, down
+  # through all they hold), as the lean parser's `agg_part`. Its `:` is stored, and its `{` after a key list's `)` with
+  # no `sep` after it.
   flag no_named
-  node aggregate        = 'count' agg_body
-                        | operator: aggregate_word value: with no_named term ('by' ('(' key: term (',' key: term)* ')' keyed_body | key: with no_named term agg_tail) | agg_tail)
-  choice agg_tail       = ['sep' separator: string] agg_body
-  choice keyed_body     = 'sep' separator: string agg_body | ':' '{' body: body '}'
-  choice agg_body       = ':' '{' body: body '}'
+  node aggregate        = (implied 'count' ':' implied '{'
+                          | operator: ('min' | 'max' | 'sum' | 'mean' | 'join' | 'product' as identifier) value: with no_named term
+                            (by_list 'by' '(' key: term (',' key: term)* ')' ('sep' separator: string ':' implied '{' | ':' '{')
+                            | ['by' key: with no_named term] ['sep' separator: string] ':' implied '{')) body: body implied '}'
   # Every punctuation but `{`, which opens a setting's JSON object: a declaration's tail takes it besides.
   choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
   # A `#` word but `#include`: an identifier with no field, as the engine stores any token on the line.
-  # A type's `<>`, and an io relation's `()`: stored, as the named children do not say them.
-  choice angle_close    = '>'
-  choice paren_close    = ')'
   # The tokens the grammar implies: no leaf.
   implied include '#include'
   implied test_block '.' 'test' 'uses' ','
@@ -490,22 +494,19 @@ tree rr {
   implied edit_declaration '.' 'edit'
   implied functor_declaration 'functor'
   implied policy_document '.' 'policy'
-  implied functor_type '>'
   implied type_declaration '.' 'type'
   implied io_directive ','
-  implied io_relation ')'
   implied pragma '.' 'pragma'
   implied lattice_declaration '.' 'lattice' '<' '>' '{' ',' '}'
   implied lattice_operation '->'
   implied lattice_functor '@'
   implied declaration 'decl'
   implied violation_declaration '.' 'violation' 'options'
-  implied code_part 'in'
+  implied code_column 'in'
   implied braced_column '{' '}'
   implied suppress_line 'suppress' ',' 'over' '{' '}'
   implied column_list '(' ',' ')'
   implied column ':'
-  implied type '>'
   implied clause ',' ':-' '=>' '.'
   implied argument_list '(' ',' ')'
   implied body ';'
@@ -517,10 +518,8 @@ tree rr {
   implied paren_subject '(' ')'
   implied parenthesized_expression '(' ')'
   implied functor_call '@'
-  implied aggregate 'count' ','
-  implied agg_body '{' '}'
-  implied keyed_body '}'
-  hidden float_at line newline io_none end_on test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat paren_term paren_tilde paren_closes count_on agg_call agg_word json_bad fix_on suppress_on options_on over_on one_name at_on comma_rule bare_functor
+  implied aggregate ','
+  hidden float_at line newline empty_angle empty_parens code_str safe_on modal_on neg_number call_on named_on by_list io_none end_on test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat paren_term paren_tilde paren_closes count_on agg_call agg_word json_bad fix_on suppress_on options_on over_on one_name at_on comma_rule bare_functor
   extra comment
   # The lexer's errors, a byte's and a character's: no rule takes them, nor `any`, as the lean
   # parser fails at a `Bad` where it reads any token (its raw line's).

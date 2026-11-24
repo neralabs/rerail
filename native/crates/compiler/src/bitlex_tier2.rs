@@ -1442,8 +1442,12 @@ impl Emit<'_> {
             self.switches[t].words = keep;
         }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
+        // A mark's arm the flags guard (`unless F`): where the flag is set, the mark is not asked here, as if the arm were
+        // not there (the reference's `starts_flagged`): the state's next test, after the mark's.
         for (jump, a) in mark_arms {
+            let default = std::mem::replace(&mut self.default, jump + 1);
             let to = self.body(a);
+            self.default = default;
             self.words[jump as usize].2 = Arg::Pc(to);
         }
         Ok(())

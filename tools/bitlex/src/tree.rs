@@ -382,6 +382,27 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// `first`'s looks, with the flags the level runs with: a way `unless F` guards while `F` is set starts none.
+    fn first_flagged(&self, g: &Gram) -> u128 {
+        match g {
+            Gram::Unless { flag, .. } if self.flags.contains(flag) => 0,
+            Gram::Alt(alts) => alts.iter().fold(0, |b, a| b | self.first_flagged(a)),
+            Gram::Seq(items) => {
+                let mut bits = 0;
+                for i in items {
+                    bits |= self.first_flagged(i);
+                    if !self.first(i).1 {
+                        break;
+                    }
+                }
+                bits
+            }
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Unless { body: a, .. } => self.first_flagged(a),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first_flagged(body),
+            _ => self.first(g).0,
+        }
+    }
+
     fn first_seq(&self, items: &[Gram]) -> (u128, bool) {
         let mut bits = 0;
         for i in items {
@@ -447,6 +468,15 @@ impl<'a> Parser<'a> {
                 Some(p)
             }
             Gram::Alt(alts) => {
+                // A hidden mark only ways the flags guard take (`unless F`, `F` set): not asked here, as the machine's
+                // state does not ask it; the choice is the token's after it.
+                let mut at = at;
+                while let Some(bit) = self.tokens.get(at).filter(|t| t.mark).map(|t| self.look_bit(&t.kind)) {
+                    if self.hidden & bit == 0 || alts.iter().all(|a| self.first(a).0 & bit == 0) || alts.iter().any(|a| self.first_flagged(a) & bit != 0) {
+                        break;
+                    }
+                    at += 1;
+                }
                 let mark = self.out.len();
                 let taken = self.settled.len();
                 // A soft keyword: the alternatives that can start with it, where there are any.

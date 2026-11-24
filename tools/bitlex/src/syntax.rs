@@ -1555,6 +1555,11 @@ impl P {
         if self.eat_p(":") {
             return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
         }
+        // `implied 'A'`: this one token makes no leaf, as the lean parser's `implied()` where another place of the same
+        // rule writes it (`anon()`); `implied RULE 'A'` marks every one of a rule's.
+        if name == "implied" && matches!(self.peek(), Some(Tok::Str(_))) {
+            return Ok(Gram::As(IMPLIED.into(), Box::new(Gram::Lit(self.kind()?))));
+        }
         match name.as_str() {
             "with" | "without" => {
                 let flag = self.ident()?;
