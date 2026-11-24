@@ -5318,7 +5318,10 @@ fn run_observed_within(
         // and its frontier relations' tape rows.
         let by_name: Vec<String> = if keeping { local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)).map(|r| r.replace(guests::KEPT_ROOTS, guests::FRESH_ROOTS).replace(guests::KEPT, guests::TAPE)).collect() } else { Vec::new() };
         let mut sources = sources;
-        if keeping {
+        // Bound in every chunk, empty where it admits no tape value (no request answered in its fixpoint): an input
+        // the program declares has a source, and so its statistics. Bound only where values were admitted, a chunk
+        // that admits none left a pass's kept rows unbound, and its plan failed ("no statistics for …_rr_kept").
+        {
             for rel in local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)) {
                 if !sources.iter().any(|(r, _)| r == rel) {
                     sources.push((rel.to_owned(), flat_source(local.version.columns_of(rel).map_or(1, |c| c.len()), &[])));
