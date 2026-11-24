@@ -2384,6 +2384,59 @@ fn a_maintain_mode_line_starts_where_it_is_cheapest() {
     assert!(work < 10.0 && work < led_work / 100.0, "priced at the delta's share: {work} against {led_work} led by it");
 }
 
+/// Decision 0094 §8 (0364 R4 at scale): under 0090 §4's floor a maintain mode's line is led by its delta, which is
+/// cheap whatever the order where the delta binds the rest. corpus0's `bv` line led by `rr_cx_reach`'s 156 changed
+/// rows bound only documents, and read all of `pann` for each row (`Model::reads_whole_past_lead`). Such a line is planned
+/// free to start, as past the floor: `pann` read once, its documents probing the delta.
+#[test]
+fn a_delta_led_line_that_reads_a_relation_whole_a_row_is_planned_free() {
+    let p = parse_version(".decl pann(f:number,x:number,t:number)\n.decl docof(n:number,d:number)\n.decl reach(d:number,e:number)\n.decl anc(s:number,c:number)\n.decl uinst(t:number,c:number)\n.input pann\n.input docof\n.input anc\n.input uinst\n.decl bv(f:number,x:number,s:number)\nbv(f,x,s) :- pann(f,x,t), docof(f,d), docof(s,e), reach(d,e), anc(s,c), uinst(t,c).\n.output bv\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+    // 103 documents of 2,400 nodes; 2,000 annotations; the reach delta 156 rows of 5,000.
+    for (rel, rows, ndv, fan) in [
+        ("pann",2_000.0,vec![2_000.0,500.0,300.0],vec![1.0,4.0,7.0]),
+        ("docof",246_000.0,vec![246_000.0,103.0],vec![1.0,2_400.0]),
+        ("reach",5_000.0,vec![103.0,103.0],vec![50.0,50.0]),
+        ("anc",20_000.0,vec![10_000.0,2_000.0],vec![2.0,10.0]),
+        ("uinst",400.0,vec![300.0,200.0],vec![1.3,2.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
+            model.ndv.insert((rel,c),ndv);
+            model.stats.fan.insert((rel,c),fan);
+        }
+    }
+    model.stats.solve(["reach","bv"].into_iter().map(str::to_owned).collect());
+    model.stats.delta_rows.insert("reach", 156.0);
+    let r = 0usize;
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let b = body::nth(&p, r);
+    let ((led, led_work, _), _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
+    let led_names: Vec<String> = led.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(led_names[..2], ["reach", "pann"], "led by the delta, `pann` read whole for each of its rows: {led_names:?}");
+    assert!(model.reads_whole_past_lead(&b, &led), "{led_names:?}");
+    model.stats.lead_free = true;
+    let ((free, work, _), _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
+    let names: Vec<String> = free.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert!(!model.reads_whole_past_lead(&b, &free), "free to start, no relation read whole a row: {names:?}");
+    assert!(work * 5.0 < led_work, "{names:?} at {work} against {led_work} led by the delta");
+    // As the maintain mode takes it under the floor: the delta-led order, priced now, freed and the cheaper taken.
+    model.stats.lead_free = false;
+    let (led_plan, _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
+    let ((_, taken, _), freed) = model.under_floor_line(fields, &b, Some(3), led_plan);
+    assert!(freed && taken * 5.0 < led_work, "freed {freed} at {taken} against {led_work}");
+    // Led by `pann`, `docof` read from its document (its one index is by node, as the tape view's) walks the
+    // document's every node for each row: `docof(s, e)` after `reach` binds `e`, where `uinst` and `anc` bind `s`
+    // from `t` first.
+    model.stats.indexes = model.stats.indexes.with([("docof".to_owned(), vec![vec!["n".to_owned()]])]);
+    let order = |ats: [usize; 6]| ats.map(|at| Step { at, mode: None }).to_vec();
+    assert!(model.reads_whole_past_lead(&b, &order([0, 1, 3, 2, 4, 5])), "`docof(s, e)` with `e` bound alone");
+    assert!(!model.reads_whole_past_lead(&b, &order([0, 5, 4, 2, 1, 3])), "`docof(s, e)` with `s` bound");
+}
+
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.
 /// The delta's name domain is wider than the four names the restrictive input can match.
 #[test]

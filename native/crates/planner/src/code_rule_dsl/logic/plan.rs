@@ -2735,7 +2735,14 @@ impl<'a> Run<'a, '_> {
                 // anywhere.
                 let first = (!a.neg()).then_some(k);
                 self.model.stats.lead_free = first.is_some() && crate::code_rule_dsl::logic::plan::again::past_floor(n);
-                let mut priced = self.model.plan_rule_reused(pf, b, first).map(|p| p.0.1);
+                let mut priced = self.model.plan_rule_reused(pf, b, first).map(|p| p.0);
+                // Under the floor as the mode plans it (`Model::under_floor_line`): priced now, freed where it pays.
+                if first.is_some() && !self.model.stats.lead_free && let Ok(p) = priced {
+                    let (p, free) = self.model.under_floor_line(pf, b, first, p);
+                    self.model.stats.lead_free = free;
+                    priced = Ok(p);
+                }
+                let mut priced = priced.map(|p| p.1);
                 // A kept order is run as it is while its work re-priced is under `REPLAN_ROWS`: a search could save
                 // no more than that. Its price may still be far over the line's best, and here it is summed with
                 // the stratum's others against the derive: a line priced over its rule's derive is searched, and
@@ -2915,14 +2922,27 @@ impl<'a> Run<'a, '_> {
                     // edit, and their price (1.9 M) kept `violation` derived again: 33 documents made for their
                     // places (0.19 s). Under the floor a line costs little whatever its order, and keeps the
                     // program's (its prepared and kept plans): planned free, ep2's appends' lines cost 1 G more.
+                    // Unless, priced now, it is over what a search could save (`Model::under_floor_line`): led by a
+                    // 156-row delta that bound only documents, corpus0's `bv` lines read `pann` whole a row (20 M of a
+                    // move's 42 M rows of work).
                     let (order, key) = match (&led, &led_body) {
                         (Some(o), Some(lb)) => (o.clone(), self.model.reused_key(lb, None)),
                         _ => {
                             // The relation's change, both sides, as the clause's price reads it (`mode_costs`).
                             self.model.stats.lead_free = crate::code_rule_dsl::logic::plan::again::past_floor(gone + added);
-                            let planned = self.model.plan_rule_reused(pf, b, first).map(|p| (p.0.0, self.model.reused_key(b, first)));
+                            let past = self.model.stats.lead_free;
+                            let planned = self.model.plan_rule_reused(pf, b, first).map(|p| p.0);
                             self.model.stats.lead_free = false;
-                            planned?
+                            // Under the floor, led by its delta as the program planned it, unless priced now it is
+                            // over what a search could save (`Model::under_floor_line`).
+                            let (plan, free) = match planned {
+                                Ok(p) if !past => self.model.under_floor_line(pf, b, first, p),
+                                p => (p?, past),
+                            };
+                            self.model.stats.lead_free = free;
+                            let key = self.model.reused_key(b, first);
+                            self.model.stats.lead_free = false;
+                            (plan.0, key)
                         }
                     };
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
@@ -3166,7 +3186,7 @@ impl<'a> Run<'a, '_> {
             }
             if trace {
                 named.sort_by(|a, b| b.0.total_cmp(&a.0));
-                eprintln!("RERAIL_MODE_TRACE {}: the mode's work {:.0}; most: {}", stratum_key(scc), work.iter().map(|(_, w)| w).sum::<f64>(), named.iter().take(4).filter(|(w, _)| *w > 0.0).map(|(w, n)| format!("{w:.0} {n}")).collect::<Vec<_>>().join("; "));
+                eprintln!("RERAIL_MODE_TRACE {}: the mode's work {:.0}; most: {}", stratum_key(scc), work.iter().map(|(_, w)| w).sum::<f64>(), named.iter().take(12).filter(|(w, _)| *w > 0.0).map(|(w, n)| format!("{w:.0} {n}")).collect::<Vec<_>>().join("; "));
             }
             for (key, w) in work {
                 crate::code_rule_dsl::logic::run::shape::join_work(w as usize);
