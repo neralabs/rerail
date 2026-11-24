@@ -40,7 +40,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Blade | language | Bladestan 0.11.7, tlint 9.7.0, blade-parser 2.1.0 | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | Clippy 0.1.99 (Rust 1.99.0) | 33 (17) | `*.rs` files |
 | SQL | language | SQLFluff 4.4.0 | 21 (19) | `*.sql` files |
-| Next.js | framework | @next/eslint-plugin-next 16.3.8, and Rerail's own App Router rules | 32 (32) | a `next` dependency |
+| Next.js | framework | @next/eslint-plugin-next 16.3.8, and Rerail's own App Router rules | 33 (32) | a `next` dependency |
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
