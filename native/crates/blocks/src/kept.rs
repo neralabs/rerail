@@ -462,6 +462,159 @@ impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
     }
 }
 
+impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
+    /// Key `key`'s history over these files (decision 0678 step 2): a frontier per file, oldest first.
+    pub fn trace<'k>(&self, key: FactKey<'k>) -> KeptTrace<'a, 'k, B> {
+        KeptTrace { files: self.files, key }
+    }
+}
+
+/// A kept key's history over a chain's files: frontier `k` reads the first `k` files. A file's rows for the key take
+/// the ids past every older file's rows for it, in file order, so an id is one row at every frontier. The live rows
+/// are those of the newest entry with rows, as `KeptChain::get` resolves it: a gone entry leaves none live, and a
+/// reads-only entry changes nothing. So a file's entry kills the rows before it and adds its own (a change of the
+/// whole relation, not the least one), and a reads-only entry is the identity.
+pub struct KeptTrace<'a, 'k, B: Borrow<Block> = Block> {
+    files: &'a [KeptFacts<B>],
+    key: FactKey<'k>,
+}
+
+impl<B: Borrow<Block>> Clone for KeptTrace<'_, '_, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<B: Borrow<Block>> Copy for KeptTrace<'_, '_, B> {}
+
+impl<'a, B: Borrow<Block>> KeptTrace<'a, '_, B> {
+    /// File `j`'s entry for the key, if it has one.
+    fn found(&self, j: usize) -> Option<Found<'a>> {
+        let file: &'a KeptFacts<B> = &self.files[j];
+        file.find(&self.key).map(|(_, f)| f)
+    }
+}
+
+impl<'a, 'k, B: Borrow<Block>> crate::trace::Trace for KeptTrace<'a, 'k, B> {
+    type Version<'s>
+        = KeptVersion<'a, 'k, B>
+    where
+        Self: 's;
+
+    fn frontier(&self) -> crate::trace::Frontier {
+        crate::trace::Frontier::new(u32::try_from(self.files.len()).expect("a chain's files fit a u32"))
+    }
+
+    fn at(&self, f: crate::trace::Frontier) -> KeptVersion<'a, 'k, B> {
+        assert!(f <= self.frontier(), "a frontier the chain has");
+        let at = KeptTrace { files: &self.files[..f.layers() as usize], key: self.key };
+        // One pass, oldest first: each entry with rows takes the ids past the ones before, and is the live rows
+        // until a newer entry with rows or a gone one.
+        let (mut end, mut live) = (0u32, (0u32, 0u32));
+        for j in 0..at.files.len() {
+            match at.found(j) {
+                Some(Found::Kept(k)) => {
+                    let n = u32::try_from(k.rows.len()).expect("a kept relation's rows fit a row id");
+                    live = (end, end + n);
+                    end += n;
+                }
+                Some(Found::Gone) => live = (end, end),
+                Some(Found::Same { .. }) | None => {}
+            }
+        }
+        // Its columns are its rows' in any file, so its empty frontier has them too.
+        let arity = (0..self.files.len()).find_map(|j| match self.found(j) {
+            Some(Found::Kept(k)) => Some(k.rows.arity as usize),
+            _ => None,
+        });
+        KeptVersion { trace: at, end, live, arity: arity.unwrap_or(0) }
+    }
+}
+
+/// A kept key read at a frontier: its ids `0 .. end`, the live ones `live`.
+pub struct KeptVersion<'a, 'k, B: Borrow<Block> = Block> {
+    trace: KeptTrace<'a, 'k, B>,
+    end: u32,
+    live: (u32, u32),
+    arity: usize,
+}
+
+impl<B: Borrow<Block>> Clone for KeptVersion<'_, '_, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<B: Borrow<Block>> Copy for KeptVersion<'_, '_, B> {}
+
+impl<'a, B: Borrow<Block>> KeptVersion<'a, '_, B> {
+    /// The rows that hold `id`, and the id of their first row.
+    fn rows_of(&self, id: u32) -> (u32, &'a Packed) {
+        let mut at = 0u32;
+        for j in 0..self.trace.files.len() {
+            if let Some(Found::Kept(k)) = self.trace.found(j) {
+                let n = k.rows.len() as u32;
+                if id < at + n {
+                    return (at, k.rows);
+                }
+                at += n;
+            }
+        }
+        panic!("row {id} past the key's rows")
+    }
+}
+
+/// A kept version's column: the file's rows it last read, resolved once, found again only when a read leaves them.
+pub struct KeptVersionColumn<'a, 'k, B: Borrow<Block>> {
+    version: KeptVersion<'a, 'k, B>,
+    c: usize,
+    last: std::cell::Cell<Option<(u32, u32, crate::packed::ColDec<'a>)>>,
+}
+
+impl<B: Borrow<Block>> crate::bistate::ColumnRead for KeptVersionColumn<'_, '_, B> {
+    #[inline]
+    fn get(&self, id: crate::ids::RowId) -> i64 {
+        let id = id.get();
+        if let Some((lo, hi, dec)) = self.last.get()
+            && (lo..hi).contains(&id)
+        {
+            return dec.get((id - lo) as usize);
+        }
+        let (lo, rows) = self.version.rows_of(id);
+        let dec = rows.col(self.c).dec();
+        self.last.set(Some((lo, lo + rows.len() as u32, dec)));
+        dec.get((id - lo) as usize)
+    }
+}
+
+impl<'a, 'k, B: Borrow<Block>> crate::bistate::Read for KeptVersion<'a, 'k, B> {
+    type Column<'s>
+        = KeptVersionColumn<'a, 'k, B>
+    where
+        Self: 's;
+
+    fn arity(&self) -> usize {
+        self.arity
+    }
+
+    fn end(&self) -> crate::ids::RowId {
+        crate::ids::RowId::new(self.end)
+    }
+
+    fn live_word(&self, w: crate::ids::WordIndex) -> u64 {
+        use crate::bistate::below;
+        use crate::ids::RowId;
+        below(RowId::new(self.live.1), w) & !below(RowId::new(self.live.0), w)
+    }
+
+    fn get(&self, id: crate::ids::RowId, c: crate::ids::ColumnIndex) -> i64 {
+        let (lo, rows) = self.rows_of(id.get());
+        rows.get((id.get() - lo) as usize, c.get())
+    }
+
+    fn column(&self, c: crate::ids::ColumnIndex) -> KeptVersionColumn<'a, 'k, B> {
+        KeptVersionColumn { version: *self, c: c.get(), last: std::cell::Cell::new(None) }
+    }
+}
+
 impl<B: Borrow<Block>> KeptRead for KeptChain<'_, B> {
     fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
         self.entry(key)
@@ -805,6 +958,54 @@ mod tests {
             let id = RowId::new(from + i as u32);
             assert_eq!([out[i], out[n + i]], [Read::get(&got, id, cols[0]), Read::get(&got, id, cols[1])], "row {id} of the fill");
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A kept key's files are a trace: a file's rows take ids past the older files', a reads-only entry is the
+    /// identity, a file's new rows kill the older and add their own, and a gone entry kills them all.
+    #[test]
+    fn a_kept_keys_files_are_a_trace() {
+        use crate::bistate::{ColumnRead, Read, check};
+        use crate::ids::{ColumnIndex, RowId};
+        use crate::trace::{Frontier, Trace};
+        let d = dir("trace");
+        let k = FactKey { rel: "r", ident: &A, part: 0 };
+        let mut w = KeptW::create(&d.join("c1.blk"), 1, 16 << 20).unwrap();
+        put(&mut w, meta(k, 1), &[(1, 1), (2, 2)], None);
+        w.finish(Flush::Synced).unwrap();
+        let mut w = KeptW::create(&d.join("c2.blk"), 2, 16 << 20).unwrap();
+        w.same(meta(k, 2));
+        w.finish(Flush::Synced).unwrap();
+        let mut w = KeptW::create(&d.join("c3.blk"), 3, 16 << 20).unwrap();
+        put(&mut w, meta(k, 3), &[(5, 5), (6, 6), (7, 7)], None);
+        put(&mut w, meta(FactKey { rel: "other", ..k }, 3), &[(9, 9)], None);
+        w.finish(Flush::Synced).unwrap();
+        let mut w = KeptW::create(&d.join("c4.blk"), 4, 16 << 20).unwrap();
+        w.gone(k);
+        w.finish(Flush::Synced).unwrap();
+        let files = (1..=4).map(|i| KeptFacts::open(&d.join(format!("c{i}.blk")), i).unwrap()).collect::<Vec<_>>();
+        let t = KeptChain { files: &files }.trace(k);
+        assert_eq!(t.frontier(), Frontier::new(4));
+        let live = |f: u32| t.at(Frontier::new(f)).live_ids().map(RowId::get).collect::<Vec<_>>();
+        assert_eq!((0..=4).map(live).collect::<Vec<_>>(), [vec![], vec![0, 1], vec![0, 1], vec![2, 3, 4], vec![]]);
+        let at = |f: u32| Frontier::new(f);
+        assert!(t.between(Some(at(1)), at(2)).is_identity(), "a reads-only entry changes nothing");
+        let s = t.between(Some(at(2)), at(3));
+        assert_eq!((s.gone().map(RowId::get).collect::<Vec<_>>(), s.added().map(RowId::get).collect::<Vec<_>>()), (vec![0, 1], vec![2, 3, 4]));
+        assert_eq!(t.between(Some(at(3)), at(4)).counts(), (3, 0), "gone: every row dead");
+        let v = t.at(at(3));
+        let col = v.column(ColumnIndex::new(0));
+        for (id, want) in [(4u32, 7i64), (0, 1), (3, 6), (1, 2), (2, 5)] {
+            assert_eq!((col.get(RowId::new(id)), Read::get(&v, RowId::new(id), ColumnIndex::new(1))), (want, want), "row {id}");
+        }
+        for b in 0..=4 {
+            check(&t.between(None, at(b)));
+            for a in 0..=b {
+                check(&t.between(Some(at(a)), at(b)));
+            }
+        }
+        // The chain's own read agrees with the trace's latest frontier but one.
+        assert_eq!(rows_of(&KeptChain { files: &files[..3] }.get(&k).unwrap()), [vec![5, 5], vec![6, 6], vec![7, 7]]);
         let _ = std::fs::remove_dir_all(&d);
     }
 
