@@ -323,8 +323,40 @@ formula").
   three of the four dumps; `T` = 3, 1.2 to 1.8 times; `T` = 10, the hardest unproved in 100,000 conflicts. The
   values recur because most of a circuit's variables take the same value whenever they are derived, not because
   levels are jumped over. Not kept.
-- **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
-  the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
-  the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on
-  the CPU too (UKL's CPU backend), or its answers kept apart from the CPU's.
+- **One search on every machine** (the user: "the device can't yet pick up where a window's earlier solves left
+  off and keep what they learned, as the CPU does. The prover needs that before it can use the device"). The
+  device's answers past level 0 were not the CPU's solver's (an unsatisfiable formula one budget leaves unknown,
+  another model, other learned clauses), so a compile's answers would have depended on the machine having a GPU.
+  Now the prover's solves are the device's search everywhere: `bitlex_csat_lanes`, the kernel step for step, on
+  the CPU; the kernel on a device. `bitlex_csat::Solver` is no longer the prover's. `PROOFS_VERSION` 7.
+  - **A window resumed, in the device's search** (`bitlex_csat_lanes::start`, `Resume`): the window's plain clauses
+    and gates propagated at level 0 once (`Start`: each value with its reason, or the contradiction); a solve sets
+    those values, watches every plain and carried clause by two literals not false (one with a single such literal
+    implies it), checks each of its own gates once, and decides its assumption first, at level 1. Its own plain
+    clauses carry `-assume` implicitly (a literal past their end, not a copy). A contradiction at level 0 or 1, or
+    the assumption false at level 0, refutes it, no conflict spent.
+  - **What it keeps** (`Solved::carry`, as `Solver::learned_without`): the learned clauses held at the end of at
+    most 64 literals without `-assume`, over the window's variables, and the values learned at level 0; only where
+    the solve's own gates each define a fresh variable. **Its core** (`Solved::used`): the contradiction's clause, the
+    level-0 values analysis left out (marked as it skips them, and a dropped learned reason's literals when a
+    reduction clears it), back along the trail through reasons.
+  - Test `a_resumed_window_answers_as_a_solve` (the lanes' own, as `bitlex_csat`'s): 1,500 windows, 4 solves
+    each: answers equal `bitlex_sat`'s, models hold, every carried clause the window implies, an own unit the core
+    leaves out not needed.
+  - **The learned clauses' room was too small.** With the prover on the search, two Kotlin solves stopped at their
+    100,000 conflicts (12 s each) where the CPU's solver needed about 5,600: a quarter of today's room made their
+    long learned clauses fill it, and the search reduced 99 times. The room is now 64 words a variable, from
+    16,384 to 2^20 (`arena`): the hardest dump 93,450 conflicts to 7,387, the next 22,006 to 7,345 (the CPU's
+    solver: 5,651 and 9,160). Room is not memory touched: a search writes only the clauses it learns.
+  - **The CPU's copy, faster** (the same steps): a round's gates without a vector, a check reading its gate's
+    arguments once, a chunk of gates that implies nothing done at its checks, the lanes' winners found among the
+    lanes with a literal. The hardest dump 11.4 s to 0.75 s with the room; per conflict still about twice the CPU
+    solver's (a round's 32 trail literals' gates all checked before a conflict ends it).
+  - Cold Kotlin on an M3 (`RERAIL_GPU=cpu`, the budget lifted): 5.2 s and 37.5 s of CPU with the CPU's solver,
+    8.1 s and 53.3 s with the device's search on the CPU. 8,763 answers made, 948 known, as before; every grammar's
+    shipped answers blessed again. (The C directives' answers check fails with "`ellipsis`: no byte left that no
+    token begins with" before and after this change: not the solver's.)
+- **The kernel does not resume yet**: `csat_solve` solves a formula whole. The Start, the carried clauses, the
+  assumption, and what a solve keeps and its core written out are the CPU copy's only, and the prover's rounds
+  (`never_in_rounds`) still send the device propagation alone.
 

@@ -206,6 +206,8 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             visits: o[6],
             items: o[7],
             reductions: o[8],
+            carry: Vec::new(),
+            used: None,
             cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
         })
         .collect())
@@ -240,7 +242,7 @@ mod tests {
         let formulas: Vec<Formula> = made
             .iter()
             .zip(&fans)
-            .map(|((g, c, vars, base), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 100_000 })
+            .map(|((g, c, vars, base), (fan, own))| Formula::new(*vars, g, *base, fan, (*base < g.len()).then_some(own), c, 100_000))
             .collect();
         // A megabyte of states: a few dozen slots, each taking formulas from the queue one after another.
         let got = solve_in(&formulas, 1 << 20).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
@@ -291,7 +293,7 @@ mod tests {
         let formulas: Vec<Formula> = made
             .iter()
             .zip(&fans)
-            .map(|((g, c, vars, base), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 0 })
+            .map(|((g, c, vars, base), (fan, own))| Formula::new(*vars, g, *base, fan, (*base < g.len()).then_some(own), c, 0))
             .collect();
         let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
         for (i, (f, x)) in formulas.iter().zip(&got).enumerate() {
@@ -339,7 +341,7 @@ mod tests {
         let formulas: Vec<Formula> = made
             .iter()
             .zip(&fans)
-            .map(|((g, vars, base, c), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 100_000 })
+            .map(|((g, vars, base, c), (fan, own))| Formula::new(*vars, g, *base, fan, (*base < g.len()).then_some(own), c, 100_000))
             .collect();
         let t = std::time::Instant::now();
         let bytes = std::env::var("RERAIL_CSAT_STATE_MB").ok().and_then(|m| m.parse::<usize>().ok()).map_or(STATE_BYTES, |m| m << 20);

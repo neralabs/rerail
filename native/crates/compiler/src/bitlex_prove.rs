@@ -793,8 +793,8 @@ pub struct Induction {
     /// a kernel binds once (decision 0670, step 3). Made at its first window.
     block: std::sync::OnceLock<FormulaBlock>,
     question: usize,
-    /// The solver, reset for each solve (its memory kept).
-    solver: Solver,
+    /// The conflicts its solves spent, in all (`stats`).
+    spent: u64,
     /// The lemmas a caller proved and gave (`add_lemma`, `never_inductive`, decision 0412), kept
     /// across its questions, unlike a question's own (`lemmas`). A prover's answers depend on
     /// them, so a prover given any is not asked through the keyed answers (`Proofs`, decision
@@ -846,7 +846,7 @@ pub enum Round {
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 6;
+pub const PROOFS_VERSION: u32 = 7;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1229,7 +1229,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, solver: Solver::default(), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, captured_core: false, core: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, captured_core: false, core: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1245,7 +1245,7 @@ impl Induction {
     /// The last question's solves, its solver's conflicts in all, its lemmas and its windows
     /// (`RERAIL_PROVING_TRACE`).
     pub fn stats(&self) -> (u32, u64, usize, usize) {
-        (SOLVES.saturating_sub(self.solves), self.solver.conflicts, self.lemmas.len(), self.window_list.len())
+        (SOLVES.saturating_sub(self.solves), self.spent, self.lemmas.len(), self.window_list.len())
     }
 
     pub fn fork(&self, work: &Budget) -> Induction {
@@ -1288,7 +1288,7 @@ impl Induction {
         let c = self.captured.as_ref()?;
         let w = &self.window_list[c.window].1;
         let gates = &w.parts.gates;
-        Some(crate::bitlex_csat_gpu::Formula { vars: c.vars, gates, base: w.base_gates, fan: &w.fan, own: c.own.as_ref(), clauses: &w.parts.clauses, conflicts })
+        Some(crate::bitlex_csat_gpu::Formula::new(c.vars, gates, w.base_gates, &w.fan, c.own.as_ref(), &w.parts.clauses, conflicts))
     }
 
     /// The outcome of the solve the last round stopped at: unsatisfiable by propagation alone
@@ -1663,32 +1663,25 @@ impl Induction {
             keep = true;
             break 'solve Outcome::Unknown;
         }
-        let s = &mut self.solver;
-        // The window at level 0, propagated once (`Start`); what its solves learned that holds without them; the
-        // solve's own clauses, each with `-sel`, a variable past the solve's, assumed (decision 0670).
-        let start = start.get_or_insert_with(|| s.start(&u.gates, fan, base_vars, u.clauses.iter().take(window_base)));
+        // The device's search (`bitlex_csat_lanes`, decision 0670): the window at level 0, propagated once (`Start`);
+        // what its solves learned that holds without them; the solve's own clauses, each with `-sel`, a variable
+        // past the solve's, assumed. The same answers on the device and here.
+        let start = start.get_or_insert_with(|| lanes::start(base_vars, &u.gates, base_gates, fan, &u.clauses, window_base));
         let sel = u.vars + 1;
-        s.resume(start, sel.unsigned_abs() as usize, u.clauses.iter().take(window_base));
-        for c in learned.iter() {
-            s.add_resumed(c);
-        }
-        let mut own = Vec::new();
-        for c in u.clauses.iter().skip(window_base) {
-            own.clear();
-            own.extend_from_slice(c);
-            own.push(-sel);
-            s.add_resumed(&own);
-        }
-        let marks = s.marks();
-        let before = s.conflicts;
+        let own_fan = (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), sel.unsigned_abs() as usize));
+        let budget = self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX));
         let t_dump = std::time::Instant::now();
-        let answer = s.solve_assuming(&u.gates, fan, base_gates, sel, self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
+        let x = {
+            let resume = lanes::Resume { start, window_clauses: window_base, carried: learned, assume: sel, carry_vars: base_vars };
+            let f = lanes::Formula { resume: Some(resume), ..lanes::Formula::new(sel.unsigned_abs() as usize, &u.gates, base_gates, fan, own_fan.as_ref(), &u.clauses, budget) };
+            lanes::solve(&f)
+        };
         // What holds for every solve of the window, kept for its next ones (`LEARNED_KEPT` literals at most).
-        s.learned_without(&u.gates, base_gates, sel, marks, base_vars, LEARNED_LONGEST, |c| {
+        for c in &x.carry {
             if learned.lits().len() + c.len() <= LEARNED_KEPT {
                 learned.push(c);
             }
-        });
+        }
         // With `RERAIL_CSAT_DUMP` (a directory): each solve of over 100 ms, its formula as `Gates::dump` writes
         // it, to solve or profile it alone (decision 0670).
         if let Some(dir) = std::env::var_os("RERAIL_CSAT_DUMP") && t_dump.elapsed().as_secs_f64() > 0.1 {
@@ -1699,21 +1692,22 @@ impl Induction {
         // With `RERAIL_SOLVE_TRACE`: a line a solve, its window (an address), its own gates and clauses, its
         // conflicts, time and answer (decision 0670).
         if std::env::var_os("RERAIL_SOLVE_TRACE").is_some() {
-            eprintln!("solve w{:x}.{j} base {base_gates} own {} clauses {} own_clauses {} vars {} conflicts {} us {} {:?}", std::ptr::from_ref(fan) as usize, u.gates.len() - base_gates, u.clauses.len(), u.clauses.len() - window_base, u.vars, s.conflicts - before, t_dump.elapsed().as_micros(), answer);
+            eprintln!("solve w{:x}.{j} base {base_gates} own {} clauses {} own_clauses {} vars {} conflicts {} us {} {:?}", std::ptr::from_ref(fan) as usize, u.gates.len() - base_gates, u.clauses.len(), u.clauses.len() - window_base, u.vars, x.conflicts, t_dump.elapsed().as_micros(), x.answer);
         }
-        self.work.spend(s.conflicts - before);
-        let answer = match answer {
+        self.work.spend(u64::from(x.conflicts));
+        self.spent += u64::from(x.conflicts);
+        let answer = match x.answer {
             // With a hypothesis, its values the contradiction read at the position: the rest may go (`prove`).
-            Sat::Unsat => Outcome::Proved(hypothesis.and_then(|h| {
-                let used = s.used(&u.gates)?;
+            lanes::Answer::Unsat => Outcome::Proved(hypothesis.and_then(|h| {
+                let used = x.used.as_ref()?;
                 let at_position = |&(at, l, _): &(u16, u32, bool)| {
                     at == STREAM || u.memo.get(&(at, u32::from(d) + l)).is_none_or(|&x| x.unsigned_abs() <= 1 || used[x.unsigned_abs() as usize])
                 };
                 Some(h.iter().map(at_position).collect())
             })),
-            Sat::Unknown => Outcome::Unknown,
-            Sat::Sat => {
-                let holds = |l: Lit| if l == 1 { true } else if l == -1 { false } else { s.holds(l.unsigned_abs() as usize) == (l > 0) };
+            lanes::Answer::Unknown => Outcome::Unknown,
+            lanes::Answer::Sat(ref model) => {
+                let holds = |l: Lit| if l == 1 { true } else if l == -1 { false } else { model[l.unsigned_abs() as usize] == (l > 0) };
                 let inside = |lag: u32| holds(u.inside(lag));
                 // A stream that begins within the window is a real one: kept (`Witnesses`).
                 if bounded && let Some(file) = u.stream(&holds) {
@@ -1777,8 +1771,9 @@ fn cube(ops: &mut Vec<BlockOp>, lemma: &Lemma) -> u16 {
     acc
 }
 
-use crate::bitlex_csat::{Fanout, Gates, Solver, Start};
-use crate::bitlex_sat::{Answer as Sat, Clauses, Lit};
+use crate::bitlex_csat::{Fanout, Gates};
+use crate::bitlex_csat_lanes::{self as lanes, Start};
+use crate::bitlex_sat::{Clauses, Lit};
 
 /// Whether `at` is a carried value with an equation (`never_unrolled`).
 fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
@@ -1878,14 +1873,13 @@ struct Window {
     parts: Parts,
     /// Its gates and clauses hold a captured solve's own past its own (`give_back`).
     kept: bool,
-    /// Its solver at level 0, made at its first solve (decision 0670).
+    /// The window at level 0, made at its first solve (decision 0670).
     start: Option<Start>,
     /// What its solves learned that holds for all of them: clauses over its own variables, none of a solve's own.
     learned: Clauses,
 }
 
-/// A window's learned clauses kept: the longest, and the literals in all.
-const LEARNED_LONGEST: usize = 64;
+/// A window's learned clauses kept: the literals in all (each of `lanes::CARRIED_LONGEST` at most).
 const LEARNED_KEPT: usize = 1 << 13;
 
 /// A window's gates, clauses and literals.
@@ -1955,7 +1949,9 @@ impl<'a> Unrolled<'a> {
         let mut held: Vec<(u16, u32)> = memo.keys().copied().collect();
         held.sort_unstable();
         let fan = Fanout::of(&gates, gates.len(), vars.unsigned_abs() as usize);
-        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, kept: false, start: None, learned: Clauses::default() }
+        // In the window's block, where the device's solver reads them (decision 0670).
+        let blocked = gates.placed().map_or_else(Clauses::default, |(b, _, _)| Clauses::in_block(b));
+        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, kept: false, start: None, learned: blocked }
     }
 }
 

@@ -15,6 +15,12 @@ use crate::bitlex_sat::{Clauses, Lit};
 /// A formula: its gates (the first `base` listed by `fan`, the rest a solve's own, listed by `own`), its plain
 /// clauses, its variables (numbered from 1), and its budget of conflicts: with none, it stops at its first decision
 /// (propagation at level 0 alone).
+///
+/// A window's solve (`resume`): the window's state at level 0 (`Start`, made by `start` from its first
+/// `window_clauses` plain clauses and its first `base` gates), what its earlier solves learned that holds without
+/// them (`carried`), the solve's own plain clauses (those past `window_clauses`) each with `-assume`, and `assume`
+/// decided first. Its report then holds what it learned that holds without `assume` over the first `carry_vars`
+/// variables (`Solved::carry`) and, unsatisfiable, the variables its contradiction rests on (`Solved::used`).
 pub struct Formula<'a> {
     pub vars: usize,
     pub gates: &'a Gates,
@@ -23,7 +29,37 @@ pub struct Formula<'a> {
     pub own: Option<&'a Fanout>,
     pub clauses: &'a Clauses,
     pub conflicts: u32,
+    pub resume: Option<Resume<'a>>,
 }
+
+/// A window's solve: what it resumes from (`Formula`).
+#[derive(Clone, Copy)]
+pub struct Resume<'a> {
+    pub start: &'a Start,
+    pub window_clauses: usize,
+    pub carried: &'a Clauses,
+    pub assume: Lit,
+    pub carry_vars: usize,
+}
+
+impl<'a> Formula<'a> {
+    /// A formula solved whole, from nothing.
+    pub fn new(vars: usize, gates: &'a Gates, base: usize, fan: &'a Fanout, own: Option<&'a Fanout>, clauses: &'a Clauses, conflicts: u32) -> Self {
+        Formula { vars, gates, base, fan, own, clauses, conflicts, resume: None }
+    }
+}
+
+/// A window at level 0 (`start`): the values its plain clauses and gates set there, in order, each with its reason
+/// and argument (a clause's number among the window's); or the contradiction it met, its clause.
+#[derive(Clone, Debug, Default)]
+pub struct Start {
+    pub set: Vec<(Lit, u32, u32)>,
+    pub broken: bool,
+    pub conflict: Vec<Lit>,
+}
+
+/// The longest learned clause a window keeps for its next solves.
+pub const CARRIED_LONGEST: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answer {
@@ -47,15 +83,21 @@ pub struct Solved {
     pub visits: u32,
     pub items: u32,
     pub reductions: u32,
+    /// A window's solve (`Resume`): what it learned that holds without its assumption, in order (clauses, then
+    /// values learned at level 0); and, unsatisfiable, each variable whether its contradiction rests on it.
+    pub carry: Vec<Vec<Lit>>,
+    pub used: Option<Vec<bool>>,
     /// The device's cycles by part, over 256 (0 where its backend has no clock, and on the CPU): watch visits, gate
     /// items, analysis, jumps back, decisions, reductions.
     pub cycles: [u32; 6],
 }
 
-/// A formula's room for learned clauses, by its size: their literals (16 words a variable, from 4,096 to 2^18), and
-/// a clause for each 16 of those. The search reduces them as they fill it.
+/// A formula's room for learned clauses, by its size: their literals (64 words a variable, from 16,384 to 2^20), and
+/// a clause for each 16 of those. The search reduces them as they fill it. (A quarter of it reduced the hardest
+/// Kotlin solves 99 times: they took 93,450 conflicts where the CPU's solver took 5,651, and with this room 7,387.
+/// It is room, not memory touched: a search writes only the clauses it learns.)
 pub fn arena(vars: usize) -> u32 {
-    (16 * vars).clamp(1 << 12, 1 << 18) as u32
+    (64 * vars).clamp(1 << 14, 1 << 20) as u32
 }
 pub fn learned(vars: usize) -> u32 {
     arena(vars) / 16
@@ -162,6 +204,20 @@ struct Search<'a> {
     reductions: u32,
     last_lbd: u32,
     status: Status,
+    /// The plain clauses: the formula's, then the carried ones; a learned clause's number is past them.
+    plain: usize,
+    /// The solve's own plain clauses (from `own_from` to the formula's count) end with `-assume`.
+    own_from: usize,
+    assume: Lit,
+    /// Level 0's variables analysis left out of a clause (what the clauses it learned rest on), and the
+    /// contradiction's clause: the roots of `used`.
+    rested: Vec<bool>,
+    refuted: Vec<Lit>,
+    /// The trail's length when the search began: values learned at level 0 lie past it.
+    began: usize,
+    /// The formula's plain clauses read and gates checked: all of them, or a window's (`start`).
+    given: usize,
+    gates_n: usize,
 }
 
 /// The formula solved as the device solves it: the same answer, model and counts.
@@ -180,11 +236,34 @@ pub fn solve(f: &Formula) -> Solved {
     s.solved()
 }
 
+/// A window at level 0 (decision 0670): its first `window_clauses` plain clauses and first `base` gates (`fan`'s),
+/// over its first `vars` variables, propagated as the search propagates at level 0. Each of its solves resumes
+/// from it (`Resume`).
+pub fn start(vars: usize, gates: &Gates, base: usize, fan: &Fanout, clauses: &Clauses, window_clauses: usize) -> Start {
+    let f = Formula::new(vars, gates, base, fan, None, clauses, 0);
+    let mut s = Search::new(&f);
+    (s.given, s.plain, s.gates_n) = (window_clauses, window_clauses, base);
+    s.start();
+    while s.status == Status::Running && s.head < s.trail.len() {
+        s.rounds += 1;
+        if s.round() {
+            s.refuted = s.conflict_lits();
+            s.status = Status::Unsat;
+        }
+    }
+    Start {
+        set: s.trail.iter().map(|&l| (l, s.reason[lvar(l)], s.why[lvar(l)])).collect(),
+        broken: s.status != Status::Running,
+        conflict: s.refuted,
+    }
+}
+
 impl<'a> Search<'a> {
     fn new(f: &'a Formula<'a>) -> Self {
         let n = f.vars + 1;
         let (lcap, acap) = (learned(f.vars) as usize, arena(f.vars) as usize);
-        let nodes = 2 * (f.clauses.len() + lcap);
+        let plain = f.clauses.len() + f.resume.map_or(0, |r| r.carried.len());
+        let nodes = 2 * (plain + lcap);
         Search {
             f,
             lcap,
@@ -223,6 +302,14 @@ impl<'a> Search<'a> {
             reductions: 0,
             last_lbd: 0,
             status: Status::Running,
+            plain,
+            own_from: f.resume.map_or(usize::MAX, |r| if r.assume != 0 { r.window_clauses } else { usize::MAX }),
+            assume: f.resume.map_or(0, |r| r.assume),
+            rested: vec![false; n],
+            refuted: Vec::new(),
+            began: 0,
+            given: f.clauses.len(),
+            gates_n: f.gates.len(),
         }
     }
 
@@ -242,8 +329,65 @@ impl<'a> Search<'a> {
             visits: self.visits,
             items: self.items,
             reductions: self.reductions,
+            carry: self.carry(),
+            used: (self.status == Status::Unsat && self.f.resume.is_some()).then(|| self.used()),
             cycles: [0; 6],
         }
+    }
+
+    /// What a window's solve learned that holds without its assumption, over the window's variables (as
+    /// `bitlex_csat::Solver::learned_without`): each learned clause it holds at the end of at most
+    /// `CARRIED_LONGEST` literals without `-assume`, then each value it learned at level 0. Each rests on the window,
+    /// the carried clauses and the solve's own clauses and gates; one without `-assume` used none of the own clauses,
+    /// and the own gates, each defining a variable past the window's and its arguments, allow any values of the
+    /// window's the rest allow. Where they do not, nothing is carried.
+    fn carry(&self) -> Vec<Vec<Lit>> {
+        let Some(r) = self.f.resume else { return Vec::new() };
+        let g = self.f.gates;
+        let defines = |i: usize| {
+            let o = lvar(g.out(i));
+            g.kind(i) != Kind::One && o > r.carry_vars && g.args(i).iter().all(|&a| lvar(a) < o)
+        };
+        if r.assume == 0 || !(self.f.base..g.len()).all(defines) || !g.out_distinct(self.f.base) {
+            return Vec::new();
+        }
+        let within = |c: &[Lit]| c.iter().all(|&l| lvar(l) <= r.carry_vars) && !c.contains(&-r.assume);
+        let mut out: Vec<Vec<Lit>> = Vec::new();
+        for j in 0..self.learned {
+            let c = &self.arena[self.lstart[j] as usize..self.lstart[j + 1] as usize];
+            if c.len() <= CARRIED_LONGEST && within(c) {
+                out.push(c.to_vec());
+            }
+        }
+        let zero = if self.level == 0 { self.trail.len() } else { self.limits[0] as usize };
+        for &l in self.trail.get(self.began..zero).unwrap_or(&[]) {
+            if self.reason[lvar(l)] == NONE && within(&[l]) {
+                out.push(vec![l]);
+            }
+        }
+        out
+    }
+
+    /// After a contradiction, the variables it rests on: its clause's, those analysis left out at level 0, and back
+    /// through each one's reason (a decision's, or a value given, stops it). One pass back along the trail: a
+    /// reason's values lie before the value it implied.
+    fn used(&self) -> Vec<bool> {
+        let mut used = self.rested.clone();
+        for &l in &self.refuted {
+            used[lvar(l)] = true;
+        }
+        let mut buf = Vec::new();
+        for i in (0..self.trail.len()).rev() {
+            let v = lvar(self.trail[i]);
+            if !used[v] || self.reason[v] == NONE {
+                continue;
+            }
+            self.explain_into(v, &mut buf);
+            for &q in &buf {
+                used[lvar(q)] = true;
+            }
+        }
+        used
     }
 
     /// `cs_finish`: a fault stays.
@@ -278,14 +422,28 @@ impl<'a> Search<'a> {
         self.f.gates.args(g)[i]
     }
 
-    /// A clause's literals: a plain one (below the plain clauses' count), else a learned one, in the arena.
+    /// A clause's literals: the formula's plain ones (a solve's own with `-assume` last), the carried ones, then the
+    /// learned ones, in the arena.
     fn cl_len(&self, id: usize) -> usize {
-        let c = self.f.clauses.len();
-        if id < c { self.f.clauses.get(id).len() } else { (self.lstart[id - c + 1] - self.lstart[id - c]) as usize }
+        let c = self.given;
+        if id < c {
+            self.f.clauses.get(id).len() + usize::from(id >= self.own_from)
+        } else if id < self.plain {
+            self.f.resume.map_or(0, |r| r.carried.get(id - c).len())
+        } else {
+            (self.lstart[id - self.plain + 1] - self.lstart[id - self.plain]) as usize
+        }
     }
     fn cl_lit(&self, id: usize, k: usize) -> Lit {
-        let c = self.f.clauses.len();
-        if id < c { self.f.clauses.get(id)[k] } else { self.arena[self.lstart[id - c] as usize + k] }
+        let c = self.given;
+        if id < c {
+            let lits = self.f.clauses.get(id);
+            if k < lits.len() { lits[k] } else { -self.assume }
+        } else if id < self.plain {
+            self.f.resume.map_or(0, |r| r.carried.get(id - c)[k])
+        } else {
+            self.arena[self.lstart[id - self.plain] as usize + k]
+        }
     }
 
     /// `cs_put`, at the trail's end.
@@ -300,8 +458,10 @@ impl<'a> Search<'a> {
     /// `cs_check`: gate `g` against the values; a conflict's clause into `cbuf` when `write`.
     fn check(&mut self, g: usize, write: bool) -> Check {
         let mut r = QUIET;
-        let n = self.f.gates.args(g).len();
-        let o = self.f.gates.out(g);
+        let gates: &'a Gates = self.f.gates;
+        let args = gates.args(g);
+        let n = args.len();
+        let o = gates.out(g);
         if write {
             self.cbuf.clear();
         }
@@ -310,7 +470,7 @@ impl<'a> Search<'a> {
                 let vo = self.value(o);
                 let (mut unset, mut unset_at) = (0u32, 0usize);
                 for i in 0..n {
-                    let a = self.arg(g, i);
+                    let a = args[i];
                     let va = self.value(a);
                     if va == -1 {
                         if vo == 1 {
@@ -329,7 +489,7 @@ impl<'a> Search<'a> {
                         if unset == 0 {
                             unset = 1;
                             unset_at = i;
-                        } else if a != self.arg(g, unset_at) {
+                        } else if a != args[unset_at] {
                             unset += 1;
                         }
                     }
@@ -346,18 +506,18 @@ impl<'a> Search<'a> {
                     if write {
                         self.cbuf.push(o);
                         for i in 0..n {
-                            let a = self.arg(g, i);
+                            let a = args[i];
                             self.cbuf.push(-a);
                         }
                     }
                 } else if vo == -1 && unset == 1 {
                     r.mode = Mode::One;
-                    r.lit = -self.arg(g, unset_at);
+                    r.lit = -args[unset_at];
                     r.why = unset_at as u32;
                 }
             }
             1 => {
-                let (a, b) = (self.arg(g, 0), self.arg(g, 1));
+                let (a, b) = (args[0], args[1]);
                 if lvar(a) == lvar(b) {
                     let want = if a == b { -o } else { o };
                     let vw = self.value(want);
@@ -406,13 +566,13 @@ impl<'a> Search<'a> {
             _ => {
                 let (mut held, mut unset, mut unset_at) = (NONE, 0u32, 0usize);
                 for i in 0..n {
-                    let a = self.arg(g, i);
+                    let a = args[i];
                     let va = self.value(a);
                     if va == 1 {
                         if held != NONE {
                             r.mode = Mode::Conflict;
                             if write {
-                                let h = self.arg(g, held as usize);
+                                let h = args[held as usize];
                                 self.cbuf.extend([-h, -a]);
                             }
                             return r;
@@ -432,13 +592,13 @@ impl<'a> Search<'a> {
                     r.mode = Mode::Conflict;
                     if write {
                         for i in 0..n {
-                            let a = self.arg(g, i);
+                            let a = args[i];
                             self.cbuf.push(a);
                         }
                     }
                 } else if unset == 1 {
                     r.mode = Mode::One;
-                    r.lit = self.arg(g, unset_at);
+                    r.lit = args[unset_at];
                     r.why = unset_at as u32;
                 }
             }
@@ -451,13 +611,21 @@ impl<'a> Search<'a> {
     /// conflict.
     fn items(&mut self, gs: &[u32]) -> bool {
         let mut ks = [QUIET; LANES];
-        for (k, &g) in ks.iter_mut().zip(gs) {
-            *k = self.check(g as usize, false);
+        let mut acts = false;
+        for (i, &g) in gs.iter().enumerate() {
+            let k = self.check(g as usize, false);
+            if k.mode == Mode::Conflict {
+                // The first lane's conflict: the lanes before it are quiet or imply, and a conflict ends the round.
+                self.check(g as usize, true);
+                self.conflict = NONE;
+                return true;
+            }
+            acts |= k.mode != Mode::None;
+            ks[i] = k;
         }
-        if let Some(i) = ks[..gs.len()].iter().position(|k| k.mode == Mode::Conflict) {
-            self.check(gs[i] as usize, true);
-            self.conflict = NONE;
-            return true;
+        // Most items imply nothing.
+        if !acts {
+            return false;
         }
         let bound = gs.iter().map(|&g| self.f.gates.args(g as usize).len()).max().unwrap_or(0) + 2;
         let mut once = [false; LANES];
@@ -474,6 +642,9 @@ impl<'a> Search<'a> {
             // Each lane's next literal, all read before any is placed.
             let mut ls = [(0 as Lit, 0u32); LANES];
             for i in 0..gs.len() {
+                if !once[i] && ks[i].mode != Mode::And && ks[i].mode != Mode::Held {
+                    continue;
+                }
                 let g = gs[i] as usize;
                 let k = &mut ks[i];
                 if once[i] {
@@ -502,15 +673,27 @@ impl<'a> Search<'a> {
                     }
                 }
             }
-            if ls[..gs.len()].iter().all(|&(l, _)| l == 0) {
+            // The lanes with a literal, in order; of those on one variable the first wins, if it is still unset (all
+            // read before any is placed).
+            let mut live = [0u8; LANES];
+            let mut nl = 0;
+            for i in 0..gs.len() {
+                if ls[i].0 != 0 {
+                    live[nl] = i as u8;
+                    nl += 1;
+                }
+            }
+            if nl == 0 {
                 return false;
             }
             let mut wins = [false; LANES];
-            for i in 0..gs.len() {
+            for a in 0..nl {
+                let i = live[a] as usize;
                 let l = ls[i].0;
-                wins[i] = l != 0 && !ls[..i].iter().any(|&(m, _)| m != 0 && lvar(m) == lvar(l)) && self.value(l) == 0;
+                wins[i] = !live[..a].iter().any(|&j| lvar(ls[j as usize].0) == lvar(l)) && self.value(l) == 0;
             }
-            for i in 0..gs.len() {
+            for &i in &live[..nl] {
+                let i = i as usize;
                 if wins[i] {
                     self.assign(ls[i].0, GATE | gs[i], ls[i].1);
                 }
@@ -522,7 +705,7 @@ impl<'a> Search<'a> {
     fn visit(&mut self, x: Lit) -> bool {
         let mut link = Link::Head(lslot(x));
         let mut k = self.whead[lslot(x)];
-        let nodes = 2 * (self.f.clauses.len() + self.lcap);
+        let nodes = 2 * (self.plain + self.lcap);
         let mut seen = 0usize;
         while k != NONE {
             if seen > nodes {
@@ -591,6 +774,11 @@ impl<'a> Search<'a> {
         window.iter().chain(own).copied()
     }
 
+    fn fan_len(&self, v: usize) -> usize {
+        let f = self.f;
+        (if v <= f.fan.vars() { f.fan.of_var(v).len() } else { 0 }) + f.own.map_or(0, |o| o.of_var(v).len())
+    }
+
     /// `cs_round`: the trail's next literals, up to 32; the watch lists that were not empty, in trail order; then
     /// their gates, 32 at a time. True on a conflict.
     fn round(&mut self) -> bool {
@@ -611,10 +799,25 @@ impl<'a> Search<'a> {
             self.status = Status::Broken;
             return true;
         }
-        let gs: Vec<u32> = lits[..f].iter().flat_map(|&l| self.fan_of(lvar(l))).collect();
-        self.items = self.items.wrapping_add(gs.len() as u32);
-        for chunk in gs.chunks(LANES) {
-            if self.items(chunk) {
+        // Their gates in order, 32 at a time (the order `cs_round` takes them in).
+        let total: usize = lits[..f].iter().map(|&l| self.fan_len(lvar(l))).sum();
+        self.items = self.items.wrapping_add(total as u32);
+        let mut chunk = [0u32; LANES];
+        let mut n = 0;
+        for &l in &lits[..f] {
+            for g in self.fan_of(lvar(l)) {
+                chunk[n] = g;
+                n += 1;
+                if n == LANES {
+                    if self.items(&chunk) {
+                        return true;
+                    }
+                    n = 0;
+                }
+            }
+        }
+        if n > 0 {
+            if self.items(&chunk[..n]) {
                 return true;
             }
         }
@@ -705,10 +908,23 @@ impl<'a> Search<'a> {
     /// number of the clause that did.
     fn explain(&mut self, v: usize) -> Option<usize> {
         let r = self.reason[v];
-        let w = self.why[v] as usize;
-        self.ebuf.clear();
         if r & GATE == 0 {
             return Some(r as usize);
+        }
+        let mut buf = std::mem::take(&mut self.ebuf);
+        self.explain_into(v, &mut buf);
+        self.ebuf = buf;
+        None
+    }
+
+    /// `v`'s reason's clause into `buf`: a numbered clause's literals, or a gate's explanation (`explain`).
+    fn explain_into(&self, v: usize, buf: &mut Vec<Lit>) {
+        let r = self.reason[v];
+        let w = self.why[v] as usize;
+        buf.clear();
+        if r & GATE == 0 {
+            buf.extend((0..self.cl_len(r as usize)).map(|k| self.cl_lit(r as usize, k)));
+            return;
         }
         let l = if self.val[v] & 1 != 0 { v as Lit } else { -(v as Lit) };
         let g = (r & !GATE) as usize;
@@ -720,40 +936,39 @@ impl<'a> Search<'a> {
             0 => {
                 if o != 0 && lvar(o) == v {
                     if l == o {
-                        self.ebuf.push(o);
-                        self.ebuf.extend(args.iter().map(|&a| -a));
+                        buf.push(o);
+                        buf.extend(args.iter().map(|&a| -a));
                     } else {
-                        self.ebuf.extend([-o, args[w]]);
+                        buf.extend([-o, args[w]]);
                     }
                 } else if l == args[w] {
-                    self.ebuf.extend([l, -o]);
+                    buf.extend([l, -o]);
                 } else {
-                    self.ebuf.extend([l, o]);
-                    self.ebuf.extend((0..n).filter(|&i| i != w).map(|i| -args[i]));
+                    buf.extend([l, o]);
+                    buf.extend((0..n).filter(|&i| i != w).map(|i| -args[i]));
                 }
             }
             1 => {
-                self.ebuf.push(l);
+                buf.push(l);
                 if w as u32 != FIXED {
                     let p = [o, args[0], args[1]];
                     for (k, q) in p.into_iter().enumerate() {
                         if k != w {
                             let e = if self.value(q) == 1 { -q } else { q };
-                            self.ebuf.push(e);
+                            buf.push(e);
                         }
                     }
                 }
             }
             _ => {
                 if l == args[w] {
-                    self.ebuf.push(l);
-                    self.ebuf.extend((0..n).filter(|&i| i != w).map(|i| args[i]));
+                    buf.push(l);
+                    buf.extend((0..n).filter(|&i| i != w).map(|i| args[i]));
                 } else {
-                    self.ebuf.extend([l, -args[w]]);
+                    buf.extend([l, -args[w]]);
                 }
             }
         }
-        None
     }
 
     /// `cs_analyze`: the conflict's first unique implication point, learned at the arena's end (its asserting
@@ -793,6 +1008,9 @@ impl<'a> Search<'a> {
                     };
                     let v = lvar(q);
                     let lv = self.level_of(v);
+                    if q != p && lv == 0 && q != 0 {
+                        self.rested[v] = true;
+                    }
                     if q != p && lv != 0 && !self.seen[v] && !cands.iter().any(|&(w, _, _)| w == v) {
                         cands.push((v, q, lv != here));
                     }
@@ -879,7 +1097,9 @@ impl<'a> Search<'a> {
         if self.status != Status::Running {
             return;
         }
-        if self.level == 0 {
+        // At level 0, or at the assumption's: unsatisfiable, no conflict spent.
+        if self.level == 0 || (self.level == 1 && self.assume != 0 && self.trail[self.limits[0] as usize] == self.assume) {
+            self.refuted = self.conflict_lits();
             self.finish(Status::Unsat);
             return;
         }
@@ -906,7 +1126,7 @@ impl<'a> Search<'a> {
             self.assign(first, NONE, 0);
         } else {
             let j = self.learned;
-            let id = self.f.clauses.len() + j;
+            let id = self.plain + j;
             self.lstart[j] = u as u32;
             self.lstart[j + 1] = (u + len) as u32;
             self.lbd[j] = self.last_lbd;
@@ -918,17 +1138,32 @@ impl<'a> Search<'a> {
         }
     }
 
+    /// The conflict's clause: a numbered one, or `cbuf`'s.
+    fn conflict_lits(&self) -> Vec<Lit> {
+        if self.conflict != NONE {
+            let id = self.conflict as usize;
+            (0..self.cl_len(id)).map(|k| self.cl_lit(id, k)).collect()
+        } else {
+            self.cbuf.clone()
+        }
+    }
+
     /// `cs_reduce`: the learned clauses reduced, at level 0. False where a clause is now false at level 0.
     fn reduce(&mut self) -> bool {
         if self.level > 0 {
             self.back_to(0);
         }
         self.whead.fill(NONE);
-        let plain = self.f.clauses.len();
+        let plain = self.plain;
         for i in 0..self.trail.len() {
             let v = lvar(self.trail[i]);
             let r = self.reason[v];
             if r & GATE == 0 && r != NONE && r as usize >= plain {
+                // What the clause read stays among `used`'s roots: the clause goes.
+                for k in 0..self.cl_len(r as usize) {
+                    let q = self.cl_lit(r as usize, k);
+                    self.rested[lvar(q)] = true;
+                }
                 self.reason[v] = NONE;
             }
         }
@@ -981,6 +1216,7 @@ impl<'a> Search<'a> {
                 continue;
             }
             if a == 0 {
+                self.refuted = (0..self.cl_len(id)).map(|k| self.cl_lit(id, k)).collect();
                 return false;
             } else if b == 0 {
                 self.assign(a, id as u32, 0);
@@ -999,6 +1235,23 @@ impl<'a> Search<'a> {
         if self.status != Status::Running {
             return;
         }
+        // The assumption first, at level 1; false at level 0, the solve is refuted by what implied it.
+        if self.level == 0 && self.assume != 0 {
+            match self.value(self.assume) {
+                0 => {
+                    self.limits[0] = self.trail.len() as u32;
+                    self.level = 1;
+                    self.assign(self.assume, NONE, 0);
+                    return;
+                }
+                -1 => {
+                    self.refuted = vec![self.assume];
+                    self.status = Status::Unsat;
+                    return;
+                }
+                _ => {}
+            }
+        }
         let mut v = self.pop();
         while v != NONE && self.val[v as usize] != 0 {
             v = self.pop();
@@ -1016,7 +1269,10 @@ impl<'a> Search<'a> {
         }
     }
 
-    /// `cs_start`: the plain clauses watched (their units set), the gates that imply with nothing set checked.
+    /// `cs_start`: the plain clauses watched (their units set), the gates that imply with nothing set checked. A
+    /// window's solve (`cs_resume`): the window's values at level 0 set as its `Start` set them; every plain and
+    /// carried clause watched by two literals not false (one level 0 satisfies left out, one with a single such
+    /// literal implying it); each of the solve's own gates checked once.
     fn start(&mut self) {
         let vars = self.f.vars;
         for v in 1..=vars {
@@ -1024,7 +1280,55 @@ impl<'a> Search<'a> {
             self.heap[v - 1] = (vars - (v - 1)) as u32;
         }
         self.heap_n = vars;
-        for id in 0..self.f.clauses.len() {
+        if let Some(r) = self.f.resume {
+            for &(l, why_r, w) in &r.start.set {
+                self.assign(l, why_r, w);
+            }
+            if r.start.broken {
+                self.refuted.clone_from(&r.start.conflict);
+                self.status = Status::Unsat;
+                return;
+            }
+            self.head = self.trail.len();
+            for id in 0..self.plain {
+                let (mut a, mut b, mut sat) = (0, 0, false);
+                for k in 0..self.cl_len(id) {
+                    let q = self.cl_lit(id, k);
+                    let vq = self.value(q);
+                    if vq == 1 {
+                        sat = true;
+                        break;
+                    } else if vq == 0 && a == 0 {
+                        a = q;
+                    } else if vq == 0 && b == 0 && q != a {
+                        b = q;
+                    }
+                }
+                if sat {
+                    continue;
+                }
+                if a == 0 {
+                    self.refuted = (0..self.cl_len(id)).map(|k| self.cl_lit(id, k)).collect();
+                    self.status = Status::Unsat;
+                    return;
+                } else if b == 0 {
+                    self.assign(a, id as u32, 0);
+                } else {
+                    self.watch(id, a, b);
+                }
+            }
+            self.began = self.trail.len();
+            let own: Vec<u32> = (self.f.base as u32..self.gates_n as u32).collect();
+            for gs in own.chunks(LANES) {
+                if self.items(gs) {
+                    self.refuted = self.conflict_lits();
+                    self.status = Status::Unsat;
+                    return;
+                }
+            }
+            return;
+        }
+        for id in 0..self.given {
             if self.status != Status::Running {
                 break;
             }
@@ -1052,7 +1356,10 @@ impl<'a> Search<'a> {
                 self.status = Status::Unsat;
             } else if b == 0 {
                 match self.value(a) {
-                    -1 => self.status = Status::Unsat,
+                    -1 => {
+                        self.refuted = vec![a];
+                        self.status = Status::Unsat;
+                    }
                     0 => self.assign(a, NONE, 0),
                     _ => {}
                 }
@@ -1063,13 +1370,14 @@ impl<'a> Search<'a> {
         if self.status != Status::Running {
             return;
         }
-        let gates = self.f.gates.len();
+        let gates = self.gates_n;
         for g0 in (0..gates).step_by(LANES) {
             let gs: Vec<u32> = (g0..(g0 + LANES).min(gates)).filter(|&g| self.seed(g)).map(|g| g as u32).collect();
             if gs.is_empty() {
                 continue;
             }
             if self.items(&gs) {
+                self.refuted = self.conflict_lits();
                 self.finish(Status::Unsat);
                 return;
             }
@@ -1199,7 +1507,7 @@ pub(crate) mod tests {
             let own = if i % 3 == 0 { rng.below(10) as usize } else { 0 };
             let (g, c, vars, base) = circuit(&mut rng, &block, inputs, gates_n, clauses_n, own);
             let (fan, own_fan) = (Fanout::of(&g, base, vars), Fanout::of_range(&g, base..g.len(), vars));
-            let f = Formula { vars, gates: &g, base, fan: &fan, own: (base < g.len()).then_some(&own_fan), clauses: &c, conflicts: 100_000 };
+            let f = Formula::new(vars, &g, base, &fan, (base < g.len()).then_some(&own_fan), &c, 100_000);
             let x = solve(&f);
             s.reset(vars);
             for cl in c.iter() {
@@ -1217,6 +1525,103 @@ pub(crate) mod tests {
         }
         assert!(sat >= 60 && unsat >= 60 && searched >= 60, "{sat} sat, {unsat} unsat, {searched} searched");
     }
+    /// A window's solves resumed from its `Start`, each with its own clauses (with `-assume`) and the clauses its
+    /// earlier solves carried (as `bitlex_csat`'s test of its resumed windows): each answer is the whole formula's
+    /// (`bitlex_sat`), each model holds, each carried clause the window implies, and an own unit `used` leaves out
+    /// is not needed.
+    #[test]
+    fn a_resumed_window_answers_as_a_solve() {
+        use crate::bitlex_sat;
+        let block = FormulaBlock::new();
+        let mut rng = Rng(0x6a09e667f3bcc908);
+        let (mut sat, mut unsat, mut carried, mut dropped, mut searched) = (0, 0, 0, 0, 0);
+        for i in 0..1500usize {
+            let inputs = 4 + rng.below(30) as usize;
+            let (gn, cn) = (rng.below(100) as usize, rng.below(2 * inputs as u64 + 4) as usize);
+            let own_gates = rng.below(6) as usize;
+            let (gates, clauses, vars, base) = circuit(&mut rng, &block, inputs, gn, cn, own_gates);
+            let wvars = (0..base).filter(|&g| gates.kind(g) != Kind::One).map(|g| lvar(gates.out(g))).chain((0..base).flat_map(|g| gates.args(g).iter().map(|&a| lvar(a)))).max().unwrap_or(1).max(1);
+            let (mut window, mut rest) = (Vec::new(), Vec::new());
+            for c in clauses.iter() {
+                if c.iter().all(|&l| lvar(l) <= wvars) { window.push(c.to_vec()) } else { rest.push(c.to_vec()) }
+            }
+            let mut wcnf = Clauses::default();
+            for c in &window {
+                wcnf.push(c);
+            }
+            let mut wg = gates.clone();
+            wg.truncate(base);
+            wg.cnf(&mut wcnf);
+            let fan = Fanout::of(&gates, base, wvars);
+            let sel = (vars + 1) as Lit;
+            let own_fan = Fanout::of_range(&gates, base..gates.len(), vars + 1);
+            let mut learned = Clauses::in_block(&block);
+            let mut start_of: Option<Start> = None;
+            for k in 0..4 {
+                let mut own: Vec<Vec<Lit>> = rest.clone();
+                for _ in 0..rng.below(6) {
+                    own.push(vec![((rng.below(vars as u64) + 1) as Lit) * if rng.below(2) == 0 { 1 } else { -1 }]);
+                }
+                let mut all = Clauses::in_block(&block);
+                for c in window.iter().chain(&own) {
+                    all.push(c);
+                }
+                let start = start_of.get_or_insert_with(|| start(wvars, &gates, base, &fan, &all, window.len()));
+                let r = Resume { start, window_clauses: window.len(), carried: &learned, assume: sel, carry_vars: wvars };
+                let f = Formula { resume: Some(r), ..Formula::new(vars + 1, &gates, base, &fan, (base < gates.len()).then_some(&own_fan), &all, 100_000) };
+                let x = solve(&f);
+                searched += usize::from(x.conflicts > 0);
+                let mut whole = Clauses::default();
+                for c in window.iter().chain(&own) {
+                    whole.push(c);
+                }
+                gates.cnf(&mut whole);
+                let mut o = bitlex_sat::Solver::new(vars);
+                o.add_all(&whole);
+                match (&x.answer, o.solve(u32::MAX)) {
+                    (Answer::Sat(m), CpuAnswer::Sat) => {
+                        let mut plain = Clauses::default();
+                        for c in window.iter().chain(&own) {
+                            plain.push(c);
+                        }
+                        assert!(holds(m, &gates, &plain), "formula {i}, solve {k}: not a model");
+                        sat += 1;
+                    }
+                    (Answer::Unsat, CpuAnswer::Unsat) => {
+                        unsat += 1;
+                        let used = x.used.as_ref().expect("a resumed solve's core");
+                        let mut kept = wcnf.clone();
+                        gates.cnf(&mut kept);
+                        for c in &own {
+                            if c.len() == 1 && !used[lvar(c[0])] {
+                                dropped += 1;
+                            } else {
+                                kept.push(c);
+                            }
+                        }
+                        let mut o = bitlex_sat::Solver::new(vars);
+                        o.add_all(&kept);
+                        assert_eq!(o.solve(u32::MAX), CpuAnswer::Unsat, "formula {i}, solve {k}: a unit it did not use was needed");
+                    }
+                    (a, b) => panic!("formula {i}, solve {k}: the search {a:?}, the whole formula {b:?}"),
+                }
+                for c in &x.carry {
+                    // Implied by the window's: with its negation added, they are unsatisfiable.
+                    let mut w = wcnf.clone();
+                    for &l in c {
+                        w.push(&[-l]);
+                    }
+                    let mut o = bitlex_sat::Solver::new(vars);
+                    o.add_all(&w);
+                    assert_eq!(o.solve(u32::MAX), CpuAnswer::Unsat, "formula {i}, solve {k}: {c:?} carried, not the window's");
+                    learned.push(c);
+                    carried += 1;
+                }
+            }
+        }
+        assert!(sat > 300 && unsat > 300 && dropped > 100 && carried > 50 && searched > 100, "{sat} satisfiable, {unsat} not, {dropped} units dropped, {carried} carried, {searched} searched");
+    }
+
     /// The formulas in `RERAIL_CSAT_DUMPS` (`Gates::dump`s), solved by this search and by the CPU's solver: each one's
     /// answers, counts and time (decision 0670; a tool, so ignored).
     #[test]
@@ -1230,7 +1635,7 @@ pub(crate) mod tests {
         for p in &paths {
             let (g, vars, base, c) = Gates::undump_into(&std::fs::read_to_string(p).expect("a dump"), Gates::in_block(&block), Clauses::in_block(&block));
             let (fan, own) = (Fanout::of(&g, base, vars), Fanout::of_range(&g, base..g.len(), vars));
-            let f = Formula { vars, gates: &g, base, fan: &fan, own: (base < g.len()).then_some(&own), clauses: &c, conflicts: 100_000 };
+            let f = Formula::new(vars, &g, base, &fan, (base < g.len()).then_some(&own), &c, 100_000);
             let t = std::time::Instant::now();
             let x = solve(&f);
             let ms = t.elapsed().as_secs_f64() * 1e3;
@@ -1238,21 +1643,24 @@ pub(crate) mod tests {
             for cl in c.iter() {
                 s.add(cl);
             }
+            let (t, before) = (std::time::Instant::now(), s.conflicts);
             let cpu = s.solve(&g, &fan, base, 100_000);
+            let (cpu_ms, cpu_conflicts) = (t.elapsed().as_secs_f64() * 1e3, s.conflicts - before);
             match (&x.answer, cpu) {
                 (Answer::Sat(m), CpuAnswer::Sat) => assert!(holds(m, &g, &c), "{p:?}: the model does not hold"),
                 (Answer::Unsat, CpuAnswer::Unsat) | (Answer::Unknown, _) => {}
                 (a, b) => panic!("{p:?}: the search {a:?}, the solver {b:?}"),
             }
             eprintln!(
-                "{}: {:?}, {} conflicts, {} decisions, {} rounds, {} gate items, {} watch visits, {ms:.1} ms",
+                "{}: {:?}, {} conflicts, {} decisions, {} rounds, {} gate items, {} watch visits, {} reductions, {ms:.1} ms; the CPU solver {cpu_conflicts} conflicts, {cpu_ms:.1} ms",
                 p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
                 x.answer == Answer::Unsat,
                 x.conflicts,
                 x.decisions,
                 x.rounds,
                 x.items,
-                x.visits
+                x.visits,
+                x.reductions
             );
         }
     }
