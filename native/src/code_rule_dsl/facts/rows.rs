@@ -523,6 +523,24 @@ fn seal_on() -> bool {
     *ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off"))
 }
 
+/// Whether a tail's full chunks are sealed as its writer passes them (0622 step 3), not only at its relation's freeze:
+/// `RERAIL_SEAL_TAILS=on`. Off by default: on `all` it sealed the same bytes earlier, the peak 2.99 GB against 2.97 GB,
+/// for 199.0 s of CPU against 178.2 s, the tails read sealed while they are written (0622).
+fn seal_tails() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(on) = SEAL_TAILS_HERE.get() {
+        return on;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| seal_on() && std::env::var("RERAIL_SEAL_TAILS").is_ok_and(|v| v == "on"))
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Tests: this thread's tails sealed as they are written (`Some(true)`), or not, whatever the setting.
+    static SEAL_TAILS_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
     let f = Arc::new(Facts::shared(lease(2 * need + MARGIN, life)?, life));
     if let Some(c) = chunk {
@@ -2083,8 +2101,17 @@ impl Rows {
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
+        let before = tail.len();
         for row in rows.chunks_exact(self.k) {
             tail.push(row);
+        }
+        // 0622 step 3, with `RERAIL_SEAL_TAILS=on`: a chunk the writer has passed is sealed now (`Part::seal_full`
+        // takes only full chunks below the rows, and only where this tail alone holds its relation).
+        if seal_tails() && before < tail.len() {
+            let min_log = tail.rel().rows.min_log;
+            if rerail_blocks::rows::chunk_of(before, min_log).0 != rerail_blocks::rows::chunk_of(tail.len(), min_log).0 {
+                tail.seal_full("rows.sealed_tail");
+            }
         }
         self.absorbed();
     }
@@ -2856,6 +2883,30 @@ mod tests {
         assert!(fails(&mut || { std::hint::black_box(v[3]); }), "a read under a GPU write");
         w.complete();
         assert_eq!(v[3], 7);
+    }
+
+    /// 0622 step 3 (`RERAIL_SEAL_TAILS=on`): a tail's chunks are sealed as its writer passes them, each full chunk
+    /// below its rows, and every row reads back as written, before and after more rows are pushed past them. Off (the
+    /// default), they stay raw until the relation is frozen.
+    #[test]
+    fn a_tails_passed_chunks_are_sealed_as_it_is_written() {
+        let k = 2;
+        let row = |i: i64| [i / 100, i % 7];
+        for on in [true, false] {
+            SEAL_TAILS_HERE.set(Some(on));
+            let mut rows = Rows::new(k);
+            for lo in (0..40_000i64).step_by(1000) {
+                // copy: not block data: a test's rows
+                let batch: Vec<i64> = (lo..lo + 1000).flat_map(row).collect();
+                rows.extend_from_slice(&batch);
+            }
+            SEAL_TAILS_HERE.set(None);
+            let tail = rows.tail.as_ref().expect("written");
+            assert_eq!(tail.rel().rows.is_sealed(0), on, "the first chunk sealed as the writer passed it: {on}");
+            for i in 0..40_000i64 {
+                assert_eq!(&*rows.row(i as u32, k), &row(i)[..], "row {i}, sealing {on}");
+            }
+        }
     }
 
     /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it

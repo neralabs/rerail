@@ -1,6 +1,6 @@
 # 0622. A relation's sealed chunks take the frozen columns' encodings
 
-Status: steps 1 and 2 built (2026-11-22); step 3 measured and not kept; step 4 built (2026-11-23, below). t52 step 5: written before it was built, as t52's plan
+Status: steps 1 and 2 built (2026-11-22); step 3 built behind `RERAIL_SEAL_TAILS=on`, off by default; step 4 built (2026-11-23, below). t52 step 5: written before it was built, as t52's plan
 asks. t52 named it 0605; it is numbered past the highest record in any worktree (0621).
 
 ## Intro
@@ -114,6 +114,12 @@ they lie.**
   `rf_in_loop`'s heap (111 MB). The first is 0353 step 3's: `text` read on the tape for each node bound, not every
   document's node rows made (t50, "The cross part's `text`"). Built 2026-11-23 (t50, "Then the tape view"): the peak
   2,837 → 2,474 MB.
+
+- **Step 3, behind a setting (2026-11-23, user).** Kept as `RERAIL_SEAL_TAILS=on`, off by default. A tail's
+  write that passes a chunk boundary seals the chunks below its rows (`Part::seal_full`, where the tail alone holds
+  its relation). Test: `a_tails_passed_chunks_are_sealed_as_it_is_written`. On `all` (M3, CPU, with step 4), every
+  export's rows are the same. All 1,109 MB is sealed as written (383 MB). The peak is 2,339 MB against 2,380 MB at
+  freeze, and instructions 1,716 G against 1,662 G (+3%): the default stays at freeze.
 
 - **Step 4, measured and not built (2026-11-23).** A census in `Rows::seal` on `all` (m1max, a temporary aid): for
   each chunk it considers, its raw bytes, what it keeps now (sealed or raw), and what a dictionary of the chunk's
