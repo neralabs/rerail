@@ -1029,7 +1029,7 @@ impl Visitor<'_, '_> {
     /// global augmentation like `declare global { }`: it binds no name, nor do its declarations.
     fn module<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
-        // A `module` always has its keyword, so the tape keeps none (RER-131); an `internal_module` is
+        // A `module` always has its keyword, so the tape keeps none (decision 0161); an `internal_module` is
         // `namespace A { }` or the keyword-less `global { }`, so its `namespace` is stored.
         let keyword = node.kind() == "module" || node.has_any_token(&["namespace"]);
         if !keyword {

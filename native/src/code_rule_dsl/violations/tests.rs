@@ -226,7 +226,7 @@
         assert_eq!(end["id"], span["id"]);
     }
 
-    /// A tape leaves out the tokens its grammar implies (RER-131). A gap test's regex group binds
+    /// A tape leaves out the tokens its grammar implies (decision 0161). A gap test's regex group binds
     /// the implied token's place in the source, past the extras beside it.
     #[test]
     fn gap_test_groups_anchor_at_the_implied_token() {

@@ -190,7 +190,7 @@ ann_bare_of(ann, m) :- !kind(ann, "type"), unparen(ann, m).
 // ---- 4b. slices --------------------------------------------------------------------------------------------------
 // slice_part(s, which, e): bound e of slice s, which is "lower", "upper" or "step". tree-sitter's slice has no
 // fields; the colons before a bound tell which it is: `x[1:]` has a lower 1, `x[:2]` an upper, `x[::2]` a step.
-// A slice's `:` is no delimiter: the tape stores it wherever it stands (RER-131, `tape::tokens`), so the bound's
+// A slice's `:` is no delimiter: the tape stores it wherever it stands (decision 0161, `tape::tokens`), so the bound's
 // part is the count of the slice's colons before it, among the slice's own children (`token`).
 .decl slice_part(s: node, which: symbol, e: node)
 slice_part(s, w, c) :- kind(s, "slice"), child(s, c, _), !kind(c, "comment"), node(_, c, _, cs, ce), token(s, j, _, cs, ce),

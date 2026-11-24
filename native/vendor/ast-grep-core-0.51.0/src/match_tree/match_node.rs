@@ -80,10 +80,10 @@ fn match_nodes_impl_recursive<'tree, D: Doc>(
 ) -> Option<()> {
   let mut goal_children = goals.iter().peekable();
   let mut cand_children = parent.children().peekable();
-  // Rerail (RER-131): the candidate the last goal matched, for the end of children.
+  // Rerail (decision 0161): the candidate the last goal matched, for the end of children.
   let mut last_matched = None;
   if cand_children.peek().is_none() {
-    // Rerail (RER-131): a node with no children (a tape leaves out the tokens its grammar
+    // Rerail (decision 0161): a node with no children (a tape leaves out the tokens its grammar
     // implies) matches goals that are ellipses, each bound to nothing, and the end of children.
     for goal in goals {
       if goal.is_children_end() {
@@ -106,7 +106,7 @@ fn match_nodes_impl_recursive<'tree, D: Doc>(
       agg,
       strictness,
     ) else {
-      // Rerail (RER-131): the end of children refused a named candidate. Where the tokens the
+      // Rerail (decision 0161): the end of children refused a named candidate. Where the tokens the
       // candidate leaves out after the last matched child begin with the goal's, those are the
       // goal's (upstream matches them there) and the rest trails, as after upstream's last goal.
       let ends_there = goal_children.peek().and_then(|goal| goal.children_end_word()).is_some_and(|word| {
@@ -132,13 +132,13 @@ fn match_nodes_impl_recursive<'tree, D: Doc>(
       return has_trailing.then_some(());
     }
     if cand_children.peek().is_none() {
-      // Rerail (RER-131): the end of children holds where the candidates end.
+      // Rerail (decision 0161): the end of children holds where the candidates end.
       return goal_children.all(PatternNode::is_children_end).then_some(());
     }
   }
 }
 
-/// Rerail (RER-131): whether the tokens `parent`'s document leaves out right after its child `child`
+/// Rerail (decision 0161): whether the tokens `parent`'s document leaves out right after its child `child`
 /// begin with `tokens` (`Doc::implied_after`).
 fn implied_after<D: Doc>(parent: &Node<'_, D>, child: &Node<'_, D>, tokens: &[&str]) -> bool {
   let Some(at) = parent.children().position(|n| n.node_id() == child.node_id()) else {
@@ -179,7 +179,7 @@ fn may_match_ellipsis_impl<'p, 't: 'p, D: Doc>(
   let mut skipped_anonymous = 0;
   while goal_children.peek().unwrap().is_trivial() {
     let goal = goal_children.next().unwrap();
-    // Rerail (RER-131): the end-of-children goal stands for the implied tokens after the
+    // Rerail (decision 0161): the end-of-children goal stands for the implied tokens after the
     // pattern's last child. A candidate keeps those tokens only where its own gap is not that word
     // (`print(a, b,)` keeps `,` and `)`): the ones it keeps are the goal's, not the ellipsis's.
     let end_word = goal.children_end_word();
@@ -412,7 +412,7 @@ mod test {
     matched("$A = $B", "a = 123", M::Template);
   }
 
-  // Rerail (RER-131): a document that leaves out every anonymous token, as a tape leaves out the
+  // Rerail (decision 0161): a document that leaves out every anonymous token, as a tape leaves out the
   // tokens its grammar implies, and says which it left out after a child (`Doc::implied_after`).
   #[derive(Clone)]
   struct Tokenless(crate::tree_sitter::StrDoc<Tsx>);

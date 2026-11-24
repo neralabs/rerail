@@ -1,5 +1,7 @@
 # Rerail rule pack: TypeScript
 
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add typescript`, then add it to a repository in the dashboard. It needs Rerail 0.2.1 or newer.
+
 **Linter-equivalent to typescript-eslint 8.70.1 and @vitest/eslint-plugin 1.6.27.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
 
 65 code rules for TypeScript: 62 ported from typescript-eslint 8.70.1 (on ESLint 10.11.0) and 3 from @vitest/eslint-plugin

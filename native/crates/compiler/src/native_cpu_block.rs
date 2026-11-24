@@ -1,5 +1,5 @@
 //! Block programs on the CPU JIT: Cranelift emits a `BlockNative` (the native IR) as one function
-//! `tempo_block(bytes, rows, nrows, out, positions, counts)` over a batch of files (decision
+//! `rerail_block(bytes, rows, nrows, out, positions, counts)` over a batch of files (decision
 //! 0044). Its loops run over the files and over each file's 64-byte blocks. A block's body is
 //! straight-line bit operations (`body`). Each file starts with zero carries.
 //!
@@ -1593,7 +1593,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let mut disassembly = String::new();
     let mut shapes: Vec<PassShape> = Vec::with_capacity(passes.passes.len());
     for (k, pass) in passes.passes.iter().enumerate() {
-        let name = if passes.passes.len() == 1 { "tempo_block".to_owned() } else { format!("tempo_block_pass{k}") };
+        let name = if passes.passes.len() == 1 { "rerail_block".to_owned() } else { format!("rerail_block_pass{k}") };
         let id = module.declare_function(&name, Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
         let mut context: Context = module.make_context();
         context.func.signature = signature.clone();
@@ -1657,7 +1657,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let records = match (&native.records, tables) {
         (Some(_), Some(t)) if merged => Some(t),
         (Some(r), Some(t)) => {
-            let id = module.declare_function("tempo_records", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+            let id = module.declare_function("rerail_records", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
             let mut context: Context = module.make_context();
             context.func.signature = signature.clone();
             context.set_disasm(true);
