@@ -6,7 +6,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileText, placementInputs } from "./git-placement.js";
-import { learnGitAccess, standingGitAccess } from "../../native/git-access.js";
+import { askingGitWithoutBlocking, learnGitAccess, standingGitAccess } from "../../native/git-access.js";
 import { gitGlobalConfigFiles, type GitReadOptions } from "../../git.js";
 
 export interface RemoteAddress {
@@ -60,11 +60,13 @@ export function keptRemoteCount(): number {
 /**
  * {@link remoteSource}; where it names none for a checkout placed from its files that the user owns, the engine owner of
  * its Git reads, which names the system files, is made first unless it stands, as Git processes no thread waits on
- * ({@link learnGitAccess}), and the source read again.
+ * ({@link learnGitAccess}), and the source read again. In a daemon, which asks Git that way from its start
+ * ({@link askingGitWithoutBlocking}), nothing waits for those asks: a slow Git answers them only after a hook's time
+ * limit, and until the owner stands the source is undefined, so the remote is asked of Git as before the owner.
  */
 export async function remoteSourceWithoutBlocking(root: string, options: GitReadOptions): Promise<RemoteSource | undefined> {
   const source = remoteSource(root);
-  if (source !== undefined || placementInputs(resolve(root))?.owned !== true) return source;
+  if (source !== undefined || placementInputs(resolve(root))?.owned !== true || askingGitWithoutBlocking()) return source;
   await learnGitAccess(options);
   return remoteSource(root);
 }

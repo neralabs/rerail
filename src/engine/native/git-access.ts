@@ -88,15 +88,22 @@ interface GitAccessKeeper {
   standing(): NativeGitAccess | undefined;
   /** The owner for `report`: the one kept while the answer is the same, else a new one. */
   take(report: GitInstallationReport): NativeGitAccess;
+  /**
+   * The owner a read takes while Git's asks run without blocking ({@link learnGitAccess}): the one kept, else one that
+   * reads no system file Git named, as after an ask that did not finish. It does not stand, so the asks' answer replaces it.
+   */
+  meanwhile(): NativeGitAccess;
 }
 
 function gitAccessKeeper(binding: NativeBinding, now: () => number): GitAccessKeeper {
   let owner: NativeGitAccess | undefined;
+  let fallback: NativeGitAccess | undefined;
   let answer = "";
   let askAgainAt = Number.POSITIVE_INFINITY;
   const tell = fallbackNotice();
   return {
     standing: () => (owner !== undefined && now() < askAgainAt ? owner : undefined),
+    meanwhile: () => owner ?? (fallback ??= new binding.GitAccess({})),
     take: ({ installation, settled, problem }) => {
       const asked = JSON.stringify([installation.systemConfig ?? null, installation.configOrigins ?? null]);
       if (owner === undefined || asked !== answer) {
@@ -137,11 +144,43 @@ let processOwner: GitAccessKeeper | undefined;
 /**
  * The process's one owner of the engine's in-process Git reads (the ignore matcher, the workspace's Git discovery), made
  * at the first need ({@link gitAccessOwner}): every read in the process then takes the config files Rerail's Git reads,
- * and the engine starts no Git of its own to find them.
+ * and the engine starts no Git of its own to find them. In a daemon that asks Git without blocking
+ * ({@link askGitWithoutBlocking}), a read before Git's answer takes the owner there is meanwhile and waits for no Git.
  */
 export function nativeGitAccess(binding: NativeBinding = loadNativeBinding()): NativeGitAccess {
   processOwner ??= gitAccessKeeper(binding, Date.now);
-  return processOwner.standing() ?? processOwner.take(readGitInstallation());
+  const standing = processOwner.standing();
+  if (standing !== undefined) return standing;
+  const daemon = [...withoutBlocking][0];
+  if (daemon === undefined) return processOwner.take(readGitInstallation());
+  // An ask that did not finish is due again: in a daemon it runs off the thread too.
+  if (learning.size === 0) void learnGitAccess({ signal: daemon });
+  return processOwner.meanwhile();
+}
+
+/** The signals of the daemons asking Git without blocking ({@link askGitWithoutBlocking}), each until it is aborted. */
+const withoutBlocking = new Set<AbortSignal>();
+
+/**
+ * From now until `signal` is aborted, every ask of Git's installation runs as Git processes no thread waits on, and a
+ * read meanwhile takes the owner there is ({@link nativeGitAccess}): the daemon's engine service asks as it starts, so
+ * neither its start nor a session's first events wait for Git's two asks, however slowly Git answers.
+ */
+export function askGitWithoutBlocking(signal: AbortSignal): void {
+  if (signal.aborted) return;
+  withoutBlocking.add(signal);
+  signal.addEventListener("abort", () => withoutBlocking.delete(signal), { once: true });
+  void learnGitAccess({ signal });
+}
+
+/** Whether a daemon asks Git without blocking ({@link askGitWithoutBlocking}): a session's open then waits for no ask. */
+export function askingGitWithoutBlocking(): boolean {
+  return withoutBlocking.size > 0;
+}
+
+/** Resolves once the ask under way without blocking, where one runs, has ended: a closed daemon leaves no Git running. */
+export async function gitAsksEnded(): Promise<void> {
+  await learning.get("installation")?.answer;
 }
 
 /**
