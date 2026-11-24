@@ -395,10 +395,9 @@ function holdMergeAssist(status) {
   githubDueAt = readAgainInMs === undefined ? null : performance.now() + readAgainInMs;
 }
 
-  /**
-   * A Merge Assist read failed with `error`, kept for the page. The sidebar still follows whether `/healthz` lists the
-   * experiment; this failure only explains why its page has no status yet. Whether anything shown changed.
-   */
+/**
+ * A Merge Assist read failed with `error`, kept for the page. The sidebar still follows whether `/healthz` lists the
+ * experiment; this failure only explains why its page has no status yet. Whether anything shown changed.
  */
 function takeMergeAssistFailure(error) {
   mergeAssistRead.at = Date.now();
@@ -808,7 +807,7 @@ async function poll() {
     const scoped = ui.scope === null ? [] : scopedJobs(since, health).then(jobs => Promise.all(jobs));
     const results = (await Promise.all([loadRepositories(), health, scoped])).flat();
     if (started !== generation) return;
-      pollAnswered(results, since);
+    pollAnswered(results, since);
   } catch (error) {
     if (started === generation) pollFailed(error);
   }

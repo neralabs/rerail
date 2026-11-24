@@ -86,8 +86,8 @@ export const data = {
   mergeAssistError: null,
   /**
    * Whether `/healthz` lists the daemon's Merge Assist experiment: `null` until health reports it, then `false` when
-   * absent or `true` when present. The sidebar follows this even if a Merge Assist read fails. The daemon's, so a scope
-   * change keeps it.
+   * absent or `true` when present. The sidebar follows this even if a Merge Assist read fails. It belongs to the daemon,
+   * so it persists across scope changes.
    */
   mergeAssistExperiment: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
