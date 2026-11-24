@@ -160,6 +160,16 @@ pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version)
 /// `finish_checks_on` of a program lowered without the rules of the `library` it reads (`rr::Text::lower_in`): its
 /// value cycles are bounded by what the library's relations guarantee there (`cycles::check_given`).
 pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) -> Result<(), Error> {
+    finish_checks_in(v, library, None)
+}
+
+/// `finish_checks_on` of a program linked from tailed modules (decision 0639 §6a): the value cycles of the components
+/// that hold a relation of `touched` alone (`cycles::check_within`), its modules' tails having checked the others.
+pub fn finish_checks_within(v: &crate::code_rule_dsl::logic::program_image::Version, touched: &BTreeSet<String>) -> Result<(), Error> {
+    finish_checks_in(v, None, Some(touched))
+}
+
+fn finish_checks_in(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>, within: Option<&BTreeSet<String>>) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     use crate::code_rule_dsl::logic::program_image::handles::{AggRef, Lit, TermRef};
     for rule in v.rules() {
@@ -223,9 +233,10 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
         return Err(Error::UndeclaredInput { relation });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    match library {
-        Some(library) => cycles::check_given(v, library)?,
-        None => cycles::check(v)?,
+    match (library, within) {
+        (Some(library), _) => cycles::check_given(v, library)?,
+        (None, Some(touched)) => cycles::check_within(v, touched)?,
+        (None, None) => cycles::check(v)?,
     };
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(v)?;

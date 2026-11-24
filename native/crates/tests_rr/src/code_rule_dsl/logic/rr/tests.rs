@@ -6774,7 +6774,7 @@ fn kind_set_rules_take_out_what_the_pass_takes_out() {
             let dropped: BTreeSet<String> = sets.keys().filter(|s| ProgramFields::states_facts(&*input, s) && !ProgramFields::states_facts(&*output, s)).map(named).collect();
             // A set taken out is undeclared and its facts dropped: stated before, not after.
             let stated = |v: &Version, s: &str| ProgramFields::declares(v, s) || ProgramFields::states_facts(v, s);
-            let out: BTreeSet<String> = sets.keys().filter(|s| stated(&*input, s) && !stated(&*output, s)).map(named).collect();
+            let out: BTreeSet<String> = sets.keys().filter(|s| stated(&input, s) && !stated(&output, s)).map(named).collect();
             (facts, [out, undeclared, dropped])
         }).collect()
     });
@@ -6958,6 +6958,8 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
     // Planned on the test's thread, in its store, as T12's are.
     let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
     let libraries = tail_libraries();
+    // The programs whose every step's changes are read off, whose checks are of their own components.
+    let read_off_programs = std::sync::atomic::AtomicUsize::new(0);
     let failures: Vec<String> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         use rayon::prelude::*;
         libraries.par_iter().flat_map(|(pack, _, texts)| texts.par_iter().take(per).filter_map(|(path, src, files)| {
@@ -6998,10 +7000,63 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
                 }
                 (v, hv) = (next, hn);
             }
+            // The program's checks are of the components its steps changed, read off the versions they made
+            // (`rr::changed_since`, step by step): where a step's are read off, they cover every relation whose rules
+            // (by their contents' hashes) or declaration it changed. A step that made a new base is read as changing
+            // everything: the program is then checked whole.
+            let content = |v: &Version| -> BTreeMap<String, (Vec<u64>, Option<u64>)> {
+                let mut out: BTreeMap<String, (Vec<u64>, Option<u64>)> = BTreeMap::new();
+                for r in v.rules() {
+                    out.entry(v.rel_name(r.head().rel()).to_owned()).or_default().0.push(r.hash());
+                }
+                for d in v.decls() {
+                    out.entry(v.text(d.name()).to_owned()).or_default().1 = Some(d.hash());
+                }
+                out.values_mut().for_each(|(h, _)| h.sort_unstable());
+                out
+            };
+            let mut whole = false;
+            let mut at = (Arc::clone(&m), content(&m));
+            for step in super::program_steps() {
+                let next = super::tail_steps(Arc::clone(&at.0), true, fresh().lowered, None, &[step]).ok()?;
+                let cn = content(&next);
+                if let Some(read_off) = super::changed_since(&at.0, &next) {
+                    let made: BTreeSet<&String> = at.1.keys().chain(cn.keys()).filter(|r| at.1.get(*r) != cn.get(*r)).collect();
+                    if let Some(r) = made.iter().find(|r| !read_off.contains(**r)) {
+                        return Some(format!("{pack}: {}: {step:?} changes {r}, which the version it made does not show", path.display()));
+                    }
+                } else {
+                    whole = true;
+                }
+                at = (next, cn);
+            }
+            if !whole {
+                read_off_programs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             None
         }).collect::<Vec<_>>()).collect()
     });
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(read_off_programs.into_inner() > 0, "no program's steps were read off: every program's checks are the whole program's");
+}
+
+/// The checks of a program linked from tailed modules are of the components its own module's relations or its steps'
+/// changes are in (decision 0639 §6a, E14): an unbounded value cycle of its own module beside a library it includes is
+/// refused, and one a library relation bounds is not.
+#[test]
+fn a_programs_checks_refuse_its_own_unbounded_value_cycle() {
+    let unbounded = ".language typescript\n#include \"tsx/ts-b.rerail\"\n\
+                     .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
+                     num(x, f + 1.0) :- num(x, f).\n.output num\n";
+    match super::parse_version(unbounded) {
+        Err(Error::UnboundedValueCycle { component, .. }) => assert!(component.iter().any(|r| r.contains("num")), "{component:?}"),
+        other => panic!("an unbounded value cycle of the own module: {:?}", other.map(|_| "planned")),
+    }
+    let bounded = ".language typescript\n#include \"tsx/ts-b.rerail\"\n\
+                   .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
+                   .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
+                   num(x, 0.0 - f) :- ua(x, a), num(a, f).\n.output num\n";
+    super::parse_version(bounded).unwrap_or_else(|e| panic!("a value cycle a library relation bounds: {e}"));
 }
 
 /// Spike for decision 0639 step 6 (the tail by module), over the packs named (`RERAIL_SPIKE_PACKS`, comma-separated

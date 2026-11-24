@@ -453,7 +453,7 @@ fn no_tree_program_comes_back() {
             }
         }
     }
-    let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
+    let native = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut all = Vec::new();
     files(&native.join("src"), &mut all);
     for krate in std::fs::read_dir(native.join("crates")).unwrap() {

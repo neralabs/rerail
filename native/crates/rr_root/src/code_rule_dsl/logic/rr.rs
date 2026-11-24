@@ -1342,14 +1342,44 @@ pub fn downward_steps() -> Vec<TailStep> {
     down
 }
 
+/// The relations whose rules or declarations the steps from `start` to `v` changed, read off the overlays and views
+/// that made `v` (`Delta::of` of each, never a comparison of rules); `None` where a step made its version otherwise.
+pub fn changed_since(start: &std::sync::Arc<super::program_image::Version>, v: &std::sync::Arc<super::program_image::Version>) -> Option<std::collections::BTreeSet<String>> {
+    use super::program_image::{Version, manager::Delta};
+    let mut changed = std::collections::BTreeSet::new();
+    let mut at = std::sync::Arc::clone(v);
+    while !std::sync::Arc::ptr_eq(&at, start) {
+        let (Version::Overlay { parent, .. } | Version::View { parent, .. }) = &*at else { return None };
+        let parent = std::sync::Arc::clone(parent);
+        let d = Delta::of(&parent, &at);
+        changed.extend(d.heads?);
+        changed.extend(d.decls.iter().map(|r| at.rel_name(r).to_owned()));
+        at = parent;
+    }
+    Some(changed)
+}
+
 /// The tail's `steps` over `start`, in their order (`lowering_tail_on` runs `TAIL`).
 pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep]) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    tail_steps_in(start, declared, lowered, library, steps, None)
+}
+
+/// `tail_steps`; with `own`, of a program linked from tailed modules whose own module's relations are `own`: its
+/// checks are of the components that hold those or what its steps changed (decision 0639 §6a, E14), the tails of its
+/// library's modules having checked the others.
+fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep], own: Option<&std::collections::BTreeSet<String>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::manager::Pipeline;
     use super::plan::corpus::preparation::{DropRepeated, lowering_tail, on_request::SourcesOnRequest};
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
+    // A program's relations its checks are of: its own module's, then each step's changes (`changed_since`).
+    let mut touched: Option<std::collections::BTreeSet<String>> = own.cloned();
     let mut p = Pipeline::new("the lowering's tail", start);
     for &step in steps {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("the lowering's tail: {step:?}"));
+        let before = match touched {
+            Some(_) => Some(std::sync::Arc::clone(p.current().map_err(Error::Syntax)?)),
+            None => None,
+        };
         match step {
             TailStep::ContextPasses => {
                 p.program(&mut super::contexts::Passes);
@@ -1411,7 +1441,13 @@ pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared
             TailStep::DeclareAxes => {
                 p.program(&mut lowering_tail::DeclareAxes);
             }
-            TailStep::Checks => super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?,
+            TailStep::Checks => {
+                let v = p.current().map_err(Error::Syntax)?;
+                match &touched {
+                    Some(touched) => super::front::finish_checks_within(v, touched)?,
+                    None => super::front::finish_checks_given(v, library.map(|l| &*l.version))?,
+                }
+            }
             TailStep::AggregateDemand => {
                 p.program(&mut lowering_tail::AggregateDemand);
             }
@@ -1437,6 +1473,14 @@ pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared
                     }
                 }
             }
+        }
+        // A step that made a new base (a derivation, a fold) leaves its changes unread: the program is checked whole.
+        if let Some(before) = before {
+            let now = p.current().map_err(Error::Syntax)?;
+            touched = changed_since(&before, now).and_then(|c| touched.map(|mut t| {
+                t.extend(c);
+                t
+            }));
         }
     }
     let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
@@ -1830,13 +1874,18 @@ fn linked_from_plan(plan: &[PlannedModule], own: Vec<Stmt>) -> Result<std::sync:
             l
         }
     };
+    // The own module's relations: its rules' heads and its declarations, whose components the program checks.
+    let own_rels: std::collections::BTreeSet<String> = {
+        let v = own.version();
+        v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(super::program_image::fields::ProgramFields::declared_names(&**v)).collect()
+    };
     let linked = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: a text's own module onto its library's union".into());
         library.with(Some(own))?
     };
     // The program's steps: the downward ones over the union, then those after them (E13, E16).
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: the program's steps".into());
-    tail_steps(linked.version, false, linked.lowered, None, &program_steps())
+    tail_steps_in(linked.version, false, linked.lowered, None, &program_steps(), Some(&own_rels))
 }
 
 /// Each library's union (`lower::LinkedLibrary`) made in this process, by the image store and its modules' plan keys.
