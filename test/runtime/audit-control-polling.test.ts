@@ -139,7 +139,7 @@ describe("The runtime's audit control polling", () => {
       // `rerail scan --session` queues through its own connection; the next tick claims it.
       const other = new SqliteAuditControlStore(databasePath);
       try {
-        const queued = other.requestAudit("b", { scope: "repository" });
+        const queued = (await other.requestAudit("b", { scope: "repository" }));
         await vi.waitFor(() => {
           expect(other.listAuditRequests("b").find(request => request.id === queued.id)?.status).not.toBe("queued");
         }, { timeout: 3_000, interval: 50 });
@@ -158,8 +158,8 @@ describe("The runtime's audit control polling", () => {
     try {
       await sleep(600);
       // Both are visible to one tick; that tick claims only the oldest.
-      const first = other.requestAudit("a", { scope: "repository" });
-      const second = other.requestAudit("a", { scope: "repository" });
+      const first = (await other.requestAudit("a", { scope: "repository" }));
+      const second = (await other.requestAudit("a", { scope: "repository" }));
       await vi.waitFor(() => {
         const statuses = other.listAuditRequests("a").filter(request => [first.id, second.id].includes(request.id)).map(request => request.status);
         expect(statuses.every(status => status !== "queued" && status !== "running")).toBe(true);
@@ -251,7 +251,7 @@ describe("The runtime's audit control polling", () => {
     const other = new SqliteAuditControlStore(databasePath);
     try {
       removeSessionRow(databasePath, "gone");
-      const queued = other.requestAudit("kept", { scope: "repository" });
+      const queued = (await other.requestAudit("kept", { scope: "repository" }));
       await vi.waitFor(() => {
         expect(other.listAuditRequests("kept").find(request => request.id === queued.id)?.status).not.toBe("queued");
       }, { timeout: 3_000, interval: 50 });
@@ -283,7 +283,7 @@ describe("The runtime's audit control polling", () => {
       removeSessionRow(databasePath, "gone");
       await runtime.ingest({ kind: "user-prompt", eventId: "after-removal", sessionId: "gone", text: "go on" });
       expect(ownerRow(databasePath, "gone")).toEqual(claimed);
-      const queued = other.requestAudit("gone", { scope: "repository" });
+      const queued = (await other.requestAudit("gone", { scope: "repository" }));
       expect({ status: queued.status, error: queued.error }).toEqual({ status: "queued", error: null });
       await vi.waitFor(() => {
         expect(other.listAuditRequests("gone").find(request => request.id === queued.id)?.status).not.toBe("queued");
@@ -357,7 +357,7 @@ describe("The runtime's audit control polling", () => {
       const claimWrites = vi.spyOn(SqliteAuditControlStore.prototype, "claimAgain");
       await runtime.ingest({ kind: "user-prompt", eventId: "claimed", sessionId: "gone", text: "go on" });
       expect(claimWrites).not.toHaveBeenCalled();
-      const queued = other.requestAudit("gone", { scope: "repository" });
+      const queued = (await other.requestAudit("gone", { scope: "repository" }));
       expect({ status: queued.status, error: queued.error }).toEqual({ status: "queued", error: null });
       await vi.waitFor(() => {
         expect(other.listAuditRequests("gone").find(request => request.id === queued.id)?.status).not.toBe("queued");

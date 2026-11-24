@@ -729,7 +729,7 @@ describe("the engine service's idle close", () => {
       clock.now += 60_000;
       const sweeping = service.closeIdleSessions();
       await reading.entered;
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       await vi.waitFor(() => expect(scans).toEqual(["repository"]), { timeout: 10_000, interval: 20 });
       reading.release();
       // The scan runs on until the sweep is done: a close that waited for it would wait here.
@@ -760,7 +760,7 @@ describe("the engine service's idle close", () => {
     expect(service.openRuntimes()).toBe(0);
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       expect(request).toMatchObject({ status: "queued", error: null });
       // The daemon's API asks the engine service to open the session again (`audit_requests_create`).
       await service.resumeSession("a");
@@ -787,7 +787,7 @@ describe("the engine service's idle close", () => {
     const controls = new SqliteAuditControlStore(databasePath);
     const writer = new Database(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       writer.exec("BEGIN IMMEDIATE");
       const asked = performance.now();
       await service.resumeSession("a");
@@ -819,7 +819,7 @@ describe("the engine service's idle close", () => {
     const sessions = new SqliteSessionStore(databasePath);
     const writer = new Database(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       const finished = requestFinished(request.id);
       writer.exec("BEGIN IMMEDIATE");
       // Another session's record waits for the lock in this process.
@@ -856,7 +856,7 @@ describe("the engine service's idle close", () => {
     const sessions = new SqliteSessionStore(databasePath);
     const writer = new Database(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       const finished = requestFinished(request.id);
       writer.exec("BEGIN IMMEDIATE");
       sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
@@ -915,7 +915,7 @@ describe("the engine service's idle close", () => {
     const controls = new SqliteAuditControlStore(databasePath);
     const writer = new Database(databasePath);
     try {
-      controls.requestAudit("a", { scope: "repository" });
+      await controls.requestAudit("a", { scope: "repository" });
       writer.exec("BEGIN IMMEDIATE");
       lockWaits.length = 0;
       await service.resumeSession("a");
@@ -940,7 +940,7 @@ describe("the engine service's idle close", () => {
     const controls = new SqliteAuditControlStore(databasePath);
     try {
       // Queued by a writer that does not open the session (a second connection, as `rerail scan` once wrote).
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       expect(request).toMatchObject({ status: "queued", error: null });
       await prompt("a", "back");
       await vi.waitFor(() => {
@@ -965,7 +965,7 @@ describe("the engine service's idle close", () => {
     stopTestRepository(first, databasePath);
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       expect(request).toMatchObject({ status: "queued", error: null });
       clock.now += 60_000;
       await service.resumeSession("a");
@@ -1014,7 +1014,7 @@ describe("the engine service's idle close", () => {
     await removeFolder(first);
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       expect(request).toMatchObject({ status: "queued", error: null });
       clock.now += 60_000;
       await service.resumeSession("a");
@@ -1049,7 +1049,7 @@ describe("the engine service's idle close", () => {
       clock.now += 60_000;
       const controls = new SqliteAuditControlStore(databasePath);
       try {
-        const request = controls.requestAudit("a", { scope: "repository" });
+        const request = (await controls.requestAudit("a", { scope: "repository" }));
         await service.resumeSession("a");
         await service.closeIdleSessions();
         await vi.waitFor(() => {
@@ -1080,7 +1080,7 @@ describe("the engine service's idle close", () => {
     await closeBegun;
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       expect(request).toMatchObject({ status: "queued", error: null });
       const resuming = service.resumeSession("a");
       closing.resolve();
@@ -1109,7 +1109,7 @@ describe("the engine service's idle close", () => {
     await closeBegun;
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       const resuming = service.resumeSession("a");
       closing.resolve();
       await Promise.all([sweeping, resuming]);
@@ -1144,7 +1144,7 @@ describe("the engine service's idle close", () => {
     await service.closeIdleSessions();
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      const request = controls.requestAudit("a", { scope: "repository" });
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
       expect(request).toMatchObject({ status: "queued", error: null });
       await service.resumeSession("a");
       expect(made).toBe(2);
@@ -1176,7 +1176,7 @@ describe("the engine service's idle close", () => {
     await hold.entered.promise;
     const controls = new SqliteAuditControlStore(databasePath);
     try {
-      expect(controls.requestAudit("a", { scope: "repository" })).toMatchObject({ status: "queued", error: null });
+      expect((await controls.requestAudit("a", { scope: "repository" }))).toMatchObject({ status: "queued", error: null });
       const resuming = service.resumeSession("a");
       hold.released.resolve();
       await Promise.all([ending, resuming]);

@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -248,4 +248,95 @@ describe("Rerail's frequent readers", () => {
     expect(await rerailSession(root, env, ["cursor"])).toBe(notRunning);
     expect((await stat(databasePath)).size).toBe(0);
   }, 30_000);
+});
+
+/** A checkout with `top.txt` changed and a checked-out submodule `sub` with a changed file, its Git folder's config whole or empty. */
+async function checkoutWithSubmodule(root: string, config: "whole" | "empty"): Promise<string> {
+  const git = (cwd: string, ...args: string[]): Promise<unknown> =>
+    run("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "-c", "protocol.file.allow=always", ...args], { cwd });
+  const source = join(root, `source-${config}`);
+  const work = join(root, `work-${config}`);
+  for (const [repository, file] of [[source, "inner.txt"], [work, "top.txt"]] as const) {
+    await mkdir(repository);
+    await git(repository, "init", "-q");
+    await writeFile(join(repository, file), "one\n");
+    await git(repository, "add", ".");
+    await git(repository, "commit", "-q", "-m", "seed");
+  }
+  await git(work, "submodule", "add", "-q", source, "sub");
+  await git(work, "commit", "-q", "-m", "submodule");
+  if (config === "empty") await writeFile(join(work, ".git", "modules", "sub", "config"), "");
+  await writeFile(join(work, "top.txt"), "two\n");
+  await writeFile(join(work, "sub", "inner.txt"), "two\n");
+  return work;
+}
+
+/**
+ * A checkout with `top.txt` changed and `count` checked-out submodules, each a copy of one repository of ten files, the
+ * first with a changed file.
+ */
+async function checkoutWithSubmodules(root: string, count: number): Promise<string> {
+  const git = async (cwd: string, ...args: string[]): Promise<string> =>
+    (await run("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd })).stdout;
+  const source = join(root, "source");
+  const work = join(root, "work");
+  for (const [repository, files] of [[source, 10], [work, 1]] as const) {
+    await mkdir(repository);
+    await git(repository, "init", "-q");
+    for (let file = 0; file < files; file += 1) await writeFile(join(repository, `f${file}.txt`), "one\n");
+    await git(repository, "add", ".");
+    await git(repository, "commit", "-q", "-m", "seed");
+  }
+  const commit = (await git(source, "rev-parse", "HEAD")).trim();
+  const names = Array.from({ length: count }, (_, at) => `sub${String(at).padStart(3, "0")}`);
+  for (const name of names) {
+    await cp(source, join(work, name), { recursive: true });
+    await git(join(work, name), "update-index", "-q", "--refresh");
+    await appendFile(join(work, ".gitmodules"), `[submodule "${name}"]\n\tpath = ${name}\n\turl = ../source\n`);
+  }
+  await git(work, "update-index", "--add", ...names.flatMap(name => ["--cacheinfo", `160000,${commit},${name}`]));
+  await git(work, "add", ".gitmodules");
+  await git(work, "commit", "-q", "-m", "submodules");
+  await writeFile(join(work, "f0.txt"), "two\n");
+  await writeFile(join(work, "sub000", "f0.txt"), "two\n");
+  return work;
+}
+
+/** `rerail scan --scope git-diff --json` in `cwd` with no daemon: its exit code, and the paths its report lists. */
+async function scannedPaths(cwd: string, env: NodeJS.ProcessEnv): Promise<[number, unknown]> {
+  const ended = await run(process.execPath, [cli, "scan", "--scope", "git-diff", "--json"], { cwd, env }).then(
+    ({ stdout }) => ({ code: 0, stdout }),
+    (error: { code?: number; stdout?: string }) => ({ code: error.code ?? -1, stdout: error.stdout ?? "" }),
+  );
+  const report = ((): { paths?: unknown } => {
+    try {
+      return JSON.parse(ended.stdout) as { paths?: unknown };
+    } catch {
+      return {};
+    }
+  })();
+  return [ended.code, report.paths];
+}
+
+describe("rerail scan with no daemon", () => {
+  test("lists a changed submodule whose Git folder's config holds no entry as it lists one whose config is whole", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-no-daemon-"));
+    roots.push(root);
+    const env = { ...process.env, RERAIL_HOME: join(root, ".rerail-home"), RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_HEADLESS_SCAN: "1" };
+
+    const scans = [await scannedPaths(await checkoutWithSubmodule(root, "whole"), env), await scannedPaths(await checkoutWithSubmodule(root, "empty"), env)];
+
+    expect(scans[1]).toEqual(scans[0]);
+    expect(scans[1]?.[1]).toEqual(["sub", "top.txt"]);
+  }, 60_000);
+
+  test("answers in a checkout with 150 checked-out submodules, as Git's own diff does there within Git's time limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-no-daemon-"));
+    roots.push(root);
+    const env = { ...process.env, RERAIL_HOME: join(root, ".rerail-home"), RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_HEADLESS_SCAN: "1" };
+
+    const scanned = await scannedPaths(await checkoutWithSubmodules(root, 150), env);
+
+    expect(scanned).toEqual([0, ["f0.txt", "sub000"]]);
+  }, 240_000);
 });
