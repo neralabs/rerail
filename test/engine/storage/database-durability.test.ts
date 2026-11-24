@@ -8,10 +8,12 @@ import { commitDurably, openRerailDatabase, openSqliteDatabase } from "../../../
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 // The store's writers open with SQLite's `PRAGMA synchronous` at 1 (NORMAL): a commit returns once it is in the
-// write-ahead log, so a power cut can take the last seconds of records, which the reference tells a person. At 2 (FULL)
-// every commit would wait for the disk.
+// write-ahead log, which the daemon syncs about every 5 s, so a power cut can take about the last 5 s of history, which
+// the reference tells a person, beside the rule and setting changes that wait for the disk. At 2 (FULL) every commit
+// would wait for the disk.
 const REFERENCE = fileURLToPath(new URL("../../../docs/reference.md", import.meta.url));
-const MAY_LOSE_THE_LAST_RECORDS = "a power cut or an operating system crash can take the last seconds of records";
+const MAY_LOSE_THE_LAST_HISTORY = "A power cut or an operating system crash can take about the last 5 s of history";
+const KEEPS_CHANGES = "A change you make to rules or settings, with the `rerail` command or in the dashboard, is on the disk before Rerail says it is made.";
 const NORMAL = 1;
 const FULL = 2;
 
@@ -40,8 +42,10 @@ describe("what the store keeps through a power cut", () => {
     }
   });
 
-  it("is what the reference tells a person: a power cut can take the last seconds of records", () => {
-    expect(readFileSync(REFERENCE, "utf8"), "docs/reference.md").toContain(MAY_LOSE_THE_LAST_RECORDS);
+  it("is what the reference tells a person: a power cut can take about the last 5 s of history, never a change made", () => {
+    const reference = readFileSync(REFERENCE, "utf8");
+    expect(reference, "docs/reference.md").toContain(MAY_LOSE_THE_LAST_HISTORY);
+    expect(reference, "docs/reference.md").toContain(KEEPS_CHANGES);
   });
 
   // The rare commit a power cut must not take (the remote outbox's record of a batch it sends) waits for the disk alone:

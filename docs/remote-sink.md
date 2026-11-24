@@ -176,7 +176,8 @@ A `gap` record reports data Rerail could not send, instead of leaving a hole:
 - a record larger than a batch (`reason: "too-large"`);
 - rejected batches.
 
-A power cut or an operating system crash can take the last seconds of events. A remote receives the session's
+A power cut or an operating system crash can take about the last 5 s of events (the daemon syncs them to the disk
+about every 5 s, later while the disk is too busy to finish a sync). A remote receives the session's
 `events-lost` record, which its next open writes: how many events of which kinds went, and when. A remote receives a
 `gap` for them only where their numbers had gone out in a batch before the cut, to it or to another remote; later
 events then take numbers past those, so a remote never receives another event under a number it holds. Where no batch
