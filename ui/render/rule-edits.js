@@ -1,10 +1,11 @@
 /**
  * A rule a coding agent edited: the edit is saved as a copy (`copiedFromRuleId`) that waits for approval while the
- * original keeps running. The original's sheet says so, with which parts changed and a button to the copy, where it is
- * approved, and its row in a rule table carries "Edited", until the person dismisses the notice. Dismissing is per
- * edit (the copy's approval digest) and lasts on this computer, as Overview's banner for a newer Rerail does.
+ * original keeps running. The copy's sheet asks for the approval, saying which rule it edits and which parts changed;
+ * the original's sheet says an edit of it waits, with a button to the copy, and its row in a rule table carries
+ * "Edited". Both last until the edit is approved or discarded: neither can be dismissed, as nothing that asks for an
+ * approval can.
  */
-import { awaitingApproval, isEditedCopy, messageText } from "../derive.js";
+import { awaitingApproval, isLog, isWaitingEdit, messageText } from "../derive.js";
 import { data } from "../state.js";
 import { whenLabel } from "../format.js";
 
@@ -15,35 +16,19 @@ function waitingCopies(rules) {
   let copies = copiesByRules.get(rules);
   if (copies === undefined) {
     copies = new Map();
-    for (const stored of rules.values()) if (isEditedCopy(stored) && awaitingApproval(stored)) copies.set(stored.copiedFromRuleId, stored);
+    for (const stored of rules.values()) if (isWaitingEdit(stored)) copies.set(stored.copiedFromRuleId, stored);
     copiesByRules.set(rules, copies);
   }
   return copies;
 }
 
-const dismissKey = digest => `rerail-edit-dismissed:${digest}`;
-/** The edits dismissed in this visit, which holds when storage is blocked. */
-const dismissedHere = new Set();
-
-export function editDismissed(digest) {
-  if (dismissedHere.has(digest)) return true;
-  try { return localStorage.getItem(dismissKey(digest)) === "1"; } catch { return false; /* storage blocked */ }
-}
-
-/** The notice's ✕: the edit whose copy has approval digest `digest` is not shown again on this computer. */
-export function dismissEdit(digest) {
-  dismissedHere.add(digest);
-  try { localStorage.setItem(dismissKey(digest), "1"); } catch { /* private mode: dismissed for this visit */ }
-}
-
 /**
- * The copy of `stored` that waits for approval and whose notice was not dismissed, else `null`. Also `null` while
- * `stored` itself waits: its sheet then shows that approval instead, so its row says nothing of the edit either.
+ * The copy of `stored` that waits for approval, else `null`. Also `null` while `stored` itself waits: its sheet then
+ * shows that approval instead, so its row says nothing of the edit either.
  */
 export function pendingEditOf(stored) {
   if (awaitingApproval(stored)) return null;
-  const copy = waitingCopies(data.rules).get(stored.rule.id);
-  return copy === undefined || editDismissed(copy.approval.subject.digest) ? null : copy;
+  return waitingCopies(data.rules).get(stored.rule.id) ?? null;
 }
 
 const json = value => JSON.stringify(value ?? null);
@@ -51,12 +36,20 @@ const json = value => JSON.stringify(value ?? null);
 const withoutMessage = clauses => (clauses ?? []).map(clause => ({ ...clause, violation: { ...clause.violation, message: undefined } }));
 
 /**
- * The sheet's sections whose content the edit changed, in the sheet's order and by its own names. Not the mode: Log or
- * Steer is a setting, changed without a copy.
+ * Whether a rule is set to Log only. A rule that waits runs in Log whatever it is set to; one set to steer or block
+ * says so in `modeSource` (`awaiting-approval`), which approving lifts.
+ */
+const setToLog = stored => isLog(stored) && stored.modeSource?.by !== "awaiting-approval";
+
+/**
+ * The sheet's sections whose content the edit changed, in the sheet's order and by its own names. "On a violation" is
+ * the rule's mode: a coding agent changes it through the rule's document, so Log to Steer is an edit like any other and
+ * waits for the same approval.
  */
 export function changedParts(was, now) {
   const a = was.rule, b = now.rule;
   return [
+    setToLog(was) !== setToLog(now) && "On a violation",
     messageText(was) !== messageText(now) && "What the agent sees",
     (a.description ?? "") !== (b.description ?? "") && "Description",
     json(a.scope) !== json(b.scope) && "Where it applies",
@@ -71,4 +64,4 @@ export const EDIT_TITLE = "An edit of this rule waits for approval.";
 export const editedLine = copy => `${copy.addedAt === null ? "" : `Edited ${whenLabel(copy.addedAt)}. `}This rule keeps running as it was until the edit is approved.`;
 
 /** The hover of a row's "Edited". */
-export const EDITED_TIP = "An edit of this rule waits for approval. Open it to see what changed.";
+export const EDITED_TIP = "An edit of this rule waits for approval. Open it to review the edit.";

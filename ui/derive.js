@@ -46,6 +46,15 @@ export const awaitingYourApproval = stored => awaitingApproval(stored) && !isFro
 /** Whether a rule is an edited copy of another (of a rule Rerail ships, or of your approved rule), saved in your library. */
 export const isEditedCopy = stored => Boolean(stored.copiedFromRuleId) && !isFromPack(stored);
 
+/** Whether a rule is an edit that waits: an edited copy no person has approved yet, which runs in Log until then. */
+export const isWaitingEdit = stored => awaitingApproval(stored) && isEditedCopy(stored) && stored.approval.subject.kind === "rule";
+
+/**
+ * Whether a rule waits for approval and a coding agent wrote it: a rule it added (`awaitingYourApproval`) or an edit it
+ * made (`isWaitingEdit`). Overview asks for both in one banner, and the sheet walks them as one queue.
+ */
+export const awaitingAgentApproval = stored => awaitingYourApproval(stored) || isWaitingEdit(stored);
+
 /** The origin of a rule that came in a rule pack this page does not know (its pack was removed): no publisher is claimed. */
 export const UNKNOWN_PACK_ORIGIN = "From a rule pack";
 

@@ -6,6 +6,7 @@
  */
 import { data, repoName, titleOf } from "./state.js";
 import { failed as failedText } from "./format.js";
+import { isWaitingEdit } from "./derive.js";
 import { send } from "./api.js";
 import { captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
 import { closePanel, toast } from "./shell.js";
@@ -38,7 +39,8 @@ export async function removeRule(id) {
   removed.set(id, { title, attachments, scope, repo });
   closePanel();
   await refreshNow();
-  toast(`Deleted from ${repo}.`, { action: { label: "Undo", act: "ruleundo", id } });
+  // An edit that waited was never live: removing it discards the edit, and the rule it edits ran as it was throughout.
+  toast(isWaitingEdit(stored) ? "Edit discarded. The original keeps running as it was." : `Deleted from ${repo}.`, { action: { label: "Undo", act: "ruleundo", id } });
 }
 
 /**

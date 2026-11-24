@@ -21,8 +21,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`, whose banner
-  for rules your coding agent added opens Created by you with the sheet of the one that caught the most, and whose
-  banner for rules someone else wrote leaves out edited copies, which their original's sheet tells of; `pack` for a
+  for the rules your coding agent added and the edits it made opens Created by you with the sheet of the next one
+  waiting, the one that caught the most first, and whose banner for rules someone else wrote leaves both out; `pack` for a
   pack page and Created by you; `packs` for the catalog, which opens on cards, lists the packs Rerail suggests for the
   repository first, each with why, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`access`, `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
@@ -34,10 +34,11 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `render/` holds what several views or the sheet share: a pack page's rule table (Rule · Enforcement · Violations ·
   On/off, as Overview's Most violations logged; "Edited" on a rule a coding agent edited) and its controls (`rules.js`,
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
-  state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`; for a rule a coding
-  agent edited, a notice that the edit waits for approval, when it was made, which parts changed and Review the edit,
-  which opens the copy, with ✕: `rule-edits.js` finds the edited copy that waits for approval, which parts it changes,
-  and whether the notice was dismissed, per edit and on this computer, as Overview's banner for a newer Rerail is), a
+  state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`; a waiting rule
+  a coding agent added or edited says where it stands among what waits, with Approve and a quiet Delete rule or
+  Discard edit, and once approved offers the next; for a rule a coding agent edited, a notice that an edit of it waits
+  and Review the edit, which opens the copy: `rule-edits.js` finds the edited copy that waits and which parts it
+  changes, and `../approval-queue.js` orders what waits), a
   rule pack in the
   sheet (`pack-panel.js`: why Rerail suggested it, and until it is added its rules under Start on and Start off), the
   session timeline (`timeline.js`), and a command to copy (`command.js`).

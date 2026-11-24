@@ -1,7 +1,7 @@
 /**
  * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Enforcement · Violations · On/off, then one row per
  * rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off. A rule a
- * coding agent edited reads "Edited" until its sheet's notice is dismissed (`rule-edits.js`).
+ * coding agent edited reads "Edited" until the edit is approved or discarded (`rule-edits.js`).
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
@@ -79,7 +79,7 @@ function updateRow(row, stored) {
   setAttr(r.sw, "aria-checked", String(stored.enabled));
   setAttr(r.sw, "aria-label", `Turn ${title} ${stored.enabled ? "off" : "on"}`);
   setAttr(r.internal, "hidden", !isInternalTesting(stored));
-  // A coding agent's edit waiting as a copy, until its notice on the sheet is dismissed.
+  // A coding agent's edit waiting as a copy, until it is approved or discarded.
   setAttr(r.edited, "hidden", pendingEditOf(stored) === null);
   // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));

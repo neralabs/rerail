@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { awaitingApproval, awaitingYourApproval } from "../../ui/derive.js";
+import { awaitingAgentApproval, awaitingApproval, awaitingYourApproval, isWaitingEdit } from "../../ui/derive.js";
 import { toStoredRules } from "../../ui/poll.js";
 import { data } from "../../ui/state.js";
-import { firstToReview, othersLine, othersToApprove, yourRulesToApprove } from "../../ui/views/overview.js";
+import { firstToReview, othersLine, othersToApprove, waitingForYouLine, waitingForYouTitle, yourRulesToApprove } from "../../ui/views/overview.js";
 import { approveLabel } from "../../ui/render/rule-sheet-model.js";
 
 const subject = (kind: string) => ({ kind, id: "x", digest: "sha256:0" });
@@ -32,6 +32,18 @@ describe("rules waiting for your approval", () => {
 
   it("leave out your edited copy of a rule Rerail ships, whose approval turns the original off", () => {
     expect(awaitingYourApproval(rule("user", { approved: false, subject: subject("rule") }, "typescript-eslint-no-explicit-any"))).toBe(false);
+  });
+
+  it("count that edited copy as an edit that waits, asked for with the rules your coding agent added", () => {
+    const copy = rule("user", { approved: false, subject: subject("rule") }, "typescript-eslint-no-explicit-any");
+    const approved = rule("user", { approved: true, subject: subject("rule") }, "typescript-eslint-no-explicit-any");
+
+    expect(isWaitingEdit(copy)).toBe(true);
+    expect(awaitingAgentApproval(copy)).toBe(true);
+    expect(isWaitingEdit(approved)).toBe(false);
+    expect(awaitingAgentApproval(rule("user", { approved: false, subject: subject("rule") }))).toBe(true);
+    // What someone else wrote keeps its own banner.
+    expect(awaitingAgentApproval(rule("pack", { approved: false, subject: subject("pack") }))).toBe(false);
   });
 
   it("read which rule a copy was made from off the rules answer", () => {
@@ -70,7 +82,7 @@ describe("Overview's banner for rules someone else wrote", () => {
     data.activityAll = {};
   });
 
-  it("leaves out edited copies, which their original's sheet tells of, and rules your coding agent added", () => {
+  it("leaves out the rules your coding agent added and the edits it made, which have their own banner", () => {
     data.loaded = true;
     data.rules = toStoredRules([
       waiting("storefront-no-legacy-client", worktree, "No legacy API client"),
@@ -103,7 +115,24 @@ describe("Overview's banner for rules someone else wrote", () => {
   });
 });
 
-describe("Review in Created by you", () => {
+describe("Overview's banner for what your coding agent added and edited", () => {
+  it("says how many were added or edited, and counts both when both wait", () => {
+    expect(waitingForYouTitle(1, 0)).toBe("Your coding agent added a rule. It’s on Log only until you approve it.");
+    expect(waitingForYouTitle(3, 0)).toBe("Your coding agent added 3 rules. They’re on Log only until you approve them.");
+    expect(waitingForYouTitle(0, 1)).toBe("Your coding agent edited a rule. The edit is on Log only until you approve it.");
+    expect(waitingForYouTitle(0, 2)).toBe("Your coding agent edited 2 rules. The edits are on Log only until you approve them.");
+    expect(waitingForYouTitle(3, 1)).toBe("4 rules wait for your approval: 3 added, 1 edited. They’re on Log only until you approve them.");
+  });
+
+  it("says an edited rule's original keeps running, and that Review opens the next one waiting", () => {
+    expect(waitingForYouLine(1, 0)).toBe("Open it to see what it checks and what it tells the coding agent, then approve it on its page.");
+    expect(waitingForYouLine(0, 1)).toBe("The original rule keeps running until then. Open it to see what it checks and what it tells the coding agent, then approve it on its page.");
+    expect(waitingForYouLine(3, 0)).toBe("Review opens the next one waiting. Each is approved on its own page.");
+    expect(waitingForYouLine(3, 1)).toBe("An edited rule’s original keeps running until then. Review opens the next one waiting. Each is approved on its own page.");
+  });
+});
+
+describe("Review next rule", () => {
   afterEach(() => {
     data.loaded = false;
     data.rules = new Map();
@@ -118,6 +147,16 @@ describe("Review in Created by you", () => {
     expect(firstToReview(yourRulesToApprove())?.rule.id).toBe("a-rule");
     data.activityAll = { "a-rule": activity(1), "b-rule": activity(7), "c-rule": activity(3) } as never;
     expect(firstToReview(yourRulesToApprove())?.rule.id).toBe("b-rule");
+  });
+
+  it("opens an edit that waits too, in its turn", () => {
+    data.loaded = true;
+    data.rules = toStoredRules([waiting("a-rule", {}, "Alpha"), waiting("no-console-copy", { copiedFromRuleId: "no-console" }, "No console")]);
+    const activity = (distinctViolations: number) => ({ measured: true, distinctViolations, loggedViolations: distinctViolations, rerails: 0, sessions: 0, lastSeenAt: null, audits: 1 });
+
+    expect(yourRulesToApprove().map(stored => stored.rule.id)).toEqual(["a-rule", "no-console-copy"]);
+    data.activityAll = { "no-console-copy": activity(2) } as never;
+    expect(firstToReview(yourRulesToApprove())?.rule.id).toBe("no-console-copy");
   });
 });
 

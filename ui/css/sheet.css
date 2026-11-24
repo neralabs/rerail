@@ -50,11 +50,22 @@
 .pask.sees-edit{margin-top:0;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:16px 18px}
 /* A notice at the top of a rule's sheet (not running, waits for approval, edited) keeps a gap above "On a violation". */
 .pnotice > .welcome{margin-bottom:12px}
-/* A rule a coding agent edited: a neutral notice with a small pencil, Review the edit and ✕. */
-.welcome.edited > .ico{margin-top:2px;flex:none}
-.welcome.edited .editbody{flex:1;min-width:0}
-.welcome.edited .editbody > b + p{margin-top:8px}
-.welcome.edited > .x{margin:-4px -6px 0 0}
+/* A notice's title has room under it before its text. */
+.pnotice > .welcome b + p{margin-top:8px}
+/* A waiting rule a coding agent added or edited: where it stands among what waits has the first line to itself, in line
+ * with the text, so the icon sits on the title's line. */
+.welcome.queued{flex-wrap:wrap;row-gap:4px}
+.welcome.queued > .queuepos{flex:0 0 100%;padding-left:34px;font-size:12px;font-weight:500;color:var(--warning-foreground)}
+.welcome.queued > div{flex:1;min-width:0}
+.welcome.queued > .ico{margin-top:-2px}
+/* Beside Approve, the quiet way to say no (Discard edit, Delete rule). */
+.welcome .btn.ghost.discard{color:var(--foreground)}
+.welcome .btn.ghost.discard:hover{background:var(--subtle)}
+/* A rule approved in this visit: a calm green box, the only notice here with ✕. */
+.welcome.approved{background:var(--success-subtle)}
+.welcome.approved > .ico{color:var(--success-foreground);margin-top:-2px}
+.welcome.approved > div{flex:1;min-width:0}
+.welcome.approved > .x{margin:-5px -6px 0 0}
 .enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--sheet-inset)}
 .enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground)}
 /* "On a violation" with the rule's enforcement tag at the right of the same line; what it means, and how to change it,

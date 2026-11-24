@@ -5,9 +5,10 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
 import { ago, andList, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { awaitingApproval, awaitingYourApproval, isEditedCopy, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
+import { awaitingApproval, awaitingAgentApproval, isFromPack, isLog, isRunning, isWaitingEdit, worktreeLeftOut } from "../derive.js";
 import { data, ui, ALL_TIME, activityAllOf, allFires, fires, isSetUp, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { newerRelease } from "../settings-model.js";
+import { approvalQueue } from "../approval-queue.js";
 import { ensureTitle } from "../poll.js";
 import { go, invalidate, openRule } from "../shell.js";
 import { parseRoute } from "../routes.js";
@@ -137,30 +138,50 @@ function renderLeftOut(root) {
     h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
 }
 
-/** The rules created by you that wait for your approval, by title: the ones `/rerail-create` added in Log. */
-export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(awaitingYourApproval) : [])
-  .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }) || a.rule.id.localeCompare(b.rule.id));
+/**
+ * The rules your coding agent wrote that wait for your approval, in the order they are reviewed: the ones it added
+ * (`/rerail-create` adds the rules it suggests this way) and the edits it made, the one that caught the most first.
+ */
+export const yourRulesToApprove = approvalQueue;
 
-/** Of the rules waiting for your approval, the one Review in Created by you opens: the one that caught the most. */
+/** Of the rules waiting for your approval, the one the banner's button opens: the one that caught the most. */
 export const firstToReview = rules => [...rules].sort((a, b) => allFires(b.rule.id) - allFires(a.rule.id))[0];
 
+/** The banner's title, by what waits: `added` rules your coding agent added and `edited` edits it made. */
+export function waitingForYouTitle(added, edited) {
+  const n = added + edited;
+  if (edited === 0) return n === 1 ? "Your coding agent added a rule. It’s on Log only until you approve it."
+    : `Your coding agent added ${fmt(n)} rules. They’re on Log only until you approve them.`;
+  if (added === 0) return n === 1 ? "Your coding agent edited a rule. The edit is on Log only until you approve it."
+    : `Your coding agent edited ${fmt(n)} rules. The edits are on Log only until you approve them.`;
+  return `${fmt(n)} rules wait for your approval: ${fmt(added)} added, ${fmt(edited)} edited. They’re on Log only until you approve them.`;
+}
+
+/** The banner's last sentences: that an edited rule's original keeps running, and where each is read and approved. */
+export function waitingForYouLine(added, edited) {
+  const one = added + edited === 1;
+  return `${edited === 0 ? "" : `${one ? "The original rule keeps" : "An edited rule’s original keeps"} running until then. `}${one
+    ? "Open it to see what it checks and what it tells the coding agent, then approve it on its page."
+    : "Review opens the next one waiting. Each is approved on its own page."}`;
+}
+
 /**
- * The rules your coding agent added that wait for your approval (`/rerail-create` adds the rules it suggests this way):
- * how many, what they caught in Log that the agent was not told, and one button to Created by you, with the sheet of the
- * one that caught the most open, where each is read in full before it is approved. Not dismissible: a rule left here
- * keeps running in Log.
+ * The rules your coding agent added and the edits it made that wait for your approval, in one banner: how many of each,
+ * what they caught in Log that the agent was not told, and one button, which opens Created by you with the sheet of the
+ * next one waiting, where each is read in full before it is approved. Not dismissible: a rule left here keeps running
+ * in Log, and an edit left here leaves its original running.
  */
 function renderYours(root) {
   const rules = yourRulesToApprove(), n = rules.length, one = n === 1;
+  const edited = rules.filter(isWaitingEdit).length, added = n - edited;
   const caught = rules.reduce((sum, stored) => sum + allFires(stored.rule.id), 0);
   const first = n === 0 ? null : firstToReview(rules).rule.id;
-  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught, first]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, pendingIcon(), h("div", null,
-    h("b", null, one ? "Your coding agent added a rule. It’s on Log only until you approve it."
-      : `Your coding agent added ${fmt(n)} rules. They’re on Log only until you approve them.`),
+  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), edited, caught, first]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, pendingIcon(), h("div", null,
+    h("b", null, waitingForYouTitle(added, edited)),
     h("p", null, caught === 0 ? "Nothing caught in Log yet. "
       : `${one ? "It" : "Together they"} caught ${fmt(caught)} ${plural(caught, "violation")} in Log, which your coding agent wasn’t told about. `,
-      `Open ${one ? "it" : "each one"} in Created by you to see what it checks and what it tells the coding agent, then approve it on its page.`),
-    h("p.acts", null, h("button.btn.sm", { "data-act": "reviewcreated", "data-i": first }, "Review in Created by you"))))));
+      waitingForYouLine(added, edited)),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "reviewcreated", "data-i": first }, one ? "Review rule" : "Review next rule"))))));
 }
 
 /** A waiting rule's button: its title, or "Review rule" for one with no title of its own and no pack to take one from. */
@@ -176,10 +197,10 @@ function approvalItem(stored) {
 }
 
 /**
- * Whether a waiting rule belongs in the banner for what someone else wrote: not one your coding agent added, which has
- * its own banner, nor an edited copy, which its original's sheet tells of (`render/rule-edits.js`).
+ * Whether a waiting rule belongs in the banner for what someone else wrote: not one your coding agent added or edited,
+ * which have their own banner.
  */
-const waitsForOthers = stored => awaitingApproval(stored) && !awaitingYourApproval(stored) && !isEditedCopy(stored);
+const waitsForOthers = stored => awaitingApproval(stored) && !awaitingAgentApproval(stored);
 
 /** The rules and packs here that someone else wrote and that wait for approval, one item each. */
 export function othersToApprove() {
@@ -448,6 +469,6 @@ function renderBody({ ruleCount, sessionsEver }, sources, repo) {
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
   dismissupdate: () => { dismissUpdate(); invalidate(); },
-  /** Review in Created by you: Created by you, with the sheet of the rule `id` open. */
+  /** Review next rule: Created by you, where rules a coding agent added and its edits are listed, with the sheet of the rule `id` open. */
   reviewcreated: id => { go(parseRoute("created")); openRule(id); },
 };

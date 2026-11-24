@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ASK, ASK_OPEN, LOG_NOTE, agentSeesHint, agentSeesPrompt, askHint, askPrompt, canDelete, deleteConsequences, fmtDay, libraryAttachments, splitPath } from "../../ui/render/rule-sheet-model.js";
 import { createSuggestions } from "../../ui/views/create.js";
 import { toStoredRules } from "../../ui/poll.js";
 import { data } from "../../ui/state.js";
-import { EDITED_TIP, EDIT_TITLE, changedParts, dismissEdit, editDismissed, editedLine, pendingEditOf } from "../../ui/render/rule-edits.js";
+import { EDITED_TIP, EDIT_TITLE, changedParts, editedLine, pendingEditOf } from "../../ui/render/rule-edits.js";
+import { approvalQueue, dismissApproved, noteWaiting, queuePosition, wasShownWaiting } from "../../ui/approval-queue.js";
 
 const RULE = { id: "lib:no-raw-fetch", title: "No raw fetch", scope: "src/**/*.ts", mode: "Steer" };
 
@@ -160,20 +161,11 @@ const copyOf = (original: string, digest: string, rule: Fields = {}, fields: Fie
 const loadRules = (...entries: ReturnType<typeof ruleEntry>[]) => { data.rules = toStoredRules(entries); };
 const ruleById = (id: string) => data.rules.get(id)!;
 
-/** A computer's `localStorage`, empty. */
-const storage = () => {
-  const saved = new Map<string, string>();
-  return { saved, getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, value); } };
-};
-
 describe("a rule a coding agent edited", () => {
-  // A dismissal is also kept for the module's life (for when storage is blocked), and nothing here resets it, so each
-  // test uses digests of its own.
-  beforeEach(() => { vi.stubGlobal("localStorage", storage()); });
-
   afterEach(() => {
-    vi.unstubAllGlobals();
+    data.loaded = false;
     data.rules = new Map();
+    data.activityAll = {};
   });
 
   describe("its sheet's notice and its row's Edited", () => {
@@ -211,10 +203,20 @@ describe("a rule a coding agent edited", () => {
       expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual(["Description", "What it checks"]);
     });
 
-    it("does not count the mode as a change: Log or Steer is a setting, changed without a copy", () => {
-      // The copy runs in Log until approved, and its document may say another mode.
-      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:d", { mode: "log" }));
+    it("counts a change of mode, which a coding agent makes through the rule's document, as On a violation", () => {
+      // A copy that waits runs in Log whatever it is set to: one set to steer says so in its mode's source.
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:d"));
       expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual([]);
+
+      // Steer to Log: the copy's own document says Log, so no approval holds its mode.
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:d", { mode: "log" }, { modeSource: { by: "rule-default" } }));
+      expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual(["On a violation"]);
+
+      // Log to Steer, with new words: the original is on Log, the copy is held on Log until approved.
+      loadRules(ruleEntry("no-debugger", { mode: "log" }), copyOf("no-debugger", "sha256:d", {
+        clauses: [{ match: { kind: "debugger_statement" }, violation: { message: "Take the debugger out." } }],
+      }));
+      expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual(["On a violation", "What the agent sees"]);
     });
 
     it("says the edit waits for approval and when it was made, and the row's hover says so too", () => {
@@ -222,46 +224,52 @@ describe("a rule a coding agent edited", () => {
       expect(editedLine({ addedAt: Date.now() })).toBe("Edited today. This rule keeps running as it was until the edit is approved.");
       expect(editedLine({ addedAt: Date.now() - 3 * DAY })).toBe("Edited 3 days ago. This rule keeps running as it was until the edit is approved.");
       expect(editedLine({ addedAt: null })).toBe("This rule keeps running as it was until the edit is approved.");
-      expect(EDITED_TIP).toBe("An edit of this rule waits for approval. Open it to see what changed.");
+      expect(EDITED_TIP).toBe("An edit of this rule waits for approval. Open it to review the edit.");
     });
   });
 
-  describe("dismissing the notice", () => {
-    it("hides the notice and the row's Edited for that edit, and is remembered on this computer", () => {
-      const local = storage();
-      vi.stubGlobal("localStorage", local);
-      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:e", { description: "No debugger, ever." }));
+  describe("waiting with the rules your coding agent added", () => {
+    const added = (id: string, title: string) => ruleEntry(id, {
+      source: { kind: "library_rule", id, packId: null }, onSource: { by: "rule-default" }, modeSource: { by: "awaiting-approval" }, mode: "log",
+      approval: { subject: { kind: "rule", id, digest: `sha256:${id}` }, approved: false },
+    }, { title });
+    const activity = (distinctViolations: number) => ({ measured: true, distinctViolations, loggedViolations: distinctViolations, rerails: 0, sessions: 0, lastSeenAt: null, audits: 1 });
 
-      dismissEdit("sha256:e");
+    it("is in one queue with them, the one that caught the most first, then by title", () => {
+      data.loaded = true;
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:l", { title: "No debugger" }), added("b-rule", "Beta"), added("a-rule", "Alpha"));
+      expect(approvalQueue().map(stored => stored.rule.id)).toEqual(["a-rule", "b-rule", "no-debugger-copy"]);
 
-      expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
-      expect(local.saved.get("rerail-edit-dismissed:sha256:e")).toBe("1");
+      data.activityAll = { "no-debugger-copy": activity(2), "b-rule": activity(5) } as never;
+      expect(approvalQueue().map(stored => stored.rule.id)).toEqual(["b-rule", "no-debugger-copy", "a-rule"]);
     });
 
-    it("is per edit: a later edit of the same rule shows again", () => {
-      dismissEdit("sha256:f");
-      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:g", { description: "No debugger in src either." }));
+    it("says where a rule stands among what waits, and nothing alone or outside it", () => {
+      data.loaded = true;
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:m"), added("a-rule", "Alpha"));
+      const queue = approvalQueue();
 
-      expect(pendingEditOf(ruleById("no-debugger"))?.approval?.subject.digest).toBe("sha256:g");
+      expect(queuePosition(queue, "a-rule")).toBe("1 of 2 waiting");
+      expect(queuePosition(queue, "no-debugger-copy")).toBe("2 of 2 waiting");
+      expect(queuePosition(queue, "no-debugger")).toBeNull();
+      expect(queuePosition(queue.slice(0, 1), "a-rule")).toBeNull();
     });
 
-    it("reads a dismissal saved in an earlier visit", () => {
-      const local = storage();
-      local.setItem("rerail-edit-dismissed:sha256:h", "1");
-      vi.stubGlobal("localStorage", local);
-
-      expect(editDismissed("sha256:h")).toBe(true);
-      expect(editDismissed("sha256:i")).toBe(false);
+    it("stays pending until it is approved: nothing dismisses it", () => {
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:n", { description: "No debugger, ever." }));
+      expect(pendingEditOf(ruleById("no-debugger"))?.approval?.subject.digest).toBe("sha256:n");
     });
+  });
 
-    it("holds for the visit when storage is blocked", () => {
-      vi.stubGlobal("localStorage", { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } });
-      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:j", { description: "No debugger, ever." }));
-      expect(pendingEditOf(ruleById("no-debugger"))).not.toBeNull();
+  describe("a rule approved in this visit", () => {
+    it("is one its sheet showed waiting, until its Approved is dismissed", () => {
+      expect(wasShownWaiting("a-rule")).toBe(false);
 
-      dismissEdit("sha256:j");
+      noteWaiting("a-rule");
+      expect(wasShownWaiting("a-rule")).toBe(true);
 
-      expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
+      dismissApproved("a-rule");
+      expect(wasShownWaiting("a-rule")).toBe(false);
     });
   });
 });

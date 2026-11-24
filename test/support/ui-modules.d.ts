@@ -130,6 +130,10 @@ declare module "*/ui/derive.js" {
   export function awaitingApproval(item: { approval?: { approved: boolean } | null }): boolean;
   /** Whether a rule waits for approval (it runs in Log) and is one created by you, from the library, not a pack's or a worktree's, nor an edited copy of another rule. */
   export function awaitingYourApproval(stored: { origin: string; approval?: { approved: boolean; subject: { kind: string } } | null; copiedFromRuleId?: string | null }): boolean;
+  /** Whether a rule is an edited copy that waits for approval. */
+  export function isWaitingEdit(stored: { origin: string; approval?: { approved: boolean; subject: { kind: string } } | null; copiedFromRuleId?: string | null }): boolean;
+  /** Whether a rule waits for approval and a coding agent added or edited it. */
+  export function awaitingAgentApproval(stored: { origin: string; approval?: { approved: boolean; subject: { kind: string } } | null; copiedFromRuleId?: string | null }): boolean;
   export function publisherLabel(pack: { publisher: string }): string;
   /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
   export function worktreeLeftOut(skipped: ReadonlyArray<{ path: string; reason: string }>, checkoutPath: string | null | undefined): Array<{ file: string; reason: string }>;
@@ -353,19 +357,30 @@ declare module "*/ui/views/overview.js" {
   export function othersToApprove(): ApprovalItem[];
   /** That banner's second line, for `n` items. */
   export function othersLine(n: number): string;
-  /** The rules created by you that wait for your approval, by title. */
+  /** The rules your coding agent added and the edits it made that wait for your approval, in the order they are reviewed. */
   export function yourRulesToApprove(): Array<{ rule: { id: string } }>;
-  /** Of `rules`, the one Review in Created by you opens: the one that caught the most since install. */
+  /** The banner's title for `added` rules your coding agent added and `edited` edits it made. */
+  export function waitingForYouTitle(added: number, edited: number): string;
+  /** The banner's last sentences: that an edited rule's original keeps running, and where each is approved. */
+  export function waitingForYouLine(added: number, edited: number): string;
+  /** Of `rules`, the one the banner's button opens: the one that caught the most since install. */
   export function firstToReview<Rule extends { rule: { id: string } }>(rules: readonly Rule[]): Rule | undefined;
+}
+
+declare module "*/ui/approval-queue.js" {
+  /** The rules a coding agent added or edited that wait for approval, in the order they are reviewed. */
+  export function approvalQueue(): Array<{ rule: { id: string } }>;
+  export function queuePosition(queue: ReadonlyArray<{ rule: { id: string } }>, id: string): string | null;
+  export function noteWaiting(id: string): void;
+  export function wasShownWaiting(id: string): boolean;
+  export function dismissApproved(id: string): void;
 }
 
 declare module "*/ui/render/rule-edits.js" {
   /** A stored rule as these read it; only the fields the tests read. */
   interface Edited { rule: { id: string }; addedAt?: number | null; approval?: { approved: boolean; subject: { kind: string; id: string; digest: string } } | null }
-  /** The waiting copy of `stored` whose notice was not dismissed, else `null`. */
+  /** The waiting copy of `stored`, else `null`. */
   export function pendingEditOf(stored: object): Edited | null;
-  export function editDismissed(digest: string): boolean;
-  export function dismissEdit(digest: string): void;
   /** The sheet's sections whose content the edit changed, in the sheet's order. */
   export function changedParts(was: object, now: object): string[];
   export const EDIT_TITLE: string;
