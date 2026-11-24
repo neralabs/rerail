@@ -3192,7 +3192,7 @@ impl<'a> Run<'a, '_> {
             let mut lists: [std::vec::IntoIter<Vec<(i64, i64)>>; 4] = [probes.into_iter(), removes.into_iter(), adds.into_iter(), rechecks.into_iter()];
             let mut work: Vec<(PlanKey, f64)> = Vec::new();
             let mut probe = 0;
-            let mut named: Vec<(f64, &str)> = Vec::new();
+            let mut named: Vec<(f64, String)> = Vec::new();
             for (i, (kind, key)) in mode_keys.iter().enumerate() {
                 let Some(line) = lists[*kind as usize].next() else { continue };
                 let mut w = work_of(&line);
@@ -3201,7 +3201,8 @@ impl<'a> Run<'a, '_> {
                     probe += 1;
                 }
                 if let Some(name) = mode_names.get(i) {
-                    named.push((w, name));
+                    // Its steps' rows in and out, for the trace.
+                    named.push((w, format!("{name} [steps {}]", line.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","))));
                 }
                 match work.iter_mut().find(|(k, _)| k == key) {
                     Some((_, at)) => *at += w,
@@ -6912,6 +6913,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // The maintained run's driver (decision 0117 step 3).
     let mut maintaining = hooks.maintain.take();
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
+    if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+        eprintln!("RERAIL_MODE_TRACE *: a run of {} strata, {}", sccs.len(), if maintaining.is_some() { "maintained" } else { "not maintained: every stratum derived" });
+    }
     // The reach by kind and key (decision 0563 B); `RERAIL_REACH_BY_KEY=off` reaches by relation alone, to compare.
     let by_key = std::env::var("RERAIL_REACH_BY_KEY").map_or(true, |x| x != "off");
     let live = std::cell::RefCell::new(NetDeltas::new());
@@ -7433,6 +7437,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         // Not kept: derived from its reads, as they were, so its rows are as they were.
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
+                        if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                            eprintln!("RERAIL_MODE_TRACE {}: {} (its reads unchanged)", stratum_key(scc), crate::code_rule_dsl::logic::plan::again::NOT_KEPT);
+                        }
                         outcome.again.push((stratum_key(scc), crate::code_rule_dsl::logic::plan::again::NOT_KEPT));
                         continue;
                     }

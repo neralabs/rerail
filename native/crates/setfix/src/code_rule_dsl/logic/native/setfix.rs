@@ -655,6 +655,18 @@ enum Origin {
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vector<i64> },
 }
 impl Rel {
+    /// Marks row `id` dead (`dead`), whether it was live. Its dead rows' bits are placed in its home's room when first
+    /// made, beside its rows: at its freeze they are handed to the block relation that holds its last rows
+    /// (`in_block_dead`, decision 0478 step 5d), which they can be only from there. Made in the run's open block
+    /// before its rows had a home, they stayed where they were, and its kills delta read a second set of words.
+    fn kill_row(&mut self, id: u32) -> bool {
+        if self.dead.is_empty()
+            && let Some(home) = self.data.home()
+        {
+            self.dead = crate::code_rule_dsl::facts::rows::vector_in(Some(&home), 0);
+        }
+        kill(&mut self.dead, id)
+    }
     pub fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
@@ -753,7 +765,7 @@ impl Rel {
                 }
             }
             if let Some(id) = held
-                && kill(&mut self.dead, id)
+                && self.kill_row(id)
             {
                 self.ndead += 1;
             }
@@ -2048,7 +2060,7 @@ impl MaintMode {
                 continue;
             }
             let rel = &mut store.rels[r];
-            if kill(&mut rel.dead, id) {
+            if rel.kill_row(id) {
                 rel.ndead += 1;
                 self.counts[1] += 1;
             }
@@ -2140,7 +2152,7 @@ impl MaintMode {
         }
         for &(head, id) in &kills {
             let rel = &mut store.rels[head];
-            if kill(&mut rel.dead, id) {
+            if rel.kill_row(id) {
                 rel.ndead += 1;
                 self.counts[1] += 1;
             }
@@ -6663,7 +6675,7 @@ impl InRel {
             }
         }
         for (id, &kept) in found.iter().enumerate() {
-            if !kept && kill(&mut rel.dead, id as u32) {
+            if !kept && rel.kill_row(id as u32) {
                 rel.ndead += 1;
             }
         }
@@ -7090,7 +7102,9 @@ impl InRel {
     /// plain index (a range is read where its order happens to hold `c` next, else the comparisons filter).
     fn index_then(&self, cols: &[usize], c: usize) -> Arc<Csr> {
         let plain = self.index(cols);
-        if plain.ordered.is_none() || cols.contains(&c) || c >= 56 {
+        // No key: an order of the range's column alone, of a derived input's own rows (a view's are its source's).
+        let keyless = cols.is_empty() && self.view.is_none();
+        if (plain.ordered.is_none() && !keyless) || cols.contains(&c) || c >= 56 {
             return plain;
         }
         let mask = cols.iter().fold(0u64, |m, &x| m | 1 << x) | (c as u64 + 1) << 56;
@@ -7754,7 +7768,7 @@ impl JoinRule {
                     let ix = rel.index(&ix.cols);
                     // A ranged probe reads the order on its key then the range's column, as `join_rule` gives it.
                     Some(Edit::Index(i, match r.as_ref() {
-                        Some(r) if ix.ordered.is_some() && ix.then.is_none() => rel.index_then(&ix.cols, r.col),
+                        Some(r) if (ix.ordered.is_some() || ix.cols.is_empty()) && ix.then.is_none() => rel.index_then(&ix.cols, r.col),
                         _ => ix,
                     }))
                 }
@@ -8349,7 +8363,7 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
     let ordered: Vec<Edit> = s.steps.iter().zip(&plan.ranges).enumerate().filter_map(|(i, (st, r))| match (st, r) {
         (Step::Atom { src: Src::In(rel, ix), .. }, Some(r)) => {
             let (rel, ix) = (s.bound(rel), s.bound(ix));
-            (ix.ordered.is_some() && ix.then.is_none()).then(|| Edit::Index(i, rel.index_then(&ix.cols, r.col)))
+            ((ix.ordered.is_some() || ix.cols.is_empty()) && ix.then.is_none()).then(|| Edit::Index(i, rel.index_then(&ix.cols, r.col)))
         }
         _ => None,
     }).collect();
@@ -8760,7 +8774,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0)
                     | binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c)
                     | j.fused_at(i).map_or(0, |f| f.gather.iter().fold(0u64, |m, &(_, c)| m | 1 << c));
-                let within: Within = j.ranges[i].map(|r| (r.col, r.lo.map(|(k, eq)| (val(slots, k), eq)), r.hi.map(|(k, eq)| (val(slots, k), eq))));
+                let within: Within = j.ranges[i].and_then(|r| r.within(slots));
                 // The step's probe state, held apart from `cx` while the step runs: its probe is read into the join as
                 // found (`Cands::Stream`), inside which the steps after it use `cx`. Put back at the step's end.
                 let mut last = std::mem::take(&mut cx.last[i]);
@@ -9232,7 +9246,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let mut hints = [0; runs::HINTS];
         let (rows, cands) = candidates_of(j, src, store, &mut hints);
         let Cands::Range(lo, hi) = cands else { return false };
-        let within: Within = j.ranges[0].map(|r| (r.col, r.lo.map(|(k, eq)| (val(slots, k), eq)), r.hi.map(|(k, eq)| (val(slots, k), eq))));
+        let within: Within = j.ranges[0].and_then(|r| r.within(slots));
         // A range of the scan's column read alone (`scan_within`): its rows in morsels where they are a range, else
         // walked as the one walk reads them.
         let (rows, cands) = self::cands::scan_within(rows, lo, hi, within);
@@ -9574,7 +9588,26 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 type Within = Option<(usize, runs::End, runs::End)>;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Ranged { pub col: usize, pub lo: Option<(Key, bool)>, pub hi: Option<(Key, bool)> }
+pub struct Ranged {
+    pub col: usize,
+    pub lo: Option<(Key, bool)>,
+    pub hi: Option<(Key, bool)>,
+    /// A document's nodes: both ends are its slot `d`, read as `d << 32` (in) and `(d + 1) << 32` (out), the ids of
+    /// its nodes (decision 0083 §3), from a later `DocOf` test of the column against `d` (`ranges_from`).
+    pub doc: bool,
+}
+
+impl Ranged {
+    /// Its ends' values, read from `slots` (`Within`).
+    fn within(&self, slots: &[i64]) -> Within {
+        let val = |k: Key| match k { Key::Slot(s) => slots[s], Key::Const(c) => c };
+        if self.doc {
+            let d = self.lo.map(|(k, _)| val(k))?;
+            return Some((self.col, Some((d << 32, true)), Some(((d + 1) << 32, false))));
+        }
+        Some((self.col, self.lo.map(|(k, eq)| (val(k), eq)), self.hi.map(|(k, eq)| (val(k), eq))))
+    }
+}
 
 /// Per step, a positive probed atom's range (`Ranged`): `line($p, $l, _)` probed by `$p`, then `$l > $a, $l < $b`
 /// with `$a` and `$b` bound before it, reads only the rows of `$p` between them where an order of `line` holds `$l`
@@ -9594,6 +9627,18 @@ fn ranges_from(steps: &[Step], bound: &[usize]) -> Vec<Option<Ranged>> {
                 let known = |k: &Key| match *k { Key::Const(_) => true, Key::Slot(s) => before.contains(&s) };
                 let mut found: Option<Ranged> = None;
                 for later in &steps[i + 1..] {
+                    // `docof` of a column this atom binds, tested against a document bound before it: the column's
+                    // range is the document's nodes (`Ranged::doc`). A mode line's `docof($n, $d)`, `$d` bound, then
+                    // `qn($n, $q)`, read every node of `$d` to probe `qn` by each (433 of a move's 15 reach rows'
+                    // documents, for 50 of `qn`'s rows).
+                    if let Step::DocOf { out, n: Key::Slot(x), bind: false } = later
+                        && before.contains(out)
+                        && found.is_none()
+                        && let Some(&(col, _)) = binds.iter().find(|&&(_, s)| s == *x)
+                    {
+                        found = Some(Ranged { col, lo: Some((Key::Slot(*out), true)), hi: Some((Key::Slot(*out), false)), doc: true });
+                        continue;
+                    }
                     let Step::Lt { a, b, or_eq } = later else { continue };
                     // `a < b`: a bound slot below the column is its lower end, above it its upper end.
                     let (col, end, upper) = match (a, b) {
@@ -9601,8 +9646,8 @@ fn ranges_from(steps: &[Step], bound: &[usize]) -> Vec<Option<Ranged>> {
                         (y, Key::Slot(x)) if known(y) => match binds.iter().find(|&&(_, s)| s == *x) { Some(&(c, _)) => (c, *y, false), None => continue },
                         _ => continue,
                     };
-                    let r = found.get_or_insert(Ranged { col, lo: None, hi: None });
-                    if r.col != col { continue; }
+                    let r = found.get_or_insert(Ranged { col, lo: None, hi: None, doc: false });
+                    if r.col != col || r.doc { continue; }
                     let slot = if upper { &mut r.hi } else { &mut r.lo };
                     if slot.is_none() { *slot = Some((end, *or_eq)); }
                 }

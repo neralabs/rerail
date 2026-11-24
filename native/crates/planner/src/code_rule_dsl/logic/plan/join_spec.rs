@@ -452,13 +452,44 @@ impl<'a> Run<'a, '_> {
         let mut lines = Vec::new();
         // Per item, the plan step it was made for (`JoinSpec::from`).
         let mut from: Vector<u32> = rerail_blocks::vector::Vector::new();
+        // A maintain mode's `docof($x, $d)`, `$d` bound and `$x` not, put after the next atom, which binds `$x`: then a
+        // test of `$x`'s document, which the engine reads as a range of that atom's column (`setfix::Ranged::doc`, the
+        // document's nodes' ids, decision 0083 §3), so no node of the document is walked. Read first, it walked every
+        // node of each document to probe the atom by each: the move's lines led by `rr_cx_reach`'s 15 changed pairs
+        // read 433 nodes for 50 of `qn`'s rows (decision 0094 §8).
+        let mut doc_after: Option<(TermRef<'_>, Slot, usize)> = None;
         for (idx, s) in steps.iter().enumerate() {
+            // A `docof` put after the next atom that the next step did not take: no spec, not a lost step.
+            if doc_after.is_some_and(|(_, _, at)| at + 1 < idx) {
+                return None;
+            }
             // The items the step before made are its (a literal can make several: `$k = @sub(@strlen($d), 1)`).
             from.resize(lines.len(), idx.saturating_sub(1) as u32);
             match b.view(s.at) {
                 Lit::Atom(l) => {
                     if s.mode == Some(Mode::Range) {
                         return None;
+                    }
+                    if !self.mode_reads.is_empty()
+                        && doc_after.is_none()
+                        && !l.neg()
+                        && b.rel(l) == "docof"
+                        && !self.mode_reads.contains_key(&s.at)
+                        && let [x @ TermRef::Var(xv), TermRef::Var(d)] = b.args(s.at)[..]
+                        && !slots.bound(x)
+                        && slots.bound(TermRef::Var(d))
+                        && let Some(next) = steps.get(idx + 1)
+                        && next.mode.is_none()
+                        && !self.mode_reads.contains_key(&next.at)
+                        && let Lit::Atom(nl) = b.view(next.at)
+                        && !nl.neg()
+                        && !scc.contains(b.rel(nl))
+                        && (native_rels.contains(b.rel(nl)) || !(self.inputs.contains(b.rel(nl)) || self.model.view_src.contains_key(b.rel(nl))))
+                        && b.args(next.at).iter().any(|t| matches!(t, TermRef::Var(v) if *v == xv))
+                    {
+                        doc_after = Some((x, d, idx));
+                        crate::code_rule_dsl::logic::profile::decision("a maintain mode's `docof` read as a range of the next atom (decision 0094 §8)", || format!("{}: {}", b.rel(b.head()), b.rel(nl)));
+                        continue;
                     }
                     // `docof(n, d)` as it was (a removal join's read of a changed input, decision 0364), its node
                     // bound: the node's document is its id's (decision 0083 §3), so `d` is computed from it. Read as
@@ -482,6 +513,10 @@ impl<'a> Run<'a, '_> {
                         None => atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?,
                     };
                     lines.push(JoinItem::Atom { neg: l.neg(), src, args });
+                    if let Some((x, d, _)) = doc_after.take() {
+                        let n = t_tok(b, x, &mut slots)?;
+                        lines.push(JoinItem::DocOf { out: var_tok(d, &mut slots), n });
+                    }
                 }
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
                     if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.count() == 1 && xr.count() == 1 =>
@@ -707,6 +742,9 @@ impl<'a> Run<'a, '_> {
                 }
                 _ => return None,
             }
+        }
+        if doc_after.is_some() {
+            return None;
         }
         // Each item's plan step, the last one's after the loop; then the head's computed terms' (`JoinSpec::from`).
         from.resize(lines.len(), steps.len().saturating_sub(1) as u32);

@@ -423,6 +423,21 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
       - The test: cold 61,261, the edit in place 6,821, the move 24,658. The move is under half a cold run, and 3.6
         times the edit in place, past the test's 3: its heaviest lines are led by `rr_cx_reach`'s 15 changed rows and
         read the documents those pairs join, which an edit in place, changing no import, does not pay.
+    - **The test again, by its lines' rows (2026-11-24).** The trace now prints each heavy line's steps' rows in and
+      out, and each run of the test starts with a marker (`0094 §8 run: …`), so a run's lines are read apart.
+      - A mode line's `docof($n, $d)`, `$d` bound by `rr_cx_reach`'s pair and `$n` not, walked every node of the
+        document to probe the next atom by each: `pv`'s line read 433 nodes for 50 of `qn`'s rows. It is now put
+        after that atom, as a test of `$n`'s document, and the engine reads the atom's rows in the document's range
+        of ids, `[d << 32, (d + 1) << 32)`, in an order on that column alone (`setfix::Ranged::doc`,
+        `InRel::index_then` with no key): `pv` 523 → 105, `tsub` 562 → 144 twice, `rr_in_annotation_0_bv` 502 → 84,
+        `bknown` 300 → 104. A stratum's own relation (`bv`'s `qv`) is not read so yet.
+      - The sources phase's first run is not maintained: a stratum whose reads changed is derived whole. A path
+        added derived `sl_match` again, every path against every suffix (1,297). It now cuts each name at the
+        suffix lengths the registry has and looks the cut up (`sl_cut` 456 and `sl_match` 99).
+      - Cold 60,594, the edit in place 6,822, the move 21,994: 3.2 times the edit. The rest of the move's excess is
+        the import's: the callers' `pv` rows change with the moved name (24 gone and added, each probed into about
+        15 rules, and rechecked against each of `pv`'s), and the strata over imports (`run_import`, `ext_import`,
+        `open_sync`, `xknown`) are reached, which an edit in place does not reach.
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers

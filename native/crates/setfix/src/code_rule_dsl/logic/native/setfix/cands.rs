@@ -122,7 +122,18 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             let (rel, ix) = j.src_in(rel, ix);
             let settings = last.settings();
             if settings.noted && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
-            if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
+            if keys.is_empty() {
+                // A range of a column read alone, where its order is the range's column (`index_then`): the range's
+                // rows, two searches a run, none walked (a document's nodes, `Ranged::doc`).
+                if let Some((c, lo, hi)) = within
+                    && ix.then == Some(c)
+                    && let Some(index) = ix.runs(rel)
+                {
+                    let found = index.find_at(&rel.rows, rel.k, &[], None, hints).within(&rel.rows, rel.k, c, lo, hi);
+                    return (Rows::In(rel), Cands::Runs(found));
+                }
+                scan_within(Rows::In(rel), 0, rel.len() as u32, within)
+            }
             else if let Some(index) = ix.runs(rel) {
                 // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
                 // is checked): the key's values in the order's column order.

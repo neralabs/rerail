@@ -636,14 +636,15 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
 /// clause), and the reach indexes over the import graph are made again whenever it changes (decision 0119 §3), their
 /// readers maintained from their delta.
 ///
-/// It fails today (2026-11-24), at its first bar only: joins' work cold 61,261, the edit in place 6,821, the move
-/// 24,658 (3.6 times the edit, 0.40 of a cold run). It was 93,291 before the maintain mode priced its lines under
+/// It fails today (2026-11-24), at its first bar only: joins' work cold 60,594, the edit in place 6,822, the move
+/// 21,994 (3.2 times the edit, 0.36 of a cold run); 24,658 before a mode line's `docof` was read as a range of the
+/// atom after it (`setfix::Ranged::doc`) and the source languages' suffixes were looked up, not each tested. It was 93,291 before the maintain mode priced its lines under
 /// the floor (`Model::under_floor_line`) and sized a stratum's relations as kept (`kept_card`). The move derives
 /// nothing again but the two reach indexes, and maintains 145 strata; its heaviest lines are led by `rr_cx_reach`'s
 /// 15 changed rows and read the documents those pairs join (`pv`, `tsub`, `bv`: 500 to 560 rows each), which the
 /// edit in place, changing no import, does not pay.
 #[test]
-#[ignore = "0094 §8: the move costs 3.6 times the edit in place (24,658 against 6,821 rows of joins' work), past 3 (edit-cost, 0364 R4 at scale)"]
+#[ignore = "0094 §8: the move costs 3.2 times the edit in place (21,994 against 6,822 rows of joins' work), past 3 (edit-cost, 0364 R4 at scale)"]
 fn a_moved_definition_costs_about_itself() {
     let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_cx.rerail")).unwrap();
     let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";
@@ -657,15 +658,22 @@ fn a_moved_definition_costs_about_itself() {
     }
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("move", &program, &["call_target", "call_open", "type_of"], &refs);
+    // Each run's start, for a trace of its lines (`RERAIL_MODE_TRACE`) to be read run by run.
+    let start = |what: &str| eprintln!("0094 §8 run: {what}");
+    start("cold");
     let cold = s.run();
     s.write("pkg/helpers.py", &helpers.replace("    n = int(s)\n", "    n = int(s)\n    n = n + 0\n"));
+    start("edit");
     let edit = s.edit("a statement added to parse");
+    start("edit back");
     s.write("pkg/helpers.py", helpers);
     s.edit("the statement taken out again");
     let moved_def = "def parse(s):\n    n = int(s)\n    return n\n";
     s.write("pkg/_moved_0.py", moved_def);
     s.write("pkg/helpers.py", &helpers.replace(moved_def, "from pkg._moved_0 import parse\n"));
+    start("move");
     let moved = s.edit("parse moved to a module of its own");
+    start("end");
     let again = |r: &Ran| r.report.cross_again.iter().map(|(w, n)| (*w, *n)).collect::<BTreeMap<&str, usize>>();
     let report = format!(
         "joins' work: cold {}, edit in place {}, move {}; edit: again {:?}, maintained {:?}; move: again {:?}, maintained {:?}",
