@@ -1633,6 +1633,51 @@ Let(d, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Each dialect's run of a `.language typescript` policy reads the other dialects' files as text (decision 0337): a
+/// rule of a `.tsx` or `.js` file sees a `.ts` file's `doc` and source lines. Each file's findings are its own
+/// dialect's run's, once: by `test-rr`'s run, then by `run-rr`'s over the same files.
+#[test]
+fn a_dialects_run_reads_the_others_files_as_text() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrlanes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, r#".policy "contract:lanes" revision 1
+.language typescript
+.scope include "**/*"
+.violation SeesA(at: node) code "A" "sees a.ts"
+SeesA(n) :- kind(n, "program"), doc(d, "a.ts", _), src_line(d, 1, _).
+.violation Doc(at: span) code "D" "a document"
+Doc(@place(p, 1)) :- doc(_, p, _).
+.test lanes exactly
+    .fixture "a.ts" ```
+        export function useA() {}
+        ```
+    .fixture "b.tsx" ```
+        export const b = <p/>;
+        ```
+    .fixture "c.js" ```
+        export const c = 1;
+        ```
+    .expect A at "a.ts":1
+    .expect A at "b.tsx":1
+    .expect A at "c.js":1
+    .expect D at "a.ts":1
+    .expect D at "b.tsx":1
+    .expect D at "c.js":1
+.end
+"#).unwrap();
+    let tests = super::testing::tests(&file).unwrap();
+    let outcome = super::testing::run(&file, &tests[0], &dir.join("work")).unwrap();
+    assert!(outcome.passed(), "{outcome:?}");
+    let root = dir.join("work").join("root");
+    let report = crate::code_rule_dsl::tools::run_rr(&file, &root, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|r| (r["code"].as_str().unwrap(), r["path"].as_str().unwrap())).collect();
+    actual.sort();
+    assert_eq!(actual, [("A", "a.ts"), ("A", "b.tsx"), ("A", "c.js"), ("D", "a.ts"), ("D", "b.tsx"), ("D", "c.js")]);
+    assert_eq!(report["files"], 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A malformed row must not leak an earlier prefix of a policy input into rule execution.
 #[test]
 fn repository_inputs_report_missing_and_malformed_without_partial_rows() {

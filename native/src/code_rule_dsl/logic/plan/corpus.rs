@@ -3100,9 +3100,11 @@ fn run_observed(
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
             let renamed = package_root_modules(root, &files);
-            let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
-            // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
-            let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
+            let (of_label, text): (Vec<&String>, Vec<&String>) = files.iter().partition(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label));
+            // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders, a
+            // text document's too (a `.scope text` file, another dialect's: decision 0337), which phase 1 does not state.
+            let read: Vec<std::path::PathBuf> = of_label.iter().chain(&text).map(|p| root.join(p)).collect();
+            let digests = world::bytes_digests_held(&read, Some(&own_sources));
             let stated: Vec<(String, String, String, String)> = of_label
                 .into_iter()
                 .zip(digests)
@@ -3909,7 +3911,7 @@ fn run_observed(
         debug_assert!(phased.keys().all(|r| local_v.rel(r).is_none_or(|id| local_v.heads(id).next().is_none())), "an earlier phase's export the file-local part derives");
         strata.identities(options, &phased, &base_rows)
     };
-    let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
+    let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref(), label);
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
     // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
     // under those as well. Coarse: an export that changes misses every component, not only those that read the rows
@@ -10284,8 +10286,8 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
 
 /// The dialects a run of `program` reads, when its `.language` names a language of several (TypeScript's: `.ts`,
 /// `.tsx` and `.js` files): those with files under `root` in the program's scope, the named one first. A program is
-/// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own. Empty when the
-/// language has one dialect: the run reads it as before.
+/// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own, which reads the
+/// others' files as text (`lane_text_dialects`). Empty when the language has one dialect: the run reads it as before.
 pub fn run_dialects(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
     run_dialects_in(&|| corpus_files(root), prog, options)
 }
@@ -10310,6 +10312,8 @@ pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Pr
 /// every policy's scope is not parsed, and gives no facts.
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
 /// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
+/// A run of one dialect of a language of several (the `dialect` option) reads the others' files in scope as text too
+/// (`lane_text_dialects`).
 fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
     let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
     found.text.retain(text_glob);
@@ -10321,18 +10325,40 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
     found.text.sort();
     // A program of JSON policies (`.policy {…}`) and no `.scope`: their `scope`s (decision 0107).
     let doc_scopes = prog.doc_scopes.clone().or_else(|| json_scopes(&prog.policies));
-    if doc_scopes.is_none() {
-        return found;
+    if doc_scopes.is_some() {
+        let scopes = front::resolve_scopes(&doc_scopes, options);
+        let before = found.parsed();
+        for files in found.by_label.values_mut().chain([&mut found.text]) {
+            files.retain(|p| front::in_doc_scopes(&scopes, p));
+        }
+        crate::code_rule_dsl::logic::profile::decision("documents", || {
+            format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.parsed(), found.text.len())
+        });
     }
-    let scopes = front::resolve_scopes(&doc_scopes, options);
-    let before = found.parsed();
-    for files in found.by_label.values_mut().chain([&mut found.text]) {
-        files.retain(|p| front::in_doc_scopes(&scopes, p));
+    if let Some(dialect) = options.get("dialect").and_then(serde_json::Value::as_str) {
+        let others: Vec<String> = lane_text_dialects(dialect).into_iter().filter_map(|l| found.by_label.get(l)).flatten().cloned().collect();
+        found.text.extend(others);
+        found.text.sort();
+        found.text.dedup();
     }
-    crate::code_rule_dsl::logic::profile::decision("documents", || {
-        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.parsed(), found.text.len())
-    });
     found
+}
+
+/// The dialects whose files a run of `dialect` reads as text only (decision 0337): where `dialect` is one of a
+/// language of several (TypeScript's `.ts`, `.tsx` and `.js` files), the language's others. Each of the program's
+/// runs is lowered for its own dialect, and parses and reports that dialect's files alone (`lane_reports`); a
+/// cross-file rule of one sees every file's `doc` and source text.
+pub fn lane_text_dialects(dialect: &str) -> Vec<&'static str> {
+    use crate::code_rule_dsl::language::{CodeRuleLanguage, label};
+    let mut several = CodeRuleLanguage::ALL.into_iter().filter(|l| l.dialects().len() > 1);
+    let Some(language) = several.find(|l| l.dialects().iter().any(|d| label(*d) == Some(dialect))) else { return Vec::new() };
+    language.dialects().iter().filter_map(|d| label(*d)).filter(|l| *l != dialect).collect()
+}
+
+/// Whether the run of `dialect` reports a finding in the file at `path`: not in a file of another dialect of its
+/// language, which it read as text only (`lane_text_dialects`) and which that dialect's own run reports.
+pub fn lane_reports(dialect: &str, path: &str) -> bool {
+    crate::code_rule_dsl::language::label_of_path(path).is_none_or(|l| !lane_text_dialects(dialect).contains(&l))
 }
 
 /// The files Git sees under `root`, relative, and how many of them Git's status changed (staged, untracked,

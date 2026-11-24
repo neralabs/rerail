@@ -332,7 +332,8 @@ pub fn run_program(
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
-    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
+    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249). Each reads the
+    // other dialects' files as text and reports its own (decision 0337): every run reads every file.
     let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
@@ -349,8 +350,8 @@ pub fn run_program(
             options["dialect"] = serde_json::json!(dialect);
         }
         let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
-        rows.extend(diagnostics(dir)?);
-        files_read += report.files;
+        rows.extend(diagnostics(dir)?.into_iter().filter(|d| dialect.is_none_or(|dialect| corpus::lane_reports(dialect, d["path"].as_str().unwrap_or_default()))));
+        files_read = files_read.max(report.files);
         nodes += report.nodes;
         phases.extend(report.phases);
     }
@@ -514,7 +515,7 @@ fn run_pack(
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
     // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
-    // a policy alone): one run as written where the language has one dialect.
+    // a policy alone): one run as written where the language has one dialect. Each reports its own dialect's files.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
         vec![(None, dir.clone())]
     } else {
@@ -530,18 +531,22 @@ fn run_pack(
         let Ok(report) = corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
             return Ok(None);
         };
-        files += report.files;
+        files = files.max(report.files);
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
     }
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
     // Each member's rows of each finding relation, by the policy each row names (its first column), every dialect's.
     type Rows<'a> = Vec<output::Row<'a>>;
     let mut rows: Vec<std::collections::BTreeMap<String, Rows<'_>>> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
-    for run in &outputs {
+    for ((dialect, _), run) in runs.iter().zip(&outputs) {
         for rel in run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
             for row in run.rows(rel) {
                 let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-                each[at].push(diagnostic(&row)?);
+                let found = diagnostic(&row)?;
+                if dialect.is_some_and(|dialect| !corpus::lane_reports(dialect, found["path"].as_str().unwrap_or_default())) {
+                    continue;
+                }
+                each[at].push(found);
                 rows[at].entry(rel.to_owned()).or_default().push(row);
             }
         }
@@ -696,7 +701,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     // A program whose language has several dialects with files in its scope (`.language typescript` over `.ts`,
     // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
     // `run_program` runs one. The first run writes `out`; each other dialect's writes `out/<dialect>`, and its
-    // findings are added to `out`'s.
+    // findings are added to `out`'s. A run given its dialect also reads the others' files as text (decision 0337).
     let dialects = crate::code_rule_dsl::logic::profile::span(|| "the dialects in the corpus".into());
     let runs = if t_facts.is_some() { vec![(None, programs.iter().map(|p| (*p).to_owned()).collect())] } else { dialect_runs(&programs, root, &options)? };
     drop(dialects);
@@ -714,7 +719,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             None => report = Some(each),
             Some(first) => {
                 let r: &mut super::logic::plan::corpus::Report = first;
-                r.files += each.files;
+                r.files = r.files.max(each.files);
                 r.nodes += each.nodes;
                 r.chunks += each.chunks;
                 // Its findings joined to the first run's, over `out`'s outputs (decision 0239).

@@ -1,0 +1,1 @@
+A `.rerail` rule of `.language typescript` now sees every `.ts`, `.tsx` and `.js` file in its scope from any of them: each file is still parsed in its own grammar, and the others are read as text (their `doc` row, path and lines), so a rule of a `.tsx` component can join a `.ts` module it imports.
