@@ -519,14 +519,16 @@ describe("Claude Code settings.json", () => {
   });
 
   /**
-   * What holds the event loop of a node that ran `registerHarnesses(options)` once the call settled, with this
-   * process's `SystemRoot` (`process.getActiveResourcesInfo()`): `rerail setup` ends when nothing does.
+   * What holds the event loop of a node that ran `registerHarnesses(options)` with `SystemRoot` at `systemRoot`, once
+   * the call settled (`process.getActiveResourcesInfo()`): `rerail setup` ends when nothing does. The node sets
+   * `SystemRoot` once started, since Node fails to start on Windows without the real one.
    */
-  async function heldAfterRegistration(options: RegistrationOptions): Promise<string[]> {
+  async function heldAfterRegistration(options: RegistrationOptions, systemRoot: string): Promise<string[]> {
     const script = join(dirname(options.root), "register.mts");
     const registration = new URL("../../src/setup/harness-registration.ts", import.meta.url).href;
     await writeFile(script, [
       `import { registerHarnesses } from ${JSON.stringify(registration)};`,
+      `process.env.SystemRoot = ${JSON.stringify(systemRoot)};`,
       `await registerHarnesses(${JSON.stringify(options)});`,
       "console.log(JSON.stringify(process.getActiveResourcesInfo()));",
     ].join("\n"));
@@ -537,11 +539,10 @@ describe("Claude Code settings.json", () => {
 
   it("leaves no timer of its cmd.exe start running where cmd.exe cannot start", async () => {
     const { home, root } = await fixture();
-    // A full path that names no folder on any computer that runs this test: spawn sends 'error' and no 'exit'.
-    vi.stubEnv("SystemRoot", String.raw`Z:\rerail-test-no-windows`);
+    const options = { root, home, nodePath: await windowsNode(home, "newer-node"), platform: "win32", harnesses: ["claude-code"] } as const;
 
-    const held = await heldAfterRegistration({ root, home, nodePath: await windowsNode(home, "newer-node"), platform: "win32", harnesses: ["claude-code"] });
-    expect(held).not.toContain("Timeout");
+    // A full path that names no folder on any computer that runs this test: spawn sends 'error' and no 'exit'.
+    expect(await heldAfterRegistration(options, String.raw`Z:\rerail-test-no-windows`)).not.toContain("Timeout");
   }, 60_000);
 
   it.runIf(process.platform === "win32")("leaves no timer of its cmd.exe start running once cmd.exe ends", async () => {
@@ -550,10 +551,9 @@ describe("Claude Code settings.json", () => {
     const systemRoot = join(dirname(home), "Windows");
     await mkdir(join(systemRoot, "System32"), { recursive: true });
     await copyFile(process.execPath, join(systemRoot, "System32", "cmd.exe"));
-    vi.stubEnv("SystemRoot", systemRoot);
+    const options = { root, home, nodePath: await windowsNode(home, "newer-node"), platform: "win32", harnesses: ["claude-code"] } as const;
 
-    const held = await heldAfterRegistration({ root, home, nodePath: await windowsNode(home, "newer-node"), platform: "win32", harnesses: ["claude-code"] });
-    expect(held).not.toContain("Timeout");
+    expect(await heldAfterRegistration(options, systemRoot)).not.toContain("Timeout");
   }, 60_000);
 
   it.runIf(process.platform === "win32")("writes main's node hook entry where cmd.exe is there but runs no command, as under the DisableCMD policy", async () => {
