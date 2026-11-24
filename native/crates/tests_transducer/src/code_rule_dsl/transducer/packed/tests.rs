@@ -24,7 +24,7 @@ use rerail_blocks::vector::Vector;
     use std::time::{Duration, Instant};
 
     /// The Metal JIT's result, or None where it refuses the batch: a shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
-    /// programs to the JIT). The CPU backends' parity is still asserted.
+    /// programs to the JIT), or a machine with no device (a Linux host without a GPU). The CPU backends' parity is still asserted.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn metal<T>(result: Result<T, Error>) -> Option<T> {
         match result {
@@ -32,8 +32,18 @@ use rerail_blocks::vector::Vector;
                 eprintln!("Metal's JIT refused the batch's arenas (Q64); its parity is not checked here");
                 None
             }
+            Err(Error::UnsupportedBackend) if !device() => {
+                eprintln!("no device: the device's parity is not checked here");
+                None
+            }
             result => Some(result.unwrap()),
         }
+    }
+
+    /// Whether the machine has a device the device backends run on.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device() -> bool {
+        rerail_gpu::shared::get().is_some()
     }
 
     fn tape(source: &str) -> TapeDoc {
@@ -162,6 +172,10 @@ use rerail_blocks::vector::Vector;
     #[test]
     fn production_corpus_executes_all_files_in_one_packed_grid() {
         const FILE_COUNT: usize = 129;
+        // The grid is the device's: a machine without one has nothing to run it on.
+        if !device() {
+            return;
+        }
         let kind = tape("value = other\n").transducer_kind(1);
         let programs = [Program::new(
             rerail_blocks::vector![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
@@ -947,7 +961,7 @@ use rerail_blocks::vector::Vector;
             .unwrap_err();
             assert_eq!(actual, expected);
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-            {
+            if device() {
                 let actual = execute_with_backend(
                     ExecutionBackend::MetalJit,
                     std::slice::from_ref(&program),
@@ -1980,8 +1994,9 @@ use rerail_blocks::vector::Vector;
         assert_eq!(negatives, 2);
         assert_eq!(registry.execution_count(batch), Some(1));
         registry.remove_batch(batch);
+        // The device's batch, where the machine has a device.
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        {
+        if device() {
             let anchors = files
                 .iter()
                 .map(|file| {
