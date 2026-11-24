@@ -10,9 +10,9 @@
 # real interactive session, as when a person opens a terminal. Run Command's own run-as-user loads no profile, and
 # tasks that log on with a stored password are refused on these images. The second run installs Rerail with `npx
 # @neralabs/rerail setup`, answers set-up's questions, and checks the managed runtime: launcher and `current`
-# junction, daemon and native engine, PATH as a new terminal sees it, the Claude Code and Codex hooks as those agents
-# spawn them, daemon restart, and removal. It uploads results.json and a log to the blob URLs it was given; the
-# driver waits for them.
+# junction, daemon and native engine, this machine's engine package alone, PATH as a new terminal sees it, the Claude
+# Code and Codex hooks as those agents spawn them, daemon restart, and removal. It uploads results.json and a log to
+# the blob URLs it was given; the driver waits for them.
 $Mode = if ($args.Count -gt 0) { $args[0] } else { "provision" }
 $ProgressPreference = "SilentlyContinue"
 $Work = "C:\rerail-env"
@@ -156,8 +156,8 @@ function Get-Facts {
 $facts = Get-Facts
 
 if ($RerailEnv.BundleUrl) {
-  # Packages under test (core and every published rule pack) from a registry on this VM, as npmjs will serve them
-  # after launch; everything else still comes from npmjs.
+  # Packages under test (core, the engine packages it pins and every published rule pack) from a registry on this VM,
+  # as npmjs will serve them after launch; everything else still comes from npmjs.
   Step "registry" {
     $tarballs = @(Get-ChildItem "$Work\bundle\*.tgz" | ForEach-Object { $_.FullName })
     $State.Registry = Start-RerailRegistry -Root "$Out\registry" -Tarballs $tarballs
@@ -199,6 +199,10 @@ if ($State.SetupOk) {
     $State.DaemonPort = $match.Groups[1].Value
   }
 
+  Step "engine-package" {
+    Assert-RerailEnginePackage -RerailHome $RerailHome -Packed ([bool]$RerailEnv.BundleUrl)
+  }
+
   # A new terminal builds PATH from the machine and user values in the registry; set-up wrote the user one.
   Step "path-new-terminal" {
     $fresh = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
@@ -236,7 +240,7 @@ if ($State.SetupOk) {
     "Claude Code, Codex and Cursor unhooked, and the user Path entry removed"
   }
 } else {
-  foreach ($name in @("status", "path-new-terminal", "hooks", "daemon-restart", "uninstall")) { Skip $name }
+  foreach ($name in @("status", "engine-package", "path-new-terminal", "hooks", "daemon-restart", "uninstall")) { Skip $name }
 }
 
 if (Test-Path $Launcher) { & $Launcher daemon stop *> $null }

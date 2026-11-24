@@ -52,7 +52,7 @@ async function settledAtOnce<T>(promise: Promise<T>): Promise<{ readonly atOnce:
 /** The engine as a Rerail whose engine does not load has it. */
 const withoutEngine = {
   ...request,
-  engine: () => { throw new Error("Unsupported platform or missing native addon"); },
+  engine: () => { throw new Error("Rerail's engine for Linux on x64 is not installed"); },
   withoutEngine: "folder",
 } satisfies LockRequest;
 
@@ -208,7 +208,7 @@ describe("the OS lock", () => {
   it("fails without the engine unless the request takes the folder lock", async () => {
     const home = await temporaryHome();
 
-    await expect(withHomeLock(home, { ...withoutEngine, withoutEngine: "fail" }, async () => "ran")).rejects.toThrow("missing native addon");
+    await expect(withHomeLock(home, { ...withoutEngine, withoutEngine: "fail" }, async () => "ran")).rejects.toThrow("engine for Linux on x64 is not installed");
   });
 });
 

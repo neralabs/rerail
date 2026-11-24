@@ -209,7 +209,7 @@ fn emit(
                 .map(|child| if child.is_children_end() { "true" } else { "false" })
                 .collect::<Vec<_>>();
             // Goal tables: an ellipsis goal's variable (0xffffffff unnamed, 0xfffffffe not an
-            // ellipsis), whether a goal is trivial, and whether it is the end of children (RER-131).
+            // ellipsis), whether a goal is trivial, and whether it is the end of children (decision 0161).
             let _ = writeln!(
                 out,
                 "constant uint E{index}_{id}[{count}]={{{}}};constant bool T{index}_{id}[{count}]={{{}}};constant bool D{index}_{id}[{count}]={{{}}};",

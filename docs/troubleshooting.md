@@ -69,6 +69,14 @@ Other reasons:
   only glibc engines for Linux; use a glibc image such as `node:24-slim`.
 - **No engine** (FreeBSD, 32-bit ARM): `Rerail has no engine for <system> on <processor>`.
 
+A Rerail that npm installed without set-up, as a dependency or with `npm install -g`, makes no such check. Where it
+then finds no engine package for the system, it gives the reason itself:
+
+```text
+Rerail has no engine for Linux with musl (Alpine, for example): on Linux it needs glibc.
+Rerail has no engine for freebsd on x64: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64.
+```
+
 </details>
 
 ### Git is missing
@@ -128,9 +136,11 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 
 ### Set-up prints nothing for a while
 
-The first `npx @neralabs/rerail setup` downloads about 240 MB, which unpacks to over 700 MB; npx prints nothing
-meanwhile, for a minute or more on a slow connection.
-Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
+The first `npx @neralabs/rerail setup` downloads about 240 MB, which unpacks to over 700 MB: npm 11.6.2 and the later
+npm 11 releases fetch Rerail's engines for all six platforms into npx's cache. npx prints nothing meanwhile, for a
+minute or more on a slow connection.
+Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`,
+this time with the one engine for this computer, about 50 MB.
 From there each step prints a line as it starts, and a step still running prints `still running after 30 s`, then
 again every 30 seconds.
 
@@ -185,12 +195,48 @@ cannot be installed offline.
 <summary>Mirrors, and `Another Rerail update is already running`</summary>
 
 `rerail update` stops the same way. Both run your own `npm` with your `~/.npmrc`, so a registry mirror set there
-works for Rerail and its rule packs.
+works for Rerail and its rule packs, as long as it serves Rerail's six engine packages as well as `@neralabs/rerail`
+([Registry access](installation.md#registry-access)).
 
 A failed install removes what it staged. The update lock is free the moment the set-up or `rerail update` holding it
 ends, Ctrl-C included, so `Another Rerail update is already running` means one is installing now. A Rerail whose engine
 does not load holds the folder `~/.rerail/locks/update-without-engine` instead; if one was cut short and the message
 stays with nothing installing, delete that folder and run again.
+
+</details>
+
+### `npm could not install …, the engine … runs on here`
+
+```text
+npm could not install @neralabs/rerail-engine-linux-x64-gnu@0.2.1, the engine @neralabs/rerail@0.2.1 runs on here (E404): the registry npm installs from (https://npm.example.com) does not have it. A mirror, proxy or allowlist must carry @neralabs/rerail-engine-linux-x64-gnu as well as @neralabs/rerail: check the registry in your npm configuration. Nothing was installed.
+```
+
+Set-up and `rerail update` install Rerail and this computer's engine package in one npm command, and your registry
+served the first and not the second. Have it serve the six engine packages
+([Registry access](installation.md#registry-access)), then run the same command again. Nothing was installed, and a
+version already active stays active.
+
+<details>
+<summary>The codes, and an engine that is not the released one</summary>
+
+- **`E404`:** the registry does not know the package; the message names the registry when npm did. **`ETARGET`:** it
+  knows the package and lacks that version, as a mirror that has not caught up does.
+- **`EBADPLATFORM`:** the message reads `npm takes it for another system's engine`. The `npm` on your PATH runs on a
+  Node built for another processor than the Node Rerail runs on, which the message names: put that Node first on PATH
+  and run the command again.
+- **Another file under the same name:**
+
+  ```text
+  The @neralabs/rerail-engine-linux-x64-gnu@0.2.1 npm installed is not the one @neralabs/rerail@0.2.1 was released with: its integrity is sha512-…, and @neralabs/rerail@0.2.1 pins sha512-…. The registry npm installs from serves another file under that name. Nothing of it was run.
+  ```
+
+  Each Rerail version pins the sha512 of the engine package released with it, and what your registry served has
+  another. Compare `npm view @neralabs/rerail-engine-<suffix>@<version> dist.integrity` through your registry and with
+  `--registry https://registry.npmjs.org`: a mirror must pass npmjs's tarball on unchanged.
+- **A registry that gives npm no sha512:** where a registry describes a version with a SHA-1 alone, Rerail has npm
+  hash the tarball it installed and compares that, so the install goes on as usual. Where npm cannot hash it, the
+  message reads `npm recorded no SHA-512 for the … it installed (its integrity is sha1-…), and its tarball could not be
+  hashed …`, with npm's reason, and nothing is installed: run the command again once npm reaches the registry.
 
 </details>
 
@@ -224,6 +270,16 @@ Node.js and React would be suggested, but have no rules yet, so set-up does not 
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
 
+### A rule pack is left out, or its rules show as not running, after an update
+
+Rerail 0.2.1 and later leave out a pack version published before 17 November 2026, and mark as not running a rule of
+the 17 November versions that tests a token the new syntax trees leave out. Install the newest version of each pack
+that works with this Rerail:
+
+```sh
+rerail packs update
+```
+
 ### `No rule pack matches what it’s built with`
 
 ```text
@@ -245,6 +301,95 @@ and says how they were listed. **Not scanned** names the folders set-up never re
 every one of them, by the places it names; a leading `/` means only at the repository's top. **Packs look for** says
 what each pack would match. To add a pack anyway, answer "Change rule packs…", or run `rerail packs add <id>`.
 `rerail packs recommend` prints the same explanation, with what each pack looks for on that pack's line.
+
+## The engine
+
+Rerail's native engine is not inside `@neralabs/rerail`: each system and processor has an engine package, installed
+with Rerail at the same version ([Registry access](installation.md#registry-access)). A command, hook or daemon that
+cannot load it stops with one of the messages below. Set-up and `rerail update` print it after
+`Installed native runtime health check failed:` and keep the version that was active.
+
+### Rerail's engine is not installed
+
+```text
+Rerail's engine for Linux on x64 is not installed: the Rerail at /home/you/.npm/_npx/0f1e2d3c4b5a6978/node_modules/@neralabs/rerail has no @neralabs/rerail-engine-linux-x64-gnu@0.2.1, an optional dependency of @neralabs/rerail. npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package or serves another file for it. Install it with `npm install --prefix "/home/you/.npm/_npx/0f1e2d3c4b5a6978" @neralabs/rerail-engine-linux-x64-gnu@0.2.1`. Or set RERAIL_ENGINE_PATH to an engine file for this system (rerail_engine.linux-x64-gnu.node).
+```
+
+npm installed Rerail without its engine and reported no error: it skips an optional dependency it is told to leave out,
+or cannot fetch, and still exits with 0. Run the command the message gives. Naming the package installs it whatever
+the setting, and where the registry lacks it npm now fails and says so.
+
+When `rerail update` printed the message, it gives no command: the update staged that Rerail in a folder it removed
+as it failed, and the version that was active stays active. Fix the cause below, then run `rerail update` again.
+
+<details>
+<summary>Finding the cause, and other shapes of the message</summary>
+
+- **npm leaves optional dependencies out.** `npm config list` shows `omit = ["optional"]` or `optional = false`, from
+  an `.npmrc` or an `NPM_CONFIG_` variable. Remove it, or keep running the message's command after each install you
+  make with npm yourself.
+- **The registry lacks the package.** `npm view @neralabs/rerail-engine-<suffix>@<version> version` prints the version
+  when your registry serves it. A private registry, mirror or allowlist must serve all six engine packages
+  ([Registry access](installation.md#registry-access)).
+- **The registry serves another file for the package.** npm checks each engine package against the sha512 Rerail pins
+  for it and leaves out one that differs, with no error. Compare
+  `npm view @neralabs/rerail-engine-<suffix>@<version> dist.integrity` through your registry and with
+  `--registry https://registry.npmjs.org`.
+- **An update from Rerail 0.1.5 or earlier:** in place of a command, the message says
+
+  ```text
+  An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.
+  ```
+
+  Those versions install `@neralabs/rerail` alone and leave its engine to npm's optional dependencies, so a setting
+  that leaves them out stops the update. Set the variable in the terminal that runs the update, not in an `.npmrc`:
+  `npm_config_include=optional rerail update` in sh, bash or zsh; `$env:npm_config_include = "optional"; rerail update`
+  in PowerShell; `set npm_config_include=optional` and then `rerail update` in cmd. It does not help where the
+  registry lacks the package. Later versions install the engine package by name and need no variable.
+- **A global install, or any folder npm did not install Rerail into as a dependency:** the message gives the command
+  without a folder:
+
+  ```text
+  Install it with `npm install @neralabs/rerail-engine-linux-x64-gnu@0.2.1`, run where @neralabs/rerail is installed (with `-g` for a global install).
+  ```
+- **`RERAIL_ENGINE_PATH`** names an engine file for Rerail to load instead of looking for the package. Use the engine
+  built for this Rerail's version; a missing file is `RERAIL_ENGINE_PATH does not exist: <path>`.
+
+</details>
+
+### Rerail was installed for another system
+
+```text
+The Rerail at /Users/you/.rerail/versions/0.2.1/node_modules/@neralabs/rerail was installed for macOS on arm64, and this is macOS on x64: it has @neralabs/rerail-engine-darwin-arm64 and no @neralabs/rerail-engine-darwin-x64@0.2.1. Its folder came from another computer, or this Node is built for another processor than the Node that installed it. Run Rerail with that Node, or add this system's engine. Install it with `npm install --prefix "/Users/you/.rerail/versions/0.2.1" --force @neralabs/rerail-engine-darwin-x64@0.2.1`. `--force` has npm keep the other system's engine. Or set RERAIL_ENGINE_PATH to an engine file for this system (rerail_engine.darwin-x64.node).
+```
+
+An install holds the engine for the system and processor of the Node that installed it, and this Node is another.
+Run Rerail with the Node that installed it, or run the command the message gives, after which the install holds this
+system's engine too. npm 11.6.2 and later also install all six inside Rerail then, about 240 MB.
+
+<details>
+<summary>How an install meets another system</summary>
+
+- **Two Nodes on one computer, built for different processors:** on a Mac, an x64 Node under Rosetta beside an arm64
+  one, from two version managers, say; on Windows on Arm, an x64 Node beside an arm64 one.
+- **A folder from another computer:** a `~/.rerail` copied, restored from a backup, taken from a CI cache keyed without
+  the system, or mounted from the host into a container. Run `npx @neralabs/rerail setup` on the system that runs
+  Rerail, with a Rerail home of its own (`RERAIL_HOME`) where the folder is shared.
+
+</details>
+
+### The engine package is another version than Rerail
+
+```text
+@neralabs/rerail-engine-linux-x64-gnu at /home/you/app/node_modules/@neralabs/rerail-engine-linux-x64-gnu is version 0.2.2, and the Rerail at /home/you/app/node_modules/@neralabs/rerail is version 0.2.1: Rerail loads only the engine released with it. Install it with `npm install --prefix "/home/you/app" @neralabs/rerail-engine-linux-x64-gnu@0.2.1`.
+```
+
+Rerail found its system's engine package at another version than its own, and loads only the engine released with
+it. Run the command the message gives.
+
+This happens when an engine package was installed or updated apart from Rerail: named in a `package.json` of its own,
+or left beside Rerail in its `node_modules/@neralabs` folder by an earlier install. Depend on `@neralabs/rerail`
+alone; it names the engine package of its version.
 
 ## The `rerail` command
 
@@ -714,6 +859,15 @@ set-up in WSL warns and goes on:
 ## Working from a clone of Rerail
 
 For changing Rerail itself; setting up is in [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
+
+### `Rerail's engine … is not built`
+
+```text
+Rerail's engine for macOS on arm64 is not built: /Users/you/rerail/native has no rerail_engine.darwin-arm64.node. Build it with `npm run build:native`, or fetch a released one with `npm run engine:pull`. Or set RERAIL_ENGINE_PATH to an engine file for this system (rerail_engine.darwin-arm64.node).
+```
+
+A clone loads the engine in its own `native/` folder, and a new clone has none. `npm run build:native` builds this
+machine's from source, which needs Rust; `npm run engine:pull` fetches the one a release published.
 
 ### Windows: checks and pack tests fail in a clone made before LF line ends
 

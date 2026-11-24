@@ -19,7 +19,7 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 ## Quickstart
 
-You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. On Windows, Claude Code also needs Git Bash, from Git for Windows. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
+You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. On Windows, Claude Code also needs Git Bash, from Git for Windows. Prebuilt native engines come as npm packages of their own, one per system and processor, which npm installs with Rerail, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
 In your repository, run this to install Rerail under `~/.rerail`, connect your coding agents and start Rerail there:
 
@@ -65,18 +65,18 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 ## Capabilities
 
-- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](https://neralabs.github.io/rerail/code-rule-dsl-reference.html) documents every construct.
+- **Code rules.** A rule you write is a JSON `rerail.policy/v1` document, which `/rerail-create`, `rerail rules add` and a worktree's `.rerail/rules/` take. Rule packs can also ship rules in Rerail's new rule language, `.rerail`, as the Django pack does ([rules written in .rerail](docs/pack-format.md#rules-written-in-rerail)). Each JSON clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries; the [code-rule DSL reference](https://neralabs.github.io/rerail/code-rule-dsl-reference.html) documents every construct. The native engine runs both kinds the same way every time, within set limits on time and size.
 - **Only the agent's new work is judged.** Code rules report only the lines the agent changed in the session, so existing code does not bury the signal.
 - **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
 - **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
 - **You approve what steers.** A rule Rerail did not publish (one you or a coding agent wrote, a worktree's own, a third party's pack) runs in Log until you approve what it says, with `rerail rules approve` or in the dashboard, and again after each edit or new version. See [Approval](docs/rule-scoping.md#approval).
 - **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
-- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it.
+- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it, then moves each installed rule pack to the newest version that fits it. Once a day the daemon asks npm whether a newer Rerail is out, and the dashboard says so; `RERAIL_UPDATE_CHECK=0` turns that off.
 
 ## Rule packs
 
-Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend|calibrate`.
+Core ships no rules. A rule pack is a set of rules published as its own npm package: Rerail's are `@neralabs/rerail-pack-<id>`, and anyone can publish one as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`, which Rerail has not reviewed ([rule packs](docs/rule-packs.md#third-parties-packs)). Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|update|recommend|calibrate`.
 
 To add a pack after set-up, first see the packs that fit this repository, and why:
 

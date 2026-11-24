@@ -27,7 +27,7 @@ pub fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
 
 /// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as PIAT's
 /// `ftsk` spelled them, so dialects never share a token. Version 5: the stream is a tape's
-/// records, which hold no implied token (RER-131), so positions renumber.
+/// records, which hold no implied token (decision 0161), so positions renumber.
 pub const POSITIONAL_INDEX_VERSION: i64 = 5;
 
 /// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +

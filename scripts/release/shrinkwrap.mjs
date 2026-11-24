@@ -2,9 +2,15 @@
 // package's shrinkwrap when it installs it, so every install gets the dependency versions and integrity hashes this
 // repository's package-lock.json pinned, instead of resolving them fresh. shrinkwrap-pack.mjs writes it at pack time
 // and checks the packed one; the checkout keeps package-lock.json as its only lockfile.
+//
+// The engine packages (engine/packages.mjs) are the one part package-lock.json cannot give: the release that packs core
+// builds them, so no lockfile written before it holds their integrity. Their entries come from the manifest of the
+// packed tarballs instead. npm installs a shrinkwrapped package's dependencies from its shrinkwrap alone, so an engine
+// package the shrinkwrap lacks is never installed, whatever package.json says, and the install still exits with 0.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { absentEnginePackages, ENGINE_PACKAGES, engineLocation, engineLockEntry, enginePins, withoutEnginePins } from "./engine/packages.mjs";
 
 export const SHRINKWRAP_FILE = "npm-shrinkwrap.json";
 
@@ -68,12 +74,8 @@ function reachable(packages, root, follow) {
   return seen;
 }
 
-/**
- * The shrinkwrap for `manifest` (package.json) from `lock` (package-lock.json): the root and the packages its
- * dependencies reach, with no development dependency, no workspace pack, and `optional` marking a package only
- * optional dependencies reach. Throws when the lockfile is not package.json's.
- */
-export function shrinkwrapFrom(manifest, lock) {
+/** The lockfile's root entry as the package ships it; throws when the lockfile is not `manifest`'s. */
+function shippedRoot(manifest, lock) {
   const root = lock.packages?.[""];
   if (!(lock.lockfileVersion >= 2) || root === undefined) throw new Error("package-lock.json must be lockfileVersion 2 or later");
   for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
@@ -84,14 +86,38 @@ export function shrinkwrapFrom(manifest, lock) {
   const shipped = { ...root, name: manifest.name, version: manifest.version };
   delete shipped.devDependencies;
   delete shipped.workspaces;
+  return shipped;
+}
+
+/** The lockfile's entries the root `shipped` reaches, as the shrinkwrap lists them, by location. */
+function reachedEntries(lock, shipped) {
   const required = reachable(lock.packages, shipped, optional => !optional);
   const all = reachable(lock.packages, shipped, () => true);
-  const packages = { "": shipped };
-  for (const [location, entry] of Object.entries(lock.packages)) {
-    if (!all.has(location)) continue;
-    const kept = { ...Object.fromEntries(Object.entries(entry).filter(([key]) => !TREE_FLAGS.has(key))), ...NO_SOURCE_BUILD };
-    packages[location] = required.has(location) ? kept : { ...kept, optional: true };
+  const entries = {};
+  for (const location of Object.keys(lock.packages).filter(candidate => all.has(candidate))) {
+    const kept = { ...Object.fromEntries(Object.entries(lock.packages[location]).filter(([key]) => !TREE_FLAGS.has(key))), ...NO_SOURCE_BUILD };
+    entries[location] = required.has(location) ? kept : { ...kept, optional: true };
   }
+  return entries;
+}
+
+/** The root `shipped` with a pin on each engine package of `engines`, and each one's entry, by location. */
+function engineEntries(shipped, engines) {
+  if (engines.packages.length === 0) return {};
+  const entries = { "": { ...shipped, optionalDependencies: { ...shipped.optionalDependencies, ...enginePins(engines) } } };
+  for (const entry of engines.packages) entries[engineLocation(entry.name)] = { ...engineLockEntry(entry), ...NO_SOURCE_BUILD };
+  return entries;
+}
+
+/**
+ * The shrinkwrap for `manifest` (package.json, without pins on engine packages) from `lock` (package-lock.json): the
+ * root and the packages its dependencies reach, with no development dependency, no workspace pack, and `optional`
+ * marking a package only optional dependencies reach. Throws when the lockfile is not package.json's. `engines` (the
+ * manifest of the packed engine packages) adds each one it lists: an optional dependency of the root, and its entry.
+ */
+export function shrinkwrapFrom(manifest, lock, engines = { packages: [] }) {
+  const shipped = shippedRoot(manifest, lock);
+  const packages = { "": shipped, ...reachedEntries(lock, shipped), ...engineEntries(shipped, engines) };
   return { name: manifest.name, version: manifest.version, lockfileVersion: 3, requires: true, packages };
 }
 
@@ -99,10 +125,24 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-/** The shrinkwrap `root`'s package.json and package-lock.json give, as the file's text. */
-export function shrinkwrapText(root) {
-  const shrinkwrap = shrinkwrapFrom(readJson(join(root, "package.json")), readJson(join(root, "package-lock.json")));
+/**
+ * The shrinkwrap `root`'s package.json and package-lock.json give, as the file's text, with the engine packages
+ * `engines` lists (none when undefined). Pins a pack stamped into package.json are left out before the lockfile is
+ * compared with it, so a pack that failed before restoring them does not break the next one.
+ */
+export function shrinkwrapText(root, engines) {
+  const shrinkwrap = shrinkwrapFrom(withoutEnginePins(readJson(join(root, "package.json"))), readJson(join(root, "package-lock.json")), engines);
   return `${JSON.stringify(shrinkwrap, null, 2)}\n`;
+}
+
+/** The packed shrinkwrap parsed, or why it can't be: `{ shrinkwrap }` or `{ problem }`. */
+function parsePacked(packed) {
+  if (packed === undefined) return { problem: `it has no ${SHRINKWRAP_FILE}; npm pack writes one as prepack (scripts/release/shrinkwrap-pack.mjs write)` };
+  try {
+    return { shrinkwrap: JSON.parse(packed) };
+  } catch (error) {
+    return { problem: `its ${SHRINKWRAP_FILE} is not JSON: ${error.message}` };
+  }
 }
 
 /**
@@ -110,17 +150,60 @@ export function shrinkwrapText(root) {
  * Names the package locations that differ, so a stale lockfile points at what changed.
  */
 export function shrinkwrapProblem(packed, expected) {
-  if (packed === undefined) return `it has no ${SHRINKWRAP_FILE}; npm pack writes one as prepack (scripts/release/shrinkwrap-pack.mjs write)`;
-  let actual;
-  try {
-    actual = JSON.parse(packed);
-  } catch (error) {
-    return `its ${SHRINKWRAP_FILE} is not JSON: ${error.message}`;
-  }
+  const { shrinkwrap: actual, problem } = parsePacked(packed);
+  if (problem !== undefined) return problem;
   const wanted = JSON.parse(expected);
   if (isDeepStrictEqual(actual, wanted)) return undefined;
   const locations = new Set([...Object.keys(actual.packages ?? {}), ...Object.keys(wanted.packages ?? {})]);
   const differing = [...locations].filter(location => !isDeepStrictEqual(actual.packages?.[location], wanted.packages?.[location]));
   const named = differing.length === 0 ? "its header" : differing.slice(0, 10).map(location => location === "" ? "the root" : location).join(", ");
   return `its ${SHRINKWRAP_FILE} is not what package-lock.json gives (${named}${differing.length > 10 ? `, and ${differing.length - 10} more` : ""})`;
+}
+
+/** The name of the package at lockfile location `location`. */
+const packageAt = (location) => location.slice(location.lastIndexOf("node_modules/") + "node_modules/".length);
+
+/**
+ * Why a packed core (`shrinkwrap` and `packageJson`, parsed) does not pin every engine package as `engines` (the
+ * manifest of the packed engine packages) gives them, or undefined. It expects all of `ENGINE_PACKAGES`, whatever the
+ * manifest and the writer made of it, so a core short of an engine never passes:
+ *
+ * - package.json's `optionalDependencies`, and the shrinkwrap root's, are the engine packages at core's version, every
+ *   one and nothing else;
+ * - each has its entry, exactly: core's version, the manifest's integrity, the `os`, `cpu` and `libc` of its name,
+ *   `optional`, and no `resolved` (`engineLockEntry`);
+ * - no other entry is `optional`. The managed install passes `--omit=optional` and names its own engine package
+ *   (src/setup/updater.ts), so a package core needs must never be one npm leaves out with them.
+ */
+export function enginePinsProblem(shrinkwrap, packageJson, engines) {
+  const { version } = packageJson;
+  const all = `the ${ENGINE_PACKAGES.length} engine packages at ${version}`;
+  const names = (entries) => entries.map(({ name }) => name).join(", ");
+  const absent = absentEnginePackages(engines);
+  const pins = enginePins(engines);
+  const packages = { "": {}, ...shrinkwrap.packages };
+  const wrong = engines.packages.filter((entry) => !isDeepStrictEqual(packages[engineLocation(entry.name)], { ...engineLockEntry(entry), ...NO_SOURCE_BUILD }));
+  const pinned = new Set(engines.packages.map(({ name }) => engineLocation(name)));
+  const isOther = (location) => packages[location].optional === true || Object.hasOwn(pins, packageAt(location));
+  const others = Object.keys(packages).filter((location) => !pinned.has(location) && isOther(location));
+  const problems = [
+    [engines.version !== version, `it is ${version}, and the engine packages are ${engines.version}`],
+    [absent.length > 0, `the engine packages lack ${names(absent)}: a release packs all ${ENGINE_PACKAGES.length}`],
+    [!isDeepStrictEqual(packageJson.optionalDependencies, pins), `its package.json's optionalDependencies are not ${all}`],
+    [!isDeepStrictEqual(packages[""].optionalDependencies, pins), `its ${SHRINKWRAP_FILE}'s root optionalDependencies are not ${all}`],
+    [wrong.length > 0, `its ${SHRINKWRAP_FILE} does not pin ${names(wrong)} as packed: version, integrity, os, cpu, libc, optional, and no resolved`],
+    [others.length > 0, `its ${SHRINKWRAP_FILE} has optional packages besides the engine packages (${others.join(", ")}): the managed install omits optional dependencies, so nothing core needs may be one`],
+  ];
+  return problems.find(([found]) => found)?.[1];
+}
+
+/**
+ * Why a tarball is not one a release publishes, or undefined: `packed` is its `shrinkwrap` and `packageJson` texts
+ * (undefined when it has none), `expected` the shrinkwrap text the checkout gives with `engines`.
+ */
+export function packedProblem(packed, expected, engines) {
+  const { shrinkwrap, problem } = parsePacked(packed.shrinkwrap);
+  if (problem !== undefined) return problem;
+  if (packed.packageJson === undefined) return "it has no package.json";
+  return enginePinsProblem(shrinkwrap, JSON.parse(packed.packageJson), engines) ?? shrinkwrapProblem(packed.shrinkwrap, expected);
 }

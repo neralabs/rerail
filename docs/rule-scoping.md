@@ -280,7 +280,9 @@ The session footer counts what waits (`2 to approve`), as does `/rerail`, and Ov
 
 Each file is judged by the checkout that owns it, with that checkout's configuration.
 
-The owner is the nearest folder above the file holding a `.git` entry that Git confirms as a checkout's top level. Only checkouts that are recorded, started and set up evaluate files.
+The owner is the nearest folder above the file holding a `.git` entry that Git confirms as a checkout's top level. Only checkouts that are recorded, started and set up evaluate files. A linked
+worktree whose main checkout was deleted or moved away, which Git no longer reads, keeps the repository, start state and
+settings recorded at its path; its branch and commits are unknown there.
 
 A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays until Git no longer lists it, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
 

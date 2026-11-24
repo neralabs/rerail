@@ -86,11 +86,21 @@ describe("publishRetryRefusal", () => {
     expect(refusal).toContain("src/cli/cli.ts, package-lock.json");
     expect(refusal).toContain("the next version");
   });
+
+  // A retry builds the engines again, to other bytes than an engine package npm already has at the version, and core
+  // would pin those. The check asks npm itself, so what is pinned here is that it asks, and last (rebuildRefusal and
+  // publishedEnginePackages are tested in release-engine-release.test.mjs).
+  it("is followed, in core-retry-check.mjs, by the refusal of a version npm already has an engine package of", () => {
+    const check = readFileSync(join(ROOT, "scripts", "release", "core-retry-check.mjs"), "utf8");
+    expect(check).toMatch(/publishRetryRefusal\(\{[^}]*\}\) \?\?\s+rebuildRefusal\(version, await publishedEnginePackages\(version\)\);/u);
+  });
 });
 
 describe("retrySummary", () => {
   it("counts the paths that build or are packed into the tarball, and no others", () => {
     for (const path of [".github/workflows/package.yml", ".github/actions/lfs/action.yml", "scripts/release/shrinkwrap-pack.mjs", ".gitattributes", "CHANGELOG.md"]) expect(changesPackage(path)).toBe(true);
+    // What packs the engine packages and pins them in core: neither ships, and both decide what an install gets.
+    for (const path of ["scripts/release/engine/packages.mjs", "scripts/release/shrinkwrap.mjs"]) expect(changesPackage(path), path).toBe(true);
     for (const path of [".github/workflows/release.yml", "docs/release.md", "scripts/host/azure/matrix.mjs", "scripts/release/core-paths.mjs"]) expect(changesPackage(path)).toBe(false);
   });
 
@@ -123,6 +133,11 @@ describe("matrixChanges", () => {
     expect(matrixChanges(["src/cli/cli.ts", "scripts/host/azure/guest.sh", "scripts/host/windows-host.ps1", ".github/workflows/env-matrix.yml"], readLock))
       .toEqual({ core: ["src/cli/cli.ts"], matrix: ["scripts/host/azure/guest.sh", "scripts/host/windows-host.ps1", ".github/workflows/env-matrix.yml"] });
     expect(matrixChanges(["scripts/host/windows-host.ps1.bak", "scripts/host/azure-notes.md", ".github/workflows/env-matrix.yml.orig"], readLock).matrix).toEqual([]);
+  });
+
+  it("runs for what packs the engine packages and pins them in core, which core does not ship", () => {
+    const packing = ["scripts/release/engine/packages.mjs", "scripts/release/shrinkwrap-pack.mjs", "scripts/release/shrinkwrap.mjs"];
+    expect(matrixChanges(packing, readLock)).toEqual({ core: [], matrix: packing });
   });
 });
 
@@ -311,6 +326,8 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
         // A copy of the scripts, since the check reads the checkout that holds it.
         cpSync(join(ROOT, "scripts", "release"), join(root, "scripts", "release"), { recursive: true });
         cpSync(join(ROOT, "scripts", "check", "check-internal-refs.mjs"), join(root, "scripts", "check", "check-internal-refs.mjs"));
+        // core.mjs installs a released core beside its engine package, whose table reaches the build's npm command.
+        cpSync(join(ROOT, "scripts", "build", "ensure-sqlite.mjs"), join(root, "scripts", "build", "ensure-sqlite.mjs"));
         linkFolder(join(ROOT, "node_modules"), join(root, "node_modules"));
         const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: root, stdio: "ignore" });
         const write = (files) => {
