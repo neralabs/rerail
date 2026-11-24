@@ -40,7 +40,9 @@ prototype's rule, "never key postings to known rules".
    - **SIBLINGS** (version 2): every 8th *named* child of a family, as (parent, node). The places the engine reads
      are among named children (a projection's `idx`), so a place is the named siblings before a node, and the reads
      step over the tokens between.
-   - **COUNTS**: (code, count), by code.
+   - **COUNTS** (version 2): (code, count), by code; and its *strays*, the named nodes under a parent that is not
+     named. A projection of the named nodes leaves their subtrees out, so where there are none, the named codes'
+     counts are its nodes'.
    - **RARE**: the nodes of each code with at most one node in 256, by code.
    - **NAMED**: the language's named codes, a bit a code, as the grammar says (a code's alias's word, else its
      kind's). The tape holds a code, not whether it is named; the builder is given them (`named_codes`).
@@ -103,4 +105,26 @@ prototype's rule, "never key postings to known rules".
      index read back from the store), and `the_aux_indexes_ukl_reads_are_its_rust_reads`, whose kernel now reads the
      index in the tape's home through `ukl_aux_in_home`.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows
-   these replace are removed, and so is the work that made them.
+   these replace are removed, and so is the work that made them. In progress.
+   - **One interface: `tape_format::doc_index::DocIndex`** (the user, 2026-11-23: "please put the calls behind an
+     abstraction so that it's easier to switch out the design later"). The engine calls it and nothing under it:
+     counts (`count`, `holds`, `counts`, `distinct`, `named_all_rooted`), listed codes (`listed`), text
+     (`may_have_text`), places (`place`, `child`). Today every answer is the auxiliary index's; another design is a
+     change to this file alone.
+   - **A missing index is built once, where it is read.** `FactsIn::index` reads the home's index in place; a home
+     without one (a format 15 tape, a home stored before layout 8), or without a section the facade needs, gets one
+     built for the document (`DocIndex::build`), kept by its facts in the slot the codes it held were kept in before.
+   - **Kind and class scans, rare kinds, the histogram.** `FactsIn::matching` (`of_kind`, `of_class`, `errors`)
+     asks the index whether the document holds a code of the set, where it first scanned every code into a held
+     list; where each code of the set is rare, its nodes are the index's list, with no scan. `histogram` is the
+     index's counts, not a pass over the codes. The held list is removed.
+   - **The `node` view's statistics** (`node_column_counts`): each document's nodes and codes are its index's
+     counts where they answer for its projection (`Docs::indexed_codes`: core.rerail's shape, no anchors, no guest,
+     a named root, no strays, not withheld), so the planner's first read of them makes no document. Else its
+     projection, as before (T's shape leaves comments out, which the index does not count apart).
+   - **`text` by its string.** A read of `text(n, s)` by `s` is routed (`MadeRows::route`, `keys_with_texts`) to
+     the documents whose index says a node or span can have the text: a name of its vocabulary, else text its source
+     holds. It made every document of the batch before.
+   - **Tests:** `a_documents_index_answers_as_the_document_says` (the facade, on a home's index and a built one; one
+     without a section refused), `a_read_of_text_by_its_string_makes_only_the_documents_that_can_hold_it`,
+     `a_node_columns_counts_make_no_document`, and the facts' tests of every format (`every_format_reads_the_same_facts_off_the_tape`).

@@ -30,8 +30,8 @@ pub enum Format {
 /// §4, step 6): the tape's presence stored after it, in its home. Layout 6: a MISSING node sets the presence's
 /// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error. Layout 8
 /// (decision 0656 step 3): the tape's auxiliary index after its presence, in its home (`lay_aux`). Layout 9: its
-/// SIBLINGS of named children (version 2) and its NAMED section.
-const F16_LAYOUT: u32 = 9;
+/// SIBLINGS of named children (version 2) and its NAMED section. Layout 10: its COUNTS' strays (version 2).
+const F16_LAYOUT: u32 = 10;
 
 impl Format {
     pub const ALL: [Format; 2] = [Format::F16, Format::F16Z];
@@ -327,7 +327,7 @@ fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, dige
         f16::Written::F16Z(t) => f16::lang(t.tag()),
     }
     .ok_or("a format 16 tape of a language without its table")?;
-    let named = named_codes(lang, language);
+    let named = named_codes(lang.table(), language);
     let aux = match &*tape {
         f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, &named, rerail_tape_format::aux_index::Sections::ALL)?,
         f16::Written::F16Z(t) => {
@@ -338,11 +338,11 @@ fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, dige
     tape.lay_aux(&aux)
 }
 
-/// The language's named codes, a bit a code of its table (`aux_index::named_codes`): as a node's flags say it is
-/// named (`Facts::flags`), its alias's word where it has one, else its grammar's for its kind (ERROR's for an error
-/// code).
-fn named_codes(lang: &f16::Lang, language: GrammarDialect) -> Vec<u64> {
-    let (table, kinds) = (lang.table(), language.kinds());
+/// The named codes of a tape's table, a bit a code (`aux_index::named_codes`): as a node's flags say it is named
+/// (`Facts::flags`), its alias's word where it has one, else its grammar's for its kind (ERROR's for an error code).
+/// What an auxiliary index is built with, by the writer (`lay_aux`) and where a home holds none (`Facts::index`).
+pub fn named_codes(table: &rerail_tape_format::tape::CodeTable, language: GrammarDialect) -> Vec<u64> {
+    let kinds = language.kinds();
     rerail_tape_format::aux_index::named_codes(table.len(), |c| {
         let e = table.entry(c);
         match &e.alias {

@@ -15,7 +15,8 @@
 //! - **SIBLINGS**: every 8th named child of a family (its 8th, 16th, ...), as (parent, node) in order: a child's
 //!   place among its named siblings, and a parent's i-th named child, from one in at most 7 named steps of the tape
 //!   (the tokens between stepped over). The places the engine reads are among named children.
-//! - **COUNTS**: each code's count in the document, by code.
+//! - **COUNTS**: each code's count in the document, by code; and how many named nodes hang from a parent that is not
+//!   (a projection of the named nodes leaves their subtrees out, so where none do it numbers every named node).
 //! - **RARE**: the nodes of each rare code (at most one node in 256), by code, in preorder.
 //! - **NAMED**: which of the language's codes are named (a bit a code), as the grammar says: the tape holds a code,
 //!   not whether its node is named, and SIBLINGS and its reads count named children.
@@ -63,17 +64,17 @@ pub enum Kind {
 impl Kind {
     pub const ALL: [Kind; 7] = [Kind::Leaves, Kind::Names, Kind::Vocab, Kind::Siblings, Kind::Counts, Kind::Rare, Kind::Named];
     /// The section's version, in its directory entry: a reader refuses a version it does not read. SIBLINGS' 2: of
-    /// named children (1 was of every child).
+    /// named children (1 was of every child). COUNTS' 2: with its strays (1 had none).
     pub fn version(self) -> u16 {
         match self {
-            Kind::Siblings => 2,
+            Kind::Siblings | Kind::Counts => 2,
             _ => 1,
         }
     }
 }
 
 /// The sections an auxiliary index is made with. NAMES and VOCAB are made together (a name is a term's number), and both
-/// need LEAVES (a leaf's rank); SIBLINGS needs NAMED (its reads step over the unnamed).
+/// need LEAVES (a leaf's rank); SIBLINGS and COUNTS need NAMED (by which they count).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sections(u32);
 
@@ -92,7 +93,7 @@ impl Sections {
         if s.has(Kind::Names) || s.has(Kind::Vocab) {
             s = Sections(s.0 | Sections::of(&[Kind::Leaves, Kind::Names, Kind::Vocab]).0);
         }
-        if s.has(Kind::Siblings) {
+        if s.has(Kind::Siblings) || s.has(Kind::Counts) {
             s = Sections(s.0 | Sections::of(&[Kind::Named]).0);
         }
         s
@@ -232,7 +233,9 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, named: &[u64],
     };
     if want.has(Kind::Counts) {
         let m = counts();
-        let mut s = head([m.len() as u32, 0, 0, 0]);
+        // The named nodes under a parent that is not: a projection of the named leaves their subtrees out.
+        let strays = (0..n).filter(|&p| !is_named(p)).map(|p| crate::tape::children(t, p).filter(|&c| is_named(c)).count() as u32).sum();
+        let mut s = head([m.len() as u32, strays, 0, 0]);
         m.iter().for_each(|(c, x)| {
             s.extend_from_slice(&c.to_le_bytes());
             s.extend_from_slice(&x.to_le_bytes());
@@ -606,10 +609,25 @@ impl<'a> AuxIndex<'a> {
         }
         0
     }
+    /// How many named nodes hang from a parent that is not named, or `NONE` (no COUNTS).
+    pub fn strays(&self) -> u32 {
+        if !self.has(Kind::Counts) {
+            return NONE;
+        }
+        self.hw(Kind::Counts, 1)
+    }
     /// Each code present and its count, by code.
     pub fn counts(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
-        let (s, n) = if self.has(Kind::Counts) { (self.sec(Kind::Counts) + 16, self.hw(Kind::Counts, 0)) } else { (0, 0) };
-        (0..n as usize).map(move |k| (u32_at(self.b, s + 8 * k), u32_at(self.b, s + 8 * k + 4)))
+        (0..self.distinct()).map(move |k| self.count_at(k))
+    }
+    /// How many codes are present (0 without COUNTS).
+    pub fn distinct(&self) -> u32 {
+        if self.has(Kind::Counts) { self.hw(Kind::Counts, 0) } else { 0 }
+    }
+    /// The `k`-th code present (by code) and its count; `k` below `distinct`.
+    pub fn count_at(&self, k: u32) -> (u32, u32) {
+        let at = self.sec(Kind::Counts) + 16 + 8 * k as usize;
+        (u32_at(self.b, at), u32_at(self.b, at + 4))
     }
     /// The positions in RARE's nodes of code `code`'s, or `None` where the code is not rare (or no RARE): a code
     /// absent from the document is rare, with no nodes.
@@ -870,6 +888,8 @@ mod tests {
         let mut by_code = std::collections::BTreeMap::<u32, Vec<u32>>::new();
         (0..d.len() as u32).for_each(|i| by_code.entry(d.code(i as usize)).or_default().push(i));
         assert_eq!(aux.counts().collect::<Vec<_>>(), by_code.iter().map(|(c, v)| (*c, v.len() as u32)).collect::<Vec<_>>());
+        let strays = (1..d.len()).filter(|&i| bit(&named, d.code(i)) && !bit(&named, d.code(d.parent(i).unwrap()))).count() as u32;
+        assert!(strays > 0 && aux.strays() == strays, "{} strays, want {strays}", aux.strays());
         let limit = rare_limit(d.len());
         let mut rare = 0;
         for c in 0..64 {

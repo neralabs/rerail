@@ -28,6 +28,7 @@ pub mod writer16;
 /// A tape's auxiliary index (decision 0656): the names stream, the vocabulary, sibling places, code counts and rare
 /// codes, made once from a tape and read in place, in Rust and in UKL.
 pub mod aux_index;
+pub mod doc_index;
 
 pub use rerail_vector::{Pod, vector::Vector};
 

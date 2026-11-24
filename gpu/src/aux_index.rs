@@ -60,7 +60,7 @@ struct ScArgs {
 unsafe impl Pod for ScArgs {}
 
 /// The words of a document's record (`I_WORDS`).
-const INFO: usize = 30;
+const INFO: usize = 31;
 
 /// The auxiliary indexes of a batch: one buffer, each document's at its offset (`at[d]..at[d + 1]`).
 pub struct Built {
@@ -119,7 +119,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, n
     let q: &ComputeQueue = queue;
 
     // The nodes.
-    let (leaf, code_key, iota, sib_n) = (u32s(nn)?, u32s(nn)?, u32s(nn)?, u32s(nn)?);
+    let (leaf, code_key, iota, sib_n, stray_n) = (u32s(nn)?, u32s(nn)?, u32s(nn)?, u32s(nn)?, u32s(nn)?);
     launch(q, k.function("aux_nodes")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
@@ -131,12 +131,15 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, n
         .buffer("codeKey", &code_key)
         .buffer("iota", &iota)
         .buffer("sibN", &sib_n)
+        .buffer("strayN", &stray_n)
         .buffer("bad", &bad)
         .run(&grid(n), &BLOCK)?;
     let (leaf_at, leaf_node) = (u32s(nn + 1)?, u32s(nn)?);
     compact_u32(q, &iota, &leaf, &leaf_node, &leaf_at, n)?;
     let sib_at = u32s(nn + 1)?;
     scan_exclusive_u32(q, &sib_n, &sib_at, n)?;
+    let stray_at = u32s(nn + 1)?;
+    scan_exclusive_u32(q, &stray_n, &stray_at, n)?;
 
     // The leaves, sorted by (document, hash, leaf).
     let (hash_key, leaf_hash, leaf_doc, l_iota) = (u64s(nn)?, u64s(nn)?, u32s(nn)?, u32s(nn)?);
@@ -253,6 +256,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, n
         .buffer("runDoc", &run_doc)
         .buffer("escAt", &esc_at)
         .buffer("sibAt", &sib_at)
+        .buffer("strayAt", &stray_at)
         .buffer("codeOf", &code_of)
         .buffer("codeDoc", &code_doc)
         .buffer("rareAt", &rare_at)

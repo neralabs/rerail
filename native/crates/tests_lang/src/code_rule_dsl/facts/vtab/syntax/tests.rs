@@ -3031,6 +3031,56 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
+/// Decision 0656 step 4: a read of `text` by its string makes only the documents whose index says a node or span can
+/// have the text: a name one document holds, text across a node's tokens another holds, and text none holds (no
+/// document made). Its rows are those a read of every document finds.
+#[test]
+fn a_read_of_text_by_its_string_makes_only_the_documents_that_can_hold_it() {
+    let store = ContentStore::open(&temp("text-by-string")).unwrap();
+    let docs = || -> Vec<Document> { (1..=6).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y({k})\nz = q{k} + 1\n"))).collect() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned()].into()), ..Projection::core() };
+    let atom = |t: &str| i64::from(store.atoms_handle().intern(t).unwrap());
+    // Every document's rows, made: what a routed read must find.
+    let all = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let all_text = Arc::clone(&made_sources(&all).iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let every = |s: i64| -> Vec<i64> { let mut v: Vec<i64> = (0..all_text.len()).filter(|&r| all_text.value(r, 1) == s).map(|r| all_text.value(r, 0)).collect(); v.sort(); v };
+    for (text, made) in [("q4", 1), ("q4 + 1", 1), ("z", 6), ("nowhere", 0)] {
+        let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+        let t = Arc::clone(&made_sources(&batch).iter().find(|(n, _, _)| *n == "text").unwrap().2);
+        assert_eq!(batch.docs.made_count(), 0);
+        let s = atom(text);
+        let mut found: Vec<i64> = t.lookup(1, &[s]).unwrap().iter().map(|&r| t.value(r, 0)).collect();
+        found.sort();
+        assert_eq!(found, every(s), "{text:?}'s rows");
+        assert_eq!(found.is_empty(), made == 0, "{text:?}");
+        assert_eq!(batch.docs.made_count(), made, "{text:?}: the documents that can hold it, made");
+        assert!(t.failure().is_none());
+    }
+}
+
+/// Decision 0656 step 4: in core.rerail's shape the `node` view's columns' counts are read off the documents'
+/// indexes, none made, and are the counts of the rows a made batch reads. (T's shape leaves comments out of its
+/// nodes, which the index does not count apart: its documents are made, `a_node_columns_counts_are_its_rows_counts`.)
+#[test]
+fn a_node_columns_counts_make_no_document() {
+    let store = ContentStore::open(&temp("node-counts-index")).unwrap();
+    let (_, node) = shaped(&store, documents().into_iter().take(4).collect(), &Projection::core()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let batch = node.python_batch().expect("a batch's view");
+    let counted: Vec<_> = (0..3).map(|c| node_column_counts(&batch, c).unwrap()).collect();
+    assert_eq!(batch.docs.made_count(), 0, "no document made to count");
+    for (column, got) in counted.into_iter().enumerate() {
+        let mut by: BTreeMap<i64, i64> = BTreeMap::new();
+        for r in 0..node.len() {
+            *by.entry(node.value(r, column)).or_default() += 1;
+        }
+        let counts: Vec<(i64, i64)> = by.into_iter().collect();
+        assert_eq!(got.0, counts.len() as i64, "column {column}'s distinct values");
+        if column != 1 {
+            assert_eq!(got.2, Some(counts), "column {column}'s counts");
+        }
+    }
+}
+
 /// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that
 /// module's document alone, as one by its path does: the batch knows each file's module from its path and the
 /// corpus's name for it, none made.

@@ -4174,42 +4174,31 @@ impl Viewed {
     }
 }
 /// `node`'s column `column` over `batch`, counted without reading its rows (decision 0329): its distinct values, the
-/// sum of their counts' squares, and each value's count. A kind's count is its postings' (`of_kind`), a document's its
-/// nodes; `n` is the key (each value once, no counts). `None` for another column (`node_column_counted`).
+/// sum of their counts' squares, and each value's count. A kind's count is its codes' nodes, a document's its nodes;
+/// `n` is the key (each value once, no counts). `None` for another column (`node_column_counted`).
+///
+/// Each document's nodes and codes are its index's counts where they answer for its projection (decision 0656 step
+/// 4, `Docs::indexed_codes`): no document is made to count them. Else its projection's, made (`doc_codes`).
 pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Option<Vec<(i64, i64)>>)> {
     let squares = |counts: &[(i64, i64)]| counts.iter().map(|&(_, n)| n * n).sum::<i64>();
+    let docs = 0..batch.docs.len();
     match column {
         0 => {
-            let counts: Vec<(i64, i64)> = batch.docs.iter().map(|p| (i64::from(p.key), i64::from(p.len()))).filter(|&(_, n)| n > 0).collect();
+            let counts: Vec<(i64, i64)> = docs.map(|i| (i64::from(batch.docs.key(i)), i64::from(doc_codes(batch, i, false).0))).filter(|&(_, n)| n > 0).collect();
             Some((counts.len() as i64, squares(&counts), Some(counts)))
         }
         1 => {
-            let n: i64 = batch.docs.iter().map(|p| i64::from(p.len())).sum();
+            let n: i64 = docs.map(|i| i64::from(doc_codes(batch, i, false).0)).sum();
             Some((n, n, None))
         }
         2 => {
-            // The batch's nodes (a document's tape holds tokens and nodes it leaves out), each node's code read once into
-            // its dialect's counts by code (`of_kind`, a scan of the tape a kind, took 12 s of a cold PostHog run's
-            // guests), each code read as the column reads it (`Dialect::kind`: its canonical code).
-            let mut by_code: std::collections::BTreeMap<u8, Vector<i64>> = Default::default();
-            for p in &batch.docs {
-                // A text-only document has no dialect and no nodes.
-                let Some(dialect) = batch.dialects.get(p.tag) else { continue };
-                let counts = by_code.entry(p.tag).or_default();
-                for (_, id) in p.nodes() {
-                    let code = usize::from(dialect.code(p.f(), id));
-                    if counts.len() <= code {
-                        counts.resize(code + 1, 0);
-                    }
-                    counts[code] += 1;
-                }
-            }
+            // Each code read as the column reads it (`Dialect::kind`: its canonical code).
             let mut by: HashMap<i64, i64> = HashMap::new();
-            for (tag, counts) in by_code {
-                let dialect = &batch.dialects[tag];
-                for (code, &n) in counts.iter().enumerate().filter(|(_, n)| **n > 0) {
-                    let code = code as u16;
-                    *by.entry(i64::from(kind_atom(tag, dialect.canonical.get(usize::from(code)).copied().unwrap_or(code)))).or_default() += n;
+            for i in docs {
+                let tag = batch.docs.tag(i);
+                let Some(dialect) = batch.dialects.get(tag) else { continue };
+                for (code, n) in doc_codes(batch, i, true).1 {
+                    *by.entry(i64::from(kind_atom(tag, dialect.canonical.get(usize::from(code)).copied().unwrap_or(code)))).or_default() += i64::from(n);
                 }
             }
             let mut counts: Vec<(i64, i64)> = by.into_iter().collect();
@@ -4220,7 +4209,28 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
     }
 }
 
-/// Whether `node_column_counts` counts `node`'s column `column`: known before it counts, which makes every document.
+/// Document `i`'s nodes, and (`codes`) each of their codes' count as the `node` view reads the code (`Dialect::code`):
+/// a made one's off its projection; else off its index where that answers for it (`Docs::indexed_codes`), else off
+/// its projection, made.
+fn doc_codes(batch: &Batch, i: usize, codes: bool) -> (u32, Vec<(u16, u32)>) {
+    if !batch.docs.is_made(i)
+        && let Some(x) = batch.docs.indexed_codes(i)
+    {
+        return x;
+    }
+    let p = batch.docs.get(i).expect("a document of the batch");
+    let mut by: std::collections::BTreeMap<u16, u32> = Default::default();
+    // A text-only document has no dialect and no nodes.
+    if let Some(dialect) = batch.dialects.get(p.tag).filter(|_| codes) {
+        for (_, id) in p.nodes() {
+            *by.entry(dialect.code(p.f(), id)).or_default() += 1;
+        }
+    }
+    (p.len(), by.into_iter().collect())
+}
+
+/// Whether `node_column_counts` counts `node`'s column `column`: known before it counts, which makes the documents
+/// whose index does not answer for them.
 pub fn node_column_counted(column: usize) -> bool {
     column <= 2
 }

@@ -37,8 +37,8 @@ UKL_INLINE uint32_t ukl_aux_nodes(UKL_AUX_ARGS) { return ukl_aux_u32(s, 8u); }
 UKL_INLINE uint32_t ukl_aux_leaves(UKL_AUX_ARGS) { return ukl_aux_u32(s, 12u); }
 UKL_INLINE uint32_t ukl_aux_terms(UKL_AUX_ARGS) { return ukl_aux_u32(s, 20u); }
 
-// Section `kind`'s version, as `aux_index::Kind::version`: SIBLINGS' 2 (of named children).
-UKL_INLINE uint32_t ukl_aux_version(uint32_t kind) { return kind == UKL_AUX_SIBLINGS ? 2u : 1u; }
+// Section `kind`'s version, as `aux_index::Kind::version`: SIBLINGS' 2 (of named children), COUNTS' 2 (its strays).
+UKL_INLINE uint32_t ukl_aux_version(uint32_t kind) { return kind == UKL_AUX_SIBLINGS || kind == UKL_AUX_COUNTS ? 2u : 1u; }
 
 // Section `kind`'s offset, or 0 where the auxiliary index has none (or is none, or of another version).
 UKL_INLINE uint32_t ukl_aux_section(UKL_AUX_ARGS, uint32_t kind)
@@ -271,6 +271,13 @@ UKL_INLINE uint64_t ukl_aux_eighth_at_or_before(UKL_AUX_ARGS, uint32_t parent, u
 }
 
 // ---- COUNTS and RARE ----
+
+// How many named nodes hang from a parent that is not named, or `UKL_AUX_NONE` (no COUNTS).
+UKL_INLINE uint32_t ukl_aux_strays(UKL_AUX_ARGS)
+{
+    uint32_t sec = ukl_aux_section(s, UKL_AUX_COUNTS);
+    return sec == 0u ? UKL_AUX_NONE : ukl_aux_u32(s, sec + 4u);
+}
 
 // The nodes of code `code` (0 where it has none), or `UKL_AUX_NONE` (no COUNTS).
 UKL_INLINE uint32_t ukl_aux_count(UKL_AUX_ARGS, uint32_t code)
