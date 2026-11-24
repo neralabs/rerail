@@ -28,6 +28,8 @@
 // ---- the tape ----------------------------------------------------------------------------------------------------
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
+// An ECMAScript or Vue file's is its path without its extension: doc(d, "src/ui/button.tsx", "src/ui/button"), the
+// name tsx/names.rerail resolves an import of it to, so its symbols are "src/ui/button#Button".
 .decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
 .decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
@@ -528,16 +530,23 @@
 // the Git tree, the policy) and is native because that is IO and format parsing, not logic.
 // file("src/c.tsx"): the file exists. Import resolution tests candidate paths against this.
 .decl file(path: symbol)                                 // a file in the scanned tree (Git tree facts)
-// tsconfig("web", "web/src") for web/tsconfig.json with "baseUrl": "src". `extends` chains are merged first.
+// tsconfig("web", "web/src") for web/tsconfig.json with "baseUrl": "src": the folder's tsconfig.json (else its
+// jsconfig.json), read as TypeScript reads it (comments, trailing commas), over its `extends` chain (a relative
+// path, or a package's file under node_modules or in the workspace). baseUrl is from the root, where it is set; no
+// row without one.
 .decl tsconfig(dir: symbol, base_url: symbol)            // tsconfig.json / jsconfig.json, `extends` followed
-// tsconfig_for("web/src/a.ts", "web"): the nearest tsconfig.json in or above its directory.
+// tsconfig_for("web/src/a.ts", "web"): the nearest folder in or above its directory with a tsconfig (as above).
 .decl tsconfig_for(path: symbol, dir: symbol)            // the tsconfig directory that governs a file
 // "paths": {"@/*": ["src/*"]} in web/tsconfig.json gives tsconfig_path("web", "@/*", "src/*"), one row per target.
+// The target is from dir: baseUrl (else the folder of the configuration that sets `paths`, an `extends` base's)
+// applied, so @join(dir, @glob_sub(pattern, target, s)) is the path specifier s maps to: with "baseUrl": "src",
+// "@/*": ["*"] gives "src/*" too, and a base's target outside dir starts with "../".
 .decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol)
 // package("packages/ui", "@acme/ui") from packages/ui/package.json: maps a workspace package name to its directory.
 .decl package(dir: symbol, name: symbol)                 // package.json name
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
-// package_export("@acme/ui", "./button", "./src/button.ts").
+// package_export("@acme/ui", "./button", "./src/button.ts"): one row per target string, through conditions
+// ({"types": …, "default": …}) and fallback arrays; a string or a conditions object is the subpath ".".
 .decl package_export(name: symbol, subpath: symbol, target: symbol)
 // package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory, as tsconfig_for.
 // package_field("web", "engines/node", ">=18"): its string values, one row each. The key is the member's path

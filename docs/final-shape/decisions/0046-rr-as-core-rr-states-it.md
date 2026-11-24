@@ -98,7 +98,11 @@ projection, as before.
     every chunk and the cross-file part, and measured once.
     - `option` and `option_item` come from the policy's options (`corpus::run_with_options`), flattened as
       rrlab flattens them.
-    - `file`, `package`, `package_field` and `package_for` come from one walk of the root.
+    - `file`, `package`, `package_field`, `package_for`, `package_export`, `tsconfig`, `tsconfig_for` and
+      `tsconfig_path` come from one walk of the root. A configuration is read as TypeScript reads it (JSON with
+      comments, `json::strip_jsonc`, shared with the module graph), over its `extends` chain. A `paths` target is
+      given from the configuration's own folder, `baseUrl` (or the folder that sets `paths`) applied, because
+      `tsx/names.rerail` joins it to that folder: the library then needs no `baseUrl` logic of its own.
 11. **Functors.**
     - `@dot("", b)` is `b`: in the native executor's `cat`, its inverse with the first part given, and SQL.
     - `@lower` is registered as Unicode lowercase. SQLite's own `lower` is ASCII only.
@@ -220,6 +224,9 @@ tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "str
    `core.rr`'s `docof(x: loc, d)` is an input bound to the batch's view, so spans have a document; T's
    `docof` over nodes stays `node`'s projection. In `core.rr`'s shape, `doc`'s module is `""` for a file with
    no dotted module (only Python and Rust have one), and `pkg` has rows for Python files only.
+   2026-11-24: an ECMAScript or Vue file's module is its path without its extension (`syntax::ecma_module`), as
+   rrlab gives it: `tsx/names.rerail` resolves an import to its target's module and names symbols `module#name`, so
+   with `""` every file's `helper` was one symbol, `#helper`.
 6. **`unset`** (O77). Its text is "": `text(x, t)` of it lowers to `t = ""`. `!unset(x)` lowers to `x != -1`.
 
 ### Evidence

@@ -3391,6 +3391,89 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
+/// core.rerail's repository inputs reach `tsx/names.rerail` (decision 0046 item 10): a tsconfig's `paths` over an
+/// inherited `baseUrl`, read with comments and trailing commas, resolve `@/…` and exact aliases to the workspace's
+/// documents, and each ECMAScript document's module is its path without its extension, so `sym_of` names the defining
+/// file's symbol across files (two `helper`s apart), through a re-exporting `index` reached as `@/ui` and `@/ui/index`
+/// alike.
+#[test]
+fn tsconfig_paths_resolve_names_across_files() {
+    let policy = r##".policy "t:tsconfig-paths" revision 1
+.language typescript
+.scope include "**/*"
+#include "tsx/names.rerail"
+
+// A call of util's helper, however the file imports it: `@/lib/util` (a tsconfig `paths` alias over an inherited
+// `baseUrl`), `~util` (an exact pattern) or a relative path; not other's helper of the same name.
+.violation UsesHelper(at: node) code "uses-helper" "calls util's helper"
+UsesHelper(f) :- kind(c, "call_expression"), field(c, "function", f), sym_of(f, "web/src/lib/util#helper").
+
+.test aliases_resolve_across_files exactly
+    .fixture "web/tsconfig.base.json" ```
+        { "compilerOptions": { "baseUrl": "src" } }
+        ```
+    .fixture "web/tsconfig.json" ```
+        {
+          // comments and trailing commas, as TypeScript allows
+          "extends": "./tsconfig.base",
+          "compilerOptions": {
+            "paths": { "@/*": ["./*"], "~util": ["lib/util.ts"], },
+          },
+        }
+        ```
+    .fixture "web/src/lib/util.ts" ```
+        export function helper() { return 1; }
+        ```
+    .fixture "web/src/lib/other.ts" ```
+        export function helper() { return 2; }
+        ```
+    .fixture "web/src/ui/index.ts" ```
+        export { helper as uiHelper } from "@/lib/util";
+        ```
+    .fixture "web/src/app/page.ts" ```
+        import { helper } from "@/lib/util";
+        import { helper as h2 } from "~util";
+        import { helper as h3 } from "@/lib/other";
+        import { uiHelper } from "@/ui";
+        import { uiHelper as u2 } from "@/ui/index";
+        helper();
+        h2();
+        h3();
+        uiHelper();
+        u2();
+        ```
+    .fixture "web/src/app/rel.ts" ```
+        import { helper } from "../lib/util";
+        helper();
+        ```
+    .decl base(d: symbol, b: symbol)
+    base(d, b) :- tsconfig(d, b).
+    .decl tgt(s: symbol, t: symbol)
+    tgt(s, t) :- target(_, s, t).
+    .decl sym(q: symbol)
+    sym(q) :- sym_of(_, q).
+    .expect only base("web", "web/src")
+    .expect only tsconfig_path("web", "@/*", "src/*")
+    .expect only tsconfig_path("web", "~util", "src/lib/util.ts")
+    .expect tsconfig_for("web/src/app/page.ts", "web")
+    .expect only tgt("@/lib/util", "web/src/lib/util")
+    .expect only tgt("~util", "web/src/lib/util")
+    .expect only tgt("@/lib/other", "web/src/lib/other")
+    .expect only tgt("@/ui", "web/src/ui/index")
+    .expect only tgt("@/ui/index", "web/src/ui/index")
+    .expect only tgt("../lib/util", "web/src/lib/util")
+    .expect sym("web/src/lib/util#helper")
+    .expect sym("web/src/lib/other#helper")
+    .expect "uses-helper" at "web/src/app/page.ts":6
+    .expect "uses-helper" at "web/src/app/page.ts":7
+    .expect "uses-helper" at "web/src/app/page.ts":9
+    .expect "uses-helper" at "web/src/app/page.ts":10
+    .expect "uses-helper" at "web/src/app/rel.ts":2
+.end
+"##;
+    assert_eq!(run_tests_of("rr-tsconfig-paths", policy), [("aliases_resolve_across_files".to_owned(), Ok(vec![]))]);
+}
+
 /// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,
 /// "1", "2", … in order, and a `.scope tool_calls` policy's finding is at the call (path "", line 0, `at` its id). A
 /// call of another tool, a `--dry-run`, or the command in another argument is no finding.
