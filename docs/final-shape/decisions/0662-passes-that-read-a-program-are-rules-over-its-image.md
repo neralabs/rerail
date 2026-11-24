@@ -1,0 +1,187 @@
+# 0662. Passes that read a program are rules over its image; rewrites are edits those rules derive
+
+Status: proposed (2026-11-23). Feeds decision 0639 §6a (the tail's steps by place, kind sets as rules).
+
+## Intro
+
+A program goes through 86 passes between its lowering and its plan. Each pass is a Rust type that implements
+`ProgramPass` (the whole program in, a derived program out) or `RulePass` (one rule in, its replacement out), in
+`plan_base/.../program_image/manager.rs`. The question asked was whether a more ergonomic pass language should augment
+or replace the Rust passes.
+
+The passes do three kinds of work, and each kind has a different natural home:
+
+- **Analyses** read the program as a graph (which rules read which relations, what is declared, what a fixpoint of
+  "live" or "empty" reaches) and keep, drop or declare. These are already Datalog problems written as Rust worklists.
+- **Local rewrites** turn one rule into another by a pattern in its body: fold a constant, drop an implied literal,
+  make a variable used once `_`. They all write through one small vocabulary of edits (`Subst`: a variable to a term,
+  a literal dropped, an atom's variables made `_`).
+- **Generators** write new relations and rules from templates: demand (magic sets), the three-valued split, the
+  findings, the reach form, locating and pushing joins into chunks.
+
+The proposal: **augment, do not replace.** The program image gets a relational view, so analyses are `.rerail` rules
+over it, evaluated by the one engine and maintained by delta. Local rewrites become rules that derive edit facts in
+the existing edit vocabulary. Generators stay Rust passes, and every pass declares its place (local, upward,
+downward, across) so decision 0639 §6a can split the tail by module from the declarations.
+
+## The passes today
+
+The survey reads each pass's type and its doc comment (86 types implement one of the two traits). 11 rule passes and
+7 program passes have no doc comment, and are classed by their name.
+
+| Kind | Count | Passes |
+|---|---|---|
+| Analysis: keep, drop, declare or refuse by a fixpoint over the program's graph | 16 | `BaseInputs`, `Declared`, `DeclareAxes`, `DropRepeated`, `DropSelfRules`, `DropUnread`, `FactsOnce`, `InputsRead`, `KindSets`, `MergeIdentical`, `Prune`, `Unfillable`, `SubsumeRequests`, `GrammarNames`, `Projected`, `DecidedFactTests` |
+| Local rewrite of a rule | 28 | the 21 `RulePass`es (`CatVariables`, `ConcatInverses`, `DropImplied`, `DropKindTests`, `ExistenceAsReads`, `FoldConstants`, `MergeKeyed`, `SpanContainment`, `WildSingletons`, `Normalize`, `Absorb`, `GateRules`, `ImpliedSets`, `Lowering`, `MatcherRelations`, `Memberships`, `Nearest`, `NodeSubjects`, `Rounds`, `TextRelations`, `Twins`), `InOrder` (the program pass that runs a rule pass), and 6 program passes that rewrite rule by rule (`LiteralsOnce`, `Unit`, `UnitColumns`, `BooleanRelations`, `GroundRules`, `CpythonFunctors`) |
+| Generator: new relations and rules from templates | 42 | the demand passes (`AggregateDemand`, `KeyDemand`, `ProgramDemand`, `NegatedDemand`, `DemandExports`, `BoundProducts`), the reach and rank forms (`ReachForm`, `UndoInCycles`, `RankForm`, `ClimbsAsAxes`), the chunk passes (`Locate`, `MoveCrossFile`, `PushLocalJoins`, `ProjectExistentials`, `FactorizeExports`, `DeferJoins`, `RequestsFileLocal`), the lowering's tail (`ThreeValued`, `Findings`, `OrderNodes`, `SpanPatterns`, `ScopeGlobs`, `WidenCyclicContexts`, `BuiltinsOut`, `CoreDecls`, `SourcesOnRequest`), and `FactSpaces`, `FunctionKeys`, `JoinComplements`, `InlineFilters`, `InlineNodeTests`, `Hide`, `RetypeHelpers`, `StatedApart`, `SetAnswers`, `SetQualifiers`, `GateFields`, `FactsAndSets`, `DeclareInput`, `ProjectAll`, `RuleOrder`, `DropJoin` (a test's) |
+
+An analysis in Rust rebuilds the program's graph each time it runs. `DropUnread` (`simplify.rs`) is typical: it builds
+a `HashMap` of reads, runs a worklist from the kept relations, and drops the rules whose head the worklist did not
+reach. As rules over a view of the image it is two rules:
+
+```
+live(r) :- rr_kept(r).
+live(s) :- live(r), rr_reads(r, s).
+rr_drop_rule(q) :- rr_rule(q, h), !live(h).
+```
+
+The same holds for the E10 spike (decision 0639): `KindSets` is three rules over the program's reads, and they take
+out the same sets in all 17 libraries.
+
+## The design
+
+### 1. The program image as relations
+
+A view over a program image (`Version`) states its rules as facts. Nothing is copied: the view reads the image's
+arrays in place, as the kept facts' virtual tables read their blocks (decisions 0264, SQL compatibility through kept
+virtual tables).
+
+| Relation | Rows |
+|---|---|
+| `rr_rule(r, head)` | each rule, by its id, and its head's relation |
+| `rr_lit(r, i, what, rel, neg)` | each body literal: an atom, an aggregate's atom, a comparison, a functor equation |
+| `rr_arg(r, i, j, term)` | each literal's argument `j`: a variable slot, a constant, or a term id |
+| `rr_head_arg(r, j, term)` | the head's arguments |
+| `rr_decl(rel, cols)`, `rr_input(rel)`, `rr_output(rel)`, `rr_kindset(set, kind)` | the image's fields |
+| `rr_reads(h, b)` | derived: a rule of `h` reads `b` (positively or not) |
+
+`rr_reads` and the strongly connected components are rules in the view's library (`rr/view.rerail`), not Rust: the
+checks of decision 0639 §6a (components holding the own module's relations) read them.
+
+### 2. Analyses as rules
+
+An analysis pass is a `.rerail` program over the view that derives some of a fixed set of edits:
+
+| Edit | Applied as |
+|---|---|
+| `rr_drop_rule(r)` | the rule is not kept (`ProgramW::keep`) |
+| `rr_declare(rel, cols)`, `rr_undeclare(rel)`, `rr_set_input(rel)` | the header's fields |
+| `rr_refuse(message)` | the pass fails with the message (`Declared`, `GrammarNames`) |
+| `rr_merge(rel, into)` | `MergeIdentical`'s renaming |
+
+The Pipeline applies them as it applies a Rust pass's writes, so a rules pass and a Rust pass are steps of one list,
+with the same key, version and `again`. Their evaluation is the engine's, so the incremental case is the engine's
+delta maintenance (decision 0225 §5): when a program's own module changes, only the edit facts that depend on the
+change are derived again. A rules pass needs no hand-written `again`. This is what decision 0639 §6a needs for the
+downward steps: `KindSets` over the union, maintained per program.
+
+There is one evaluator. The prototype's record is plain that two lowerings of one thing need a routing predicate, and
+that the routing selected the second engine for nothing (S003, sql-index-prototype design index topic 6a). Phase 0
+already plans modules in `bootstrap.rerail`. Analyses over a program are the same language over a different view, not
+a second engine (decision 0083's phases).
+
+### 3. Local rewrites as edits rules derive
+
+A local rewrite is an analysis whose edits are the rule passes' edit vocabulary, the operations `Subst` already
+carries (`simplify.rs`):
+
+| Edit | `Subst`'s field |
+|---|---|
+| `rr_subst(r, var, term)` | `to` |
+| `rr_drop_lit(r, i)` | `drop` |
+| `rr_wild(r, i, var)` | `wild_atoms`, `wild` |
+| `rr_add_lit(r, template, args)` | a literal from a named template, for the rewrites that add one (`ConcatInverses`, `SpanContainment`) |
+
+`WildSingletons`, `FoldConstants` and `DropImplied` become:
+
+```
+// A variable of a positive atom named nowhere else is `_`.
+rr_wild(r, i, v) :- rr_arg(r, i, _, v), rr_var(v), rr_lit(r, i, "atom", _, false), 1 = count : { rr_uses(r, v, _) }.
+// A variable equal to a constant is the constant.
+rr_subst(r, v, c) :- rr_lit(r, i, "eq", _, false), rr_arg(r, i, 0, v), rr_var(v), rr_arg(r, i, 1, c), rr_const(c).
+rr_drop_lit(r, i) :- rr_subst(r, v, _), rr_lit(r, i, "eq", _, false), rr_arg(r, i, 0, v).
+// A literal equal to an earlier one drops.
+rr_drop_lit(r, j) :- rr_same_lit(r, i, j), i < j.
+```
+
+A rewrite pass's rules see the body as a set of literals, which is what a body is. Order-sensitive matching, as in a
+term-rewriting language, would have to try each permutation.
+
+Two rewrites of one rule in one round must not clash. A rule is rewritten once a round, from the edits derived on the
+round's input. A variable that two `rr_subst` rows send to two terms is `rr_refuse`d (a rewrite conflict, like 0639's
+`helper_conflict`). The Pipeline runs a rewrite pass to its fixpoint as `InOrder` runs a rule pass today.
+
+### 4. Generators stay Rust, with declared places
+
+A generator makes relation names, column layouts and rules from analyses that are themselves programs: magic sets'
+adornments, the three-valued split, the chunk passes' location columns. Writing them as templates in the rule
+language would need quotation of rules inside rules, and that is a second language with its own typing. They stay
+`ProgramPass`es. What changes for them:
+
+- **Each pass declares its place** (decision 0639 §6a): `const PLACE: Place`, one of `Local` (a rule or relation,
+  with declarations), `Upward` (a scope's results into a module), `Downward` (from what the program reads) or
+  `Across` (relations two modules give rules to). The tail's split by module reads the declarations, and `rr::DOWNWARD`
+  becomes the tail's steps that declare `Downward`.
+- **Each pass reads its analyses from the view** where an analysis is one of §2's: `AggregateDemand`'s readers of a
+  helper and `SourcesOnRequest`'s reads become rules, so the generator's Rust is the writing alone.
+
+### 5. What moves first
+
+1. The view (§1) and the edit application (§2) in `plan_base`, with `KindSets` as the first rules pass (0639's T10).
+2. `DropUnread`, `InputsRead`, `BaseInputs`, `Prune`, `Unfillable`: the reachability analyses, each against its Rust
+   pass on every pack before the Rust pass is removed.
+3. The rewrites with no added literal (`WildSingletons`, `FoldConstants`, `DropImplied`, `DropKindTests`,
+   `LiteralsOnce`), then those that add one.
+4. `PLACE` on every pass.
+
+## Prior art
+
+- **ISLE** (Cranelift's instruction-selection DSL, vendored at `native/vendor/cranelift-codegen-0.125.4/src/*.isle`,
+  42,657 lines, read first-hand). A rule is `(rule (simplify <pattern>) <replacement>)` over typed terms, with
+  extractors and constructors bound to Rust, and priorities to choose between overlapping rules. It compiles to Rust
+  matching code. It fits local rewrites of trees whose argument positions are fixed (`(iadd ty x (iconst_u ty 0))`).
+  A rule body is a set of literals joined by shared variables, not a tree: an ISLE pattern would name literal
+  positions, and its matching would be the permutation search §3 avoids. It has no fixpoint over a graph, so the
+  analyses would stay Rust. It would be a second language beside `.rerail` (S003).
+- **egglog** (measured in this project, `docs/final-shape/notes/t9-typing-support.md`, the DE runs). Equality
+  saturation over terms with Datalog rules: the model of rewrites as facts that a fixpoint derives is §3's. Measured:
+  60 ms a document, 2.29 GB for the corpus, and additions only. A file added and re-saturated cost 31% of a full
+  evaluation for 0.4% of the nodes, with no retraction. Drop passes are retractions, and per-program maintenance
+  (0639 §6a) is a delta, so it does not fit as the engine. The idea it shares, rewrites as derived facts, is kept.
+- **Datalog over a program's facts** (Soufflé's and Doop's use; this project's own `bootstrap.rerail` plan). The
+  language `.rerail` is Soufflé's dialect. Phase 0 already plans and keys modules as rules over files' facts
+  (decision 0639 §1–3). §1–2 apply the same thing to the program image.
+- Nanopass (typed intermediate languages per pass), MLIR's PDLL and Stratego's rewriting strategies were not read
+  first-hand for this decision and are not cited.
+
+## Collisions
+
+- **A rules pass's cost on a small program.** A Rust analysis on a 200-rule program is a few hash maps. A rules pass
+  is a planned program. The view is read in place and the pass's plan is kept with its image (a planned analysis is a
+  program like the others, decision 0281's keyed steps), so a rerun is the evaluation alone. T16 measures the kind
+  sets as rules against `KindSets` per program, on the packs of 0639's E15.
+- **Edits in one round that interact.** §3's rule: one rewrite a rule a round, conflicts refused.
+- **Rules passes in the bootstrap.** The passes that lower `bootstrap.rerail` itself cannot be rules evaluated by the
+  program they lower. Phase 0's own programs keep the Rust passes until the view's library is lowered once and kept
+  in the template (decision 0639 §5).
+
+## Tests, written before the code
+
+- **T15.** The view (§1) states every rule, literal and argument of an image: each pack program's image printed from
+  the view's rows is the image printed.
+- **T16.** `KindSets` as rules (0639's T10), through the Pipeline: every pack program plans as with the Rust pass,
+  and the kind set rules' time per program is reported beside the pass's.
+- **T17.** Each analysis moved (§5 item 2) gives its Rust pass's edits on every pack program.
+- **T18.** Each rewrite moved (§5 item 3) gives its Rust pass's rule on every pack program, and a clash of two
+  `rr_subst` rows is refused.
+- **T19.** Every pass declares `PLACE`, and the tail's steps that declare `Downward` are `rr::DOWNWARD`'s.

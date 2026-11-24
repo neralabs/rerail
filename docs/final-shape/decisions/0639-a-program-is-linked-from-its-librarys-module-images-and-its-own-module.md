@@ -432,6 +432,70 @@ Each tail step is one of four kinds, and each kind has its place:
   (phases) and `cmp_same_ask` (Python). Only those relations' SCCs, three-valued closures and strata are completed per
   program.
 
+### 6a. The tail by module, spiked (E12–E16)
+
+The tail is a list of named steps (`rr::TailStep`; `rr::TAIL` is its order, `rr::DOWNWARD` the two downward steps,
+`rr::tail_steps` runs any list), so its parts run apart. Spike `spike_0639_tail_by_module` (ignored), on spark2, over
+all 17 packs' libraries and the phase programs, and up to 6 programs a pack (96 programs):
+
+| | Question | Result |
+|---|---|---|
+| E12 | The *module steps* (`TAIL` less `KindSets` and `SourcesOnRequest`), run on each module linked with its scope, give together what they give on the whole library? Lines compared with variables renamed by place | yes in 16 libraries. Vue: `vue/component`'s own tail keeps host copies of 11 relations (`vaccessor`, `vmacro`, …) that the whole leaves to the context `script`. `vue/script` declares that context again with more exports, which reach them. No host rule reads the copies, so `Prune` drops them when the plan is made. Nothing else differs, and no context instance is missing |
+| E12b | The module steps twice, the second over the first's output: as once? | yes in all 16 |
+| E13 | A program's tail with the module steps first, then the downward ones, then the steps that follow them in `TAIL`: `TAIL`'s program? | yes in all 93 compared. 3 more fail alike in both orders: `eslint-curly`'s and `eslint-plugin-vue-no-child-content`'s known inline failures, and `phpcs-generic-php-deprecated-functions`, whose facts file the spike's module collection leaves out (it is included from `../packs/php/`; the product's parse holds it, E1) |
+| E14 | A strongly connected component holding relations two modules give rules to? | none in any library. Relations with rules from two modules are E8's (`layout_at`, `token_text_ask`, `cc_name`, `cc_decision`, `php_dynamic`, `rr_embed_req`, `rr_dir_req`, `rr_file_req`) and content-named helpers |
+| E16 | The steps after the downward ones change only relations that the downward ones or the program's own module changed? | yes in all 93 |
+
+E15 and E16's times, per program on one thread (ms; the module steps here over the whole union, as today):
+
+| Pack | `TAIL` | `KindSets` | `SourcesOnRequest` | the steps after them | Largest others |
+|---|---|---|---|---|---|
+| django | 77.4 | 5.2 | 7.3 | 26.8 | ContextPasses 15.8, Checks 15.4, AggregateDemand 5.2 |
+| react | 37.6 | 1.8 | 8.9 | 10.3 | Checks 4.2, AggregateDemand 3.4, ContextPasses 3.0 |
+| python | 30.8 | 2.0 | 2.6 | 10.0 | ContextPasses 6.6, Checks 4.8, AggregateDemand 2.7 |
+| javascript | 19.3 | 0.9 | 4.8 | 5.3 | Checks 1.9, AggregateDemand 1.7 |
+| vue | 19.1 | 1.0 | 4.8 | 4.1 | ContextPasses 3.6, Checks 1.4 |
+| phases | 16.5 | 0.6 | 2.0 | 7.4 | Checks 4.5, ContextPasses 1.9 |
+
+**What step 6 builds.**
+
+1. **A module's tail at module time.** Phase 0's lowering request (§3) runs the module steps over the link of the
+   module's scope (their tailed images) and the module, and keeps in the module's image the rules that the run
+   writes and that no scope image holds. That covers the module's own rules, tailed, and what its tail makes of
+   its scope's: a context's instances made at the module that declares it (E11), and a module's own copy of a
+   relation it renames. E12 and E12b are why this composes. The parts' union is the whole library's tail (up to the
+   dead host copies `Prune` drops), and a scope image the steps run over again comes back as it was.
+2. **A second key, the tail's.** The module steps read the scope's rules themselves, not only its interface:
+   a context's instance is a copy of a scope rule's body, and the three-valued closure and the span columns read
+   the scope's rules. Step 5's key (§4) names the scope by interface, so a body edit in the scope keeps the lowered
+   image. The tailed image needs its own key: the lowered image's digest and the scope modules' tailed digests.
+   A body edit in the scope then re-runs only the module steps of the modules that read it. No lowering runs
+   again. Kept as `p0_module_tailed(key, image)` beside `p0_module_lowered`, answered by the engine.
+3. **A program's tail.** The link of the tailed library images, and the program's own module tailed in its scope
+   (1. on the program's module). Then `KindSets` and `SourcesOnRequest` over the union, then the steps after them
+   run on what changed alone (E16): each is a local step, so it reruns through `ProgramPass::again` over the
+   downward steps' edit (decision 0393; `Pipeline::again`). Of the checks (`finish_checks_given`), the program
+   runs only those of the components that hold the own module's relations or the downward steps' changes (E14: no
+   component crosses modules).
+4. **The downward steps as rules (T10).** `KindSets` becomes E10's three rules over the union's reads, evaluated
+   and kept by delta as the program's own module changes (0225 §5). Their input is a relational view of a
+   program image (decision 0662), the first analysis written that way. `SourcesOnRequest` keeps its `again` until
+   decision 0662's view carries what it reads.
+5. **The steps' places declared.** Each tail step says whether it is local, upward, downward or across
+   (decision 0662), so the module/program split above reads the declarations. It does not keep a list of its own:
+   `DOWNWARD` becomes the steps that declare `Downward`. T11 and T13 hold the declarations to what the steps do.
+
+**Tests, before the code.**
+- **T10.** E10 as a test: the kind set rules take out what `KindSets` takes out, every pack.
+- **T11.** E12 and E12b as a test: every library's modules, tailed at module time, unite to the library's tail
+  after `Prune`; the module steps over a tailed scope leave it as it was.
+- **T12.** E13 as a test, on the product path: every pack program, linked from tailed images, plans to the program
+  it plans to today after `Prune`.
+- **T13.** E16 as a test: the steps after the downward ones change nothing but the downward steps' and the own
+  module's relations.
+- **T14.** A rule body edited in a scope file re-tails the modules whose tail reads it (their tail key changes), and
+  lowers none again (their lowering key does not).
+
 **Use edges.** A relation a module reads that a later module defines is the rules' function-local import: lowering
 needs only its declaration, so the plan stays a DAG; evaluation has the cycle. Phase 0 has one such edge today:
 `p0_phase` (a `<phase>__<export>` declaration loads the phase program as a rule file of the run, not into the module's
@@ -567,6 +631,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
    digests. T9. **Done**: T9 `every_module_lowers_alike_against_its_scopes_headers`, and
    `a_modules_key_names_its_scopes_interfaces`; the digest is the file system's `file_interface`.
 6. §6: the local and upward tail steps at module time; kind sets, then sources on request, as rules per program.
-   T10.
+   T10. **Spiked** (§6a, E12–E16) and specified: the module steps at module time under a tail key
+   (`p0_module_tailed`), the program's downward steps over the union and the steps after them on their edit, kind
+   sets as rules over decision 0662's view, the steps' places declared. T10–T14.
 7. §5 checked by T4 on the template, and the template's fill time measured.
 8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
