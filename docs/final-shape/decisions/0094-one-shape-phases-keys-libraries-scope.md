@@ -396,6 +396,15 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
       ibind(s, x, q), qv(m9, q, k, v), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9)`; `pv`'s through `litq`
       and `qn` alike). That is 0364 R4 at scale: the order after the driver, priced. The test is ignored until the
       move costs at most 3 times the edit in place and at most half a cold run.
+    - **corpus0 again (2026-11-24),** after the hub's roll-up 112 (K4) and the reach indexes' delta, same scripts and
+      host. Answers as before. Cold 9.3 s CPU (16.2 s before the roll-ups), warm 0.0 s, the move 12.6 s: its cross
+      part 7.7 s, against 3.0 s when the reach indexes' readers derived again. Of the move's 42.0 M rows of joins'
+      work, the big recursive component's maintain mode did 35.3 M; derived cold it does 202,510. Its heaviest lines
+      are led by `rr_cx_reach`'s delta (156 rows) and then scan `pann` whole before `docof` binds it to the
+      document (`bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), uinst(t, c), anc(s, c), docof(f, d9), docof(s,
+      e9), rr_cx_reach(d9, e9)`: 9.96 M each). 0090 §4's priced clause let it through: it priced the mode at
+      1.9e12 against a derive at 2.0e12, both far from the work done. So the reach index's delta is right, and its
+      readers' lines and their price are now the cost: 0364 R4 at scale and the clause's price, edit-cost's next.
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers
