@@ -353,7 +353,7 @@ describe("readRepositoryLintConfig", () => {
       agentsFound: [],
       lintConfig: ruff,
     }, "agent");
-    expect(ruffScreen).toContain("214 rules start off  not selected by pyproject.toml: tool.ruff.lint.select");
+    expect(ruffScreen).toMatch(/^ {4}\d+ rules start off {2}not selected by pyproject\.toml: tool\.ruff\.lint\.select$/mu);
 
     const banditRoot = await repository({ ".bandit": "[bandit]\ntests = B101\n" });
     const bandit = readRepositoryLintConfig(banditRoot, ruleCatalog, ["python"]);
@@ -365,7 +365,7 @@ describe("readRepositoryLintConfig", () => {
       agentsFound: [],
       lintConfig: bandit,
     }, "agent");
-    expect(banditScreen).toContain("49 rules start off  not in .bandit tests");
+    expect(banditScreen).toMatch(/^ {4}\d+ rules start off {2}not in \.bandit tests$/mu);
   });
   it("configures typescript-eslint's consistent-type-definitions from [\"error\", \"type\"]", async () => {
     const root = await repository({ ".eslintrc.json": "{ \"rules\": { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } }" });

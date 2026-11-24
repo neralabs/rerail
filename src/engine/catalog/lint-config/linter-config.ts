@@ -67,8 +67,10 @@ export interface Port {
 /** Upstream options mapped onto a port's `config`, or why they are not. */
 export type MappedOptions = { readonly ok: true; readonly config: RuleConfig } | { readonly ok: false; readonly reason: string };
 
-/** What one linter's config decides for a port, for every file. `because` names the config entry, for the person. */
-/** Reasons can appear after a count of rules, so wording must work for any number. */
+/**
+ * What one linter's config decides for a port, for every file. `because` names the config entry, for the person.
+ * Reasons can appear after a count of rules, so wording must work for any number.
+ */
 export type PortDecision =
   | {
     readonly on: boolean;
