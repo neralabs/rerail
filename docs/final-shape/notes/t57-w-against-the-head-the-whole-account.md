@@ -214,3 +214,21 @@ the matcher wave 1,651, string annotations 403.
 
 The next work builds E2, E3, E1, E4 and E7, in that order: E2 and E3 are the lowering's and the join's own, and
 the others read through them.
+
+### What was built, and what the step CPU says (2026-11-24)
+
+Units of work count a step's rows in, so a step that does little a row reads as much as one that probes. The cost
+dump now also takes the profiled CPU of every step, by head, and ranks the heads by it. At 8 definitions a file, the
+joins' steps took 154 ms before the work below and 116 ms after.
+
+| | Outcome | Commit |
+|---|---|---|
+| E2 | A comparison of nodes reads each node's preorder key where the node lies (`@rr_node_order`). No plan joins `node_order`. | 410c2312c5 |
+| E3 | No cost. The filter steps take 0.1–0.6 ms of the steps' 116–154 ms. Most are fused into the binding atom's row program already, and the rest run as comparisons. Writing hiding's bounds before the body moved the units a name from 34.2 to 31.1 and the CPU not at all, so that change was not kept. The case now bounds their CPU at 1% of the steps'. | aab93aa6c9 |
+| — | Not in the catalogue, the largest step: `text($e, $x)` read by its string walked every text row of every document for each probe (`rf_target`, 36.6 ms of 154). `Projected::text_rows_of` finds a document's rows of a text where the text occurs in its source, by a binary search on the tape's node starts. `rf_target` went from 52.9 to 12.8 ms, with the same outputs. The planner prices a step by the rows it passes on, so a read's own cost never enters a plan's price; this one was found only by timing. | 37f8fd8c9e |
+| E1 | `NearEnds`, run as a program is prepared (not in the lowering, which stays T's front end's). In a recursive rule whose recursion binds a `nearest`'s far end, the `nearest` and the atoms that bind its near end become a helper, made once and read by the far end. `rf_qn` reads 32–160 helper rows a wave, against 4,528 nodes. | e91529c5dd |
+| E4 | Not built. `bind_only` is demanded because the size test bounds a rule's key by base atoms only (`tgt(t), kind(t, "identifier")` counts every identifier), and 932 rows are over 1/32 of the nodes anyway. Its readers ask about every name read, so the demand saves no row. Each of its ten rules joins the demand, and two start from it: 9,175 units against a bound of 1,373. The demand pays only when its readers ask about fewer keys than the relation holds. That needs both sizes before any run: a derived atom bounded by its relation's own scans (written, `tmp/e4-demand-sizes.patch`), and an AST-pattern literal's rows (`nameref`, `tp_site`), which are its matcher's root kind's count. The demand split has no grammar to turn the root kind into a code, so both sizes stay unknown and the patch changes nothing. | — |
+
+The cost cases pass 13 of 31 (with E1). The remaining heads by step CPU: `rf_target` 12.8 ms (its `text` read and
+`rf_named`), `wstart` 8.1 (E7: `nearest` per name read, then the scope's kind), `rf_in` 6.0, `bind_only` 2.6–5.2
+(E4), `target_form` 3.9, `rf_local` 3.6.
