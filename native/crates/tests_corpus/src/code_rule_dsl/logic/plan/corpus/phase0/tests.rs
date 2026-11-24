@@ -434,4 +434,15 @@
         assert_eq!(back.plan, graph.plan, "the module plan");
         assert_eq!(back.lowered, graph.lowered, "the modules' images");
         assert_eq!(back.digests, graph.digests, "the modules' digests");
+        // A rule file outside the library, including a pack's table beside it (`../packs/…`), as the bench's rules do.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("r.rerail"), "#include \"python/ruff-classes.rerail\"\n#include \"../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail\"\n.decl k(m: symbol)\nk(m) :- stdlib_module(m).\n.output k\n").unwrap();
+        let seed = super::Seed::File(dunce::canonicalize(dir.path().join("r.rerail")).unwrap());
+        let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
+        let back = graph.kept_as_facts().expect("the graph read back from its facts");
+        assert!(!graph.plan.is_empty(), "{}", graph.describe());
+        // One spelling a file: the pack's table is `packs/…`, as a program's canonical list of its files has it, not
+        // `lib/../packs/…` (`Library::scope` compares them).
+        assert!(!format!("{graph:?}").contains("/../"), "{}", graph.describe());
+        assert_eq!(format!("{back:#?}"), format!("{graph:#?}"), "the graph, as its facts keep it");
     }

@@ -5307,13 +5307,15 @@ fn run_observed_within(
         // (decision 0431 §8, `syntax::values`).
         let values = kept_guests.as_ref().map(|_| Arc::new(syntax::values::Values::default()));
         // Decision 0597 rule 8: a pass's kept rows are inputs a tape value's entry fills as it is admitted
-        // (`kept_of`): bound empty, and grown with the chunk's values.
-        let keeping = values.is_some() && local.version.inputs().any(|a| guests::kept_input(local.version.text(a)));
+        // (`kept_of`): bound empty, and grown with the chunk's values. A chunk that keeps no guests binds them empty
+        // too: no value's entry fills them, and an input left unbound has no statistics to plan its readers by.
+        let has_kept = local.version.inputs().any(|a| guests::kept_input(local.version.text(a)));
+        let keeping = values.is_some() && has_kept;
         // What the chunk's end reads of them (`kept_rows`), held to the end with its exports: each pass's fresh roots
         // and its frontier relations' tape rows.
         let by_name: Vec<String> = if keeping { local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)).map(|r| r.replace(guests::KEPT_ROOTS, guests::FRESH_ROOTS).replace(guests::KEPT, guests::TAPE)).collect() } else { Vec::new() };
         let mut sources = sources;
-        if keeping {
+        if has_kept {
             for rel in local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)) {
                 if !sources.iter().any(|(r, _)| r == rel) {
                     sources.push((rel.to_owned(), flat_source(local.version.columns_of(rel).map_or(1, |c| c.len()), &[])));
