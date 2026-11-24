@@ -885,15 +885,23 @@ fn image_digest(bytes: &[u8]) -> String {
     sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The module of plan key `key`, with its image's digest, as this process made or read it for the store the run
+/// reads (`planned_module`'s first look, without the store's).
+fn held_module(key: &str) -> Option<(lower::Module, String)> {
+    let k = planned_key(key)?;
+    let held = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
+    held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(image_store_path(), k)).map(|(m, d, _)| (m.clone(), d.clone()))
+}
+
 /// The module of plan key `key`, with its image's digest: made or read in this process, else read from the image
 /// store (`image_store`) and decoded. `None` where no store holds it.
 fn planned_module(key: &str) -> Option<(lower::Module, String)> {
+    if let Some(found) = held_module(key) {
+        return Some(found);
+    }
     let k = planned_key(key)?;
     let held = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
     let at = (image_store_path(), k);
-    if let Some((m, d, _)) = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&at) {
-        return Some((m.clone(), d.clone()));
-    }
     let store = image_store();
     let (bytes, id) = images::read_image(store.as_deref(), k)?;
     if let (Some(store), Some(id)) = (store.as_deref(), id) {
@@ -919,14 +927,19 @@ pub fn planned_module_held(key: &str) -> bool {
 
 /// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
 /// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
-/// kept under its key; or found held. Its image's digest.
+/// kept under its key; or found held by the process. Its image's digest.
+///
+/// Answered inside the run's waves, so it reads no store (decision 0104: SQL only before the first wave, writes
+/// behind the run): a module the process does not hold is lowered (deterministic, and cheap: the library's 64 files
+/// in tens of milliseconds, decision 0639), and its image kept behind the run. Its scope's modules rank below it in
+/// the same wave's requests, answered first, so the process holds them.
 pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
-    if let Some((_, digest)) = planned_module(key) {
+    if let Some((_, digest)) = held_module(key) {
         return Ok(digest);
     }
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
-    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| planned_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
+    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
     // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
     // each other are one module, and write each other's relations.
     let mut open = std::collections::HashMap::new();
