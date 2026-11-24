@@ -259,6 +259,28 @@ formula").
   items a round, about 30 µs a round on the Spark: a chain of dependent reads of device memory. Lane 0 read the
   watch head of each of the round's literals in turn; each lane now reads its own, and lane 0 walks only the lists
   that are not empty (13.8 s to 11.1 s).
+- **Learned clauses reduced** (`cs_reduce`): past `H_REDUCE` learned clauses (2,000, then 300 more each time) or
+  three quarters of the room, the search goes back to level 0, where no learned clause is a reason analysis reads;
+  it keeps, newest first while they fit in half the arena, those of at most 3 levels (LBD, counted as a clause is
+  learned) and the newer half, drops those level 0 satisfies, compacts the arena in order and watches every clause
+  again. A formula's room is by its size (16 words a variable, from 4,096 to 2^18; a clause for each 16): at 2^18
+  words each, a round's 6,000 formulas would have needed 6 GB. The hardest dump is now proved too, in 22,006
+  conflicts and 19 reductions.
+- **Where a hard formula's time goes** (`ukl_clock`, new in UKL: CUDA's `clock64`, 0 where a backend has none; the
+  hardest dump on a DGX Spark, in millions of cycles): watch visits 30,744, analysis 25,608, gate items 18,992,
+  decisions 7,334, jumps back 4,354, reductions 2,291. The first two were lane 0's chains of dependent reads: a
+  long learned clause scanned for a new watch, the trail walked back an entry at a time.
+- **Now across the lanes**, each with the serial code's result, so the search is the same conflict for conflict:
+  - a watch visit: the group walks the list together, a clause's literals scanned 32 at a time, the first in its
+    order taken;
+  - analysis: a clause's literals filtered by the lanes (a variable's first taken, by match), bumped by lane 0 in
+    that order; the trail searched back 32 entries at a time (a ballot's highest); the clause's levels and its
+    highest literal across the lanes;
+  - a bump or an insertion into the heap: the path to the root read at once, the entry placed by a ballot, the
+    ancestors below it moved down in one write.
+  The hardest dump: 41.7 s to 29.5 s (watch visits 16,210, analysis 14,600 million cycles). Per formula the device
+  is still about 60 times the CPU: each step of a search is a few dependent reads of device memory, and a hard
+  search is millions of them in a row.
 - **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
   the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
   the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on

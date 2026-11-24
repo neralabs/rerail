@@ -70,6 +70,8 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)(uint64_t)(simd_vote::vote_t)simd_ballot(b); }
 
 UKL_INLINE void ukl_sg_barrier() { simdgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup); }
+// A thread's clock, to profile a kernel's parts: cycles where the backend has one, else 0 (Metal has none).
+UKL_INLINE uint64_t ukl_clock() { return 0u; }
 UKL_INLINE void ukl_tg_barrier() { threadgroup_barrier(mem_flags::mem_threadgroup); }
 UKL_INLINE void ukl_tg_barrier_device() { threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup); }
 
@@ -164,6 +166,7 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ballot_sync(0xffffffffu, b); }
 
 UKL_INLINE void ukl_sg_barrier() { __syncwarp(); }
+UKL_INLINE uint64_t ukl_clock() { return (uint64_t)clock64(); }
 UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
 UKL_INLINE void ukl_tg_barrier_device() { __syncthreads(); }
 
@@ -247,6 +250,7 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 UKL_INLINE uint32_t ukl_sg_seg_inclusive_native(bool add, uint32_t f, uint32_t v, uint32_t* fin __UKL_PARAMS) { return __ukl_cpu_seg(add, f, v, fin); }
 
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
+UKL_INLINE uint64_t ukl_clock() { return 0u; }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
 UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
 // A poll of another group's progress (a grid barrier's): the thread suspends, and once its whole group polls, the
@@ -294,6 +298,7 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 
 // OpenCL C 1.2 (ukl_opencl_shim.h): C with address spaces, clang's `overloadable`, and C11's `_Static_assert`.
 #define UKL_INLINE static inline
+UKL_INLINE uint64_t ukl_clock() { return 0u; }
 #define UKL_CALLED static
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))

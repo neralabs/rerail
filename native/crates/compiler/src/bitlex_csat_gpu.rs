@@ -33,9 +33,14 @@ const LANES: u64 = 32;
 const STEPS: u32 = 1 << 12;
 /// The launches a batch takes at most.
 const LAUNCHES: usize = 1 << 12;
-/// A formula's room for learned clauses: clauses, and their literals.
-pub const LEARNED: u32 = 1 << 13;
-pub const ARENA: u32 = 1 << 18;
+/// A formula's room for learned clauses, by its size: their literals (16 words a variable, from 4,096 to 2^18), and
+/// a clause for each 16 of those. The kernel reduces them as they fill it (`cs_reduce`).
+fn arena(vars: usize) -> u32 {
+    (16 * vars).clamp(1 << 12, 1 << 18) as u32
+}
+fn learned(vars: usize) -> u32 {
+    arena(vars) / 16
+}
 /// The state's header (the kernel's `HEADER`) and the statuses it reports.
 const HEADER: usize = 32;
 const SAT: u32 = 1;
@@ -43,7 +48,7 @@ const UNSAT: u32 = 2;
 const ROOMLESS: u32 = 4;
 const BROKEN: u32 = 5;
 /// The words a formula's report holds (`out`).
-const OUT: usize = 8;
+const OUT: usize = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -90,12 +95,16 @@ pub struct Solved {
     pub learned_literals: u32,
     pub visits: u32,
     pub items: u32,
+    pub reductions: u32,
+    /// The device's cycles by part, over 256 (0 where its backend has no clock): watch visits, gate items, analysis,
+    /// jumps back, decisions, reductions.
+    pub cycles: [u32; 6],
 }
 
 /// A formula's state, in words (the kernel's layout).
 fn state_words(vars: usize, clauses: usize) -> usize {
-    let (n, l, a) = (vars + 1, LEARNED as usize, ARENA as usize);
-    HEADER + 9 * n + 2 * n + 4 * (clauses + l) + (l + 1) + a + 2 * (n + 1)
+    let (n, l, a) = (vars + 1, learned(vars) as usize, arena(vars) as usize);
+    HEADER + 9 * n + 2 * n + 4 * (clauses + l) + (l + 1) + a + 2 * (n + 1) + n + l + LANES as usize
 }
 
 /// A byte offset in the block as the kernel reads it: in words.
@@ -148,8 +157,8 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
             words(ends)?,
             f.clauses.len() as u32,
             state,
-            LEARNED,
-            ARENA,
+            learned(f.vars),
+            arena(f.vars),
             f.conflicts,
             f.fan.vars() as u32,
             0,
@@ -209,6 +218,8 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
             learned_literals: o[5],
             visits: o[6],
             items: o[7],
+            reductions: o[8],
+            cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
         })
         .collect())
 }
@@ -406,7 +417,7 @@ mod tests {
                 Answer::Unknown => "Unknown",
             };
             eprintln!(
-                "{}: the device {answer}{}, {} conflicts, {} decisions, {} rounds, {} learned ({} literals), {} watch visits, {} gate items; the CPU {cpu:?}, {} conflicts, {ms:.1} ms",
+                "{}: the device {answer}{}, {} conflicts, {} decisions, {} rounds, {} learned ({} literals), {} watch visits, {} gate items, {} reductions, Mcycles visit/items/analyze/back/decide/reduce {:?}; the CPU {cpu:?}, {} conflicts, {ms:.1} ms",
                 p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
                 if x.roomless { " (room full)" } else { "" },
                 x.conflicts,
@@ -416,6 +427,8 @@ mod tests {
                 x.learned_literals,
                 x.visits,
                 x.items,
+                x.reductions,
+                x.cycles.map(|c| u64::from(c) * 256 / 1_000_000),
                 s.conflicts - c0
             );
         }
