@@ -186,3 +186,27 @@ and 15,000 to 30,000 gates, 550 to 9,160 conflicts, 100 to 580 ms.
   large part of them. A large factor needs fewer conflicts (a different proof: the base case last, smaller windows)
   rather than a faster check.
 
+**Step 3, its first part: the solver in UKL** (the user: "Start step 3: the full solver in UKL, one SIMD group per
+formula").
+- **The formulas where both solvers read them** (`bitlex_grown`): a window's gates, its fanout and its plain
+  clauses, and a solve's own, are chunks of one block a compile's provers share (`FormulaBlock`; an `Induction`'s
+  forks take their parent's). `Grown` is an array in a chunk that grows as a `Vec` does (a chunk twice as large, the
+  old one given back to the block's free list). The CPU's solver reads the block as before (from the heap and from a
+  block, in turns on an M3: within a few percent); a batch's kernel binds it once and finds each formula by its
+  offsets. Nothing is uploaded.
+- **The kernel** (`bitlex_csat_gpu.uglykl`, `bitlex_csat_gpu::solve`): a SIMD group a formula. A round takes up to
+  32 of the trail's literals: lane 0 visits the clauses watching their negations, then the lanes check their gates,
+  a gate a lane. What a step implies goes on the trail in lane order (the lowest of the lanes that set one variable,
+  `ukl_sg_match`; a slot by rank), so the search does not depend on the schedule. Analysis (first UIP, the CPU's
+  rules and explanations) and decisions (VMTF, false first) are lane 0's; learned clauses go into the formula's own
+  arena (8,192 clauses, 262,144 literals), past which it is unknown. A launch runs a formula 4,096 steps; the host
+  launches again while any runs.
+- **Tested**: 400 random circuits (with and without a solve's own gates), on an M3's Metal and a DGX Spark's CUDA:
+  every answer the CPU solver's (113 satisfiable, 287 not, 95 with conflicts), every model holding.
+- **The hard formulas** (the 4 hardest of a cold Kotlin compile, `the_dumped_formulas_on_the_device`, an M3): each
+  stops unknown, its room full, after 2,600 to 3,700 conflicts (the CPU proves them in 1,500 to 9,200 conflicts,
+  330 to 600 ms). Its learned clauses are about 98 literals long (the CPU's 35), and a round takes about 40 µs: a
+  formula's search is one SIMD group's chain of dependent reads of device memory.
+- **Next**: the prover's batches through it (0654's propagation replaced: it is this kernel's first phase), measured
+  on a cold compile; then a round's cost and the learned clauses' length.
+

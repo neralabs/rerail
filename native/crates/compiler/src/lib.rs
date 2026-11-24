@@ -25,6 +25,9 @@ pub mod bitlex_prove_gpu;
 pub mod bitlex_rust;
 pub mod bitlex_sat;
 pub mod bitlex_csat;
+#[cfg(not(target_family = "wasm"))]
+pub mod bitlex_csat_gpu;
+pub mod bitlex_grown;
 pub mod bitlex_tier2;
 pub mod block;
 pub mod class_pack;

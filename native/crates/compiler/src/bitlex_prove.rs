@@ -27,6 +27,7 @@
 //! The position is in the stream (the questions are about tokens): a byte at or before it is the
 //! stream's or before it (`within` is which), one after it may be past the end.
 
+use crate::bitlex_grown::FormulaBlock;
 use crate::block::{BlockOp, ClassTable};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
@@ -788,6 +789,9 @@ pub struct Induction {
     /// Those windows, each with the operations it was made of (`windows` finds it by their
     /// hash, with no copy of them).
     window_list: Vec<(Vec<BlockOp>, Window)>,
+    /// The block its windows are built in (`bitlex_grown`): its forks', so a batch of their solves is in one block
+    /// a kernel binds once (decision 0670, step 3). Made at its first window.
+    block: std::sync::OnceLock<FormulaBlock>,
     question: usize,
     /// The solver, reset for each solve (its memory kept).
     solver: Solver,
@@ -1216,7 +1220,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), question: 0, solver: Solver::default(), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, captured_core: false, core: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, solver: Solver::default(), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, captured_core: false, core: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1238,7 +1242,13 @@ impl Induction {
     pub fn fork(&self, work: &Budget) -> Induction {
         let mut p = Induction::new(&self.rounds, self.horizon, self.conflicts).within(work);
         p.given = self.given.clone();
+        p.block = self.block().clone().into();
         p
+    }
+
+    /// The block its windows are built in.
+    pub fn block(&self) -> &FormulaBlock {
+        self.block.get_or_init(FormulaBlock::new)
     }
 
     /// `never` in rounds (decision 0654): the question asked again from its start, each solve
@@ -1510,7 +1520,7 @@ impl Induction {
                     roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
                 let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
-                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, gates: Gates::default(), clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default(), memo_added: Vec::new(), readers_added: Vec::new() };
+                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, gates: Gates::in_block(self.block()), clauses: Clauses::in_block(self.block()), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default(), memo_added: Vec::new(), readers_added: Vec::new() };
                 // A literal that is true.
                 u.clauses.push(&[1]);
                 // Before the stream: from some lag past the position's on.

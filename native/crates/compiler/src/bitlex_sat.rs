@@ -9,6 +9,8 @@
 //! A conflict budget bounds the work: past it, the answer is "unknown", which a proof reads as
 //! "not proved" (sound).
 
+use crate::bitlex_grown::{FormulaBlock, Grown};
+
 /// A literal: a variable from 1, negative for its negation.
 pub type Lit = i32;
 
@@ -24,11 +26,22 @@ pub enum Answer {
 /// window's thousands of clauses are two allocations, not one each.
 #[derive(Clone, Debug, Default)]
 pub struct Clauses {
-    lits: Vec<Lit>,
-    ends: Vec<u32>,
+    lits: Grown<Lit>,
+    ends: Grown<u32>,
 }
 
 impl Clauses {
+    /// None yet, built in `block`, where a kernel reads them (`bitlex_grown`).
+    pub fn in_block(block: &FormulaBlock) -> Clauses {
+        Clauses { lits: Grown::in_block(block), ends: Grown::in_block(block) }
+    }
+
+    /// Its literals and ends: their block and byte offsets there (`None` on the heap).
+    pub fn placed(&self) -> Option<(&FormulaBlock, usize, usize)> {
+        let (b, lits) = self.lits.placed()?;
+        Some((b, lits, self.ends.placed()?.1))
+    }
+
     pub fn push(&mut self, c: &[Lit]) {
         self.lits.extend_from_slice(c);
         self.ends.push(self.lits.len() as u32);

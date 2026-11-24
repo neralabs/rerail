@@ -16,6 +16,7 @@
 //! A reason is a gate and an argument (`why`): its clause is made when a conflict's analysis reads it, from the
 //! values set before the literal it implied.
 
+use crate::bitlex_grown::{FormulaBlock, Grown};
 use crate::bitlex_sat::{Answer, Clauses, Lit, Order, normal};
 
 /// A gate's kind (`Gates`).
@@ -31,14 +32,25 @@ pub enum Kind {
 pub struct Gates {
     /// A gate a record: its kind and number of arguments (`kind | n << 2`), its output, and its arguments where it
     /// has at most two, else where they begin in `args` (decision 0670: one load a gate, on the CPU and a device).
-    rec: Vec<[Lit; 4]>,
-    args: Vec<Lit>,
+    rec: Grown<[Lit; 4]>,
+    args: Grown<Lit>,
 }
 
 /// The kinds in a record's first word.
 const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
 
 impl Gates {
+    /// None yet, built in `block`, where a kernel reads them (`bitlex_grown`).
+    pub fn in_block(block: &FormulaBlock) -> Gates {
+        Gates { rec: Grown::in_block(block), args: Grown::in_block(block) }
+    }
+
+    /// Its records and wide arguments: their block and byte offsets there (`None` on the heap).
+    pub fn placed(&self) -> Option<(&FormulaBlock, usize, usize)> {
+        let (b, rec) = self.rec.placed()?;
+        Some((b, rec, self.args.placed()?.1))
+    }
+
     pub fn len(&self) -> usize {
         self.rec.len()
     }
@@ -132,7 +144,12 @@ impl Gates {
 
     /// `dump`'s text read back: the gates, the variables, the window's gates and the plain clauses.
     pub fn undump(text: &str) -> (Gates, usize, usize, Clauses) {
-        let (mut g, mut c, mut vars, mut base) = (Gates::default(), Clauses::default(), 0, 0);
+        Gates::undump_into(text, Gates::default(), Clauses::default())
+    }
+
+    /// `undump`, the formula built in `gates` and `clauses` (empty: in a block, or on the heap).
+    pub fn undump_into(text: &str, mut g: Gates, mut c: Clauses) -> (Gates, usize, usize, Clauses) {
+        let (mut vars, mut base) = (0, 0);
         for line in text.lines() {
             let mut w = line.split(' ');
             let k = w.next().unwrap_or("");
@@ -186,8 +203,8 @@ impl Gates {
 /// its first `base` gates.
 #[derive(Clone, Debug, Default)]
 pub struct Fanout {
-    starts: Vec<u32>,
-    gates: Vec<u32>,
+    starts: Grown<u32>,
+    gates: Grown<u32>,
     seeds: Vec<u32>,
 }
 
@@ -213,9 +230,15 @@ fn seed(gates: &Gates, g: usize) -> bool {
 impl Fanout {
     /// The fanout of `gates`' first `base` gates over `vars` variables.
     pub fn of(gates: &Gates, base: usize, vars: usize) -> Fanout {
+        Fanout::of_range(gates, 0..base, vars)
+    }
+
+    /// The fanout of the gates `range` over `vars` variables: a solve's own, past a window's, for the device's solver
+    /// (`bitlex_csat_gpu`), which reads a variable's gates as two lists.
+    pub fn of_range(gates: &Gates, range: std::ops::Range<usize>, vars: usize) -> Fanout {
         let mut count = vec![0u32; vars + 2];
         let mut last = vec![u32::MAX; vars + 1];
-        for g in 0..base {
+        for g in range.clone() {
             for v in vars_of(gates, g) {
                 if last[v] != g as u32 {
                     last[v] = g as u32;
@@ -226,11 +249,14 @@ impl Fanout {
         for v in 0..=vars {
             count[v + 1] += count[v];
         }
-        let starts = count.clone();
+        // Where the gates are: in their block, the kernel's to read too.
+        let mut starts = Grown::like(&gates.rec);
+        starts.extend_from_slice(&count);
         let mut fill = count;
-        let mut out = vec![0u32; starts[vars + 1] as usize];
+        let mut out = Grown::like(&gates.rec);
+        out.resize(starts[vars + 1] as usize, 0);
         last.fill(u32::MAX);
-        for g in 0..base {
+        for g in range.clone() {
             for v in vars_of(gates, g) {
                 if last[v] != g as u32 {
                     last[v] = g as u32;
@@ -239,8 +265,24 @@ impl Fanout {
                 }
             }
         }
-        let seeds = (0..base).filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
+        let seeds = range.filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
         Fanout { starts, gates: out, seeds }
+    }
+
+    /// Its starts (a variable's gates from `starts[v]` to `starts[v + 1]`) and gates: their byte offsets in the
+    /// block they are in.
+    pub fn placed(&self) -> Option<(usize, usize)> {
+        Some((self.starts.placed()?.1, self.gates.placed()?.1))
+    }
+
+    /// The variables it covers.
+    pub fn vars(&self) -> usize {
+        self.starts.len().saturating_sub(2)
+    }
+
+    /// The gates that imply with nothing set.
+    pub fn seeds(&self) -> &[u32] {
+        &self.seeds
     }
 
     fn of_var(&self, v: usize) -> &[u32] {
@@ -918,20 +960,29 @@ mod tests {
         let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the dumps").map(|e| e.expect("a dump").path()).collect();
         paths.sort();
         let mut s = Solver::default();
+        // Each formula on the heap and in a block (as the prover's windows are), in turns.
+        let block = crate::bitlex_grown::FormulaBlock::new();
         for p in paths {
-            let (gates, vars, base, clauses) = Gates::undump(&std::fs::read_to_string(&p).expect("a dump"));
-            let fan = Fanout::of(&gates, base, vars);
-            let t = std::time::Instant::now();
-            let c0 = s.conflicts;
-            let mut answer = Answer::Unknown;
+            let text = std::fs::read_to_string(&p).expect("a dump");
+            let made = [Gates::undump(&text), Gates::undump_into(&text, Gates::in_block(&block), Clauses::in_block(&block))];
+            let fans: Vec<Fanout> = made.iter().map(|(g, vars, base, _)| Fanout::of(g, *base, *vars)).collect();
+            let mut ms = [0.0f64; 2];
+            let (mut answer, mut conflicts) = (Answer::Unknown, 0);
             for _ in 0..times {
-                s.reset(vars);
-                for c in clauses.iter() {
-                    s.add(c);
+                for (k, ((gates, vars, base, clauses), fan)) in made.iter().zip(&fans).enumerate() {
+                    let t = std::time::Instant::now();
+                    let c0 = s.conflicts;
+                    s.reset(*vars);
+                    for c in clauses.iter() {
+                        s.add(c);
+                    }
+                    answer = s.solve(gates, fan, *base, 100_000);
+                    ms[k] += t.elapsed().as_secs_f64() * 1e3 / f64::from(times);
+                    conflicts = s.conflicts - c0;
                 }
-                answer = s.solve(&gates, &fan, base, 100_000);
             }
-            eprintln!("{}: {vars} vars, {} gates, {} clauses: {answer:?}, {} conflicts, {:.1} ms a solve", p.display(), gates.len(), clauses.len(), (s.conflicts - c0) / u64::from(times), t.elapsed().as_secs_f64() * 1e3 / f64::from(times));
+            let (gates, vars, _, clauses) = &made[0];
+            eprintln!("{}: {vars} vars, {} gates, {} clauses: {answer:?}, {conflicts} conflicts, {:.1} ms a solve on the heap, {:.1} ms in a block", p.display(), gates.len(), clauses.len(), ms[0], ms[1]);
         }
     }
 

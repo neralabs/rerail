@@ -210,7 +210,7 @@ struct Bounds {
 /// `kept` holds each value's bounds a walk found with no part of it past the depth cut, so the
 /// same as any walk's (the operations never change, decision 0670): a compile asks of each value
 /// once, not of its whole cone again at every `early_to`.
-pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16, kept: &mut HashMap<u16, Bounds>) -> Option<u32> {
+fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16, kept: &mut HashMap<u16, Bounds>) -> Option<u32> {
     /// `v`'s bounds, and whether the walk to them met the depth cut.
     fn go(ops: &[BlockOp], tables: &[ClassTable], v: u16, memo: &mut HashMap<u16, (Bounds, bool)>, kept: &mut HashMap<u16, Bounds>, depth: u32) -> (Bounds, bool) {
         if let Some(&b) = kept.get(&v) {
