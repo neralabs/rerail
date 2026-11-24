@@ -449,13 +449,14 @@ function removeOrphanedSidecars(home: string): void {
   }
 }
 
-/** The files `removeQuietly` could not remove for a reason other than Windows holding them, each said once on stderr. */
+/** The files `removeQuietly` could not remove and said so on stderr, each once. */
 const unremovable = new Set<string>();
 
 /**
- * Removes the file at `path`; true once it is gone. False while it stays: a file Windows holds (`heldOnWindows`) goes
- * a moment later, and any other failure (a folder under its name, a folder the daemon may not write) is said once
- * with the file's path on stderr, which the daemon writes to its log.
+ * Removes the file at `path`; true once it is gone, false while it stays. On Windows a failure with one of
+ * `heldOnWindows`'s codes is not said, whether another program holds the file or the daemon may not remove it:
+ * Windows can give both the same code. Every other failure (a folder under its name, or on Linux and macOS a folder
+ * the daemon may not write) is said once per file with its path on stderr, which the daemon writes to its log.
  */
 function removeQuietly(path: string): boolean {
   try {
