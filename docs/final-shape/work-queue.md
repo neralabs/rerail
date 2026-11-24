@@ -11470,3 +11470,27 @@ locals; a pub(in ...) re-export keeps its visibility; per-compile proc-macro
 statics; more NEON intrinsics) and the farm's test slots first come, first
 served. No engine source changes; nothing to run here beyond the hub's own
 Relax, which is installed apart from this record.
+
+### Q550. Roll-up 122 (Parser-generators-final-shape b51cf66526 onto Pulling-it-all-together): what the merge chose
+
+0673 steps 1 to 11 (tier 2 takes the lean parser's forms) and 0668 step 4.
+
+- bitlex_rust: the feeder's one take and no-dead-methods pass over tier 2's
+  code (0673 step 7), with the hub's wording of `parse`'s doc and
+  `plain_writer`'s (0626/0631: tier 2 writes format 16 to `finish`'s target
+  as it goes; roll-up 114 settled it so).
+- `provisional` and `settled` are gone, as the feeder decided (0673 step 5: a
+  bare term is refused where its literal ends). The hub's provisional checks
+  in native_cpu_stream (the table loop) and stream_facts (the AOT refusal,
+  `plain`) go with them. The hub's 0650 `recover` term in `plain` stays.
+- rr_parser: the hub's `Compiled::image` (0631's format 16 path) with the
+  feeder's deeper nesting test (30,000 past STACK_BYTES).
+- Generated: rr_aot's tier1/tier2/tier2_loop and kotlin_aot's tier2 written
+  again by `rust_is_current` (RERAIL_BLESS=1) from the merged generator.
+
+Checked under Relax (RERAIL_GPU=cpu): check of bitlex, compiler, rr,
+kotlin-aot, rr-aot, rr-parser and kotlin-parser, 0 errors. Tests:
+rr-parser 58, kotlin-parser 70 (red before: it now runs under Relax
+5b2d68c26a51-128339291b98, built with the fix rolled up in 121 but not yet
+installed), compiler 46, bitlex 11 (without its oracle: Relax's --allow-c
+does not run tree-sitter-json's build script), parser-tests rr_tests 4.

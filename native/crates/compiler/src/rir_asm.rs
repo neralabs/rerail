@@ -659,10 +659,6 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.extras.push((b, k));
         }
-        "provisional" => {
-            let f: u16 = line.number("#")?;
-            parts.readings.provisional.push(f);
-        }
         "extra" => {
             let k: u16 = line.number("#")?;
             parts.readings.extras.push(k);
