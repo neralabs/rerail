@@ -192,7 +192,13 @@ fn open_without_includes(
     let mut options = sources.options();
     options.permissions.config.includes = false;
     let repository = gix::discover_opts(root, upwards_options(), options).ok()?;
-    (repository.git_dir() != repository.common_dir()).then_some(repository)
+    is_linked_worktree(&repository).then_some(repository)
+}
+
+/// Whether `repository` is a linked worktree: its own Git folder is not the one it shares with
+/// the main checkout.
+fn is_linked_worktree(repository: &gix::Repository) -> bool {
+    repository.git_dir() != repository.common_dir()
 }
 
 /// Gives `repository` the config files Git reads for a command run in its worktree.
@@ -207,7 +213,7 @@ fn open_without_includes(
 /// and `onbranch:` against its `HEAD`, as Git does. A main checkout keeps gix's reading: there the
 /// two folders are one.
 fn include_as_git_does(repository: &mut gix::Repository) -> Result<(), OpenError> {
-    if repository.git_dir() == repository.common_dir() {
+    if !is_linked_worktree(repository) {
         return Ok(());
     }
     let git_dir = repository.git_dir().to_owned();
