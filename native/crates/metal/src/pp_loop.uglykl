@@ -1732,16 +1732,19 @@ UKL_INLINE bool lp_collect_run(UKL_LOCAL LpRun* r, Ar a, PP_GLOBAL uint32_t* lob
             if (r->line) r->state[f->at + j] = 2u;
         }
     }
-    uint32_t n = ukl_min(k, 3u);
+    // The frame's place held here and stored once per exit: the M1 Max's back end (G13) lost the `+= rest` after the
+    // loop's increments of the threadgroup word (2026-11-23: the frame 2 tokens behind, `F((a,b))`'s call closed at
+    // its argument's nested `)`; 8 eval tests failed on m1max for it).
+    uint32_t n = ukl_min(k, 3u), at = f->at;
     for (uint32_t i = 0u; i < n; i++) {
-        LpTok t = lp_frame_tok(r, a, *f, f->at);
+        LpTok t = lp_frame_tok(r, a, *f, at);
         if (FR_KIND(*f) == FK_SPAN && FR_NSP(*f) != 0u) { t.flags = FR_NSP(*f); FR_SET_NSP(*f, 0u); }
-        f->at++;
-        if (!lp_push(r, a, 0u, r->cl_astart, t)) return false;
+        at++;
+        if (!lp_push(r, a, 0u, r->cl_astart, t)) { f->at = at; return false; }
     }
     uint32_t rest = k - n;
+    f->at = at + rest;
     if (rest != 0u) {
-        f->at += rest;
         uint32_t x = r->mem[0].top - 1u;
         LpTok l = lp_get(r, a, 0u, x);
         l.flags += 16u * rest;
