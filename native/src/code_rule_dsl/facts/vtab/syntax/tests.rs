@@ -1514,9 +1514,72 @@ fn text_of_a_bound_node_is_read_in_place() {
         let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
         assert_eq!(printed.matches("@rr_node_text_any(").count(), read, "{rules}: {printed}");
     }
-    // Outside `core.rerail`'s shape (T's, whose `text` holds some nodes' alone): no atom is read so.
-    let t_shape = crate::code_rule_dsl::logic::rr::parse_version(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\n.input text\n.decl out(t: symbol)\nout(t) :- kind(n, \"call\"), text(n, t).\n.output out\n").unwrap();
-    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(t_shape, Default::default()).unwrap().1, 0, "T's shape");
+    // In T's shape (whose `text` holds some nodes' alone) the read is T's (`syntax::t_value`), as are `intval`'s and
+    // `op`'s; a relation the program derives itself is no input, and stays.
+    for (rules, read, call) in [
+        ("out(t) :- kind(n, \"call\"), text(n, t).", 1, "@rr_node_t_text("),
+        ("out(\"x\") :- kind(n, \"integer\"), intval(n, 3).", 1, "@rr_node_intval("),
+        ("out(o) :- kind(n, \"binary_operator\"), op(n, o).", 1, "@rr_node_op_t("),
+        ("out(t) :- text(n, t).", 0, "@rr_node_"),
+    ] {
+        let t_shape = crate::code_rule_dsl::logic::rr::parse_version(&format!(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\n.input text\n.decl intval(n: node, v: number)\n.input intval\n.decl op(n: node, s: symbol)\n.input op\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(t_shape, Default::default()).unwrap();
+        assert_eq!(made, read, "T's shape: {rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        assert_eq!(printed.matches(call).count(), read, "T's shape: {rules}: {printed}");
+    }
+    let derived = crate::code_rule_dsl::logic::rr::parse_version(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\ntext(n, \"x\") :- kind(n, \"call\").\n.decl out(t: symbol)\nout(t) :- kind(n, \"call\"), text(n, t).\n.output out\n").unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(derived, Default::default()).unwrap().1, 0, "a derived text");
+}
+
+/// Decision 0353 step 3, row 7: T's per-node relations (`syntax::TRel`), read of a node (`@rr_node_*` in T's shape;
+/// `intval` and `op_t` in core.rerail's too), answer the rows `NodeRows` makes, node by node: one definition
+/// (`syntax::t_value`).
+#[test]
+fn t_shape_node_reads_answer_the_rows_node_rows_makes() {
+    use crate::code_rule_dsl::facts::vtab::syntax::TRel;
+    let src = "import os.path as p\nasync def f(a, b=0x1_0):\n    x = a + b * 2\n    y = obj.attr.c\n    s = rb'z' + \"q\" + f\"v{a}\"\n    async with a:\n        pass\n    return -x if not y else ~a\n";
+    let store = ContentStore::open(&temp("t-node-reads")).unwrap();
+    for core in [false, true] {
+        let rels: Vec<TRel> = TRel::ALL.into_iter().filter(|r| !core || matches!(r, TRel::Intval | TRel::Op)).collect();
+        let mut reads: Vec<String> = rels.iter().map(|r| r.relation(core).to_owned()).collect();
+        reads.extend(["node".to_owned(), "op_at".to_owned(), crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES.to_owned()]);
+        let shape = if core { Shape::Core } else { Shape::T };
+        let projection = Projection { shape, reads: Some(reads.into_iter().collect()), ..Projection::core() };
+        let docs = vec![document(1, "m.py", "python", src), document(2, "bad.py", "python", "x = (\n")];
+        let sources = shaped(&store, docs, &projection).unwrap();
+        let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+        let (nodes, long) = (source("node"), source(crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES));
+        let mut checked = 0;
+        for rel in rels {
+            let s = source(rel.relation(core));
+            let value = |v: i64| if rel == TRel::Intval { v.to_string() } else { store.atom_value(v as u32).unwrap().unwrap() };
+            let mut made: HashMap<i64, String> = HashMap::new();
+            for r in 0..s.len() {
+                assert!(made.insert(s.value(r, 0), value(s.value(r, 1))).is_none(), "{rel:?}: one row a node");
+            }
+            assert!(!made.is_empty(), "{rel:?} ({core}): the walk made rows");
+            for r in 0..nodes.len() {
+                let n = nodes.value(r, 1);
+                assert_eq!(long.node_read(rel.read(), n, &[]), made.get(&n).cloned(), "{rel:?} ({core}) of node {n}");
+                checked += 1;
+            }
+        }
+        // `op_at`, in either shape (`Tree`'s rows).
+        let s = source("op_at");
+        let mut ops: HashMap<(i64, i64), String> = HashMap::new();
+        for r in 0..s.len() {
+            ops.insert((s.value(r, 0), s.value(r, 1)), store.atom_value(s.value(r, 2) as u32).unwrap().unwrap());
+        }
+        assert!(!ops.is_empty(), "op_at ({core}): the walk made rows");
+        for r in 0..nodes.len() {
+            let n = nodes.value(r, 1);
+            for i in 0..3 {
+                assert_eq!(long.node_read("rr_node_op_at", n, &[i]), Some(ops.get(&(n, i)).cloned().unwrap_or_default()), "op_at ({core}) of node {n} at {i}");
+            }
+        }
+        assert!(checked > 100, "{checked} reads");
+    }
 }
 
 /// Decision 0353 step 3: an atom of another per-node relation of `core.rerail` (`structural_before`,

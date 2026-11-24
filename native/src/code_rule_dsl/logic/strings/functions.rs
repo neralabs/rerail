@@ -143,6 +143,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_strprefix", &[Number], Text),
     // `op_at(n, i, s)`'s `s`: node `n`'s operator at place `i`, `""` past its last (`core_rr::node_ops`).
     ("rr_node_op_at", &[Number, Number], Text),
+    // T's `text`, `intval` and `op` (`op_t` in core.rerail's shape) of a node (`syntax::TRel`).
+    ("rr_node_t_text", &[Number], Text),
+    ("rr_node_intval", &[Number], Number),
+    ("rr_node_op_t", &[Number], Text),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -212,7 +216,7 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         db.create_scalar_function(name, i32::try_from(arity).expect("few arguments"), FunctionFlags::SQLITE_UTF8, move |ctx| {
             let more: Vec<i64> = (1..arity).map(|i| ctx.get::<Option<i64>>(i).map(Option::unwrap_or_default)).collect::<rusqlite::Result<_>>()?;
             let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n, &more));
-            Ok(text.map_or(Value::Null, Value::Text))
+            Ok(node_read_value(name, text))
         })?;
     }
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
@@ -224,6 +228,16 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
 /// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
 pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64, more: &[i64]) -> Option<String> {
     nodes?.node_read(name, n, more)
+}
+
+/// A node read's answer as the value its signature returns: a number's (`@rr_node_intval`) from its decimal, else the
+/// text; NULL for none.
+pub fn node_read_value(name: &str, read: Option<String>) -> Value {
+    match (read, signature(name).map(|(_, _, ret)| ret)) {
+        (None, _) => Value::Null,
+        (Some(t), Some(Kind::Number)) => t.parse::<i64>().map_or(Value::Null, Value::Integer),
+        (Some(t), _) => Value::Text(t),
+    }
 }
 
 /// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;

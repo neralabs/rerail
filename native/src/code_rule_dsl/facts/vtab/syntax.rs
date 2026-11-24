@@ -426,10 +426,7 @@ impl LongTexts {
         let f = &*p.facts;
         match self.batch.shape {
             Shape::Core => core_rr::node_str(f, dialect, x),
-            Shape::T => match dialect.class(f, x) {
-                Class::String => dialect.string(f, x).and_then(|(_, content)| content.map(str::to_owned)),
-                _ => None,
-            },
+            Shape::T => t_value(TRel::Str, dialect.class(f, x), f, dialect, x),
         }
     }
 }
@@ -441,6 +438,10 @@ impl LongTexts {
         if self.batch.shape != Shape::Core {
             return None;
         }
+        self.node_at(n)
+    }
+    /// Node `n`'s projection, tape node and grammar, in either shape.
+    fn node_at(&self, n: i64) -> Option<(&Projected, u32, &Dialect)> {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
@@ -448,9 +449,8 @@ impl LongTexts {
     }
 
     /// A node read of `core.rerail`'s per-node relations (decision 0353 step 3), each the value `CoreRows::node` makes:
-    /// `structural_before`, `structural_after`, `name`, `comment`, `strprefix`, and `op_at`'s operator at place `more[0]`
-    /// (`""` past the last: an operator is never empty).
-    fn core_read(&self, name: &str, n: i64, more: &[i64]) -> Option<String> {
+    /// `structural_before`, `structural_after`, `name`, `comment` and `strprefix`.
+    fn core_read(&self, name: &str, n: i64) -> Option<String> {
         let (p, x, dialect) = self.core_node(n)?;
         let f = &*p.facts;
         match name {
@@ -459,10 +459,6 @@ impl LongTexts {
             "rr_node_name" => core_rr::node_name(f, dialect, x),
             "rr_node_comment" => core_rr::node_comment(f, dialect, x).map(str::to_owned),
             "rr_node_strprefix" => core_rr::node_strprefix(f, dialect, x),
-            "rr_node_op_at" => {
-                let i = usize::try_from(*more.first()?).ok();
-                Some(i.and_then(|i| tree::node_operators(f, dialect, x).nth(i)).unwrap_or_default().to_owned())
-            }
             _ => None,
         }
     }
@@ -473,12 +469,30 @@ impl Source for LongTexts {
         Some(Arc::clone(&self.batch) as _)
     }
     fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<String> {
+        // T's per-node relations (`TRel`): in T's shape each, in core.rerail's `intval` and `op_t`, which `NodeRows`
+        // makes there too. `str`'s is `str_any`'s, which answers `str` on request in either shape.
+        if let Some(rel) = TRel::ALL.into_iter().find(|r| r.read() == name && *r != TRel::Str).filter(|r| self.batch.shape == Shape::T || matches!(r, TRel::Intval | TRel::Op)) {
+            // A comment, declared a node though T's nodes leave it out, is a span whose `text` is its text
+            // (`Extra::document`).
+            if rel == TRel::Text && granules::comment_of(n as u32).is_some() {
+                return self.text_any(n);
+            }
+            let (p, x, dialect) = self.node_at(n)?;
+            return t_value(rel, dialect.class(&p.facts, x), &p.facts, dialect, x);
+        }
         match name {
             "rr_node_text" => self.long_text(n),
             "rr_node_text_any" => self.text_any(n),
             "rr_node_value" => self.value_any(n),
             "rr_node_str" => self.str_any(n),
-            _ => self.core_read(name, n, more),
+            // `op_at`'s operator at place `more[0]`, in either shape (`Tree` makes its rows so in both; `""` past the
+            // last: an operator is never empty).
+            "rr_node_op_at" => {
+                let (p, x, dialect) = self.node_at(n)?;
+                let i = usize::try_from(*more.first()?).ok();
+                Some(i.and_then(|i| tree::node_operators(&p.facts, dialect, x).nth(i)).unwrap_or_default().to_owned())
+            }
+            _ => self.core_read(name, n),
         }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
@@ -3030,57 +3044,97 @@ impl NodeRows {
     }
 }
 
+/// T's per-node relations (`NodeRows`), each at most one value a node: `text`, `name`, `str`, `strprefix`, `intval` and
+/// `op` (`op_t` in `core.rerail`'s shape). A rule that binds the node reads its value (`t_value`) where the join reaches
+/// it, `@rr_node_*` in T's shape (decision 0353 step 3, row 7); one that does not reads the rows `NodeRows` makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TRel {
+    Text,
+    Name,
+    Str,
+    Strprefix,
+    Intval,
+    Op,
+}
+
+impl TRel {
+    pub const ALL: [TRel; 6] = [TRel::Text, TRel::Name, TRel::Str, TRel::Strprefix, TRel::Intval, TRel::Op];
+    /// The relation's name in T's shape (`op`'s is `op_t` in `core.rerail`'s).
+    pub fn relation(self, core: bool) -> &'static str {
+        match self {
+            TRel::Text => "text",
+            TRel::Name => "name",
+            TRel::Str => "str",
+            TRel::Strprefix => "strprefix",
+            TRel::Intval => "intval",
+            TRel::Op if core => "op_t",
+            TRel::Op => "op",
+        }
+    }
+    /// The node read that answers it in T's shape (`LongTexts::node_read`).
+    pub fn read(self) -> &'static str {
+        match self {
+            // Not `rr_node_text_any`, any node's text (`node_text` on request): T's `text` holds a token's alone.
+            TRel::Text => "rr_node_t_text",
+            TRel::Name => "rr_node_name",
+            TRel::Str => "rr_node_str",
+            TRel::Strprefix => "rr_node_strprefix",
+            TRel::Intval => "rr_node_intval",
+            TRel::Op => "rr_node_op_t",
+        }
+    }
+}
+
+/// Node `id`'s value in T's relation `rel`, its class `class`: what `NodeRows` makes and a node read reads, the one
+/// definition (`intval`'s in decimal).
+pub(super) fn t_value(rel: TRel, class: Class, f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+    match (rel, class) {
+        (TRel::Text | TRel::Name, Class::Text) => {
+            let t = f.text(id);
+            (!t.contains(['\t', '\n', '\r', '\\'])).then(|| t.to_owned())
+        }
+        (TRel::Name, Class::Attribute) => dialect.dotted(f, id),
+        (TRel::Str, Class::String) => dialect.string(f, id).and_then(|(_, content)| content.map(str::to_owned)),
+        (TRel::Strprefix, Class::String) => dialect.string(f, id).map(|(prefix, _)| prefix),
+        (TRel::Intval, Class::Integer) => f.text(id).replace('_', "").parse::<i64>().ok().map(|v| v.to_string()),
+        (TRel::Op, Class::Operator) => {
+            let operator = dialect.operator.filter(|&o| o != 0);
+            f.children(id).iter().find(|&&c| operator == Some(f.field(c))).map(|&o| dialect.name(f, o).to_owned())
+        }
+        // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
+        // `async for`, `async with` likewise.
+        (TRel::Op, Class::FunctionDefinition | Class::AsyncStatement) if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => Some("async".to_owned()),
+        (TRel::Op, Class::FunctionItem)
+            if f.children(id).iter().any(|&m| dialect.name(f, m) == "function_modifiers" && f.tokens(m).iter().any(|k| dialect.atom_name(k.kind) == "async")) =>
+        {
+            Some("async".to_owned())
+        }
+        _ => None,
+    }
+}
+
 impl NodeRows {
-    /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rerail`'s shape).
-    fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
+    /// Document `p`'s rows of the relations `wants` names (by `TRel::ALL`'s order), each node's `t_value`.
+    fn document(&mut self, p: &Projected, dialect: &Dialect, wants: [bool; 6], string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
+        let wanted: Vec<TRel> = TRel::ALL.into_iter().zip(wants).filter(|&(_, w)| w).map(|(r, _)| r).collect();
         for (_, id, n) in p.node_ids() {
-            match dialect.class(f, id) {
-                Class::Text | Class::Attribute | Class::String if core => {}
-                Class::Text => {
-                    let t = f.text(id);
-                    if !t.contains(['\t', '\n', '\r', '\\']) {
-                        self.text.push([n, string(t) as i64]);
-                        self.name.push([n, string(t) as i64]);
-                    }
+            let class = dialect.class(f, id);
+            for &rel in &wanted {
+                let Some(v) = t_value(rel, class, f, dialect, id) else { continue };
+                let row = match rel {
+                    TRel::Intval => [n, v.parse::<i64>().expect("intval's decimal")],
+                    _ => [n, string(&v) as i64],
+                };
+                match rel {
+                    TRel::Text => &mut self.text,
+                    TRel::Name => &mut self.name,
+                    TRel::Str => &mut self.strs,
+                    TRel::Strprefix => &mut self.strprefix,
+                    TRel::Intval => &mut self.intval,
+                    TRel::Op => &mut self.op,
                 }
-                Class::Attribute => {
-                    if let Some(dotted) = dialect.dotted(f, id) {
-                        self.name.push([n, string(&dotted) as i64]);
-                    }
-                }
-                Class::String => {
-                    if let Some((prefix, content)) = dialect.string(f, id) {
-                        self.strprefix.push([n, string(&prefix) as i64]);
-                        if let Some(content) = content {
-                            self.strs.push([n, string(content) as i64]);
-                        }
-                    }
-                }
-                Class::Integer => {
-                    if let Ok(v) = f.text(id).replace('_', "").parse::<i64>() {
-                        self.intval.push([n, v]);
-                    }
-                }
-                Class::Operator => {
-                    let operator = dialect.operator.filter(|&o| o != 0);
-                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field(c))) {
-                        self.op.push([n, string(dialect.name(f, o)) as i64]);
-                    }
-                }
-                // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
-                // `async for`, `async with` likewise.
-                Class::FunctionDefinition | Class::AsyncStatement if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
-                    self.op.push([n, string("async") as i64]);
-                }
-                Class::FunctionItem
-                    if f.children(id).iter().any(|&m| {
-                        dialect.name(f, m) == "function_modifiers" && f.tokens(m).iter().any(|k| dialect.atom_name(k.kind) == "async")
-                    }) =>
-                {
-                    self.op.push([n, string("async") as i64]);
-                }
-                _ => {}
+                .push(row);
             }
         }
     }
@@ -3489,6 +3543,8 @@ impl Batch {
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
+        // T's per-node relations the program reads as rows (`NodeRows`): in core.rerail's shape `intval` and `op_t`.
+        let t_wants = TRel::ALL.map(|r| (!core || matches!(r, TRel::Intval | TRel::Op)) && projection.wants(r.relation(core)));
         // The `op` view's names, which no row holds: interned as a made relation's strings are, into the vocabulary.
         let op_names = core && projection.wants("op");
         // `rr_value_lit` holds the literals of the documents W reads no values of (`unvalued`, `values_of`): where no
@@ -3638,11 +3694,12 @@ impl Batch {
             const NODE_ROWS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(7, "3", "core.rerail's and the vtab's per-node rows (node rows)");
             let (copying, rows_before) = (NODE_ROWS.start(), rows.bytes() + c.bytes());
             if let Some(dialect) = dialect {
-                // In core.rerail's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
-                if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
-                    let _s = crate::code_rule_dsl::logic::profile::span(|| "scalar rows (intval, op_t)".into());
+                // In core.rerail's shape `NodeRows` makes only `intval` and T's `op` (`op_t`); in either, only those a
+                // rule reads as rows (a bound node's are read, `t_value`).
+                if t_wants.contains(&true) {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "scalar rows (T's per-node relations)".into());
                     visited += p.len() as usize;
-                    rows.document(p, dialect, core, &mut string);
+                    rows.document(p, dialect, t_wants, &mut string);
                 }
                 if core_nodes || wants_long_text_nodes {
                     let kept = (c.skip.literal_rows, c.skip.literal_value);

@@ -41,7 +41,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     let text = p.current()?.decl_of("text").is_some();
     if text {
         p.rules(&mut NodeSubjects);
-        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), tests: HashMap::new() });
+        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() });
         p.rules(&mut Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 });
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
@@ -84,7 +84,7 @@ pub fn long_text_twins(v: Arc<Version>, matchers: &Matchers) -> Result<(Arc<Vers
 /// step 3), `matchers` its matchers' relations: that version and the number of atoms read so.
 pub fn text_by_node(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("text by node", v);
-    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), tests: HashMap::new() };
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
     p.rules(&mut pass);
     Ok((p.finish()?.0, pass.made))
 }
@@ -497,6 +497,21 @@ const NODE_READ_OF: [(&str, &str); 6] = [
     ("strprefix", "rr_node_strprefix"),
 ];
 
+/// The per-node relations a program's shape states and their reads: `core.rerail`'s (`NODE_READ_OF`, and T's
+/// `intval` and `op_t`, which the batch makes in either shape), or T's (`syntax::TRel`: `text`, `name`, `str`,
+/// `strprefix`, `intval`, `op`), those of them the program takes as inputs. None for a program of neither.
+fn node_reads_of(v: &Version) -> Vec<(&'static str, &'static str)> {
+    use crate::code_rule_dsl::facts::vtab::syntax::TRel;
+    let core = crate::code_rule_dsl::facts::core::core_names();
+    let inputs: HashSet<&str> = v.inputs().map(|a| v.text(a)).collect();
+    let of: Vec<(&'static str, &'static str)> = if !core.is_empty() && core.iter().all(|r| v.declares(r)) {
+        NODE_READ_OF.into_iter().chain([TRel::Intval, TRel::Op].map(|r| (r.relation(true), r.read()))).collect()
+    } else {
+        TRel::ALL.into_iter().map(|r| (r.relation(false), r.read())).collect()
+    };
+    of.into_iter().filter(|(rel, _)| inputs.contains(rel)).collect()
+}
+
 /// `r(v, x)` of a per-node relation `r` of `core.rerail` (`NODE_READ_OF`), of a node `v` the rest of the body binds,
 /// reads `v`'s value where the join reaches it: `x = @rr_node_<r>(v)` (decision 0353 step 3: a derived value computed
 /// on demand; `text`'s at any length). No row of `r` is made for it, and no walk of every node of every document
@@ -521,6 +536,8 @@ struct NodeReads {
     made: usize,
     /// By relation, the heads of the rules whose atoms of it stay (their node not known to be bound), for the decision.
     kept: BTreeMap<&'static str, BTreeSet<String>>,
+    /// The per-node relations and their reads, as the program's shape states them (`node_reads_of`).
+    of: Vec<(&'static str, &'static str)>,
     /// The node tests (`node_tests`): each relation `h` whose one rule is `h(v) :- r(v, _)` of a per-node relation `r`,
     /// and `r`. Its readers read `r(v, _)` in its place, and its rule goes.
     tests: HashMap<String, (&'static str, Vec<(CmpOp, i64)>)>,
@@ -531,7 +548,7 @@ struct NodeReads {
 /// is one (`rr_cover(e) :- text(e, _)`, `rr::lower`'s cover of a group that only reads `e`'s text): stored so that a
 /// join of several literals runs once, it read every node's `text` instead, 16 MB of rows on the bench for a test
 /// every node passes. Read in place of the cover, the atom is its readers' node read where they bind the node.
-fn node_tests(v: &Version) -> HashMap<String, (&'static str, Vec<(CmpOp, i64)>)> {
+fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<String, (&'static str, Vec<(CmpOp, i64)>)> {
     let mut rules_of: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
     for r in v.rules() {
         rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
@@ -555,7 +572,7 @@ fn node_tests(v: &Version) -> HashMap<String, (&'static str, Vec<(CmpOp, i64)>)>
         let body: Vec<LitRef<'_>> = r.body().filter(|l| guard(l).is_none()).collect();
         let [l] = body[..] else { continue };
         let Lit::Atom(a) = l.view() else { continue };
-        let Some(&(rel, _)) = NODE_READ_OF.iter().find(|(rel, _)| v.rel_name(a.rel()) == *rel).filter(|_| !a.neg()) else { continue };
+        let Some(&(rel, _)) = of.iter().find(|(rel, _)| v.rel_name(a.rel()) == *rel).filter(|_| !a.neg()) else { continue };
         let a = args(a);
         if a.len() == 2 && matches!(a[0], TermRef::Var(n) if n == x) && matches!(a[1], TermRef::Wild | TermRef::Var(_)) && !matches!(a[1], TermRef::Var(y) if y == x) {
             tests.insert((*h).to_owned(), (rel, guards));
@@ -660,15 +677,16 @@ impl RulePass for NodeReads {
     const NAME: &'static str = "a bound node's per-node values are read";
     fn begin(&mut self, cx: &Cx<'_>) -> Result<Select> {
         let v = cx.v();
-        // `core.rerail`'s shape, as the projection takes it (`text_demand::projection_of`).
-        let core = crate::code_rule_dsl::facts::core::core_names();
-        if core.is_empty() || !core.iter().all(|r| v.declares(r)) {
+        // The shape's per-node relations, as the projection takes the shape (`text_demand::projection_of`).
+        self.of = node_reads_of(v);
+        if self.of.is_empty() {
             return Ok(Select::Rules(crate::code_rule_dsl::logic::program_image::manager::RuleSet::new()));
         }
         let split = cx.get::<crate::code_rule_dsl::typing::file_local::FileLocal>()?;
         self.nodes = node_columns(v, &self.matchers, &split.local);
-        self.nodes.retain(|rel, _| !NODE_READ_OF.iter().any(|(r, _)| r == rel));
-        self.tests = node_tests(v);
+        let of = &self.of;
+        self.nodes.retain(|rel, _| !of.iter().any(|(r, _)| r == rel));
+        self.tests = node_tests(v, &self.of);
         Ok(Select::All)
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
@@ -684,8 +702,8 @@ impl RulePass for NodeReads {
         let of = |l: &LitRef<'_>| match l.view() {
             Lit::Atom(a) if !a.neg() => {
                 let name = v.rel_name(a.rel());
-                let rel = self.tests.get(name).map(|t| t.0).or_else(|| NODE_READ_OF.iter().find(|(rel, _)| name == *rel).map(|&(rel, _)| rel))?;
-                let read = NODE_READ_OF.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
+                let rel = self.tests.get(name).map(|t| t.0).or_else(|| self.of.iter().find(|(rel, _)| name == *rel).map(|&(rel, _)| rel))?;
+                let read = self.of.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
                 let a = args(a);
                 let arity = if self.tests.contains_key(name) { 1 } else { 2 };
                 Some((rel, read, a.len() == arity && matches!(a[0], TermRef::Var(x) if bound.contains(&x))))

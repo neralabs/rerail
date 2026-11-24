@@ -8698,7 +8698,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
             Step::Func { name, kinds, args, out, bind, texts, kept } => {
-                use crate::code_rule_dsl::logic::strings::functions::{eval, node_read, Kind};
+                use crate::code_rule_dsl::logic::strings::functions::{eval, node_read, node_read_value, Kind};
                 // A text kept for its symbol (decision 0478 step 2e), the CPU's or the device's.
                 let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
                 let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
@@ -8713,7 +8713,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                             node_read(name, nodes.as_deref(), val(slots, args[0]), &more)
                         }
                     };
-                    read.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
+                    node_read_value(name, read)
                 } else {
                     let mut strs = Vec::new();
                     let mut numbers = Vec::new();
