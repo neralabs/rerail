@@ -46,6 +46,7 @@ mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
 mod path_owner;
+pub mod pipe_server;
 pub mod process;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
@@ -247,6 +248,13 @@ pub fn health() -> Health {
         ok: true,
         engine_version: "1".to_owned(),
     }
+}
+
+/// Names the installed package this addon was loaded for (`source_tree::name_package`), where the engine reads its
+/// own `.rerail` files. The loader calls it as it loads the addon, before anything reads them.
+#[napi]
+pub fn set_package_root(root: String) {
+    source_tree::name_package(std::path::PathBuf::from(root));
 }
 
 /// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.

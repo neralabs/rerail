@@ -38,7 +38,7 @@ import { READS_LEFT_OUT_TOKEN_CODE } from "../engine/code-rule/code-rule-compile
 import { clean } from "../harness/setup-screens.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, type CheckoutEligibility, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { readGitBlobs, runGit } from "../engine/git.js";
+import { readGitBlobs, runGit, runGitWithoutBlocking, type GitResult } from "../engine/git.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
@@ -142,8 +142,19 @@ export interface HeadlessScanOptions {
   packStore?: (home: string) => PackStore;
 }
 
+const SCAN_GIT_BUFFER = 256 * 1024 * 1024;
+
 function git(cwd: string, args: readonly string[]): string {
-  const result = runGit(cwd, args, { maxBuffer: 256 * 1024 * 1024 });
+  return answered(args, runGit(cwd, args, { maxBuffer: SCAN_GIT_BUFFER }));
+}
+
+/** {@link git} without blocking: a diff asks a checkout's submodules at once, within the call's one time limit. */
+async function gitWithoutBlocking(cwd: string, args: readonly string[]): Promise<string> {
+  return answered(args, await runGitWithoutBlocking(cwd, args, { maxBuffer: SCAN_GIT_BUFFER }));
+}
+
+/** The stdout of Git's `args`, which gave `result`; throws how it failed. */
+function answered(args: readonly string[], result: GitResult): string {
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
   return result.stdout;
@@ -162,9 +173,9 @@ function nulList(text: string): string[] {
  * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. With
  * `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
  */
-function diffPaths(root: string, against: string): string[] {
-  const changed = nulList(git(root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
-  const untracked = nulList(git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]));
+async function diffPaths(root: string, against: string): Promise<string[]> {
+  const changed = nulList(await gitWithoutBlocking(root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
+  const untracked = nulList(await gitWithoutBlocking(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]));
   return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
 }
 
@@ -437,7 +448,7 @@ async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratc
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
-function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanReport["base"]; paths: string[] | null } {
+async function scanTarget(options: HeadlessScanOptions, root: string): Promise<{ base: ScanReport["base"]; paths: string[] | null }> {
   if (options.paths !== undefined) {
     const paths = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))]
       .filter(path => existsSync(join(root, path)))
@@ -446,11 +457,11 @@ function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanRep
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {
-    return { base: null, paths: diffPaths(root, gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) === null ? git(root, ["hash-object", "-t", "tree", "/dev/null"]).trim() : "HEAD") };
+    return { base: null, paths: await diffPaths(root, gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) === null ? git(root, ["hash-object", "-t", "tree", "/dev/null"]).trim() : "HEAD") };
   }
   const mergeBase = gitMaybe(root, ["merge-base", options.base, "HEAD"]);
   if (mergeBase === null) throw new Error(`--base ${options.base} has no merge base with HEAD in ${root}`);
-  return { base: { ref: options.base, mergeBase }, paths: diffPaths(root, mergeBase) };
+  return { base: { ref: options.base, mergeBase }, paths: await diffPaths(root, mergeBase) };
 }
 
 type ScanAudit = AuditInput & { result?: AuditResult };
@@ -629,7 +640,7 @@ async function scanReport(
     home?.$client.close();
   }
   const repository = repositoryOf(databasePath, root);
-  const { base, paths } = scanTarget(options, root);
+  const { base, paths } = await scanTarget(options, root);
   const { audits, unaudited, notRun } = await runScanAudits(databasePath, root, `scan-${scanId}`, paths, declaredPacks?.catalog);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
   const violations = scanViolations(audits, rules, root);

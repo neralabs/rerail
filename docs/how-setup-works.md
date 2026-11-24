@@ -10,6 +10,8 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 ```text
 ~/.rerail/
 ├── versions/<version>/node_modules/@neralabs/rerail/  the installed package
+├── versions/<version>/node_modules/@neralabs/rerail-engine-<suffix>/
+│                                                      its engine for this computer, a package of its own
 ├── current  →  versions/<version>/node_modules/@neralabs/rerail
 ├── bin/rerail                                         launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
@@ -30,14 +32,25 @@ The steps match in a terminal and a coding agent; nothing reaches a repository, 
 Rerail has no engine for. Those are musl Linux such as Alpine, glibc older than 2.28, and other systems or processors.
 See [Which Git and Node Rerail runs](#which-git-and-node-rerail-runs).
 
-**1. Install.** Set-up runs `npm install @neralabs/rerail@<this version>` into `versions/<version>`, points `current`
-at it and writes `bin/rerail`. Nothing is turned on, no agent connected, no daemon started.
+**1. Install.** Set-up runs `npm install` of `@neralabs/rerail@<this version>`, and of this computer's engine package
+at the same version, into `versions/<version>`, points `current` at it and writes `bin/rerail`. Nothing is turned on,
+no agent connected, no daemon started.
 
 <details>
 <summary>How the install works</summary>
 
-- `versions/<version>` is a staging folder until it passes validation: package identity, native kernel loading, a
-  real event-stream round-trip.
+- **Two packages.** Core holds no engine. Each of the six engines is a package of its own
+  ([the six](installation.md#registry-access)), and set-up installs the one for this computer's system and processor.
+  It names that package in the install and tells npm to leave optional dependencies out, so exactly one engine is
+  installed whichever npm runs and whatever its `omit` and `optional` settings, and the install fails, saying which
+  package, if the registry does not have it
+  ([Troubleshooting](troubleshooting.md#npm-could-not-install--the-engine--runs-on-here)). Only `include=optional` in
+  your npm settings changes that: npm then installs all six engines inside core as well.
+- **The npx copy** is different: plain npm installed it, with the engine packages as optional dependencies of core.
+  npm 11.6.2 and the later npm 11 releases install all six there, on every computer, because they do not apply a
+  package's `os` and `cpu` to the entries of a dependency's shrinkwrap. That is about 240 MB to download, once.
+- `versions/<version>` is a staging folder until it passes validation: package identity, the engine package's integrity
+  against the one core's shrinkwrap pins, native kernel loading, a real event-stream round-trip.
 - Then `current` is re-pointed atomically and `bin/rerail` (re)written; the npx copy is never used again.
 - An install that fails later removes the empty folders it made.
 - Skipped when set-up runs from the version `current` points at. Once any version is installed, answer runs
@@ -483,8 +496,10 @@ version on its channel and the `rerail packs add` command that installs them ([r
 <details>
 <summary>Registry and credentials</summary>
 
-`@neralabs/rerail` is published only to npmjs (`https://registry.npmjs.org/`). Rerail adds no registry
-configuration: `setup` and `rerail update` run the `npm` next to their Node, with your normal npm configuration.
+`@neralabs/rerail` and its engine packages are published only to npmjs (`https://registry.npmjs.org/`). Rerail adds
+no registry configuration: `setup` and `rerail update` run the `npm` on your PATH (on Windows, the npm beside their
+Node), with your normal npm configuration. A mirror or proxy named there must serve the engine packages as well as
+core ([Registry access](installation.md#registry-access)).
 
 If your npm token for npmjs is invalid or expired, npm-backed commands such as `rerail update` report that the npm
 registry credentials are missing or expired; sign in again with `npm login`, or remove the token. Rerail redacts
@@ -502,6 +517,27 @@ any of it.
 
 A signature that does not verify stops the update with nothing installed. A registry that publishes no signing keys,
 as some private mirrors do, gets a warning naming it, and the update goes on.
+
+The engine package is checked once more: the integrity npm recorded for the one it installed must equal the integrity
+core's own `npm-shrinkwrap.json` pins for it, or the update stops with nothing installed. An engine named in the
+install is resolved by npm on its own, without core's shrinkwrap, so this comparison is what ties the engine to the
+core it came with. Core pins a SHA-512. Where the registry gave npm only a SHA-1 to record, npm hashes the tarball it
+installed (`npm pack --dry-run`), and that SHA-512 is compared.
+
+</details>
+
+<details>
+<summary>What an update downloads</summary>
+
+- **Core and one engine package**, about 50 MB together, besides core's dependencies: an engine package is 35 to
+  42 MB and core about 12 MB. They land side by side in `versions/<version>/node_modules`.
+- **The first update from 0.1.5** downloads all six engine packages, about 240 MB. The version you update from runs
+  the update, and 0.1.5 installs core alone and leaves its dependencies to npm, which installs all six inside core's
+  own `node_modules` on npm 11.6.2 and the later npm 11 releases. That install works; the update after it downloads
+  one engine.
+- **Keep an install on the system that made it.** It holds the engine for the system and processor of the Node that
+  installed it, so a `~/.rerail` copied or mounted into another system, a container included, has no engine there:
+  run set-up inside it instead.
 
 </details>
 

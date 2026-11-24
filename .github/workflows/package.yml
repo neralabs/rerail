@@ -1,9 +1,11 @@
 name: Package
 
 # Builds the @neralabs/rerail package: native rules engines for every supported target, the TypeScript runtime,
-# and the bundled UI, packed into one cross-platform tarball, uploaded as the `rerail-package` artifact of the
-# calling run. release.yml publishes what this builds; env-matrix.yml installs it on Azure VMs. One build, so the
-# environment matrix tests exactly what a release would ship.
+# and the bundled UI. Each engine is packed into an npm package of its own, and core (the runtime and the UI) into a
+# tarball that pins those six by version and integrity (scripts/release/engine/packages.mjs): npm's registry refuses
+# one tarball holding every engine. The seven tarballs and the engine packages' manifest (engine-packages.json) are
+# uploaded as the `rerail-package` artifact of the calling run. release.yml publishes what this builds; env-matrix.yml
+# installs it on Azure VMs. One build, so the environment matrix tests exactly what a release would ship.
 #
 # Each native build compiles through the Rust compile cache (.github/actions/rust-compile-cache): it starts from the
 # newest store release-cache.yml saved on main as an artifact for that target, and compiles cold without one. Nothing
@@ -13,7 +15,7 @@ on:
   workflow_call:
     outputs:
       tarball:
-        description: File name of the packed tarball inside the rerail-package artifact
+        description: File name of core's tarball inside the rerail-package artifact, which holds the engine packages' tarballs and their manifest beside it
         value: ${{ jobs.package.outputs.tarball }}
 
 permissions:
@@ -224,25 +226,49 @@ jobs:
             test -f "native/rerail_engine.${target}.node" || { echo "missing native/rerail_engine.${target}.node" >&2; exit 1; }
           done
 
+      # One npm package per engine, each at core's version, and their manifest. --all fails unless native/ holds all
+      # six: a core packed against fewer installs with no engine on the platforms left out.
+      - name: Pack the engine packages
+        run: node scripts/release/engine/packages.mjs pack --all --out "$RUNNER_TEMP/rerail-package"
+
+      # prepack reads RERAIL_ENGINE_PACKAGES and pins the six engine packages in core's package.json and
+      # npm-shrinkwrap.json, each at the integrity of the tarball just packed (scripts/release/shrinkwrap-pack.mjs).
       - id: packed-package
         name: Pack release package
+        env:
+          RERAIL_ENGINE_PACKAGES: ${{ runner.temp }}/rerail-package
         run: |
-          npm pack --json > "$RUNNER_TEMP/packed-package.json"
+          npm pack --json --pack-destination "$RERAIL_ENGINE_PACKAGES" > "$RUNNER_TEMP/packed-package.json"
           node --input-type=module <<'EOF'
           import { readFileSync, appendFileSync } from "node:fs";
           const [{ filename }] = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/packed-package.json`, "utf8"));
           appendFileSync(process.env.GITHUB_OUTPUT, `tarball=${filename}\n`);
           EOF
 
+      # The check release.yml makes again before it publishes (its shrinkwrap job), made here too so the environment
+      # matrix never installs a core that pins fewer than six engine packages, or other tarballs than these.
+      - name: Check the tarball pins the six engine packages
+        env:
+          RERAIL_ENGINE_PACKAGES: ${{ runner.temp }}/rerail-package
+          PACKAGE_TARBALL: ${{ steps.packed-package.outputs.tarball }}
+        run: node scripts/release/shrinkwrap-pack.mjs check "$RERAIL_ENGINE_PACKAGES/$PACKAGE_TARBALL"
+
       - name: Smoke installed release package
         env:
+          RERAIL_ENGINE_PACKAGES: ${{ runner.temp }}/rerail-package
           PACKAGE_TARBALL: ${{ steps.packed-package.outputs.tarball }}
         run: |
           set -euo pipefail
           smoke_directory="$(mktemp -d)"
           installed="$smoke_directory/node_modules/@neralabs/rerail"
-          npm install --prefix "$smoke_directory" "$PWD/$PACKAGE_TARBALL"
+          # npm reads no shrinkwrap from a tarball it is handed as a file, and the engine packages are on no registry
+          # yet: core's tarball alone installs with no engine, exit code 0. The runner's engine package is installed
+          # with it, from its own tarball, and lands beside core, where the managed install puts it.
+          engine_tarball="$(node --input-type=module -e 'import { readEngineManifest } from "./scripts/release/engine/packages.mjs"; import { enginePackageFor } from "./scripts/release/engine/release.mjs"; console.log(readEngineManifest(process.argv[1]).packages.find(({ name }) => name === enginePackageFor().name).file);' "$RERAIL_ENGINE_PACKAGES")"
+          npm install --prefix "$smoke_directory" "$RERAIL_ENGINE_PACKAGES/$PACKAGE_TARBALL" "$RERAIL_ENGINE_PACKAGES/$engine_tarball"
           "$smoke_directory/node_modules/.bin/rerail" --help
+          # Core ships no engine of its own, so the health check below loads the engine package's.
+          if compgen -G "$installed/native/*.node" > /dev/null; then echo "core's tarball ships a native engine" >&2; exit 1; fi
           # Every file the package runs by path (src/engine/package-root.ts ENTRY_POINTS: CLI, daemon, hooks, status
           # line, event stream), read from the installed package itself so a layout change cannot leave this stale.
           # shellcheck disable=SC2016 # the script is JavaScript; its template literals are not the shell's.
@@ -273,9 +299,11 @@ jobs:
           # and the .rerail rule library.
           node scripts/check/ci/installed-rr-tests.mjs "$installed"
 
-      - name: Upload release tarball
+      # Core's tarball, the six engine packages' and engine-packages.json, side by side: what the install gates
+      # serve from a registry and release.yml publishes.
+      - name: Upload release tarballs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rerail-package
-          path: ${{ steps.packed-package.outputs.tarball }}
+          path: ${{ runner.temp }}/rerail-package
           if-no-files-found: error

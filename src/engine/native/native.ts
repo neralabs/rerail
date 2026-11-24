@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { PACKAGE_ROOT } from "../package-root.js";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
 import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
 import type { CodeRuleSourceSpan } from "../code-rule/code-rule.js";
@@ -547,6 +547,14 @@ export interface NativeTreeWatcher {
   close(): void;
 }
 
+/** The process holding the server end of a Windows named pipe ({@link NativeBinding.namedPipeServer}). */
+export interface NativeNamedPipeServer {
+  /** Absent when other clients kept every instance of the pipe taken until the wait ran out. */
+  pid?: number | null;
+  /** When it started, epoch ms; absent where this user may not ask. */
+  startedAt?: number | null;
+}
+
 export interface NativeBinding {
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
@@ -608,6 +616,12 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
+  /**
+   * Windows only: the process holding the server end of the named pipe `path` and when it started, opening again while
+   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where no pipe
+   * of that name takes a connection, and on every other system. A binary built before it lacks it.
+   */
+  namedPipeServer?(path: string, timeoutMs: number): Promise<NativeNamedPipeServer | null>;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
@@ -628,6 +642,11 @@ export interface NativeBinding {
   assembleRir(text: string): string;
   /** The file-system event bus; an engine built before it lacks it. */
   TreeWatcher?: new () => NativeTreeWatcher;
+  /**
+   * Names the Rerail package the engine reads its own `.rerail` files from (its typing programs and rule library). An
+   * engine built before the engine packages lacks it, and finds the package above its own file.
+   */
+  setPackageRoot?: (root: string) => void;
 }
 
 const require = createRequire(import.meta.url);
@@ -642,19 +661,220 @@ export function nativePlatformSuffix(
   return `${platform}-${architecture}`;
 }
 
-export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENGINE_PATH): string {
+/** The npm package that carries the engine for a platform (scripts/release/engine/packages.mjs, ENGINE_PACKAGES). */
+export function nativeEnginePackageName(
+  platform: NodeJS.Platform = process.platform,
+  architecture: string = process.arch,
+): string {
+  return `@neralabs/rerail-engine-${nativePlatformSuffix(platform, architecture)}`;
+}
+
+/** The systems an engine is built for, each in an engine package of its own (`ENGINE_PACKAGES`, as above). */
+export const NATIVE_ENGINE_SYSTEMS: readonly (readonly [platform: NodeJS.Platform, architecture: string])[] = [
+  ["darwin", "arm64"],
+  ["darwin", "x64"],
+  ["linux", "arm64"],
+  ["linux", "x64"],
+  ["win32", "arm64"],
+  ["win32", "x64"],
+];
+
+const SYSTEM_NAMES: Readonly<Partial<Record<NodeJS.Platform, string>>> = { darwin: "macOS", linux: "Linux", win32: "Windows" };
+
+/** Which Rerail an engine is looked up for, and on which system: this package in this process, unless a test says otherwise. */
+export interface NativeEngineSite {
+  /** The root of the Rerail package the engine is for. */
+  readonly packageRoot?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: string;
+  /** On Linux, whether Node runs on musl, which no engine is built for; read from Node's own report unless given. */
+  readonly musl?: boolean;
+}
+
+/**
+ * The engine file Rerail loads. In order: the file `RERAIL_ENGINE_PATH` names; the one in the package's own `native/`
+ * (a checkout's build, or `npm run engine:pull`); the one in this system's engine package
+ * ({@link nativeEnginePackageName}), which npm installs as an optional dependency of this package. Throws, saying which
+ * of these is the case and what to do, where the system has no engine, where its engine package is not installed, and
+ * where the package installed is another system's or another version's.
+ */
+export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENGINE_PATH, site: NativeEngineSite = {}): string {
   if (configuredPath !== undefined) {
     const addonPath = resolve(configuredPath);
     if (!existsSync(addonPath)) throw new Error(`RERAIL_ENGINE_PATH does not exist: ${addonPath}`);
     return addonPath;
   }
-  const fileName = `rerail_engine.${nativePlatformSuffix()}.node`;
-  const candidates = [join(PACKAGE_ROOT, "native", fileName), join(PACKAGE_ROOT, "native", "rerail_engine.node")];
-  const addonPath = candidates.find(existsSync);
-  if (addonPath === undefined) {
-    throw new Error(`Unsupported platform or missing native addon: ${fileName}`);
+  const { packageRoot = PACKAGE_ROOT, platform = process.platform, architecture = process.arch } = site;
+  const fileName = `rerail_engine.${nativePlatformSuffix(platform, architecture)}.node`;
+  const candidates = [join(packageRoot, "native", fileName), join(packageRoot, "native", "rerail_engine.node")];
+  return candidates.find(existsSync) ?? packagedEnginePath({ packageRoot, platform, architecture, musl: site.musl }, fileName);
+}
+
+/**
+ * The engine file of each Rerail package's engine package, once found. `loadNativeBinding` runs for every call into
+ * the engine, so the package is resolved and its version read once per process, and only where `native/` has no engine.
+ */
+const packagedEngines = new Map<string, string>();
+
+/** A {@link NativeEngineSite} with its defaults filled in, but for `musl`: Node's report is read only where no engine is found. */
+interface EngineLookup {
+  readonly packageRoot: string;
+  readonly platform: NodeJS.Platform;
+  readonly architecture: string;
+  readonly musl: boolean | undefined;
+}
+
+function packagedEnginePath(lookup: EngineLookup, fileName: string): string {
+  const { packageRoot, platform, architecture } = lookup;
+  const key = `${packageRoot}\n${fileName}`;
+  const known = packagedEngines.get(key);
+  if (known !== undefined) return known;
+  const name = nativeEnginePackageName(platform, architecture);
+  const version = packageVersion(packageRoot);
+  const folder = installedPackageFolder(packageRoot, name);
+  if (folder === undefined) throw enginePackageAbsent(lookup, fileName, `${name}@${version}`);
+  const found = packageVersion(folder);
+  if (found !== version) {
+    throw new Error(
+      `${name} at ${folder} is version ${found}, and the Rerail at ${packageRoot} is version ${version}: Rerail loads only the engine released with it. ${installAdvice(packageRoot, `${name}@${version}`)}`,
+    );
   }
+  const addonPath = join(folder, fileName);
+  packagedEngines.set(key, addonPath);
   return addonPath;
+}
+
+function packageVersion(folder: string): string {
+  return String((JSON.parse(readFileSync(join(folder, "package.json"), "utf8")) as { version?: unknown }).version);
+}
+
+/**
+ * Where the scoped npm package `name` is installed for the package at `packageRoot`, in the two places an install puts
+ * it: the package's own `node_modules`, where npm puts the optional dependencies its shrinkwrap lists, or beside the
+ * package in the scope folder it sits in, where an install that names both puts it. Undefined where it is in neither.
+ * Node's own lookup is not used: it goes on through every `node_modules` above, and an engine is native code, so one
+ * left in a folder above an install would be loaded.
+ */
+function installedPackageFolder(packageRoot: string, name: string): string | undefined {
+  const [scope, base] = name.split("/") as [string, string];
+  const scopeFolder = dirname(resolve(packageRoot));
+  const places = [join(packageRoot, "node_modules", scope, base), ...(basename(scopeFolder) === scope ? [join(scopeFolder, base)] : [])];
+  return places.find(folder => existsSync(join(folder, "package.json")));
+}
+
+/**
+ * Why Rerail has no engine for a system at all, whatever is installed: its operating system or processor is not one
+ * of {@link NATIVE_ENGINE_SYSTEMS}, or it is a Linux on musl. Undefined for a system an engine is built for. `musl` is
+ * read from Node's own report unless given.
+ */
+export function noEngineForSystem(platform: NodeJS.Platform = process.platform, architecture: string = process.arch, musl?: boolean): string | undefined {
+  if (!NATIVE_ENGINE_SYSTEMS.some(([os, cpu]) => os === platform && cpu === architecture)) {
+    return `Rerail has no engine for ${systemName(platform, architecture)}: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64.`;
+  }
+  return platform === "linux" && (musl ?? (process.platform === "linux" && runsOnMusl())) ? NO_MUSL_ENGINE : undefined;
+}
+
+/**
+ * The one other system whose engine package is installed for the Rerail at `packageRoot`: an install made for that
+ * system. Undefined where none is installed, and where several are: npm 11.6.2 and later install every system's from
+ * core's shrinkwrap and skip one they cannot fetch, so several beside a missing one are an install npm made here.
+ */
+function otherSystemInstalled({ packageRoot, platform, architecture }: EngineLookup): (typeof NATIVE_ENGINE_SYSTEMS)[number] | undefined {
+  const others = NATIVE_ENGINE_SYSTEMS.filter(([os, cpu]) =>
+    (os !== platform || cpu !== architecture) && installedPackageFolder(packageRoot, nativeEnginePackageName(os, cpu)) !== undefined);
+  return others.length === 1 ? others[0] : undefined;
+}
+
+/** Why no engine package was found for a system, and what to do about it. */
+function enginePackageAbsent(lookup: EngineLookup, fileName: string, spec: string): Error {
+  const { packageRoot, platform, architecture } = lookup;
+  const system = systemName(platform, architecture);
+  const none = noEngineForSystem(platform, architecture, lookup.musl);
+  if (none !== undefined) return new Error(none);
+  const otherwise = `Or set RERAIL_ENGINE_PATH to an engine file for this system (${fileName}).`;
+  if (existsSync(join(packageRoot, "native", "Cargo.toml"))) {
+    return new Error(
+      `Rerail's engine for ${system} is not built: ${join(packageRoot, "native")} has no ${fileName}. Build it with \`npm run build:native\`, or fetch a released one with \`npm run engine:pull\`. ${otherwise}`,
+    );
+  }
+  const other = otherSystemInstalled(lookup);
+  if (other !== undefined) {
+    return new Error(
+      `The Rerail at ${packageRoot} was installed for ${systemName(...other)}, and this is ${system}: it has ${nativeEnginePackageName(...other)} and no ${spec}. Its folder came from another computer, or this Node is built for another processor than the Node that installed it. Run Rerail with that Node, or add this system's engine. ${installAdvice(packageRoot, spec, true)} ${otherwise}`,
+    );
+  }
+  return new Error(
+    `Rerail's engine for ${system} is not installed: the Rerail at ${packageRoot} has no ${spec}, an optional dependency of ${RERAIL_PACKAGE_NAME}. npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package or serves another file for it. ${installAdvice(packageRoot, spec)} ${otherwise}`,
+  );
+}
+
+function systemName(platform: NodeJS.Platform, architecture: string): string {
+  return `${SYSTEM_NAMES[platform] ?? platform} on ${architecture}`;
+}
+
+const NO_MUSL_ENGINE = "Rerail has no engine for Linux with musl (Alpine, for example): on Linux it needs glibc.";
+
+/** Whether this Linux runs on musl, once read: a caller whose engine does not load may ask at every call. */
+let musl: boolean | undefined;
+
+/** On Linux: Node reports the glibc it runs on, and leaves the field out on musl. */
+function runsOnMusl(): boolean {
+  if (musl !== undefined) return musl;
+  const report = process.report.getReport();
+  const header = "header" in report && typeof report.header === "object" && report.header !== null ? report.header : {};
+  musl = !("glibcVersionRuntime" in header);
+  return musl;
+}
+
+/**
+ * What a failed load of the engine at `addonPath` is thrown as. On a Linux with musl an engine package can be
+ * installed all the same, since npm 11.6.2 and later do not hold the optional dependencies of a package's shrinkwrap to
+ * their `libc`, and the system then fails to load it: that is thrown as no engine for the system. Every other failure
+ * is thrown as it is, as is that of an engine `RERAIL_ENGINE_PATH` names, which is the person's own.
+ */
+export function engineLoadFailure(error: unknown, site: Pick<NativeEngineSite, "platform" | "musl"> = {}, configuredPath = process.env.RERAIL_ENGINE_PATH): unknown {
+  if (configuredPath !== undefined || (site.platform ?? process.platform) !== "linux") return error;
+  return (site.musl ?? (process.platform === "linux" && runsOnMusl())) ? new Error(NO_MUSL_ENGINE, { cause: error }) : error;
+}
+
+/**
+ * The folder an update stages a version in until it has validated it, `versions/.<version>.<uuid>.staging`
+ * (`ManagedUpdater` in src/setup/updater.ts, and the updater of every released version).
+ */
+const UPDATE_STAGING_FOLDER = /^\..+\.staging$/u;
+
+/**
+ * How to install the engine package `spec` where the Rerail at `packageRoot` finds it: an npm command, with `--force`
+ * where the install holds another system's engine (`keepOthers`), which npm would otherwise remove. The command names
+ * the folder only where npm installed Rerail into one as a dependency (`<folder>/node_modules/@neralabs/rerail`, with
+ * a `package.json` that names it), as set-up and `npx` do: an install into any other folder with `--prefix` removes
+ * the packages its `package.json` does not name, which under a global install is every one.
+ *
+ * A Rerail an update or a first set-up staged gets no command ({@link UPDATE_STAGING_FOLDER}): either removes that
+ * folder as its check of the engine fails, so it is what to run again. A first set-up has no `rerail` command yet.
+ * The updater of a version from before the engine packages installs core alone, and `npm_config_include=optional` has
+ * its npm install the optional dependencies that npm's settings leave out.
+ */
+function installAdvice(packageRoot: string, spec: string, keepOthers = false): string {
+  const folder = resolve(packageRoot, "..", "..", "..");
+  if (UPDATE_STAGING_FOLDER.test(basename(folder))) {
+    return "An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.";
+  }
+  const dependency = join(folder, "node_modules", ...RERAIL_PACKAGE_NAME.split("/")) === resolve(packageRoot) && namesRerail(join(folder, "package.json"));
+  const options = keepOthers ? " --force" : "";
+  const command = dependency
+    ? `Install it with \`npm install --prefix "${folder}"${options} ${spec}\`.`
+    : `Install it with \`npm install${options} ${spec}\`, run where ${RERAIL_PACKAGE_NAME} is installed (with \`-g\` for a global install).`;
+  return keepOthers ? `${command} \`--force\` has npm keep the other system's engine.` : command;
+}
+
+function namesRerail(manifestPath: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { dependencies?: Record<string, unknown> };
+    return manifest.dependencies?.[RERAIL_PACKAGE_NAME] !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -664,9 +884,24 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
  */
 let workspaceBusy: unknown;
 
+/** Whether this process has named Rerail's package to its engine (`setPackageRoot`): once, as the engine never forgets it. */
+let packageRootNamed = false;
+
 export function loadNativeBinding(): NativeBinding {
-  const binding = require(resolveNativeBindingPath()) as NativeBinding;
+  const addonPath = resolveNativeBindingPath();
+  let binding: NativeBinding;
+  try {
+    binding = require(addonPath) as NativeBinding;
+  } catch (error) {
+    throw engineLoadFailure(error);
+  }
   workspaceBusy ??= binding.WORKSPACE_BUSY;
+  if (!packageRootNamed) {
+    // In an engine package of its own the engine cannot always find Rerail's package from its own file: npm can put
+    // the two side by side, and a package manager that keeps a store links the engine package in from there.
+    binding.setPackageRoot?.(PACKAGE_ROOT);
+    packageRootNamed = true;
+  }
   return binding;
 }
 

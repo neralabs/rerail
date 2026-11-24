@@ -7,10 +7,11 @@ import { z } from "zod/v4";
 import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
-import { runGit } from "../git.js";
+import { runGitWithoutBlocking } from "../git.js";
 import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits, events } from "../storage/schema.js";
-import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
+import { isOmittedFailuresSummary, isSourceGap, type AuditFailure } from "./audit.js";
+import { parsedList } from "./audit-store.js";
 import { ownerLockFreed, ownerLockOf, ownerToken } from "./owner-lock.js";
 import { scrubSecrets } from "../secret-scrub.js";
 
@@ -32,8 +33,29 @@ function isScanLimitMarker(failure: { stage?: string | undefined; code: string; 
     && /^Repository scan stopped after reaching \d+ failures$/u.test(failure.message);
 }
 
-function gitPaths(workspaceRoot: string, args: readonly string[]): string[] {
-  const result = runGit(workspaceRoot, args, { maxBuffer: GIT_OUTPUT_LIMIT });
+/**
+ * Whether the failures `text` holds are some and each one a failed audit tolerates today. They are read as an audit
+ * record reads them (`parsedList`): text that holds no JSON array of failures is a damaged record, left for a person to
+ * mend rather than audited again at every session. So is a failure with no string `code` or `message`.
+ */
+function onlyToleratedFailures(text: string): boolean {
+  const failures = parsedList(text, "failures");
+  return Array.isArray(failures) && failures.length > 0
+    && failures.every(item => hasCodeAndMessage(item) && (isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item)));
+}
+
+/**
+ * Whether a stored failure, an object as `parsedList` reads it, has the string `code` and `message` every failure Rerail
+ * writes has. The tests of a tolerated failure call string methods on `message`; its other fields they only compare.
+ */
+function hasCodeAndMessage(item: unknown): item is AuditFailure {
+  const { code, message } = item as Record<string, unknown>; // an object: `parsedList` reads no other item as a failure
+  return typeof code === "string" && typeof message === "string";
+}
+
+/** The paths Git lists for `args` in `workspaceRoot`, asked without blocking the thread; throws how Git failed. */
+async function gitPaths(workspaceRoot: string, args: readonly string[]): Promise<string[]> {
+  const result = await runGitWithoutBlocking(workspaceRoot, args, { maxBuffer: GIT_OUTPUT_LIMIT });
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) throw new Error(result.stderr.trim() || `git exited with code ${result.status ?? "unknown"}`);
   return result.stdout.split("\0").filter(Boolean);
@@ -48,9 +70,9 @@ function isDirectory(path: string): boolean {
 }
 
 /** Which of `folders` (relative to `workspaceRoot`) are submodules its index declares: gitlinks, mode 160000. */
-function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): Set<string> {
+async function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): Promise<Set<string>> {
   if (folders.length === 0) return new Set();
-  return new Set(gitPaths(workspaceRoot, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...folders])
+  return new Set((await gitPaths(workspaceRoot, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...folders]))
     .filter(entry => entry.startsWith("160000 "))
     .map(entry => entry.slice(entry.indexOf("\t") + 1)));
 }
@@ -61,19 +83,20 @@ function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): 
  * so each is judged by its owner. Git is never run in any other nested repository: such a folder stays a folder,
  * which the audit walks as part of this checkout.
  */
-function gitDiffPaths(workspaceRoot: string, isRecordedCheckout: (path: string) => boolean, prefix = ""): string[] {
+async function gitDiffPaths(workspaceRoot: string, isRecordedCheckout: (path: string) => boolean, prefix = ""): Promise<string[]> {
   const entries = new Set([
-    ...gitPaths(workspaceRoot, ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
-    ...gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
-    ...gitPaths(workspaceRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--"]),
+    ...await gitPaths(workspaceRoot, ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
+    ...await gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
+    ...await gitPaths(workspaceRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--"]),
   ].map(entry => entry.endsWith("/") ? entry.slice(0, -1) : entry));
   const folders = [...entries].filter(path => isDirectory(join(workspaceRoot, path)));
-  const submodules = declaredSubmodules(workspaceRoot, folders);
-  const paths = [...entries].flatMap(path => {
+  const submodules = await declaredSubmodules(workspaceRoot, folders);
+  const paths: string[] = [];
+  for (const path of entries) {
     const absolute = join(workspaceRoot, path);
     const ownCheckout = folders.includes(path) && (submodules.has(path) || isRecordedCheckout(physicalPath(absolute)));
-    return ownCheckout ? gitDiffPaths(absolute, isRecordedCheckout, `${prefix}${path}/`) : [`${prefix}${path}`];
-  });
+    paths.push(...ownCheckout ? await gitDiffPaths(absolute, isRecordedCheckout, `${prefix}${path}/`) : [`${prefix}${path}`]);
+  }
   return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
 }
 
@@ -370,12 +393,11 @@ export class SqliteAuditControlStore {
   #failedAuditCanDifferNow(auditId: string | null, catalogRevision: string | undefined): boolean {
     const failed = auditId === null
       ? undefined
-      : this.#database.select({ failures: audits.failures, catalogRevision: audits.catalogRevision })
+      : this.#database.select({ failures: sql<string>`${audits.failures}`, catalogRevision: audits.catalogRevision })
         .from(audits).where(eq(audits.auditId, auditId)).get();
     if (failed === undefined) return false;
     if (failed.catalogRevision !== null && catalogRevision !== undefined && failed.catalogRevision !== catalogRevision) return true;
-    return failed.failures.length > 0
-      && failed.failures.every(item => isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item));
+    return onlyToleratedFailures(failed.failures);
   }
   finishRepositoryAudit(
     sessionId: string,
@@ -488,33 +510,43 @@ export class SqliteAuditControlStore {
       this.#database.update(sessions).set({ endedAt: Math.min(heardAt + idleMs, now) }).where(eq(sessions.sessionId, sessionId)).run();
     }
   }
-  requestAudit(sessionId: string, input: z.input<typeof auditRequestInputSchema>): AuditRequest {
+  /**
+   * Queues an audit of the session's workspace. A git-diff one reads Git's diff first without holding the thread, so
+   * the process serves other requests while Git runs; the session's state is read once that read has answered.
+   */
+  async requestAudit(sessionId: string, input: z.input<typeof auditRequestInputSchema>): Promise<AuditRequest> {
     const parsed = auditRequestInputSchema.parse(input);
+    requireSession(this.#database, sessionId);
+    const { workspaceRoot } = this.getSettings(sessionId);
+    const diff = (parsed.scope ?? "git-diff") === "git-diff";
+    const selection = diff ? await this.#diffSelection(workspaceRoot) : { paths: [], error: null };
+    return this.#recordRequest(sessionId, { workspaceRoot, scope: diff ? "touched-files" : "repository", ...selection });
+  }
+  /** The files Git's diff lists in `workspaceRoot`, or why it gave none. */
+  async #diffSelection(workspaceRoot: string): Promise<{ paths: string[]; error: string | null }> {
+    try {
+      const paths = await gitDiffPaths(workspaceRoot, path =>
+        this.#database.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.checkoutPath, path)).get() !== undefined);
+      return { paths, error: paths.length === 0 ? "Git diff contains no changed files" : null };
+    } catch (error) {
+      return { paths: [], error: `Could not read git diff: ${scrubSecrets(error instanceof Error ? error.message : String(error))}` };
+    }
+  }
+  /** Records `request` for the session: queued, or failed with why its files or the session leave nothing to audit. */
+  #recordRequest(sessionId: string, request: { workspaceRoot: string; scope: "touched-files" | "repository"; paths: string[]; error: string | null }): AuditRequest {
     const session = requireSession(this.#database, sessionId);
     const current = this.getSettings(sessionId);
-    const requestedScope = parsed.scope ?? "git-diff";
-    const scope = requestedScope === "git-diff" ? "touched-files" : "repository";
-    let paths: string[] = [];
-    let selectionError: string | null = null;
-    if (requestedScope === "git-diff") {
-      try {
-        paths = gitDiffPaths(current.workspaceRoot, path =>
-          this.#database.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.checkoutPath, path)).get() !== undefined);
-        if (paths.length === 0) selectionError = "Git diff contains no changed files";
-      } catch (error) {
-        selectionError = `Could not read git diff: ${scrubSecrets(error instanceof Error ? error.message : String(error))}`;
-      }
-    }
+    const { workspaceRoot, scope, paths } = request;
     const id = randomUUID();
     const now = Date.now();
-    let error = selectionError;
+    let error = request.error;
     if (session.endedAt !== null) error = "Session is inactive";
     else if (!current.active) error = "Session has no live owning runtime";
     const status = error === null ? "queued" : "failed";
     this.#database.insert(auditRequests).values({
       id,
       sessionId,
-      workspaceRoot: current.workspaceRoot,
+      workspaceRoot,
       scope,
       mode: "log",
       paths,
