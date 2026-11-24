@@ -550,7 +550,8 @@ function reportedAudit(audit: AuditRecord): SupportBundleAudit {
   };
 }
 
-function readSession(database: RerailDatabase, databasePath: string, session: typeof sessions.$inferSelect, workspaceRoot: string, problems: string[]): SupportBundleSession {
+function readSession(database: RerailDatabase, context: DatabaseReadContext, session: typeof sessions.$inferSelect): SupportBundleSession {
+  const { databasePath, workspaceRoot, problems, stderr } = context;
   const eventCounts = Object.fromEntries(database.select({ kind: events.kind, total: count() }).from(events)
     .where(eq(events.sessionId, session.sessionId)).groupBy(events.kind).orderBy(asc(events.kind)).all().map(row => [row.kind, row.total]));
   const eventTotal = Object.values(eventCounts).reduce((sum, total) => sum + total, 0);
@@ -560,7 +561,7 @@ function readSession(database: RerailDatabase, databasePath: string, session: ty
   const steered = eventCounts["steering-delivered"] ?? 0;
   if (!found && steered > 0) problems.push(`steers: the session steered ${steered} time${steered === 1 ? "" : "s"} and its ledger was not found, so their text is missing.`);
   const sessionReader = new SqliteSessionReader(databasePath);
-  const auditReader = new SqliteAuditReader(databasePath);
+  const auditReader = new SqliteAuditReader(databasePath, { log: stderr });
   try {
     const { audits, total: auditTotal } = auditReader.list({ sessionId: session.sessionId, limit: MAX_AUDITS });
     return {
@@ -696,6 +697,8 @@ interface CollectInput {
    * writes it, so a caller that stops the command during the wait still has the bundle it had before there was a wait.
    */
   whileWaiting?: (draft: CollectedBundle) => void;
+  /** Where the line that names an audit whose stored lists do not read goes; the process's error output unless given. */
+  stderr?: Pick<NodeJS.WriteStream, "write">;
 }
 
 /** A bundle, scrubbed, and the ids of the rules the person's team wrote, which the summary names. */
@@ -710,7 +713,7 @@ interface CollectedBundle {
  * it can be waited for.
  */
 export async function collectSupportBundle(input: CollectInput): Promise<CollectedBundle> {
-  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS } = input;
+  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS, stderr = process.stderr } = input;
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
@@ -732,7 +735,7 @@ export async function collectSupportBundle(input: CollectInput): Promise<Collect
   const catalog = attempt("packs", () => loadRuleCatalog(home), undefined);
 
   if (existsSync(databasePath)) {
-    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules };
+    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules, stderr };
     ({ repository, session } = readDatabaseSections(context, repository));
   } else if (sessionId !== undefined) {
     throw new SupportBundleError(SESSION_NOT_FOUND(sessionId));
@@ -784,6 +787,7 @@ interface DatabaseReadContext {
   problems: string[];
   knownValues: KnownValue[];
   ownRules: string[];
+  stderr: Pick<NodeJS.WriteStream, "write">;
 }
 
 /** The bundle's sections from the database: the checkout's repository with its rules, and the session. */
@@ -835,11 +839,11 @@ function readRules(database: RerailDatabase, context: DatabaseReadContext, check
 
 /** The session the bundle is for, if one is found, with its id and folder added to `context.knownValues`. */
 function readSelectedSession(database: RerailDatabase, context: DatabaseReadContext, historyIds: readonly string[]): SupportBundleSession | null {
-  const { attempt, databasePath, workspaceRoot, problems } = context;
+  const { attempt } = context;
   const selected = attempt("session", () => selectSession(database, historyIds, context.sessionId), undefined);
   if (selected === undefined) return null;
   context.knownValues.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
-  return attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
+  return attempt("session", () => readSession(database, context, selected), null);
 }
 
 function summaryOf(path: string, bundle: SupportBundle, ownRules: readonly string[]): SupportBundleSummary {
@@ -908,6 +912,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
       packageRoot: io.packageRoot ?? PACKAGE_ROOT,
+      stderr,
       whileWaiting: draft => {
         writeBundle(output, draft.bundle);
         stderr.write(waitingText(output));
