@@ -22,7 +22,7 @@ interface FakeDaemon {
   receipts: unknown[];
   /** Settles once it has read its first receipt. */
   receiptRead: Promise<void>;
-  /** How many connections hooks opened to it. */
+  /** How many connections carried a request to it: on Windows a hook's look-up of the pipe's holder connects and sends nothing. */
   connections: number;
   close(): Promise<void>;
 }
@@ -49,7 +49,10 @@ async function fakeDaemon(root: string, receiptAnswer: ReceiptAnswer): Promise<F
   const read = Promise.withResolvers<void>();
   const daemon: FakeDaemon = { socketPath, receipts: [], receiptRead: read.promise, connections: 0, close: async () => undefined };
   const held: ServerResponse[] = [];
+  const sockets = new Set<IncomingMessage["socket"]>();
   const server = createServer(async (request, response) => {
+    sockets.add(request.socket);
+    daemon.connections = sockets.size;
     const posted = await body(request);
     if (request.url === "/events") {
       const { eventId, sessionId } = posted.event as { eventId: string; sessionId: string };
@@ -64,7 +67,6 @@ async function fakeDaemon(root: string, receiptAnswer: ReceiptAnswer): Promise<F
     else if (receiptAnswer === "drop") request.socket.destroy();
     else held.push(response);
   });
-  server.on("connection", () => { daemon.connections += 1; });
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
   await recordAsDaemon(process.env.RERAIL_HOME!, { socketPath, databasePath: hookOptions(root).databasePath, accessToken: randomUUID() });
   daemon.close = async () => {
