@@ -9,12 +9,17 @@ vi.mock("node:fs", { spy: true });
 
 const CALLS = 1_000;
 
-/** The looks on the disk for an engine file (`existsSync` on a `.node` path) over `CALLS` calls of `call`, after its first. */
+/** The looks on the disk for an engine file (`existsSync` on a `.node` path) since the spy was last cleared. */
+function looksSinceCleared(): number {
+  return vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith(".node")).length;
+}
+
+/** The looks for an engine file over `CALLS` calls of `call`, after its first. */
 function engineFileLooks(call: () => unknown): number {
   call();
   vi.mocked(existsSync).mockClear();
   for (let made = 0; made < CALLS; made += 1) call();
-  return vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith(".node")).length;
+  return looksSinceCleared();
 }
 
 afterEach(() => {
@@ -31,11 +36,17 @@ describe("the engine's file", () => {
     expect(engineFileLooks(call)).toBe(0);
   });
 
-  it("is looked for again once RERAIL_ENGINE_PATH names another file, and the loaded engine comes back with the first value", () => {
+  it("is looked for at each call while RERAIL_ENGINE_PATH names a missing file, and the engine loaded before is kept", () => {
     const binding = loadNativeBinding();
     vi.stubEnv("RERAIL_ENGINE_PATH", join(tmpdir(), "rerail-no-engine-here.node"));
+    vi.mocked(existsSync).mockClear();
     expect(() => loadNativeBinding()).toThrow(/RERAIL_ENGINE_PATH does not exist/);
+    expect(() => loadNativeBinding()).toThrow(/RERAIL_ENGINE_PATH does not exist/);
+    expect(looksSinceCleared()).toBe(2);
     vi.unstubAllEnvs();
+    vi.mocked(existsSync).mockClear();
+    // Node's module cache hands back the same exports for the same path, so only the count shows the engine was kept.
     expect(loadNativeBinding()).toBe(binding);
+    expect(looksSinceCleared()).toBe(0);
   });
 });
