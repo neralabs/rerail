@@ -5,7 +5,7 @@ use rerail_tape_format::aux_index::{self, NONE, Sections, AuxIndex};
 use rerail_tape_format::tape::Tape;
 
 /// Words a thread writes.
-const W: usize = 26;
+const W: usize = 28;
 
 const KERNEL: &str = r#"
 #define CLIF_VIEW_SPACE UKL_GLOBAL
@@ -24,14 +24,14 @@ DEFINE_KERNEL2(tests, t_aux_index,
                ROBUFFER, uint8_t,  tape, "[bytes]",
                ROBUFFER, uint32_t, view, "[32]",
                ROBUFFER, uint8_t,  src,  "[bytes]",
-               RWBUFFER, uint32_t, out,  "[threads * 26]",
+               RWBUFFER, uint32_t, out,  "[threads * 28]",
                GID0,     uint32_t, i,    )
 {
     if (i >= args.threads)
         return;
     // The index where the tape's home holds it, after its presence (decision 0656 step 3).
     UKL_GLOBAL const uint8_t* aux = tape + ukl_aux_in_home(tape, view);
-    RWBUFFER(uint32_t) o = out + i * 26u;
+    RWBUFFER(uint32_t) o = out + i * 28u;
     o[0] = ukl_aux_leaf_rank(aux, i);
     o[1] = ukl_aux_leaf_node(aux, i);
     o[2] = ukl_aux_term_of_leaf(aux, i);
@@ -57,15 +57,17 @@ DEFINE_KERNEL2(tests, t_aux_index,
         uint64_t e = p == CLIF_T_NONE ? 0u : ukl_aux_eighth_at_or_before(aux, p, i);
         o[17] = (uint32_t)e;
         o[18] = (uint32_t)(e >> 32);
+        o[26] = ukl_aux_place_past_comments(tape, view, aux, i);
     }
     o[19] = ukl_aux_count(aux, i);
     uint64_t r = ukl_aux_rare_range(aux, i);
     o[20] = (uint32_t)r;
     o[21] = (uint32_t)(r >> 32);
     o[22] = i < args.rare ? ukl_aux_rare_node(aux, i) : 0u;
-    o[23] = ukl_aux_section(aux, i % 8u);
+    o[23] = ukl_aux_section(aux, i % 9u);
     o[24] = ukl_aux_named(aux, i);
     o[25] = ukl_aux_strays(aux);
+    o[27] = ukl_aux_comment(aux, i);
 }
 "#;
 
@@ -87,9 +89,9 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
     let lang = rerail_tape_format::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
     let number = rerail_tape_format::f16::numbers(&lang, &d.table).unwrap();
     // A format 16 tape's home: the tape, its presence, and its auxiliary index laid after it, as the engine stores it.
-    let mut w = rerail_tape_format::f16::write_from_with_presence(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false).unwrap().tape;
+    let mut w = rerail_tape_format::f16::write_from_present(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false).unwrap();
     let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
-    let bytes = aux_index::build(&t16.reader(&lang).unwrap(), &d.source, 3, &aux_index::sample::named(), Sections::ALL).unwrap();
+    let bytes = aux_index::build(&t16.reader(&lang).unwrap(), &d.source, 3, &aux_index::sample::renumbered(&aux_index::sample::codes(), &number), Sections::ALL).unwrap();
     w.lay_aux(&bytes).unwrap();
     let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
     let t = t16.reader(&lang).unwrap();
@@ -122,20 +124,23 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
             o[16] = aux.eighth(i, 2);
             let (k8, e) = p.map_or((0, 0), |p| aux.eighth_at_or_before(p, i));
             (o[17], o[18]) = (e, k8);
+            o[26] = aux_index::place_past_comments(&t, &aux, i);
         }
         o[19] = aux.count(i);
         let r = aux.rare_range(i).unwrap_or((NONE, NONE));
         (o[20], o[21]) = r;
         o[22] = if i < rare_total { aux.rare_node(i) } else { 0 };
-        let kind = aux_index::Kind::ALL.iter().find(|k| **k as u32 == i % 8);
+        let kind = aux_index::Kind::ALL.iter().find(|k| **k as u32 == i % 9);
         o[23] = kind.map_or(0, |k| if aux.has(*k) { section_at(&bytes, *k as u16) } else { 0 });
         o[24] = u32::from(aux.named(i));
         o[25] = aux.strays();
+        o[27] = u32::from(aux.comment(i));
     }
     // The answers mean something: the reads met leaves, escaped terms, wide families and rare codes.
     assert!(want.chunks(W).any(|o| o[2] != NONE && o[2] >= 255), "an escaped term");
     assert!(want.chunks(W).any(|o| o[15] != NONE) && want.chunks(W).any(|o| o[12] > 100), "wide families");
     assert!(rare_total > 0);
+    assert!(want.chunks(W).any(|o| o[27] == 1) && want.chunks(W).any(|o| o[26] != o[12] && o[26] > 8), "comments past an eighth");
     // UKL's.
     let src = super::source("/<kernels>/aux_index.uglykl", KERNEL, &[]).unwrap_or_else(|e| panic!("{e}"));
     let tape = super::c_tape(&src).unwrap();
@@ -162,7 +167,7 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
         const NAMES: [&str; W] = [
             "leaf rank", "leaf node", "term of leaf", "term of node", "term start", "term len", "hash lo", "hash hi", "by hash",
             "term by hash", "text hash lo", "text hash hi", "place", "child at place", "child i%37", "eighth 1", "eighth 2",
-            "eighth at or before: node", "eighth at or before: k", "count", "rare from", "rare to", "rare node", "section", "named", "strays",
+            "eighth at or before: node", "eighth at or before: k", "count", "rare from", "rare to", "rare node", "section", "named", "strays", "place past comments", "comment",
         ];
         for i in 0..threads as usize {
             for w in 0..W {

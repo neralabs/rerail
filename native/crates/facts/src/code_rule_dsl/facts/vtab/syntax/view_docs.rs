@@ -80,13 +80,8 @@ impl ViewEntry {
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
-            // A node's place: read in its tape's auxiliary index (`tape_place`), or the derived column.
-            if p.places_by_index() {
-                (*d).places_by_index = 1;
-            } else {
-                let places = p.places_column();
-                Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
-            }
+            // A node's place, read in its tape's auxiliary index (`tape_place`, `tape_place_past_comments`).
+            (*d).place = p.place_kind() as u32;
             // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
             let (columns, named) = p.derived.made();
             let [before, after, visits, digests] = columns;

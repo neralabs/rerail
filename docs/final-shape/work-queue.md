@@ -11318,3 +11318,26 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - Checked with Relax, RERAIL_GPU=cpu:
   - a check over blocks, prof, facts-base, facts, setfix, engine and tests-lang: no type errors in the merged code. Relax still reports its own errors: the sessions_base `translate` visibility defect (since roll-up 112), napi's constructor registry, and a Relax bus error in the engine pass.
   - tests: setfix 137; facts-base 83; blocks 88; tests-lang `vtab::syntax` 89.
+
+### Q543. Roll-up 116 (final-rerail-shape-phased-facts 4e85066eb9 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape-phased-facts (4 commits, to 4e85066eb9; decision 0656 step 4):
+  - 07e2162656: text by node, through the index;
+  - 613cab1ba9: the places column removed; a place is read in the tape's auxiliary index, among the named siblings (core.rerail's shape) or past the comments (T's; `PlaceAmong`);
+  - 827049b60e: `text` is a view (`View::Text`, `Item::Text`): no row made, read by its string in the documents whose index can hold it;
+  - 4e85066eb9: docs.
+- `text`: the branch's view replaces the hub's 0353 step 3 path (`Batch::tape_text`, `CoreRows::text_row`, `keeps_text`, `token_like`, `made::TAPE_ROWS`). Both read a node's text off its tape with no rows made, so there is one mechanism: the view. Its rule for which nodes have text (`TextRows::has`: the inline bound, the kinds read at any length, comments, leaves, prefixed literals) is the hub's.
+- The views' directory: `text` has a slot of its own (`view_reads::TEXT`, after `END`; `TAPE` follows it). A document's counts are 12: the hub's `parented` is 10, and the branch's `text_rows` is 11. A text row's first rows come from the directory (`firsts`), as every view's do. `text` is the host's alone, with no kernel read (`kernel_view`).
+- Places: the hub's Rust view reads (`tape_format::view_reads`) read `child`'s place as the branch's CLIF read does. An outermost anchor reads its rank among the anchors. Any other node reads `Tape::place`, or the new `Tape::place_past_comments`, as the document's entry says (`ViewDoc::place`). `places_by_index` and the places column are gone.
+- The hub's lookups keep their memo (`lookup_runs`, `read_matches`). The branch's view arms are added there: text by its string, unit -1 for the roots, a text row found as a place.
+- The UKL headers (ids.h, view.h, body/view_reads.h) are regenerated from the CLIF (`RERAIL_WRITE_READS=1`). relation.h was stale against its generator on the hub, and is regenerated too.
+- Tests:
+  - `a_probe_makes_the_document_it_names_alone` keeps both sides' checks. With the documents' counts given, `text` makes no rows; then a `name` probe makes its document's rows.
+  - The hub's 0353 step 3 test now compares the view's probe by node with an eager batch's.
+  - `a_batch_answers_may_hold_rows_…` probes `name` (a made relation), since `text` is no longer one.
+  - The views-read-both-ways test checks each document's place kind by shape.
+- Fixed on the way: ukl-vec's test target did not compile on the hub. Since 0631, `f16::numbers` and `write_from_present` were test-only inside tape-format. They are now behind `test-hooks` too, which ukl-vec and gpu enable.
+- Checked with Relax, RERAIL_GPU=cpu:
+  - a check over clif, tape-format, lang, facts-base, facts, tests-lang, ukl, setfix, gpu and engine: no errors but the sessions_base `translate` visibility defect (Relax's, since roll-up 112);
+  - tests: clif 17; tape-format 51; facts-base 83; lang 78; facts 14; ukl-vec 51; tests-lang `vtab::syntax` 90 and the rest 86; tests-transducer `packed` 36; tests-tape `persisted_image_round_trips_without_parsing`.
+  - tests-tape whole passed the 12 GB cap (the suite's memory growth, open).

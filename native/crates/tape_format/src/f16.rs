@@ -1293,21 +1293,22 @@ pub(crate) fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[
     write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
 }
 
-/// `write_from`, with each block's presence after the tape (`write_present`).
-#[cfg(test)]
-pub(crate) fn write_from_present<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+/// `write_from`, with each block's presence after the tape (`write_present`); other crates' tests' too (`test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn write_from_present<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
     write_present(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
 }
 
-/// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tree's codes with.
-#[cfg(test)]
-pub(crate) fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
+/// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tree's codes with; other crates' tests' too
+/// (`test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
     table.entries().map(|e| lang.number(e).ok_or_else(|| format!("code {e:?} is not in the language's table"))).collect()
 }
 
 /// `t`'s nodes in preorder, as `write` takes them, each code mapped to the language's number (`number`, by `t`'s
 /// code): a tree written in format 16 by a test or the reference writer.
-#[cfg(any(test, feature = "reference"))]
+#[cfg(any(test, feature = "reference", feature = "test-hooks"))]
 pub(crate) fn nodes_of<'t, T: Tape>(t: &'t T, number: &'t [u32]) -> impl FnMut(usize) -> Node + 't {
     let mut s = 0;
     move |i| {
