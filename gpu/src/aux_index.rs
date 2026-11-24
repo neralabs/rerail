@@ -21,7 +21,9 @@ fn kernels() -> Result<&'static Program, String> {
 }
 
 /// A document of a batch: its tape at byte `tape` of the tapes' buffer (8-byte aligned), its source at byte `src` of
-/// the sources', its tape's digest (the auxiliary index's header), its nodes, and its view's words (its offsets from `tape`).
+/// the sources', its tape's digest (the auxiliary index's header), its nodes, its view's words (its offsets from
+/// `tape`), and its language's named codes (`aux_index::named_codes`): `named_words` u64 words from word `named` of
+/// `build`'s `named`.
 #[derive(Clone, Copy)]
 pub struct Doc {
     pub tape: u32,
@@ -29,6 +31,8 @@ pub struct Doc {
     pub digest: u64,
     pub nodes: u32,
     pub view: [u32; 32],
+    pub named: u32,
+    pub named_words: u32,
 }
 
 #[repr(C)]
@@ -38,6 +42,10 @@ struct ScDoc {
     src: u32,
     digest_lo: u32,
     digest_hi: u32,
+    named: u32,
+    named_words: u32,
+    pad0: u32,
+    pad1: u32,
 }
 unsafe impl Pod for ScDoc {}
 
@@ -52,7 +60,7 @@ struct ScArgs {
 unsafe impl Pod for ScArgs {}
 
 /// The words of a document's record (`I_WORDS`).
-const INFO: usize = 28;
+const INFO: usize = 30;
 
 /// The auxiliary indexes of a batch: one buffer, each document's at its offset (`at[d]..at[d + 1]`).
 pub struct Built {
@@ -69,9 +77,10 @@ pub enum Refused {
     Limits,
 }
 
-/// The auxiliary indexes of `docs`, their tapes in `tapes` and sources in `sources`, every section. `Ok(Err(_))` where the
-/// batch is one the device does not build (`Refused`).
-pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, docs: &[Doc]) -> Result<Result<Built, Refused>, String> {
+/// The auxiliary indexes of `docs`, their tapes in `tapes` and sources in `sources`, their languages' named codes in
+/// `named` (each a run of u64 words, `Doc::named` its first), every section. `Ok(Err(_))` where the batch is one the
+/// device does not build (`Refused`).
+pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, named: &[u64], docs: &[Doc]) -> Result<Result<Built, Refused>, String> {
     let k = kernels()?;
     let d = docs.len();
     if d == 0 {
@@ -93,7 +102,13 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
     block_at.push(b);
     let args = ScArgs { docs: d as u32, nodes: n, blocks: b, pad: 0 };
     let nn = n as usize;
-    let aux_docs: Vec<ScDoc> = docs.iter().map(|x| ScDoc { tape: x.tape, src: x.src, digest_lo: x.digest as u32, digest_hi: (x.digest >> 32) as u32 }).collect();
+    let aux_docs: Vec<ScDoc> = docs
+        .iter()
+        .map(|x| ScDoc { tape: x.tape, src: x.src, digest_lo: x.digest as u32, digest_hi: (x.digest >> 32) as u32, named: 2 * x.named, named_words: x.named_words, pad0: 0, pad1: 0 })
+        .collect();
+    let mut named_w: Vec<u32> = named.iter().flat_map(|w| [*w as u32, (*w >> 32) as u32]).collect();
+    named_w.push(0);
+    let named_b = buffer_of(&named_w)?;
     let views: Vec<u32> = docs.iter().flat_map(|x| x.view).collect();
     let (docs_b, node_at_b, block_at_b, views_b) = (buffer_of(&aux_docs)?, buffer_of(&node_at)?, buffer_of(&block_at)?, buffer_of(&views)?);
     let bad = buffer_of(&[0u32; 4])?;
@@ -111,6 +126,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("nodeAt", &node_at_b)
         .buffer("tapes", tapes)
         .buffer("views", &views_b)
+        .buffer("named", &named_b)
         .buffer("leaf", &leaf)
         .buffer("codeKey", &code_key)
         .buffer("iota", &iota)
@@ -230,6 +246,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
     let (info, size, out_at) = (u32s(d * INFO)?, u32s(d + 1)?, u32s(d + 1)?);
     launch(q, k.function("aux_layout")?)
         .value("args", &args)
+        .buffer("docs", &docs_b)
         .buffer("nodeAt", &node_at_b)
         .buffer("leafAt", &leaf_at)
         .buffer("runOf", &run_of)
@@ -262,6 +279,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
     launch(q, k.function("aux_header")?)
         .value("args", &args)
         .buffer("docs", &docs_b)
+        .buffer("named", &named_b)
         .buffer("info", &info)
         .buffer("outAt", &out_at)
         .buffer("escAt", &esc_at)
@@ -310,6 +328,7 @@ pub fn build(queue: &mut ComputeQueue, tapes: &BufferRef, sources: &BufferRef, d
         .buffer("nodeAt", &node_at_b)
         .buffer("tapes", tapes)
         .buffer("views", &views_b)
+        .buffer("named", &named_b)
         .buffer("sibAt", &sib_at)
         .buffer("info", &info)
         .buffer("outAt", &out_at)
@@ -401,6 +420,11 @@ mod tests {
         let sample = aux_index::sample::Doc::new();
         let lang = rerail_tape_format::f16::Lang::new(sample.table.clone(), [1, 1, 1], 1).unwrap();
         let number = rerail_tape_format::f16::numbers(&lang, &sample.table).unwrap();
+        // The named codes, as the tapes number them.
+        let named = aux_index::sample::named();
+        let named = aux_index::named_codes(number.iter().max().map_or(0, |&m| m as usize + 1), |x| {
+            number.iter().position(|&y| y == x).is_some_and(|c| (named[c / 64] >> (c % 64)) & 1 != 0)
+        });
         // Documents: the sample, and its first subtrees as documents of their own.
         let mut docs: Vec<(Vec<(u32, u64, u64, usize)>, Vec<u8>)> = vec![(sample.nodes.clone(), sample.source.clone())];
         let mut c = 1;
@@ -420,19 +444,19 @@ mod tests {
                 panic!("format 16")
             };
             let r = t.reader(&lang).unwrap();
-            want.push(aux_index::build(&r, source, 100 + k as u64, aux_index::Sections::ALL).unwrap());
+            want.push(aux_index::build(&r, source, 100 + k as u64, &named, aux_index::Sections::ALL).unwrap());
             let view = rerail_tape_format::f16::placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
             // SAFETY: the view is plain u32s (`repr(C)`, 128 bytes).
             let words: [u32; 32] = unsafe { std::ptr::read(std::ptr::from_ref(&view).cast::<[u32; 32]>()) };
             tapes.resize(tapes.len().next_multiple_of(8), 0);
-            ins.push(super::Doc { tape: tapes.len() as u32, src: sources.len() as u32, digest: 100 + k as u64, nodes: r.len() as u32, view: words });
+            ins.push(super::Doc { tape: tapes.len() as u32, src: sources.len() as u32, digest: 100 + k as u64, nodes: r.len() as u32, view: words, named: 0, named_words: named.len() as u32 });
             tapes.extend_from_slice(t.as_bytes());
             sources.extend_from_slice(source);
         }
         tapes.resize(tapes.len().next_multiple_of(8) + 8, 0);
         sources.resize(sources.len().next_multiple_of(8) + 8, 0);
         let (tb, sb) = (crate::kernels::buffer_of(&tapes).unwrap(), crate::kernels::buffer_of(&sources).unwrap());
-        let built = super::build(&mut queue, &tb, &sb, &ins).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend())).expect("built on the device");
+        let built = super::build(&mut queue, &tb, &sb, &named, &ins).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend())).expect("built on the device");
         let words: Vec<u32> = crate::kernels::read(&built.out, (built.at[ins.len()] / 4) as usize);
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
         for (k, w) in want.iter().enumerate() {

@@ -26,6 +26,7 @@
 #define UKL_AUX_SIBLINGS 4u
 #define UKL_AUX_COUNTS 5u
 #define UKL_AUX_RARE 6u
+#define UKL_AUX_NAMED 7u
 
 #define UKL_AUX_ARGS UKL_GLOBAL const uint8_t* s
 
@@ -36,6 +37,9 @@ UKL_INLINE uint32_t ukl_aux_nodes(UKL_AUX_ARGS) { return ukl_aux_u32(s, 8u); }
 UKL_INLINE uint32_t ukl_aux_leaves(UKL_AUX_ARGS) { return ukl_aux_u32(s, 12u); }
 UKL_INLINE uint32_t ukl_aux_terms(UKL_AUX_ARGS) { return ukl_aux_u32(s, 20u); }
 
+// Section `kind`'s version, as `aux_index::Kind::version`: SIBLINGS' 2 (of named children).
+UKL_INLINE uint32_t ukl_aux_version(uint32_t kind) { return kind == UKL_AUX_SIBLINGS ? 2u : 1u; }
+
 // Section `kind`'s offset, or 0 where the auxiliary index has none (or is none, or of another version).
 UKL_INLINE uint32_t ukl_aux_section(UKL_AUX_ARGS, uint32_t kind)
 {
@@ -45,7 +49,7 @@ UKL_INLINE uint32_t ukl_aux_section(UKL_AUX_ARGS, uint32_t kind)
     for (uint32_t e = 0u; e < count; e++) {
         uint32_t d = 32u + 16u * e;
         if ((ukl_aux_u32(s, d) & 0xffffu) == kind)
-            return (ukl_aux_u32(s, d) >> 16) == 1u ? ukl_aux_u32(s, d + 8u) : 0u;
+            return (ukl_aux_u32(s, d) >> 16) == ukl_aux_version(kind) ? ukl_aux_u32(s, d + 8u) : 0u;
     }
     return 0u;
 }
@@ -207,7 +211,16 @@ UKL_INLINE uint64_t ukl_aux_text_hash(UKL_GLOBAL const uint8_t* src, uint32_t st
     return h ^ (h >> 33);
 }
 
-// ---- SIBLINGS ----
+// ---- NAMED and SIBLINGS ----
+
+// Whether code `code` is named (0 past the table, or no NAMED).
+UKL_INLINE uint32_t ukl_aux_named(UKL_AUX_ARGS, uint32_t code)
+{
+    uint32_t sec = ukl_aux_section(s, UKL_AUX_NAMED);
+    if (sec == 0u || code / 64u >= ukl_aux_u32(s, sec))
+        return 0u;
+    return (uint32_t)((ukl_aux_u64(s, sec + 16u + 8u * (code / 64u)) >> (code % 64u)) & 1u);
+}
 
 UKL_INLINE uint32_t ukl_aux_pair_parent(UKL_AUX_ARGS, uint32_t sec, uint32_t i) { return ukl_aux_u32(s, sec + 16u + 8u * i); }
 UKL_INLINE uint32_t ukl_aux_pair_node(UKL_AUX_ARGS, uint32_t sec, uint32_t i) { return ukl_aux_u32(s, sec + 20u + 8u * i); }

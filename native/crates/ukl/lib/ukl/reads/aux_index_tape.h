@@ -1,5 +1,5 @@
 // ukl/reads/aux_index_tape.h: the reads of a tape and its auxiliary index together (decision 0656): a child's place among its
-// siblings and a parent's i-th child, from the auxiliary index's every-K-th children and at most K - 1 steps of the tape.
+// named siblings and a parent's i-th named child, from the auxiliary index's every-K-th named children and the tape's steps.
 // `aux_index::place` and `aux_index::child` in Rust; `rerail-ukl-vec`'s `aux_index_tests` hold them equal.
 //
 // The tape's reads are `<ukl/reads/tape.h>`'s, or `tape_z.h`'s where a kernel included that first.
@@ -25,7 +25,8 @@ UKL_INLINE uint32_t ukl_aux_in_home(CLIF_T_ARGS)
     return at + ((len + 15u) & ~15u);
 }
 
-// `node`'s place among its siblings (0 for a first child, and for the root).
+// `node`'s place among its named siblings: the named children of its parent before it (0 for the first, and for the
+// root), the tokens between stepped over.
 UKL_INLINE uint32_t ukl_aux_place(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t node)
 {
     uint32_t p = clif_tape_parent(t, v, node);
@@ -38,23 +39,27 @@ UKL_INLINE uint32_t ukl_aux_place(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t node)
         i = (uint32_t)(e >> 32) * UKL_AUX_K;
     }
     while (c != node) {
+        i += ukl_aux_named(s, clif_tape_number(t, v, c));
         c = clif_tape_end_of(t, v, c);
-        i++;
     }
     return i;
 }
 
-// `parent`'s child `i`, or `CLIF_T_NONE`.
+// `parent`'s named child `i`, or `CLIF_T_NONE`.
 UKL_INLINE uint32_t ukl_aux_child(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t parent, uint32_t i)
 {
     uint32_t end = clif_tape_end_of(t, v, parent);
     uint32_t c = i < UKL_AUX_K ? parent + 1u : ukl_aux_eighth(s, parent, i / UKL_AUX_K);
-    if (c == UKL_AUX_NONE || c >= end)
+    if (c == UKL_AUX_NONE)
         return CLIF_T_NONE;
-    for (uint32_t k = 0u; k < i % UKL_AUX_K; k++) {
+    uint32_t left = i % UKL_AUX_K;
+    while (c < end) {
+        if (ukl_aux_named(s, clif_tape_number(t, v, c)) != 0u) {
+            if (left == 0u)
+                return c;
+            left--;
+        }
         c = clif_tape_end_of(t, v, c);
-        if (c >= end)
-            return CLIF_T_NONE;
     }
-    return c;
+    return CLIF_T_NONE;
 }

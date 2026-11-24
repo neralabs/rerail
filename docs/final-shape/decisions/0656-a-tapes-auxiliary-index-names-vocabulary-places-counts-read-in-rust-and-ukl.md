@@ -37,9 +37,13 @@ prototype's rule, "never key postings to known rules".
      run of (leaf, term).
    - **VOCAB**: each term's 64-bit hash (`text_hash`) and its first occurrence's span in the source, so no text is
      copied. Then the terms in hash order.
-   - **SIBLINGS**: every 8th child of a family, as (parent, node).
+   - **SIBLINGS** (version 2): every 8th *named* child of a family, as (parent, node). The places the engine reads
+     are among named children (a projection's `idx`), so a place is the named siblings before a node, and the reads
+     step over the tokens between.
    - **COUNTS**: (code, count), by code.
    - **RARE**: the nodes of each code with at most one node in 256, by code.
+   - **NAMED**: the language's named codes, a bit a code, as the grammar says (a code's alias's word, else its
+     kind's). The tape holds a code, not whether it is named; the builder is given them (`named_codes`).
 2. **One set of reads, written twice and held equal.**
    - Rust: `aux_index::AuxIndex`, plus `place` and `child` over a `Tape`.
    - UKL: `<ukl/reads/aux_index.h>` (`ukl_aux_*`) and `<ukl/reads/aux_index_tape.h>` (`ukl_aux_place`, `ukl_aux_child`,
@@ -88,7 +92,7 @@ prototype's rule, "never key postings to known rules".
    - **Written once, where the tape is.** `TapeImage::written_16`, which every producer's tape passes through, builds
      every section (`lay_aux`) and lays them (`Written::lay_aux`). A tape without a presence gets none.
    - **Keyed by content.** The store keys a home by its source, language, grammar version and layout; the layout is
-     8 (`F16_LAYOUT`), so a store of layout 7 reads cold, not without an index. The index's header holds the source
+     8 (`F16_LAYOUT`), so a store of layout 7 reads cold, not without an index (9 since SIBLINGS' version 2). The index's header holds the source
      digest's first eight bytes; each section's version is in its directory entry.
    - **Read.** `Tape16::aux_bytes`, `Tape16Z::aux_bytes`, `TapeImage::aux_bytes`; `presence::find` checks the index's
      header and directory where it loads the home, and `presence_bytes` ends where the index starts.

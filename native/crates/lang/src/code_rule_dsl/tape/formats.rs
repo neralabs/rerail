@@ -29,8 +29,9 @@ pub enum Format {
 /// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016. Layout 5 (decision 0434
 /// §4, step 6): the tape's presence stored after it, in its home. Layout 6: a MISSING node sets the presence's
 /// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error. Layout 8
-/// (decision 0656 step 3): the tape's auxiliary index after its presence, in its home (`lay_aux`).
-const F16_LAYOUT: u32 = 8;
+/// (decision 0656 step 3): the tape's auxiliary index after its presence, in its home (`lay_aux`). Layout 9: its
+/// SIBLINGS of named children (version 2) and its NAMED section.
+const F16_LAYOUT: u32 = 9;
 
 impl Format {
     pub const ALL: [Format; 2] = [Format::F16, Format::F16Z];
@@ -292,7 +293,7 @@ impl TapeImage {
             None => super::source_digest(source, &budget)?,
         };
         let mut written = written;
-        lay_aux(&mut written.tape, source, &digest)?;
+        lay_aux(&mut written.tape, language, source, &digest)?;
         let held = match written.tape {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
@@ -316,7 +317,7 @@ impl TapeImage {
 /// device's) reads it where the tape lies. Keyed by the tape's content: its header holds the source digest's first
 /// eight bytes, and the store keys the home by its layout (`F16_LAYOUT`). A tape without a presence (one no
 /// producer of the engine writes) is left without one.
-fn lay_aux(tape: &mut f16::Written, source: &str, digest: &[u8; 32]) -> Result<(), String> {
+fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, digest: &[u8; 32]) -> Result<(), String> {
     if tape.presence_bytes().is_none() {
         return Ok(());
     }
@@ -326,14 +327,29 @@ fn lay_aux(tape: &mut f16::Written, source: &str, digest: &[u8; 32]) -> Result<(
         f16::Written::F16Z(t) => f16::lang(t.tag()),
     }
     .ok_or("a format 16 tape of a language without its table")?;
+    let named = named_codes(lang, language);
     let aux = match &*tape {
-        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, rerail_tape_format::aux_index::Sections::ALL)?,
+        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, &named, rerail_tape_format::aux_index::Sections::ALL)?,
         f16::Written::F16Z(t) => {
             let cache = f16::ZCache::of([t]);
-            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, rerail_tape_format::aux_index::Sections::ALL)?
+            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, &named, rerail_tape_format::aux_index::Sections::ALL)?
         }
     };
     tape.lay_aux(&aux)
+}
+
+/// The language's named codes, a bit a code of its table (`aux_index::named_codes`): as a node's flags say it is
+/// named (`Facts::flags`), its alias's word where it has one, else its grammar's for its kind (ERROR's for an error
+/// code).
+fn named_codes(lang: &f16::Lang, language: GrammarDialect) -> Vec<u64> {
+    let (table, kinds) = (lang.table(), language.kinds());
+    rerail_tape_format::aux_index::named_codes(table.len(), |c| {
+        let e = table.entry(c);
+        match &e.alias {
+            Some(alias) => alias.1,
+            None => kinds.kind_is_named(if e.flags & rerail_tape_format::CODE_ERROR != 0 { super::ERROR_SYMBOL } else { e.kind }),
+        }
+    })
 }
 
 /// `source`'s tape from the `.rerail` parser, in the run's format (`rerail_rr_syntax::lean::tape_to`, compiled in the

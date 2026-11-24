@@ -5,7 +5,8 @@
 // so a document's part of each is a run of it.
 //
 // A batch's documents: their tapes in `tapes` (each at `doc.tape`, 8-byte aligned) and their views (`views`, 32
-// words a document), their sources in `sources` (at `doc.src`), their nodes numbered across the batch (`nodeAt`).
+// words a document), their sources in `sources` (at `doc.src`), their nodes numbered across the batch (`nodeAt`),
+// their languages' named codes in `named` (at `doc.named`).
 // Two limits, said in `bad`: fewer than 65535 documents and codes below 65536 (the sorts' keys), and no two texts of
 // a document of one hash (`bad[0]`: the host then builds that batch's auxiliary indexes by `aux_index::build`).
 
@@ -32,14 +33,21 @@
 #define I_RCODE0 14u
 #define I_RNODE0 15u
 #define I_SEC 16u
-#define I_LEN 22u
-#define I_WORDS 28u
+#define I_LEN 23u
+#define I_WORDS 30u
+// The sections, NAMED the last.
+#define AUX_SECTIONS 7u
 
 typedef struct ScDoc {
     uint32_t tape;
     uint32_t src;
     uint32_t digest_lo;
     uint32_t digest_hi;
+    // Its language's named codes (NAMED's words): their first u32 in `named`, and their count of u64 words.
+    uint32_t named;
+    uint32_t named_words;
+    uint32_t pad0;
+    uint32_t pad1;
 } ScDoc;
 
 typedef struct ScArgs {
@@ -62,6 +70,14 @@ UKL_INLINE uint32_t aux_doc_of(ROBUFFER(uint32_t) nodeAt, uint32_t docs, uint32_
             hi = mid;
     }
     return lo;
+}
+
+// Whether code `code` is named in document `doc`'s language (`aux_index::AuxIndex::named`).
+UKL_INLINE uint32_t aux_is_named(ROBUFFER(uint32_t) named, ScDoc doc, uint32_t code)
+{
+    if (code / 64u >= doc.named_words)
+        return 0u;
+    return (named[doc.named + code / 32u] >> (code % 32u)) & 1u;
 }
 
 // The first of `n` ascending values at least `x`.
@@ -93,13 +109,14 @@ DEFINE_KERNEL2(aux, aux_iota,
 // ---- the nodes ----
 
 // Each node: whether it is a leaf, its code's sort key (document, code), its number (the sorts' values), and the
-// every-8th children it has (its family's entries in SIBLINGS).
+// every-8th named children it has (its family's entries in SIBLINGS).
 DEFINE_KERNEL2(aux, aux_nodes,
                ARGS,     ScArgs,   args,     ,
                ROBUFFER, ScDoc,    docs,     "[docs]",
                ROBUFFER, uint32_t, nodeAt,   "[docs + 1]",
                ROBUFFER, uint8_t,  tapes,    "[bytes]",
                ROBUFFER, uint32_t, views,    "[docs * 32]",
+               ROBUFFER, uint32_t, named,    "[words]",
                RWBUFFER, uint32_t, leaf,     "[nodes]",
                RWBUFFER, uint32_t, codeKey,  "[nodes]",
                RWBUFFER, uint32_t, iota,     "[nodes]",
@@ -120,7 +137,7 @@ DEFINE_KERNEL2(aux, aux_nodes,
     iota[g] = g;
     uint32_t k = 0u;
     for (uint32_t c = i + 1u; c < end; c = clif_tape_end_of(t, v, c))
-        k++;
+        k += aux_is_named(named, docs[d], clif_tape_number(t, v, c));
     sibN[g] = k > UKL_AUX_K ? (k - 1u) / UKL_AUX_K : 0u;
 }
 
@@ -349,6 +366,7 @@ DEFINE_KERNEL2(aux, aux_code_runs,
 // Each document: its counts, its firsts in the batch's arrays, its sections' offsets and lengths, and its bytes.
 DEFINE_KERNEL2(aux, aux_layout,
                ARGS,     ScArgs,   args,     ,
+               ROBUFFER, ScDoc,    docs,     "[docs]",
                ROBUFFER, uint32_t, nodeAt,   "[docs + 1]",
                ROBUFFER, uint32_t, leafAt,   "[nodes + 1]",
                ROBUFFER, uint32_t, runOf,    "[nodes + 1]",
@@ -359,7 +377,7 @@ DEFINE_KERNEL2(aux, aux_layout,
                ROBUFFER, uint32_t, codeDoc,  "[nodes]",
                ROBUFFER, uint32_t, rareAt,   "[nodes + 1]",
                ROBUFFER, uint32_t, rareNAt,  "[nodes + 1]",
-               RWBUFFER, uint32_t, info,     "[docs * 28]",
+               RWBUFFER, uint32_t, info,     "[docs * 30]",
                RWBUFFER, uint32_t, size,     "[docs + 1]",
                GID0,     uint32_t, d,        )
 {
@@ -392,15 +410,16 @@ DEFINE_KERNEL2(aux, aux_layout,
     f[I_RNODE0] = rareNAt[c0];
     uint32_t chunks = (leaves + 255u) / 256u;
     uint32_t bases_at = 16u + aux_round(leaves, 4u);
-    uint32_t len[6];
+    uint32_t len[AUX_SECTIONS];
     len[0] = 16u + 32u * blocks + 4u * (blocks + 1u);
     len[1] = bases_at + 4u * (chunks + 1u) + 8u * escs;
     len[2] = 16u + 20u * (r1 - r0);
     len[3] = 16u + 8u * sibs;
     len[4] = 16u + 8u * (c1 - c0);
     len[5] = 16u + 8u * (rc + 1u) + 4u * rn;
-    uint32_t at = 32u + 16u * 6u;
-    for (uint32_t k = 0u; k < 6u; k++) {
+    len[6] = 16u + 8u * docs[d].named_words;
+    uint32_t at = 32u + 16u * AUX_SECTIONS;
+    for (uint32_t k = 0u; k < AUX_SECTIONS; k++) {
         f[I_SEC + k] = at;
         f[I_LEN + k] = len[k];
         at = aux_round(at + len[k], 16u);
@@ -422,11 +441,12 @@ DEFINE_KERNEL2(aux, aux_zero,
 #define W(byte, x) (out[(base + (byte)) / 4u] = (x))
 
 // Each document: its header, its directory, each section's head, LEAVES' last base, NAMES' chunk bases, RARE's
-// closing entry.
+// closing entry, NAMED.
 DEFINE_KERNEL2(aux, aux_header,
                ARGS,     ScArgs,   args,     ,
                ROBUFFER, ScDoc,    docs,     "[docs]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, named,    "[words]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                ROBUFFER, uint32_t, escAt,    "[nodes + 1]",
                ROBUFFER, uint32_t, escLeaf,  "[nodes]",
@@ -439,16 +459,16 @@ DEFINE_KERNEL2(aux, aux_header,
     uint32_t base = outAt[d];
     uint32_t n = f[I_NODES], leaves = f[I_LEAVES], blocks = f[I_BLOCKS];
     W(0u, UKL_AUX_MAGIC);
-    W(4u, UKL_AUX_VERSION | (6u << 16));
+    W(4u, UKL_AUX_VERSION | (AUX_SECTIONS << 16));
     W(8u, n);
     W(12u, leaves);
     W(16u, blocks);
     W(20u, f[I_TERMS]);
     W(24u, docs[d].digest_lo);
     W(28u, docs[d].digest_hi);
-    for (uint32_t k = 0u; k < 6u; k++) {
+    for (uint32_t k = 0u; k < AUX_SECTIONS; k++) {
         uint32_t e = 32u + 16u * k;
-        W(e, (k + 1u) | (1u << 16));
+        W(e, (k + 1u) | (ukl_aux_version(k + 1u) << 16));
         W(e + 4u, k == 5u ? ukl_max(n / 256u, 1u) : 0u);
         W(e + 8u, f[I_SEC + k]);
         W(e + 12u, f[I_LEN + k]);
@@ -493,6 +513,12 @@ DEFINE_KERNEL2(aux, aux_header,
     W(s + 8u, 16u + 8u * (rc + 1u));
     W(s + 16u + 8u * rc, UKL_AUX_NONE);
     W(s + 20u + 8u * rc, f[I_RARE_NODES]);
+    // NAMED: the language's words, as they are.
+    s = f[I_SEC + 6u];
+    uint32_t nw = docs[d].named_words;
+    W(s, nw);
+    for (uint32_t w = 0u; w < 2u * nw; w++)
+        W(s + 16u + 4u * w, named[docs[d].named + w]);
 }
 
 // ---- the sections ----
@@ -504,7 +530,7 @@ DEFINE_KERNEL2(aux, aux_leaves,
                ROBUFFER, uint32_t, nodeAt,   "[docs + 1]",
                ROBUFFER, uint32_t, blockAt,  "[docs + 1]",
                ROBUFFER, uint32_t, leafAt,   "[nodes + 1]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                RWBUFFER, uint32_t, out,      "[bytes / 4]",
                GID0,     uint32_t, gb,       )
@@ -534,7 +560,7 @@ DEFINE_KERNEL2(aux, aux_names,
                ROBUFFER, uint32_t, leafDoc,  "[nodes]",
                ROBUFFER, uint32_t, leafTerm, "[nodes]",
                ROBUFFER, uint32_t, escAt,    "[nodes + 1]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                RWBUFFER, uint32_t, out,      "[bytes / 4]",
                GID0,     uint32_t, l,        )
@@ -573,7 +599,7 @@ DEFINE_KERNEL2(aux, aux_vocab,
                ROBUFFER, uint32_t, runStart, "[nodes + 1]",
                ROBUFFER, uint32_t, runDoc,   "[nodes]",
                ROBUFFER, uint32_t, number,   "[nodes]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                RWBUFFER, uint32_t, out,      "[bytes / 4]",
                GID0,     uint32_t, r,        )
@@ -595,15 +621,16 @@ DEFINE_KERNEL2(aux, aux_vocab,
     W(16u + 16u * f[I_TERMS] + 4u * (r - f[I_RUN0]), x);
 }
 
-// Each node with every-8th children: its family's entries (parent, child), in order.
+// Each node with every-8th named children: its family's entries (parent, child), in order.
 DEFINE_KERNEL2(aux, aux_siblings,
                ARGS,     ScArgs,   args,     ,
                ROBUFFER, ScDoc,    docs,     "[docs]",
                ROBUFFER, uint32_t, nodeAt,   "[docs + 1]",
                ROBUFFER, uint8_t,  tapes,    "[bytes]",
                ROBUFFER, uint32_t, views,    "[docs * 32]",
+               ROBUFFER, uint32_t, named,    "[words]",
                ROBUFFER, uint32_t, sibAt,    "[nodes + 1]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                RWBUFFER, uint32_t, out,      "[bytes / 4]",
                GID0,     uint32_t, g,        )
@@ -617,6 +644,8 @@ DEFINE_KERNEL2(aux, aux_siblings,
     UKL_GLOBAL const uint32_t* v = views + 32u * d;
     uint32_t end = clif_tape_end_of(t, v, i), at = sibAt[g] - f[I_SIB0], k = 0u;
     for (uint32_t c = i + 1u; c < end; c = clif_tape_end_of(t, v, c)) {
+        if (aux_is_named(named, docs[d], clif_tape_number(t, v, c)) == 0u)
+            continue;
         if (k > 0u && k % UKL_AUX_K == 0u) {
             W(16u + 8u * at, i);
             W(20u + 8u * at, c);
@@ -635,7 +664,7 @@ DEFINE_KERNEL2(aux, aux_counts,
                ROBUFFER, uint32_t, codeDoc,  "[nodes]",
                ROBUFFER, uint32_t, rareAt,   "[nodes + 1]",
                ROBUFFER, uint32_t, rareNAt,  "[nodes + 1]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                RWBUFFER, uint32_t, out,      "[bytes / 4]",
                GID0,     uint32_t, c,        )
@@ -665,7 +694,7 @@ DEFINE_KERNEL2(aux, aux_rare_nodes,
                ROBUFFER, uint32_t, codeDoc,  "[nodes]",
                ROBUFFER, uint32_t, rareAt,   "[nodes + 1]",
                ROBUFFER, uint32_t, rareNAt,  "[nodes + 1]",
-               ROBUFFER, uint32_t, info,     "[docs * 28]",
+               ROBUFFER, uint32_t, info,     "[docs * 30]",
                ROBUFFER, uint32_t, outAt,    "[docs + 1]",
                RWBUFFER, uint32_t, out,      "[bytes / 4]",
                GID0,     uint32_t, p,        )

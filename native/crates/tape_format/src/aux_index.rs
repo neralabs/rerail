@@ -12,10 +12,13 @@
 //!   255 is a prefix: the term is in the escapes, by leaf, a run for each 256 leaves.
 //! - **VOCAB**: each term's 64-bit hash (`text_hash`) and where its first occurrence lies in the source (no text is
 //!   copied), and the terms in hash order, for a lookup by a string.
-//! - **SIBLINGS**: every 8th child of a family (its 8th, 16th, ...), as (parent, node) in order: a child's place, and
-//!   a parent's i-th child, in at most 7 steps of the tape from one.
+//! - **SIBLINGS**: every 8th named child of a family (its 8th, 16th, ...), as (parent, node) in order: a child's
+//!   place among its named siblings, and a parent's i-th named child, from one in at most 7 named steps of the tape
+//!   (the tokens between stepped over). The places the engine reads are among named children.
 //! - **COUNTS**: each code's count in the document, by code.
 //! - **RARE**: the nodes of each rare code (at most one node in 256), by code, in preorder.
+//! - **NAMED**: which of the language's codes are named (a bit a code), as the grammar says: the tape holds a code,
+//!   not whether its node is named, and SIBLINGS and its reads count named children.
 //!
 //! The layout: a header, a directory of sections (kind, version, parameters, offset, length), then each section,
 //! 16-byte aligned, starting with four u32s of its own. Every value lies at its own alignment; all are little-endian.
@@ -54,24 +57,29 @@ pub enum Kind {
     Siblings = 4,
     Counts = 5,
     Rare = 6,
+    Named = 7,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Leaves, Kind::Names, Kind::Vocab, Kind::Siblings, Kind::Counts, Kind::Rare];
-    /// The section's version, in its directory entry: a reader refuses a version it does not read.
+    pub const ALL: [Kind; 7] = [Kind::Leaves, Kind::Names, Kind::Vocab, Kind::Siblings, Kind::Counts, Kind::Rare, Kind::Named];
+    /// The section's version, in its directory entry: a reader refuses a version it does not read. SIBLINGS' 2: of
+    /// named children (1 was of every child).
     pub fn version(self) -> u16 {
-        1
+        match self {
+            Kind::Siblings => 2,
+            _ => 1,
+        }
     }
 }
 
 /// The sections an auxiliary index is made with. NAMES and VOCAB are made together (a name is a term's number), and both
-/// need LEAVES (a leaf's rank).
+/// need LEAVES (a leaf's rank); SIBLINGS needs NAMED (its reads step over the unnamed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sections(u32);
 
 impl Sections {
     pub const NONE: Sections = Sections(0);
-    pub const ALL: Sections = Sections((1 << 7) - 2);
+    pub const ALL: Sections = Sections((1 << 8) - 2);
     pub fn of(kinds: &[Kind]) -> Sections {
         Sections(kinds.iter().fold(0, |m, k| m | 1 << *k as u32))
     }
@@ -83,6 +91,9 @@ impl Sections {
         let mut s = self;
         if s.has(Kind::Names) || s.has(Kind::Vocab) {
             s = Sections(s.0 | Sections::of(&[Kind::Leaves, Kind::Names, Kind::Vocab]).0);
+        }
+        if s.has(Kind::Siblings) {
+            s = Sections(s.0 | Sections::of(&[Kind::Named]).0);
         }
         s
     }
@@ -107,7 +118,8 @@ pub fn text_hash(text: &[u8]) -> u64 {
 
 /// The bytes of an auxiliary index of `t` (over `source`, the document's), with `want`'s sections (and those they need).
 /// `digest` is the tape's content id, as the store keys it, kept in the header so an auxiliary index is matched to its tape.
-pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, want: Sections) -> Result<Vec<u8>, String> {
+/// `named`: the language's named codes, a bit a code (`named_codes`), which NAMED holds and SIBLINGS counts by.
+pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, named: &[u64], want: Sections) -> Result<Vec<u8>, String> {
     let n = t.len();
     if n >= NONE as usize || source.len() >= NONE as usize {
         return Err(format!("a document of {n} nodes and {} bytes: past an auxiliary index's u32s", source.len()));
@@ -115,6 +127,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, want: Sections
     let want = want.closed();
     let blocks = n.div_ceil(BLOCK as usize);
     let leaf = |i: usize| t.subtree_end(i) == i + 1;
+    let is_named = |i: usize| bit(named, t.code(i));
     let leaves: Vec<u32> = (0..n).filter(|&i| leaf(i)).map(|i| i as u32).collect();
     let mut sections: Vec<(Kind, u32, Vec<u8>)> = Vec::new();
     let mut terms_count = 0u32;
@@ -196,11 +209,13 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, want: Sections
             let end = t.subtree_end(p);
             let (mut c, mut k) = (p + 1, 0u32);
             while c < end {
-                if k > 0 && k % K == 0 {
-                    pairs.push((p as u32, c as u32));
+                if is_named(c) {
+                    if k > 0 && k % K == 0 {
+                        pairs.push((p as u32, c as u32));
+                    }
+                    k += 1;
                 }
                 c = t.subtree_end(c);
-                k += 1;
             }
         }
         let mut s = head([pairs.len() as u32, 0, 0, 0]);
@@ -253,6 +268,11 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, want: Sections
         nodes.iter().for_each(|x| s.extend_from_slice(&x.to_le_bytes()));
         sections.push((Kind::Rare, limit, s));
     }
+    if want.has(Kind::Named) {
+        let mut s = head([named.len() as u32, 0, 0, 0]);
+        named.iter().for_each(|w| s.extend_from_slice(&w.to_le_bytes()));
+        sections.push((Kind::Named, 0, s));
+    }
     // The header, the directory, the sections.
     let mut out = Vec::new();
     out.extend_from_slice(&MAGIC.to_le_bytes());
@@ -283,6 +303,18 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, want: Sections
 /// The most nodes a rare code has in a document of `n` nodes.
 pub fn rare_limit(n: usize) -> u32 {
     (n as u32 / 256).max(1)
+}
+
+/// Bit `code` of `words` (0 past them).
+fn bit(words: &[u64], code: u32) -> bool {
+    words.get((code / 64) as usize).is_some_and(|w| (w >> (code % 64)) & 1 != 0)
+}
+
+/// The named codes of a code table whose entry `c` is named where `named(c)`: a bit a code, as `build` takes them.
+pub fn named_codes(codes: usize, named: impl Fn(u32) -> bool) -> Vec<u64> {
+    let mut w = vec![0u64; codes.div_ceil(64)];
+    (0..codes as u32).filter(|&c| named(c)).for_each(|c| w[(c / 64) as usize] |= 1 << (c % 64));
+    w
 }
 
 fn head(w: [u32; 4]) -> Vec<u8> {
@@ -507,9 +539,17 @@ impl<'a> AuxIndex<'a> {
         self.leaves_with_term(term).map(|l| self.leaf_node(l))
     }
 
-    // SIBLINGS.
+    // NAMED and SIBLINGS.
 
-    /// The node of `parent`'s child `K * k` (k ≥ 1), or `NONE`.
+    /// Whether code `code` is named (false where it is past the table, or no NAMED).
+    pub fn named(&self, code: u32) -> bool {
+        if !self.has(Kind::Named) || code / 64 >= self.hw(Kind::Named, 0) {
+            return false;
+        }
+        (u64_at(self.b, self.sec(Kind::Named) + 16 + 8 * (code / 64) as usize) >> (code % 64)) & 1 != 0
+    }
+
+    /// The node of `parent`'s named child `K * k` (k ≥ 1), or `NONE`.
     pub fn eighth(&self, parent: u32, k: u32) -> u32 {
         if !self.has(Kind::Siblings) || k == 0 {
             return NONE;
@@ -518,8 +558,8 @@ impl<'a> AuxIndex<'a> {
         let at = first + k - 1;
         if at < self.hw(Kind::Siblings, 0) && self.pair(at).0 == parent { self.pair(at).1 } else { NONE }
     }
-    /// The last of `parent`'s every-K-th children at or before `node`: `(k, its node)`, or `(0, NONE)` where none is
-    /// (`node` is among the first K, or no SIBLINGS).
+    /// The last of `parent`'s every-K-th named children at or before `node`: `(k, its node)`, or `(0, NONE)` where none
+    /// is (`node` is before the K-th, or no SIBLINGS).
     pub fn eighth_at_or_before(&self, parent: u32, node: u32) -> (u32, u32) {
         if !self.has(Kind::Siblings) {
             return (0, NONE);
@@ -603,8 +643,9 @@ impl<'a> AuxIndex<'a> {
 
 // ---- reads of the tape and the auxiliary index together ---------------------------------------------------------
 
-/// `node`'s place among its siblings (0 for the first child, and for the root): from the last every-K-th sibling at
-/// or before it, at most K - 1 steps of the tape. `ukl_aux_place` is the same in UKL.
+/// `node`'s place among its named siblings: the named children of its parent before it (0 for the first, and for
+/// the root). From the last every-K-th named sibling at or before it, the tape's siblings stepped to it, at most K - 1
+/// named ones and the tokens between. `ukl_aux_place` is the same in UKL.
 pub fn place<T: Tape + ?Sized>(t: &T, aux: &AuxIndex, node: u32) -> u32 {
     let Some(p) = t.parent(node as usize) else { return 0 };
     let (k, from) = match aux.eighth_at_or_before(p as u32, node) {
@@ -613,26 +654,31 @@ pub fn place<T: Tape + ?Sized>(t: &T, aux: &AuxIndex, node: u32) -> u32 {
     };
     let (mut c, mut i) = (from as usize, k);
     while c != node as usize {
+        i += u32::from(aux.named(t.code(c)));
         c = t.subtree_end(c);
-        i += 1;
     }
     i
 }
 
-/// `parent`'s child `i`, or `None`: from its every-K-th child, at most K - 1 steps. `ukl_aux_child` is the same in UKL.
+/// `parent`'s named child `i`, or `None`: from its every-K-th named child, the siblings stepped past at most K - 1
+/// named ones. `ukl_aux_child` is the same in UKL.
 pub fn child<T: Tape + ?Sized>(t: &T, aux: &AuxIndex, parent: u32, i: u32) -> Option<u32> {
     let end = t.subtree_end(parent as usize);
     let mut c = if i < K { parent as usize + 1 } else { aux.eighth(parent, i / K) as usize };
-    if c == NONE as usize || c >= end {
+    if c == NONE as usize {
         return None;
     }
-    for _ in 0..i % K {
-        c = t.subtree_end(c);
-        if c >= end {
-            return None;
+    let mut left = i % K;
+    while c < end {
+        if aux.named(t.code(c)) {
+            if left == 0 {
+                return Some(c as u32);
+            }
+            left -= 1;
         }
+        c = t.subtree_end(c);
     }
-    Some(c as u32)
+    None
 }
 
 fn select64(mut w: u64, r: u32) -> u32 {
@@ -719,6 +765,12 @@ pub mod sample {
         }
     }
 
+    /// The sample's named codes: all but those `c % 5 == 2` (leaves among them, so families hold tokens a place
+    /// steps over, and inner nodes too).
+    pub fn named() -> Vec<u64> {
+        super::named_codes(64, |c| c % 5 != 2)
+    }
+
     impl Default for Doc {
         fn default() -> Self {
             Doc::new()
@@ -760,7 +812,7 @@ mod tests {
     #[test]
     fn the_aux_index_reads_every_node_as_the_document_says() {
         let d = sample::Doc::new();
-        let b = build(&d, &d.source, 7, Sections::ALL).unwrap();
+        let b = build(&d, &d.source, 7, &sample::named(), Sections::ALL).unwrap();
         let aux = AuxIndex::read(&b).unwrap();
         assert_eq!((aux.nodes() as usize, aux.digest()), (d.len(), 7));
         assert!(Kind::ALL.iter().all(|&k| aux.has(k)));
@@ -792,22 +844,28 @@ mod tests {
             assert_eq!(aux.nodes_with_term(t).collect::<Vec<_>>(), per_term[&t], "term {t}'s nodes");
         }
         assert_eq!(aux.term_of_text(b"absent", &d.source), NONE);
-        // Places and children.
-        let mut wide = 0;
+        // Places and children, among the named: a token's place is the named siblings before it.
+        let named = sample::named();
+        let (mut wide, mut tokens) = (0, 0);
         for p in 0..d.len() as u32 {
             let mut c = p as usize + 1;
             let mut k = 0;
             while c < d.subtree_end(p as usize) {
                 assert_eq!(place(&d, &aux, c as u32), k, "node {c}'s place");
-                assert_eq!(child(&d, &aux, p, k), Some(c as u32), "{p}'s child {k}");
+                if bit(&named, d.code(c)) {
+                    assert_eq!(child(&d, &aux, p, k), Some(c as u32), "{p}'s child {k}");
+                    k += 1;
+                } else {
+                    tokens += 1;
+                }
                 c = d.subtree_end(c);
-                k += 1;
             }
-            assert_eq!(child(&d, &aux, p, k), None, "{p} has {k} children");
+            assert_eq!(child(&d, &aux, p, k), None, "{p} has {k} named children");
             wide += usize::from(k > 200);
         }
-        assert!(wide > 0);
+        assert!(wide > 0 && tokens > 100, "{wide} wide families, {tokens} tokens");
         assert_eq!(place(&d, &aux, 0), 0);
+        assert!((0..64).all(|c| aux.named(c) == bit(&named, c)));
         // Counts and rare codes.
         let mut by_code = std::collections::BTreeMap::<u32, Vec<u32>>::new();
         (0..d.len() as u32).for_each(|i| by_code.entry(d.code(i as usize)).or_default().push(i));
@@ -840,12 +898,17 @@ mod tests {
         // The tape's codes are the language's numbers: the same where the table is in order.
         assert!((0..d.len()).all(|i| r.code(i) == number[d.code(i) as usize]));
         let identity = number.iter().enumerate().all(|(k, &x)| k as u32 == x);
-        let (a, b) = (build(&d, &d.source, 1, Sections::ALL).unwrap(), build(&r, &d.source, 1, Sections::ALL).unwrap());
+        // The named codes, as the tape numbers them.
+        let named = sample::named();
+        let named_r = named_codes(number.iter().max().map_or(0, |&m| m as usize + 1), |x| number.iter().position(|&y| y == x).is_some_and(|c| bit(&named, c as u32)));
+        let (a, b) = (build(&d, &d.source, 1, &named, Sections::ALL).unwrap(), build(&r, &d.source, 1, &named_r, Sections::ALL).unwrap());
         if identity {
             assert_eq!(a, b);
         } else {
-            let only = Sections::of(&[Kind::Leaves, Kind::Names, Kind::Vocab, Kind::Siblings]);
-            assert_eq!(build(&d, &d.source, 1, only).unwrap(), build(&r, &d.source, 1, only).unwrap());
+            let only = Sections::of(&[Kind::Leaves, Kind::Names, Kind::Vocab]);
+            assert_eq!(build(&d, &d.source, 1, &named, only).unwrap(), build(&r, &d.source, 1, &named_r, only).unwrap());
+            let (a, b) = (AuxIndex::read(&a).unwrap(), AuxIndex::read(&b).unwrap());
+            assert!((0..d.len() as u32).all(|p| (1..40).all(|k| a.eighth(p, k) == b.eighth(p, k))), "the same every-8th named children");
         }
     }
 
@@ -862,7 +925,7 @@ mod tests {
             let mut w = crate::f16::write_from_with_presence(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, z).unwrap().tape;
             let (tape, presence) = (match &w { Written::F16(t) => t.as_bytes().to_vec(), Written::F16Z(t) => t.as_bytes().to_vec() }, w.presence_bytes().unwrap().to_vec());
             assert!(w.aux_bytes().is_none());
-            let aux = build(&d, &d.source, 7, Sections::ALL).unwrap();
+            let aux = build(&d, &d.source, 7, &sample::named(), Sections::ALL).unwrap();
             w.lay_aux(&aux).unwrap();
             assert!(w.lay_aux(&aux).is_err(), "laid once");
             let home = w.extent().to_vec();
@@ -889,12 +952,12 @@ mod tests {
     #[test]
     fn an_aux_index_without_a_section_answers_none_for_it() {
         let d = sample::Doc::new();
-        let b = build(&d, &d.source, 0, Sections::of(&[Kind::Names])).unwrap();
+        let b = build(&d, &d.source, 0, &sample::named(), Sections::of(&[Kind::Names])).unwrap();
         let aux = AuxIndex::read(&b).unwrap();
         assert!(aux.has(Kind::Leaves) && aux.has(Kind::Vocab) && !aux.has(Kind::Siblings) && !aux.has(Kind::Counts));
         assert_eq!((aux.eighth(0, 1), aux.count(10)), (NONE, NONE));
         assert!(aux.rare(40).is_none());
-        let b = build(&d, &d.source, 0, Sections::of(&[Kind::Counts])).unwrap();
+        let b = build(&d, &d.source, 0, &sample::named(), Sections::of(&[Kind::Counts])).unwrap();
         let aux = AuxIndex::read(&b).unwrap();
         assert_eq!((aux.leaf_rank(1), aux.term_of_text(b"n0_", &d.source)), (NONE, NONE));
         assert!(AuxIndex::read(&b[..8]).is_err());

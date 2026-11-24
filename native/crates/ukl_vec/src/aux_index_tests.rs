@@ -5,7 +5,7 @@ use rerail_tape_format::aux_index::{self, NONE, Sections, AuxIndex};
 use rerail_tape_format::tape::Tape;
 
 /// Words a thread writes.
-const W: usize = 24;
+const W: usize = 25;
 
 const KERNEL: &str = r#"
 #define CLIF_VIEW_SPACE UKL_GLOBAL
@@ -24,14 +24,14 @@ DEFINE_KERNEL2(tests, t_aux_index,
                ROBUFFER, uint8_t,  tape, "[bytes]",
                ROBUFFER, uint32_t, view, "[32]",
                ROBUFFER, uint8_t,  src,  "[bytes]",
-               RWBUFFER, uint32_t, out,  "[threads * 24]",
+               RWBUFFER, uint32_t, out,  "[threads * 25]",
                GID0,     uint32_t, i,    )
 {
     if (i >= args.threads)
         return;
     // The index where the tape's home holds it, after its presence (decision 0656 step 3).
     UKL_GLOBAL const uint8_t* aux = tape + ukl_aux_in_home(tape, view);
-    RWBUFFER(uint32_t) o = out + i * 24u;
+    RWBUFFER(uint32_t) o = out + i * 25u;
     o[0] = ukl_aux_leaf_rank(aux, i);
     o[1] = ukl_aux_leaf_node(aux, i);
     o[2] = ukl_aux_term_of_leaf(aux, i);
@@ -64,6 +64,7 @@ DEFINE_KERNEL2(tests, t_aux_index,
     o[21] = (uint32_t)(r >> 32);
     o[22] = i < args.rare ? ukl_aux_rare_node(aux, i) : 0u;
     o[23] = ukl_aux_section(aux, i % 8u);
+    o[24] = ukl_aux_named(aux, i);
 }
 "#;
 
@@ -87,7 +88,7 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
     // A format 16 tape's home: the tape, its presence, and its auxiliary index laid after it, as the engine stores it.
     let mut w = rerail_tape_format::f16::write_from_with_presence(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false).unwrap().tape;
     let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
-    let bytes = aux_index::build(&t16.reader(&lang).unwrap(), &d.source, 3, Sections::ALL).unwrap();
+    let bytes = aux_index::build(&t16.reader(&lang).unwrap(), &d.source, 3, &aux_index::sample::named(), Sections::ALL).unwrap();
     w.lay_aux(&bytes).unwrap();
     let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
     let t = t16.reader(&lang).unwrap();
@@ -127,6 +128,7 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
         o[22] = if i < rare_total { aux.rare_node(i) } else { 0 };
         let kind = aux_index::Kind::ALL.iter().find(|k| **k as u32 == i % 8);
         o[23] = kind.map_or(0, |k| if aux.has(*k) { section_at(&bytes, *k as u16) } else { 0 });
+        o[24] = u32::from(aux.named(i));
     }
     // The answers mean something: the reads met leaves, escaped terms, wide families and rare codes.
     assert!(want.chunks(W).any(|o| o[2] != NONE && o[2] >= 255), "an escaped term");
@@ -158,7 +160,7 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
         const NAMES: [&str; W] = [
             "leaf rank", "leaf node", "term of leaf", "term of node", "term start", "term len", "hash lo", "hash hi", "by hash",
             "term by hash", "text hash lo", "text hash hi", "place", "child at place", "child i%37", "eighth 1", "eighth 2",
-            "eighth at or before: node", "eighth at or before: k", "count", "rare from", "rare to", "rare node", "section",
+            "eighth at or before: node", "eighth at or before: k", "count", "rare from", "rare to", "rare node", "section", "named",
         ];
         for i in 0..threads as usize {
             for w in 0..W {
