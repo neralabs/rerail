@@ -52,8 +52,9 @@ const BUSY_MS = 8_000;
  * looks only for the file, never at what it holds: it polls, and could read a file the test has created and not yet
  * written. With `slowStart`, the first daemon to listen while that file is there removes it, makes `<slowStart>.held`,
  * and right after that listen, before it can write daemon.json, spins without returning to its event loop until the
- * test writes `<slowStart>.release` ({@link releaseSlowStart}), then removes the `.held` file; a test writes `slowStart`
- * before any daemon starts.
+ * test writes `<slowStart>.release` ({@link releaseSlowStart}), then removes the `.held` file and, when the test wrote
+ * `<slowStart>.fail` first ({@link failSlowStart}), writes a line to its log and exits with code 7; a test writes
+ * `slowStart` before any daemon starts.
  */
 export function watchedEnvironment(home: string, busy?: string, slowStart?: string): NodeJS.ProcessEnv {
   const script = join(home, "watch.cjs");
@@ -92,6 +93,9 @@ if (daemon && slowStart !== null) {
       const pause = new Int32Array(new SharedArrayBuffer(4));
       while (!fs.existsSync(slowStart + ".release")) Atomics.wait(pause, 0, 0, 10);
       fs.rmSync(slowStart + ".held", { force: true });
+      if (!fs.existsSync(slowStart + ".fail")) return;
+      process.stderr.write("rerail daemon: the test failed this start\\n");
+      process.exit(7);
     });
     return listen.apply(this, args);
   };
@@ -192,9 +196,20 @@ export function releaseSlowStart(slowStart: string): void {
   writeFileSync(`${slowStart}.release`, "");
 }
 
+/** Lets the daemon held at its start by `slowStart` go on, to fail its start: it exits with code 7. */
+export function failSlowStart(slowStart: string): void {
+  writeFileSync(`${slowStart}.fail`, "");
+  releaseSlowStart(slowStart);
+}
+
 function recorded(home: string, file: string): number[] {
   const path = join(home, file);
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(Number) : [];
+}
+
+/** Every daemon started in `home` under `watchedEnvironment`. */
+export function daemonsStarted(home: string): number[] {
+  return recorded(home, STARTED.daemons.started);
 }
 
 /** Every `rerail daemon start` launched in `home` under `watchedEnvironment`. */

@@ -1,6 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { replaceFileSync } from "../file-replace.js";
+import { DAEMON_LOG_FILE } from "../storage/rerail-home.js";
 import { LOCKS_DIR } from "./file-lock.js";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 
@@ -44,6 +45,12 @@ export interface HomeDaemonLease {
    * missing file, or no file id), the home counts as held, as before the check.
    */
   holdsHome(): boolean;
+  /**
+   * Records that the daemon's start is over: it has written daemon.json and answers. Until then its record beside the
+   * lock says it is starting, so a start that finds it waits for it ({@link homeDaemonStarting}). A record it cannot
+   * write is said in the daemon's log, and the daemon goes on.
+   */
+  started(): void;
   /** Gives the lock up before process exit, once the daemon has closed (`RerailDaemonOptions.homeLease`). */
   release(): void;
 }
@@ -64,18 +71,55 @@ function fileAt(path: string): Pick<BigIntStats, "dev" | "ino"> | "none" | undef
   }
 }
 
+/**
+ * Whether `locked`, the file this process locked at `path`, is still the one there; undefined where the file system
+ * cannot tell, at the lock or now ({@link fileAt}).
+ */
+function lockedFileAt(path: string, locked: ReturnType<typeof fileAt>): boolean | undefined {
+  if (locked === undefined || locked === "none") return undefined;
+  const now = fileAt(path);
+  return now === undefined ? undefined : now !== "none" && now.dev === locked.dev && now.ino === locked.ino;
+}
+
+/** Whether `home`'s record reads and names a process other than this one, as a daemon of a home made again there. */
+function recordNamesAnother(home: string): boolean {
+  const pid = homeDaemonHolder(home);
+  return pid !== undefined && pid !== process.pid;
+}
+
 /** Module state keeps the native handle reachable: a collected handle would close, and so release, the lock. */
 let held: NativeExclusiveFileLock | undefined;
 
-/** The pid the holder of `home`'s lock recorded, if it recorded one. */
-export function homeDaemonHolder(home: string): number | undefined {
+/**
+ * What the holder of `home`'s lock recorded: its pid, and `starting` until its start is over, with where its output
+ * starts in the home's log, `logOffset`: 0, the log's beginning, when the record says none or names a place no read
+ * can start from (a read starts only at a safe integer of 0 or more).
+ */
+function holderRecord(home: string): { pid: number; starting: boolean; logOffset: number } | undefined {
   try {
     // JSON null throws here too, and is no record.
-    const { pid } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown };
-    return typeof pid === "number" && Number.isInteger(pid) ? pid : undefined;
+    const { pid, starting, logOffset } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown; starting?: unknown; logOffset?: unknown };
+    if (typeof pid !== "number" || !Number.isInteger(pid)) return undefined;
+    // Only a hand-edited record holds such a place. Number() is for the type: isSafeInteger does not narrow `unknown`.
+    return { pid, starting: starting === true, logOffset: Number.isSafeInteger(logOffset) ? Math.max(0, Number(logOffset)) : 0 };
   } catch {
     return undefined;
   }
+}
+
+/** The pid the holder of `home`'s lock recorded, if it recorded one. */
+export function homeDaemonHolder(home: string): number | undefined {
+  return holderRecord(home)?.pid;
+}
+
+/**
+ * The pid the holder of `home`'s lock recorded while its start is not over ({@link HomeDaemonLease.started}), with
+ * where its output starts in the home's log, or undefined. The record alone proves nothing: a holder killed in its start
+ * leaves it, so a reader asks whether that pid runs and the lock is held.
+ */
+export function homeDaemonStarting(home: string): { pid: number; logOffset: number } | undefined {
+  const record = holderRecord(home);
+  return record?.starting === true ? { pid: record.pid, logOffset: record.logOffset } : undefined;
 }
 
 /** Where the holder of `home`'s lock records its pid. */
@@ -127,15 +171,23 @@ export async function holdHomeDaemonLock(home: string, holderRuns?: HolderRuns):
   }
   const taken = await handedOrRefused(waiting, home, holderRuns);
   if (taken === null) throw new HomeDaemonConflictError(home, homeDaemonHolder(home));
-  recordHolder(home);
+  recordHolder(home, true);
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
   const locked = fileAt(path);
   return {
     holdsHome() {
-      if (locked === undefined || locked === "none") return true;
-      const now = fileAt(path);
-      return now === undefined || (now !== "none" && now.dev === locked.dev && now.ino === locked.ino);
+      return lockedFileAt(path, locked) ?? true;
+    },
+    started() {
+      // Whether this process still holds the home decides, not a read of the record, which can fail: a home moved and
+      // made again at its path holds another daemon's record. Only where the file system cannot tell does the record
+      // decide, when it reads and names another process.
+      if (held !== taken || !(lockedFileAt(path, locked) ?? !recordNamesAnother(home))) return;
+      // One write: replaceFileSync already tries a held rename again for 2 s on Windows, and elsewhere a second write
+      // fails as the first did.
+      if (recordHolder(home, false)) return;
+      process.stderr.write(`rerail daemon: could not record in ${homeDaemonHolderFile(home)} that this daemon's start is over\n`);
     },
     release() {
       if (held !== taken) return;
@@ -181,21 +233,38 @@ async function recordedHolderRuns(home: string, holderRuns: HolderRuns): Promise
 }
 
 /**
- * Writes this process's pid beside the lock, whole, since a refusal may read the record at any moment: the replace is
- * atomic, so a reader sees the record a holder killed outright left, or this one, never none. Never fails the daemon:
- * a holder that could not record itself holds the home all the same, and removes the record an earlier holder left, so
- * the refusal names no pid rather than one that runs no daemon.
+ * Writes this process's pid beside the lock, whole, with `starting` while its start is not over, since a refusal or a
+ * start may read the record at any moment: the replace is atomic, so a reader sees the record a holder killed outright
+ * left, or this one, never none. A starting record says where the daemon's output starts in the home's log
+ * ({@link logEnd}), so a start that finds it and sees it fail shows that output whole. Never fails the daemon: a holder
+ * that could not record itself holds the home all the same, and removes the record an earlier holder left, so the
+ * refusal names no pid rather than one that runs no daemon. Says whether the record was written.
  */
-function recordHolder(home: string): void {
+function recordHolder(home: string, starting: boolean): boolean {
   const record = join(home, LOCKS_DIR, HOLDER_FILE);
   try {
-    replaceFileSync(record, `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
+    replaceFileSync(record, `${JSON.stringify(starting ? { pid: process.pid, starting, logOffset: logEnd(home) } : { pid: process.pid })}\n`, { mode: 0o600 });
+    return true;
   } catch {
     try {
       rmSync(record, { force: true });
     } catch {
       // Unrecorded, the holder holds the home all the same.
     }
+    return false;
+  }
+}
+
+/**
+ * Where the home's log ends now, in bytes. A start launches the daemon with its output appended there, and the daemon
+ * writes nothing before it takes the lock but its refusal of an unsupported Node, after which it exits: its output
+ * starts here. 0 when the log cannot be read: a failure then shows the log's last lines.
+ */
+function logEnd(home: string): number {
+  try {
+    return statSync(join(home, DAEMON_LOG_FILE)).size;
+  } catch {
+    return 0;
   }
 }
 

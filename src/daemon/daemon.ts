@@ -1443,6 +1443,9 @@ type RerailDaemonServices = Pick<
  * the lock goes with the process however else it ends; an exit also removes the holder's record beside it. A loopback
  * restart for a TLS key it may not serve with runs in this process and keeps the lock. A restart at the heap ceiling
  * closes the daemon, so the home is free before it launches the next daemon, whatever this process does before it exits.
+ * From the lock to the end of its start, the record beside the lock says it is starting (`homeDaemonStarting`), so a
+ * start that finds it then waits for it rather than taking it for a daemon that does not answer or launching a second
+ * one.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
@@ -1454,6 +1457,9 @@ export async function runHomeDaemon(argv: readonly string[], services: Omit<Rera
     recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() },
     homeLease: homeLock,
   });
+  // Its start is over: it has recorded itself, said where it listens, and its one thread is free to answer. Until now
+  // its record beside the lock said it was starting, and a start that found it waited for this.
+  homeLock.started();
 }
 
 /**

@@ -47,11 +47,13 @@ import {
   dashboardAccessLink,
   dashboardLink,
   daemonNotRunningMessage,
+  homeDaemonInStart,
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
   openInBrowser,
   openDashboard,
   startDaemon,
+  startingDaemonNoticeTo,
   STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
@@ -265,7 +267,8 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const launch = daemonStartLaunch(parsed);
-  const result = await startDaemon({ home, packageRoot }, launch);
+  // A daemon still in its start, one set-up or another start launched, is waited for; the person is told whose.
+  const result = await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, launch);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
@@ -351,7 +354,7 @@ async function runStatusCommand(home: string): Promise<number> {
     return 3;
   }
   process.stdout.write(workspaceStatus(process.cwd()));
-  const code = printDaemonStatus(lookup);
+  const code = printStartingDaemon(home, lookup) ?? printDaemonStatus(lookup);
   for (const line of hookHealthLines(home, lookup)) process.stdout.write(`${line}\n`);
   printRemoteStatus(home);
   await printCodingAgentDataAccess(home);
@@ -416,6 +419,20 @@ function hookHealthLines(home: string, lookup: DaemonLookup): string[] {
   const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
   const waiting = lookup.status === "absent" ? [] : untakenWaitingLines(home, lookup.state.pid);
   return [...registration, ...hookFailureLines(log, recorded), ...waiting, ...lateCheckLines(log)];
+}
+
+/**
+ * What `rerail status` says of a daemon still in its start that does not answer yet, with the exit code of a daemon that
+ * does not answer: that it is starting, never to stop it, after the note that the lookup removed a daemon.json naming
+ * another process when it did. Undefined when the lookup found it answering, or none is in its start.
+ */
+function printStartingDaemon(home: string, lookup: DaemonLookup): number | undefined {
+  if (lookup.status === "running" || lookup.status === "refused") return undefined;
+  const pid = homeDaemonInStart(home);
+  if (pid === undefined) return undefined;
+  if (lookup.status === "absent" && lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
+  process.stdout.write(`Rerail daemon (pid ${pid}) is still starting and does not answer yet. See ${join(home, DAEMON_LOG_FILE)}\n`);
+  return 4;
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
