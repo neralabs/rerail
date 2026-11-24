@@ -1200,6 +1200,112 @@ UKL_INLINE void row_strjoin(Longs L, Longs R, JSPACE const uint8_t* F, JSPACE ui
     }
 }
 
+// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0668): program G (`text::table::GroupProgram`, the regex's
+// Thompson NFA) walked over x by a Pike VM, as `regex_automata`'s `PikeVM` walks it, by lane 0: its threads in
+// priority order, each state once a position (a sparse set), the group's two slots a thread; a match cuts the threads
+// after it, and the last match found is the leftmost-first one. f: the group's scratch, two thread lists and the
+// closure's stack (`GroupProgram::scratch`). Whether the group took part, its range in [from, to).
+UKL_INLINE void rx_group_closure(JSPACE const uint32_t* w, JSPACE uint32_t* dense, JSPACE uint32_t* sparse, JSPACE uint32_t* slots,
+                                 UKL_PRIVATE uint32_t* count, JSPACE uint32_t* stack, uint32_t sid, uint32_t pos, uint32_t n,
+                                 uint32_t c0, uint32_t c1) {
+    JSPACE const uint32_t* st = w + w[4];
+    uint32_t cur[2] = {c0, c1};
+    uint32_t sp = 0, cap = w[3];
+    stack[0] = sid;
+    stack[1] = 0;
+    sp = 1;
+    // Bounded: each state is entered once a closure, and pushes its entries, `w[3]` at most.
+    for (uint32_t turn = 0; turn < 2u * cap + 2u && sp > 0; turn++) {
+        sp--;
+        uint32_t a = stack[2 * sp], old = stack[2 * sp + 1];
+        if ((a & 0x80000000u) != 0u) {
+            cur[a & 1u] = old;
+            continue;
+        }
+        uint32_t i = sparse[a];
+        if (i < *count && dense[i] == a) continue;
+        sparse[a] = *count;
+        dense[*count] = a;
+        slots[2 * *count] = cur[0];
+        slots[2 * *count + 1] = cur[1];
+        *count += 1;
+        JSPACE const uint32_t* s = st + 4 * a;
+        uint32_t kind = s[0];
+        if (kind == 3u) {
+            for (uint32_t k = s[1]; k > 0 && sp < cap; k--) {
+                stack[2 * sp] = w[s[2] + k - 1];
+                stack[2 * sp + 1] = 0;
+                sp++;
+            }
+        } else if (kind == 4u && sp + 2 <= cap) {
+            if (s[1] < 2u) {
+                stack[2 * sp] = 0x80000000u | s[1];
+                stack[2 * sp + 1] = cur[s[1]];
+                sp++;
+                cur[s[1]] = pos;
+            }
+            stack[2 * sp] = s[2];
+            stack[2 * sp + 1] = 0;
+            sp++;
+        } else if (kind == 5u && ((s[1] == 0u && pos == 0) || (s[1] == 1u && pos == n)) && sp < cap) {
+            stack[2 * sp] = s[2];
+            stack[2 * sp + 1] = 0;
+            sp++;
+        }
+    }
+}
+
+UKL_INLINE bool rx_group_range(JSPACE const uint8_t* G, Txt x, JSPACE uint8_t* f, uint32_t lane, UKL_PRIVATE uint32_t* from,
+                               UKL_PRIVATE uint32_t* to __UKL_PARAMS) {
+    JSPACE const uint32_t* w = (JSPACE const uint32_t*)G;
+    uint32_t S = w[0], n = txt_len(x);
+    uint32_t got0 = NONE, got1 = NONE;
+    if (lane == 0) {
+        JSPACE const uint32_t* st = w + w[4];
+        JSPACE uint32_t* m = (JSPACE uint32_t*)f;
+        // Two lists (dense, sparse, two slots a thread), then the stack.
+        JSPACE uint32_t* lists[2] = {m, m + 4 * S};
+        JSPACE uint32_t* stack = m + 8 * S;
+        uint32_t counts[2] = {0, 0};
+        uint32_t c = 0;
+        rx_group_closure(w, lists[0], lists[0] + S, lists[0] + 2 * S, &counts[0], stack, w[2], 0, n, NONE, NONE);
+        for (uint32_t pos = 0; pos <= n && counts[c] > 0; pos++) {
+            JSPACE uint32_t* cd = lists[c];
+            JSPACE uint32_t* cs = lists[c] + 2 * S;
+            JSPACE uint32_t* nd = lists[1 - c];
+            counts[1 - c] = 0;
+            uint32_t b = pos < n ? (uint32_t)txt_byte(x, pos) : 0u;
+            for (uint32_t i = 0; i < counts[c]; i++) {
+                JSPACE const uint32_t* s = st + 4 * cd[i];
+                if (s[0] == 6u) {
+                    got0 = cs[2 * i];
+                    got1 = cs[2 * i + 1];
+                    break;
+                }
+                if (pos == n) continue;
+                uint32_t next = NONE;
+                if (s[0] == 1u && s[1] <= b && b <= s[2]) next = s[3];
+                else if (s[0] == 2u) {
+                    for (uint32_t k = 0; k < s[1]; k++) {
+                        JSPACE const uint32_t* r = w + s[2] + 3 * k;
+                        if (r[0] <= b && b <= r[1]) {
+                            next = r[2];
+                            break;
+                        }
+                    }
+                }
+                if (next != NONE) rx_group_closure(w, nd, nd + S, nd + 2 * S, &counts[1 - c], stack, next, pos + 1, n, cs[2 * i], cs[2 * i + 1]);
+            }
+            c = 1 - c;
+        }
+    }
+    got0 = ukl_sg_shuffle(got0, 0u __UKL_ARGS);
+    got1 = ukl_sg_shuffle(got1, 0u __UKL_ARGS);
+    *from = got0;
+    *to = got1;
+    return got0 != NONE && got1 != NONE;
+}
+
 UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
                          JSPACE int64_t* V, JSPACE const uint8_t* G, JSPACE uint8_t* scratch, JSPACE const uint32_t* P, JSPACE const uint8_t* D,
                          JSPACE uint8_t* VC, JSPACE uint32_t* T, UKL_GLOBAL uint32_t* ctl, StageP s, uint32_t sg, uint32_t lane __UKL_PARAMS)
@@ -1382,6 +1488,17 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             from = 0;
             to = cut;
             len = cut;
+        } else if (f == 14) {
+            // rx_group(x, re, name): the group's range of x by its program G (`rx_group_range`); no row where the
+            // regex does not match x or the group took no part, as on the CPU.
+            if (!rx_group_range(G, x, fs, lane, &from, &to __UKL_ARGS)) {
+                if (lane == 0) {
+                    V[row] = -1;
+                    counts[row] = 0;
+                }
+                continue;
+            }
+            len = to - from;
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);

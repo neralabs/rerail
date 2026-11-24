@@ -139,6 +139,8 @@ enum RowAuto {
     Test { table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
     /// `replace_all` of regex `pattern` by `with` (symbols).
     Replace { pattern: i64, with: i64 },
+    /// `rx_group` of regex `pattern`'s group `name` (symbols): its program (decision 0668).
+    Group { pattern: i64, name: i64 },
 }
 
 /// Whether a stage makes texts into the arena (its counter word says when the arena was full).
@@ -227,6 +229,7 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         ZeroPad => mj::TEXTFN_ZERO_PAD,
         StrBetween => mj::TEXTFN_STR_BETWEEN,
         PkgUp => mj::TEXTFN_PKG_UP,
+        RxGroup => mj::TEXTFN_RX_GROUP,
         Replace => mj::TEXTFN_REPLACE,
     };
     Some((f, texts, nums))
@@ -998,9 +1001,14 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if args.len() != ntexts + nnums {
                     return Err(format!("the function {name} of {} arguments", args.len()));
                 }
+                // Bound and read only as positive atoms' keys (the CPU's `PROBE_OUT`: a text no atom is matches no
+                // row): its value is the atom the text is, found in the atoms directory (`ROW_FIND`, decision 0666),
+                // and no row where none is, as the CPU drops it at the function. A symbol: its atoms probe by value,
+                // one keyed by it alone too.
+                let finds = *bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
                 let target = if *bind {
                     let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !(finds && matches!(s, Step::Atom { neg: false, .. }))) {
                         return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
                     }
                     *out
@@ -1054,10 +1062,6 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = target as u32;
-                // Bound and read only as positive atoms' keys (the CPU's `PROBE_OUT`: a text no atom is matches no
-                // row): its value is the atom the text is, found in the atoms directory (`ROW_FIND`, decision 0666),
-                // and no row where none is, as the CPU drops it at the function. A symbol: its atoms probe by value.
-                let finds = *bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
                 if finds {
                     d.agg[0] |= mj::ROW_FIND;
                 }
@@ -1065,11 +1069,20 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
                 };
-                let mut kind = kind;
+                // A capture group's program is the stage's automaton (decision 0668): its regex and group constants.
+                let auto = if f == mj::TEXTFN_RX_GROUP {
+                    let (Some(pattern), Some(group)) = (konst(&args[1]), konst(&args[2])) else {
+                        return Err("the function rx_group of a regex or group name that is not a constant has no device form".into());
+                    };
+                    RowAuto::Group { pattern, name: group }
+                } else {
+                    RowAuto::None
+                };
+                let mut kind = if matches!(auto, RowAuto::None) { kind } else { Kind::RowText { auto: auto.clone(), kept: 0 } };
                 if ntexts > 0
                     && !finds
                     && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
-                        kind = Kind::RowText { auto: RowAuto::None, kept: id };
+                        kind = Kind::RowText { auto, kept: id };
                         kept_texts.insert(target, chain);
                     }
                 if target >= bound.len() {
@@ -1720,6 +1733,10 @@ fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevB
             }
             let (a, states) = automata(&names.name(*pattern))?;
             Some((a, [states, 0, 0, 0]))
+        }
+        RowAuto::Group { pattern, name } => {
+            let g = crate::code_rule_dsl::text::table::group_program(&names.name(*pattern), &names.name(*name)).map_err(|e| format!("rx_group has no device form: {e}"))?;
+            Some((Rc::new(mj::DevBytes::of(&g.automaton).map_err(|e| format!("{e:?}"))?), [g.scratch, 0, 0, 0]))
         }
         RowAuto::Test { table, .. } => {
             let b = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);

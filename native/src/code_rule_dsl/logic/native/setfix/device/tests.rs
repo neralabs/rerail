@@ -1413,6 +1413,16 @@
             // `literal_key` does) a made text, the function's text made of it.
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v1\nfunc str_between v0 v3 {} {}\nhead v1 v2", sym("<"), sym("<"), sym("")),
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v3 {} v2\nfunc str_concat v4 v3 {}\nfunc str_between v2 v4 {} {}\nhead v4 v1", sym("("), sym(",)"), sym("("), sym(",)")),
+            // A regex's capture groups (decision 0668), as `match("(?<d>…)", s)` lowers them: a path's directory and
+            // its first part's rest (the C includes' splits), a lazy repeat before a greedy one, a group in a repeat
+            // (its last part), a group of a multi-byte class; no row where the regex does not match or the group
+            // took no part. One made into a cat after it.
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<fw>[^/]+)/(?<rest>.+))$"), sym("rest")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<a>[a-z]*?)(?<b>[a-z_]*)\\..*)$"), sym("b")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?:(?<p>[A-Za-z]+)_)+.*)$"), sym("p")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<u>x9)|(?<g>[αβé]+).*)$"), sym("g")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nfunc str_concat v3 v2 {}\nhead v3 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d"), sym("/x.h")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
@@ -1424,6 +1434,10 @@
             // Every name found (the empty one too), of every length.
             format!("pos {n} v0 v1\nfunc str_concat v2 v0 {}\npos {n} v2 v1\nhead v0 v1", sym("")),
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:4\nfunc str_concat v3 v2 {}\npos {n} v3 v1\nhead v2 v1", sym("")),
+            // A capture group as an atom's key (`c_inc_found`'s `dir_entry(dd, bb, 0)`): the whole name, and a first
+            // part that may be a name.
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v1\nhead v0 v1", sym("^(?:(?<h>.*))$"), sym("h")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v3\nhead v0 v3", sym("^(?:(?<h>foo|Bar|SRC|x9).*)$"), sym("h")),
         ];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
             let mut got = Vec::new();
