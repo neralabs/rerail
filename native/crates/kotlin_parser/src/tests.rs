@@ -2022,28 +2022,18 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
 
 /// The shipped answers (`kotlin.answers`, decision 0414's seed) answer every question the grammar
 /// asks, and the parser as Rust's compile (`tiers_rust`): a compile from them alone, not the
-/// machine's kept answers, proves nothing. `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again,
-/// from a cold compile's and the Rust's compile's from those.
+/// machine's kept answers, proves nothing (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes
+/// them again, from a cold compile's and the Rust's compile's from those).
 #[test]
 fn the_shipped_answers_answer_the_grammar() {
-    use rerail_compiler::bitlex_prove::{decode, encode};
-    if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
-        let cold = compile_text(GRAMMAR).expect("the grammar compiles");
-        let mut all = cold.proofs.clone();
-        let (_, _, rust) = crate::tiers_rust_given(GRAMMAR, decode(&encode(&cold.proofs))).expect("the parser as Rust");
-        all.extend(rust);
-        let path = &format!("{}/kotlin.answers", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-        std::fs::write(path, encode(&all)).expect("kotlin.answers written");
-        return;
-    }
-    let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
-    let (_, _, rust) = crate::tiers_rust_given(GRAMMAR, crate::shipped_answers()).expect("the parser as Rust");
-    assert!(
-        c.proofs.is_empty() && rust.is_empty(),
-        "{} and {} (the Rust's) questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.answers",
-        c.proofs.len(),
-        rust.len()
-    );
+    let path = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("kotlin.answers");
+    rerail_compiler::answers::check_shipped(&path, crate::ANSWERS, |known| {
+        let c = crate::compile_timed(GRAMMAR, known.clone(), &mut |_, _| {})?;
+        let mut given = known;
+        given.extend(c.proofs.iter().copied());
+        let (_, _, rust) = crate::tiers_rust_given(GRAMMAR, given)?;
+        Ok(c.proofs.into_iter().chain(rust).collect())
+    });
 }
 
 /// A cold compile (no answers known) makes the program the shipped answers make, and its answers,
@@ -2120,7 +2110,7 @@ fn tier1_cones() {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
-    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers()).expect("compiles");
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers(), bitlex_compile::AsRust::No).expect("compiles");
     let b = &c.program;
     let n = b.ops.len();
     let cone = |v: u16| {
@@ -2370,7 +2360,7 @@ fn token_level_probe() {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
-    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers()).expect("compiles");
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers(), bitlex_compile::AsRust::No).expect("compiles");
     let mut by: HashMap<String, usize> = HashMap::new();
     for o in &c.origin {
         if let Some(m) = o.strip_prefix("mask ") {

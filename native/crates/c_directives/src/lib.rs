@@ -9,10 +9,29 @@
 //! it does not read) goes to the lean scan, so a row is never wrong.
 
 use rerail_compiler::bitlex_masks as bitlex_compile;
+use rerail_compiler::bitlex_prove::{Answer, Key, Known};
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
+
+/// A grammar lowered (`lower_kinds`): the assembled program, the native IR, tier 2's words and its
+/// state machine as text.
+pub(crate) type Lowered = (rerail_compiler::program::Words, native_ir::Structure, String, String);
 
 /// The grammar.
 pub const GRAMMAR: &str = include_str!("../directives.bitlex");
+
+/// The provers' answers to its questions, shipped beside it (decision 0669).
+pub const ANSWERS: &[u8] = include_bytes!("../directives.answers");
+
+/// A grammar's shipped answers (decision 0669): `<grammar>.answers`' bytes, and the family the
+/// machine keeps the answers its compiles make under (`answers::answered`), one a text.
+#[derive(Clone, Copy)]
+pub(crate) struct Seed {
+    pub family: &'static str,
+    pub shipped: &'static [u8],
+}
+
+/// The directives' answers.
+const SEED: Seed = Seed { family: "c-directives", shipped: ANSWERS };
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.
@@ -62,7 +81,7 @@ static LOWERED: std::sync::OnceLock<Result<rerail_compiler::program::Words, Stri
 /// `src`'s directives by the interpreter, the grammar lowered once a process (no Cranelift), or
 /// `None` where the grammar refuses it.
 pub fn interpreted_read(src: &[u8]) -> Option<Read> {
-    let program = LOWERED.get_or_init(|| lower_kinds(GRAMMAR, KINDS, FIELDS).map(|l| l.0)).as_ref().ok()?;
+    let program = LOWERED.get_or_init(|| lower_kinds(GRAMMAR, KINDS, FIELDS, SEED).map(|l| l.0)).as_ref().ok()?;
     let run = program.block_programs[0].run(src);
     let nodes = rerail_compiler::stream::run(program, src, &run).ok()?;
     read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src)).ok()
@@ -70,22 +89,27 @@ pub fn interpreted_read(src: &[u8]) -> Option<Read> {
 
 /// `grammar` compiled: a grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
-    compile_kinds(grammar, KINDS, FIELDS)
+    compile_kinds(grammar, KINDS, FIELDS, SEED)
 }
 
 /// `grammar` compiled with its tape's kinds and fields by id (`kinds`, `fields`: a field's id is
 /// its index plus one), the grammar's other names numbered from `OWN_IDS`.
-pub(crate) fn compile_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Result<Compiled, String> {
-    let (program, native, words, machine) = lower_kinds(grammar, kinds, fields)?;
+pub(crate) fn compile_kinds(grammar: &str, kinds: &[&str], fields: &[&str], seed: Seed) -> Result<Compiled, String> {
+    let (program, native, words, machine) = lower_kinds(grammar, kinds, fields, seed)?;
     let cut = native_cpu_clusters::by_rules(&native);
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words, machine })
 }
 
 /// `grammar` through the Bitlex compiler, assembled and lowered to the native IR: all but
-/// Cranelift's compile (`compile_kinds`).
-#[allow(clippy::type_complexity)]
-pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Result<(rerail_compiler::program::Words, native_ir::Structure, String, String), String> {
+/// Cranelift's compile (`compile_kinds`); from the grammar's shipped answers and the machine's
+/// (decision 0669).
+pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str], seed: Seed) -> Result<Lowered, String> {
+    rerail_compiler::answers::answered_shipped(seed.family, grammar.as_bytes(), seed.shipped, |known| lower_known(grammar, kinds, fields, known))
+}
+
+/// `lower_kinds` from the provers' answers `known`, and the answers its compile made.
+pub(crate) fn lower_known(grammar: &str, kinds: &[&str], fields: &[&str], known: Known) -> Result<(Lowered, Vec<(Key, Answer)>), String> {
     let kind_id = |name: &str| if name == "ERROR" { Some(u16::MAX) } else { kinds.iter().position(|&k| k == name).map(|i| i as u16) };
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
@@ -101,13 +125,13 @@ pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Res
     };
     let field = |name: &str| fields.iter().position(|&f| f == name).map(|i| i as u16 + 1);
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     for b in &mut native.block_programs {
         b.pad = rerail_compiler::native_cpu_block::BACK as u16;
     }
-    Ok((program, native, compiled.words.clone(), compiled.machine.clone()))
+    Ok(((program, native, compiled.words, compiled.machine), compiled.proofs))
 }
 
 /// A directive as the tape gives it: `c_directive`'s kind and bytes (the file's).
@@ -392,3 +416,5 @@ pub fn facts(src: &[u8], opts: rerail_c_pp::Options) -> Facts {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod answers_tests;

@@ -7,7 +7,7 @@ and 0662.
 
 ## Intro
 
-**The problem.** A cold Kotlin compile took 16.3 s on spark1, 14.5 s of it proving. The prover's work summed
+**The problem.** A cold Kotlin compile took 16.3 s on a DGX Spark, 14.5 s of it proving. The prover's work summed
 over threads was about 98 s of CPU:
 
 - **A serial stretch, 6.0 s of wall.** After the row modes, the pending checks (`last_row`, `token_row`)
@@ -55,7 +55,7 @@ its 2.16 billion evaluations, at 2^21 to 2^23 evaluations each. Those it proved 
   increment, and anything else is kept in a spill map. The memo is only a cache, so the search's splits
   are as before.
 - **The search's steps are its evaluations**: 32 evaluations a step (`EVALS_A_STEP`), about a solver's step's
-  time (12 ns an evaluation, about 300 ns a SAT step, spark1). A split of a large cone costs as much more as it
+  time (12 ns an evaluation, about 300 ns a SAT step, a DGX Spark). A split of a large cone costs as much more as it
   reads.
 - **Bounded before a solve** (`never_in_before_solve`, `EVALS_BEFORE_SOLVE` 2^16). Where a solve is asked
   after the search fails (`never_within`, `either_never` and `either_never_many` with their GPU rounds, `Ask`'s
@@ -68,7 +68,7 @@ its 2.16 billion evaluations, at 2^21 to 2^23 evaluations each. Those it proved 
 
 ## Results
 
-Cold Kotlin compile, spark1, `RERAIL_GPU=cpu`:
+Cold Kotlin compile, a DGX Spark, `RERAIL_GPU=cpu`:
 
 | | Before | After |
 |---|---|---|

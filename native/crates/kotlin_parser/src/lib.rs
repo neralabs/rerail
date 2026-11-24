@@ -26,8 +26,6 @@ pub struct Compiled {
     pub machine: String,
     /// The provers' answers the compile made, for the next (`compile_timed`'s `known`).
     pub proofs: Vec<(rerail_compiler::bitlex_prove::Key, rerail_compiler::bitlex_prove::Answer)>,
-    /// Tier 2 as Rust, written by the Bitlex compiler from the tree rules (`bitlex_rust`).
-    pub rust: Option<Result<String, String>>,
 }
 
 /// The provers' answers by question (decision 0414).
@@ -43,7 +41,7 @@ unsafe impl Sync for Compiled {}
 /// A compile given them proves only what an edit asks anew: 41 s cold, 1.5 s with them. Answers of
 /// another provers' version are none (`decode`), so the seed is never wrong, only slow.
 /// `tests::the_shipped_answers_answer_the_grammar` says when it lacks one, and writes it again
-/// (`RERAIL_BLESS_KOTLIN_ANSWERS=1`).
+/// (`RERAIL_BLESS_ANSWERS=1`, `answers::check_shipped`).
 pub const ANSWERS: &[u8] = include_bytes!("../kotlin.answers");
 
 /// [`ANSWERS`], decoded: `compile_timed`'s `known`.
@@ -108,7 +106,7 @@ pub fn tiers_rust_given(grammar: &str, known: Proofs) -> Result<(String, String,
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     // The shipped answers: the compile's own, so the same Rust, with no cold proofs.
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::Yes)?;
     let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
     let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
     Ok((tier1, tier2, compiled.proofs))
@@ -140,7 +138,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     lap("assembled");
@@ -158,7 +156,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
-    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), rust: compiled.rust.clone() })
+    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone() })
 }
 
 impl Compiled {

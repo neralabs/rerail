@@ -4,12 +4,20 @@
 //! `rerail_c_pp::tape::image`: a file the grammar reads gives the same bytes, and one it refuses
 //! goes to the lean writer.
 
-use crate::{Compiled, compile_kinds};
+use crate::{Compiled, Seed, compile_kinds};
 use rerail_c_lean::pp::Options;
 use rerail_c_pp::tape::{FIELDS, KINDS};
 
 /// The grammar, C++'s.
 pub const PP: &str = include_str!("../bitlex_pp/pp.bitlex");
+
+/// The provers' answers to the C and the C++ grammar's questions, shipped beside them (decision 0669).
+pub const ANSWERS: &[u8] = include_bytes!("../bitlex_pp/pp.answers");
+
+/// The answers of the grammar for C or C++ (`cpp`): one file, kept apart on the machine.
+pub(crate) fn seed(cpp: bool) -> Seed {
+    Seed { family: if cpp { "cpp-pp" } else { "c-pp" }, shipped: ANSWERS }
+}
 
 /// The grammar's text for C (`cpp` false: its `C++ only` lines left out) or C++ (its `C only`
 /// lines left out).
@@ -29,7 +37,7 @@ static CPP: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock:
 /// The process's compiled grammar for C or C++, compiled the first time.
 pub fn compiled(cpp: bool) -> Result<&'static Compiled, &'static str> {
     let cell = if cpp { &CPP } else { &C };
-    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, FIELDS)).as_ref().map_err(String::as_str)
+    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, FIELDS, seed(cpp))).as_ref().map_err(String::as_str)
 }
 
 /// `src`'s tape: the grammar's, or the lean writer's where the grammar refuses the file.

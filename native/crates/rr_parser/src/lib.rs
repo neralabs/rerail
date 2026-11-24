@@ -21,6 +21,9 @@ use std::collections::HashMap;
 /// The grammar: the ladder's last step.
 const GRAMMAR: &str = include_str!("../rr.bitlex");
 
+/// The provers' answers to the grammar's questions, shipped beside it (decision 0669).
+const ANSWERS: &[u8] = include_bytes!("../rr.answers");
+
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rerail`
 /// files, spread over its folders. A profile of about ten files gives a cut as good as the
@@ -106,6 +109,12 @@ pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compi
 /// the application's input): with fewer than a window reaches, each window is cut on a rare
 /// branch.
 pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> Result<Compiled, String> {
+    rerail_compiler::answers::answered_shipped("rr", grammar.as_bytes(), ANSWERS, |known| compile_known(grammar, shape, pad, known))
+}
+
+/// `compile_padded` from the provers' answers `known` (decision 0669), and the answers its compile
+/// made.
+fn compile_known(grammar: &str, shape: bitlex_compile::Shape, pad: u16, known: rerail_compiler::bitlex_prove::Known) -> Result<(Compiled, Vec<(rerail_compiler::bitlex_prove::Key, rerail_compiler::bitlex_prove::Answer)>), String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
@@ -119,7 +128,7 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
     let kind = |n: &str| Some(if n == "ERROR" { u16::MAX } else { id(rr::tape::KIND_NAMES, n) });
     let field = |n: &str| Some(id(rr::tape::FIELD_NAMES, n.trim_start_matches("field ")));
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), shape)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), shape, known, bitlex_compile::AsRust::No)?;
     let program = rir::assemble(&compiled.text())?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = rerail_tape_format::RR_TAG;
@@ -137,7 +146,7 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
         rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
+    Ok((Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program }, compiled.proofs))
 }
 
 /// `src`'s tape, the engine's bytes (decision 0140): from the compiled grammar, or, for a file
@@ -217,6 +226,15 @@ pub fn compile_error() -> Option<String> {
 mod gating_tests;
 #[cfg(test)]
 mod token_local_tests;
+
+/// The shipped answers (`rr.answers`, decision 0669) answer every question the grammar's compile
+/// asks (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes them again).
+#[cfg(test)]
+#[test]
+fn the_shipped_answers_answer_the_grammar() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rr.answers");
+    rerail_compiler::answers::check_shipped(&path, ANSWERS, |known| Ok(compile_known(GRAMMAR, bitlex_compile::Shape::Rules, rerail_compiler::native_cpu_block::BACK as u16, known)?.1));
+}
 
 #[cfg(test)]
 pub mod tests {

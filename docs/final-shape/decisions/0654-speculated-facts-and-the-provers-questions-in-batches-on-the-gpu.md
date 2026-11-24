@@ -7,7 +7,7 @@ proof on the compiler"). Follows 0414 (answers by content), 0552 (`assume`), 064
 
 ## Intro
 
-**The problem.** A cold compile of Kotlin's grammar takes 224 s, 554M prover steps (spark1, the budget lifted).
+**The problem.** A cold compile of Kotlin's grammar takes 224 s, 554M prover steps (a DGX Spark, the budget lifted).
 The 2^20-step budget is about a second's work, so a cold compile is answered from shipped answers, and a grammar
 edit means a bless of minutes. The user's bar is a second.
 
@@ -111,7 +111,7 @@ takes a bounded number of rounds, and the host launches again while nodes are le
 
 ## Results
 
-**Steps 1 and 2** (spark1, a cold compile with the budget lifted, `RERAIL_PROVING_TRACE`):
+**Steps 1 and 2** (a DGX Spark, a cold compile with the budget lifted, `RERAIL_PROVING_TRACE`):
 
 - **Gap ends was never usable for Kotlin.** A records' gap is the record pass's (0411), for a grammar with no
   end rules: with them the token loop ends each token by its rule, and `BlockProgram::verify` refuses a gap.
@@ -130,7 +130,7 @@ mark's mask: checked as an escape, it would make that mask again. The row modes'
 toggle's mode) are masks every mask executor makes anyway (the row's start, the toggle), so a speculated row
 mode is an escape of a few operations: the candidate next step.
 
-**Step 3: batches on the CPU** (spark1, 20 threads, the same cold compile):
+**Step 3: batches on the CPU** (a DGX Spark, 20 threads, the same cold compile):
 
 - **Where a solve's time goes** (the serial compile, timed by part): building the windows 8.8 s (8,126 of them),
   a solve's own clauses 5.5 s, the solver 34.5 s over 12,415 solves. Of the solver's time, 17.1 s is loading
@@ -167,7 +167,7 @@ tree section).
 - **The kernel.** One threadgroup of 256 threads a formula, each thread taking every 256th clause per sweep. The
   values are two bit sets per formula in device memory, set by atomic ORs only. The group ORs its threads' news
   each sweep. A launch holds at most 16M literals and 512 sweeps.
-- **Tested.** On spark1's GPU (CUDA): 300 random formulas, whose conflicts equal the CPU's propagation's and which
+- **Tested.** On a DGX Spark's GPU (CUDA): 300 random formulas, whose conflicts equal the CPU's propagation's and which
   the solver finds unsatisfiable at level 0. Kotlin's cold compile with it blesses the same answers, byte for byte.
   Checked against the CPU solver, no formula the GPU left at a fixed point was unsatisfiable at level 0: the GPU
   misses no conflict.

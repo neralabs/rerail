@@ -7,7 +7,7 @@ results left 53 s of a cold Kotlin compile (67 s) after the prover's tree sectio
 
 **The problem.** Writing tier 1 as Rust (`bitlex_lex_rust::tier1`) took 55 s of Kotlin's compile, cold or warm:
 a warm compile, every answer shipped, still took about a minute. The time was all in deciding where each
-escape of a region holds: `region_escape` 46 s, `find_loop_fills` 12 s (spark1, `RERAIL_PROVING_TRACE`).
+escape of a region holds: `region_escape` 46 s, `find_loop_fills` 12 s (a DGX Spark, `RERAIL_PROVING_TRACE`).
 
 **Why.** Those checks ask a mask's *ways*: `Gen::cubes`, each way a set of bytes at offsets about the byte it
 holds at, the mask's definition expanded to a disjunction. `in_region_of` walks a mask's expression, and at
@@ -43,7 +43,7 @@ kept on the `Gen` across calls, and made once.
 
 ## Results
 
-Kotlin, spark1, `RERAIL_GPU=cpu`:
+Kotlin, a DGX Spark, `RERAIL_GPU=cpu`:
 
 | | Before | After |
 |---|---|---|

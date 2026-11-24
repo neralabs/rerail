@@ -535,7 +535,16 @@ pub const MACHINE_STATES: usize = 64;
 
 /// `compile`, with tier 2 in `shape`.
 pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape) -> Result<Compiled, String> {
-    compile_proved(stmts, outputs, symbols, shape, HashMap::default())
+    compile_proved(stmts, outputs, symbols, shape, HashMap::default(), AsRust::No)
+}
+
+/// Whether a compile writes its tiers as Rust too (`Compiled::rust`, `Compiled::lexer_rust`), from
+/// the program it made: only a caller that reads them asks (decision 0669). They change nothing
+/// else, and tier 1's can cost more than the rest of the compile (the C tokens': nearly all of it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AsRust {
+    Yes,
+    No,
 }
 
 /// With `RERAIL_PROVING_TRACE`, the prover's steps and the time spent so far in a compile, at
@@ -552,7 +561,7 @@ fn phase_mark(low: &Lowering, what: &str) {
 
 /// `compile_shaped`, with the provers' answers a compile made before (`Compiled::proofs`,
 /// decision 0414): a question among them is answered without its proof. The program is the same.
-pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape, known: bitlex_prove::Known) -> Result<Compiled, String> {
+pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape, known: bitlex_prove::Known, as_rust: AsRust) -> Result<Compiled, String> {
     let mut low = Lowering {
         proofs: bitlex_prove::Proofs { known, made: Vec::new(), used: Vec::new(), work: bitlex_prove::Budget::new(std::env::var("RERAIL_PROVING_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(bitlex_prove::PROVING_STEPS)) },
         shape,
@@ -835,7 +844,9 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         words = lowered;
         machine = text;
         // Tier 2 as Rust, from the tree rules and the tables (`bitlex_rust`), the records' outputs the program's now.
-        if let (Some(t), Some(r), Some(symbols)) = (&low.rust_tables, &low.program.records, symbols) {
+        if as_rust == AsRust::Yes
+            && let (Some(t), Some(r), Some(symbols)) = (&low.rust_tables, &low.program.records, symbols)
+        {
             let marks = (0..low.marks.len())
                 .map(|i| {
                     let (name, _, end) = &low.marks[i];
