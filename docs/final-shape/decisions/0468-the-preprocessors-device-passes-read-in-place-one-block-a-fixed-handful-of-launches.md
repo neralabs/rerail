@@ -5,6 +5,9 @@
 Status: built (audited 2026-11-23). Accepted (2026-11-19); being built in the steps below. Revises 0448 (§2's memory,
 §3's passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree then (0459).
 
+> **Superseded in part by 0653 (2026-11-23):** §4's persistent grid is gone; the setup is a program of phases on a
+> work queue, a fixed handful of launches still (`PP_LAUNCHES` of `pp_run` and `pp_rebase` a command).
+
 The user, on 0448 as built:
 
 1. "I thought that the latest token indexes had a line index? Please verify."

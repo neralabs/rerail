@@ -5134,6 +5134,8 @@ pub mod tests {
         if rerail_accel::gpu::join::device().is_err() {
             return;
         }
+        // The batches' launches are an evaluation's (decision 0601).
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
         let n = 300;
         let keys = rows(n, 13, 40);
         let rel = DevRel::empty_indexed(1, n, 3).unwrap();

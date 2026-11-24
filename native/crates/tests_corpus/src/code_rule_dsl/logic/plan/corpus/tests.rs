@@ -1976,6 +1976,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
 /// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
 /// undeclared relation (Q67: these three of the data-layer pack, on any file).
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");

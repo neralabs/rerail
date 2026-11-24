@@ -33,4 +33,9 @@ pub mod tests;
 /// syntax errors here, as in 3.13).
 pub const VERSION: ruff_python_ast::PythonVersion = ruff_python_ast::PythonVersion::PY313;
 
+/// The terminators CPython's tokenizer ends a line at (`\r\n`, `\r`, `\n`; Ruff's too): the Python pack's
+/// (`Adapter::TERMINATORS`, decision 0612), read here, below the pack, without its registration (as rr's and C's are
+/// their crates': `syntax::TERMINATORS`, `rerail_c_pp::tape::LINE_ENDS`).
+pub const LINE_ENDS: crate::code_rule_dsl::lines::Terminators = crate::code_rule_dsl::lines::Terminators::Newlines;
+
 // The Python pack's test load (registering the pack for its tests) is rerail-lang-python's.

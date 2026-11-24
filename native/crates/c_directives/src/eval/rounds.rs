@@ -272,7 +272,7 @@ pub struct Settled {
 
 /// The units `units` (each its files and its main file), of one configuration `cfg` (C++ where
 /// `cpp`), in rounds run as batches (decision 0486 §7): each round one run over the batch's units
-/// still running, a team each (decision 0588 §6), the units that request answered between rounds,
+/// still running, their programs on one queue (decision 0653), the units that request answered between rounds,
 /// and a unit's round with no requests its expansion. A refusal is a unit's alone. A batch is split
 /// in halves where the budget refuses its arena, or its documents are where a batch cannot read
 /// them together. `eval` is the device's run of a batch's units, each from the rooms it is given,

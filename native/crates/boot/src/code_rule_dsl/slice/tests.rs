@@ -351,7 +351,7 @@ const KNOWN: [(&str, &str, &str); 0] = [];
 /// `ast` clauses lower (any language), and of their programs (root and label) how many are micro
 /// walks, the device's shape (0024), against those that need a general executor.
 #[test]
-#[ignore = "the packs' census; run with --ignored --nocapture"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: the packs' census; run with --ignored --nocapture"]
 fn pack_census() {
     use crate::code_rule_dsl::matcher::match_tree;
     use crate::code_rule_dsl::transducer::packed::{LoweredMatcher, Micro};

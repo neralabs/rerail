@@ -14,8 +14,8 @@
 //!   2,048-code window up to the partition's largest code. Pairs: the per-row counts, a scan, and a scatter in
 //!   which each left row walks its partition's right rows in order (the units price exactly that).
 //! - **histogram**: a threadgroup per partition, threadgroup atomics, a pass per 2,048-code window of `width`.
-//! - **closure**: components and the condensed DAG's levels on the host (Tarjan's, linear), then the components'
-//!   bit rows filled on the device level by level, each level one dispatch.
+//! - **closure**: components and the condensed DAG on the host (Tarjan's, linear), then the components' bit rows
+//!   filled on the device in one dispatch: a work queue that takes a component once its successors are done.
 //!
 //! Inputs are wrapped without a copy when page-aligned, and copied otherwise (an `Arc<[T]>`'s data follows its
 //! counts, so it is page-aligned only when the caller made it so). Outputs are counted, then scattered: deterministic, and equal to [`crate::cpu::run`]'s. A pairs output is
@@ -862,7 +862,7 @@ impl Planner<'_> {
         if nu == 0 {
             return Ok(Job::ready(Output::Bits(Bits::new(0, words, rerail_blocks::vector::Vector::<u64>::new()))));
         }
-        // The condensed DAG on the host: components, their successor components (deduplicated), cycles, levels.
+        // The condensed DAG on the host: components, their successor components (deduplicated), cycles.
         let (comp, ncomp) = crate::cpu::components(nu, off, dst);
         let mut start = vec![0u32; ncomp + 1];
         for &c in &comp {

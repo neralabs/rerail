@@ -88,7 +88,7 @@ pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
     // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's
     // OpenCL (an Arc 140V) was still compiling at 90 s, and the CPU's compiler takes 7 s.
     if rerail_gpu::device::backend() == "CPU" || every_kernel_ahead() {
-        v.push(ahead("pp passes", || released(|| caught(|| _ = pp_arena::kernel("pp_setup")))));
+        v.push(ahead("pp passes", || released(|| caught(|| _ = pp_arena::kernel("pp_run")))));
     }
     v
 }

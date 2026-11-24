@@ -11050,3 +11050,27 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - Red before this merge (at 92a5c8ce55 too), for the green pass:
   - `typed_corpus_reads_declarations_and_dependency_summaries` ("a lattice relation in a gate's place");
   - parity_aggregates and parity_random_integers.
+
+### Q531. Roll-up 104 (cost-classifier-metal-rf dc71ebe625 onto Pulling-it-all-together): what the merge chose
+
+- cost-classifier-metal-rf (5 commits past its hub merge of roll-up 80):
+  - 0653: the preprocessor's setup is a program of phases on a work queue (`pp_step`, `pp_advance`, `pp_run`); `ukl/grid.h` and its barrier, join and residency are gone, as the user ordered;
+  - 0613: a line's expansion is requests, read in place (`a_line_past_its_room_runs_again_larger` 7.8 s to 0.63 s);
+  - the macOS 26.0–26.3 allocator warning; the data-layer packs disabled (their tests ignored with the reason);
+  - 0353 step 4's guest `Loc` views in place (`ViewDoc::hosted`, `PLACED_SPANS`).
+- 0353 step 4 is the hub's already: the hub reads such a guest's places in place by `ViewDoc::placed` (`PLACED_TABLE`, 2026-11-22). One mechanism per job, so the hub's clif reads, view headers, `view_docs.rs`, `device_chunk.rs` and 0353 text are kept whole and the branch's `hosted` column is not taken.
+- The `#if` line's window: both sides moved it from shuffles into the SIMD group's memory for the same slow test. The hub's (0588, `IfWin`: lane 0 alone evaluates, the lanes only fill its slots, an early stop told through `at`) is kept; the branch's (every lane runs the branches, `sy_share` each window) is not. 0613's text says so.
+- pp_grid and pp_loop are the branch's 0653 files, with the hub's own commits replayed onto them:
+  - 1175006048 (0588): `IfWin` in `PpTg`'s union, and the thread's ask through `LpRun::q`, now 10 words with the branch's `q_off` and `q_hoff`;
+  - 7377e987fe (0613): the run's frames past the group's 64 in region 6 (`LP_FSPILL`), with the branch's lines posting requests (no `!rp->line`).
+  - The lp_run worker ends when it finds nothing (0653's rule); the grid's idle polls and beats are gone with the grid.
+- pp_if is the hub's without the grid's beat and its `grid` word.
+- backend.h: the hub's vector backend section (0567 step 3) stays, so the branch's `__UKL_VEC` block is dropped; its `UKL_GRID_SPINS` default goes as 0653 removes the others. The clock comment names CUDA's timer, AMD's counter and arm64's.
+- Device: `resident_groups` and `gpu_cores` go (0653, nothing calls them); the hub's `target_name` and `local_defines` (0645) stay. The arena's source tests prepare `pp_run` for the named `apple7` target.
+- cl_dag (accel), lang_ecma's Vue loader, text_demand, reuse, ukl's include paths and 0603: the hub's, newer than the branch's copies. lang_sql: both the hub's private folders and the branch's SQL test loader.
+- Decisions README: a row for 0653.
+- Checked with Relax, RERAIL_GPU=cpu: 12 crates, 0 errors. Tests:
+  - metal `pp_` 9;
+  - c-directives eval 48 in 4.7 s;
+  - gpu stages 3; ukl 15; tests-lang syntax 85; lang-sql 8.
+- Red at the hub's 92a5c8ce55 too, for the green pass: device `the_engine_finds_the_file_it_was_loaded_from` under Relax (its code is in no image).
