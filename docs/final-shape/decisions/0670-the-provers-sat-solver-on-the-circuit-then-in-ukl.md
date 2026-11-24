@@ -164,4 +164,7 @@ late cheaper; `PROOFS_VERSION` 5).
 - **What is left of a late failure**: its first, bounded solve, one hard search (110 to 320 ms, thousands of
   conflicts), and the drops from about 11 values to 2 or 3, one at a time. The first is the solver's own speed: no
   restarts, no saved phases, no learned clauses dropped (step 1's search as `bitlex_sat`'s).
+- **Restarts and saved phases do not help these solves** (tried after the cores): a decision at the variable's last
+  value, and a restart to level 0 after 100 times the Luby sequence's terms of conflicts. Cold Kotlin: 160 million
+  steps against 157, proving 5.6 s against 5.2 to 5.5, the late failures as long; the same values. Not kept.
 
