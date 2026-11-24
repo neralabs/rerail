@@ -2898,7 +2898,7 @@ fn run_observed_within(
                 }
                 given.push(1);
             }
-            super::kept_analyses::kept_value(source, "text kinds demanded", 2, &[&given], || super::text_demand::text_kind_demand(source, matchers), super::text_demand::demand_rows, super::text_demand::demand_of_rows)
+            super::kept_analyses::kept_value(source, "text kinds demanded", 3, &[&given], || super::text_demand::text_kind_demand(source, matchers), super::text_demand::demand_rows, super::text_demand::demand_of_rows)
         };
         // The spans whose text a rule reads, a function of the program, kept with it as the text kinds are (t33 K4).
         let spans = {

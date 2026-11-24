@@ -109,9 +109,6 @@ pub struct Projection {
     /// The nodes whose `text` a rule reads (`TextDemand::read`): those of these kinds, or in these fields of their
     /// parent. `None` is every node.
     pub text_nodes: Option<TextNodes>,
-    /// The nodes whose `op` and `op_at` rows a rule reads (`TextDemand::op`), as `text_nodes` are read (their `values`
-    /// none). `None` is every node.
-    pub op_nodes: Option<TextNodes>,
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub partial: BTreeSet<String>,
@@ -180,7 +177,7 @@ fn compile_spans(patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, S
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, op_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -195,7 +192,6 @@ impl Projection {
         let mut h = Sha256::new();
         h.update(b"rerail.projection-rows/v1\0");
         h.update(format!("{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}", self.shape, self.rx_spans, self.ast_patterns, self.text_spans, self.token_text, self.node_anchors, self.long_text, self.long_text_any, self.text_nodes, self.partial, self.verdict).as_bytes());
-        h.update(format!("\0{:?}", self.op_nodes).as_bytes());
         h.finalize().into()
     }
     /// Whether a guest of `grammar` that does not parse keeps its partial tree.
@@ -211,14 +207,14 @@ impl Projection {
         let shape = if core_shape { Shape::Core } else { Shape::T };
         let verdict = shape == Shape::T && error_triple;
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, op_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
+        Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
     /// (`demand`), and its phase's node anchors (`anchors`): found by its caller over its version
     /// (`logic::plan::text_demand::projection`).
     pub fn with_long_text_parts(mut self, demand: TextDemand, anchors: Result<BTreeSet<String>, String>) -> Self {
-        let TextDemand { long, any, negated_any, read, wide, op, op_wide } = demand;
+        let TextDemand { long, any, negated_any, read, wide } = demand;
         self.long_text = long;
         self.long_text_any = any.len() + negated_any > 0;
         crate::code_rule_dsl::logic::profile::decision("text past the inline bound", || {
@@ -233,17 +229,6 @@ impl Projection {
         });
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
             self.text_nodes = read;
-        }
-        crate::code_rule_dsl::logic::profile::decision("nodes with op rows", || match &op {
-            None => format!("every node ({} reads the ops of a node it does not narrow)", op_wide.as_deref().unwrap_or("a rule")),
-            Some(TextNodes { kinds, fields, parents, parent_fields, .. }) => {
-                let some = |s: &BTreeSet<String>| s.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
-                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({})", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields))
-            }
-        });
-        // `RERAIL_OP_NODES=all`: every node's, to compare.
-        if !std::env::var("RERAIL_OP_NODES").is_ok_and(|v| v == "all") {
-            self.op_nodes = op;
         }
         crate::code_rule_dsl::logic::profile::decision("nodes projected", || match &anchors {
             Ok(kinds) => format!("the root and the subtrees of {} kinds: {}", kinds.len(), kinds.iter().cloned().collect::<Vec<_>>().join(", ")),
@@ -362,10 +347,6 @@ pub struct TextDemand {
     pub read: Option<TextNodes>,
     /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.
     pub wide: Option<String>,
-    /// The nodes whose `op` or `op_at` a rule reads, narrowed as `read` is; `None` every node.
-    pub op: Option<TextNodes>,
-    /// Where `op` is every node: a rule that reads the ops of a node it does not narrow.
-    pub op_wide: Option<String>,
 }
 
 /// What `Projection::of_parts` reads of a program: the spans whose text a rule reads and whether a token's, whether the

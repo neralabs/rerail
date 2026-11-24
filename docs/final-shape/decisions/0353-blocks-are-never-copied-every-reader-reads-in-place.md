@@ -1338,7 +1338,13 @@ read on the kernels follows as its own step. The merge also takes the hub's `str
 `structural_after`, views of the tape (`tape_rows`' `Gap`, a derived column made on first read): a lookup by node
 reads them in place, so their node reads (`rr_node_before`, `rr_node_after`) and `core_rr::node_structural` go.
 `core_rr` makes no `op_at` (one definition, `tree::node_operators`), so the hub's narrowing of `core_rr`'s `op_at` to
-the nodes rules read (`op_nodes`) goes with it.
+the nodes rules read (`op_nodes`) goes with it: `Projection::op_nodes` and `TextDemand`'s `op` and `op_wide` are
+removed (2026-11-23), and the kept demand's version is 3.
+
+After the merge, two walks that `name` and `comment` as node reads had left empty: core's walk of the nodes made a
+literal's value (`rr_value_lit`, `value`'s eager half) only where a rule also read one of its other relations, so a
+`.rerail` file's `value` had no rows (`rule_files_have_text_facts`). `scalar_nodes` and `CoreRows::visits` now count
+the literal values.
 
 T's shape's `NodeRows` (Q121, 2026-11-23). T's per-node relations (`syntax::TRel`: `text`, `name`, `str`,
 `strprefix`, `intval`, `op`, which is `op_t` in core.rerail's shape) have one definition, `syntax::t_value`: the

@@ -1837,27 +1837,6 @@ fn nodes_read_as_codes_are_the_nodes_read_by_name() {
     }
 }
 
-/// The nodes given `op` and `op_at` rows are the ones the rules read, narrowed as `text`'s are: a fixed kind
-/// (python/annotations' `op(m, "|")` of a `binary_operator`), a parent's kind, a derived column; a node nothing
-/// narrows, or a program's own `op` rules, widens it to every node.
-#[test]
-fn op_rows_only_for_the_nodes_read() {
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
-    let kinds = |ks: &[&str]| Some(TextNodes { kinds: ks.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
-    for (body, op) in [
-        ("out(\"|\") :- kind(m, \"binary_operator\"), op(m, \"|\").", kinds(&["binary_operator"])),
-        ("out(o) :- kind(m, \"boolean_operator\"), op(m, o).\nout(o) :- kind(m, \"comparison_operator\"), !op(m, \"in\"), op_at(m, 0, o).", kinds(&["boolean_operator", "comparison_operator"])),
-        ("out(o) :- kind(p, \"list_splat_pattern\"), child(p, s, 0), op(s, o).", Some(TextNodes { parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
-        (".decl bin(n: node)\nbin(n) :- kind(n, \"binary_operator\").\nout(o) :- bin(n), op(n, o).", kinds(&["binary_operator"])),
-        ("out(o) :- child(_, n, 0), op(n, o).", None),
-        ("out(o) :- node(_, n, _, _, _), op(n, o).", None),
-        ("out(\"x\") :- kind(m, \"binary_operator\").", Some(TextNodes::default())),
-    ] {
-        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).op, op, "{body}");
-    }
-}
-
 /// A negated `text` read narrows the nodes given `text` as a positive one does: by the field the node is in
 /// (PYI025's `field(a, "alias", al), !text(al, "AbstractSet")`), the constant it is compared with, or its fixed kind.
 /// Of a constant within the bound it needs no text past the bound, even of a fixed kind; compared with a variable, its
