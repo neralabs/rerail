@@ -92,7 +92,8 @@ Check licences, pull the test data, and look for conflicting pull requests.
 A rule with no upstream needs no test data; its examples are the proof.
 
 1. Write `packs/<id>/rules/<rule>.json` ([writing-rules.md](writing-rules.md),
-   [text criteria](pack-format.md#description), check 8).
+   [text criteria](pack-format.md#description), check 8), or `packs/<id>/rules/<rule>.rerail`
+   ([Rules written in .rerail](pack-format.md#rules-written-in-rerail)).
 2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3).
 3. In a pack with a `conformance.json`, add its id to `own` there, so the gates know it has no upstream and judge it on `loads` and `compact` alone
    ([conformance.json](pack-format.md#conformancejson)). Where a generator writes `conformance.json`, add it to the
@@ -115,6 +116,11 @@ The pull request says what the examples show and what they leave out.
 - The changeset is needed because the rule changes what the pack publishes.
 - In a pack with a tool-pack, the contract run also needs the pulled data; without it, say so.
 - The rule starts on unless its listing says otherwise; nothing judges it against a tool.
+- A rule written in `.rerail` proves itself twice: its `pack.json` examples run through the `.rerail` runner, and its
+  own `.test` blocks (at least one) must pass (`rerail rules test packs/<id>/rules/<rule>.rerail`). It needs no `own`
+  entry: the gates count it as the pack's own. A rule that only fires across files gives its example the other files
+  it reads with `with`. A library file only the pack's rules include goes under `rules/lib/`. Block mode,
+  `.scope tool_calls`, fixes and options are not supported yet for it.
 
 </details>
 
@@ -267,7 +273,8 @@ version by hand, once ([publishing-a-new-pack.md](publishing-a-new-pack.md)).
 - **Skeleton**: package manifest, pack listing with no rules, README, LICENSE, NOTICE. Set-up recommends the pack by
   the listing's `match` (check 7).
 - **Register**: packs are npm workspaces. `generate:packs` writes core's pack list; check 7 fails when it is stale.
-- **Changeset**: the first release is `0.1.1`.
+- **Changeset**: the first release is `0.1.1`; a pack that needs Rerail 0.2 or newer, such as one with `.rerail`
+  rules, takes a `minor`, so its first release is `0.2.0`.
 - **Rules**: a pack whose ports are all candidates ships no rules and is never recommended.
 - **Repository lists**: the pack tables in rule-packs.md and the root README, `packs/README.md`, and the first
   paragraph of `docs/pack-format.md`.

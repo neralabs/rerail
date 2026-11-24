@@ -959,7 +959,7 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
 }
 
 /// `prev_token(n, s)` is the text of the child right before n among its parent's stored children, and `token(p, i, s,
-/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (RER-131), and
+/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (decision 0161), and
 /// no relation holds one: the call's `(`, `)` and `,`, the `from` and the import list's `,` are in neither. A keyword
 /// some other word of its gap holds is stored where implied too: `from m import (a, b)` makes `import` one.
 #[test]

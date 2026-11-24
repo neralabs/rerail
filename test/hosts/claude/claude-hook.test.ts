@@ -1,9 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -13,7 +15,7 @@ import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/c
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { answering, countingDaemon, type CountingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -94,6 +96,50 @@ describe("Claude Code hook without a daemon", () => {
   });
 });
 
+/**
+ * A listener on an engine pipe in a process of its own (`path`, then `mode`): another process answers 500; the home's
+ * older daemon answers the proof 404, as Rerail 0.1.4's did, and each event as an engine does. Each request is written
+ * out as its method, path and capability. It ends once its stdin does.
+ */
+const LISTENER_APART = `
+const server = require("node:http").createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8").on("data", chunk => { body += chunk; });
+  request.on("end", () => {
+    process.stdout.write(request.method + " " + request.url + " " + (request.headers["x-rerail-access"] ?? "no capability") + "\\n");
+    if (process.argv[2] !== "older daemon" || request.url !== "/events") return void response.writeHead(process.argv[2] === "older daemon" ? 404 : 500).end();
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ eventId: JSON.parse(body).event.eventId, deliveries: [] }));
+  });
+});
+server.listen(process.argv[1], () => process.stdout.write("listening\\n"));
+process.stdin.on("end", () => { server.close(); server.closeAllConnections(); }).resume();
+`;
+
+interface ListenerApart {
+  pid: number;
+  /** Ends it, and gives every request it got. */
+  stop(): Promise<string[]>;
+}
+
+async function listenerApart(path: string, mode: "other process" | "older daemon", started: ChildProcess[]): Promise<ListenerApart> {
+  const child = spawn(process.execPath, ["-e", LISTENER_APART, path, mode], { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+  started.push(child);
+  const received: string[] = [];
+  const listening = Promise.withResolvers<void>();
+  createInterface({ input: child.stdout }).on("line", line => (line === "listening" ? listening.resolve() : received.push(line)));
+  child.once("exit", () => listening.reject(new Error(`the ${mode} ended before it listened`)));
+  await listening.promise;
+  return {
+    pid: child.pid!,
+    stop: async () => {
+      const closed = once(child, "close");
+      child.stdin.end();
+      await closed;
+      return received;
+    },
+  };
+}
+
 describe("Claude Code hook with a daemon that misses its health probe", () => {
   // The hook's waits for the daemon, shorter than the product's 2 s probe and 10 s busy wait, in the same order and
   // with the same 2 s start check (`READ_TIMEOUT_MS`) before them: a hook waits `HOOK_WAIT_MS` from the event's arrival.
@@ -102,11 +148,13 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
   const BUSY_MS = 6_000;
   const HOOK_WAIT_MS = PROBE_MS + BUSY_MS;
   const servers: Server[] = [];
+  const apart: ChildProcess[] = [];
   beforeEach(() => {
     waits.probeMs = PROBE_MS;
     waits.busyMs = BUSY_MS;
   });
   afterEach(async () => {
+    for (const child of apart.splice(0)) child.kill();
     waits.probeMs = undefined;
     waits.busyMs = undefined;
     vi.unstubAllEnvs();
@@ -198,6 +246,86 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     expect(received.filter(line => process.platform !== "win32" || line !== "POST /proof no capability")).toEqual([]);
   });
 
+  /**
+   * Another process listening on a new engine pipe, which Windows names as the pipe's holder; each request it gets is
+   * kept as its method, path and capability, and answered 500. `received` gives every request once it is ended.
+   */
+  async function listenerInAnotherProcess(started: ChildProcess[]): Promise<{ otherProcessPipe: string; received: () => Promise<string[]> }> {
+    const otherProcessPipe = `\\\\.\\pipe\\rerail-other-process-${process.pid}-${Date.now()}`;
+    return { otherProcessPipe, received: (await listenerApart(otherProcessPipe, "other process", started)).stop };
+  }
+
+  /** daemon.json naming `pipe` as its engine's pipe, with nothing answering at the recorded URL. */
+  async function recordEnginePipe(pipe: string): Promise<void> {
+    await rewriteState(state => ({ ...state, url: "http://127.0.0.1:1/", port: 1, kernelSocketPath: pipe }));
+  }
+
+  // Off Windows the daemon's socket sits in a folder only the person can open, so no other account can hold it.
+  it.runIf(process.platform === "win32").each([
+    // As daemon.json does once a logoff or a reboot ended the daemon that wrote it.
+    { names: "the pipe another process holds", inDaemonJson: true },
+    // As daemon.json does when another process held the default pipe's name as the daemon started.
+    { names: "the daemon's own pipe", inDaemonJson: false },
+  ])("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names until what holds it proves it is this home's daemon (daemon.json names $names)", { timeout: 60_000 }, async ({ inDaemonJson }) => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    // The listener began before the daemon stamped its start in daemon.json, so only its pid tells it from the daemon.
+    const { otherProcessPipe, received: otherProcessReceived } = await listenerInAnotherProcess(apart);
+    await startNativeTestDaemon(root);
+    if (inDaemonJson) await recordEnginePipe(otherProcessPipe);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", otherProcessPipe);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "other-process-session", cwd: root };
+    const answers = [
+      await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath).catch((error: unknown) => error),
+      await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath).catch((error: unknown) => error),
+    ];
+    // Only challenges reached the pipe, each hook's own and, where daemon.json names the pipe, its start check's: neither
+    // the capability nor an event.
+    const received = await otherProcessReceived();
+    expect(received.filter(line => line !== "POST /proof no capability")).toEqual([]);
+    expect(received).toContain("POST /proof no capability");
+    const notThisHome = { name: "DaemonUnreachableError", message: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) };
+    expect(answers).toEqual([expect.objectContaining(notThisHome), expect.objectContaining(notThisHome)]);
+    // Each event lost so is in the hook failure log `rerail status` reads, with that reason.
+    const notThisHomeLogged = (event: string) => expect.objectContaining({ event, reason: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) });
+    const log = await readFile(join(process.env.RERAIL_HOME!, "hook-failures.jsonl"), "utf8");
+    const failures = log.split("\n").filter(line => line !== "").map(line => JSON.parse(line) as { reason: string });
+    expect(failures.filter(failure => failure.reason.includes(otherProcessPipe))).toEqual([notThisHomeLogged("SessionStart"), notThisHomeLogged("UserPromptSubmit")]);
+  });
+
+  it.runIf(process.platform === "win32")("sends a session's events to the home's own daemon of Rerail 0.1.4 or earlier on the pipe RERAIL_ENGINE_SOCKET names, which gives no proof, since Windows names that daemon as the pipe's holder", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const pipe = `\\\\.\\pipe\\rerail-older-${process.pid}-${Date.now()}`;
+    const older = await listenerApart(pipe, "older daemon", apart);
+    // daemon.json as that daemon wrote it: its pid, its pipe and capability, and a start stamped after its process began.
+    await mkdir(process.env.RERAIL_HOME!, { recursive: true });
+    await writeFile(join(process.env.RERAIL_HOME!, "daemon.json"), JSON.stringify({ pid: older.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/",
+      version: "0.1.4", databasePath: defaultRerailDatabasePath(), kernelSocketPath: pipe, ui: "bundled", startedAt: Date.now(), packageRoot: root, accessToken: "older-capability" }));
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", pipe);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "older-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect((await older.stop()).filter(line => line.startsWith("POST /events"))).toEqual(["POST /events older-capability", "POST /events older-capability"]);
+  });
+
+  it("records a session's events at the daemon's engine socket RERAIL_ENGINE_SOCKET names, which on Windows proves itself first", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const daemon = await startNativeTestDaemon(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", daemon.kernelSocketPath);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "named-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect(eventIds()).toEqual(expect.arrayContaining(["named-session:SessionStart", "named-session:prompt:p1"]));
+  });
+
   /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
   async function silentFront(): Promise<string> {
     const server = createHttpServer(() => undefined);
@@ -285,6 +413,22 @@ describe("Claude Code hook with a running daemon", () => {
       return [{ eventId: entry.data.item.metadata.fields.eventId, text: entry.data.item.text }];
     });
   }
+
+  it("gives the session note its link and rules from the daemon's answer to the session's start, reading neither again", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const reads = vi.spyOn(globalThis, "fetch");
+    const start = await runClaudeHook({ session_id: "noted-session", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonHookOptions(root, { keepDatabase: false }));
+    const paths = reads.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : input).pathname);
+    reads.mockRestore();
+    // The same note the daemon's HTTP API gives, read here after the hook.
+    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "noted-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "noted-session", cwd: root }));
+    expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note } });
+    // The start check reads the presentation before the event (`hookRerailStarted`); after the answer nothing is read.
+    expect(paths.filter(path => path.startsWith("/api/"))).toEqual(["/api/presentation"]);
+  });
 
   it("ends a reply at its empty last batch and stores the whole reply, blank line kept, as one message", { timeout: 60_000 }, async () => {
     const root = await temporaryDirectory();
@@ -675,6 +819,80 @@ describe("Claude Code one-shot hook", () => {
     }
   });
 
+  it("builds the session note and a steer's why? from the daemon's answer, asking it nothing more, and reads an older daemon after it", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const sessionNote = { setUp: true as const, ruleCount: 26 };
+      const start = await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, answering(scriptedLoop({}), { dashboard, sessionNote }), join(root, "sessions"));
+      expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: sessionStartNote(dashboard, "claude-code", "claude-session", sessionNote) } });
+
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const result = { ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: {}, tool_response: "ok" };
+      const linked = await handleClaudeEvent({ ...result, tool_use_id: "tool-1" }, answering(scriptedLoop({ result: steer }), { dashboard }), join(root, "sessions"));
+      expect(JSON.stringify(linked)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+
+      // A daemon older than these facts answers without them: the hook reads the dashboard from it, as before.
+      const older = await handleClaudeEvent({ ...result, tool_use_id: "tool-2" }, scriptedLoop({ result: steer }), join(root, "sessions"));
+      expect(JSON.stringify(older)).toContain(`${daemon.origin}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toContain("/api/repository");
+    } finally {
+      vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it("links a steer it holds with the answer that found it, so the next tool call's hook asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const storageRoot = join(root, "sessions");
+      await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard }), storageRoot);
+      await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, answering(scriptedLoop({ "user-prompt": steer }), { dashboard }), storageRoot);
+
+      // The tool call's answer links nothing of its own, so it carries no dashboard.
+      const call = await handleClaudeEvent({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} }, scriptedLoop({}), storageRoot);
+      // Either steer held unlinked would have the hook read the dashboard from the daemon.
+      expect(JSON.stringify(call)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it("links a held steer again from the daemon that answers when the daemon restarted at another origin", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    const before = await countingDaemon(home);
+    vi.stubEnv("RERAIL_HOME", home);
+    let after: CountingDaemon | undefined;
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const storageRoot = join(root, "sessions");
+      await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard: before.origin }), storageRoot);
+      // The daemon restarts on another port: its state file names the new origin, and the old one listens no more.
+      after = await countingDaemon(home);
+      await before.close();
+      const call = await handleClaudeEvent({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} }, scriptedLoop({}), storageRoot);
+      expect(JSON.stringify(call)).toContain(`${after.origin}#rule/acme%3Ano-print`);
+      expect(JSON.stringify(call)).not.toContain(before.origin);
+    } finally {
+      vi.unstubAllEnvs();
+      await before.close();
+      await after?.close();
+    }
+  });
+
   it("gives a turn-end steer to the coding agent at Stop, with the person's line and its count, and nothing at the next prompt", async () => {
     const root = await temporaryDirectory();
     const common = { session_id: "claude-session", cwd: root };
@@ -838,5 +1056,36 @@ describe("Claude Code one-shot hook", () => {
       scriptedLoop({}),
       storageRoot,
     )).toEqual({});
+  });
+});
+
+describe("a Claude Code hook while the daemon is not reading", () => {
+  it("leaves its event and answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    // Without its own branch, the hook would route the held steer into its answer and empty the session's file.
+    const call = { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_input: {} };
+    expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-1" }, left, storageRoot)).toEqual({});
+    expect(left.events.map(event => event.kind)).toEqual(["call"]);
+    expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-2" }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" }))
+      .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: expect.stringContaining("Deferred steer.") } });
+  });
+
+  it("removes the steers held for the session at its end, as one the daemon answers does, since no later hook of it reads them", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionEnd", reason: "exit" }, left, storageRoot)).toEqual({});
+    expect(left.events).not.toEqual([]);
+    // A session resumed under the same id: before, its first answer carried the steer held for the session that ended.
+    const call = { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} };
+    expect(await handleClaudeEvent(call, scriptedLoop({}), storageRoot, { NO_COLOR: "1" })).toEqual({});
   });
 });

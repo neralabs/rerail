@@ -59,7 +59,7 @@ function capabilitiesJson(): string {
 export const NOT_JSON_REPRESENTABLE = "the document is not JSON representable";
 
 /**
- * How the engine words its refusal of a code rule that reads a token a tape may leave out (RER-131, t31): a form older
+ * How the engine words its refusal of a code rule that reads a token a tape may leave out (decision 0161, t31): a form older
  * packs were written in, which this engine no longer answers.
  */
 const READS_LEFT_OUT_TOKEN = "a token test reads a token the tape may leave out";
@@ -68,6 +68,20 @@ const READS_LEFT_OUT_TOKEN = "a token test reads a token the tape may leave out"
 export function readsLeftOutToken(reason: string): boolean {
   return reason.startsWith(READS_LEFT_OUT_TOKEN);
 }
+
+/**
+ * The stable code of an installed pack's rule this Rerail does not run because it reads a token a tape may leave out
+ * (`readsLeftOutToken`): the catalog keeps the rule, shows it as not running, and the pack's next version runs it.
+ */
+export const READS_LEFT_OUT_TOKEN_CODE = "reads-left-out-token";
+
+/** Why a code rule is kept but never evaluated: the engine does not read its language yet, or no longer reads its form. */
+export interface InactiveCodeRule {
+  code: typeof LANGUAGE_NOT_SUPPORTED | typeof READS_LEFT_OUT_TOKEN_CODE;
+  reason: string;
+}
+
+export const INACTIVE_CODE_RULE_CODES = [LANGUAGE_NOT_SUPPORTED, READS_LEFT_OUT_TOKEN_CODE] as const;
 
 /**
  * Compile a schema-valid code rule exactly as the live catalog will (same source text, same bundled capabilities),

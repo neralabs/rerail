@@ -113,6 +113,29 @@ describe("SQLite audit persistence", () => {
     store.close();
   });
 
+  it("records an audit the repository owns under its checkout's repository and no session, and its recorder's open interrupts it", async () => {
+    const path = await temporaryDatabase();
+    const store = new SqliteAuditStore(path);
+    const client = new Database(path);
+    try {
+      client.prepare("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 1, 1)").run();
+      client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, created_at, last_seen_at) VALUES ('/workspace', 'repo', 'clone', 1, 1)").run();
+      const owned = store.start({ ...input, owner: "repository", mode: "log" });
+      const other = store.start({ ...input, sessionId: "session-b", owner: "repository", mode: "log" });
+      expect(store.get(owned)).toMatchObject({ sessionId: null, repositoryId: "repo", recordedBy: "session-a" });
+      expect(store.list({}, ["repo"]).audits.map(audit => audit.auditId).sort()).toEqual([owned, other].sort());
+      expect(store.list({}, ["another"]).total).toBe(0);
+      // The session that ran it opens again: what it left running for the repository is over, another session's is not.
+      store.interrupt("session-a");
+      expect([store.get(owned)?.status, store.get(other)?.status]).toEqual(["interrupted", "running"]);
+      // A checkout Rerail has not recorded names no repository to own the audit.
+      expect(() => store.start({ ...input, owner: "repository", workspaceRoot: "/elsewhere" })).toThrow("No repository is recorded for /elsewhere");
+    } finally {
+      client.close();
+      store.close();
+    }
+  });
+
   // Every evaluator's open interrupts its session's earlier runs. Before, it updated with nothing to match and waited up
   // to 5 s on the daemon's thread for another process's write lock.
   it("interrupts a session with nothing running without waiting for another process's write lock", async () => {

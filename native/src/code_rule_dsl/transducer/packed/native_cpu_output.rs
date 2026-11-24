@@ -353,7 +353,7 @@ pub(super) fn define(
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_apply_output", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_apply_output", Linkage::Local, &signature)?;
     let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = signature;

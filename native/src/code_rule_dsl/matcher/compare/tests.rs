@@ -628,7 +628,7 @@
         }
     }
 
-    /// A tape leaves out the tokens its grammar implies (RER-131): `tokens` reads them back from the
+    /// A tape leaves out the tokens its grammar implies (decision 0161): `tokens` reads them back from the
     /// text between leaves and from a leaf whose kind has children, as a full tree's leaves.
     #[test]
     fn tokens_compare_reads_the_tokens_a_tape_leaves_out() {

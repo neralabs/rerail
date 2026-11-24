@@ -1,11 +1,13 @@
 import type { SteerRule } from "../adapter-contract.js";
-import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
+import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import type { GitReads } from "../git.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
-import { steerOrigin, steerTitle, type SteerRuleSource } from "./steer-origin.js";
+import { steerNaming, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1475,6 +1477,11 @@ export interface CodeRuleEditBatch {
    * in `log` mode, so the restored source is judged and recorded but steers nothing.
    */
   mode?: AuditMode;
+  /**
+   * Who these edits' audits belong to; `session` when absent. `repository`: changes the walk of the other worktrees
+   * found that no session made, recorded once for the repository by the one session the walk handed them to.
+   */
+  owner?: AuditOwner;
 }
 
 export interface CodeRuleSourceSpan {
@@ -1629,8 +1636,18 @@ export interface CodeRuleAuditor {
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
-  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
-  worktreeRoots?(): readonly string[];
+  /**
+   * The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent.
+   * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
+   */
+  worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /**
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
+   * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list
+   * stored for the registry, with nothing started, for a call in the same synchronous run to take. Undefined, with
+   * nothing started, where there is nothing to learn. Never throws, and what it gives to wait on never rejects.
+   */
+  learnWorktreeRoots?(git: GitReads): WorktreeListLearning | undefined;
   /**
    * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
    * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.
@@ -1652,6 +1669,8 @@ export interface CodeRuleAuditor {
    * walk's included, is checked by one audit of the whole repository. False when absent.
    */
   steeringWaitsForLog?(): boolean;
+  /** The agent's turn ended (or the session reached its final checkpoint): work waiting for the session to go quiet starts now. */
+  turnEnded?(): void;
   /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
@@ -1758,9 +1777,10 @@ export function buildSteer(
   shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
+  const naming = steerNaming(sourceOf);
   return {
     content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
-    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId)), ruleId => steerTitle(ruleId, sourceOf(ruleId))),
+    rules: steerRules(findings, naming.origin, naming.title),
   };
 }

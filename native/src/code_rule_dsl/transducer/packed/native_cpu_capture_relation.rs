@@ -116,8 +116,8 @@ pub(super) fn define(
     module: &mut JITModule,
     id: FuncId,
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
-    let count = declare(module, "tempo_capture_geometry_count", 3)?;
-    let at = declare(module, "tempo_capture_geometry_at", 4)?;
+    let count = declare(module, "rerail_capture_geometry_count", 3)?;
+    let at = declare(module, "rerail_capture_geometry_at", 4)?;
     define_geometry_walk(module, count, false)?;
     define_geometry_walk(module, at, true)?;
     let mut context = module.make_context();

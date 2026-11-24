@@ -146,6 +146,29 @@ export function andList(names: readonly string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
+/** How wide the summary's note about rules not run is wrapped, as its other lines are written. */
+const SUMMARY_NOTE_WIDTH = 72;
+
+/** An installed pack with rules this Rerail does not run (`RuleCatalog.notRun`), and how many. */
+export interface PackNotRun {
+  readonly name: string;
+  readonly version: string | null;
+  readonly ruleCount: number;
+}
+
+/**
+ * Which installed packs have rules this Rerail does not run, and what runs them again; undefined when every rule runs.
+ * Said after an update and at set-up, which both keep a pack at the version installed.
+ */
+export function notRunLine(packs: readonly PackNotRun[]): string | undefined {
+  if (packs.length === 0) return undefined;
+  const total = packs.reduce((sum, pack) => sum + pack.ruleCount, 0);
+  const which = andList(packs.map(pack => `${clean(pack.name)}${pack.version === null ? "" : ` ${clean(pack.version)}`} (${pack.ruleCount})`));
+  const [they, them] = total === 1 ? ["it tests", "it"] : ["they test", "them"];
+  const next = packs.length === 1 ? "The pack's next version" : "Each pack's next version";
+  return `This Rerail does not run ${plural(total, "rule")} of ${which}: ${they} a token parsed files now leave out. ${next} runs ${them} again; rerail packs list names ${them}.`;
+}
+
 function agentNames(agents: readonly CodingAgent[]): string[] {
   return agents.map(agent => clean(agent.name));
 }
@@ -882,6 +905,8 @@ export interface AgentsConnection {
   readonly codexTrust?: boolean;
   /** OMP also loads its own plugin install of Rerail (`omp plugin install`), so two copies run until the person removes it. */
   readonly ompPlugin?: boolean;
+  /** cmd.exe ran no command at set-up, so Claude Code's hooks start with `node` from its PATH. */
+  readonly nodeHookFallback?: boolean;
   /** Whether any coding agent was found on this computer. */
   readonly anyFound: boolean;
   /** Every coding agent Rerail works with, named when none is connected. */
@@ -892,7 +917,10 @@ export interface SummaryInput {
   readonly repoName: string;
   /** The rule packs now on, by name. Never the rules themselves. */
   readonly packNames: readonly string[];
+  /** The rules on that run: those this Rerail does not run (`notRun`) are left out. */
   readonly ruleCount: number;
+  /** The packs added with rules on here that this Rerail does not run, and how many: `ruleCount` leaves those out. */
+  readonly notRun?: readonly PackNotRun[];
   readonly dashboard: DashboardLink;
   /** Other repos where Rerail is already started; empty on a first set-up. */
   readonly otherStartedRepos?: readonly string[];
@@ -951,6 +979,23 @@ function ompPluginRows(agents: AgentsConnection): string[] {
     : [];
 }
 
+/** cmd.exe ran no command at set-up, so Claude Code's hooks start with node: what that costs, and how to try again. */
+function nodeHookRows(agents: AgentsConnection): string[] {
+  return agents.nodeHookFallback === true
+    ? summaryRow("Claude", [
+      "cmd.exe could not run a test command, so Rerail’s hooks start",
+      "with node. Where Claude Code’s PATH finds another Node first,",
+      "each hook event starts a second Node.",
+      "Run rerail install --refresh to try cmd.exe again.",
+    ])
+    : [];
+}
+
+/** What the person does in a coding agent after set-up connected it: trust Codex's hooks, and the like. */
+function agentStepRows(agents: AgentsConnection): string[] {
+  return [...codexTrustRows(agents), ...ompPluginRows(agents), ...nodeHookRows(agents)];
+}
+
 /**
  * In place of the rows that need a coding agent, when none is connected and none failed to connect (the failure says
  * what to do): none is connected, which ones Rerail works with, and how to connect one.
@@ -995,12 +1040,13 @@ function summaryLines(input: SummaryInput, style: Style): string[] {
     "to watch Rerail catch and fix a broken rule.",
     ...otherFormLines(connected, "rerail-show-me"),
   ]);
+  const notRun = notRunLine(input.notRun ?? []);
   return [
     bullet(`Rerail is on in ${repo} · ${packsOn}`, style),
+    ...(notRun === undefined ? [] : wrapWords(notRun.split(" "), SUMMARY_NOTE_WIDTH).map(row => `  ${row}`)),
     ...connectionNotes(agents, style),
     "",
-    ...codexTrustRows(agents),
-    ...ompPluginRows(agents),
+    ...agentStepRows(agents),
     ...noAgentRows(agents),
     ...tryIt,
     ...summaryRow("Manage", manageRows(input.dashboard, style)),
@@ -1275,8 +1321,7 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
     bullet("Rerail is installed · not on in any repo yet", style),
     ...connectionNotes(agents, style),
     "",
-    ...codexTrustRows(agents),
-    ...ompPluginRows(agents),
+    ...agentStepRows(agents),
     ...noAgentRows(agents),
     ...start,
     "",
@@ -1298,7 +1343,7 @@ export interface StoppedRepoInput {
 export function renderStoppedRepo(input: StoppedRepoInput, lane: SetupLane): string {
   const style = styleFor(lane);
   const start = lane === "terminal" ? "rerail start" : commandIn(input.agents?.connected ?? [], "rerail-start");
-  const notes = input.agents === undefined ? [] : [...connectionNotes(input.agents, style), ...codexTrustRows(input.agents), ...ompPluginRows(input.agents)];
+  const notes = input.agents === undefined ? [] : [...connectionNotes(input.agents, style), ...agentStepRows(input.agents)];
   return lines([`  ${style.dim("○")} Rerail is set up in ${clean(input.repoName)}, and stopped there. Start it again with ${start}.`, ...notes]);
 }
 

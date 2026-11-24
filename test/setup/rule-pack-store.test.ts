@@ -2,9 +2,10 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, w
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import semver from "semver";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
-import { CommandTimeoutError, type NpmRunner } from "../../src/runtime/index.js";
+import { CommandTimeoutError, KILL_GRACE_MS, type NpmRunner, type Progress } from "../../src/runtime/index.js";
 import {
   addPackSpecs,
   discoverPacks,
@@ -15,9 +16,11 @@ import {
   npmPackStore,
   packsLeftOutByCore,
   parsePackVersions,
+  updatePacks,
   type PackStore,
   type PackVersion,
 } from "../../src/setup/index.js";
+import { PACKS_LOCK_WAIT_MS } from "../../src/setup/packs-lock.js";
 import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../support/oracles.js";
@@ -163,26 +166,76 @@ describe("npmPackStore", () => {
     expect(existsSync(current!)).toBe(true);
   });
 
-  it("installs exact versions into the Rerail home's packs from npm's cache, after `--`", async () => {
+  it("installs exact versions into the Rerail home's packs from npm's cache when asked to, after `--`", async () => {
     const home = temporaryHome();
     const { npm, calls } = fakeNpm();
 
-    await npmPackStore(home, npm).install(["@neralabs/rerail-pack-typescript@0.1.1", "@neralabs/rerail-pack-complexity@0.1.2-next.0"]);
+    await npmPackStore(home, npm).install(["@neralabs/rerail-pack-typescript@0.1.1", "@neralabs/rerail-pack-complexity@0.1.2-next.0"], { preferOffline: true });
 
     const [args] = calls;
     expect(prefixOf(args!)).toBe(join(home, "packs"));
     expect(args).toEqual(expect.arrayContaining(["--save-exact", "--ignore-scripts"]));
-    // The versions discovery fetched are in npm's cache, so the install does not ask the registry for them again.
     expect(args).toContain("--prefer-offline");
     expect(specsOf(args!)).toEqual(["@neralabs/rerail-pack-typescript@0.1.1", "@neralabs/rerail-pack-complexity@0.1.2-next.0"]);
   });
 
-  it("asks the registry when a spec names a tag or range rather than a version", async () => {
+  it("asks the registry for an exact version unless told to prefer the cache, which may list an older set of versions", async () => {
     const { npm, calls } = fakeNpm();
 
-    await npmPackStore(temporaryHome(), npm).install(["@neralabs/rerail-pack-typescript@latest"]);
+    await npmPackStore(temporaryHome(), npm).install(["@neralabs/rerail-pack-typescript@0.1.1"]);
 
     expect(calls[0]).not.toContain("--prefer-offline");
+  });
+
+  it("asks the registry when npm's cached listing has no such version, once", async () => {
+    const { npm, calls } = fakeNpm();
+    const offlineMisses: NpmRunner = async (args, options) => {
+      if (args.includes("--prefer-offline")) {
+        calls.push([...args]);
+        throw new Error("npm error code ETARGET\nnpm error notarget No matching version found for @neralabs/rerail-pack-typescript@0.1.9.");
+      }
+      return await npm(args, options);
+    };
+
+    await npmPackStore(temporaryHome(), offlineMisses).install(["@neralabs/rerail-pack-typescript@0.1.9"], { preferOffline: true });
+
+    expect(calls.map(args => args.includes("--prefer-offline"))).toEqual([true, false]);
+  });
+
+  it("does not ask again when the cache-first install fails for another reason", async () => {
+    const { npm, calls } = fakeNpm(() => "npm error code E404\nnpm error 404 Not Found");
+
+    await expect(npmPackStore(temporaryHome(), npm).install(["@neralabs/rerail-pack-typescript@0.1.9"], { preferOffline: true })).rejects.toThrow(/E404/u);
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it("asks the registry when a spec names a tag or range rather than a version, even when told to prefer the cache", async () => {
+    const { npm, calls } = fakeNpm();
+
+    await npmPackStore(temporaryHome(), npm).install(["@neralabs/rerail-pack-typescript@latest"], { preferOffline: true });
+
+    expect(calls[0]).not.toContain("--prefer-offline");
+  });
+
+  it("stops an install, and the install and removal that put it back, within the packs lock's wait", async () => {
+    const timeouts: (number | undefined)[] = [];
+    const npm: NpmRunner = async (_args, options) => {
+      timeouts.push(options?.timeoutMs);
+      return { stdout: "", stderr: "" };
+    };
+    const store = npmPackStore(temporaryHome(), npm);
+
+    await store.install(["@neralabs/rerail-pack-typescript@0.1.1"]);
+    await store.remove(["@neralabs/rerail-pack-typescript"]);
+
+    expect(timeouts).toHaveLength(2);
+    const [install, remove] = timeouts.map(timeout => {
+      expect(timeout).toBeDefined();
+      return timeout! + KILL_GRACE_MS;
+    });
+    // The lock is held through a stopped install and its put-back: an install, then a removal.
+    expect(install! * 2 + remove!).toBeLessThan(PACKS_LOCK_WAIT_MS);
   });
 });
 
@@ -190,16 +243,19 @@ describe("npmPackStore", () => {
  * A store that installs `@neralabs/rerail-pack-typescript@<version>` by linking a copy of this repository's
  * typescript pack at that version, whose core range is `ranges[version]`.
  */
-function copiesStore(home: string, ranges: Record<string, string>): PackStore & { installs: string[][]; removes: string[][] } {
+function copiesStore(home: string, ranges: Record<string, string>): PackStore & { installs: string[][]; offline: boolean[]; removes: string[][] } {
   const installs: string[][] = [];
+  const offline: boolean[] = [];
   const removes: string[][] = [];
   return {
     home,
     installs,
+    offline,
     removes,
     fetch: async () => ({ fetched: [], problems: [], release: async () => {} }),
-    async install(specs) {
+    async install(specs, options) {
       installs.push([...specs]);
+      offline.push(options?.preferOffline === true);
       for (const spec of specs) {
         const version = spec.slice(spec.lastIndexOf("@") + 1);
         // A restore names the folder npm recorded (`…@file:<copy>`); any other spec is a version to copy the pack at.
@@ -234,6 +290,8 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
     expect(problem).toMatch(/^@neralabs\/rerail-pack-typescript@9\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u);
     expect(store.installs.at(-1)).toEqual([`@neralabs/rerail-pack-typescript@file:${join(home, "copies", "0.1.1")}`]);
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
+    // Discovery has just fetched the versions an answer names, so they install from npm's cache; the put-back asks.
+    expect(store.offline).toEqual([true, true, false]);
   });
 
   it("removes a pack it installed that is left out, when none was installed before", async () => {
@@ -340,6 +398,8 @@ describe("addPackSpecs", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
     expect(added).toEqual({ problem: expect.stringMatching(/^@neralabs\/rerail-pack-typescript@9\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u) });
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
+    // A version named by hand may be newer than npm's cached listing of the pack, so npm asks the registry (#992).
+    expect(copies.offline).toEqual([false, false, false]);
   });
 
   it("checks a third party's pack as it does Rerail's own, and says what it installed under its package name", async () => {
@@ -399,6 +459,51 @@ describe("packsLeftOutByCore", () => {
   }, 30_000);
 });
 
+/** A package as a fake registry holds it: its dist-tags, and each version's core range (null for none named). */
+interface RegistryPackage {
+  readonly tags: Readonly<Record<string, string>>;
+  readonly versions: Readonly<Record<string, string | null>>;
+}
+
+type NpmCall = { args: string[]; cwd: string | undefined; timeoutMs: number | undefined };
+
+/**
+ * An npm whose `view` answers from `registry`, as npm does: `view <package> dist-tags versions` with the listing, and
+ * `view <package>@<a || b> <fields>` with the fields asked for of each version the range names, oldest first: one answer
+ * alone unwrapped, a version that names no core range without `peerDependencies`, and, as npm 11's `view.js` does,
+ * every answer reduced to its one field when the first has only one. A package it lacks is a 404; an Error is thrown
+ * as npm's failure.
+ */
+function registryNpm(registry: Readonly<Record<string, RegistryPackage | Error>>): { npm: NpmRunner; calls: NpmCall[] } {
+  const calls: NpmCall[] = [];
+  const npm: NpmRunner = async (args, options = {}) => {
+    calls.push({ args: [...args], cwd: options.cwd, timeoutMs: options.timeoutMs });
+    const spec = args[1]!;
+    const listing = args[2] === "dist-tags";
+    const packageName = listing ? spec : spec.slice(0, spec.lastIndexOf("@"));
+    const found = registry[packageName];
+    if (found instanceof Error) throw found;
+    if (found === undefined) throw new Error(`npm failed (1): npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/${packageName} - Not found`);
+    if (listing) return { stdout: JSON.stringify({ "dist-tags": found.tags, versions: Object.keys(found.versions) }), stderr: "" };
+    const fields = args.slice(2, args.indexOf("--json"));
+    const named = spec.slice(spec.lastIndexOf("@") + 1).split(" || ").filter(version => version in found.versions).sort(compareVersions);
+    const answers: Record<string, unknown>[] = named.map(version => {
+      const range = found.versions[version];
+      const all: Record<string, unknown> = { name: packageName, version, ...range === null ? {} : { peerDependencies: { "@neralabs/rerail": range } } };
+      return Object.fromEntries(fields.filter(field => field in all).map(field => [field, all[field]]));
+    });
+    const first = Object.keys(answers[0] ?? {});
+    const printed = first.length === 1 ? answers.map(answer => answer[first[0]!]) : answers;
+    return { stdout: printed.length === 0 ? "" : JSON.stringify(printed.length === 1 ? printed[0] : printed), stderr: "" };
+  };
+  return { npm, calls };
+}
+
+const compareVersions = (left: string, right: string): number => semver.compare(left, right);
+
+/** The packages the views in `calls` asked about, each as `<package> <fields>`, in order. */
+const viewsOf = (calls: readonly NpmCall[]): string[] => calls.map(call => `${call.args[1]} ${call.args[2]}`);
+
 describe("newerPackVersions", () => {
   /** Installs a bare pack package (a `package.json` only) into `home` as npm records it: `spec`, by default its version. */
   function installBare(home: string, packageName: string, version: string, spec = version): void {
@@ -408,29 +513,16 @@ describe("newerPackVersions", () => {
     installPackDirectory(directory, packageName, home, spec);
   }
 
-  /** An npm whose `view <package>@<tag>` answers from `registry`, by spec; a spec it lacks has no version under the tag. */
-  function registryNpm(registry: Record<string, unknown>): { npm: NpmRunner; calls: { args: string[]; cwd: string | undefined; timeoutMs: number | undefined }[] } {
-    const calls: { args: string[]; cwd: string | undefined; timeoutMs: number | undefined }[] = [];
-    const npm: NpmRunner = async (args, options = {}) => {
-      calls.push({ args: [...args], cwd: options.cwd, timeoutMs: options.timeoutMs });
-      const answer = registry[args[1]!];
-      if (answer instanceof Error) throw answer;
-      if (answer === undefined) throw new Error(`npm failed (1): npm error code E404\nnpm error 404 No match found for version ${args[1]!.split("@").at(-1)!}`);
-      return { stdout: JSON.stringify(answer), stderr: "" };
-    };
-    return { npm, calls };
-  }
-
   it("names each installed pack with a newer version under the channel that fits the active core, asking npm from no project", async () => {
     const home = temporaryHome();
     installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
     installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
     installBare(home, "@acme/rerail-pack-sql", "1.0.0");
     const { npm, calls } = registryNpm({
-      "@neralabs/rerail-pack-typescript@latest": { version: "0.1.6", peerDependencies: { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" } },
-      // npm prints the version alone when the package declares no peer dependencies.
-      "@acme/rerail-pack-sql@latest": "1.1.0",
-      "@neralabs/rerail-pack-python@latest": { version: "0.1.6", peerDependencies: { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" } },
+      "@neralabs/rerail-pack-typescript": { tags: { latest: "0.1.6" }, versions: { "0.1.5": FITS, "0.1.6": ">=0.1.0-0 <0.2.0" } },
+      // No peer dependencies: it fits any core.
+      "@acme/rerail-pack-sql": { tags: { latest: "1.1.0" }, versions: { "1.0.0": null, "1.1.0": null } },
+      "@neralabs/rerail-pack-python": { tags: { latest: "0.1.6" }, versions: { "0.1.6": FITS } },
     });
 
     await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({
@@ -440,9 +532,16 @@ describe("newerPackVersions", () => {
       ],
       problems: [],
     });
-    expect(calls).toHaveLength(3);
+    // The listing of each pack, and the core ranges only of a pack with a newer version.
+    expect(viewsOf(calls).sort()).toEqual([
+      "@acme/rerail-pack-sql dist-tags",
+      "@acme/rerail-pack-sql@1.1.0 name",
+      "@neralabs/rerail-pack-python dist-tags",
+      "@neralabs/rerail-pack-typescript dist-tags",
+      "@neralabs/rerail-pack-typescript@0.1.6 name",
+    ]);
     for (const call of calls) {
-      expect(call.args.slice(2)).toEqual(["version", "peerDependencies", "--json", "--fetch-timeout=30000"]);
+      expect(call.args.slice(-2)).toEqual(["--json", "--fetch-timeout=30000"]);
       expect(call.cwd).toBeDefined();
       expect(call.cwd!.startsWith(home)).toBe(false);
       expect(existsSync(join(call.cwd!, "package.json"))).toBe(false);
@@ -450,72 +549,95 @@ describe("newerPackVersions", () => {
     }
   });
 
-  it("offers no older version, no version the active core leaves out, nothing for a pack from a folder, and nothing npm has no version of under the tag or next", async () => {
+  it("takes the newest version the active core loads when the channel's own is for a later core, asking about every candidate at once", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
+    installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    const { npm, calls } = registryNpm({
+      "@neralabs/rerail-pack-typescript": {
+        tags: { latest: "0.1.9" },
+        versions: { "0.1.5": FITS, "0.1.6": FITS, "0.1.7": FITS, "0.1.8": ">=0.3.0-0", "0.1.9": ">=0.3.0-0" },
+      },
+      // Every newer version is for a later core: nothing to move to.
+      "@neralabs/rerail-pack-python": { tags: { latest: "0.2.0" }, versions: { "0.1.6": FITS, "0.2.0": ">=0.3.0-0" } },
+    });
+
+    await expect(newerPackVersions(home, "latest", "0.2.1", npm)).resolves.toEqual({
+      updates: [{ packageName: "@neralabs/rerail-pack-typescript", installed: "0.1.5", available: "0.1.7", tag: "latest" }],
+      problems: [],
+    });
+    expect(viewsOf(calls)).toContain("@neralabs/rerail-pack-typescript@0.1.9 || 0.1.8 || 0.1.7 || 0.1.6 name");
+  });
+
+  it("keeps every candidate's core range when the oldest names none, which npm would otherwise print as bare versions", async () => {
+    const home = temporaryHome();
+    installBare(home, "@acme/rerail-pack-sql", "1.0.0");
+    const { npm } = registryNpm({
+      "@acme/rerail-pack-sql": { tags: { latest: "1.2.0" }, versions: { "1.0.0": null, "1.1.0": null, "1.2.0": ">=0.3.0-0" } },
+    });
+
+    await expect(newerPackVersions(home, "latest", "0.2.1", npm)).resolves.toEqual({
+      updates: [{ packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0", tag: "latest" }],
+      problems: [],
+    });
+  });
+
+  it("offers no older version, none past the tag's, no prerelease on a channel of releases, nothing for a pack from a folder, and nothing npm has no version of under the tag or next", async () => {
     const home = temporaryHome();
     // Installed from next, newer than latest.
     installBare(home, "@neralabs/rerail-pack-typescript", "0.1.7-next.1");
     installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
     installBare(home, "@neralabs/rerail-pack-go", "0.1.0");
+    installBare(home, "@neralabs/rerail-pack-php", "0.1.0");
     const folder = join(home, "copies", "folder-pack");
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "rerail-pack-mine", version: "0.0.1" }));
     installPackDirectory(folder, "rerail-pack-mine", home);
     const { npm, calls } = registryNpm({
-      "@neralabs/rerail-pack-typescript@latest": { version: "0.1.6" },
-      "@neralabs/rerail-pack-python@latest": { version: "0.2.0", peerDependencies: { "@neralabs/rerail": ">=0.2.0 <0.3.0" } },
+      "@neralabs/rerail-pack-typescript": { tags: { latest: "0.1.6", next: "0.1.7-next.1" }, versions: { "0.1.6": null, "0.1.7-next.1": null } },
+      // Only a prerelease and the version past latest are newer.
+      "@neralabs/rerail-pack-python": { tags: { latest: "0.1.6", next: "0.1.7" }, versions: { "0.1.6": FITS, "0.1.6-next.0": FITS, "0.1.7": FITS } },
+      "@neralabs/rerail-pack-go": { tags: { beta: "0.2.0" }, versions: { "0.1.0": FITS, "0.2.0": FITS } },
+      "@neralabs/rerail-pack-php": { tags: { latest: "0.1.1" }, versions: { "0.1.0": FITS, "0.1.1-next.0": FITS, "0.1.1": ">=0.3.0-0" } },
     });
 
     await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
-    expect(calls.map(call => call.args[1]).sort()).toEqual([
-      "@neralabs/rerail-pack-go@latest",
-      "@neralabs/rerail-pack-go@next",
-      "@neralabs/rerail-pack-python@latest",
-      "@neralabs/rerail-pack-typescript@latest",
-    ]);
+    // Only php has a candidate newer than its install, and the prerelease before it is not one.
+    expect(viewsOf(calls).filter(view => !view.endsWith(" dist-tags"))).toEqual(["@neralabs/rerail-pack-php@0.1.1 name"]);
+    expect(viewsOf(calls).some(view => view.startsWith("rerail-pack-mine"))).toBe(false);
   });
 
-  it.each([
-    ["has no version under the channel", undefined],
-    // npm prints nothing for a tag the package's dist-tags do not hold.
-    ["prints nothing for the channel", ""],
-  ])("looks a pack up under next when npm %s, where set-up installs it from", async (_why, latest) => {
+  it("looks a pack up under next when the channel has no version of it, where set-up installs it from, prereleases included", async () => {
     const home = temporaryHome();
     installBare(home, "@neralabs/rerail-pack-java", "0.1.0-next.1");
-    const registry: Record<string, unknown> = { "@neralabs/rerail-pack-java@next": { version: "0.1.0-next.3" } };
-    const { npm, calls } = registryNpm(registry);
-    const answering: NpmRunner = async (args, options) => latest === "" && args[1] === "@neralabs/rerail-pack-java@latest"
-      ? { stdout: "", stderr: "" }
-      : await npm(args, options);
+    const { npm, calls } = registryNpm({
+      "@neralabs/rerail-pack-java": { tags: { next: "0.1.0-next.3" }, versions: { "0.1.0-next.1": FITS, "0.1.0-next.2": FITS, "0.1.0-next.3": ">=0.3.0-0" } },
+    });
 
-    await expect(newerPackVersions(home, "latest", "0.1.5", answering)).resolves.toEqual({
-      // Under next, not the channel, so the update says so.
-      updates: [{ packageName: "@neralabs/rerail-pack-java", installed: "0.1.0-next.1", available: "0.1.0-next.3", tag: "next" }],
+    await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({
+      // Under next, not the channel, so the update says so; next.3 is for a later core.
+      updates: [{ packageName: "@neralabs/rerail-pack-java", installed: "0.1.0-next.1", available: "0.1.0-next.2", tag: "next" }],
       problems: [],
     });
-    expect(calls.map(call => call.args[1])).toEqual([...latest === "" ? [] : ["@neralabs/rerail-pack-java@latest"], "@neralabs/rerail-pack-java@next"]);
-  });
-
-  it("asks next once when it is the channel", async () => {
-    const home = temporaryHome();
-    installBare(home, "@neralabs/rerail-pack-java", "0.1.0-next.1");
-    const { npm, calls } = registryNpm({});
-
-    await expect(newerPackVersions(home, "next", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
-    expect(calls.map(call => call.args[1])).toEqual(["@neralabs/rerail-pack-java@next"]);
+    expect(viewsOf(calls)).toEqual(["@neralabs/rerail-pack-java dist-tags", "@neralabs/rerail-pack-java@0.1.0-next.3 || 0.1.0-next.2 name"]);
   });
 
   it("names a pack npm could not be asked about, with why, and still checks the others", async () => {
     const home = temporaryHome();
     installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
     installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    installBare(home, "@acme/rerail-pack-gone", "1.0.0");
     const { npm } = registryNpm({
-      "@neralabs/rerail-pack-typescript@latest": new Error("npm failed (1): npm error code ECONNRESET\nnpm error network request to https://registry.npmjs.org/x failed"),
-      "@neralabs/rerail-pack-python@latest": { version: "0.1.7" },
+      "@neralabs/rerail-pack-typescript": new Error("npm failed (1): npm error code ECONNRESET\nnpm error network request to https://registry.npmjs.org/x failed"),
+      "@neralabs/rerail-pack-python": { tags: { latest: "0.1.7" }, versions: { "0.1.6": null, "0.1.7": null } },
     });
 
     const check = await newerPackVersions(home, "latest", "0.1.5", npm);
     expect(check.updates).toEqual([{ packageName: "@neralabs/rerail-pack-python", installed: "0.1.6", available: "0.1.7", tag: "latest" }]);
-    expect(check.problems).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript: could not reach the npm registry \(https:\/\/registry\.npmjs\.org, ECONNRESET\)/u)]);
+    expect([...check.problems].sort()).toEqual([
+      expect.stringMatching(/^@acme\/rerail-pack-gone: npm cannot read @acme\/rerail-pack-gone: it is not published/u),
+      expect.stringMatching(/^@neralabs\/rerail-pack-typescript: could not reach the npm registry \(https:\/\/registry\.npmjs\.org, ECONNRESET\)/u),
+    ]);
   });
 
   it("says a pack check npm did not finish was stopped, on one line, with the last line npm printed", async () => {
@@ -523,9 +645,9 @@ describe("newerPackVersions", () => {
     installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
     installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
     const { npm } = registryNpm({
-      "@neralabs/rerail-pack-typescript@latest": new CommandTimeoutError("npm view", 60_000, "npm http fetch GET 200 https://registry.npmjs.org/a\nnpm http fetch GET attempt 3 failed with ETIMEDOUT"),
+      "@neralabs/rerail-pack-typescript": new CommandTimeoutError("npm view", 60_000, "npm http fetch GET 200 https://registry.npmjs.org/a\nnpm http fetch GET attempt 3 failed with ETIMEDOUT"),
       // Nothing printed, so there is no last line to name.
-      "@neralabs/rerail-pack-python@latest": new CommandTimeoutError("npm view", 60_000),
+      "@neralabs/rerail-pack-python": new CommandTimeoutError("npm view", 60_000),
     });
 
     const check = await newerPackVersions(home, "latest", "0.1.5", npm);
@@ -539,6 +661,128 @@ describe("newerPackVersions", () => {
     const { npm, calls } = registryNpm({});
     await expect(newerPackVersions(temporaryHome(), "latest", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("updatePacks", { timeout: COMPILING_TIMEOUT_MS }, () => {
+  /** Installs `packageName` (pack `id`) at `version` into `home`, as npm records a registry install. */
+  function installThirdParty(home: string, packageName: string, id: string, version: string): void {
+    installPackDirectory(thirdPartyPack(join(home, "copies"), packageName, id, version), packageName, home, version);
+  }
+
+  /**
+   * A store on `home` that installs `<package>@<version>` by linking `folders` of that spec, or, for a version already
+   * under `home/copies` (one installed before, put back), that copy; recorded as that version, as npm records it.
+   */
+  function versionedStore(home: string, folders: Readonly<Record<string, string>>): PackStore & { installs: string[][]; offline: boolean[] } {
+    const installs: string[][] = [];
+    const offline: boolean[] = [];
+    return {
+      home,
+      installs,
+      offline,
+      fetch: async () => ({ fetched: [], problems: [], release: async () => {} }),
+      async install(specs, options) {
+        installs.push([...specs]);
+        offline.push(options?.preferOffline === true);
+        for (const spec of specs) {
+          const at = spec.lastIndexOf("@");
+          const [packageName, version] = [spec.slice(0, at), spec.slice(at + 1)];
+          const folder = folders[spec] ?? join(home, "copies", packageName, version);
+          if (!existsSync(folder)) throw new Error(`npm error code E404\nnpm error 404 Not Found - ${spec}`);
+          installPackDirectory(folder, packageName, home, version);
+        }
+      },
+      async remove(packageNames) {
+        for (const packageName of packageNames) uninstallPack(packageName, home);
+      },
+    };
+  }
+
+  it("moves each pack to the newest version the active core loads, and puts back alone one that does not load", async () => {
+    const home = temporaryHome();
+    installThirdParty(home, "@acme/rerail-pack-sql", "sql", "1.0.0");
+    installThirdParty(home, "@acme/rerail-pack-lint", "lint", "1.0.0");
+    const store = versionedStore(home, {
+      "@acme/rerail-pack-sql@1.1.0": thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-sql", "sql", "1.1.0"),
+      // npm says it fits; what installs names a core range this core is outside of.
+      "@acme/rerail-pack-lint@1.1.0": thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-lint", "lint", "1.1.0", ">=99.0.0"),
+    });
+    const { npm } = registryNpm({
+      "@acme/rerail-pack-sql": { tags: { latest: "1.2.0" }, versions: { "1.0.0": null, "1.1.0": null, "1.2.0": ">=99.0.0" } },
+      "@acme/rerail-pack-lint": { tags: { latest: "1.1.0" }, versions: { "1.0.0": null, "1.1.0": null } },
+    });
+    const steps: string[] = [];
+    const progress: Progress = { step: async (label, run) => { steps.push(label); return await run(); } };
+
+    const run = await updatePacks(store, progress, npm);
+
+    expect(run.updated).toEqual([{ packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0", tag: "latest" }]);
+    expect(run.failed).toEqual([{
+      update: { packageName: "@acme/rerail-pack-lint", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+      problem: expect.stringMatching(/^@acme\/rerail-pack-lint@1\.1\.0 cannot be used: .*>=99\.0\.0.*\. Nothing was changed\.$/u),
+    }]);
+    expect(run.problems).toEqual([]);
+    expect(installedPackVersion("@acme/rerail-pack-sql", home)).toBe("1.1.0");
+    expect(installedPackVersion("@acme/rerail-pack-lint", home)).toBe("1.0.0");
+    expect(loadRuleCatalog(home).packs.get("sql")?.version).toBe("1.1.0");
+    // One install each, so the one that failed put back only itself, as npm recorded it.
+    expect(store.installs).toEqual([["@acme/rerail-pack-lint@1.1.0"], ["@acme/rerail-pack-lint@1.0.0"], ["@acme/rerail-pack-sql@1.1.0"]]);
+    // npm's cached listing of a pack may be older than the version the check found, so each install asks the registry.
+    expect(store.offline).toEqual([false, false, false]);
+    expect(steps).toEqual(["Checking your rule packs for newer versions", "Installing @acme/rerail-pack-lint@1.1.0", "Installing @acme/rerail-pack-sql@1.1.0"]);
+  });
+
+  it("keeps the packs already moved when a later pack's step throws, and tries none after it", async () => {
+    const home = temporaryHome();
+    installThirdParty(home, "@acme/rerail-pack-lint", "lint", "1.0.0");
+    installThirdParty(home, "@acme/rerail-pack-sql", "sql", "1.0.0");
+    installThirdParty(home, "@acme/rerail-pack-tidy", "tidy", "1.0.0");
+    const store = versionedStore(home, {
+      "@acme/rerail-pack-lint@1.1.0": thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-lint", "lint", "1.1.0"),
+    });
+    const { npm } = registryNpm(Object.fromEntries(["lint", "sql", "tidy"].map(id =>
+      [`@acme/rerail-pack-${id}`, { tags: { latest: "1.1.0" }, versions: { "1.0.0": null, "1.1.0": null } }])));
+    const stalls: (string | undefined)[] = [];
+    // What installChecked throws, rather than returns, when another process holds the packs past the lock's wait.
+    const progress: Progress = {
+      step: async (label, run, stall) => {
+        if (label === "Installing @acme/rerail-pack-sql@1.1.0") {
+          throw new Error("Another Rerail process (pid 4242) is changing the rule packs in /home/packs; try again once it is done.");
+        }
+        if (label.startsWith("Installing")) stalls.push(stall?.hint);
+        return await run();
+      },
+    };
+
+    const run = await updatePacks(store, progress, npm);
+
+    expect(run.updated).toEqual([{ packageName: "@acme/rerail-pack-lint", installed: "1.0.0", available: "1.1.0", tag: "latest" }]);
+    expect(run.failed).toEqual([
+      {
+        update: { packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+        problem: "Another Rerail process (pid 4242) is changing the rule packs in /home/packs; try again once it is done. `rerail packs list` shows what is installed now.",
+      },
+      {
+        update: { packageName: "@acme/rerail-pack-tidy", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+        problem: "not tried, since updating @acme/rerail-pack-sql stopped",
+      },
+    ]);
+    expect(store.installs).toEqual([["@acme/rerail-pack-lint@1.1.0"]]);
+    // A step that waits on npm or the lock says so, as the check step does.
+    expect(stalls).toEqual([expect.stringMatching(/npm is stopped at 1 min 20 s/u)]);
+  });
+
+  it("installs nothing and names the problem when npm cannot be asked about a pack", async () => {
+    const home = temporaryHome();
+    installThirdParty(home, "@acme/rerail-pack-sql", "sql", "1.0.0");
+    const store = versionedStore(home, {});
+    const { npm } = registryNpm({ "@acme/rerail-pack-sql": new Error("npm failed (1): npm error code ECONNRESET\nnpm error network request to https://registry.npmjs.org/x failed") });
+
+    const run = await updatePacks(store, undefined, npm);
+
+    expect(run).toEqual({ updated: [], failed: [], problems: [expect.stringMatching(/^@acme\/rerail-pack-sql: could not reach the npm registry/u)] });
+    expect(store.installs).toEqual([]);
   });
 });
 

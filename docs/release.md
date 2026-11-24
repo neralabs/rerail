@@ -1,17 +1,20 @@
 # Releasing Rerail
 
-How core is built, versioned and published. Rule packs release separately; see [pack-format.md](pack-format.md#release).
+How core and the engine packages it depends on are built, versioned and published. Rule packs release separately; see
+[pack-format.md](pack-format.md#release).
 
 ## Release
 
-Merging the Release pull request tags a version; the tag builds, checks and publishes core to `next`, and the packs
-publish to `next` beside it. That published version is the release candidate. Once it is tested, a person promotes it
-to `latest` ([Before promoting](#before-promoting), [Promoting](#promoting)), and `main` stays open throughout.
+Merging the Release pull request tags a version; the tag builds, checks and publishes core and its six
+[engine packages](#engine-packages) to `next`, and the packs publish to `next` beside it. That published version is
+the release candidate. Once it is tested, a person promotes it to `latest` ([Before promoting](#before-promoting),
+[Promoting](#promoting)), and `main` stays open throughout.
 
 ### Build
 
-`.github/workflows/release.yml` builds the package the updater installs, via `.github/workflows/package.yml`, and
-test-installs it on each platform before publishing.
+`.github/workflows/release.yml` builds the seven packages the updater installs from, core and one engine package per
+operating system and processor, via `.github/workflows/package.yml`, and test-installs them on each platform before
+publishing.
 
 <details>
 <summary>Build and check steps</summary>
@@ -25,11 +28,16 @@ test-installs it on each platform before publishing.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
 2. Smoke-test native loading and device storage on each host.
-3. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
-4. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
+3. Build the runtime and bundled UI. Pack the six engine packages from the six `native/*.node` files, which fails if
+   one is absent, then pack core against them, so core pins each one's version and integrity
+   ([Engine packages](#engine-packages)).
+4. Install core's tarball and the runner's engine package into a scratch prefix; check `rerail --help`, the bundled UI
+   and `nativeHealth()`.
 5. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
    `scripts/host/windows-install-smoke.ps1` on Windows, the environment matrix's `scripts/host/azure/guest.sh` through
-   `matrix.mjs local` on Linux and macOS. Nothing publishes unless all three pass.
+   `matrix.mjs local` on Linux and macOS. Each serves the seven tarballs from a registry of its own, as npmjs will,
+   and fails unless the managed install holds that machine's engine package and no other. Nothing publishes unless
+   all three pass.
 
 </details>
 
@@ -61,9 +69,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
-  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.
-  `package-lock.json` counts only when more than its pack entries moved (`NOT_SHIPPED` in
-  `scripts/release/core-paths.mjs`).
+  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack. The `.rerail`
+  rule library under `docs/rule-syntax/lib/` ships with core, so it counts. `package-lock.json` counts only when more
+  than its pack entries moved (`NOT_SHIPPED` and `SHIPPED_FROM_NOT_SHIPPED` in `scripts/release/core-paths.mjs`).
 
 </details>
 
@@ -96,8 +104,8 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 Merging publishes the release to `next`; nothing reaches `latest` until a person approves its promotion. First:
 
 - **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
-  core and lists the newer versions of your installed packs on `next`, with the `rerail packs add` command for each:
-  run them, so the packs under test are the release's too.
+  core, then updates your installed packs to their newest versions on `next`, so the packs under test are the
+  release's too.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
@@ -116,7 +124,8 @@ Each release run ends with its promotion, waiting for a person to approve the `r
 tested. Approve core's first, then the packs':
 
 1. **Core:** the **Release** run of `v<version>`, job **Point latest at `<version>`**. It points `latest` at that
-   version and makes its GitHub Release the repository's latest.
+   version, for core and its six engine packages ([Promotion and put-back](#promotion-and-put-back)), and makes its
+   GitHub Release the repository's latest.
 2. **Packs:** the **Release packs** run the release's publish started, job **Promote to latest**. Its first job lists
    the pack versions it will move: exactly those the release published, whatever `main` holds by then, less any pack
    held where it was put back, which it reads again once approved ([pack-format.md](pack-format.md#release)). It makes each one's GitHub Release a full
@@ -151,7 +160,7 @@ gh workflow run release-packs.yml --ref main -f released="<name>@<version>:next 
 Run with no inputs, the packs' workflow instead promotes every released pack version not `latest` yet, at its version
 on `main`, less any held. That includes any later release still being tested on `next`, so check the versions its plan
 lists before approving. To put a pack back, run it with the pack's id and an older version; it holds the pack there.
-Core's put-back is the `latest` input with an older version.
+Core's put-back is the `latest` input with an older version; it takes the engine packages of that version with it.
 
 ### Installer plugins
 
@@ -173,8 +182,8 @@ released. Publish a new plugin version only once the release is on npm.
 
 ### Tags and channels
 
-A `v<version>` tag, equal to `package.json`'s version, publishes `@neralabs/rerail` to npmjs on the channel it names,
-after a reviewer approves.
+A `v<version>` tag, equal to `package.json`'s version, publishes `@neralabs/rerail` and the six engine packages of
+that version to npmjs on the channel it names, after a reviewer approves.
 
 | Tag | Channel |
 | --- | --- |
@@ -198,9 +207,11 @@ after a reviewer approves.
 - `next` never trails `latest`: a promotion or put-back raises `next` to the version (`scripts/release/raise-next.mjs`)
   unless `next` holds a newer one. Whoever follows `next` gets every release first. A publish moves only its own
   channel.
-- Re-running the publish job is safe: npm refusing to publish over an existing version counts as published.
-- The run's summary lists core's dist-tags. It fails if the channel's tag is not the new version, or, for a `next`
-  release, `next` is unset or older than `latest`.
+- Re-running the publish job is safe: npm refusing to publish over an existing version counts as published. It is also
+  how a publish that stopped between two of the seven packages is finished
+  ([Engine packages](#a-publish-that-stops-between-packages)).
+- The run's summary lists the dist-tags of core and the engine packages. It fails if a package's channel tag is not
+  the new version, or, for a `next` release, its `next` is unset or older than its `latest`.
 
 </details>
 
@@ -208,7 +219,10 @@ after a reviewer approves.
 
 `workflow_dispatch` builds a trial tarball, retries a failed release, or moves `latest`.
 
-- **No inputs:** uploads the tarball as a run artifact, unpublished. Try it with `npm install <tarball>`.
+- **No inputs:** uploads the seven tarballs as a run artifact, unpublished. Try them with
+  `npm install <core tarball> <your platform's engine tarball>`: core's tarball alone installs no engine. Its
+  shrinkwrap pins this build's engines, the registry has none for a version not yet published, and for a version that
+  is, the published engine is not this build's, fails the pin, and npm leaves it out.
 - **`publish` set to a version:** retries that version's release from `main`, to `next`; see below.
 - **`latest` set to a released plain version:** builds nothing and points `latest` at it: a newer version promotes it,
   as a release run's own promotion does once approved ([Promoting](#promoting)), an older one puts core back.
@@ -229,15 +243,21 @@ provenance names the `main` commit. It is refused unless all of these hold, so c
 
 - it runs from `main` with `latest` left empty, and `main`'s `package.json` names that version;
 - the `v<version>` tag exists;
-- nothing core ships has changed since the tag (`publishRetryRefusal` in `scripts/release/core-paths.mjs`).
+- nothing core ships has changed since the tag (`publishRetryRefusal` in `scripts/release/core-paths.mjs`);
+- no engine package of that version is on npm yet. A retry builds the engines again, and nothing makes a rebuilt engine
+  the same bytes: core would pin integrities npm does not have. Re-run the failed publish job of the release's own run
+  instead ([A publish that stops between packages](#a-publish-that-stops-between-packages)), or release the next
+  version.
 
 How the package is built and its changelog can still differ from the tag, so that a fix to the build can be retried
 too. The run summary lists every path changed since the tag, starting with those that can change the tarball (`PACKAGE_INPUTS`): the build
-workflow and its actions, the shrinkwrap step, `.gitattributes` and `CHANGELOG.md`. Check that list before approving.
+workflow and its actions, the engine packages' script and the shrinkwrap step (`scripts/release/engine/`,
+`shrinkwrap.mjs`, `shrinkwrap-pack.mjs`), `.gitattributes` and `CHANGELOG.md`. Check that list before approving.
 
 If the fix changes what ships, it takes the next version: the Release pull request offers one as soon as the fix is on
 `main`. Say in that version's lead that the failed version was never published, since its notes won't reach anyone
-updating past it.
+updating past it. 0.2.0 is one: npm refused its tarball, which held all six engines, and 0.2.1 is the first release
+with engine packages.
 
 </details>
 
@@ -245,7 +265,8 @@ updating past it.
 <summary>What a promotion or put-back also does</summary>
 
 It uses trusted publishing behind the same approval as a release, so no one needs an npm login to move core's
-`latest`. If `next` is older than that version, it raises `next` to it too. The run's **Promoted GitHub Release** job then makes
+`latest`. If `next` is older than that version, it raises `next` to it too. The six engine packages' dist-tags move
+with core's ([Promotion and put-back](#promotion-and-put-back)). The run's **Promoted GitHub Release** job then makes
 that version's Release the repository's latest.
 
 </details>
@@ -370,13 +391,144 @@ version on `latest`, so a release candidate that never reached `latest` is not l
 
 </details>
 
+## Engine packages
+
+Core's tarball holds no native engine. Each of the six engines is an npm package of its own,
+`@neralabs/rerail-engine-<suffix>` ([the six names](installation.md#registry-access)), published at core's version,
+and core names all six as optional dependencies at that exact version.
+
+- **Pack.** The release packs the six from the engines it built, then packs core against them ([Packing](#packing)).
+- **Publish.** The six first, each read back from npm, and core last ([Publish order](#publish-order)).
+- **Promote.** Seven dist-tags move together ([Promotion and put-back](#promotion-and-put-back)).
+- **A name never published** is published by hand once, before the release workflow can publish it:
+  [runbook](publishing-the-engine-packages.md).
+
+<details>
+<summary>What an engine package holds, how it is named and how it is loaded</summary>
+
+- **Contents.** `rerail_engine.<suffix>.node`, `package.json`, `README.md`, `LICENSE`, `NOTICE` and
+  `THIRD_PARTY_NOTICES`. The `package.json` carries `os`, `cpu` and, on Linux, `libc: ["glibc"]`, so npm can skip the
+  package on another platform, and `repository`, which npm's provenance requires to name this repository. It has no
+  scripts, no dependencies and no `exports`.
+- **Generated, not committed.** `scripts/release/engine/packages.mjs` writes each package as it packs it, from one
+  table (`ENGINE_PACKAGES`: suffix, `os`, `cpu`, `libc`, Rust target). No other script spells a package name. The
+  runtime cannot import a release script, so it makes the same name from its own platform suffix
+  (`nativeEnginePackageName` in `src/engine/native/native.ts`), and `test/scripts/release-engine-packages.test.mjs`
+  fails when the table's names or suffixes are not the runtime's.
+- **Version.** Exactly core's, every release. `package.json` on `main` names no engine package: packing core stamps
+  the six pins in and takes them out again ([Shrinkwrap](#shrinkwrap)).
+- **Loading.** Rerail loads the engine `RERAIL_ENGINE_PATH` names, else the one in the package root's `native/` (a
+  checkout's own build, or `npm run engine:pull`), else its platform's engine package, and that only at Rerail's own
+  version. A checkout and CI's jobs build into `native/`, so they never resolve an engine package.
+- **Size.** Packed from 0.2.0's engines, an engine package is 35 to 42 MB and core about 12 MB. npm's registry refused
+  0.2.0's single tarball of 248.5 MB, which is why the engines are packages of their own.
+
+</details>
+
+### Packing
+
+One script packs the engine packages; `npm pack` then pins core to what it packed.
+
+```sh
+npm run build:js                                                     # if dist/ is missing
+node scripts/release/engine/packages.mjs pack --out "$OUT" --all     # the six tarballs and their manifest
+RERAIL_ENGINE_PACKAGES="$OUT" npm pack --pack-destination "$OUT"     # core, pinned to what $OUT holds
+RERAIL_ENGINE_PACKAGES="$OUT" node scripts/release/shrinkwrap-pack.mjs check "$OUT/neralabs-rerail-<version>.tgz"
+```
+
+`$OUT` is a folder outside the repository, or one Git ignores. A checkout usually holds its own machine's engine only:
+leave out `--all` and the check, and install the two tarballs it gets in one command,
+`npm install <core tarball> <engine tarball>`, for an install with an engine on that platform.
+
+<details>
+<summary>The manifest, and packing with fewer than six engines</summary>
+
+- **Manifest.** `pack` writes `engine-packages.json` beside the tarballs: each package's name, version, file name and
+  `integrity`, the sha512 of its tarball, which is the value npm's registry reports as `dist.integrity`. Core's pins and
+  the publish's read-back both come from it.
+- **`--all`** fails, packing nothing, unless `native/` holds all six engines; the release passes it. Without it, `pack`
+  packs the engines it finds and names the absent packages. `--native <folder>` reads the engines from another folder.
+- **`RERAIL_ENGINE_PACKAGES`** names the folder for `npm pack`, whose `prepack` reads the manifest. Core packed against
+  a folder with some of the six installs with an engine on those platforms only; packed with the variable unset, it
+  pins no engine package at all. `npm pack` says which on stderr, and [the release's check](#shrinkwrap) refuses both.
+- A folder without a manifest, or whose manifest is of another version than `package.json`, fails `npm pack` before it
+  writes anything.
+- Core's tarball never contains `native/*.node`, whatever `native/` holds.
+
+</details>
+
+### Publish order
+
+The six engine packages are published before core, and core only once npm serves all six as they were packed.
+
+1. Publish each engine package under core's channel, with provenance.
+2. Read each one back from the registry: its `dist.integrity` must equal the manifest's.
+3. Publish core.
+
+Core must never be on npm while an engine package of its version is absent or has other bytes than core pins: npm
+skips an optional dependency it cannot fetch or verify, so that core installs with exit code 0 and no engine.
+
+<details>
+<summary>What stops the publish before core</summary>
+
+`node scripts/release/engine/release.mjs publish <folder>` does steps 1 and 2, on the folder
+`scripts/release/engine/packages.mjs pack` wrote. Its error ends `This run publishes no core.` when:
+
+- **`First publish needed`:** an engine package has never been published. Every name is asked before anything is
+  published; publish the missing ones by hand ([runbook](publishing-the-engine-packages.md)) and run the job again.
+- **A publish fails.** A version npm already has is not a failure, so the job run again publishes what is left.
+- **npm has a version with other bytes** than this run packed: an earlier run or attempt published them, and npm
+  never replaces a version. If core of the version is on npm too, the earlier attempt finished: the version is
+  released with those bytes and this run was not needed. If it is not, release the next version.
+- **npm does not serve a version yet.** A new version can answer 404 for minutes, so the read-back reads up to 20
+  times, 15 seconds apart, then fails without knowing: run the job again.
+
+</details>
+
+### A publish that stops between packages
+
+npm publishes one package per request, so seven publishes cannot succeed or fail as one. If the job stops after some
+of the six, re-run the failed job of the same run.
+
+<details>
+<summary>What the state means, and what not to do</summary>
+
+- **Users see nothing.** Nothing depends on an engine package until core of that version is published, and nobody
+  installs one by itself. The engine packages already published hold their channel's dist-tag at a version no core
+  names yet.
+- **Re-run the failed job, not all jobs.** The failed job publishes the run's own tarballs again, the bytes core pins.
+  A version npm already has counts as published, and the read-back then checks it. Re-running all jobs builds the
+  engines again; the job then finds the first build's packages on npm and stops before it publishes anything.
+- **Do not retry from `main`** (the `publish` input): it rebuilds too, and is refused once any engine package of the
+  version is on npm ([Retrying a failed release](#manual-runs-and-put-back)).
+- **If the run's tarballs are gone** (its artifacts expired, say), the version cannot be completed: npm never replaces
+  a published version. Release the next version, and say in its lead that this one was never published. Its engine
+  packages stay on npm, named by no core.
+- **One package fails with an authentication error:** its trusted publisher is missing or has lapsed. Set it up again
+  ([runbook](publishing-the-engine-packages.md#set-up-the-trusted-publisher)), then re-run the failed job.
+
+</details>
+
+### Promotion and put-back
+
+A promotion or put-back moves `latest` for core, then for the six engine packages of that version, and raises each
+one's `next` to it when `next` is older. Nothing installs an engine package by a dist-tag, since core pins exact
+versions; the tags move so each package's `latest` is the engine of the core on `latest`.
+
+- A put-back to a version from before the engine packages, any below 0.2.1, moves core alone: the engine packages
+  have no such version (`ENGINE_PACKAGES_SINCE` in `scripts/release/engine/release.mjs`).
+- Each move is safe to repeat, so a promotion that stopped between two packages is finished by running it again.
+- Each of the seven packages needs its own trusted publisher on npmjs, allowing `npm publish` and `npm dist-tag`
+  ([runbook](publishing-the-engine-packages.md)).
+
 ## Shrinkwrap
 
-The tarball ships an `npm-shrinkwrap.json`, so installs get exactly the dependencies `package-lock.json` pinned.
+The tarball ships an `npm-shrinkwrap.json`, so installs get exactly the dependencies `package-lock.json` pinned and the
+engine packages the release packed.
 
 - **Write failures.** Run `npm install` and commit the lockfile.
-- **Failed pack.** Remove the leftover with `node scripts/release/shrinkwrap-pack.mjs remove`, or npm would use it
-  instead of `package-lock.json`.
+- **Failed pack.** Run `node scripts/release/shrinkwrap-pack.mjs remove`. It deletes the leftover shrinkwrap, which npm
+  would use instead of `package-lock.json`, and takes the engine pins out of `package.json`.
 
 <details>
 <summary>How the shrinkwrap is written and checked</summary>
@@ -385,29 +537,49 @@ The tarball ships an `npm-shrinkwrap.json`, so installs get exactly the dependen
 - npm honors a published shrinkwrap instead of resolving versions and integrity hashes fresh; the registry flags such
   versions (`_hasShrinkwrap`).
 - **Writing.** `npm pack` writes it (`prepack`: `node scripts/release/shrinkwrap-pack.mjs write`) and deletes it after
-  (`postpack`); `package.json`'s `files` lists it.
+  (`postpack`); `package.json`'s `files` lists it. The same two steps put the engine pins into `package.json`, as
+  `optionalDependencies` at core's exact version, and take them out.
 - **Contents.** The root and every package its dependencies reach in `package-lock.json`: no development dependency,
   workspace pack, or optional peer nothing else needs. Packages reached only through optional dependencies are marked
   `optional`.
+- **Engine packages.** One entry per engine package core was packed against, at
+  `node_modules/@neralabs/rerail-engine-<suffix>`: core's version, the tarball's `integrity`, `os`, `cpu`, `libc` on
+  Linux, and `optional: true`. They come from the manifest (`RERAIL_ENGINE_PACKAGES`), never from
+  `package-lock.json`: the release that packs core builds the engines, so no lockfile written before it holds their
+  integrity.
+  - **All six, always.** npm installs a shrinkwrapped package's dependencies from its shrinkwrap alone. An engine
+    package the shrinkwrap lacks is never installed, whatever `package.json` says, and the install exits with 0.
+  - **No `resolved`.** With one, npm asks that URL's registry for the tarball instead of the registry mapped to the
+    `@neralabs` scope, and a mirror or a local registry installs no engine.
 - **No source builds.** Every dependency's entry sets `gypfile: false`. npm reads a shrinkwrapped dependency from its
   entry, not its own `package.json`, so without it npm compiles `better-sqlite3` with `node-gyp` during
   `npx @neralabs/rerail setup`, and the install fails on an image with no compiler, such as `node:24-slim`.
 - **Write failures.** Writing fails if `package-lock.json`'s root dependencies differ from `package.json`'s, or the
   lockfile lacks a package a dependency needs.
-- **Release check.** Before publishing, `release.yml` runs `node scripts/release/shrinkwrap-pack.mjs check <tarball>`.
-  It fails on a missing shrinkwrap or one differing from the tag's `package-lock.json`, naming the packages that differ.
+- **Release check.** `node scripts/release/shrinkwrap-pack.mjs check <tarball>`, with `RERAIL_ENGINE_PACKAGES` naming
+  the folder core was packed against. `package.yml` runs it once core is packed, so the environment matrix never
+  installs a core short of an engine, and `release.yml` runs it again before publishing. It fails, naming what
+  differs, on:
+  - a missing shrinkwrap, or one differing from what the tag's `package-lock.json` gives;
+  - a folder without all six engine packages, or with a tarball that is absent or is not the bytes its manifest lists;
+  - a core that does not pin exactly the six, in `package.json` and in the shrinkwrap, each as packed: version,
+    integrity, `os`, `cpu`, `libc`, `optional`, and no `resolved`;
+  - any other `optional` entry: the managed install leaves optional dependencies out and names its own engine package,
+    so a package core needs must never be one npm would leave out with them.
 - **Layout.** npm installs a shrinkwrapped package's dependencies inside it, under
-  `node_modules/@neralabs/rerail/node_modules`, not beside it.
+  `node_modules/@neralabs/rerail/node_modules`, not beside it. That is where plain npm puts the engine packages; the
+  managed install names its own, which npm puts beside core ([what gets installed](how-setup-works.md#updates)).
 
 </details>
 
 The managed install (`src/setup/updater.ts`) runs no install scripts (`--ignore-scripts`). A new dependency needing an
-install script would break after `rerail update`; check before adding one.
+install script would break after `rerail update`; check before adding one. No engine package has a script.
 
 <details>
 <summary>Install-time verification</summary>
 
 - No production dependency needs an install script; `better-sqlite3` ships prebuilt binaries.
+- The engine package it installed must have the integrity core's shrinkwrap pins for it, or the install is discarded.
 - Before running staged code, it verifies registry signatures and provenance attestations of everything installed with
   `npm audit signatures`, stopping on any failure.
 - A registry without signing keys, such as some private mirrors, gets a warning and the install continues.

@@ -113,7 +113,7 @@ function isFolder(looked: Looked): looked is Stats {
   return isEntry(looked) && looked.isDirectory();
 }
 
-interface FileText {
+export interface FileText {
   readonly text: string;
 }
 
@@ -131,7 +131,7 @@ const READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0);
  * A file's text, read now, as Git reads it (through a link at its name); `"none"` when nothing is there, undefined when
  * it is no regular file, is too large or cannot be read.
  */
-function fileText(path: string): FileText | "none" | undefined {
+export function fileText(path: string): FileText | "none" | undefined {
   let descriptor: number;
   try {
     descriptor = openSync(path, READ_FLAGS);

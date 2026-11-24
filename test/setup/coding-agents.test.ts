@@ -6,7 +6,7 @@ import {
   codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
 } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
-import { CODEX_HOOK_EVENTS, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { CODEX_HOOK_EVENTS, NODE_HOOK_FALLBACK_NOTE, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Each look for a program on PATH, passed through and watched: it checks a file in each PATH entry.
@@ -299,6 +299,25 @@ describe("whether a coding agent can read Rerail's data", () => {
     expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: managed })).toEqual({ connected: true, access: "file-tools" });
   });
 
+  it("offers turning Claude Code's sandbox on as the fix only where it is off and Claude Code has one", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const { root, home, managed } = await connected(["claude-code"]);
+    const settings = join(home, ".claude", "settings.json");
+    const fixOn = async (platform: NodeJS.Platform) =>
+      (await codingAgentStates(root, home, { platform, claudeManagedSettings: managed })).find(agent => agent.id === "claude-code")!.rerailData.fix;
+
+    expect(await fixOn("linux")).toBe("Turn it on to keep them out too: run /sandbox in Claude Code.");
+    await writeFile(settings, JSON.stringify({ ...JSON.parse(await readFile(settings, "utf8")), sandbox: { enabled: true } }));
+    expect(await fixOn("linux")).toBeNull();
+  });
+
+  it("offers no fix for Claude Code on native Windows, where it has no sandbox", async () => {
+    const { root, home, managed } = await connected(["claude-code"], async () => {}, "win32");
+    const state = (await codingAgentStates(root, home, { platform: "win32", claudeManagedSettings: managed })).find(agent => agent.id === "claude-code")!;
+    expect(state.rerailData).toMatchObject({ access: "file-tools", fix: null });
+    expect(state.rerailData.why).toContain("no sandbox on Windows");
+  });
+
   it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async ({ skip }) => {
     skip(WINDOWS, POSIX_SETUP);
     const withConfig = await connected(["cursor"], cursorCliConfig);
@@ -314,9 +333,10 @@ describe("whether a coding agent can read Rerail's data", () => {
   });
 
   it("counts Claude Code on Windows as connected whatever node PATH finds first for whoever asks", async () => {
-    // Set-up writes Claude Code's Windows hooks with `node` where PATH finds the recorded node, here the one running
-    // this test, and with cmd.exe where PATH finds another. The dashboard and `rerail status` ask from the daemon and
-    // the shell, each with a PATH of its own.
+    // Versions 0.1.4 and earlier wrote Claude Code's Windows hooks with `node` always; 0.1.5 to 0.2.1 with `node` where
+    // set-up's PATH found the recorded node, here the one running this test, and with cmd.exe where it found another;
+    // this one writes cmd.exe. The dashboard and `rerail status` ask from the daemon and the shell, each with a PATH of
+    // its own.
     let recorded = "";
     const { root, home } = await connected(["claude-code"], async home => {
       recorded = await folderOfThisNode(dirname(home));
@@ -326,16 +346,16 @@ describe("whether a coding agent can read Rerail's data", () => {
     const other = join(dirname(home), "other-node");
     await mkdir(other);
     await writeFile(join(other, "node.exe"), "");
-    // cmd.exe at the path set-up names, on Linux too: set-up writes a cmd.exe entry only where a file is there.
+    // A cmd.exe that runs commands at the path set-up names, on Linux too: set-up writes a cmd.exe entry only there.
     const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
-    const fileExists = (path: string) => path === cmd;
+    const cmdRuns = (path: string) => path === cmd;
     const askedWith = async (path: string) => {
       vi.stubEnv("PATH", path);
-      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists });
+      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, cmdRuns });
     };
 
     expect(await askedWith(other)).toEqual({ connected: true, access: "file-tools" });
-    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", fileExists });
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", cmdRuns });
     expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
     expect(await askedWith(recorded)).toEqual({ connected: true, access: "file-tools" });
   });
@@ -343,7 +363,7 @@ describe("whether a coding agent can read Rerail's data", () => {
   it("reads Claude Code on Windows as connected and registered, and takes it out, without looking for node on PATH", async () => {
     // The daemon reads whether Rerail is connected on its event loop each time the dashboard's Settings opens, and
     // `rerail update` reads whether an agent is registered before it registers it again. A look for node on PATH checks
-    // a file in each PATH entry, which a share that does not answer holds for about 21 s: only set-up's write looks.
+    // a file in each PATH entry, which a share that does not answer holds for about 21 s: no registration looks.
     const { root, home } = await connected(["claude-code"], async () => {}, "win32");
     const settings = join(home, ".claude", "settings.json");
     const other = join(dirname(home), "other-node");
@@ -352,21 +372,48 @@ describe("whether a coding agent can read Rerail's data", () => {
     vi.stubEnv("PATHEXT", ".exe");
     vi.stubEnv("PATH", other);
     const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
-    const fileExists = (path: string) => path === cmd;
-    const windows = { root, home, harnesses: ["claude-code"] as const, platform: "win32" as const, fileExists };
+    const cmdRuns = (path: string) => path === cmd;
+    const windows = { root, home, harnesses: ["claude-code"] as const, platform: "win32" as const, cmdRuns };
     looksOnPath.mockClear();
     await registerHarnesses(windows);
     expect(await readFile(settings, "utf8")).toContain(inJson(cmd));
-    expect(looksOnPath).toHaveBeenCalledWith("node");
-    looksOnPath.mockClear();
+    expect(looksOnPath).not.toHaveBeenCalled();
 
-    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists })).toEqual({ connected: true, access: "file-tools" });
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, cmdRuns })).toEqual({ connected: true, access: "file-tools" });
     // The question `rerail update` and set-up ask of each coding agent (`isRegistered`): would a removal change anything.
     const removal = await unregisterHarnesses({ ...windows, dryRun: true });
     expect(removal.changes.some(change => change.harness === "claude-code" && change.action !== "unchanged" && change.action !== "skipped")).toBe(true);
     await unregisterHarnesses(windows);
     expect(await readFile(settings, "utf8")).not.toContain("hook-launcher");
     expect(looksOnPath).not.toHaveBeenCalled();
+  });
+
+  it("counts Claude Code on Windows as connected from the cmd.exe entry set-up wrote, and starts no cmd.exe to check", async () => {
+    // `rerail status` and the dashboard's Settings ask each time. A start of cmd.exe that fails once (an antivirus scan,
+    // a loaded computer) must not show hooks that run as not connected, nor a dashboard request wait on cmd.exe.
+    const { root, home } = await connected(["claude-code"], async () => {}, "win32");
+    const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", cmdRuns: path => path === cmd });
+    expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
+    const started: string[] = [];
+    const failsThisTime = (path: string) => {
+      started.push(path);
+      return false;
+    };
+
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, cmdRuns: failsThisTime })).toEqual({ connected: true, access: "file-tools" });
+    expect(started).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("tells set-up and the refresh when cmd.exe ran no command and Claude Code's hooks start with node", async () => {
+    const { root, home } = await connected(["claude-code"], async () => {}, "win32");
+    // A full path that names no folder on any computer that runs this test: the start of cmd.exe fails.
+    vi.stubEnv("SystemRoot", String.raw`Z:\rerail-test-no-windows`);
+
+    expect((await connectCodingAgents(root, home, ["claude-code"])).nodeHookFallback).toBe(true);
+    expect((await refreshCodingAgents(root, home)).notes).toContain(NODE_HOOK_FALLBACK_NOTE);
+    vi.unstubAllEnvs();
+    expect((await connectCodingAgents(root, home, ["claude-code"])).nodeHookFallback).toBe(false);
   });
 });
 

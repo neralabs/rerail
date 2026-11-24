@@ -243,8 +243,24 @@ describe("audit controls", () => {
       expect(controls.claimRepositoryAudit("a", checkout, ranAgainst)).toBe(true);
       controls.finishRepositoryAudit("a", checkout, auditId, "failed", "Evaluation failed");
       sessionStore.openSession({ host: "omp", sessionId: "later", cwd: root });
-      return { checkout, controls, close: () => { controls.close(); sessionStore.close(); } };
+      return { checkout, controls, path: sessionStore.path, auditId, close: () => { controls.close(); sessionStore.close(); } };
     }
+
+    // Text an audit record reads as an adapter error: a damaged file's, and a list past the CHECK on `audits`; then
+    // failures with no string message or code, which Rerail never writes.
+    it.each([
+      '[{"clauseId":"source"', "[null]", '[{"path":"a","code":"source-incomplete"}]',
+      '[{"path":"a","code":"source-incomplete","message":1}]', '[{"path":"a","blind":"syntax","message":"m"}]',
+    ])("does not run again when its stored failures read as %s, until the catalog is another one", async text => {
+      const { checkout, controls, path, auditId, close } = await failedAudit([sourceGap]);
+      const database = openRerailDatabase(path);
+      database.$client.pragma("ignore_check_constraints = ON");
+      database.$client.prepare("UPDATE audits SET failures_json = ? WHERE audit_id = ?").run(text, auditId);
+      database.$client.close();
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(false);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-2")).toBe(true);
+      close();
+    });
 
     it("runs again when it failed only for files read in part, which the old rule counted", async () => {
       const { checkout, controls, close } = await failedAudit([sourceGap, scanLimit]);
@@ -298,7 +314,7 @@ describe("audit controls", () => {
   it("records and interrupts audits without claiming another session's work", async () => {
     const { controls, sessionStore: sessionStore } = await fixture();
     const owner = controls.registerOwner("a", "next-event");
-    const queued = controls.requestAudit("a", { scope: "repository" });
+    const queued = (await controls.requestAudit("a", { scope: "repository" }));
     expect(queued.mode).toBe("log");
     expect(controls.claim("b", owner)).toBeUndefined();
     expect(controls.claim("a", owner)).toMatchObject({ id: queued.id, status: "running" });
@@ -329,7 +345,7 @@ describe("audit controls", () => {
     await writeFile(join(root, "untracked.ts"), "export const added = true;\n");
     const owner = controls.registerOwner("a", "next-event");
 
-    const queued = controls.requestAudit("a", { scope: "git-diff" });
+    const queued = (await controls.requestAudit("a", { scope: "git-diff" }));
 
     expect(queued).toMatchObject({
       scope: "touched-files",
@@ -355,7 +371,7 @@ describe("audit controls", () => {
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "baseline"], { cwd: root });
     execFileSync("git", ["mv", "before.ts", "after.ts"], { cwd: root });
 
-    expect(controls.requestAudit("a", { scope: "git-diff" }).paths).toEqual(["after.ts"]);
+    expect((await controls.requestAudit("a", { scope: "git-diff" })).paths).toEqual(["after.ts"]);
     controls.close(); sessionStore.close();
   });
 
@@ -391,7 +407,7 @@ describe("audit controls", () => {
     }
     controls.registerOwner("a", "next-event");
 
-    expect(controls.requestAudit("a", { scope: "git-diff" }).paths)
+    expect((await controls.requestAudit("a", { scope: "git-diff" })).paths)
       .toEqual(["nested", "recorded/kept.ts", "vendor/sub/added.ts", "vendor/sub/lib.ts"]);
     controls.close(); sessionStore.close();
   });
@@ -399,7 +415,7 @@ describe("audit controls", () => {
   it("isolates replacement owners and interrupts work stranded by a prior owner", async () => {
     const { controls, sessionStore: sessionStore } = await fixture();
     const first = controls.registerOwner("a", "next-event");
-    const queued = controls.requestAudit("a", { scope: "repository" });
+    const queued = (await controls.requestAudit("a", { scope: "repository" }));
     controls.releaseOwner("a", first);
     const replacement = controls.registerOwner("a", "background");
     expect(controls.claim("a", first)).toBeUndefined();

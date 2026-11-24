@@ -15,7 +15,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
-import type { AuditMode } from "../audit/audit.js";
+import type { AuditMode, AuditOwner } from "../audit/audit.js";
 import { fileStamp, stampTime } from "../file-stamp.js";
 import {
   gitBranchTips,
@@ -44,13 +44,16 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
+import { type LinkedFiles, type NoticedRead, SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
+import { WorktreeLooks } from "./worktree-look.js";
+import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
-  type WorktreeWatch,
+  storedRegistry, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
+  type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
 
@@ -111,6 +114,14 @@ export function ledgerPreimage(preimage: Preimage): Preimage {
   }
   return preimage.readError === undefined ? preimage : { ...preimage, readError: scrubSecrets(preimage.readError) };
 }
+
+/**
+ * What `begin` takes in place of preimages for a call no one saw start, which may have run already (its hook left it
+ * while the daemon did not read, or gave up waiting): it captures nothing, as what its files hold now may be what it
+ * wrote. Its "before" is then rebuilt from its own text edits only where that is certain (`certainEdit`); the rules
+ * read the whole text it left everywhere else (`#readToolEdit`).
+ */
+export const UNSEEN_START = "unseen-start";
 
 export interface Source {
   readonly path: string;
@@ -187,6 +198,8 @@ function observation(source: Source): ObservedSource {
 interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
+  /** The text edits its input asks for (`inputTextEdits`), which give a "before" its start did not capture. */
+  readonly textEdits?: readonly TextEdit[] | undefined;
 }
 
 /** A tool call the session's ledger holds open as the session opens, with what it captured as it began. */
@@ -250,12 +263,64 @@ function keptPreimage(source: Source, preimage: Preimage): Preimage {
   return { withheld: { sha256: sha256(preimage.text), bytes: Buffer.byteLength(preimage.text) } };
 }
 /**
- * The digest a tool edit's source had before it when its text was not captured: the one observed before a call whose start
- * was not seen, or a secret-like file's, which finds it again where this session or Git holds it.
+ * The digest a secret-like file had before a tool edit whose start kept no copy of it, which finds the text again where
+ * this session or Git holds it.
  */
-function uncapturedPrior(edit: CodeRuleEdit, preimage: Preimage | undefined, before: string | undefined): string | undefined {
-  if (edit.generatedText === undefined) return undefined;
-  return preimage === undefined ? before : preimage.withheld?.sha256;
+function withheldPrior(edit: CodeRuleEdit, preimage: Preimage): string | undefined {
+  return edit.generatedText === undefined ? undefined : preimage.withheld?.sha256;
+}
+/**
+ * `edit`, of a call that captured nothing of its file as it began (its hook left it while the daemon did not read, or
+ * the ledger held nothing), with the text the call was made on as its "before", where that text is certain; undefined
+ * anywhere else, so the rules read the whole text it left and tell every finding of the file: more than the call's own
+ * lines where some are not its own, never fewer. The text is certain only where each of these holds:
+ * - the call's input names its text edits (`inputTextEdits`): an Edit or MultiEdit, not a Write, whose earlier text
+ *   nothing in its input gives;
+ * - undoing them in the text it left, the last first, finds each new text, which is not empty, exactly once (at every
+ *   place, for an edit of every place), the one place each edit can have been made (`undoTextEdits`);
+ * - making them again on the text that gives, as the tool makes them, finds each old text, which is not empty (an Edit
+ *   with an empty one created its file), exactly once (at every place, for an edit of every place) and gives back
+ *   exactly the text the call left;
+ * - that text is what the session last saw of the file (`sight`, its SHA-256 digest).
+ * Then the file held that text when the session last looked, and holds it now with this call's edits and nothing else,
+ * so no other write came between: neither another program's nor another call the same hold left, whose change the
+ * text left would hold besides (a later call that wrote the same text again included). A file the session first saw
+ * after the call wrote it fails the last condition, as what it saw already holds the call's edits. One write gets past
+ * them: for an edit of every place, another program's write of the same new text over an older line, which undoing
+ * every place takes back too, so that line is told as the call's: one line more, never fewer.
+ */
+function certainEdit(edit: CodeRuleEdit, textEdits: readonly TextEdit[] | undefined, sight: string | undefined): CodeRuleEdit | undefined {
+  if (edit.generatedText === undefined || textEdits === undefined || sight === undefined) return undefined;
+  const previousText = undoTextEdits(edit.generatedText, textEdits);
+  if (previousText === undefined || sha256(previousText) !== sight) return undefined;
+  const { previousReadError: _uncaptured, ...rest } = edit;
+  return { ...rest, previousText };
+}
+/**
+ * What a call's edits are read against (`#readToolEdit`): what its start captured, the text edits its input asks for
+ * (`inputTextEdits`), and what its result says the file it wrote held before. `notFromCapture` collects each source
+ * whose edit was read against anything but the call's own capture, which `rewind` never rolls back.
+ */
+interface EditPreimages {
+  readonly captured: ReadonlyMap<string, Preimage>;
+  readonly textEdits: readonly TextEdit[] | undefined;
+  readonly reported: ReportedPreimage | undefined;
+  readonly notFromCapture: Set<string>;
+}
+/** What the tool's result reports of the source at `path` before the call, when it reports that source. */
+function reportedFor(preimages: EditPreimages, path: string): ReportedPreimage | undefined {
+  return preimages.reported?.path === path ? preimages.reported : undefined;
+}
+/**
+ * `edit`, of a call whose start captured nothing of its file, with the text it was made on as its "before" where that is
+ * certain (`certainEdit`), else as read, over the whole text it left. A rebuilt "before" is no capture of the call's,
+ * so the source joins `notFromCapture`.
+ */
+function editWithoutCapture(edit: CodeRuleEdit, preimages: EditPreimages, sight: string | undefined): CodeRuleEdit {
+  const certain = certainEdit(edit, preimages.textEdits, sight);
+  if (certain === undefined) return edit;
+  preimages.notFromCapture.add(edit.path);
+  return certain;
 }
 /**
  * What Git decided about a change: it was Git's (`keptAs` when the text it left is held by neither the index nor `HEAD`:
@@ -755,13 +820,25 @@ interface WorktreeDiscovery {
   unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
   /** Filesystem-clock reading taken as the last finished walk began; undefined until one finishes. */
   walkedFrom: number | undefined;
+  /**
+   * Changes a walk handed the session to record for the repository (`WalkStart.records`) that its take left to the next
+   * walk (`WorktreeTake.views`, `#leaveToNextWalk`): the next take records them, though its walk finds them no new change.
+   */
+  unrecorded: Set<string>;
   /** A mark of each of `roots`, made new each time Git lists one the session did not list before (`#syncWorktrees`). */
   readonly listed: Map<string, symbol>;
 }
 
+/**
+ * The place of a call's writes outside the session folder in its own checkout, which a walk of the other worktrees reads
+ * for the sessions watching it, and asks this session's claims of (`#callPlaces`). Not a path, so no worktree is it.
+ */
+const REST_OF_CHECKOUT = "\0checkout";
+
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
     roots: new Set(), fresh: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(), walkedFrom: undefined,
+    unrecorded: new Set(),
     listed: new Map(),
   };
 }
@@ -826,6 +903,12 @@ function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan
  */
 function takenErrors(worktree: string, errors: readonly ScanError[], takes: (path: string) => boolean): ScanError[] {
   return errors.filter(error => takes(error.path)).map(error => ({ ...error, path: inWorktree(worktree, error.path) }));
+}
+
+/** `walk`, answering for no call in a worktree that holds one of `left`, the sources it left to the next walk. */
+function answeringAround(walk: WalkStart, left: ReadonlySet<string>): WalkStart {
+  const holding = new Set([...left].map(path => rootHolding(walk.worktrees, path)));
+  return holding.size === 0 ? walk : { ...walk, readFrom: new Map([...walk.readFrom].filter(([worktree]) => !holding.has(worktree))) };
 }
 
 /**
@@ -989,11 +1072,23 @@ interface SourceDiscovery {
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
+  /** The session folder's change notices: which paths a pass for a command's result reads, when not every file. */
+  readonly notices: SessionNotices;
+  /** The files that tell Git what to ignore beyond the session folder's `.gitignore` files, read at each pass. */
+  readonly ignoreFiles: WorktreeLooks;
   /**
-   * Each file the session folder's last walk could not read, by path, with the calls that may have written it unseen
-   * (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it, up to
-   * the last walk's start. Another program may let the file go between two walks that miss it, so each call in that
-   * time may have written it.
+   * Whether a shell command of the session ran while the session folder's first walk read it, or ended since it began:
+   * that walk keeps what was seen before of a file the command may have been part way through writing (`stampOfRead`)
+   * and names none of them, so the pass after reads the whole folder. A later pass names what it left
+   * (`leftToCommands`).
+   */
+  commandDuringPass: boolean;
+  /**
+   * Each file the session folder's last whole walk could not read, by path, with the calls that may have written it
+   * unseen (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it,
+   * up to the last walk's start. Another program may let the file go between two walks that miss it, so each call in
+   * that time may have written it. A pass of noticed paths leaves it as it is: it lets no call go (`#finishWholeWalk`),
+   * so a file it could not read keeps every call until a whole walk reads it.
    */
   missedFiles: ReadonlyMap<string, EndedCalls>;
   /** `ToolCallWindows.ends` as the last session folder walk that listed every folder began. */
@@ -1087,6 +1182,12 @@ export interface SourceScan {
    * `#firstSeenInWorktrees`), each with the sources the walk saw first there, by path.
    */
   readonly lateListings: Map<string, ReadonlyMap<string, Source>>;
+  /**
+   * Each file observed that has another name (a hard link): a write through a name outside the session folder is told
+   * by no change notice of it, so a pass of noticed paths reads these too (`SessionNotices`). Absent: not noted, as in
+   * a walk of another worktree.
+   */
+  readonly linked?: LinkedFiles;
 }
 function emptyScan(): SourceScan {
   return {
@@ -1184,6 +1285,19 @@ interface WalkStart {
   readonly callsEnded: number;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
+  /** The session folder's paths this pass read, when it read only those change notices named (`SessionNotices`). */
+  readonly noticed?: ReadonlyMap<string, NoticedRead>;
+  /**
+   * Of the walk of the other worktrees, when the read each worktree's findings come from began (`WorktreeFindings.readFrom`),
+   * by the worktree as the session names it: it saw every write of a call that ran there and ended before. None for a
+   * read that gave up on a path (`WorktreeFindings.gaveUp`), and empty for the session folder's walk.
+   */
+  readonly readFrom: ReadonlyMap<string, number>;
+  /**
+   * Of the walk of the other worktrees, the changes (session-relative) no watching session made that this session
+   * records once for the repository (`WorktreeWalks`). Empty for the session folder's walk.
+   */
+  readonly records: ReadonlySet<string>;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
@@ -1219,6 +1333,57 @@ function walkAnswersFor(discovery: SourceDiscovery, walk: WalkStart, path: strin
   const walked = rootHolding(walk.worktrees, path);
   if (!walk.inSession) return walked !== undefined && walkHeld(discovery, walk, walked);
   return walked === undefined && !underBaselineRoot(discovery.worktrees.roots, path) && path !== ".." && !path.startsWith("../");
+}
+/** What a pass of noticed paths reads (`SessionNotices.begin`). */
+type NoticedReads = Extract<SessionReads, { readonly whole: false }>;
+/** The paths a walk weighs: each it or the walk before found, or only those a pass of noticed paths read. */
+function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Iterable<string> {
+  return walk.noticed?.keys() ?? new Set([...walk.previous.keys(), ...current.keys()]);
+}
+/**
+ * Whether a pass for `checkpoint` reads the whole session folder whatever its notices say: at a turn's end, which so
+ * finds within the turn a write no notice told of; and until a walk finished with nothing it could not read or check,
+ * which only a whole walk reads again; and after a first walk a shell command of the session ran through
+ * (`commandDuringPass`), which may have kept a file's earlier view without naming it. A command's
+ * result reads whole too once the last whole walk began more than `WORKTREE_FULL_WALK_MS` ago (`SessionNotices`), so in
+ * a long turn such a write is found at the first command result past that, read when the result arrives: no timer runs
+ * for it.
+ */
+function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
+  if (checkpoint !== "edit" || !discovery.baselineComplete || discovery.commandDuringPass) return true;
+  return discovery.gaps.length > 0 || discovery.baselineRoots.size > 0;
+}
+
+/**
+ * Asks for one more pass after a baseline walk, unless one is asked for already: it reconciles changes to
+ * already-observed files made during the initial traversal.
+ */
+function passAfterBaseline(discovery: SourceDiscovery, walk: WalkStart, checkpoint: DiscoveryCheckpoint): void {
+  if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+}
+/**
+ * The paths a pass left to the pass after because a shell command of the session that began by `commandSince` ran
+ * through it (`#toolChanges`): each the session saw before whose stamp the command may have written, gone ones
+ * included. The pass took their notices, so the pass after reads them again by name (`SessionNotices.readAgain`), and
+ * the writer's own result checks them without a walk of the whole folder.
+ */
+function leftToCommands(walk: WalkStart, scan: SourceScan, commandSince: number | undefined): string[] {
+  if (commandSince === undefined) return [];
+  const writtenSince = (path: string): boolean => {
+    const modifiedAt = scan.sources.get(path)?.modifiedAt;
+    return modifiedAt === undefined || commandSince <= modifiedAt;
+  };
+  return [...walkedPaths(walk, scan.sources)].filter(path => walk.previous.has(path) && writtenSince(path));
+}
+/**
+ * `unread` with each of `noticed` as a pass of those paths found it (`found`); the rest as the last walk found them. A
+ * path the pass read is taken out, so one the last walk left unread for its size and the pass found readable or gone is
+ * no longer listed.
+ */
+export function unreadAfter(unread: SourceDiscovery["unread"], noticed: ReadonlyMap<string, unknown>, found: SourceScan["unread"]): SourceDiscovery["unread"] {
+  const after = new Map([...unread].filter(([path]) => !noticed.has(path)));
+  for (const [path, entry] of found) after.set(path, entry);
+  return after;
 }
 /**
  * The digest a changed source was observed with before, when the walk found it changed and could not read what it was;
@@ -1382,6 +1547,31 @@ function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): str
   if (said.length > 0) return said.join("; ");
   if (!discovery.baselineComplete) return "Initial source discovery is still pending";
   return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
+}
+/**
+ * What the session folder's path `path` (at `absolute`) is now, for a pass of noticed paths: "gone" when the whole walk
+ * would not find it; undefined when only a whole walk reads it: a folder now, a path that cannot be looked at, or a file
+ * a change notice named (`how`: "stamp-and-spelling") spelled otherwise than the folder holds it, as a volume that
+ * ignores case finds `m.py` as `M.py`, and Windows a file by its short name; the whole walk finds such a file under its
+ * own name. A linked file no notice named is spelled as a walk found it, which its stamp alone answers ("stamp").
+ */
+async function noticedEntry(absolute: string, path: string, how: NoticedRead): Promise<Stats | "gone" | undefined> {
+  const info = await lstat(absolute).catch(goneOrUnknown);
+  if (info === "gone" || info === undefined) return info;
+  if (info.isDirectory()) return undefined;
+  return how === "stamp" ? info : await asSpelled(absolute, path, info);
+}
+/** `info`, unless it is of a file the folder holds under another spelling than `path` (`spelledAsHeld`). */
+async function asSpelled(absolute: string, path: string, info: Stats): Promise<Stats | undefined> {
+  return !info.isFile() || (await spelledAsHeld(absolute, path)) ? info : undefined;
+}
+function goneOrUnknown(error: unknown): "gone" | undefined {
+  return vanished(error) ? "gone" : undefined;
+}
+/** Whether the session folder's file `path` (at `absolute`) is spelled as its folders hold it: `realpath` gives each name as held. */
+async function spelledAsHeld(absolute: string, path: string): Promise<boolean> {
+  const held = await realpath(absolute).catch(() => undefined);
+  return held !== undefined && held.endsWith(sep + path.split("/").join(sep));
 }
 /**
  * The most gaps one bridge tells `onDiscoveryGaps` of. Past it, one more gap says the walks could not check more than that
@@ -1682,6 +1872,19 @@ function walkKeeps(discovery: SourceDiscovery, walk: WalkStart, root: string): b
 function walkHeld(discovery: SourceDiscovery, walk: WalkStart, worktree: string): boolean {
   return discovery.worktrees.listed.get(worktree) === walk.listed?.get(worktree);
 }
+/** The worktrees `walk` of the other worktrees read that Git did not list for the whole walk (`walkHeld`). */
+function walkLost(discovery: SourceDiscovery, walk: WalkStart): Set<string> {
+  return new Set([...walk.worktrees].filter(worktree => !walk.inSession && !walkHeld(discovery, walk, worktree)));
+}
+/**
+ * Leaves the records for the repository of `paths` that `walk` handed the session to the next walk
+ * (`WorktreeDiscovery.unrecorded`), but those in a worktree Git did not list for the whole walk: one removed took its
+ * changes with it (`#forgetWorktrees`), and the next walk reads one listed again at its path as new.
+ */
+function leaveRecords(discovery: SourceDiscovery, walk: WalkStart, paths: Iterable<string>): void {
+  const lost = walkLost(discovery, walk);
+  for (const path of paths) if (!underBaselineRoot(lost, path)) discovery.worktrees.unrecorded.add(path);
+}
 /** Keeps the `HEAD` and unmerged entries a walk read, those it keeps (`walkKeeps`), as what the next walk is judged from. */
 function keepWalkedGit(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
   const keeps = (root: string): boolean => walkKeeps(discovery, walk, root);
@@ -1808,16 +2011,109 @@ export function generatedEditPaths(toolName: string, input: unknown): string[] {
   return [...new Set(paths.filter(path => path.trim() !== "" && !/[\0\r\n]/u.test(path)))];
 }
 
+/**
+ * A text edit as an Edit tool call asks for it, and each edit of a MultiEdit call: `oldString` replaced by `newString`
+ * once, or at every place it is with `replaceAll`.
+ */
+export interface TextEdit {
+  readonly oldString: string;
+  readonly newString: string;
+  readonly replaceAll: boolean;
+}
+
+/**
+ * The text edits a tool call's input asks for, in the order they are made: an Edit's one (`old_string`, `new_string`,
+ * `replace_all`) or a MultiEdit's `edits`. Undefined when it asks for none, as a Write does, or a field is not of its kind.
+ */
+export function inputTextEdits(input: unknown): readonly TextEdit[] | undefined {
+  if (!isRecord(input)) return undefined;
+  const items: readonly unknown[] = Array.isArray(input.edits) ? input.edits : [input];
+  const edits = items.map(textEditOf);
+  return edits.length > 0 && edits.every(isTextEdit) ? edits : undefined;
+}
+
+/**
+ * The text `edits` were made on, from the text they left: each one undone, the last first, by putting its old string
+ * back where its new string is, then checked by making them again on it as the tool makes them, which must give back
+ * `text`. Undefined where the place is not known exactly (a new string that is empty, or one the text holds other than
+ * once, or not at all for an edit made at every place, as a later edit or another writer changed it there), or where the
+ * tool could not have made the edits on the text undoing gives (an empty old string, which creates a file, or one that
+ * text holds other than once). In a text with CRLF line breaks the edits' lines are matched with CRLF, as an editor
+ * that keeps a file's line breaks writes them.
+ */
+export function undoTextEdits(text: string, edits: readonly TextEdit[]): string | undefined {
+  const matched = text.includes("\r\n") ? edits.map(withCrlf) : edits;
+  const undone = matched.reduceRight<string | undefined>((current, edit) => (current === undefined ? undefined : undoTextEdit(current, edit)), text);
+  if (undone === undefined) return undefined;
+  const redone = matched.reduce<string | undefined>((current, edit) => (current === undefined ? undefined : madeOnce(current, edit)), undone);
+  return redone === text ? undone : undefined;
+}
+
+function undoTextEdit(text: string, edit: TextEdit): string | undefined {
+  return replacedOnce(text, edit.newString, edit.oldString, edit.replaceAll);
+}
+
+/** `edit` made on `text` as the tool makes it: its old string replaced once, where the text holds it once, or at every place. */
+function madeOnce(text: string, edit: TextEdit): string | undefined {
+  return replacedOnce(text, edit.oldString, edit.newString, edit.replaceAll);
+}
+
+/** `text` with `from` replaced by `to` where it holds `from` exactly once, or at every place it holds it with `everywhere`. */
+function replacedOnce(text: string, from: string, to: string, everywhere: boolean): string | undefined {
+  const at = text.indexOf(from);
+  if (from === "" || at < 0) return undefined;
+  if (everywhere) return text.split(from).join(to);
+  if (text.includes(from, at + 1)) return undefined;
+  return text.slice(0, at) + to + text.slice(at + from.length);
+}
+
+function withCrlf(edit: TextEdit): TextEdit {
+  return { ...edit, oldString: crlf(edit.oldString), newString: crlf(edit.newString) };
+}
+
+function crlf(text: string): string {
+  return text.replace(/\r?\n/gu, "\r\n");
+}
+
+function textEditOf(value: unknown): TextEdit | undefined {
+  if (!isRecord(value)) return undefined;
+  const { old_string: oldString, new_string: newString, replace_all: replaceAll = false } = value;
+  if (typeof oldString !== "string" || typeof newString !== "string" || typeof replaceAll !== "boolean") return undefined;
+  return { oldString, newString, replaceAll };
+}
+
+function isTextEdit(edit: TextEdit | undefined): edit is TextEdit {
+  return edit !== undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /** Tools that run arbitrary commands can write any source without a preimage, so their results reconcile the workspace. */
 export function isCommandTool(toolName: string): boolean {
   return /bash|shell|exec|terminal|command|cmd/iu.test(toolName);
 }
 
 /**
- * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
- * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
- * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
- * per-event timeout.
+ * What `begin` and `finish` check of a call at the call's own result, given the paths its input names
+ * (`generatedEditPaths`): an edit tool's call names the paths it writes, whose text `begin` captures (`edit`), and a
+ * command tool's result reconciles the workspace (`command`). Any other call only opens a window (`unwatchedCall` opens
+ * the same one), and what it wrote is the next walk's (undefined).
+ */
+export function checkAtResult(toolName: string, paths: readonly string[]): "edit" | "command" | undefined {
+  if (paths.length > 0) return "edit";
+  return isCommandTool(toolName) ? "command" : undefined;
+}
+
+/**
+ * How long a turn checkpoint or a command result waits for its pass of the session folder's walk before answering with
+ * what it has. The work goes on, and what it finds is audited and delivered at a later boundary; waiting longer would
+ * hold the session's event lane past the host's per-event timeout. A command result's pass reads only the paths the
+ * folder's change notices named (`SessionNotices`) and ends well inside this; a pass of the whole folder (the first, a
+ * turn's end, the first result more than ten minutes after the last whole walk began, one the notices cannot vouch
+ * for) in a large checkout, or a read on a disk that stalls, can reach it. A reopened session's first event waits as
+ * long at most for the texts its suspension held (`heldTextsRead`).
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 
@@ -1935,6 +2231,8 @@ export class CodeRuleBridge {
   #firstSightBytes = 0;
   /** The most `#texts` may take (`MAX_SESSION_TEXT_BYTES`). */
   readonly #sessionTextBytes: number;
+  /** `eventTime` of the bridge's options. */
+  readonly #eventTime: (() => number | undefined) | undefined;
 
   constructor(
     cwd: string,
@@ -1985,6 +2283,12 @@ export class CodeRuleBridge {
        * as it leaves a begun call's, so an edit one made while the session was closed is not read as another writer's.
        */
       heldCalls?: readonly HeldCall[];
+      /**
+       * When the event the session is checking happened, where it is checked after it happened (a hook left it while the
+       * daemon did not read): a tool call's run is then read from those times, not from the clock as it is checked, so
+       * what the call wrote is the session's own. Undefined, or returning undefined, reads the filesystem's clock.
+       */
+      eventTime?: () => number | undefined;
     } = {},
   ) {
     this.#cwd = resolve(cwd);
@@ -1993,6 +2297,7 @@ export class CodeRuleBridge {
     this.#observations = options.observations;
     this.#resume = options.resume;
     this.#heldCalls = options.heldCalls ?? [];
+    this.#eventTime = options.eventTime;
     // A session opened fresh has no text to read back before its first event is answered.
     if (options.resume === undefined) this.#heldTexts.resolve();
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
@@ -2013,6 +2318,7 @@ export class CodeRuleBridge {
       const startedAt = await filesystemClock();
       const previous = this.#discovery;
       if (previous !== undefined) previous.cancelled = true;
+      previous?.notices.close();
       const unwatched = previous?.worktrees.watch?.close();
       if (this.#sessionId !== undefined) {
         this.#sessionId = undefined;
@@ -2047,6 +2353,11 @@ export class CodeRuleBridge {
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
         readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched, missedFiles: new Map(), listedEnds: 0,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
+        // A write no notice tells of is found by a whole walk at the first command result ten minutes after the last
+        // one began; the other worktrees reread on a timer of the same length.
+        notices: new SessionNotices(root, { fullWalkMs: WORKTREE_FULL_WALK_MS }),
+        ignoreFiles: new WorktreeLooks(),
+        commandDuringPass: false,
       };
       this.#unwatched = new ToolCallWindows();
       // Before the first walk can start, which would otherwise read a held call's edit as another writer's change.
@@ -2189,30 +2500,43 @@ export class CodeRuleBridge {
     toolCallId: string,
     toolName: string,
     input: unknown,
-    restoredPreimages?: Readonly<Record<string, Preimage>>,
+    restoredPreimages?: Readonly<Record<string, Preimage>> | typeof UNSEEN_START,
+    cwd?: string,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.begin(toolCallId, await filesystemClock(), isCommandTool(toolName));
-    this.refreshCodeRules();
+    // The call's start is read first, so the look at its folder below cannot move it later.
+    const at = await this.#toolCallClock();
     const paths = generatedEditPaths(toolName, input);
+    const named = paths.flatMap(path => sessionRelativePath(discovery.root, path) ?? []);
+    const place = { folder: await this.#callFolder(cwd), paths: named };
+    discovery.toolCalls.begin(toolCallId, at, { command: isCommandTool(toolName), place });
+    this.refreshCodeRules();
     this.#auditor.refreshOwners?.(paths);
     // The rules of a checkout no lane opened yet compile off the daemon's thread, before the capture asks for them.
     if (paths.length > 0) await this.#auditor.prepareRules?.(paths);
-    // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
-    await this.#rememberIgnoreFiles(paths);
-    if (paths.length === 0) {
-      if (isCommandTool(toolName)) this.#commands.add(toolCallId);
-      return {};
-    }
+    // What the ignore files a tool is about to write hold now is the baseline its edit is compared with; one that may
+    // have run already keeps the last look's, as what they hold now may be what it wrote.
+    if (restoredPreimages !== UNSEEN_START) await this.#rememberIgnoreFiles(paths);
+    const check = checkAtResult(toolName, paths);
+    if (check === "command") this.#commands.add(toolCallId);
+    if (check !== "edit") return {};
     return await this.#enqueue(async () => {
       this.#assertDiscovery(discovery);
-      const preimages = restoredPreimages === undefined
-        ? await this.#capturePreimages(discovery, paths)
-        : new Map(Object.entries(restoredPreimages));
+      const preimages = await this.#preimagesAtBegin(discovery, paths, restoredPreimages);
       for (const path of preimages.keys()) this.#touchSource(discovery, path);
-      this.#pending.set(toolCallId, { paths, preimages });
+      this.#pending.set(toolCallId, { paths, preimages, textEdits: inputTextEdits(input) });
       return Object.fromEntries(preimages);
     });
+  }
+
+  /** A call's preimages as it begins: read now, the ledger's for a restored call, or none for one no one saw start. */
+  async #preimagesAtBegin(
+    discovery: SourceDiscovery,
+    paths: readonly string[],
+    restoredPreimages: Readonly<Record<string, Preimage>> | typeof UNSEEN_START | undefined,
+  ): Promise<ReadonlyMap<string, Preimage>> {
+    if (restoredPreimages === undefined) return await this.#capturePreimages(discovery, paths);
+    return new Map(restoredPreimages === UNSEEN_START ? [] : Object.entries(restoredPreimages));
   }
 
   /**
@@ -2221,12 +2545,23 @@ export class CodeRuleBridge {
    * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
    * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call. `toolName`
    * names the call's tool, none for a turn's window; `input` is its tool input, whose files the window names, so a later
-   * call's capture of one of them knows it holds an edit no walk has checked yet (`#unobservedOpeningEdit`).
+   * call's capture of one of them knows it holds an edit no walk has checked yet (`#unobservedOpeningEdit`). `cwd` is
+   * the folder it runs in, as its host's hook named it.
    */
-  async unwatchedCall(toolCallId: string, toolName?: string, input?: unknown): Promise<void> {
-    const at = await filesystemClock();
-    const named = toolName === undefined ? [] : await this.#sessionPaths(generatedEditPaths(toolName, input));
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, at, toolName !== undefined && isCommandTool(toolName), named);
+  async unwatchedCall(
+    toolCallId: string,
+    call: { readonly toolName?: string | undefined; readonly input?: unknown; readonly cwd?: string | undefined } = {},
+  ): Promise<void> {
+    const at = await this.#toolCallClock();
+    const { toolName } = call;
+    const named = toolName === undefined ? [] : await this.#sessionPaths(generatedEditPaths(toolName, call.input));
+    const place = { folder: await this.#callFolder(call.cwd), paths: named };
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, at, { command: toolName !== undefined && isCommandTool(toolName), unwatched: true, place });
+  }
+
+  /** Where a tool call starts or ends on the filesystem's clock: when its event happened, or now (`eventTime`). */
+  async #toolCallClock(): Promise<number> {
+    return this.#eventTime?.() ?? await filesystemClock();
   }
 
   /**
@@ -2238,9 +2573,19 @@ export class CodeRuleBridge {
     return root === undefined ? [] : configuredPaths.flatMap(path => sessionRelativePath(root, path) ?? []);
   }
 
+  /**
+   * The folder a call runs in (its host's `cwd`), relative to the session folder as a walk names paths, through any link
+   * as the walks resolve the worktrees; undefined where the host did not say.
+   */
+  async #callFolder(cwd: string | undefined): Promise<string | undefined> {
+    if (cwd === undefined) return undefined;
+    const root = this.#discovery?.root ?? await realpath(this.#cwd).catch(() => resolve(this.#cwd));
+    return sessionPath(root, await realpath(cwd).catch(() => resolve(cwd)));
+  }
+
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
+    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await this.#toolCallClock());
   }
 
   /**
@@ -2252,7 +2597,7 @@ export class CodeRuleBridge {
    */
   async finish(toolCallId: string, failed = false, options: FinishOptions = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finish(toolCallId, await filesystemClock());
+    discovery.toolCalls.finish(toolCallId, await this.#toolCallClock());
     if (this.#commands.delete(toolCallId)) {
       const responses = await this.#reconcile(discovery);
       await this.#noteIgnoreRules([]);
@@ -2503,9 +2848,11 @@ export class CodeRuleBridge {
    */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finishAll(await filesystemClock());
+    discovery.toolCalls.finishAll(await this.#toolCallClock());
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
+    // Once the edits queued so far reached the auditor, runs waiting for their checkout to go quiet start now.
+    void this.#queue.then(() => this.#auditor.turnEnded?.());
     this.#assertDiscovery(discovery);
     return this.#discoveryResponse(discovery, checkpoint);
   }
@@ -2574,6 +2921,7 @@ export class CodeRuleBridge {
     if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
     // No walk of the other worktrees reads through this session, or reaches it, any more.
     const unwatched = discovery.worktrees.watch?.close();
+    discovery.notices.close();
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#shareOwnObservations(discovery);
@@ -2646,7 +2994,7 @@ export class CodeRuleBridge {
 
   /**
    * The tool call's edits, each read against its preimage (`editPreimage`): the call's own, or the one its result
-   * reports. And the digest each source had before it where the call's start captured no preimage, and the sources
+   * reports. And the digest each secret-like source had before it, of which its start kept no copy, and the sources
    * whose edit was read against anything but the call's own capture.
    */
   async #readEdits(
@@ -2657,7 +3005,9 @@ export class CodeRuleBridge {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
-    const preimages = { captured: pending.preimages, reported: this.#locatedReport(root, reported), notFromCapture: new Set<string>() };
+    const preimages: EditPreimages = {
+      captured: pending.preimages, textEdits: pending.textEdits, reported: this.#locatedReport(root, reported), notFromCapture: new Set<string>(),
+    };
     for (const configuredPath of [...pending.paths].sort(compareDeterministicStrings)) {
       const edit = await this.#readToolEdit(discovery, root, configuredPath, preimages, uncaptured);
       if (edit !== undefined) edits.push(edit);
@@ -2673,29 +3023,29 @@ export class CodeRuleBridge {
 
   /**
    * The edit of the source at `configuredPath`, read against its preimage (`editPreimage`): the call's own capture, or
-   * what the tool's result reports for that source. A source whose edit is read against anything but its capture's
-   * text joins `notFromCapture`.
+   * what the tool's result reports for that source. Where its start captured nothing of the file, its "before" is the
+   * text it was made on where that is certain (`certainEdit`), so the rules read the call's own lines; anywhere else
+   * they read the whole text it left. A source whose edit is read against anything but its capture's text joins
+   * `notFromCapture`. What the session last saw of the file is taken before reading it moves that sight on.
    */
   async #readToolEdit(
     discovery: SourceDiscovery,
     root: string,
     configuredPath: string,
-    preimages: {
-      readonly captured: ReadonlyMap<string, Preimage>; readonly reported: ReportedPreimage | undefined; readonly notFromCapture: Set<string>;
-    },
+    preimages: EditPreimages,
     uncaptured: Map<string, string>,
   ): Promise<CodeRuleEdit | undefined> {
     const source = await this.#readSource(root, configuredPath);
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
-    const reported = preimages.reported?.path === source.path ? preimages.reported : undefined;
     const captured = preimages.captured.get(source.path);
-    const preimage = editPreimage(source, captured, reported);
+    const preimage = editPreimage(source, captured, reportedFor(preimages, source.path));
     if (!readAsCaptured(preimage, captured)) preimages.notFromCapture.add(source.path);
-    const before = this.#observedSource(source.path)?.digest;
+    const sight = this.#observedSource(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;
-    const prior = uncapturedPrior(edit, preimage, before);
+    if (preimage === undefined) return editWithoutCapture(edit, preimages, sight);
+    const prior = withheldPrior(edit, preimage);
     if (prior !== undefined) uncaptured.set(edit.path, prior);
     return edit;
   }
@@ -2822,7 +3172,7 @@ export class CodeRuleBridge {
   async #noteWalkedIgnoreFiles(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>): Promise<void> {
     if (this.#onIgnoreRulesChanged === undefined) return;
     const first: string[] = [];
-    for (const path of new Set([...walk.previous.keys(), ...current.keys()])) {
+    for (const path of walkedPaths(walk, current)) {
       const seen = this.#walkedIgnoreFile(discovery, walk, current, path);
       if (seen === undefined) continue;
       if (seen === "first" && !(await writtenThisSession(discovery, walk, path))) first.push(path);
@@ -2904,10 +3254,11 @@ export class CodeRuleBridge {
   /**
    * The repository's other worktrees as they are now, each relative to the session folder in `WorktreeDiscovery.roots`. One
    * first seen now is a baseline but for what changed since the session opened, which Git's verdicts judge. One gone took
-   * its files with it, and none of them is an edit.
+   * its files with it, and none of them is an edit. `registry`: the list the walk's learn step gave as stored, in the same
+   * synchronous run (`worktreeRoots`).
    */
-  #syncWorktrees(discovery: SourceDiscovery): readonly string[] {
-    const worktrees = (this.#auditor.worktreeRoots?.() ?? []).filter(worktree => worktree !== discovery.root);
+  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry): readonly string[] {
+    const worktrees = (this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
     const { roots, fresh, listed } = discovery.worktrees;
     for (const worktree of current) {
@@ -2934,6 +3285,7 @@ export class CodeRuleBridge {
       fresh.delete(worktree);
       listed.delete(worktree);
     }
+    discovery.worktrees.unrecorded = new Set([...discovery.worktrees.unrecorded].filter(path => !underBaselineRoot(removed, path)));
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
     forgetSnapshots(discovery, removed);
     this.#worktreeView.forget(removed);
@@ -2941,18 +3293,29 @@ export class CodeRuleBridge {
 
   /**
    * Asks for a walk of the other worktrees, behind the session folder's walk and never in its way: a command does not
-   * wait for it, and what it finds is recorded, never steered (`#auditWalkEdits`). The walk is shared with every session
+   * wait for it, and what it finds steers the session at a later answer, where the session made it (`#auditWalkEdits`). The walk is shared with every session
    * watching those worktrees (`WorktreeWalks`). A boundary that comes before the next walk is due sets a timer rather
    * than dropping it, and one that comes while a walk runs has it walk again after, so the last write of a turn is still
    * seen.
    */
   #scheduleWorktreeWalk(discovery: SourceDiscovery): void {
     if (discovery.cancelled || this.#auditor.worktreeRoots === undefined) return;
-    discovery.worktrees.watch ??= this.#sharedWorktreeWalks().watch({
-      clock: filesystemClock,
-      start: () => this.#startWorktreeWalk(discovery),
-    });
+    discovery.worktrees.watch ??= this.#watchWorktrees(discovery);
     discovery.worktrees.watch.request();
+  }
+
+  /**
+   * The session's watch of the shared walk, made at its first walk. From then on the session folder's change notices
+   * come through the engine watch the walk takes its notices from (`SessionNotices`), so a command's result reads the
+   * paths they name.
+   */
+  #watchWorktrees(discovery: SourceDiscovery): WorktreeWatch {
+    const walks = this.#sharedWorktreeWalks();
+    discovery.notices.use(walks.sessionWatch());
+    const auditor = this.#auditor;
+    // An auditor that learns its worktrees ahead has each walk learn them first, so the walk's start asks Git nothing.
+    const prepare = auditor.learnWorktreeRoots === undefined ? {} : { prepare: (git: GitReads) => auditor.learnWorktreeRoots?.(git) };
+    return walks.watch({ clock: filesystemClock, ...prepare, start: registry => this.#startWorktreeWalk(discovery, registry) });
   }
 
   #sharedWorktreeWalks(): WorktreeWalks {
@@ -2967,11 +3330,11 @@ export class CodeRuleBridge {
    * The session's part in a walk of the other worktrees as it begins: the worktrees it watches now, and what it takes
    * the walk's findings against. Undefined once the session has closed, or when the worktrees cannot be listed.
    */
-  #startWorktreeWalk(discovery: SourceDiscovery): WatcherWalk | undefined {
+  #startWorktreeWalk(discovery: SourceDiscovery, registry: WorktreeRegistry | undefined): WatcherWalk | undefined {
     if (this.#abandoned(discovery)) return undefined;
     let worktrees: readonly string[];
     try {
-      worktrees = this.#syncWorktrees(discovery);
+      worktrees = this.#syncWorktrees(discovery, registry);
     } catch (error) {
       discovery.worktrees.gaps = [{ reason: errorMessage(error) }];
       return undefined;
@@ -2984,14 +3347,17 @@ export class CodeRuleBridge {
     return {
       worktrees: new Set(worktrees),
       checkout: this.#owningCheckout(discovery.root, ""),
+      folder: discovery.root,
       registry: this.#auditor.worktreeRegistry?.(),
       firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
+      fresh: new Set(worktrees.filter(worktree => discovery.worktrees.fresh.has(sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
       unmerged: new Set([...discovery.unmerged.keys()].filter(root => inWorktrees(discovery, root))),
       scan: request => this.#scanWorktree(discovery, request, rules),
       holdsRefusal: (root, path) => this.#holdsRefusal(inWorktree(sessionPath(discovery.root, root), path === "." ? "" : path)),
-      take: walk => this.#takeWorktreeWalk(discovery, start, walk),
+      claims: (root, findings) => this.#claimsIn(discovery, root, findings),
+      take: (walk, records) => this.#takeWorktreeWalk(discovery, start, walk, records),
     };
   }
 
@@ -3014,48 +3380,159 @@ export class CodeRuleBridge {
     await this.#walkSources(discovery, checkpoint);
   }
 
-  /** One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes what the other owns. */
+  /**
+   * One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes
+   * what the other owns. A pass for a command's result reads only the paths the folder's change notices named since the
+   * last pass when they vouch for the rest (`SessionNotices`); every other pass reads the whole folder.
+   */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
-    const worktrees = this.#syncWorktrees(discovery);
-    const walk: WalkStart = {
+    const whole = readsWholeFolder(discovery, checkpoint);
+    // Read beside the walk, as the pass begins: Git names the files once a session, so a whole pass, the session's
+    // first among them, never waits for it; one that may read by notices waits, for files Git has named.
+    const ignores = discovery.ignoreFiles.ignoresOf(discovery.git, discovery.root);
+    // Taken before the walk: a write made from here on is a notice for the next pass.
+    const reads = discovery.notices.begin(whole, whole ? undefined : await ignores);
+    // What the worktrees' list would ask Git is learnt first, as a process no thread waits on, so the list below starts
+    // none; while the stored list stands there is nothing to wait for, and the list below takes it as read here. A
+    // session that closed meanwhile has its walk stop there, as at the walk's other waits.
+    const learnt = this.#auditor.learnWorktreeRoots?.(discovery.git);
+    const learning = this.#learnWorktrees(discovery, learnt);
+    if (learning !== undefined && !(await learning)) return;
+    const worktrees = this.#syncWorktrees(discovery, storedRegistry(learnt));
+    const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery),
       callsEnded: discovery.toolCalls.ends,
       observedAt: await filesystemClock(),
+      readFrom: new Map(),
+      records: new Set(),
     };
-    const scan = await this.#scanSources(discovery, walk, worktrees);
+    const { walk, scan, seen } = await this.#scanPass(discovery, start, worktrees, reads);
     if (this.#abandoned(discovery)) return;
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
-    // Reconcile changes to already-observed files made during the initial traversal.
-    if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+    // Only once applied: a pass whose audit failed leaves the next to read whole, which finds its changes again.
+    discovery.notices.ended(seen, { linked: reads.linked, files: scan.sources.size }, await ignores);
+    passAfterBaseline(discovery, walk, checkpoint);
+  }
+
+  /**
+   * The wait for what `learnt` learns through the session's Git reads (`learnWorktreeRoots`): resolves whether the
+   * session's walk goes on, false once the session closed meanwhile; undefined, with nothing to wait for, when there is
+   * nothing to learn or the stored list stands.
+   */
+  #learnWorktrees(discovery: SourceDiscovery, learnt: WorktreeListLearning | undefined): Promise<boolean> | undefined {
+    return learnt?.kind === "learning" ? learnt.done.then(() => !this.#abandoned(discovery)) : undefined;
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {
     return discovery.cancelled || this.#discovery !== discovery;
   }
 
-  async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan> {
+  /**
+   * The scan of a pass: of the paths `reads` names, else, or when one of them is a folder now, of the whole folder,
+   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against.
+   */
+  async #scanPass(
+    discovery: SourceDiscovery,
+    walk: WalkStart,
+    worktrees: readonly string[],
+    reads: SessionReads,
+  ): Promise<{ walk: WalkStart; scan: SourceScan; seen?: WorktreeRead }> {
+    if (!reads.whole) {
+      const noticed = await this.#scanNoticed(discovery, walk, reads);
+      if (noticed !== undefined) return { walk: { ...walk, noticed: reads.paths }, scan: noticed };
+      // The whole walk notes each linked file again: counted twice, they could reach the bound they are under.
+      reads.linked.restart();
+    }
+    const scan = await this.#scanSources(discovery, walk, worktrees, reads.linked);
+    return { walk, scan, seen: scan.seen };
+  }
+
+  async #scanSources(
+    discovery: SourceDiscovery,
+    walk: WalkStart,
+    worktrees: readonly string[],
+    linked: LinkedFiles,
+  ): Promise<SourceScan & { readonly seen: WorktreeRead }> {
     // An earlier session's baseline of this workspace lets unchanged sources skip the read.
     const seed = walk.baseline ? this.#observations?.get(this.#cwd) : undefined;
-    const scan = await this.#observeSources({
-      discovery, checkoutOf: path => this.#owningCheckout(discovery.root, path), observedAt: walk.observedAt,
+    const scan = { ...emptyScan(), linked, seen: { folders: new Set<string>(), leftOut: new Set<string>() } };
+    await this.#observeSources({
+      ...this.#sessionTraversal(discovery, walk, scan),
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
-      captureChanges: !walk.baseline,
-      commandRuns: () => discovery.toolCalls.commandSince(walk.callsEnded) !== undefined,
-      baselineRoots: discovery.baselineRoots,
-      buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
-      scan: emptyScan(),
       stack: [discovery.root], roots: new Set([discovery.root, ...worktrees]),
-      view: this.#auditor.walkView?.() ?? this.#auditor,
-      held: path => this.#holdsRefusal(path),
-      withdrawn: discovery.withdrawn,
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
     await this.#readFirstSeenTexts(discovery, walk, scan);
     await this.#readPassedCheckouts(discovery, walk, scan);
     return scan;
+  }
+
+  /**
+   * A traversal of the session folder for `walk` into `scan`, from no folder yet. A pass of noticed paths reads each
+   * file as the whole walk does, so a file a shell command of the session may be writing as it is read gets the same
+   * stamp in both (`stampOfRead`).
+   */
+  #sessionTraversal(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): SourceWalk {
+    return {
+      discovery, checkoutOf: path => this.#owningCheckout(discovery.root, path), observedAt: walk.observedAt,
+      previousSources: walk.previous,
+      captureChanges: !walk.baseline,
+      commandRuns: () => discovery.toolCalls.commandSince(walk.callsEnded) !== undefined,
+      baselineRoots: discovery.baselineRoots,
+      buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
+      scan,
+      stack: [], roots: new Set([discovery.root]),
+      view: this.#auditor.walkView?.() ?? this.#auditor,
+      held: path => this.#holdsRefusal(path),
+      withdrawn: discovery.withdrawn,
+    };
+  }
+
+  /**
+   * Reads only the paths of `reads`, which the session folder's change notices named since the last pass and the linked
+   * files (`SessionNotices`), each as the whole walk reads a file: every other file is as the last pass saw it.
+   * Undefined when one of them is a folder now or cannot be looked at, which only a whole walk reads.
+   */
+  async #scanNoticed(discovery: SourceDiscovery, walk: WalkStart, reads: NoticedReads): Promise<SourceScan | undefined> {
+    const traversal = this.#sessionTraversal(discovery, walk, { ...emptyScan(), linked: reads.linked });
+    if (!(await this.#readNoticedPaths(discovery, walk, traversal, reads))) return undefined;
+    const { scan } = traversal;
+    for (const source of scan.sources.values()) recordReadError(scan, source);
+    await this.#readFirstSeenTexts(discovery, walk, scan);
+    return scan;
+  }
+
+  /**
+   * Reads each path of `reads` this session folder's walk answers for, in waves as the whole walk reads files
+   * (`#observeSources`); false when one of them only a whole walk reads.
+   */
+  async #readNoticedPaths(discovery: SourceDiscovery, walk: WalkStart, traversal: SourceWalk, reads: NoticedReads): Promise<boolean> {
+    const answered = [...reads.paths].filter(([path]) => walkAnswersFor(discovery, walk, path));
+    while (!discovery.cancelled && answered.length > 0) {
+      const wave = answered.splice(-OBSERVATION_CONCURRENCY);
+      const read = await Promise.all(wave.map(async ([path, how]) => await this.#readNoticed(traversal, path, how)));
+      if (read.includes(false)) return false;
+    }
+    // A folder that failed, or one found where a file was, is the whole walk's to read; so is a file that refused its
+    // read with EPERM, which only a whole walk looks at again (`judgeRefusals`).
+    return traversal.stack.length === 0 && traversal.scan.failedRoots.size === 0 && traversal.refusals === undefined;
+  }
+
+  /**
+   * Reads `path` (session-relative) as the whole walk reads a file it finds, from the one look that found it
+   * (`noticedEntry`, which looks at it as `how` says); false when only a whole walk reads it.
+   */
+  async #readNoticed(walk: SourceWalk, path: string, how: NoticedRead): Promise<boolean> {
+    const absolute = resolve(walk.discovery.root, path);
+    const entry = await noticedEntry(absolute, path, how);
+    // Gone, as the whole walk would not find it: an edit when the last pass saw it.
+    if (entry === "gone") return true;
+    if (entry === undefined) return false;
+    await this.#observeFound(walk, absolute, entry);
+    return true;
   }
 
   /**
@@ -3094,23 +3571,72 @@ export class CodeRuleBridge {
   }
 
   /**
+   * Which of the changes a read found in the worktree at `root` (physical) this session made: one of its tool calls ran
+   * in that worktree as each was written (`#callRanAsWritten`), as its own take of them asks (`#writtenByCall`).
+   */
+  async #claimsIn(discovery: SourceDiscovery, root: string, findings: WorktreeFindings): Promise<Set<string>> {
+    const claimed = new Set<string>();
+    if (this.#abandoned(discovery)) return claimed;
+    const worktree = sessionPath(discovery.root, root);
+    const watched = discovery.worktrees.roots.has(worktree);
+    const claimant = this.#claimant(discovery, root, worktree, watched);
+    for (const change of findings.changes) {
+      const { path, asked } = claimant(change.path);
+      const since = change.before?.observedAt ?? discovery.startedAt;
+      const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
+      if (await this.#callRanAsWritten(discovery, asked, path, written)) claimed.add(change.path);
+    }
+    if (!watched) this.#restOfCheckoutRead(discovery, findings);
+    return claimed;
+  }
+
+  /**
+   * A read of the session's checkout, `findings`, answers for its calls outside the session folder, unless it left a
+   * subtree unread or gave up on a path. It comes only while another session watches the checkout and a read of it finds
+   * a change: else such a call waits for the oldest calls to go (`MAX_FINISHED_CALLS`), which costs only its memory, and
+   * comes only of a session opened below its checkout's top.
+   */
+  #restOfCheckoutRead(discovery: SourceDiscovery, findings: WorktreeFindings): void {
+    if (findings.failedRoots.size > 0 || findings.gaveUp) return;
+    discovery.toolCalls.answeredIn(REST_OF_CHECKOUT, { at: findings.readFrom }, this.#callPlaces(discovery));
+  }
+
+  /**
+   * For a change at `path` in the worktree at `root` (physical), named `worktree` from the session folder, the path
+   * the session knows it by and the calls of its that count as having made it. In a worktree it watches, a call that
+   * ran there (`#ranIn`). Else the session's own checkout, which holds its folder: the session takes nothing of it
+   * outside the folder, so only an edit tool, whose result checked the file, made a change there it records.
+   */
+  #claimant(discovery: SourceDiscovery, root: string, worktree: string, watched: boolean): (path: string) => { path: string; asked: CallsAsked } {
+    if (watched) {
+      return changed => {
+        const path = inWorktree(worktree, changed);
+        return { path, asked: { place: worktree, counted: this.#ranIn(discovery, worktree, path) } };
+      };
+    }
+    return changed => {
+      const path = sessionPath(discovery.root, join(root, changed));
+      return { path, asked: { place: REST_OF_CHECKOUT, counted: (call: CallPlace) => call.paths.includes(path) } };
+    };
+  }
+
+  /**
    * Takes a walk of the other worktrees: what changed since the snapshots the session took last is read off the lane,
    * then audited and kept on it, as the session folder's walk is. What fails is the walk's error, reported at each
    * boundary.
    */
-  async #takeWorktreeWalk(discovery: SourceDiscovery, start: WorktreeStart, walk: WorktreeWalk): Promise<void> {
+  async #takeWorktreeWalk(discovery: SourceDiscovery, start: WorktreeStart, walk: WorktreeWalk, records: WorktreeRecords): Promise<void> {
     if (this.#abandoned(discovery)) return;
     if ("error" in walk) {
       discovery.worktrees.gaps = [{ reason: walk.error }];
       return;
     }
     try {
-      const take = await this.#worktreeTake(discovery, start, walk.found, walk.observedAt);
+      const take = await this.#worktreeTake(discovery, start, walk.found, walk.observedAt, records);
       if (this.#abandoned(discovery)) return;
       await this.#enqueue(async () => {
         if (this.#abandoned(discovery)) return;
-        this.#takeSnapshots(discovery, take);
-        await this.#applyWalk(discovery, take.walk, take.scan);
+        await this.#applyWalk(discovery, this.#takeSnapshots(discovery, take), take.scan);
       });
     } catch (error) {
       const gaps = await this.#failedWalkGaps(error);
@@ -3128,29 +3654,39 @@ export class CodeRuleBridge {
     start: WorktreeStart,
     found: ReadonlyMap<string, WorktreeFindings>,
     observedAt: number,
+    records: WorktreeRecords,
   ): Promise<WorktreeTake> {
     const previous = new Map<string, ObservedSource>();
     const scan = emptyScan();
     const snapshots = new Map<string, WorktreeSnapshot>();
     const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
+    const readFrom = new Map<string, number>();
     const listedAtFirstSight = new Map<string, ReadonlySet<string>>();
     const kept = this.#keptWorktreePaths(start.worktrees);
     for (const [root, findings] of found) {
       const worktree = sessionPath(discovery.root, root);
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
+      // A read that gave up on a path answers for no call's writes there (`#finishWorktreeWalk`).
+      if (!findings.gaveUp) readFrom.set(worktree, findings.readFrom);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       if (discovery.worktrees.fresh.has(worktree)) takeFirstSightListings(findings, listedAtFirstSight);
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
-      heads, unmerged, callsEnded: start.callsEnded, observedAt, listed: start.listed, listedAtFirstSight,
+      heads, unmerged, callsEnded: start.callsEnded, observedAt, readFrom, listed: start.listed, listedAtFirstSight,
+      records: new Set([
+        ...[...records].flatMap(([root, paths]) => [...paths].map(path => inWorktree(sessionPath(discovery.root, root), path))),
+        ...discovery.worktrees.unrecorded,
+      ]),
     };
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
-    // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
+    // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`), and a record of one waits.
     for (const path of views.keys()) previous.delete(path);
+    discovery.worktrees.unrecorded = new Set();
+    leaveRecords(discovery, walk, [...walk.records].filter(path => views.has(path)));
     return { walk, scan, snapshots, views };
   }
 
@@ -3359,16 +3895,33 @@ export class CodeRuleBridge {
 
   /**
    * Moves the session's view of each worktree the walk read to the walk's snapshot. A source a tool call of the session
-   * touched while the walk ran is not the walk's to answer for: it keeps what the session saw of it before. So does one
-   * the take leaves to the next walk (`WorktreeTake.views`).
+   * touched while the walk ran is not the walk's to answer for, nor one a shell command of it may still be writing
+   * (`#toolChanges`): it keeps what the session saw of it before (`#leaveToNextWalk`). So does one the take leaves to the
+   * next walk (`WorktreeTake.views`). Returns the walk to apply: one that answers for no call in a worktree where it left
+   * a source, as the call that changed it is the one that may claim it at the next walk (`#finishWorktreeWalk`).
    */
-  #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
+  #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): WalkStart {
     for (const [worktree, snapshot] of take.snapshots) if (walkHeld(discovery, take.walk, worktree)) this.#worktreeView.take(worktree, snapshot);
     const toolChanged = this.#toolChanges(discovery, take.walk);
+    const left = new Set(take.views.keys());
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
-      if (toolChanged(path, take.scan.sources.get(path))) this.#keepToolView(path, take.walk.previous.get(path));
+      if (!toolChanged(path, take.scan.sources.get(path))) continue;
+      this.#leaveToNextWalk(discovery, take.walk, path);
+      left.add(path);
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
+    return answeringAround(take.walk, left);
+  }
+
+  /**
+   * Leaves `path` to the next walk: the session keeps what it saw of it before, and a record for the repository the walk
+   * handed this session waits with it (`WorktreeDiscovery.unrecorded`), as the shared walk hands each change over once.
+   * The next take records the file as it then is: when another session's call wrote it again meanwhile, that write is
+   * that session's own and in this record too. Dropping the record instead would lose the change no session made.
+   */
+  #leaveToNextWalk(discovery: SourceDiscovery, walk: WalkStart, path: string): void {
+    this.#keepToolView(path, walk.previous.get(path));
+    if (walk.records.has(path)) leaveRecords(discovery, walk, [path]);
   }
 
   /** Keeps `before`, what the session saw of `path` before this walk, unless it holds a view of its own of it. */
@@ -3395,20 +3948,26 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Audits what a walk found. The other worktrees' walk cannot tell which session wrote a file there, so its findings are
-   * recorded under the repository in `log` mode and steer no session; the session that made a change is steered on it
-   * by its own tool call or its own folder's walk.
+   * Audits what a walk found (`#separateOwnWrites`): the session's own changes in its mode, so they steer it, wherever
+   * they are; another writer's only where the evaluator holds the session's text, in `log` mode; and in another
+   * worktree, the changes no watching session made that the walk handed this session, once, in `log` mode, for the
+   * repository.
    */
   async #auditWalkEdits(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[], uncaptured: Map<string, string>): Promise<void> {
-    const { own, notOwn } = await this.#separateOwnWrites(discovery, walk, edits, uncaptured);
+    const { own, notOwn, repository } = await this.#separateOwnWrites(discovery, walk, edits, uncaptured);
     const checkpoints = discoveryCheckpoints(strongerCheckpoint(walk.checkpoint, discovery.requested));
+    // The walk hands a change over once: what is not recorded for the repository yet waits for the retry.
+    const unrecorded = new Set(repository.map(edit => edit.path));
     try {
       if (notOwn.length > 0) await this.#auditEdits(discovery, notOwn, checkpoints, new Map(), "log");
-      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured, walk.inSession ? undefined : "log");
+      if (repository.length > 0) await this.#auditEdits(discovery, repository, checkpoints, uncaptured, "log", "repository");
+      unrecorded.clear();
+      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured);
     } catch (error) {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
       this.#restoreObservations(discovery, walk, edits);
+      leaveRecords(discovery, walk, unrecorded);
       throw error;
     }
   }
@@ -3418,7 +3977,7 @@ export class CodeRuleBridge {
    * worktrees (`walkHeld`): one removed took its files with it (`#forgetWorktrees`), and one listed again is new.
    */
   #restoreObservations(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[]): void {
-    const gone = new Set([...walk.worktrees].filter(worktree => !walk.inSession && !walkHeld(discovery, walk, worktree)));
+    const gone = walkLost(discovery, walk);
     for (const edit of edits.filter(edit => !underBaselineRoot(gone, edit.path))) {
       const before = walk.previous.get(edit.path);
       if (before === undefined) this.#unobserve(edit.path);
@@ -3427,18 +3986,62 @@ export class CodeRuleBridge {
   }
 
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
-    discovery.walkedFrom = walk.observedAt;
     discovery.baselineComplete = true;
-    discovery.baselineRoots = scan.failedRoots;
     discovery.gaps = scanGaps(scan.errors);
+    const commandSince = discovery.toolCalls.commandSince(walk.callsEnded);
+    discovery.commandDuringPass = walk.baseline && commandSince !== undefined;
+    discovery.notices.readAgain(leftToCommands(walk, scan, commandSince));
+    if (walk.noticed === undefined) this.#finishWholeWalk(discovery, walk, scan);
+    else discovery.unread = unreadAfter(discovery.unread, walk.noticed, scan.unread);
+    this.#listLateAgain(discovery, scan.lateListings);
+  }
+
+  /**
+   * What only a walk of the whole folder answers. The tool calls it covered are let go of only then: a pass of noticed
+   * paths leaves them to the next whole walk, which judges by them a write no notice told of. So does where a session
+   * opened again goes on from (`walkedFrom`): a write no notice told of before a pass of noticed paths is still judged.
+   */
+  #finishWholeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
+    discovery.walkedFrom = walk.observedAt;
+    discovery.baselineRoots = scan.failedRoots;
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
     // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
     // reads them judges each by its stamp. A walk that gave up on a path (a folder it could not list, or a path gone as
     // it looked, perhaps moved) keeps every call; a file keeps those that may have written it unseen
-    // (`holdMissedFiles`), for its own writes only.
-    if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()]);
-    this.#listLateAgain(discovery, scan.lateListings);
+    // (`holdMissedFiles`), for its own writes only. A call that ran in another worktree, or named a file there, is that
+    // worktree's walk to answer for too (`#finishWorktreeWalk`).
+    if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()], this.#callPlaces(discovery));
+  }
+
+  /**
+   * The places a call's writes are to be found in, each answered for by the walk that reads it (`ToolCallWindows`): the
+   * other worktree that holds the folder it ran in, else the session folder (undefined); and for each file it named, the
+   * other worktree that holds it, else the rest of the session's checkout outside its folder (`REST_OF_CHECKOUT`), else
+   * the session folder, which holds the rest: a file outside the repository is no walk's. A shell write outside the
+   * folder is no claim of the session's (`#claimsIn`), so the folder needs no mark. The checkout that owns the folder
+   * is read for the walk asking, as the walks read it (a `git init` or `git worktree add` can change it), once, and only
+   * when a file named is outside the folder.
+   */
+  #callPlaces(discovery: SourceDiscovery): CallPlacesOf {
+    let checkout: { readonly root: string | undefined } | undefined;
+    const restOfCheckout = (path: string): boolean => {
+      if (path !== ".." && !path.startsWith("../")) return false;
+      checkout ??= { root: this.#owningCheckout(discovery.root, "") };
+      if (checkout.root === undefined) return false;
+      const absolute = resolve(discovery.root, path);
+      return absolute === checkout.root || absolute.startsWith(`${checkout.root}${sep}`);
+    };
+    return call => [
+      this.#worktreeHolding(discovery, call.folder),
+      ...call.paths.map(path => this.#worktreeHolding(discovery, path) ?? (restOfCheckout(path) ? REST_OF_CHECKOUT : undefined)),
+    ];
+  }
+
+  /** The other worktree that holds `path` (session-relative), or is it; undefined for one in the session's own checkout. */
+  #worktreeHolding(discovery: SourceDiscovery, path: string | undefined): string | undefined {
+    if (path === undefined) return undefined;
+    return discovery.worktrees.roots.has(path) ? path : rootHolding(discovery.worktrees.roots, path);
   }
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
@@ -3454,6 +4057,12 @@ export class CodeRuleBridge {
     const stays = (path: string): boolean => !gone.has(path) && !underBaselineRoot(gone, path);
     worktrees.gaps = scanGaps(scan.errors.filter(error => stays(error.path)));
     worktrees.unread = new Map([...scan.unread].filter(([path]) => stays(path)));
+    // Drops the calls each worktree's read answered for, as the session folder's walk drops its own; not where the read
+    // left a subtree unread, which may still hold their writes.
+    for (const [worktree, readFrom] of walk.readFrom) {
+      const unread = [...scan.failedRoots].some(failed => failed === worktree || failed.startsWith(`${worktree}/`)) || underBaselineRoot(scan.failedRoots, worktree);
+      if (!unread) discovery.toolCalls.answeredIn(worktree, { at: readFrom, ends: walk.callsEnded }, this.#callPlaces(discovery));
+    }
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
@@ -3547,7 +4156,7 @@ export class CodeRuleBridge {
   #discoverEdits(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>, uncaptured: Map<string, string>): CodeRuleEdit[] {
     const toolChanged = this.#toolChanges(discovery, walk);
     const edits: CodeRuleEdit[] = [];
-    for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
+    for (const path of [...walkedPaths(walk, current)].sort(compareDeterministicStrings)) {
       if (!walkAnswersFor(discovery, walk, path) || toolChanged(path, current.get(path))) continue;
       const previous = walk.previous.get(path);
       const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
@@ -3641,7 +4250,7 @@ export class CodeRuleBridge {
     walk: WalkStart,
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
-  ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[] }> {
+  ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] }> {
     const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
     sorted.unwritten.push(...unowned);
@@ -3653,8 +4262,9 @@ export class CodeRuleBridge {
       if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
     const { unwritten, notOwn } = sorted;
-    const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
-    return { own, notOwn };
+    const repository: CodeRuleEdit[] = [];
+    const own = await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, { notOwn, repository });
+    return { own, notOwn, repository };
   }
 
   /**
@@ -3697,22 +4307,28 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Of the session folder's changes Git did not write, the session's own: those stamped while one of its tool calls ran
-   * (`ToolCallWindows`), whatever the tool. The rest are another writer's (another session, an editor, a process a
-   * command left running): their text is kept, so the session's next shell edit of one is measured from what that writer
-   * left. The other worktrees' walk records what it finds in `log` mode anyway.
+   * Of the changes Git did not write, the session's own: those stamped while one of its tool calls ran (`ToolCallWindows`),
+   * whatever the tool; in another worktree, one that ran there, by its host's `cwd`. The rest are another writer's
+   * (another session, an editor, a process a command left running): their text is kept, so the session's next shell edit
+   * of one is measured from what that writer left. In another worktree, one that no watching session made and the walk
+   * handed this session (`WalkStart.records`) goes to `repository`, to be recorded once for the repository, measured
+   * from what this session last saw as its own edits are.
    */
   async #claimOwnWrites(
     discovery: SourceDiscovery,
     walk: WalkStart,
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
-    notOwn: CodeRuleEdit[],
+    { notOwn, repository }: { notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] },
   ): Promise<CodeRuleEdit[]> {
     const own: CodeRuleEdit[] = [];
     for (const edit of edits) {
       if (await this.#writtenByCall(discovery, walk, edit)) {
         own.push(edit);
+        continue;
+      }
+      if (walk.records.has(edit.path)) {
+        repository.push(edit);
         continue;
       }
       uncaptured.delete(edit.path);
@@ -3724,13 +4340,40 @@ export class CodeRuleBridge {
   /**
    * Whether one of the session's tool calls ran as `edit`'s file was stamped or, for a file now gone, as its folder was
    * (removing an entry stamps the folder; a later change there moves the stamp on). With no stamp to go by, at some point
-   * since the walk that last saw the file began. A file the last walk could not read counts the calls kept for it too.
+   * since the walk that last saw the file began. In the session folder a call counts wherever it ran, and a file the
+   * last walk could not read counts the calls kept for it too; in another worktree only one that ran in that worktree
+   * does, so a session whose long command runs elsewhere takes no other session's write there.
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
-    const stamp = this.#observedSource(edit.path)?.modifiedAt ?? (edit.deleted === true ? await folderStamp(discovery.root, edit.path) : undefined);
-    const held = discovery.missedFiles.get(edit.path);
-    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp, held);
-    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt, held);
+    const worktree = walk.inSession ? undefined : this.#worktreeHolding(discovery, edit.path);
+    const asked: CallsAsked = worktree === undefined
+      ? { held: discovery.missedFiles.get(edit.path) }
+      : { place: worktree, counted: this.#ranIn(discovery, worktree, edit.path) };
+    const since = walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt;
+    const written = { stamp: this.#observedSource(edit.path)?.modifiedAt, deleted: edit.deleted === true, since, until: walk.observedAt };
+    return await this.#callRanAsWritten(discovery, asked, edit.path, written);
+  }
+
+  /**
+   * The calls that may have written `path` in the other worktree `worktree`: one that ran there, by its host's `cwd`, or
+   * named the file. An edit tool's call into another worktree runs where the agent is, but names the file it writes.
+   */
+  #ranIn(discovery: SourceDiscovery, worktree: string, path: string): CallsCounted {
+    return call => this.#worktreeHolding(discovery, call.folder) === worktree || call.paths.includes(path);
+  }
+
+  /**
+   * Whether a call of the session that `asked` counts ran as `path` was written: as it was stamped, or a removed file as
+   * its folder was; with no stamp to go by, at some point from `since` to `until`.
+   */
+  async #callRanAsWritten(
+    discovery: SourceDiscovery,
+    asked: CallsAsked,
+    path: string,
+    { stamp, deleted, since, until }: { stamp: number | undefined; deleted: boolean; since: number; until: number },
+  ): Promise<boolean> {
+    const at = stamp ?? (deleted ? await folderStamp(discovery.root, path) : undefined);
+    return at === undefined ? discovery.toolCalls.ranDuring(since, until, asked) : discovery.toolCalls.ranDuring(at, at, asked);
   }
 
   /**
@@ -3970,19 +4613,41 @@ export class CodeRuleBridge {
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
-    let info: Stats | undefined;
+    let info: Stats;
     try {
       info = await lstat(absolute);
+    } catch (error) {
+      this.#observationFailed(walk, absolute, error, undefined);
+      return;
+    }
+    await this.#observeFound(walk, absolute, info);
+  }
+
+  /**
+   * Observes what a pass of noticed paths found at `absolute` by its own look (`noticedEntry`), as `#observePath` does
+   * what the walk finds; a failure to read it is the walk's to record.
+   */
+  async #observeFound(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+    try {
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (walk.discovery.cancelled) return;
-      if (goneWhenExamined(walk, absolute, error)) {
-        gaveUpOn(walk.scan);
-        return;
-      }
-      this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
-      noteRefusal(walk, absolute, error, info);
+      this.#observationFailed(walk, absolute, error, info);
     }
+  }
+
+  /**
+   * What the walk keeps of its failure to look at or read `absolute` (`info`: what its lstat found, when it answered):
+   * nothing for a path gone when examined, which the walk gave up on (`goneWhenExamined`); else the failure, and an
+   * EPERM refusal to look at again (`noteRefusal`). A whole walk and a pass of noticed paths keep the same.
+   */
+  #observationFailed(walk: SourceWalk, absolute: string, error: unknown, info: Stats | undefined): void {
+    if (walk.discovery.cancelled) return;
+    if (goneWhenExamined(walk, absolute, error)) {
+      gaveUpOn(walk.scan);
+      return;
+    }
+    this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
+    noteRefusal(walk, absolute, error, info);
   }
 
   async #observeEntry(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
@@ -4042,7 +4707,9 @@ export class CodeRuleBridge {
     else walk.scan.seen?.leftOut.add(path);
   }
 
+  /** Observes a file, noting it when it has another name (`SourceScan.linked`). */
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
+    if (info.nlink > 1) walk.scan.linked?.note(location.path);
     const observed = await this.#observedFile(walk, location, info);
     if (observed !== undefined) walk.scan.sources.set(location.path, observed);
   }
@@ -4188,23 +4855,33 @@ export class CodeRuleBridge {
     checkpoints: CodeRuleCheckpoint[],
     uncaptured: ReadonlyMap<string, string>,
     mode?: AuditMode,
+    owner?: AuditOwner,
   ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
-    for (const edit of edits) {
-      // The evaluator keeps the text it held of a file it could not read, so the session keeps it too: another
-      // program's later write there is then audited for it (`#sortUnownedWrite`).
-      if (edit.readError !== undefined) continue;
-      this.#forgetText(edit.path);
-      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
-    }
+    this.#keepAuditedTexts(edits, owner);
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
     this.#onRevision?.(sessionId, this.#revision, paths);
     this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, {
-      revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }),
+      revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }), ...(owner === undefined ? {} : { owner }),
     });
     return this.#lastResponse;
+  }
+
+  /**
+   * Keeps the text each edit about to be audited leaves, as the evaluator will hold it: the session's edit, or for the
+   * repository's record another writer's text, which is no edit of the session's but measures its next change. The
+   * evaluator keeps the text it held of a file it could not read, so the session keeps it too: another program's later
+   * write there is then audited for it (`#sortUnownedWrite`).
+   */
+  #keepAuditedTexts(edits: CodeRuleEditBatch["edits"], owner: AuditOwner | undefined): void {
+    const origin = owner === "repository" ? "other-writer" : "edit";
+    for (const edit of edits) {
+      if (edit.readError !== undefined) continue;
+      this.#forgetText(edit.path);
+      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, origin);
+    }
   }
 
   /**

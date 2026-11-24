@@ -33,10 +33,16 @@ rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "fun
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# `Win32_Storage_FileSystem` and `Win32_System_SystemInformation`: NTFS's change time, file id, attributes and
+# volume beside a worktree file's stat, and the clock it stamps a change with (`git_workspace`).
+# `Win32_System_LibraryLoader`: the module this code was loaded from (`source_tree`'s image), the addon and not node.exe.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

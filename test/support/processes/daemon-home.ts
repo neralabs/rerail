@@ -52,8 +52,9 @@ const BUSY_MS = 8_000;
  * looks only for the file, never at what it holds: it polls, and could read a file the test has created and not yet
  * written. With `slowStart`, the first daemon to listen while that file is there removes it, makes `<slowStart>.held`,
  * and right after that listen, before it can write daemon.json, spins without returning to its event loop until the
- * test writes `<slowStart>.release` ({@link releaseSlowStart}), then removes the `.held` file; a test writes `slowStart`
- * before any daemon starts.
+ * test writes `<slowStart>.release` ({@link releaseSlowStart}), then removes the `.held` file and, when the test wrote
+ * `<slowStart>.fail` first ({@link failSlowStart}), writes a line to its log and exits with code 7; a test writes
+ * `slowStart` before any daemon starts.
  */
 export function watchedEnvironment(home: string, busy?: string, slowStart?: string): NodeJS.ProcessEnv {
   const script = join(home, "watch.cjs");
@@ -92,6 +93,9 @@ if (daemon && slowStart !== null) {
       const pause = new Int32Array(new SharedArrayBuffer(4));
       while (!fs.existsSync(slowStart + ".release")) Atomics.wait(pause, 0, 0, 10);
       fs.rmSync(slowStart + ".held", { force: true });
+      if (!fs.existsSync(slowStart + ".fail")) return;
+      process.stderr.write("rerail daemon: the test failed this start\\n");
+      process.exit(7);
     });
     return listen.apply(this, args);
   };
@@ -99,6 +103,83 @@ if (daemon && slowStart !== null) {
 `);
   const preload = `--require ${JSON.stringify(script.replaceAll("\\", "/"))}`;
   return { ...process.env, RERAIL_HOME: home, NODE_OPTIONS: [process.env.NODE_OPTIONS, preload].filter(Boolean).join(" ") };
+}
+
+const EXIT_WATCH_FILE = "exit-watch.cjs";
+
+/** What the daemons started with {@link watchedExits}'s environment show a test as their processes end. */
+export interface WatchedExits {
+  readonly env: NodeJS.ProcessEnv;
+  /** Whether daemon `pid` has begun to exit, its close done: a held exit is held from then on. */
+  exiting(pid: number): boolean;
+  /** Lets the held exit of `daemon`, started with a stdin pipe ({@link daemonProcess}), go on: a byte on that stdin. */
+  release(daemon: ChildProcess): void;
+  /**
+   * Whether the engine still waited for the home's daemon lock as daemon `pid` exited ("waiting"), so something else
+   * than the end of that wait stopped it, or had ended that wait ("ended"); undefined when the daemon did not ask for
+   * the lock or has not exited.
+   */
+  lockWaitAtExit(pid: number): "waiting" | "ended" | undefined;
+}
+
+/**
+ * `env`, made by {@link watchedEnvironment} for `home`, with one more preload in each daemon it starts, through which a
+ * test sees how the daemon's process ends. It wraps the engine's lock takes as the engine loads, to see whether the
+ * wait for the home's daemon lock had ended when the daemon exited; an engine with no wait for a lock (before
+ * `lockExclusive`) is tried until the bound, so that wait has always ended. With `holdExit`, the exit of a daemon that
+ * closed cleanly (exit code 0) marks itself and then, before the daemon's own exit steps run, reads its stdin, as a
+ * process slow to exit after its close. A daemon started with a stdin pipe is held there until the test releases it
+ * ({@link WatchedExits.release}) or the test's process ends, and no clock ends the hold; any other daemon reads the end
+ * of its stdin at once. A daemon that stops on a held home exits 1 and is not held.
+ */
+export function watchedExits(home: string, env: NodeJS.ProcessEnv, holdExit = false): WatchedExits {
+  const script = join(home, EXIT_WATCH_FILE);
+  const mark = (name: string, pid: number): string => join(home, `${name}.${pid}`);
+  writeFileSync(script, `const fs = require("node:fs");
+const Module = require("node:module");
+const mark = name => require("node:path").join(${JSON.stringify(home)}, name + "." + process.pid);
+if (/[\\\\/]daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
+  let lockWait;
+  const daemonLock = path => /[\\\\/]daemon\\.lock$/u.test(path);
+  const loadAddon = Module._extensions[".node"];
+  Module._extensions[".node"] = function (module, filename) {
+    loadAddon.call(this, module, filename);
+    const engine = module.exports;
+    if (typeof engine.tryLockExclusive !== "function") return;
+    const watched = typeof engine.lockExclusive === "function" ? { lockExclusive: (path, waitMs) => {
+      const taking = engine.lockExclusive(path, waitMs);
+      if (daemonLock(path)) {
+        lockWait = "waiting";
+        taking.then(() => { lockWait = "ended"; }, () => { lockWait = "ended"; });
+      }
+      return taking;
+    } } : { tryLockExclusive: path => {
+      if (daemonLock(path)) lockWait = "ended";
+      return engine.tryLockExclusive(path);
+    } };
+    module.exports = Object.create(engine, Object.fromEntries(Object.entries(watched).map(([name, value]) => [name, { enumerable: true, value }])));
+  };
+  process.on("exit", code => {
+    if (lockWait !== undefined) fs.writeFileSync(mark("lock-wait"), lockWait);
+    if (!${String(holdExit)} || code !== 0) return;
+    fs.writeFileSync(mark("exiting"), "");
+    // Blocks until a byte arrives or the writer's end closes; an ignored stdin (/dev/null, NUL) is at its end already.
+    fs.readSync(0, Buffer.alloc(1));
+  });
+}
+`);
+  const preload = `--require ${JSON.stringify(script.replaceAll("\\", "/"))}`;
+  return {
+    env: { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, preload].filter(Boolean).join(" ") },
+    exiting: pid => existsSync(mark("exiting", pid)),
+    release: daemon => {
+      daemon.stdin?.end("\n");
+    },
+    lockWaitAtExit: pid => {
+      const answer = existsSync(mark("lock-wait", pid)) ? readFileSync(mark("lock-wait", pid), "utf8") : undefined;
+      return answer === "waiting" || answer === "ended" ? answer : undefined;
+    },
+  };
 }
 
 /**
@@ -115,9 +196,20 @@ export function releaseSlowStart(slowStart: string): void {
   writeFileSync(`${slowStart}.release`, "");
 }
 
+/** Lets the daemon held at its start by `slowStart` go on, to fail its start: it exits with code 7. */
+export function failSlowStart(slowStart: string): void {
+  writeFileSync(`${slowStart}.fail`, "");
+  releaseSlowStart(slowStart);
+}
+
 function recorded(home: string, file: string): number[] {
   const path = join(home, file);
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map(Number) : [];
+}
+
+/** Every daemon started in `home` under `watchedEnvironment`. */
+export function daemonsStarted(home: string): number[] {
+  return recorded(home, STARTED.daemons.started);
 }
 
 /** Every `rerail daemon start` launched in `home` under `watchedEnvironment`. */
@@ -152,12 +244,18 @@ export async function recordedPid(home: string): Promise<number | undefined> {
 /** What each daemon `daemonProcess` started wrote to stderr, whole once it has closed. */
 const errorsOf = new WeakMap<ChildProcess, Promise<string>>();
 
-/** A daemon process of this checkout's build in `home`, started as a start launches one, with `args` after its own. */
-export function daemonProcess(home: string, env: NodeJS.ProcessEnv, args: readonly string[] = []): ChildProcess {
+/**
+ * A daemon process of this checkout's build in `home`, started as a start launches one, with `args` after its own. Its
+ * stdin is ignored, as a start's is, or with `stdin: "pipe"` a pipe from the test, on which {@link watchedExits} holds
+ * its exit.
+ */
+export function daemonProcess(home: string, env: NodeJS.ProcessEnv, args: readonly string[] = [], stdin: "ignore" | "pipe" = "ignore"): ChildProcess {
   const entry = join(packageRoot, "dist", "cli", "daemon-entry.js");
   const child = spawn(process.execPath, [entry, "--state-file", join(home, DAEMON_STATE_FILE), "--workspace-root", home, "--dev", ...args], {
-    cwd: home, env, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
+    cwd: home, env, stdio: [stdin, "ignore", "pipe"], windowsHide: true,
   });
+  // A release written after the daemon has gone meets a closed pipe, and has nothing left to let go.
+  child.stdin?.on("error", () => undefined);
   let errors = "";
   child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
   errorsOf.set(child, once(child, "close").then(() => errors, () => errors));

@@ -132,3 +132,25 @@ it("keeps writing daemon.json when it cannot tell whether it holds its home, and
   }
   expect(existsSync(stateFile)).toBe(false);
 }, 20_000);
+
+it("gives its home's lock up as the last step of its close, so the next daemon a restart launches finds the home free", async () => {
+  const home = await mkdtemp(join(tmpdir(), "rerail-record-"));
+  homes.push(home);
+  process.env.RERAIL_HOME = home;
+  const stateFile = join(home, DAEMON_STATE_FILE);
+  const given: string[] = [];
+  const daemon = await RerailDaemon.start({
+    version: "0.0.0-test",
+    databasePath: join(home, "rerail.sqlite"),
+    workspaceRoot: home,
+    port: 0,
+    stateFile,
+    homeLease: { release: () => { given.push(existsSync(stateFile) ? "the home, its record still there" : "the home"); } },
+    nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+  });
+  expect(given).toEqual([]);
+
+  await daemon.close();
+  await daemon.close();
+  expect(given).toEqual(["the home"]);
+}, 20_000);

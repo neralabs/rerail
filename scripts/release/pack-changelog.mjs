@@ -23,6 +23,31 @@ export function packRules(pack, documentOf) {
   });
 }
 
+/** What a `.rerail` string's one-character escapes stand for; any other backslash is kept with the character after it. */
+const RERAIL_ESCAPES = { '"': '"', "\\": "\\", n: "\n", t: "\t", r: "\r" };
+
+/** A `.rerail` string literal's body with its escapes undone as the engine's reader undoes them (rr_syntax's `unescape`). */
+function unescapeRerail(body) {
+  return body.replace(/\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|(.))/gsu, (escape, braced, four, other) => {
+    if (braced !== undefined) return String.fromCodePoint(Number.parseInt(braced, 16));
+    // A JSON surrogate pair is two of these, which join in the string.
+    if (four !== undefined) return String.fromCharCode(Number.parseInt(four, 16));
+    return RERAIL_ESCAPES[other] ?? escape;
+  });
+}
+
+/**
+ * The `{ mode, description }` a rule document written in `.rerail` states of itself, as packRules reads a document:
+ * its first `.mode block|steer|log` and its `.description "…"`, each undefined where it has none. A `.mode` that names
+ * codes (`.mode log CODE`) is not the rule's mode. A document with more than one `.mode` is not checked for here: the
+ * engine refuses it, so its pack fails to load (rule-packs.ts, readRerailPackDocument) long before a release.
+ */
+export function rerailRuleHeader(text) {
+  const mode = /^\.mode[ \t]+(block|steer|log)[ \t]*(?:\/\/.*)?$/mu.exec(text)?.[1];
+  const description = /^\.description[ \t]+"((?:[^"\\]|\\.)*)"/msu.exec(text)?.[1];
+  return { mode, description: description === undefined ? undefined : unescapeRerail(description) };
+}
+
 /**
  * What changed between a pack's rules at its last release (`before`, `[]` for a pack never released) and those it
  * releases now (`after`), each as packRules reads them: `{ total, on, added, removed, restarted }`, `added` the rules
@@ -89,7 +114,7 @@ function mergedEntries(generated, written) {
 /** What every pack's CHANGELOG.md says of itself, as core's does: the format, and where it differs from Keep a Changelog. */
 export const PACK_CHANGELOG_INTRO = [
   "Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.",
-  "Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.",
+  "Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 a version's minor follows the Rerail line it needs (0.2.x needs Rerail 0.2 or newer), and a patch can add, change or remove rules, so read the notes before you update.",
 ].join("\n\n");
 
 /**

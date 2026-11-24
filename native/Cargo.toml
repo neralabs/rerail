@@ -165,7 +165,7 @@ tree-sitter = "=0.27.1"
 bitlex = { path = "../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 # The engine's crates (tools/cratify/apply.py): its sources, mounted in place.
 rerail-facts = { path = "crates/facts", default-features = false }
@@ -207,7 +207,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # `Win32_System_IO` and `Win32_System_Ioctl`: the tree watch's completion port, reads and oplock (`tree_watch/windows.rs`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+# `Win32_System_Pipes`: which process holds a named pipe's server end (`pipe_server.rs`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rerail-device-metal = { path = "crates/device_metal", default-features = false }
@@ -287,7 +288,7 @@ napi-build = "2.2"
 sha2 = "0.11"
 # The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's
 # once the crate split gives it there (`BUILDS_GRAMMARS`).
-cc = "=1.11.1"
+cc = "=1.11.2"
 tree-sitter-generate = { version = "=0.27.2", default-features = false }
 flate2 = "=1.1.11"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.

@@ -1,13 +1,12 @@
 /**
- * The page's rule setting writes: rules on or off, a whole rule pack on or off, and whether a rule pack's rules honour
- * linter suppression comments. Each change is one `PUT /api/repository/settings` per folder and setting it writes,
- * owned by this worktree or the repository (`owner(packId)`, given the pack the change is to, when it is to one pack),
- * sent in click order. The page shows the change at once; after a failed write it puts back what nothing saved and reads
+ * The page's rule setting writes: rules on or off, and a whole rule pack on or off. Each change is one
+ * `PUT /api/repository/settings` per folder and setting it writes, owned by this worktree or the repository
+ * (`owner(packId)`, given the pack the change is to, when it is to one pack), sent in click order. The page shows the change at once; after a failed write it puts back what nothing saved and reads
  * the rules in full, so it ends on what the daemon holds. `toast` and `invalidate` are the page's.
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
-import { inPack, packSettingDecides } from "./derive.js";
+import { inPack } from "./derive.js";
 import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
 import { failed as failedText } from "./format.js";
 
@@ -134,47 +133,10 @@ export function settingWrites({ toast, invalidate, owner }) {
     return save(packSwitchWrites(packId, enabled), rules, r => { r.enabled = enabled; }, label, failed, packId);
   }
 
-  /**
-   * Honour or ignore suppression comments for a rule pack, at every folder it is added at. The page shows it in the
-   * folders of the pack's rules its setting decides: not where a setting that outranks it decides, by owner, folder
-   * depth, or a rule's own setting at the same owner and folder.
-   */
-  function setPackSuppressions(packId, suppressions, label, failed) {
-    const by = owner(packId);
-    const decides = state => packSettingDecides(state, packId, by, data.checkout?.checkoutPath);
-    const rules = [...data.rules.values()].filter(r => r.folderStates.some(decides));
-    const folders = byFolder(packFolders(packId).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label, failed, packId);
-  }
-
-  return { setEnabled, setPackEnabled, setPackSuppressions };
+  return { setEnabled, setPackEnabled };
 }
 
-/**
- * Put back on stored rule `r` what a write that saved nothing showed (`shown`, over `was`), except wherever a later
- * change has replaced it since.
- */
+/** Put back on stored rule `r` what a write that saved nothing showed (`shown`, over `was`), unless a later change has replaced it since. */
 function undo(r, was, shown) {
-  r.folderStates = r.folderStates.map((state, index) => (state === shown.folderStates[index] ? was.folderStates[index] : state));
-  r.suppressions = r.folderStates[0]?.suppressions ?? r.suppressions;
-  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
   if (r.enabled === shown.enabled) r.enabled = was.enabled;
 }
-
-/**
- * What decides a folder's suppressions once a setting on `target` written as `owner` lands there, as the API reports
- * it, so a second change before the page refreshes weighs the first.
- */
-const decider = (owner, target) => state => (owner === "checkout"
-  ? { by: "checkout", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }
-  : { by: "repository", folder: state.folder, target });
-
-/**
- * Show a suppressions change on a stored rule, in every folder it is added at that `changes`, with what now decides it
- * (`source`, from the folder's state).
- */
-const showSuppressions = (suppressions, changes, source) => r => {
-  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions, suppressionsSource: source(state) } : state));
-  r.suppressions = r.folderStates[0]?.suppressions ?? suppressions;
-  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
-};

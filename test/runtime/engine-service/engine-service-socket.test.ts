@@ -1,16 +1,22 @@
 import { spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
-import { createServer as createHttpServer } from "node:http";
+import { chmod, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { ClientRequest, createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
-import { createServer, type Server } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ENGINE_ANSWER_WAIT_MS, engineEndpointAt } from "../../../src/runtime/daemon-control.js";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/daemon/engine-pipe.js";
-import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
+import {
+  chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
+} from "../../../src/runtime/engine-service.js";
+import type { HeldSession } from "../../../src/engine/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
+import { fakeMachine } from "../../support/platform/daemon-machine.js";
 import { oneInstanceHolder } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -472,5 +478,174 @@ describe.runIf(process.platform === "win32")("starting the engine beside a pipe 
       second.close();
       await new Promise<void>(resolve => engine.close(() => resolve()));
     }
+  });
+});
+
+describe("the answer to a hook's event", () => {
+  it("carries the event's deliveries when the facts beside them cannot be told, and what its runtime holds to a hook that asks once they can", async () => {
+    const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-")));
+    const databasePath = join(root, "rerail.sqlite");
+    const repositoryKey = startTestRepository(root, databasePath);
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-event-answer-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    let readable = false;
+    const held: (HeldSession | undefined)[] = [];
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath,
+      embedder: testEmbedder,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+      answerFacts: (_event, _deliveries, readHeld) => {
+        const session = readHeld();
+        held.push(session);
+        if (!readable) throw new Error("the daemon could not tell its dashboard");
+        return { dashboard: null, ...(session?.sessionNote === undefined ? {} : { sessionNote: session.sessionNote }) };
+      },
+    });
+    const start = (sessionId: string) => ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } } as const);
+    try {
+      // The hook reads what the answer lacks after it, as from a daemon older than these facts.
+      await expect(ingestEngineEventAnswer({ socketPath }, start("unread"))).resolves.toEqual({ eventId: "unread:start", deliveries: [] });
+      readable = true;
+      await expect(ingestEngineEventAnswer({ socketPath }, start("read")))
+        .resolves.toEqual({ eventId: "read:start", deliveries: [], dashboard: null, sessionNote: { setUp: false } });
+      // What the runtime that took each start holds of its session: its checkout, and a note for a repository not set up.
+      const session = { checkout: { repositoryKey, checkoutPath: root }, sessionNote: { setUp: false } };
+      expect(held).toEqual([session, session]);
+    } finally {
+      await service.close();
+      await removeFolder(root);
+    }
+  });
+});
+
+/** A listener on a fresh engine socket (a pipe on Windows) in this process, which takes each connection and answers nothing. */
+async function silentListener(): Promise<{ socketPath: string; close(): Promise<void> }> {
+  const root = process.platform === "win32" ? undefined : await mkdtemp(join(SOCKET_ROOT, "rerail-silent-"));
+  const socketPath = root === undefined ? String.raw`\\.\pipe\rerail-silent-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+  const connections = new Set<Socket>();
+  const server = createServer(socket => connections.add(socket));
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  return {
+    socketPath,
+    close: async () => {
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      if (root !== undefined) await removeFolder(root);
+    },
+  };
+}
+
+describe("an event sent after a proof on the engine", () => {
+  const event = { kind: "session-end", eventId: "end", sessionId: "s" } as const;
+
+  /** The wait each request hands its socket while `body` runs, through a stand-in timer that fires once it is handed. */
+  const socketWaits = async (body: () => Promise<void>): Promise<number[]> => {
+    const waits: number[] = [];
+    const timer = vi.spyOn(ClientRequest.prototype, "setTimeout").mockImplementation(function (this: ClientRequest, ms: number, fire?: () => void) {
+      waits.push(ms);
+      process.nextTick(() => fire?.());
+      return this;
+    });
+    try {
+      await body();
+    } finally {
+      timer.mockRestore();
+    }
+    return waits;
+  };
+
+  it("hands its socket what the proof left of the wait it shares with it, 1 ms once the proof took it all, and its own 30 s with no proof", async () => {
+    const silent = await silentListener();
+    try {
+      const waits = await socketWaits(async () => {
+        await expect(ingestEngineEvent({ socketPath: silent.socketPath, proofTookMs: ENGINE_ANSWER_WAIT_MS - 300 }, event)).rejects.toThrow("Kernel request timed out");
+        await expect(ingestEngineEvent({ socketPath: silent.socketPath, proofTookMs: ENGINE_ANSWER_WAIT_MS + 1_000 }, event)).rejects.toThrow("Kernel request timed out");
+        await expect(ingestEngineEvent({ socketPath: silent.socketPath }, event)).rejects.toThrow("Kernel request timed out");
+      });
+      // At least 1 ms, since a socket reads 0 as no limit.
+      expect(waits).toEqual([300, 1, ENGINE_ANSWER_WAIT_MS]);
+    } finally {
+      await silent.close();
+    }
+  });
+
+  it("keeps what the proof left of its wait, from its own request, however long the hook waited for its session's lock in between", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-proof-then-lock-"));
+    const silent = await silentListener();
+    // daemon.json records another pid than any holder Windows names, so the engine on the pipe proves itself first.
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+      databasePath: join(home, "rerail.sqlite"), kernelSocketPath: String.raw`\\.\pipe\rerail-engine-proof-then-lock`, ui: "bundled", startedAt: 1, packageRoot: home, accessToken: "capability" }));
+    let now = 1_700_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const proving = fakeMachine("win32", { env: { RERAIL_HOME: home }, capabilityProof: async () => {
+        now += 12_000;
+        return "proved";
+      } });
+      const endpoint = await engineEndpointAt(String.raw`\\.\pipe\rerail-engine-proof-then-lock`, undefined, proving);
+      // The hook then waits 31 s for its session's lock, held by another hook of the session.
+      now += 31_000;
+      const waits = await socketWaits(async () => {
+        await expect(ingestEngineEvent({ ...endpoint, socketPath: silent.socketPath }, event)).rejects.toThrow("Kernel request timed out");
+      });
+      expect(waits).toEqual([ENGINE_ANSWER_WAIT_MS - 12_000]);
+    } finally {
+      clock.mockRestore();
+      await silent.close();
+      await removeFolder(home);
+    }
+  });
+});
+
+describe("the holder of a Windows named pipe", () => {
+  it.runIf(process.platform === "win32")("is the process serving it, as Windows records it, with when that process started, and no one once it stops", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-${process.pid}-${Date.now()}`;
+    const server = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => server.listen(pipe, resolve));
+    try {
+      const holder = await pipeServer(pipe, 1_000);
+      expect(holder?.pid).toBe(process.pid);
+      // Node starts a moment after Windows creates its process.
+      const nodeStarted = Date.now() - process.uptime() * 1_000;
+      expect(holder?.startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
+      expect(holder?.startedAt).toBeGreaterThan(nodeStarted - 10_000);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+    expect(await pipeServer(pipe, 0)).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, says so with no pid, and leaves this process's timers running meanwhile", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-busy-${process.pid}-${Date.now()}`;
+    // The pipe's one instance is served by another process, which never lists it again once a client takes it.
+    const holder = await oneInstanceHolder(pipe);
+    const client = connect(pipe).on("error", () => undefined);
+    try {
+      await once(client, "connect");
+      const fired: number[] = [];
+      setTimeout(() => fired.push(Date.now()), 50);
+      const answers = [await pipeServer(pipe, 0), await pipeServer(pipe, 1_000)];
+      const answeredAt = Date.now();
+      // An answer with no pid, which tells a pipe kept busy from one no one holds.
+      expect(answers.map(answer => answer !== undefined && typeof answer.pid !== "number")).toEqual([true, true]);
+      // The timer fired while the lookup waited for a free instance, before its answer.
+      expect(fired).toHaveLength(1);
+      expect(fired[0]).toBeLessThan(answeredAt);
+    } finally {
+      client.destroy();
+      await holder.end();
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", async () => {
+    expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBeUndefined();
   });
 });
