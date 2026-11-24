@@ -347,6 +347,18 @@ freed code, so the run took a bus error at exit ("no image"). Retiring a world n
 handlers whose code is the world's. The fork's `tests/proc_macro_state_per_crate` checks both: on
 the earlier Relax its second crate's check fails and the run exits on signal 10.
 
+### 22. A guard run once per or-alternative keeps its locals where every alternative reaches
+
+Change 17 lowers a guarded or-arm's guard once per alternative. A local the guard binds to an
+aggregate rvalue took over that rvalue's slot, whose address only the first alternative's blocks
+made; the other alternatives then wrote through an undefined register. `format!` in a guard binds
+its argument array so. In the Bitlex compiler's `brief` (`bitlex_lex_rust.rs`, an
+`And | Or | Xor` arm whose guard formats the expression) that freed a stale pointer, which took a
+live `String`'s block: `rerail-kotlin-parser`'s `rust_is_current` panicked in `decode_at`, aborted
+in a `Vec`'s drop, or wrote garbage node names, from run to run. Such a local now takes the slot
+made at the arm's start. The fork's `tests/guard_or_alternative_rvalue_local` (an edition-2024
+crate) segfaults on the earlier Relax.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

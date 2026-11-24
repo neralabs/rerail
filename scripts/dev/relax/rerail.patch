@@ -778,7 +778,7 @@ index 00000000..a7209e22
 +    }
 +}
 diff --git a/libs/relax/compiler/src/lower.rs b/libs/relax/compiler/src/lower.rs
-index 28d3fbd3..4e88811c 100644
+index 28d3fbd3..c2fc2dff 100644
 --- a/libs/relax/compiler/src/lower.rs
 +++ b/libs/relax/compiler/src/lower.rs
 @@ -328,6 +328,11 @@ pub struct Lcx<'a> {
@@ -818,7 +818,23 @@ index 28d3fbd3..4e88811c 100644
              _ => {
                  let a = self.new_slot_for(t);
                  LocalSt::Slot(a)
-@@ -10492,6 +10508,11 @@ impl<'a> Lcx<'a> {
+@@ -4679,9 +4695,13 @@ impl<'a> Lcx<'a> {
+             Pat::Ident { sub, by_ref: false, .. } if sub.is_none() && !self.b.pat_res.contains_key(&p.0) && !self.b.pat_bind_ref.contains_key(&p.0) => {
+                 if let Some(&li) = self.b.pat_local.get(&p.0) {
+                     // an aggregate rvalue in memory is a fresh temporary (or a by-pointer
+-                    // parameter copy): the local takes it over instead of copying it
++                    // parameter copy): the local takes it over instead of copying it. Not in
++                    // a guard lowered once per or-alternative (`guard_slots`): the temporary's
++                    // address is made in this alternative's blocks, and the next alternatives,
++                    // finding the local placed, would write through it undefined (a guard's
++                    // `format!`: its argument array). Its slot is made at the arm's start.
+                     self.drop_local_before_rebind(li);
+-                    if let (Val::M(base, off), None) = (&v, &self.locals[li as usize]) {
++                    if let (Val::M(base, off), None, None) = (&v, &self.locals[li as usize], &self.guard_slots) {
+                         let l = self.layout(t);
+                         if l.leaves.is_none() {
+                             let a = self.addr_add(*base, *off);
+@@ -10492,6 +10512,11 @@ impl<'a> Lcx<'a> {
              // temporaries and the pattern's bindings (rustc if-let guard scopes)
              self.push_scope();
              let n = combos.len();
@@ -830,7 +846,7 @@ index 28d3fbd3..4e88811c 100644
              for (ci, combo) in combos.into_iter().enumerate() {
                  let alt_fail = if ci + 1 == n { next } else { self.f.block() };
                  self.or_force = combo.into_iter().collect();
-@@ -10536,6 +10557,17 @@ impl<'a> Lcx<'a> {
+@@ -10536,6 +10561,17 @@ impl<'a> Lcx<'a> {
                      self.switch(alt_fail);
                  }
              }
@@ -1828,6 +1844,136 @@ index 00000000..a3a893dd
 +    let v: Vec<u16> = Vec::new();
 +    let r = &v[..] as &[u16];
 +    println!("| {:?} {}", bytes, r.len());
++}
+diff --git a/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/Cargo.toml b/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/Cargo.toml
+new file mode 100644
+index 00000000..710f2a6d
+--- /dev/null
++++ b/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/Cargo.toml
+@@ -0,0 +1,6 @@
++[package]
++name = "guard_or_alt"
++version = "0.1.0"
++edition = "2024"
++
++[workspace]
+diff --git a/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/run.sh b/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/run.sh
+new file mode 100755
+index 00000000..509d54c5
+--- /dev/null
++++ b/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/run.sh
+@@ -0,0 +1,15 @@
++#!/bin/bash
++# usage: run.sh <relax binary>: an edition-2024 crate whose guarded or-arms bind `format!`'s argument array in
++# the guard, run once per alternative (src/lib.rs). Each alternative must write the array to a slot every
++# alternative reaches. Prints "guard_or_alternative_rvalue_local: ok" or "...: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++T=$(mktemp -d) || exit 1
++[ -n "$T" ] || exit 1
++trap 'rm -rf "$T"' EXIT
++export RELAX_CACHE=off RELAX_HOME="$T/home" RELAX_STD=$H/../../std
++TEST=$(cd "$H" && "$1" test guard_or_alt --lib 2>&1)
++if echo "$TEST" | grep -q "test result: ok. 2 passed"; then
++  echo "guard_or_alternative_rvalue_local: ok"
++else
++  echo "$TEST" | grep -E "segfault|panicked|test result" | head -4; echo "guard_or_alternative_rvalue_local: FAILED"; exit 1
++fi
+diff --git a/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/src/lib.rs b/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/src/lib.rs
+new file mode 100644
+index 00000000..41dffbea
+--- /dev/null
++++ b/libs/relax/compiler/tests/guard_or_alternative_rvalue_local/src/lib.rs
+@@ -0,0 +1,91 @@
++// A guarded or-arm's guard is lowered once per alternative. A local the guard binds to an aggregate
++// rvalue (`format!`'s argument array) took over the rvalue's slot, whose address the first
++// alternative's blocks made; the next alternatives wrote through that address undefined (a
++// segfault, or a free of a stale pointer: rerail's bitlex_lex_rust `brief`). Each alternative
++// that matches must run the guard on a slot every alternative reaches.
++use std::cell::Cell;
++use std::collections::HashSet;
++
++#[derive(Debug)]
++pub enum E { And(u32), Or(u32), Xor(u32), Name(u32) }
++
++struct Noisy<'a>(&'a Cell<i32>, u32);
++impl Drop for Noisy<'_> {
++    fn drop(&mut self) {
++        self.0.set(self.0.get() + 1);
++    }
++}
++fn make<'a>(dropped: &'a Cell<i32>, made: &Cell<i32>, v: u32) -> Noisy<'a> {
++    made.set(made.get() + 1);
++    Noisy(dropped, v)
++}
++fn even(n: &Noisy) -> bool {
++    n.1 % 2 == 0
++}
++
++/// Leaves the stack full of non-zero words for the next call.
++#[inline(never)]
++fn scribble(i: u32) -> u64 {
++    let a = [i as u64 ^ 0x5555_5555_5555_5555; 64];
++    std::hint::black_box(&a);
++    a.iter().sum()
++}
++
++fn value(i: u32) -> E {
++    match i % 4 {
++        0 => E::And(i % 7),
++        1 => E::Or(i % 7),
++        2 => E::Xor(i % 7),
++        _ => E::Name(i % 7),
++    }
++}
++
++#[inline(never)]
++fn formatted(known: &HashSet<String>, a: &E) -> u32 {
++    match a {
++        E::And(..) | E::Or(..) | E::Xor(..) if !known.contains(&format!("{a:?}")) => 1,
++        _ => 3,
++    }
++}
++
++#[inline(never)]
++fn bound(known: &HashSet<String>, a: &E, dropped: &Cell<i32>, made: &Cell<i32>) -> u32 {
++    match a {
++        E::And(v) | E::Or(v) | E::Xor(v) if !known.contains(&format!("{a:?}")) && even(&make(dropped, made, *v)) => 1,
++        E::And(v) | E::Or(v) if even(&make(dropped, made, *v + 1)) => 2,
++        _ => 3,
++    }
++}
++
++#[test]
++fn each_alternative_runs_the_guard_on_its_own_slot() {
++    let known: HashSet<String> = ["Or(1)", "Xor(2)", "And(4)"].into_iter().map(String::from).collect();
++    let mut seen = [0; 4];
++    for i in 0..400 {
++        scribble(i);
++        let a = value(i);
++        let want = match &a {
++            E::Name(_) => 3,
++            x if known.contains(&format!("{x:?}")) => 3,
++            _ => 1,
++        };
++        let got = formatted(&known, &a);
++        assert_eq!(got, want, "{a:?}");
++        seen[got as usize] += 1;
++    }
++    assert!(seen[1] > 0 && seen[3] > 0, "{seen:?}");
++}
++
++#[test]
++fn each_alternative_drops_its_guard_temporaries_once() {
++    let known: HashSet<String> = ["Or(1)", "Xor(2)", "And(4)"].into_iter().map(String::from).collect();
++    let (dropped, made) = (Cell::new(0), Cell::new(0));
++    let mut seen = [0; 4];
++    for i in 0..400 {
++        scribble(i);
++        let a = value(i);
++        seen[bound(&known, &a, &dropped, &made) as usize] += 1;
++        assert_eq!(dropped.get(), made.get(), "{a:?}");
++    }
++    assert!(seen[1] > 0 && seen[2] > 0 && seen[3] > 0, "{seen:?}");
 +}
 diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/.gitignore b/libs/relax/compiler/tests/import_pub_in_other_crate/.gitignore
 new file mode 100644
