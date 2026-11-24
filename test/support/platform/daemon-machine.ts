@@ -23,6 +23,7 @@ export function fakeMachine(platform: NodeJS.Platform, overrides: Partial<Daemon
     mainInstanceLockHeld: () => undefined,
     homeDaemonLockHeld: () => undefined,
     processStartedAt: () => undefined,
+    endProcessStartedBy: refuse("end of a process"),
     nodeExecutable: () => "node",
     spawnDetached: refuse("process through the native spawn"),
     spawn: refuse("process through Node's spawn"),

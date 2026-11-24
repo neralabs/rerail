@@ -404,6 +404,48 @@ checks that every file the manifest pins is `-text`.
 
 </details>
 
+## Edits that keep a file's time
+
+On Windows a scan reads a clean file whose change time moved after its last write, since the stat Git records cannot
+show such an edit there.
+
+<details>
+<summary>The change-time check, and where the stat still decides</summary>
+
+A warm repository index restores a clean file's stored results while the file's stat equals the stat Git recorded in
+its index entry. On Unix that stat holds the change time, which every write moves. On Windows it holds the creation
+time in that field, so a tool that rewrote a file at the same size and put its modification time back (`touch -r`, a
+copy or an extraction that keeps times) left the stat equal, and every later scan reported the findings of the
+committed text. `holds_blob_bytes` and `clean_blob_unread` (`native/src/git_workspace.rs`) also need NTFS's change
+time, read through the handle the stat opens (`native/src/git_workspace/worktree_stat.rs`), to equal the modification
+time. A file whose change time moved is read and hashed at every scan: nothing keeps what an earlier hash showed.
+Untouched files are restored unread, as their change time equals their modification time.
+
+The stat decides, as it does for Git, in three cases:
+
+- **No change time to trust.** FAT and exFAT answer a change time of 0. A network share's change time is kept by the
+  server's file system: a volume counts as local only where it refuses the protocol query (`FileRemoteProtocolInfo`)
+  with error 87, as NTFS and ReFS do. A workspace asks each volume once, or once by each call that misses it while
+  another asks.
+- **Data not on this disk.** A cloud provider's placeholder (`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`,
+  `FILE_ATTRIBUTE_RECALL_ON_OPEN`) and an offline file (`FILE_ATTRIBUTE_OFFLINE`) keep their stat's answer: freeing a
+  placeholder's space moves its change time, and a read would download it.
+- **A file this process cannot read**, its read denied or another process holding or locking it: no hash can check
+  it.
+
+The server graph's disk walk (`native/src/code_rule_dsl/module_graph.rs`) keeps each source's summary while the
+source's stamp stands. On Windows the stamp held only the modification time and length; it also holds the change time
+and file id, read with each folder's listing (`FileIdBothDirectoryInfo`, `module_graph/listing.rs`), so a source
+rewritten from `'use server'` to `'use client'` at the same size and time is read again. The listing gives the folder
+entry's copy of the times, which NTFS refreshes only when the last handle to the file closes, and only for the name
+that handle opened: a rewrite through another hard link keeps this name's old stamp, and one whose writer still holds
+its handle keeps it until the handle closes.
+
+CI's `rust-windows` job runs these cases: rerail-store's `git_workspace::`, the walk's `code_rule_dsl::module_graph::`
+and the warm index's four.
+
+</details>
+
 ## Each coding agent's shell
 
 Rerail writes every command it hands an agent or a person in the syntax of the shell that runs it. On Windows,
@@ -594,20 +636,51 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   A recorded pid, whether this user may signal it or not, counts as the recorded daemon only when its engine pipe
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
-  Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
+  Nothing goes to the recorded URL before that. An engine of Rerail 0.1.4 or earlier has no proof and answers the
+  challenge 404, as any listener without the proof's path does, and a process can outlive its pipe and port: a daemon
+  that shuts down lets go of both before it exits. So a 404 counts only where `daemon.json` was written by a release
+  before the proof (its `version` before 0.1.5); from a later release the record is removed unprobed. For an earlier
+  one, a lookup (`rerail status`, `rerail daemon stop`, a hook's start of the daemon, set-up) lets the process's
+  creation time decide, read as below: a pid this user may signal that started no later than the `startedAt` that
+  `daemon.json` records is the daemon that wrote it. It proved nothing, so it is sent nothing that carries the
+  capability or the native token, its health probe included, and `rerail status` exits 4, saying which release it runs
+  and to run `rerail daemon start`. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail
+  install --remove` end it through its process: one call opens the process, reads its creation time, ends it through
+  that handle and waits on it for the exit, so a pid Windows gives to another process meanwhile is never ended. The
+  wait is bounded at the stop's 5 s kill wait, and for `rerail install --remove` at 15 s with PowerShell's own start
+  (below), only so that an end that hangs cannot hold the command for good.
+  `rerail daemon start` then starts this release's daemon and says, in one line, which daemon it ended. A hook's
+  start and set-up replace it whatever package it ran from, since it predates the fields hooks send; a hook that may
+  not replace it (`RERAIL_AUTOSTART=0`, or a daemon found only after the start looked) sends it nothing and logs each
+  event it lost, which `rerail status` reports with the stop to run before the start. Under `RERAIL_AUTOSTART=0` a
+  session's start also tells the person that nothing is recorded until a daemon from the active package runs, and to
+  run `rerail daemon stop`, then `rerail daemon start`. A pid behind such an engine that started more than 10 s later,
+  or that this user may not signal, is not that daemon, and the record is removed; one whose start is not read, or is
+  later by 10 s or less, is kept as a busy daemon is, and sent nothing, as is one whose recorded start lies more than
+  10 s past the reader's clock, before which any process started: nothing is ended on it. Every other reader
+  (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
+  nothing and reads no start, as for an engine that does not prove itself, and removes nothing: a hook makes that check
+  before every tool call. An engine that does not answer the proof in time is taken for a busy daemon: its
+  state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
   process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
   process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
   no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
-  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through
-  Windows PowerShell, which loads no Rerail engine, and is ended at what is left of the lookup's limit (the stop's
-  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. So on a
-  machine whose policy blocks `powershell.exe` itself, no start is read, and a busy daemon of 0.1.4 or earlier is not
-  shown to be this home's: `rerail daemon stop` ends nothing and says how to check the process, and `rerail install
-  --remove` stops with that error, having already taken Rerail out of the coding agents. The command that message
-  gives runs PowerShell too, so there open Task Manager's Details tab, show its Command line column, end the process
-  with the pid the message names if its command line runs Rerail's `daemon-entry.js` for this home, and run the
-  command again. The proof's limit counts
+  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through the
+  engine (`GetProcessTimes`), which starts no process, however little of the lookup's limit is left: a process this
+  user may not query, or an engine that does not load (the first such failure goes to stderr), leaves it unread, and
+  the record is kept. `rerail install --remove` reads it, and ends a daemon of 0.1.4 or earlier, through Windows
+  PowerShell instead, since it deletes the folder the engine loads from next and Windows keeps a loaded DLL from being
+  deleted. The read's PowerShell is ended at what is left of the lookup's limit, and one ended there, or one that
+  cannot run, reads nothing; the end's PowerShell is ended at the stop's 10 s wait and its 5 s kill wait, 15 s with its
+  own start, and one ended after it ended the process reads as still running. The lookup's limit counts from its start
+  and bounds this read for a busy daemon and for one whose engine has no proof alike: 2 s, which the proof shares, for
+  `rerail status`, set-up's look for a daemon to keep and a hook's start of the daemon; the stop's 10 s wait for
+  `rerail daemon stop`, set-up's stop of a daemon it replaces and both stops of `rerail install --remove`. So on a
+  machine whose policy blocks `powershell.exe` itself, a busy daemon of 0.1.4 or earlier is not shown to be this
+  home's in `rerail install --remove`, which stops with that error, having already taken Rerail out of the coding
+  agents. The command that message gives runs PowerShell too, so there open Task Manager's Details tab, show its
+  Command line column, end the process with the pid the message names if its command line runs Rerail's
+  `daemon-entry.js` for this home, and run the command again. The proof's limit counts
   from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/daemon/engine-proof.ts`). It connects to the pipe
   spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking

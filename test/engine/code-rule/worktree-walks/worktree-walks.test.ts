@@ -12,6 +12,7 @@ import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import type { WorktreeListLearning } from "../../../../src/engine/catalog/repository-identity.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -161,6 +162,8 @@ interface SessionOptions {
    * the other worktrees whose folder is there.
    */
   readonly registry?: string;
+  /** What the auditor learns before each walk lists the other worktrees, as the router learns Git's list. */
+  readonly learn?: (git: GitReads) => WorktreeListLearning | undefined;
 }
 
 /**
@@ -172,11 +175,13 @@ async function opened(
   folder: string,
   checkouts: readonly string[],
   walks: WorktreeWalks,
-  { rules, ignores, nested = [], registry }: SessionOptions = {},
+  { rules, ignores, nested = [], registry, learn }: SessionOptions = {},
 ) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
     revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
   }));
+  // As the router does: the session's own checkout is never one of the other worktrees.
+  const worktreeRoots = vi.fn(() => checkouts.filter(checkout => checkout !== innermost(checkouts, folder) && (registry === undefined || existsSync(checkout))));
   let known = new Set(rules?.extensions);
   const auditor: CodeRuleAuditor = {
     openWorkspace: async () => undefined,
@@ -187,15 +192,15 @@ async function opened(
     auditGeneratedEdits,
     close: async () => undefined,
     sourceRoot: path => innermost([...checkouts, ...nested], resolve(folder, path)),
-    // As the router does: the session's own checkout is never one of the other worktrees.
-    worktreeRoots: () => checkouts.filter(checkout => checkout !== innermost(checkouts, folder) && (registry === undefined || existsSync(checkout))),
+    worktreeRoots,
     ...(ignores === undefined ? {} : { ignoresPath: ignores }),
     ...(registry === undefined ? {} : { worktreeRegistry: () => registry }),
+    ...(learn === undefined ? {} : { learnWorktreeRoots: learn }),
   };
   const bridge = new CodeRuleBridge(folder, auditor, { worktreeWalks: walks });
   bridges.push(bridge);
   await bridge.openWorkspace(`session-${bridges.length}`);
-  return { bridge, auditGeneratedEdits };
+  return { bridge, auditGeneratedEdits, worktreeRoots };
 }
 
 /** A session whose first turn, and the walk of the other worktrees after it, are done. */
@@ -1342,6 +1347,53 @@ describe("the walks of each repository", () => {
     // Dropped again, then watched by a session it was handed to before that.
     handed.watch(watcherOf([], []));
     expect(repositories.of("r")).toBe(handed);
+  });
+});
+
+describe("what a session learns before a walk lists the other worktrees", () => {
+  it("takes a throw of a session's learn step as nothing to learn, and walks once while the event loop turns", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    let learnt = 0;
+    const watcher: WorktreeWatcher = {
+      ...watcherOf([worktrees[0]!], scans),
+      // Throws at its first 49 calls only, so walks begun again at each throw still end.
+      prepare: () => {
+        learnt += 1;
+        if (learnt < 50) throw new Error("the checkout's placement cannot be read");
+        return undefined;
+      },
+    };
+    const watch = new WorktreeWalks({ gapMs: 0 }).watch(watcher);
+    watch.request();
+    const atFirstTurn = await new Promise<number>(turned => {
+      setImmediate(() => turned(learnt));
+    });
+    await watch.settled();
+    expect({ atFirstTurn, learnt, scans }).toEqual({ atFirstTurn: 1, learnt: 1, scans: [worktrees[0]] });
+    await watch.close();
+  });
+
+  it("stops the session folder's walk once the list is learnt when the session closed meanwhile, and lists no worktree for it", async () => {
+    const { worktrees, checkouts } = await repository(["w1"]);
+    const entered = Promise.withResolvers<void>();
+    const learnt = Promise.withResolvers<void>();
+    releases.push(learnt.resolve);
+    const { bridge, worktreeRoots } = await opened(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }), {
+      learn: () => {
+        entered.resolve();
+        return { kind: "learning", done: learnt.promise };
+      },
+    });
+    void bridge.checkpoint("turn").catch(() => undefined);
+    await entered.promise;
+    await bridge.close();
+    learnt.resolve();
+    // A walk that went on would list the worktrees in the steps that run before the event loop turns.
+    await new Promise(turn => {
+      setImmediate(turn);
+    });
+    expect(worktreeRoots).not.toHaveBeenCalled();
   });
 });
 

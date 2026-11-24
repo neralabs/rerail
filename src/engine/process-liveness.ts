@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { spawnSync } from "./child-process.js";
+import { loadNativeBinding, type NativeBinding } from "./native/native.js";
 import { windowsPowerShell } from "./system-programs.js";
 
 /**
@@ -70,12 +71,152 @@ export function exitedEveryThread(status: string): boolean {
 /**
  * When the process holding `pid` started, in epoch milliseconds, or undefined where it cannot be read. A process keeps
  * its pid for life, so its start time tells the process that holds a pid now from one that held it before. Linux reads
- * `/proc` ({@link linuxStartedAt}), Windows the process's creation time within `timeoutMs` ({@link windowsStartedAt});
- * other systems are not read.
+ * `/proc` ({@link linuxStartedAt}), Windows the process's creation time through Windows PowerShell within `timeoutMs`
+ * ({@link windowsStartedAt}), which loads no engine: for a process that deletes the engine's folder after it reads, as
+ * the uninstall does. Every other reader asks {@link processStartedAtThroughEngine}. Other systems are not read.
  */
 export function processStartedAt(pid: number, timeoutMs: number, platform: NodeJS.Platform = process.platform): number | undefined {
+  return startedAt(pid, platform, () => windowsStartedAt(pid, timeoutMs));
+}
+
+/**
+ * {@link processStartedAt}, with Windows reading the creation time through the engine (`GetProcessTimes`), which starts
+ * no process: a hook or a status pays a system call where a PowerShell start costs about a second, and a policy that
+ * blocks Windows PowerShell does not keep it from the answer. A system call needs no limit, so Windows reads it however
+ * little of a lookup's limit is left. An engine that does not load, or was built before the read, reads nothing, and
+ * the first such failure is reported ({@link reportEngineReadFailure}).
+ */
+export function processStartedAtThroughEngine(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  engine: () => Pick<NativeBinding, "processStartedAt"> = loadNativeBinding,
+): number | undefined {
+  return startedAt(pid, platform, () => engineStartedAt(pid, engine));
+}
+
+/**
+ * How far the reader's clock may have moved since a daemon stamped its start, either way. A clock set forward since
+ * then puts a later read of the daemon's own start up to this much after the stamp; one set back puts the stamp up to
+ * this much past the reader's now.
+ */
+export const START_CLOCK_SLACK_MS = 10_000;
+
+/**
+ * Whether a recorded start (epoch ms) can name the time a process started: a finite number no more than
+ * {@link START_CLOCK_SLACK_MS} past the reader's clock. Every process's start compares no later than Infinity, or than a
+ * start further ahead, so any process at the pid would pass for the one that wrote it, and none compares to NaN.
+ */
+export function startNamesProcess(startedAt: number): boolean {
+  return Number.isFinite(startedAt) && startedAt <= Date.now() + START_CLOCK_SLACK_MS;
+}
+
+/** Linux's start of `pid`, `windows` on Windows, and none elsewhere. */
+function startedAt(pid: number, platform: NodeJS.Platform, windows: () => number | undefined): number | undefined {
   if (platform === "linux") return linuxStartedAt(pid);
-  return platform === "win32" ? windowsStartedAt(pid, timeoutMs) : undefined;
+  return platform === "win32" ? windows() : undefined;
+}
+
+/** What the engine reads of when `pid` started; nothing when it does not load or has no such read. */
+function engineStartedAt(pid: number, engine: () => Pick<NativeBinding, "processStartedAt">): number | undefined {
+  try {
+    const read = engine().processStartedAt;
+    if (read === undefined) throw new Error("the engine was built before it could read a process's start");
+    return read(pid) ?? undefined;
+  } catch (error) {
+    reportEngineReadFailure(error);
+    return undefined;
+  }
+}
+
+/** Whether a failure of the engine's process reads was reported in this process. */
+let engineReadFailureReported = false;
+
+/**
+ * Writes the first failure of the engine's process reads to stderr, which a daemon keeps in its log, once per process:
+ * without them neither a busy daemon nor one of Rerail 0.1.4 or earlier is told from a stale record by its start, and
+ * the latter is not ended. The line names neither, since every Windows start read goes through the engine.
+ */
+function reportEngineReadFailure(error: unknown): void {
+  if (engineReadFailureReported) return;
+  engineReadFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not read or end a process, so Rerail could not tell whether the recorded daemon is still running: ${reason}\n`);
+}
+
+/**
+ * What ending a daemon of a release before the engine's proof through its process came to ({@link endProcessStartedBy}):
+ * it exited (`ended`), it was ended and still runs after the wait (`running`), the process holding the pid started
+ * after the record's `startedAt` and was let alone (`later`), or the process could not be opened, its start read or
+ * waited on, as when no process holds the pid, or `startedAt` names no time a process started ({@link startNamesProcess})
+ * (`unread`). A wait that failed came after the end was asked, so an `unread` process may have been ended.
+ */
+export type ProcessEnd = "ended" | "running" | "later" | "unread";
+
+const PROCESS_ENDS: ReadonlySet<string> = new Set(["ended", "running", "later"]);
+
+/**
+ * Windows: ends the process holding `pid` when it started no later than `startedAt` (epoch ms), and waits up to
+ * `waitMs` for it to exit, through the engine's one call (`endProcessStartedBy`), which opens the process, reads its
+ * start and ends it through that one handle: the process ended is the one whose start was read, whatever process
+ * Windows gives the pid between two calls. An engine that does not load, or was built before it, ends nothing.
+ */
+export function endProcessStartedBy(
+  pid: number,
+  startedAt: number,
+  waitMs: number,
+  engine: () => Pick<NativeBinding, "endProcessStartedBy"> = loadNativeBinding,
+): ProcessEnd {
+  try {
+    const end = engine().endProcessStartedBy;
+    if (end === undefined) throw new Error("the engine was built before it could end a process by its start");
+    return processEnd(end(pid, startedAt, waitMs));
+  } catch (error) {
+    reportEngineReadFailure(error);
+    return "unread";
+  }
+}
+
+/**
+ * {@link endProcessStartedBy} through Windows PowerShell, which loads no Rerail engine, for the uninstall: the process
+ * object `Get-Process` returns keeps the handle it opened for `.Handle` and reads its start, ends it and waits on that
+ * one handle for the end, with cmdlets and properties alone, which Constrained Language Mode allows. Each cmdlet is named
+ * with its module, as {@link windowsStartedAt}'s is, so PowerShell reads no other installed module first. The wait has
+ * no limit of its own: the end is a fact the handle gives. `waitMs` bounds the whole call, PowerShell's own start
+ * included, only so that a PowerShell or an end that hangs cannot hold the uninstall for good. It prints
+ * {@link END_ASKED} once it has ended the process, so a PowerShell ended at the bound after that reads `running`; one
+ * ended before it, or one that cannot run, ends nothing it reports: `unread`.
+ */
+export function endProcessStartedByPowerShell(pid: number, startedAt: number, waitMs: number): ProcessEnd {
+  // A start that names no time a process started ends nothing, as the engine's end answers.
+  if (!startNamesProcess(startedAt)) return "unread";
+  const latest = (BigInt(Math.floor(startedAt)) + BigInt(FILETIME_EPOCH_MS)) * 10_000n + 9_999n;
+  const script = `$p = ${PROCESS_CMDLETS}\\Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
+    + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { ${PROCESS_CMDLETS}\\Stop-Process -InputObject $p -Force -ErrorAction Stop; `
+    + `'${END_ASKED}'; ${PROCESS_CMDLETS}\\Wait-Process -InputObject $p; 'ended' }`;
+  const run = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: waitMs });
+  return powerShellEnd(run.status, String(run.stdout ?? ""));
+}
+
+/** What {@link endProcessStartedByPowerShell} prints once it has ended the process, before it waits for the exit. */
+const END_ASKED = "asked";
+
+/** The module of the process cmdlets Rerail runs through Windows PowerShell, which names each one with it. */
+const PROCESS_CMDLETS = "Microsoft.PowerShell.Management";
+
+/**
+ * The {@link ProcessEnd} a run of {@link endProcessStartedByPowerShell} that exited with `status` came to by what it
+ * printed (`stdout`): its last line once it exited, `running` when it was ended after it ended the process and before
+ * that process exited, and `unread` otherwise.
+ */
+function powerShellEnd(status: number | null, stdout: string): ProcessEnd {
+  const lines = stdout.trim().split(/\r?\n/u);
+  if (status === 0) return processEnd(lines.at(-1) ?? "");
+  return lines.includes(END_ASKED) ? "running" : "unread";
+}
+
+/** The {@link ProcessEnd} an engine or PowerShell answered; anything else is `unread`. */
+function processEnd(answer: string): ProcessEnd {
+  return PROCESS_ENDS.has(answer) ? answer as ProcessEnd : "unread";
 }
 
 /**
@@ -112,7 +253,7 @@ const FILETIME_EPOCH_MS = 11_644_473_600_000;
 function windowsStartedAt(pid: number, timeoutMs: number): number | undefined {
   if (!(timeoutMs > 0)) return undefined;
   const read = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `(Microsoft.PowerShell.Management\\Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`],
+    `(${PROCESS_CMDLETS}\\Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`],
   { encoding: "utf8", timeout: timeoutMs });
   const text = String(read.stdout ?? "").trim();
   return read.status === 0 && /^\d+$/u.test(text) ? Number(BigInt(text) / 10_000n) - FILETIME_EPOCH_MS : undefined;
