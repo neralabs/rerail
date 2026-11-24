@@ -1536,8 +1536,10 @@ tokens have no field.
   report CODE [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document;
   the tape's `syntax_error(d)` is tree-sitter's ERROR/MISSING.
 - `static_value` is `value`: file-local constants are not followed.
-- `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
+- `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
   `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
+  2026-11-24: `tsconfig`, `tsconfig_for`, `tsconfig_path` and `package_export` are made, from the repository walk
+  that makes `package*` (`facts::repository`, decision 0046 item 10).
 - `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order, made for Python documents only
   (`facts::vtab::syntax::tree`); other languages have no `visit_index` row, so no `earlier` row.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.

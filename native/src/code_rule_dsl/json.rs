@@ -94,3 +94,63 @@ pub fn invalid(message: impl Into<String>) -> Error {
 pub fn json_error(error: serde_json::Error) -> Error {
     invalid(error.to_string())
 }
+
+/// A JSON-with-comments text as plain JSON, as TypeScript reads a configuration file (`tsconfig.json`): without a
+/// leading byte-order mark, comments and trailing commas. Comments go first, so a trailing comma before a comment and
+/// a closing bracket is still dropped.
+pub fn strip_jsonc(text: &str) -> String {
+    // TypeScript drops a leading byte-order mark, as editors on Windows write one.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let without_comments = strip_outside_strings(text, |bytes, at| match bytes[at..] {
+        [b'/', b'/', ..] => Some(
+            bytes[at..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |end| at + end),
+        ),
+        [b'/', b'*', ..] => Some(
+            bytes[at + 2..]
+                .windows(2)
+                .position(|pair| pair == b"*/")
+                .map_or(bytes.len(), |end| at + 2 + end + 2),
+        ),
+        _ => None,
+    });
+    strip_outside_strings(&without_comments, |bytes, at| {
+        (bytes[at] == b','
+            && matches!(
+                bytes[at + 1..]
+                    .iter()
+                    .find(|byte| !byte.is_ascii_whitespace()),
+                Some(b'}' | b']')
+            ))
+        .then_some(at + 1)
+    })
+}
+
+/// `text` without the spans `skip` names outside string literals: given the bytes and an offset,
+/// it returns where a span to drop starting there ends.
+fn strip_outside_strings(text: &str, skip: impl Fn(&[u8], usize) -> Option<usize>) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut kept = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'"' {
+            at += 1;
+            while at < bytes.len() && bytes[at] != b'"' {
+                at += if bytes[at] == b'\\' { 2 } else { 1 };
+            }
+            at = (at + 1).min(bytes.len());
+        } else if let Some(end) = skip(bytes, at) {
+            out.push_str(&text[kept..at]);
+            out.push(' ');
+            at = end.min(bytes.len());
+            kept = at;
+        } else {
+            at += 1;
+        }
+    }
+    out.push_str(&text[kept..]);
+    out
+}

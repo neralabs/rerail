@@ -15,7 +15,8 @@ confirm once a parser and engine exist. None is fixed yet.
 6. `export default function App(){}` is likely exported as `App`, not `default`.
 7. `export * as ns from "m"` is treated as plain `export *`.
 8. `export { a as b }` without a source does not follow the local `a`.
-9. `tsconfig` baseUrl, `package`, `package_export` are unused; paths join the tsconfig dir rather than baseUrl;
+9. `tsconfig` baseUrl (a bare specifier under baseUrl with no `paths` pattern), `package`, `package_export` are unused
+   (`paths` targets are right: the engine gives them from the tsconfig dir, baseUrl applied);
    `resolve_base` lacks `.d.ts`, `/index.jsx` and the ESM `.js` → `.ts` mapping.
 10. `def_of`/`decl_site` miss `export var`, `enum`, `namespace`, abstract classes, generator and class expressions.
 11. jsx: `render_stop` includes `statement_block` (block-bodied map callbacks end the climb); `child_callback` rejects any

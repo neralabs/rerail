@@ -1138,6 +1138,14 @@ pub fn module(rel: &str) -> String {
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
+/// An ECMAScript or Vue file's module in core.rerail's shape: its path without its extension (`src/ui/button.tsx` is
+/// `src/ui/button`, `src/ui/index.ts` is `src/ui/index`), the name `tsx/names.rerail` resolves an import of the file
+/// to (`resolve_base`: `./ui` and `./ui/index` alike), and rrlab gives. `None` for other files.
+pub fn ecma_module(rel: &str) -> Option<&str> {
+    // `.mjs` before `.js`: a.mjs is `a`, not `a.m`.
+    [".mjs", ".cjs", ".mts", ".cts", ".js", ".jsx", ".ts", ".tsx", ".vue"].iter().find_map(|x| rel.strip_suffix(x))
+}
+
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
 /// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
@@ -2935,14 +2943,14 @@ impl Batch {
                 unvalued.insert(d.key);
             }
             let key = i64::from(d.key);
-            // core.rerail: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
-            // for every file.
+            // core.rerail: a module for Python and Rust files, an ECMAScript or Vue file's path without its extension
+            // (`ecma_module`), "" for the others; `pkg` for Python only. T's has both for every file.
             let py_file = d.path.ends_with(".py") || d.path.ends_with(".pyi");
             let dotted = py_file || d.path.ends_with(".rs");
             let named = d.module.as_deref();
             let module = match named {
                 Some(m) => m.to_owned(),
-                None if core && !dotted => String::new(),
+                None if core && !dotted => ecma_module(&d.path).unwrap_or_default().to_owned(),
                 None => module(&d.path),
             };
             doc.push([key, string(&d.path) as i64, string(&module) as i64]);
