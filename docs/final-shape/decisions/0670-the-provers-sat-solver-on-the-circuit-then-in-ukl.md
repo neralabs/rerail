@@ -240,6 +240,25 @@ formula").
   its rounds on an M3's GPU: the same bytes as the shipped answers; 34 rounds, 6,320 formulas, 3,979 decided at
   level 0, 2.1 s in the rounds; the compile 23.7 to 25.8 s against the CPU's 20.9 to 22.4 s, in turns (the M3 at a
   load of 41 to 58).
+- **Why the device's learned clauses were long: its decisions.** The CPU's solver with the device's decisions (VMTF,
+  a queue in bump order) on the 4 hardest dumps: 130 to 650 literals a learned clause against 29 to 35, and 3 to 7
+  times the conflicts (65,591 against 9,160 on the hardest). The device now decides as the CPU does: an activity
+  heap on lane 0 (`cs_pop`, `cs_up`, `cs_down`), the variables met in analysis bumped, the bump growing by a
+  twentieth a conflict, ties to the higher number, false first. Activities are integers (past 2^24 every one shifted
+  down 14 bits, across the lanes), so the order is the same on every backend.
+- **Every kernel loop is bounded** (a heap walk by its depth, a watch list by its nodes, a gate's items by its width,
+  analysis and the trail by the trail's room): a fault ends the formula `BROKEN`, which the host reports as an
+  error, never a launch that does not end. A version with float activities (a float view of the state's words) ran
+  without end on an M3's GPU: its process killed by the farm's watchdog, its command buffer ran on. The integer
+  version passes on an M1 Max's Metal, a DGX Spark's CUDA and UKL's CPU backend.
+- **The hard formulas now** (an M1 Max's Metal and a DGX Spark's CUDA: the same counts, conflict for conflict): 3 of
+  the 4 proved unsatisfiable, in 706 to 2,352 conflicts (the CPU's 1,476 to 3,004), 15 to 36 literals a learned
+  clause; the hardest stops with its room full after 4,926 conflicts. 19.6 s on the M1 Max, 12 s on the Spark,
+  against the CPU's 0.3 to 0.7 s a formula.
+- **What a round costs**: about 113 rounds a conflict (a frontier of about 20 literals), 2 watch nodes and 60 gate
+  items a round, about 30 µs a round on the Spark: a chain of dependent reads of device memory. Lane 0 read the
+  watch head of each of the round's literals in turn; each lane now reads its own, and lane 0 walks only the lists
+  that are not empty (13.8 s to 11.1 s).
 - **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
   the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
   the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on

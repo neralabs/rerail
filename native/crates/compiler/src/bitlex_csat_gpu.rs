@@ -41,6 +41,7 @@ const HEADER: usize = 32;
 const SAT: u32 = 1;
 const UNSAT: u32 = 2;
 const ROOMLESS: u32 = 4;
+const BROKEN: u32 = 5;
 /// The words a formula's report holds (`out`).
 const OUT: usize = 8;
 
@@ -87,6 +88,8 @@ pub struct Solved {
     /// The clauses it learned and their literals.
     pub learned: u32,
     pub learned_literals: u32,
+    pub visits: u32,
+    pub items: u32,
 }
 
 /// A formula's state, in words (the kernel's layout).
@@ -182,6 +185,9 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
         run(&mut q, 0)?;
         got = read::<u32>(&out, n * OUT);
     }
+    if let Some(i) = got.chunks(OUT).position(|o| o[0] == BROKEN) {
+        return Err(format!("the device's solver broke on formula {i}: a loop past its bound"));
+    }
     let any_sat = got.chunks(OUT).any(|o| o[0] == SAT);
     let words = if any_sat { read::<u32>(&state, states) } else { Vec::new() };
     drop(table);
@@ -201,6 +207,8 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
             rounds: o[3],
             learned: o[4],
             learned_literals: o[5],
+            visits: o[6],
+            items: o[7],
         })
         .collect())
 }
@@ -398,7 +406,7 @@ mod tests {
                 Answer::Unknown => "Unknown",
             };
             eprintln!(
-                "{}: the device {answer}{}, {} conflicts, {} decisions, {} rounds, {} learned ({} literals); the CPU {cpu:?}, {} conflicts, {ms:.1} ms",
+                "{}: the device {answer}{}, {} conflicts, {} decisions, {} rounds, {} learned ({} literals), {} watch visits, {} gate items; the CPU {cpu:?}, {} conflicts, {ms:.1} ms",
                 p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
                 if x.roomless { " (room full)" } else { "" },
                 x.conflicts,
@@ -406,6 +414,8 @@ mod tests {
                 x.rounds,
                 x.learned,
                 x.learned_literals,
+                x.visits,
+                x.items,
                 s.conflicts - c0
             );
         }

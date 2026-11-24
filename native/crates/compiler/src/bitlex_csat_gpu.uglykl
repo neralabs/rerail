@@ -12,8 +12,13 @@
 //   other's gate is checked again when the variable's turn comes, and meets the conflict then. So the answer and the
 //   search do not depend on how the lanes are scheduled.
 // - **Analysis, decisions** are lane 0's: the clause is learned into the formula's own arena (`D_LEARNED` clauses,
-//   `D_ARENA` literals); past it the formula is unknown (sound). Decisions take the most recently bumped unset
-//   variable (VMTF: a queue in bump order, a search pointer), false first, as the CPU's are false first.
+//   `D_ARENA` literals); past it the formula is unknown (sound). Decisions are the CPU's (`bitlex_sat::Order`): the
+//   most active unset variable from a max-heap (activity, then the higher number), false first; a variable met in
+//   analysis is bumped, and the bump grows by a twentieth a conflict. Activities are integers, the same on every
+//   backend: past `BUMP_MAX` every one is shifted down `BUMP_SHIFT` bits (the order kept, old bumps decayed). (A queue in bump order, VMTF, made clauses 4 to
+//   18 times as long on the CPU's hard formulas, and 3 to 7 times the conflicts.)
+// - **Every loop is bounded** (a heap walk by its depth, a watch list by its nodes, a gate's items by its width,
+//   analysis by the trail): a fault ends the formula `BROKEN`, never a launch that does not end.
 // - **Launches are bounded**: a launch runs each formula `args.steps` steps (a round, a conflict, a decision) and
 //   leaves its state; the host launches again while any runs. The first launch (`args.init`) lays the state out.
 //
@@ -57,10 +62,13 @@
 #define H_CONFLICTS 4u
 #define H_LEARNED 5u
 #define H_USED 6u
-#define H_FIRST 7u
-#define H_LAST 8u
-#define H_SEARCH 9u
-#define H_STAMP 10u
+#define H_HEAP 7u     // the heap's size
+#define H_BUMP 10u    // the next bump
+
+// The bumps: the first, and where every activity is scaled down (an activity stays below 21 bumps, in 32 bits).
+#define BUMP_FIRST 1024u
+#define BUMP_MAX (1u << 24)
+#define BUMP_SHIFT 14u
 #define H_CONFLICT 11u  // the conflict's clause: a clause's number, or NONE for `cbuf`'s
 #define H_CLEN 12u      // `cbuf`'s length
 #define H_DECISIONS 13u
@@ -68,6 +76,8 @@
 #define H_FLAG 15u      // a round's conflict, from lane 0's clauses
 #define H_BACK 16u      // a conflict's level to jump back to, and its learned clause's length, from lane 0
 #define H_LEN 17u
+#define H_VISITS 18u   // watch nodes visited
+#define H_ITEMS 19u    // gate items checked
 #define HEADER 32u
 
 // Statuses.
@@ -76,6 +86,7 @@
 #define UNSAT 2u
 #define UNKNOWN 3u   // the conflicts' budget spent
 #define ROOMLESS 4u  // the learned clauses' room full
+#define BROKEN 5u    // a loop past its bound: the state is not what the solver keeps (a fault, which the host reports)
 
 // What a gate's check found.
 #define M_NONE 0u
@@ -98,7 +109,7 @@ typedef struct Csat {
     uint32_t lane;
     uint32_t vars, fvars, base, gates, rec, args, fs, fg, os, og, lits, ends, clauses, lcap, acap, budget;
     // The state's arrays (word offsets in `s`).
-    uint32_t val, reason, why, trail, limits, seen, prev, next, stamp, whead, wnext, wlit, lstart, arena, cbuf, ebuf;
+    uint32_t val, reason, why, trail, limits, seen, act, heap, hat, whead, wnext, wlit, lstart, arena, cbuf, ebuf;
 } Csat;
 
 typedef struct Check {
@@ -342,7 +353,15 @@ UKL_INLINE bool cs_items(UKL_PRIVATE Csat* c, uint32_t g, bool active __UKL_PARA
     }
     uint32_t n = active ? cs_g_width(c, g) : 0u;
     bool once = k.mode == M_ONE;
-    for (;;) {
+    // A lane puts at most its gate's width and one more.
+    uint32_t bound = ukl_sg_max(n __UKL_ARGS) + 2u;
+    for (uint32_t step = 0u;; step++) {
+        if (step > bound) {
+            if (c->lane == 0u)
+                c->s[H_STATUS] = BROKEN;
+            ukl_sg_barrier();
+            return true;
+        }
         // This lane's next literal: its one, or the next unset argument.
         int32_t l = 0;
         uint32_t why = 0u;
@@ -387,8 +406,13 @@ UKL_INLINE bool cs_items(UKL_PRIVATE Csat* c, uint32_t g, bool active __UKL_PARA
 UKL_INLINE bool cs_visit(UKL_PRIVATE Csat* c, int32_t x)
 {
     uint32_t link = c->whead + cs_lslot(x);
-    uint32_t k = c->s[link];
-    while (k != NONE) {
+    uint32_t k = c->s[link], nodes = 2u * (c->clauses + c->lcap);
+    for (uint32_t seen = 0u; k != NONE; seen++) {
+        if (seen > nodes) {
+            c->s[H_STATUS] = BROKEN;
+            return true;
+        }
+        c->s[H_VISITS]++;
         uint32_t id = k >> 1, nk = c->s[c->wnext + k];
         int32_t other = (int32_t)c->s[c->wlit + (k ^ 1u)];
         int32_t vo = cs_value(c, other);
@@ -460,19 +484,34 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
 {
     uint32_t hd = c->s[H_HEAD], tl = c->s[H_TRAIL];
     uint32_t f = tl - hd < UKL_SIMD_WIDTH ? tl - hd : UKL_SIMD_WIDTH;
-    if (c->lane == 0u) {
-        bool conflict = false;
-        for (uint32_t i = 0u; i < f && !conflict; i++)
-            conflict = cs_visit(c, -(int32_t)c->s[c->trail + hd + i]);
-        c->s[H_FLAG] = conflict ? 1u : 0u;
+    // Each lane its literal; lane 0 visits the watch lists that are not empty, in trail order.
+    int32_t lit = c->lane < f ? (int32_t)c->s[c->trail + hd + c->lane] : 0;
+    bool watched = lit != 0 && c->s[c->whead + cs_lslot(-lit)] != NONE;
+    ukl_mask_t lists = ukl_sg_ballot(watched __UKL_ARGS);
+    if (lists != 0u) {
+        if (c->lane == 0u) {
+            bool conflict = false;
+            for (uint32_t i = 0u; i < f && !conflict; i++)
+                if (((lists >> i) & 1u) != 0u)
+                    conflict = cs_visit(c, -(int32_t)c->s[c->trail + hd + i]);
+            c->s[H_FLAG] = conflict ? 1u : 0u;
+        }
+        ukl_sg_barrier();
+        if (c->s[H_FLAG] != 0u)
+            return true;
     }
-    ukl_sg_barrier();
-    if (c->s[H_FLAG] != 0u)
+    uint32_t v = c->lane < f ? cs_lvar(lit) : 0u;
+    if (ukl_sg_ballot(v > c->vars __UKL_ARGS) != 0u) {
+        if (c->lane == 0u)
+            c->s[H_STATUS] = BROKEN;
+        ukl_sg_barrier();
         return true;
-    uint32_t v = c->lane < f ? cs_lvar((int32_t)c->s[c->trail + hd + c->lane]) : 0u;
+    }
     uint32_t mine = c->lane < f ? cs_fan_count(c, v) : 0u;
     uint32_t off = ukl_sg_exclusive_sum(mine, c->lane __UKL_ARGS);
     uint32_t total = ukl_sg_sum(mine __UKL_ARGS);
+    if (c->lane == 0u)
+        c->s[H_ITEMS] += total;
     for (uint32_t t0 = 0u; t0 < total; t0 += UKL_SIMD_WIDTH) {
         uint32_t t = t0 + c->lane;
         // The literal whose gates hold item `t`: the last lane whose first item is at or before it.
@@ -496,23 +535,80 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
     return false;
 }
 
-// Lane 0: a variable bumped: to the queue's front.
+// Lane 0: the decisions' heap (`bitlex_sat::Order`): `act` each variable's activity, `heap` the variables by it,
+// `hat` each one's place there (NONE: out).
+UKL_INLINE bool cs_before(UKL_PRIVATE Csat* c, uint32_t a, uint32_t b)
+{
+    uint32_t x = c->s[c->act + a], y = c->s[c->act + b];
+    return x > y || (x == y && a > b);
+}
+UKL_INLINE void cs_up(UKL_PRIVATE Csat* c, uint32_t i)
+{
+    uint32_t v = c->s[c->heap + i];
+    while (i > 0u) {
+        uint32_t p = (i - 1u) / 2u, pv = c->s[c->heap + p];
+        if (!cs_before(c, v, pv))
+            break;
+        c->s[c->heap + i] = pv;
+        c->s[c->hat + pv] = i;
+        i = p;
+    }
+    c->s[c->heap + i] = v;
+    c->s[c->hat + v] = i;
+}
+UKL_INLINE void cs_down(UKL_PRIVATE Csat* c, uint32_t i)
+{
+    uint32_t v = c->s[c->heap + i], n = c->s[H_HEAP];
+    for (uint32_t depth = 0u;; depth++) {
+        if (depth > 32u) {
+            c->s[H_STATUS] = BROKEN;
+            return;
+        }
+        uint32_t k = 2u * i + 1u;
+        if (k >= n)
+            break;
+        if (k + 1u < n && cs_before(c, c->s[c->heap + k + 1u], c->s[c->heap + k]))
+            k++;
+        uint32_t kv = c->s[c->heap + k];
+        if (!cs_before(c, kv, v))
+            break;
+        c->s[c->heap + i] = kv;
+        c->s[c->hat + kv] = i;
+        i = k;
+    }
+    c->s[c->heap + i] = v;
+    c->s[c->hat + v] = i;
+}
+UKL_INLINE void cs_insert(UKL_PRIVATE Csat* c, uint32_t v)
+{
+    if (c->s[c->hat + v] != NONE)
+        return;
+    uint32_t i = c->s[H_HEAP];
+    c->s[H_HEAP] = i + 1u;
+    c->s[c->heap + i] = v;
+    cs_up(c, i);
+}
+// The most active variable, taken out (NONE: the heap is empty).
+UKL_INLINE uint32_t cs_pop(UKL_PRIVATE Csat* c)
+{
+    uint32_t n = c->s[H_HEAP];
+    if (n == 0u)
+        return NONE;
+    uint32_t top = c->s[c->heap];
+    c->s[c->hat + top] = NONE;
+    c->s[H_HEAP] = n - 1u;
+    if (n > 1u) {
+        c->s[c->heap] = c->s[c->heap + n - 1u];
+        cs_down(c, 0u);
+    }
+    return top;
+}
+// A variable's activity raised by the bump.
 UKL_INLINE void cs_bump(UKL_PRIVATE Csat* c, uint32_t v)
 {
-    uint32_t last = c->s[H_LAST];
-    c->s[c->stamp + v] = ++c->s[H_STAMP];
-    if (v == last)
-        return;
-    uint32_t p = c->s[c->prev + v], n = c->s[c->next + v];
-    if (p != NONE)
-        c->s[c->next + p] = n;
-    else
-        c->s[H_FIRST] = n;
-    c->s[c->prev + n] = p;
-    c->s[c->prev + v] = last;
-    c->s[c->next + v] = NONE;
-    c->s[c->next + last] = v;
-    c->s[H_LAST] = v;
+    c->s[c->act + v] += c->s[H_BUMP];
+    if (c->s[c->hat + v] != NONE)
+        cs_up(c, c->s[c->hat + v]);
 }
 
 // Lane 0: the clause that implied `v`'s value, into `ebuf` (its literal first, every other false), or the number of
@@ -604,6 +700,10 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back)
             }
         }
         do {
+            if (at == 0u || count == 0u) {
+                c->s[H_STATUS] = BROKEN;
+                return 0u;
+            }
             at--;
         } while (c->s[c->seen + cs_lvar((int32_t)c->s[c->trail + at])] == 0u);
         int32_t l = (int32_t)c->s[c->trail + at];
@@ -632,31 +732,30 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back)
         c->s[c->arena + u + hk] = t;
     }
     *back = hi;
+    c->s[H_BUMP] += c->s[H_BUMP] / 20u;
     return len;
 }
 
-// Every lane: the trail back to level `to`, its variables unset; the search pointer at the most recently bumped.
+// Every lane: the trail back to level `to`, its variables unset; those out of the heap (decided, or met set at a
+// decision) put back, in trail order.
 UKL_INLINE void cs_back_to(UKL_PRIVATE Csat* c, uint32_t to __UKL_PARAMS)
 {
     uint32_t start = c->s[c->limits + to], tl = c->s[H_TRAIL];
-    uint32_t best = 0u, best_v = NONE;
-    for (uint32_t i = start + c->lane; i < tl; i += UKL_SIMD_WIDTH) {
-        uint32_t v = cs_lvar((int32_t)c->s[c->trail + i]);
-        c->s[c->val + v] = 0u;
-        uint32_t st = c->s[c->stamp + v];
-        if (best_v == NONE || st > best) {
-            best = st;
-            best_v = v;
-        }
+    for (uint32_t i0 = start; i0 < tl; i0 += UKL_SIMD_WIDTH) {
+        uint32_t i = i0 + c->lane;
+        uint32_t v = i < tl ? cs_lvar((int32_t)c->s[c->trail + i]) : 0u;
+        bool out = i < tl && c->s[c->hat + v] == NONE;
+        if (i < tl)
+            c->s[c->val + v] = 0u;
+        ukl_mask_t outs = ukl_sg_ballot(out __UKL_ARGS);
+        ukl_sg_barrier();
+        if (c->lane == 0u)
+            for (uint32_t k = 0u; k < UKL_SIMD_WIDTH; k++)
+                if (((outs >> k) & 1u) != 0u)
+                    cs_insert(c, cs_lvar((int32_t)c->s[c->trail + i0 + k]));
+        ukl_sg_barrier();
     }
-    uint32_t top = ukl_sg_max(best_v == NONE ? 0u : best + 1u __UKL_ARGS);
-    uint32_t from = ukl_sg_first(best_v != NONE && best + 1u == top __UKL_ARGS);
-    uint32_t v = ukl_sg_shuffle(best_v, from == UKL_NONE ? 0u : from __UKL_ARGS);
-    ukl_sg_barrier();
     if (c->lane == 0u) {
-        uint32_t s = c->s[H_SEARCH];
-        if (from != UKL_NONE && (s == NONE || c->s[c->stamp + v] > c->s[c->stamp + s]))
-            c->s[H_SEARCH] = v;
         c->s[H_TRAIL] = start;
         c->s[H_HEAD] = start;
         c->s[H_LEVEL] = to;
@@ -666,7 +765,7 @@ UKL_INLINE void cs_back_to(UKL_PRIVATE Csat* c, uint32_t to __UKL_PARAMS)
 
 UKL_INLINE void cs_finish(UKL_PRIVATE Csat* c, uint32_t status)
 {
-    if (c->lane == 0u)
+    if (c->lane == 0u && c->s[H_STATUS] != BROKEN)
         c->s[H_STATUS] = status;
     ukl_sg_barrier();
 }
@@ -674,6 +773,8 @@ UKL_INLINE void cs_finish(UKL_PRIVATE Csat* c, uint32_t status)
 // Every lane: a conflict met at a level past 0: learned, jumped back, its literal asserted.
 UKL_INLINE void cs_conflict(UKL_PRIVATE Csat* c __UKL_PARAMS)
 {
+    if (c->s[H_STATUS] != RUNNING)
+        return;
     if (c->s[H_LEVEL] == 0u) {
         cs_finish(c, UNSAT);
         return;
@@ -692,6 +793,14 @@ UKL_INLINE void cs_conflict(UKL_PRIVATE Csat* c __UKL_PARAMS)
     ukl_sg_barrier();
     len = c->s[H_LEN];
     back = c->s[H_BACK];
+    // Past `BUMP_MAX`: every activity scaled down alike, across the lanes.
+    if (c->s[H_BUMP] > BUMP_MAX) {
+        for (uint32_t v = c->lane; v <= c->vars; v += UKL_SIMD_WIDTH)
+            c->s[c->act + v] >>= BUMP_SHIFT;
+        ukl_sg_barrier();
+        if (c->lane == 0u)
+            c->s[H_BUMP] >>= BUMP_SHIFT;
+    }
     ukl_sg_barrier();
     if (len == 0u) {
         cs_finish(c, ROOMLESS);
@@ -716,20 +825,21 @@ UKL_INLINE void cs_conflict(UKL_PRIVATE Csat* c __UKL_PARAMS)
     ukl_sg_barrier();
 }
 
-// Lane 0's decision: the queue's most recent unset variable, false; none left, the formula holds.
+// Lane 0's decision: the most active unset variable, false; none left, the formula holds.
 UKL_INLINE void cs_decide(UKL_PRIVATE Csat* c)
 {
-    if (c->lane == 0u) {
-        uint32_t v = c->s[H_SEARCH];
+    if (c->lane == 0u && c->s[H_HEAP] > c->vars)
+        c->s[H_STATUS] = BROKEN;
+    if (c->lane == 0u && c->s[H_STATUS] == RUNNING) {
+        uint32_t v = cs_pop(c);
         while (v != NONE && c->s[c->val + v] != 0u)
-            v = c->s[c->prev + v];
+            v = cs_pop(c);
         if (v == NONE) {
             c->s[H_STATUS] = SAT;
         } else if (c->budget == 0u) {
             // No conflict to spend: propagation at level 0 alone (the prover's rounds, decision 0654).
             c->s[H_STATUS] = UNKNOWN;
         } else {
-            c->s[H_SEARCH] = v;
             uint32_t lv = c->s[H_LEVEL];
             c->s[c->limits + lv] = c->s[H_TRAIL];
             c->s[H_LEVEL] = lv + 1u;
@@ -748,19 +858,19 @@ UKL_INLINE void cs_start(UKL_PRIVATE Csat* c __UKL_PARAMS)
     for (uint32_t v = c->lane; v < n; v += UKL_SIMD_WIDTH) {
         c->s[c->val + v] = 0u;
         c->s[c->seen + v] = 0u;
-        c->s[c->prev + v] = v <= 1u ? NONE : v - 1u;
-        c->s[c->next + v] = v == 0u || v == c->vars ? NONE : v + 1u;
-        c->s[c->stamp + v] = v;
+        // Every activity 0: the heap is the numbers, highest first.
+        c->s[c->act + v] = 0u;
+        c->s[c->hat + v] = v == 0u ? NONE : c->vars - v;
+        if (v < c->vars)
+            c->s[c->heap + v] = c->vars - v;
         c->s[c->whead + 2u * v] = NONE;
         c->s[c->whead + 2u * v + 1u] = NONE;
     }
     if (c->lane == 0u) {
         for (uint32_t h = 0u; h < HEADER; h++)
             c->s[h] = 0u;
-        c->s[H_FIRST] = c->vars == 0u ? NONE : 1u;
-        c->s[H_LAST] = c->vars == 0u ? NONE : c->vars;
-        c->s[H_SEARCH] = c->s[H_LAST];
-        c->s[H_STAMP] = c->vars;
+        c->s[H_HEAP] = c->vars;
+        c->s[H_BUMP] = BUMP_FIRST;
     }
     ukl_sg_barrier();
     if (c->lane == 0u) {
@@ -850,10 +960,10 @@ DEFINE_KERNEL2(prover, csat_solve,
     c->trail = c->why + n;
     c->limits = c->trail + n;
     c->seen = c->limits + n;
-    c->prev = c->seen + n;
-    c->next = c->prev + n;
-    c->stamp = c->next + n;
-    c->whead = c->stamp + n;
+    c->act = c->seen + n;
+    c->heap = c->act + n;
+    c->hat = c->heap + n;
+    c->whead = c->hat + n;
     c->wnext = c->whead + 2u * n;
     c->wlit = c->wnext + nodes;
     c->lstart = c->wlit + nodes;
@@ -864,6 +974,11 @@ DEFINE_KERNEL2(prover, csat_solve,
         cs_start(c __UKL_ARGS);
     } else {
         for (uint32_t step = 0u; step < args.steps && c->s[H_STATUS] == RUNNING; step++) {
+            // The trail within its room: past it, every loop over it would be unbounded.
+            if (c->s[H_TRAIL] > n || c->s[H_HEAD] > c->s[H_TRAIL] || c->s[H_LEVEL] >= n) {
+                cs_finish(c, BROKEN);
+                break;
+            }
             if (c->s[H_HEAD] == c->s[H_TRAIL]) {
                 cs_decide(c);
                 continue;
@@ -883,5 +998,7 @@ DEFINE_KERNEL2(prover, csat_solve,
         o[3] = c->s[H_ROUNDS];
         o[4] = c->s[H_LEARNED];
         o[5] = c->s[H_USED];
+        o[6] = c->s[H_VISITS];
+        o[7] = c->s[H_ITEMS];
     }
 }

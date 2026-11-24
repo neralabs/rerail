@@ -1696,6 +1696,11 @@ impl Induction {
             let name = format!("{:016x}.csat", { use std::hash::{BuildHasher as _}; rustc_hash::FxBuildHasher.hash_one(&text) });
             let _ = std::fs::write(std::path::Path::new(&dir).join(name), text);
         }
+        // With `RERAIL_SOLVE_TRACE`: a line a solve, its window (an address), its own gates and clauses, its
+        // conflicts, time and answer (decision 0670).
+        if std::env::var_os("RERAIL_SOLVE_TRACE").is_some() {
+            eprintln!("solve w{:x}.{j} base {base_gates} own {} clauses {} own_clauses {} vars {} conflicts {} us {} {:?}", std::ptr::from_ref(fan) as usize, u.gates.len() - base_gates, u.clauses.len(), u.clauses.len() - window_base, u.vars, s.conflicts - before, t_dump.elapsed().as_micros(), answer);
+        }
         self.work.spend(s.conflicts - before);
         let answer = match answer {
             // With a hypothesis, its values the contradiction read at the position: the rest may go (`prove`).
