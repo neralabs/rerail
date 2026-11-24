@@ -859,6 +859,36 @@ describe("event numbers a remote has taken", () => {
     expect(held).not.toContain(first?.id);
   });
 
+  // An audit sent marked, its stored paths unreadable, in a batch out while its remote is removed and added again: the
+  // removal forgets the hash the audit is held under, as it forgets every sent record's, and keeps the batch's numbers.
+  it("sends a remote added again while a batch was out an audit whose stored paths do not read once marked, whole once mended, and later events past the batch's numbers", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    const quiet = { stdout: { write: () => true } };
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    sink.duringNextRequest(() => {
+      void runRemoteCommand(["remove", "team"], { home, ...quiet });
+      addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    });
+    await outbox().sync({ force: true });
+    const held = storedRecords(sink).filter(record => record.type === "event").map(record => record.id);
+    cutEvents();
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    await outbox().sync({ force: true });
+    setPathsText(auditId, '["a.ts"]');
+    await outbox().sync({ force: true });
+    const audits = sink.requests.map(request => request.records.filter(item => item.type === "audit").map(item => item.paths));
+    expect(audits).toEqual([[[]], [[]], [["a.ts"]]]);
+    const first = storedRecords(sink).find(record => record.type === "event" && record.eventId === "first");
+    expect(held).toHaveLength(4);
+    expect(first?.id).toEqual(expect.any(String));
+    expect(held).not.toContain(first?.id);
+  });
+
   // A hook's steer receipt opens a writer of its own and no session (`hook-host.ts`), and its session opened in the
   // daemon first, which moved the numbers: the receipt's writer opened the outbox at every receipt all the same.
   it("reads no outbox for a writer that opens no session, as a hook's steer receipt", async () => {
