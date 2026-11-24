@@ -247,3 +247,20 @@ the grammar's regions are fixed openers). These stay limits (decision 0650), the
 
 Tests: the rr suite (the end-of-file floats now taken, the engine's tape), both corpus tests, the corpus tapes against
 the engine's and lean's (and lean's on edited files), the unpadded program's; JSON's and Kotlin's suites; clippy.
+
+## Step 10: the block's classes in tables of their own, rare among them (done)
+
+- **The block's classes packed alone** (`cover`, in `block_from_classes`): the nibble tables hold the classes the
+  block's words read (`ws`, `word`) and the rare tokens' first bytes, and nothing else. They were stage 1's tables,
+  whose bits held every class stage 1 writes, ten of sixteen read by no word of the lean loop, and rare was a table pair
+  of its own (`RARE_0`) classified apart. A class is the bits it is the union of: a bit already in a pair whose bytes
+  are all the class's is shared, and each new bit a set of high nibbles times a set of low ones widened over the
+  class. Each class's bits are named, as lean's `SPACE`, `WORD`, `RARE`: `S::test(c0, S::splat(WORD))`. Three
+  classifies of classes a block became two.
+- **Two pairs, where lean's are one**: `ws` two bits, `word` four, rare seven. Lean's rare is `" # / \`` and the digits,
+  non-ASCII by a compare; ours holds the grammar's `other` too (controls, `$ ' ? \`, DEL), which lean's common path
+  takes one byte at a time as `BAD` from its `TOKEN`, where our `bad` is a run of them, a rare row of its own.
+- **The arm of none is what reaches it**: a byte whose group's tests none holds, four backticks or more (the grammar's
+  escape, decision 0177). It was said to be a byte no token begins with, which no byte is: `bad` takes them.
+
+Tests: the rr suite, the eight corpus tests; JSON's and Kotlin's suites; clippy.

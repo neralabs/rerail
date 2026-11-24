@@ -672,9 +672,64 @@ impl<'a> Bytes<'a> {
             }
             words.push((f, if groups.is_empty() { "0u64".to_owned() } else { groups.join(" | ") }));
         }
+        // The lean lexer's classes (decision 0655 step 10): the classes the block's words read and the rare tokens'
+        // first bytes, packed in nibble tables of their own, a class the bits it is the union of, each named (lean's
+        // `SPACE`, `WORD`, `RARE`). No bit a class no word reads.
+        let mut lean_tables = None;
+        if self.lean {
+            let mut sets: Vec<(String, [bool; 256])> = used.iter().filter(|c| self.classes.contains_key(c.as_str())).map(|c| (c.clone(), class_set(self.classes[c.as_str()]))).collect();
+            if let Some(set) = self.rare {
+                sets.push(("rare".to_owned(), set));
+            }
+            let mut packs: Vec<Vec<(u16, u16)>> = Vec::new();
+            let mut named: Vec<(String, usize, u8)> = Vec::new();
+            for (c, set) in &sets {
+                let bytes: Vec<usize> = (0..256).filter(|&b| set[b]).collect();
+                if let [b] = bytes.as_slice() {
+                    self.class_code.insert(c.clone(), format!("S::eq_mask(v, {b:#04x})"));
+                    continue;
+                }
+                let (p, bits) = cover(&mut packs, set)?;
+                named.push((c.clone(), p, bits));
+            }
+            let one = packs.len() == 1;
+            // Not the stage-1 tables' names (`LO_0`), which the file holds too until they go unread.
+            let c_n = |p: usize| if one { ("LO".to_owned(), "HI".to_owned(), "c".to_owned()) } else { (format!("LO_{}", (b'A' + p as u8) as char), format!("HI_{}", (b'A' + p as u8) as char), format!("c{p}")) };
+            let mut text = String::new();
+            for (c, p, bits) in &named {
+                let k = c.to_uppercase();
+                let _ = writeln!(text, "/// `{c}`: its bits in the classes' nibble tables{}.\nconst {k}: u8 = {bits:#04x};", if one { String::new() } else { format!(", pair {p}") });
+                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test({}, S::splat({k})))", c_n(*p).2));
+            }
+            let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+            let mut heads = String::new();
+            for (p, rects) in packs.iter().enumerate() {
+                let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
+                for (bit, &(h, l)) in rects.iter().enumerate() {
+                    for i in 0..16 {
+                        if l >> i & 1 == 1 {
+                            lo[i] |= 1 << bit;
+                        }
+                        if h >> i & 1 == 1 {
+                            hi[i] |= 1 << bit;
+                        }
+                    }
+                }
+                let (l, h, c) = c_n(p);
+                let _ = write!(text, "/// The classes' nibble tables{} (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s\n/// high and low nibbles.\nstatic {l}: [u8; 16] = [{}];\nstatic {h}: [u8; 16] = [{}];\n", if one { String::new() } else { format!(", pair {p}") }, row(&lo), row(&hi));
+                let _ = writeln!(heads, "        let {c} = S::classify(v, &{l}, &{h});");
+            }
+            text.push('\n');
+            if self.rare.is_some() {
+                used.push("rare".to_owned());
+                words.push(("rare".to_owned(), format!("cur[{}]", used.len() - 1)));
+            }
+            statics.insert_str(0, &text);
+            lean_tables = Some(heads);
+        }
         // The rare tokens' first bytes (lean's `rare`): a byte's nibbles' bits, a set of high nibbles times a set of low
         // ones a bit, eight a pair of tables.
-        if let Some(set) = self.rare {
+        if let Some(set) = self.rare.filter(|_| lean_tables.is_none()) {
             let mut rects: Vec<(u16, u16)> = Vec::new();
             for h in 0..16usize {
                 let lows = (0..16usize).filter(|&l| set[h << 4 | l]).fold(0u16, |m, l| m | 1 << l);
@@ -712,8 +767,8 @@ impl<'a> Bytes<'a> {
             return None;
         }
         // The classes' bits of the block at `base` (in the file), each its class's test of its nibble tables' pair.
-        let mut tables = String::new();
-        for k in 0..8 {
+        let mut tables = lean_tables.clone().unwrap_or_default();
+        for k in (0..8).filter(|_| lean_tables.is_none()) {
             if used.iter().any(|c| self.class_code.get(c.as_str()).is_some_and(|code| code.contains(&format!("c{k},")) || code.contains(&format!("c{k})")))) {
                 let _ = writeln!(tables, "        let c{k} = S::classify(v, &LO_{k}, &HI_{k});");
             }
@@ -1493,4 +1548,65 @@ pub(super) fn word_table(words: &[Vec<u8>], padded: bool) -> Option<String> {
         }
     }
     None
+}
+
+/// The bytes of a class of byte ranges.
+fn class_set(ranges: &[(u32, u32)]) -> [bool; 256] {
+    std::array::from_fn(|b| ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&(b as u32))))
+}
+
+/// Class `set`'s bits in the first of `packs` (nibble tables' pairs, eight bits each) with room: the bits already
+/// there whose bytes are all `set`'s, and new ones for the rest, each a set of high nibbles times a set of low ones
+/// widened over `set` (a bit may hold bytes another bit holds). Its pair and bits; none past eight bits.
+fn cover(packs: &mut Vec<Vec<(u16, u16)>>, set: &[bool; 256]) -> Option<(usize, u8)> {
+    let at = |h: usize, l: usize| set[h << 4 | l];
+    let inside = |r: &(u16, u16)| (0..16).all(|h| r.0 >> h & 1 == 0 || (0..16).all(|l| r.1 >> l & 1 == 0 || at(h, l)));
+    let holds = |r: &(u16, u16), b: usize| r.0 >> (b >> 4) & 1 == 1 && r.1 >> (b & 15) & 1 == 1;
+    // Its bytes a high nibble at a time, the high nibbles with the same low ones one bit, each widened: every high
+    // nibble whose bytes at its low ones are all the class's, then every low one at all of them.
+    let mut rects: Vec<(u16, u16)> = Vec::new();
+    for h in 0..16 {
+        let lows = (0..16).filter(|&l| at(h, l)).fold(0u16, |m, l| m | 1 << l);
+        if lows == 0 {
+            continue;
+        }
+        let hs = (0..16).filter(|&g| (0..16).all(|l| lows >> l & 1 == 0 || at(g, l))).fold(0u16, |m, g| m | 1 << g);
+        let ls = (0..16).filter(|&l| (0..16).all(|g| hs >> g & 1 == 0 || at(g, l))).fold(0u16, |m, l| m | 1 << l);
+        if !rects.contains(&(hs, ls)) {
+            rects.push((hs, ls));
+        }
+    }
+    // None a byte the others hold all of.
+    let mut i = 0;
+    while i < rects.len() {
+        let r = rects[i];
+        let others: Vec<(u16, u16)> = rects.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, x)| *x).collect();
+        if (0..256).all(|b| !holds(&r, b) || others.iter().any(|o| holds(o, b))) {
+            rects.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    if rects.len() > 8 {
+        return None;
+    }
+    let plan = |p: &Vec<(u16, u16)>| {
+        let reuse: Vec<usize> = (0..p.len()).filter(|&k| inside(&p[k])).collect();
+        let new: Vec<(u16, u16)> = rects.iter().filter(|r| (0..256).any(|b| holds(r, b) && !reuse.iter().any(|&k| holds(&p[k], b)))).copied().collect();
+        (reuse, new)
+    };
+    let p = match packs.iter().position(|p| p.len() + plan(p).1.len() <= 8) {
+        Some(p) => p,
+        None => {
+            packs.push(Vec::new());
+            packs.len() - 1
+        }
+    };
+    let (reuse, new) = plan(&packs[p]);
+    let mut bits = reuse.iter().fold(0u8, |m, &k| m | 1 << k);
+    for r in new {
+        bits |= 1 << packs[p].len();
+        packs[p].push(r);
+    }
+    Some((p, bits))
 }

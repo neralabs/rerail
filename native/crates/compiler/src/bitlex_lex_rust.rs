@@ -5796,7 +5796,7 @@ impl Gen<'_> {
                 return Err(format!("tier 1 as Rust: row {} reads the region opened, which the rows' pick does not make", arm.row));
             }
         }
-        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
+        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no row takes: its group's tests, none of which holds.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
             // The body up to its record's tuple, then the resume.
             Some(r) => format!("{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0)),
             None if a.open => {

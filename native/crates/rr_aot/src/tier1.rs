@@ -18,14 +18,6 @@ pub struct Lexed {
     pub refused: bool,
 }
 
-/// The classes' nibble tables, pair 0 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_0: [u8; 16] = [0x8e, 0x8c, 0x8c, 0x8c, 0x9c, 0x8c, 0x8c, 0x9c, 0x8c, 0x89, 0x09, 0x0c, 0x49, 0x09, 0x0c, 0x2c];
-static HI_0: [u8; 16] = [0x05, 0x08, 0x12, 0xa0, 0x00, 0x40, 0x00, 0x20, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08];
-
-/// The classes' nibble tables, pair 1 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_1: [u8; 16] = [0x8d, 0x9f, 0x9f, 0x9f, 0xbf, 0x9f, 0x9f, 0x8f, 0xcf, 0xcf, 0x8e, 0x82, 0x82, 0x82, 0x82, 0x86];
-static HI_1: [u8; 16] = [0x80, 0x80, 0x00, 0x41, 0x32, 0x04, 0x32, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
 /// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and
 /// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.
 #[inline(always)]
@@ -207,7 +199,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     (l, u32::from(kind1), false, 0)
                 },
                 _ => {
-                    // A byte no token begins with.
+                    // A byte no row takes: its group's tests, none of which holds.
                     refused = true;
                     break 'tokens;
                 }
@@ -352,14 +344,26 @@ fn u_ok(src: &[u8], n: usize, i: usize) -> bool {
     ((u_four(src, n, i) && (i < n && !(i + 1 < n && (src[i + 1] == b'{')))) || ((i + 1 < n && (src[i + 1] == b'{')) && (((b_short(src, n, i) || b_four(src, n, i)) || b_five(src, n, i)) || b_six(src, n, i))))
 }
 
+/// `ws`: its bits in the classes' nibble tables, pair 0.
+const WS: u8 = 0x03;
+/// `word`: its bits in the classes' nibble tables, pair 0.
+const WORD: u8 = 0x3c;
+/// `rare`: its bits in the classes' nibble tables, pair 1.
+const RARE: u8 = 0x7f;
+/// The classes' nibble tables, pair 0 (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s
+/// high and low nibbles.
+static LO_A: [u8; 16] = [0x36, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3d, 0x39, 0x08, 0x09, 0x09, 0x08, 0x18];
+static HI_A: [u8; 16] = [0x01, 0x00, 0x02, 0x04, 0x08, 0x34, 0x08, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+/// The classes' nibble tables, pair 1 (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s
+/// high and low nibbles.
+static LO_B: [u8; 16] = [0x2b, 0x0b, 0x0f, 0x0f, 0x0f, 0x0b, 0x0b, 0x0f, 0x0b, 0x0a, 0x02, 0x03, 0x12, 0x02, 0x03, 0x4f];
+static HI_B: [u8; 16] = [0x65, 0x7f, 0x44, 0x6c, 0x00, 0x10, 0x20, 0x40, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f];
+
 /// `pair_6`'s pairs (`:-`, `=>`, `!=`, `<=`, `<:`, `>=`, `->`): a first byte's bits the pairs it starts, a second's those it ends.
 static PAIR_6_0_FIRST: ([u8; 16], [u8; 16]) = ([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x18, 0x42, 0x20, 0x00], [0x00, 0x00, 0x44, 0x3b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 static PAIR_6_0_SECOND: ([u8; 16], [u8; 16]) = ([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x2d, 0x42, 0x00], [0x00, 0x00, 0x01, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-/// The bytes a rare token starts with, part 0: a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static RARE_0: ([u8; 16], [u8; 16]) = ([0x2b, 0x0b, 0x0f, 0x0f, 0x0f, 0x0b, 0x0b, 0x0f, 0x0b, 0x0a, 0x02, 0x03, 0x12, 0x02, 0x03, 0x4f], [0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x20, 0x40, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02]);
-
-/// The classes the block's words read (`ws`, `word`, `pair_6_0`, `rare_0`), each's bits in the block at `base`, a byte of the file: one load, and one
+/// The classes the block's words read (`ws`, `word`, `pair_6_0`, `rare`), each's bits in the block at `base`, a byte of the file: one load, and one
 /// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.
 ///
 /// # Safety
@@ -372,9 +376,9 @@ unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: u
     unsafe {
         let v = S::load(block);
         let d = S::shift_in(v, src[base + 64]);
-        let c0 = S::classify(v, &LO_0, &HI_0);
-        let c1 = S::classify(v, &LO_1, &HI_1);
-        [S::to_bitmask(S::test(c0, S::splat(0x03))) & lv, S::to_bitmask(S::test(c1, S::splat(0x0f))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, S::to_bitmask(S::test(S::classify(v, &RARE_0.0, &RARE_0.1), S::splat(0xff))) & lv]
+        let c0 = S::classify(v, &LO_A, &HI_A);
+        let c1 = S::classify(v, &LO_B, &HI_B);
+        [S::to_bitmask(S::test(c0, S::splat(WS))) & lv, S::to_bitmask(S::test(c0, S::splat(WORD))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, S::to_bitmask(S::test(c1, S::splat(RARE))) & lv]
     }
 }
 

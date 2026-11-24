@@ -2725,7 +2725,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                 }
 ,
                 _ => {
-                    // A byte no token begins with.
+                    // A byte no row takes: its group's tests, none of which holds.
                     refused = true;
                     break 'tokens;
                 }
