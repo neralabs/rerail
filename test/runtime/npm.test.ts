@@ -186,12 +186,21 @@ describe("runCommand", () => {
   });
 
   it("answers soon after the command exits when a process it left running keeps its output open", async () => {
-    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 12_000)'], { stdio: 'inherit', detached: true }).unref(); process.stdout.write('done')";
+    // The process left running prints its PID on stderr, so the test can stop it once it has its answer.
+    const script = "const sleeper = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 12_000)'], { stdio: 'inherit', detached: true }); sleeper.unref(); process.stderr.write(String(sleeper.pid)); process.stdout.write('done')";
     const started = Date.now();
 
-    await expect(runCommand(process.execPath, ["-e", script])).resolves.toEqual({ stdout: "done", stderr: "" });
+    const { stdout, stderr } = await runCommand(process.execPath, ["-e", script]);
+    process.kill(Number(stderr));
 
+    expect(stdout).toBe("done");
     expect(Date.now() - started).toBeLessThan(KILL_GRACE_MS + 5_000);
+  }, 20_000);
+
+  it("answers with what a command printed when it exits before its timeout but a process it left running holds its output past it", async () => {
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => process.stdout.write(\\'late\\'), 3_000)'], { stdio: 'inherit', detached: true }).unref(); process.stdout.write('early ')";
+
+    await expect(runCommand(process.execPath, ["-e", script], { timeoutMs: 1_500 })).resolves.toEqual({ stdout: "early late", stderr: "" });
   }, 20_000);
 
   it("leaves a command that finishes in time alone", async () => {
