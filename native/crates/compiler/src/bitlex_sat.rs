@@ -1,5 +1,5 @@
 //! A small CDCL SAT solver over clauses: the reference the circuit's solver (`bitlex_csat`, decision 0670) is
-//! tested against, and the clauses 0654's GPU kernel propagates. The prover's windows are solved on the circuit.
+//! tested against. The prover's windows are solved on the circuit.
 //!
 //! Clauses are lists of literals: a variable `v` (from 1) is `v` true or `-v` false. The search
 //! is the usual one: two watched literals a clause, unit propagation, a conflict's first unique

@@ -166,7 +166,7 @@ impl Gates {
         (g, vars, base, c)
     }
 
-    /// Each gate's clauses, whose unit propagation is the gate's own (`bitlex_sat`'s input; 0654's kernel's).
+    /// Each gate's clauses, whose unit propagation is the gate's own (`bitlex_sat`'s input, the tests').
     pub fn cnf(&self, into: &mut Clauses) {
         for g in 0..self.len() {
             let (o, a) = (self.out(g), self.args(g));

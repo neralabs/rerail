@@ -207,6 +207,17 @@ formula").
   stops unknown, its room full, after 2,600 to 3,700 conflicts (the CPU proves them in 1,500 to 9,200 conflicts,
   330 to 600 ms). Its learned clauses are about 98 literals long (the CPU's 35), and a round takes about 40 µs: a
   formula's search is one SIMD group's chain of dependent reads of device memory.
-- **Next**: the prover's batches through it (0654's propagation replaced: it is this kernel's first phase), measured
-  on a cold compile; then a round's cost and the learned clauses' length.
+- **The prover's rounds through it** (`RERAIL_PROVER_GPU=1`): 0654's kernel and module are removed, and with them
+  its clauses written from the gates (`Gates::cnf` into a `Clauses` a solve). A round's solve is read where it was
+  built: its window keeps the solve's own gates and clauses until it is attached again (`Window::kept`), and the
+  capture holds its variables and its own gates' fanout (`Captured`). With no conflict to spend the kernel stops at
+  its first decision, so a solve is decided only by a conflict at level 0, as 0654's were, and the answers are the
+  CPU's (`with_no_conflicts_the_device_is_level_0s_propagation`, 0654's test ported). A cold Kotlin compile with
+  its rounds on an M3's GPU: the same bytes as the shipped answers; 34 rounds, 6,320 formulas, 3,979 decided at
+  level 0, 2.1 s in the rounds; the compile 23.7 to 25.8 s against the CPU's 20.9 to 22.4 s, in turns (the M3 at a
+  load of 41 to 58).
+- **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
+  the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
+  the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on
+  the CPU too (UKL's CPU backend), or its answers kept apart from the CPU's.
 

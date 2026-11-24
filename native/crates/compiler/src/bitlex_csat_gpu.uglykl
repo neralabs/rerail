@@ -725,6 +725,9 @@ UKL_INLINE void cs_decide(UKL_PRIVATE Csat* c)
             v = c->s[c->prev + v];
         if (v == NONE) {
             c->s[H_STATUS] = SAT;
+        } else if (c->budget == 0u) {
+            // No conflict to spend: propagation at level 0 alone (the prover's rounds, decision 0654).
+            c->s[H_STATUS] = UNKNOWN;
         } else {
             c->s[H_SEARCH] = v;
             uint32_t lv = c->s[H_LEVEL];

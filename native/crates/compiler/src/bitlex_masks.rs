@@ -2110,7 +2110,7 @@ impl Lowering {
         let (t1, c1) = (std::time::Instant::now(), process_cpu());
         let longest = std::sync::atomic::AtomicU64::new(0);
         #[cfg(not(target_family = "wasm"))]
-        let on_gpu = crate::bitlex_prove_gpu::enabled();
+        let on_gpu = crate::bitlex_csat_gpu::enabled();
         #[cfg(target_family = "wasm")]
         let on_gpu = false;
         let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = if on_gpu {
@@ -3728,9 +3728,10 @@ const GPU_ROUNDS: usize = 8;
 
 /// `either_never_many`'s answers with the solves in rounds (decision 0654, step 5): each
 /// question, on its thread, asked to its next new solve (`Induction::never_round`); the
-/// round's formulas propagated on the GPU together (`bitlex_prove_gpu::conflicts`), a conflict
-/// deciding its solve as the CPU's solver would; the questions asked again. The answers are
-/// those of `either_never_many` on the CPU.
+/// round's formulas propagated on the GPU together (`bitlex_csat_gpu::solve` with no conflict to
+/// spend, read where the questions built them, decision 0670), a conflict at level 0 deciding its
+/// solve as the CPU's solver would; the questions asked again. The answers are those of
+/// `either_never_many` on the CPU.
 #[cfg(not(target_family = "wasm"))]
 fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
     use bitlex_prove::Round;
@@ -3739,18 +3740,18 @@ fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[
         p: bitlex_prove::Induction,
         x: Val,
         answer: Option<bool>,
-        formula: Option<(u32, crate::bitlex_sat::Clauses)>,
+        formula: bool,
     }
     let take = |q: &mut Q, r: Round| match r {
         Round::Answered(a) => q.answer = Some(a),
-        Round::Formula(v, c) => q.formula = Some((v, c)),
+        Round::Formula => q.formula = true,
     };
     let trace = std::env::var_os("RERAIL_PROVING_TRACE").is_some();
     let mut qs: Vec<Q> = xs
         .par_iter()
         .zip(budgets)
         .map(|(&x, work)| {
-            let mut q = Q { p: prover.fork(work), x, answer: None, formula: None };
+            let mut q = Q { p: prover.fork(work), x, answer: None, formula: false };
             if work.left() == 0 || q.p.refutes(ops, tables, x.v, x.d) {
                 q.answer = Some(false);
             } else if bitlex_prove::never_in_before_solve(work, ops, tables, x.v, x.d) {
@@ -3763,20 +3764,22 @@ fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[
         })
         .collect();
     for round in 0..GPU_ROUNDS {
-        let waiting: Vec<usize> = (0..qs.len()).filter(|&i| qs[i].formula.is_some()).collect();
+        let waiting: Vec<usize> = (0..qs.len()).filter(|&i| qs[i].formula).collect();
         if waiting.is_empty() {
             break;
         }
         let t = std::time::Instant::now();
-        let formulas: Vec<(u32, &crate::bitlex_sat::Clauses)> = waiting.iter().map(|&i| qs[i].formula.as_ref().map(|f| (f.0, &f.1)).unwrap()).collect();
-        let lits: usize = formulas.iter().map(|f| f.1.lits().len()).sum();
-        let conflicts = crate::bitlex_prove_gpu::conflicts(&formulas).unwrap_or_else(|e| panic!("the prover's GPU ({}): {e}", rerail_gpu::device::backend()));
+        let formulas: Vec<crate::bitlex_csat_gpu::Formula> = waiting.iter().map(|&i| qs[i].p.formula(0).expect("a captured solve")).collect();
+        let gates: usize = formulas.iter().map(|f| f.gates.len()).sum();
+        let solved = crate::bitlex_csat_gpu::solve(&formulas).unwrap_or_else(|e| panic!("the prover's GPU ({}): {e}", rerail_gpu::device::backend()));
+        drop(formulas);
+        let conflicts: Vec<bool> = solved.iter().map(|s| s.answer == crate::bitlex_csat_gpu::Answer::Unsat && s.conflicts == 0).collect();
         if trace {
-            eprintln!("gpu round {round}: {} formulas, {lits} literals, {} conflicts, {:.1} ms", waiting.len(), conflicts.iter().filter(|&&c| c).count(), t.elapsed().as_secs_f64() * 1e3);
+            eprintln!("gpu round {round}: {} formulas, {gates} gates, {} conflicts, {:.1} ms", waiting.len(), conflicts.iter().filter(|&&c| c).count(), t.elapsed().as_secs_f64() * 1e3);
         }
         for (&i, c) in waiting.iter().zip(conflicts) {
             qs[i].p.decided(c);
-            qs[i].formula = None;
+            qs[i].formula = false;
         }
         let last = round + 1 == GPU_ROUNDS;
         qs.par_iter_mut().filter(|q| q.answer.is_none()).for_each(|q| {

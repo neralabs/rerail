@@ -20,6 +20,11 @@ use rerail_gpu::kernels::{alloc, launch, program, read};
 
 const KERNEL: &str = include_str!("bitlex_csat_gpu.uglykl");
 
+/// Whether the prover's batches solve on the GPU first (`RERAIL_PROVER_GPU=1`).
+pub fn enabled() -> bool {
+    std::env::var_os("RERAIL_PROVER_GPU").is_some_and(|v| v == "1")
+}
+
 /// A descriptor's words (the kernel's `DESC`).
 const DESC: usize = 20;
 /// A formula's lanes: one SIMD group.
@@ -51,7 +56,8 @@ struct Args {
 unsafe impl rerail_gpu::Pod for Args {}
 
 /// A formula: its gates (the first `base` listed by `fan`, the rest a solve's own, listed by `own`), its plain
-/// clauses, its variables (numbered from 1), and its budget of conflicts. All in one block.
+/// clauses, its variables (numbered from 1), and its budget of conflicts: with none, it stops at its first decision
+/// (propagation at level 0 alone). All in one block.
 pub struct Formula<'a> {
     pub vars: usize,
     pub gates: &'a Gates,
@@ -311,6 +317,47 @@ mod tests {
         }
         eprintln!("{sat} satisfiable, {unsat} unsatisfiable, {searched} with conflicts");
         assert!(sat >= 40 && unsat >= 40 && searched >= 40, "{sat} sat, {unsat} unsat, {searched} searched");
+    }
+
+    /// With no conflict to spend, the device is unsatisfiable exactly where the CPU's solver is with none spent (a
+    /// conflict at level 0): the prover's rounds rest on it (decision 0654, its kernel's test ported).
+    #[test]
+    fn with_no_conflicts_the_device_is_level_0s_propagation() {
+        if rerail_gpu::shared::get().is_none() {
+            eprintln!("no device: the prover's GPU solver test did not run");
+            return;
+        }
+        let block = FormulaBlock::new();
+        let mut rng = Rng(0x9e3779b97f4a7c15);
+        let made: Vec<_> = (0..400usize).map(|i| {
+            let inputs = 4 + rng.below(40) as usize;
+            let (g, c) = (rng.below(120) as usize, rng.below(2 * inputs as u64 + 4) as usize);
+            let own = if i % 3 == 0 { rng.below(10) as usize } else { 0 };
+            circuit(&mut rng, &block, inputs, g, c, own)
+        }).collect();
+        let fans: Vec<(Fanout, Fanout)> = made.iter().map(|(g, _, vars, base)| (Fanout::of(g, *base, *vars), Fanout::of_range(g, *base..g.len(), *vars))).collect();
+        let formulas: Vec<Formula> = made
+            .iter()
+            .zip(&fans)
+            .map(|((g, c, vars, base), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 0 })
+            .collect();
+        let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        let (mut at_0, mut searched) = (0, 0);
+        let mut s = Solver::default();
+        for (i, (((g, c, vars, base), (fan, _)), x)) in made.iter().zip(&fans).zip(&got).enumerate() {
+            s.reset(*vars);
+            for cl in c.iter() {
+                s.add(cl);
+            }
+            let before = s.conflicts;
+            let cpu = s.solve(g, fan, *base, 100_000);
+            let cpu_at_0 = cpu == CpuAnswer::Unsat && s.conflicts == before;
+            assert_eq!(x.answer == Answer::Unsat, cpu_at_0, "formula {i}: the device {:?}, the CPU {cpu:?} after {} conflicts", x.answer, s.conflicts - before);
+            assert_eq!(x.conflicts, 0, "formula {i}");
+            at_0 += usize::from(cpu_at_0);
+            searched += usize::from(s.conflicts > before);
+        }
+        assert!(at_0 >= 100 && searched >= 40, "{at_0} unsatisfiable at level 0, {searched} searched");
     }
 
     /// The formulas in `RERAIL_CSAT_DUMPS` (`Gates::dump`s), solved on the device together and on the CPU: each one's

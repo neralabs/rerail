@@ -812,11 +812,20 @@ pub struct Induction {
     at: usize,
     /// Asked in rounds: the first solve past `replay` stops the question with its formula.
     capture: bool,
-    captured: Option<(u32, Clauses)>,
+    captured: Option<Captured>,
     /// The solve the last round stopped at had a hypothesis, whose core it tells (`decided`).
     captured_core: bool,
     /// The core of the solve that proved the last `prove` (`Outcome::Proved`).
     core: Option<Vec<bool>>,
+}
+
+/// The solve a round stopped at (decision 0654), as the device reads it (decision 0670, step 3): its window, whose
+/// gates and clauses hold the solve's own past the window's until the next round attaches it (`Window::kept`), its
+/// variables, and its own gates' fanout, in the formula block.
+struct Captured {
+    window: usize,
+    vars: usize,
+    own: Option<Fanout>,
 }
 
 /// A solve's outcome in a question asked in rounds (decision 0654).
@@ -831,8 +840,8 @@ enum Replayed {
 /// A round of a question (`Induction::never_round`).
 pub enum Round {
     Answered(bool),
-    /// Stopped at a solve: its formula's variables and clauses (its gates' as `Gates::cnf` writes them).
-    Formula(u32, Clauses),
+    /// Stopped at a solve: its formula is `Induction::formula`'s.
+    Formula,
 }
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
@@ -1266,10 +1275,20 @@ impl Induction {
         (self.at, self.capture, self.captured) = (0, stop, None);
         let proved = self.prove(&mut ops, tables, v, d, LEVELS, None, &[0; 4]);
         self.capture = false;
-        match self.captured.take() {
-            Some((vars, clauses)) => Round::Formula(vars, clauses),
+        match self.captured {
+            Some(_) => Round::Formula,
             None => Round::Answered(proved),
         }
+    }
+
+    /// The formula of the solve the last round stopped at (`Round::Formula`), as the device's solver reads it, with
+    /// a budget of `conflicts`.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn formula(&self, conflicts: u32) -> Option<crate::bitlex_csat_gpu::Formula<'_>> {
+        let c = self.captured.as_ref()?;
+        let w = &self.window_list[c.window].1;
+        let gates = &w.parts.gates;
+        Some(crate::bitlex_csat_gpu::Formula { vars: c.vars, gates, base: w.base_gates, fan: &w.fan, own: c.own.as_ref(), clauses: &w.parts.clauses, conflicts })
     }
 
     /// The outcome of the solve the last round stopped at: unsatisfiable by propagation alone
@@ -1567,6 +1586,7 @@ impl Induction {
         };
         let window = &mut self.window_list[j].1;
         let mut u = window.attach(ops, tables, nexts);
+        let mut keep = false;
         let out = 'solve: {
         let Window { far, reach, at_position, held, fan, base_gates, .. } = &*window;
         let (far, reach, base_gates) = (*far, *reach, *base_gates);
@@ -1633,12 +1653,13 @@ impl Induction {
         if !spent && !self.work.spend(u.vars.unsigned_abs().into()) {
             break 'solve Outcome::Unknown;
         }
-        // In rounds, a new solve: its formula, for the batch (`never_round`).
+        // In rounds, a new solve: its formula, for the batch (`never_round`), where it was built: the window keeps
+        // the solve's own gates and clauses until it is attached again.
         if self.capture && i == self.replay.len() {
-            let mut clauses = u.clauses.clone();
-            u.gates.cnf(&mut clauses);
-            self.captured = Some((u.vars.unsigned_abs(), clauses));
+            let vars = u.vars.unsigned_abs() as usize;
+            self.captured = Some(Captured { window: j, vars, own: (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), vars)) });
             self.captured_core = hypothesis.is_some();
+            keep = true;
             break 'solve Outcome::Unknown;
         }
         let s = &mut self.solver;
@@ -1707,7 +1728,7 @@ impl Induction {
         };
         answer
         };
-        window.give_back(u);
+        window.give_back(u, keep);
         out
     }
 }
@@ -1832,6 +1853,8 @@ struct Window {
     base: usize,
     base_vars: i32,
     parts: Parts,
+    /// Its gates and clauses hold a captured solve's own past its own (`give_back`).
+    kept: bool,
 }
 
 /// A window's gates, clauses and literals.
@@ -1851,6 +1874,10 @@ impl Window {
     /// The window as an `Unrolled`, for one solve: its parts lent, given back by `give_back`.
     fn attach<'a>(&mut self, ops: &'a [BlockOp], tables: &'a [ClassTable], nexts: &'a HashMap<u16, u16>) -> Unrolled<'a> {
         let p = &mut self.parts;
+        if std::mem::take(&mut self.kept) {
+            p.gates.truncate(self.base_gates);
+            p.clauses.truncate(self.base);
+        }
         Unrolled {
             ops,
             tables,
@@ -1870,11 +1897,16 @@ impl Window {
         }
     }
 
-    /// A solve's `Unrolled` back: its gates, clauses, variables and literals undone, the window's own.
-    fn give_back(&mut self, u: Unrolled<'_>) {
+    /// A solve's `Unrolled` back: its gates, clauses, variables and literals undone, the window's own. `keep`: its
+    /// gates and clauses kept until the window is attached again, for the device to read (`Captured`).
+    fn give_back(&mut self, u: Unrolled<'_>, keep: bool) {
         let Unrolled { mut gates, mut clauses, mut memo, before, past, groups, mut readers, memo_added, readers_added, .. } = u;
-        gates.truncate(self.base_gates);
-        clauses.truncate(self.base);
+        if keep {
+            self.kept = true;
+        } else {
+            gates.truncate(self.base_gates);
+            clauses.truncate(self.base);
+        }
         for k in memo_added {
             memo.remove(&k);
         }
@@ -1892,7 +1924,7 @@ impl<'a> Unrolled<'a> {
         let mut held: Vec<(u16, u32)> = memo.keys().copied().collect();
         held.sort_unstable();
         let fan = Fanout::of(&gates, gates.len(), vars.unsigned_abs() as usize);
-        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers } }
+        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, kept: false }
     }
 }
 
