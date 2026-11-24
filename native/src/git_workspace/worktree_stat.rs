@@ -81,11 +81,24 @@ pub(super) fn files_are_on_a_share(answer: bool) {
     platform::ON_A_SHARE.set(answer);
 }
 
+/// Makes this thread's next query of whether a file's volume is on this machine wait: it sends on
+/// `reached` once it is reached, then waits for `release`, as a slow volume would.
+#[cfg(all(test, windows))]
+pub(super) fn hold_the_next_volume_query(
+    reached: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+) {
+    platform::HOLD.set(Some((reached, release)));
+}
+
 /// Each volume's answer to whether it keeps a change time to trust, by its serial number: asked
 /// once per volume, since every file on it gives the same answer; under `None`, once for the files
-/// that give no serial number.
+/// that give no serial number. Restores and looks at clean blobs that run at once share it, so its
+/// lock is held only to read or keep an answer, never across a query of the file system: one
+/// caller's slow volume holds up no other. Two callers that miss the same volume at once both ask
+/// it, and the answer kept first stands for both.
 #[derive(Debug, Default)]
-pub(super) struct VolumeAnswers(HashMap<Option<u64>, bool>);
+pub(super) struct VolumeAnswers(parking_lot::Mutex<HashMap<Option<u64>, bool>>);
 
 impl VolumeAnswers {
     /// Whether the stat of a file, equal to the stat Git recorded, proves the file holds its blob's
@@ -93,19 +106,23 @@ impl VolumeAnswers {
     /// it does for Git, since the volume keeps no change time to trust (FAT, exFAT, a network
     /// share, a file that refused the handle) or the file's data is not all on this disk. Where it
     /// does not, only a read can tell.
-    pub(super) fn stat_proves(&mut self, current: &WorktreeStat) -> bool {
+    pub(super) fn stat_proves(&self, current: &WorktreeStat) -> bool {
         let change = &current.change;
         change.unchanged_since_written()
             || change.leaves_the_stat_to_decide()
             || !self.trusts(change)
     }
 
-    /// Whether the volume of the file `change` describes keeps a change time to trust.
-    fn trusts(&mut self, change: &platform::Change) -> bool {
-        *self
-            .0
-            .entry(change.volume())
-            .or_insert_with(|| change.volume_keeps_change_times())
+    /// Whether the volume of the file `change` describes keeps a change time to trust: the answer
+    /// kept for it, else the volume's own, asked with the lock released. Each statement takes the
+    /// lock for its own line and gives it back at its end.
+    fn trusts(&self, change: &platform::Change) -> bool {
+        let volume = change.volume();
+        let kept = self.0.lock().get(&volume).copied();
+        kept.unwrap_or_else(|| {
+            let answer = change.volume_keeps_change_times();
+            *self.0.lock().entry(volume).or_insert(answer)
+        })
     }
 }
 
@@ -305,6 +322,22 @@ mod platform {
         pub(super) static NO_SERIAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// Whether every file answers as one on a network share on this thread.
         pub(super) static ON_A_SHARE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// Where this thread's next protocol query waits (`super::hold_the_next_volume_query`).
+        pub(super) static HOLD: std::cell::Cell<Option<Hold>> = const { std::cell::Cell::new(None) };
+    }
+
+    /// What a held query sends once it is reached, and what it waits on before it runs.
+    #[cfg(test)]
+    type Hold = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
+
+    /// Waits where this thread's case holds its next protocol query: tells the case it is
+    /// reached, then waits for its release.
+    #[cfg(test)]
+    fn wait_if_held() {
+        if let Some((reached, release)) = HOLD.take() {
+            reached.send(()).unwrap();
+            release.recv().unwrap();
+        }
     }
 
     /// The system time as of the clock's last tick (`GetSystemTimeAsFileTime`), which NTFS and
@@ -362,6 +395,8 @@ mod platform {
 
     /// Whether `file` is on this machine (`super::on_this_machine`).
     fn is_local(file: &File) -> bool {
+        #[cfg(test)]
+        wait_if_held();
         #[cfg(test)]
         if queried(ON_A_SHARE.get()) {
             return false;

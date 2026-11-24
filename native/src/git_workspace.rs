@@ -314,8 +314,9 @@ pub struct GitWorkspace {
     pub nested_roots: Vec<PathBuf>,
     /// Each volume's answer to whether it keeps a change time to trust, which restores
     /// (`holds_blob_bytes`) and looks at clean blobs (`clean_blob_unread`) ask, kept across their
-    /// calls and this workspace's clones, so each volume is asked once.
-    volume_answers: std::sync::Arc<parking_lot::Mutex<VolumeAnswers>>,
+    /// calls and this workspace's clones, so each volume is asked once, or once by each call that
+    /// misses it while another asks. No call waits for another's queries (`VolumeAnswers`).
+    volume_answers: std::sync::Arc<VolumeAnswers>,
 }
 
 #[derive(Debug)]
@@ -777,7 +778,7 @@ impl GitWorkspace {
         {
             return self.hashes_to_blob(relative_path, blob_length);
         }
-        let proven = self.volume_answers.lock().stat_proves(&current);
+        let proven = self.volume_answers.stat_proves(&current);
         proven || self.read_decides(relative_path, blob_length)
     }
 
@@ -808,7 +809,7 @@ impl GitWorkspace {
         let current = WorktreeStat::read(&self.worktree_root.join(relative_path))?;
         let proven = current.metadata.is_file()
             && current.matches(&recorded)
-            && self.volume_answers.lock().stat_proves(&current);
+            && self.volume_answers.stat_proves(&current);
         proven.then_some(file.blob)
     }
 
@@ -2136,7 +2137,7 @@ mod tests {
     #[cfg(windows)]
     fn not_all_on_disk_is_taken_by_its_stat(name: &str, attributes: u32) {
         let (root, path, _) = committed_long_ago(name, b"print(1)\n");
-        let mut answers = VolumeAnswers::default();
+        let answers = VolumeAnswers::default();
         let on_disk = WorktreeStat::as_if(&path, Some((2, 1)), 0);
         assert!(
             !answers.stat_proves(&on_disk),
@@ -2202,7 +2203,7 @@ mod tests {
             return;
         }
         let (root, path, _) = committed_long_ago("stat-no-change-time", b"print(1)\n");
-        let mut answers = VolumeAnswers::default();
+        let answers = VolumeAnswers::default();
         worktree_stat::queries_made();
         for times in [Some((0, 1)), None] {
             let current = WorktreeStat::as_if(&path, times, 0);
@@ -2229,7 +2230,7 @@ mod tests {
         let (root, path, _) = committed_long_ago("stat-volume-once", b"print(1)\n");
         let moved = WorktreeStat::as_if(&path, Some((2, 1)), 0);
         for serial in [true, false] {
-            let mut answers = VolumeAnswers::default();
+            let answers = VolumeAnswers::default();
             worktree_stat::volume_serials_answer(serial);
             worktree_stat::queries_made();
             for _ in 0..3 {
@@ -2325,6 +2326,59 @@ mod tests {
             worktree_stat::queries_made(),
             4 + 2,
             "four serial number queries and the volume's two, once"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A look at a clean blob answers while another look's volume query is held: the workspace's
+    /// volume answers are locked only to read or keep an answer, never across a query. The second
+    /// look misses the volume too, so it asks the volume itself; its answer is kept, and the next
+    /// look makes the serial number query alone.
+    #[cfg(windows)]
+    #[test]
+    fn a_look_answers_while_another_looks_volume_query_is_held() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_look_answers_while_another_looks_volume_query_is_held",
+        ) {
+            return;
+        }
+        let (root, path, workspace) = committed_long_ago("unread-held-query", b"print(1)\n");
+        rewrite_keeping_its_time(&path, b"print(1)\n");
+        let workspace = &workspace;
+        let (reached, held) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let (answered, answer) = std::sync::mpsc::channel();
+        let (second, first) = std::thread::scope(|scope| {
+            let first = scope.spawn(move || {
+                worktree_stat::hold_the_next_volume_query(reached, released);
+                workspace.clean_blob_unread("a.py")
+            });
+            held.recv().unwrap();
+            scope.spawn(move || {
+                let blob = workspace.clean_blob_unread("a.py");
+                answered
+                    .send((blob, worktree_stat::queries_made()))
+                    .unwrap();
+            });
+            // Released whatever the second look did, so neither thread is left waiting.
+            let second = answer.recv_timeout(std::time::Duration::from_secs(30));
+            release.send(()).unwrap();
+            (second, first.join().unwrap())
+        });
+        assert_eq!(
+            second,
+            Ok((None, 3)),
+            "the second look asks the volume and answers while the first one's query is held: \
+             a serial number query and the volume's two"
+        );
+        assert_eq!(first, None, "the first look, once released");
+        worktree_stat::queries_made();
+        assert_eq!(workspace.clean_blob_unread("a.py"), None);
+        assert_eq!(
+            worktree_stat::queries_made(),
+            1,
+            "the kept answer: the serial number query alone"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
