@@ -1053,6 +1053,28 @@ Measured (M3, `--metal --metal-mb 512`, ten runs of the final head): every run's
 `finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367, `mn_dec_fn` 116,511; 0.7 s after the run; peak about
 3.5 GB; wall about 33 s; exit 0.
 
+### The goal's items, measured at the head (2026-11-23, M3, `all`, the dead-code program)
+
+A CPU run (`RERAIL_GPU=cpu`) at the head showed one regression left: the cross part took 87–90 s of wall at a
+parallelism of 1.3. 77 s of it was the run's thread waiting on the heavy values (decision 0209 §6) of `rf_names`,
+`rf_fn_follows` and `rf_target`. Their rounds passed `gpu_pays`'s row threshold and went to the device's radix
+sorts, and under `RERAIL_GPU=cpu` the device's kernels run on the CPU, at a parallelism of about one. Fixed:
+- `gpu_pays` never sends a round to a device whose kernels run on the CPU (`SolverDevice::kernels_on_cpu`);
+- the CPU's batch counts each relation by morsels of its rows across the pool, the morsels' counts merged as a tree.
+
+The same run after the fix, every export's rows equal to the earlier CPU run's:
+
+| Item | Was | Now |
+|---|---|---|
+| 1. The stats phase | 42 s, mostly serial | 1.12 s |
+| 2. The export's work in local | about 19 s on the run's thread | 3.15 s wall, the run's thread 2.6 s, 14.8 s on the other threads |
+| 3. Cross | 28 → 52 s (and 87.6 s on the CPU backend) | 12.5 s, parallelism 3.1 |
+| 3. Per-file (`wait`) | 89 → 111 s | 8.6 s of wall, 71 s on the workers |
+| 5. Peak | 4.8 GB | 2.40 GB |
+| The run | | 29.9 s wall, 139.5 s CPU, 1,626 G instructions |
+
+Metal at 512 MB, ten runs: 0.7 s after the run, peak about 3.5 GB, wall about 33 s, every export the CPU's (above).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.

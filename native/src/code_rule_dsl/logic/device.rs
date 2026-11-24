@@ -70,6 +70,11 @@ pub trait SolverDevice: Send + Sync {
     /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
     /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;
+    /// Whether its kernels run on the CPU (`RERAIL_GPU=cpu`): work a launch pays for on a GPU (`table::gpu_pays`) is
+    /// the CPU's own there, done faster by the CPU's path.
+    fn kernels_on_cpu(&self) -> bool {
+        false
+    }
 }
 
 /// A column for `SolverDevice::column_stats`: values on the host, or column `.1` of an engine relation.
