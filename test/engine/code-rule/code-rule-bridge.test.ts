@@ -5667,10 +5667,12 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
 
   // A checkout inside the worktree has a `HEAD` of its own: the walk lists its index against no other. A clone of the
   // same repository holds the worktree's `HEAD` commit, and its index measured against that commit names other files.
+  // No branch of the clone names that commit, so a file holding its text is no file restored from a branch.
   it("records a file the session's command staged in a clone of the same repository inside a worktree before its first walk", async () => {
     const { root, roots, owned, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
     const nested = join(worktree, "lib");
     git(worktree, "clone", "--quiet", "-c", "core.autocrlf=false", root, nested);
+    git(nested, "update-ref", "-d", "refs/remotes/origin/other");
     await shellInWorktree(bridge, async () => {
       // The text `other`, the worktree's `HEAD`, holds there, where the clone's `HEAD` is `main`.
       await writeFile(join(nested, "src", "a.py"), "old\nviolation\n");
