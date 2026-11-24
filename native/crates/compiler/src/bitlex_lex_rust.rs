@@ -7647,9 +7647,136 @@ fn one_pick(out: &str) -> Option<String> {
     Some(format!("{}{}{}", &out[..at], new, &out[close + 1..]))
 }
 
+/// The rare tokens' `match` with each group's tests as the lean lexer's arms make them (decision 0655 step 12): no
+/// test of the first byte where the pick says it (one byte picks the group: `b'/' if d == b'/'`), and a group whose arms
+/// are runs of one byte (one backtick, two, three) one arm that counts the run once and reads by its count (lean's
+/// `k`), its arm of none the `match`'s. Else `out`.
+fn counted_runs(out: &str) -> String {
+    let Some(h) = out.find(" = match pick {\n") else { return out.to_owned() };
+    let open = h + " = match pick {".len() - 1;
+    let Some(close) = closing_brace(out, open) else { return out.to_owned() };
+    let body = &out[open + 2..close];
+    // The `}` line's indent, after the arms.
+    let tail = &body[body.rfind('\n').map_or(0, |k| k + 1)..];
+    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+    let pad = |l: &str| l.len() - l.trim_start().len();
+    let Some(ai) = lines.first().map(|l| pad(l)) else { return out.to_owned() };
+    let table = out.split_once("static TOKEN: [(u8, u8, u8); ").and_then(|x| x.1.split_once("\n};")).map_or("", |x| x.0);
+    // The one byte that picks group `g`, where one does (`t[b'/' as usize] = (13, `, no range of them).
+    let alone = |g: &str| {
+        let tag = format!(" = ({g}, ");
+        let hits: Vec<&str> = table.lines().filter(|l| l.contains(&tag)).collect();
+        match hits.as_slice() {
+            [l] => l.trim().strip_prefix("t[").and_then(|r| r.split_once(" as usize]")).map(|x| x.0.to_owned()).filter(|b| b.starts_with("b'") || b.starts_with("0x")),
+            _ => None,
+        }
+    };
+    let norm = |c: &str| c.chars().filter(|c| !matches!(c, '(' | ')' | ' ')).collect::<String>();
+    let strip = |mut c: String| {
+        while c.starts_with('(') && c.ends_with(')') && closing_paren(&c, 0) == Some(c.len() - 1) {
+            c = c[1..c.len() - 1].to_owned();
+        }
+        c
+    };
+    // The arms: their header lines, bodies and the comments before them.
+    struct Arm {
+        head: Vec<String>,
+        pick: String,
+        cond: Option<String>,
+        body: Vec<String>,
+    }
+    let mut arms: Vec<Arm> = Vec::new();
+    let mut lead: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        if pad(l) == ai && l.trim().starts_with("//") {
+            lead.push(l.to_owned());
+            i += 1;
+            continue;
+        }
+        let t = l.trim();
+        let Some(h) = t.strip_suffix(" => {").filter(|_| pad(l) == ai) else { return out.to_owned() };
+        let Some(end) = (i + 1..lines.len()).find(|&j| pad(lines[j]) == ai && lines[j].trim_start().starts_with('}')) else { return out.to_owned() };
+        let (pick, cond) = match h.split_once(" if ") {
+            Some((p, c)) => (p.to_owned(), Some(c.to_owned())),
+            None => (h.to_owned(), None),
+        };
+        arms.push(Arm { head: std::mem::take(&mut lead), pick, cond, body: lines[i + 1..end].iter().map(|x| (*x).to_owned()).collect() });
+        i = end + 1;
+    }
+    // No test of the byte the pick says.
+    for a in &mut arms {
+        let (Some(c), Some(b)) = (a.cond.clone(), alone(&a.pick)) else { continue };
+        let first = format!("(src[s] == {b}) && ");
+        if let Some(k) = c.find(&first) {
+            let mut c2 = c.clone();
+            c2.replace_range(k..k + first.len(), "");
+            a.cond = Some(strip(c2));
+        }
+    }
+    // A group of runs: arm `j` of its arms in order a run of `j` of byte `B` from the first.
+    let run_of = |b: &str, j: usize| {
+        let at = |i: usize| format!("s+{i}<n&&src[s+{i}]=={b}");
+        let mut v: Vec<String> = (1..j).map(at).collect();
+        v.push(format!("!{}", at(j)));
+        v.join("&&")
+    };
+    let mut text = String::new();
+    let none_body = arms.iter().find(|a| a.pick == "_").map(|a| a.body.clone());
+    let mut k = 0;
+    while k < arms.len() {
+        let g = arms[k].pick.clone();
+        let group: Vec<usize> = (k..arms.len()).take_while(|&x| arms[x].pick == g && arms[x].cond.is_some()).collect();
+        let byte = alone(&g);
+        let counted = group.len() >= 2 && byte.as_ref().is_some_and(|b| group.iter().enumerate().all(|(j, &x)| arms[x].cond.as_deref().map(norm) == Some(run_of(b, j + 1))));
+        let sp = " ".repeat(ai);
+        match (counted, &none_body) {
+            (true, Some(none)) => {
+                let b = byte.unwrap_or_default();
+                for l in &arms[k].head {
+                    let _ = writeln!(text, "{l}");
+                }
+                let _ = write!(text, "{sp}{g} => {{\n{sp}    // Its run of {b} counted once, read by its count (the lean lexer's `k`).\n{sp}    let mut k = 1;\n{sp}    while s + k < n && src[s + k] == {b} {{\n{sp}        k += 1;\n{sp}    }}\n{sp}    match k {{\n");
+                for (j, &x) in group.iter().enumerate() {
+                    let _ = writeln!(text, "{sp}        {} => {{", j + 1);
+                    for l in &arms[x].body {
+                        let _ = writeln!(text, "{}{l}", if l.is_empty() { "" } else { "        " });
+                    }
+                    let _ = writeln!(text, "{sp}        }}");
+                }
+                let _ = writeln!(text, "{sp}        _ => {{\n{sp}            // A run no arm reads.");
+                for l in none.iter().filter(|l| !l.trim().starts_with("//")) {
+                    let _ = writeln!(text, "{}{l}", if l.is_empty() { "" } else { "        " });
+                }
+                let _ = writeln!(text, "{sp}        }}\n{sp}    }}\n{sp}}},");
+                k += group.len();
+            }
+            _ => {
+                let a = &arms[k];
+                for l in &a.head {
+                    let _ = writeln!(text, "{l}");
+                }
+                let head = match &a.cond {
+                    Some(c) => format!("{} if {c}", a.pick),
+                    None => a.pick.clone(),
+                };
+                let _ = writeln!(text, "{sp}{head} => {{");
+                for l in &a.body {
+                    let _ = writeln!(text, "{l}");
+                }
+                let _ = writeln!(text, "{sp}}}{}", if a.pick == "_" { "" } else { "," });
+                k += 1;
+            }
+        }
+    }
+    format!("{}{}{}{}", &out[..open + 2], text, tail, &out[close..])
+}
+
 /// The lean form's reads as hand-written Rust: a count that asks for one as `any`, a test of every byte as `all`, a
 /// region's end found as it is (`c`, not `c + 0`), the run's next byte by its index (`l + 1`).
 fn tidy_lean(out: &str) -> String {
+    let out = counted_runs(out);
     let mut out = out.replace("Some(c) => c + 0,", "Some(c) => c,").replace("(l + 1) >= 1 && ", "").replace("(l + 1) - 1", "l").replace("(l + 1) + 1", "l + 2").replace("((l + 1) < n", "(l + 1 < n");
     // `(a..=b).filter(|&i| P).count() as u32 } >= 1`: whether one holds.
     while let Some(e) = out.find(".count() as u32 } >= 1") {
@@ -7691,6 +7818,9 @@ fn tidy_lean(out: &str) -> String {
     // A record's marks: none but an extra's own bit, which the extras' list says (decision 0655 step 9). The record is
     // its kind and word, as the lean lexer's `Tok`, and an extra its span in the list, as its `comments`.
     out = no_record_marks(&out);
+    if out.contains("code: kind | word << 8 }") && !out.contains("marks << 16") {
+        out = out.replace("its code (its kind, its word and its marks).", "its code (its kind and its word).");
+    }
     // The token tests read no vector: a plain function, as the lean parser's tests of a token.
     if let Some(a) = out.find("unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(")
         && let Some(d) = out[a..].find("\nrerail_simd8::dispatch! {\n    fn token_test(").map(|d| d + a)

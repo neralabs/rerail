@@ -292,3 +292,38 @@ Tests: the rr suite, the eight corpus tests; JSON's and Kotlin's suites; clippy.
 Tests: `tier1_reads_leans_bad_tokens` over the cases, among them a run of junk and characters and both in a raw
 line, each read as lean's tape by the interpreter, the JIT and the one machine; the rr suite, the eight corpus tests;
 JSON's and Kotlin's suites (their Rust unchanged); Bitlex's own; clippy.
+
+## Step 12: a group's tests as lean's arms make them (done)
+
+- **No test of the byte the pick says** (`counted_runs`): where one byte alone picks a group (`/`, the backtick), its
+  arms test what follows it only, as lean's `b'/' if d == b'/'`. They tested the first byte again.
+- **A run of one byte counted once**: a group whose arms are runs of one byte of one, two, three (the backtick
+  literals) is one arm that counts the run (`k`) and reads by its count, as the lean lexer's backtick arm; its arm of
+  none, four or more, is that `match`'s. The arms tested each backtick again.
+- The record's doc says what it holds since step 9: its kind and its word.
+
+Tests: the rr suite, the eight corpus tests; JSON's and Kotlin's suites (their Rust unchanged); Bitlex's own; clippy.
+
+## The six gaps, where they stand
+
+Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers and names):
+
+1. **A rare token's end**: lean's micro-lexers (`micro::find`, `find_pair`, `string_end`, `find_fence`) and byte loops;
+   no window function, no `cls_*`, `w_*`, `wfirst_*` or `wrun_*` (steps 4, 5, 7).
+2. **The pick's tests once**: a group's arms test only the bytes after the one the pick says, a backtick run counted
+   once (step 12).
+3. **`BAD` where lean writes it**: a block comment, string or literal open at the end, a byte no token begins with
+   and a character past ASCII are `bad` tokens, their statement recovering (decision 0650, step 11). Three
+   refusals stay, each the grammar's `escape` to the engine, whose reading tier 1's must be: a `\u` escape not one
+   of the forms the bytes say a code point (lean's `unescape` reads characters: a surrogate pair, `\u+abc`); a
+   number of 19 digits (one may fit an `i64`, which no mask says); four backticks or more (lean finds a fence of its
+   own count; a region of a closer as long as its opener is a reader every executor would need: the interpreter,
+   the JIT, Metal's).
+4. **Marks**: no marks in a record and no extra's bit (step 9), no `float_after` and no check after the loop.
+   `token_test`, `tested` and `gap` stay for what tier 2 asks where it reads it: `float_at` (a float's kind at its
+   number's first byte would need `back_fill`, decision 0416), `json_bad` (the grammar's JSON checks, lean's
+   parser's), and `gap` is lean's `on_line`.
+5. **No dead code**: no `block`, `prev`, `next`, `fill`, `escaped`, `any`, `bit`, `set`, `toggle`, `held`,
+   `padded`; `drop_uncalled_fns` drops a function or a table nothing calls (step 7).
+6. **Tables**: `TOKEN` gives a pair's kind and code by one load (`+ 256`, `+ 512` for `<:`), `WORDS` is built at
+   compile time from `WORD_LIST` (step 8), and the block's classes are one pair, lean's `LO`, `HI` (step 11).

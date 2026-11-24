@@ -2,7 +2,7 @@
 
 use rerail_simd8::micro;
 
-/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).
+/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind and its word).
 #[derive(Clone, Copy)]
 pub struct Rec {
     pub start: u32,
@@ -92,13 +92,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
             let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {
                 // `/`
-                13 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) => {
+                13 if s + 1 < n && (src[s + 1] == b'/') => {
                     // `comment`: read line | block
                     let l = micro::find(&src[..n], s + 1, b'\n').unwrap_or(n) - 1;
                     let l = l.max(s);
                     (l, 0, true, 0)
                 },
-                13 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'*')))) => {
+                13 if s + 1 < n && (src[s + 1] == b'*') => {
                     // `comment`: read line | block
                     let mut open_bad = false;
                     let l = match micro::find_pair(&src[..n], s, b'*', b'/').map(|a| a + 1) {
@@ -112,42 +112,56 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     (l, 0, !open_bad, 0)
                 },
                 // ```
-                16 if (((src[s] == b'`') && !(s + 1 < n && (src[s + 1] == b'`')))) => {
-                    // `code_literal`: read t1 | t2 | t3
-                    let mut open_bad = false;
-                    let l = match micro::find(&src[..n], s + 1, b'`') {
-                        Some(c) => c,
-                        None => {
-                            open_bad = true;
-                            n - 1
+                16 => {
+                    // Its run of b'`' counted once, read by its count (the lean lexer's `k`).
+                    let mut k = 1;
+                    while s + k < n && src[s + k] == b'`' {
+                        k += 1;
+                    }
+                    match k {
+                        1 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let mut open_bad = false;
+                            let l = match micro::find(&src[..n], s + 1, b'`') {
+                                Some(c) => c,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                         }
-                    };
-                    let l = l.max(s);
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
-                },
-                16 if ((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && !(s + 2 < n && (src[s + 2] == b'`')))) => {
-                    // `code_literal`: read t1 | t2 | t3
-                    let l = match micro::find_pair(&src[..n], s + 1, b'`', b'`') {
-                        Some(c) => c + 1,
-                        None => {
-                            s + 1
+                        2 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let l = match micro::find_pair(&src[..n], s + 1, b'`', b'`') {
+                                Some(c) => c + 1,
+                                None => {
+                                    s + 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, u32::from(kind1), false, 0)
                         }
-                    };
-                    let l = l.max(s);
-                    (l, u32::from(kind1), false, 0)
-                },
-                16 if (((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && (s + 2 < n && (src[s + 2] == b'`'))) && !(s + 3 < n && (src[s + 3] == b'`')))) => {
-                    // `code_literal`: read t1 | t2 | t3
-                    let mut open_bad = false;
-                    let l = match find_fence(&src[..n], s + 1, &[b'`', b'`', b'`']) {
-                        Some(c) => c + 2,
-                        None => {
-                            open_bad = true;
-                            n - 1
+                        3 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let mut open_bad = false;
+                            let l = match find_fence(&src[..n], s + 1, &[b'`', b'`', b'`']) {
+                                Some(c) => c + 2,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                         }
-                    };
-                    let l = l.max(s);
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                        _ => {
+                            // A run no arm reads.
+                            refused = true;
+                            break 'tokens;
+                        }
+                    }
                 },
                 0 => {
                     // `string`: read str
