@@ -5031,6 +5031,45 @@ fn finishs_rewrites_run_on_the_version() {
     assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
 }
 
+/// A recursive rule whose recursion binds a `nearest`'s far end reads it from its near end (t57 §8, E1,
+/// `lowering_tail::NearEnds`, run as a program is prepared, not in the lowering, which stays T's front end's): the
+/// `nearest` and the atoms that bind its near end are a helper made once
+/// (`rr_near0`), read by the far end; two rules with the same part read one helper, and a rule with no recursion, or
+/// whose recursion binds the near end, is left as it was.
+#[test]
+fn a_recursions_nearest_is_read_from_its_near_end() {
+    let src = concat!(
+        "#include \"python/compare.rerail\"\n",
+        ".decl dk(k: symbol)\ndk(\"function_definition\"). dk(\"class_definition\").\n",
+        ".decl def(f: node, x: symbol)\n.decl qn(f: node, q: symbol)\n.decl top(f: node)\n.decl up(f: node, s: node)\n",
+        ".output qn, top, up\n",
+        "def(f, x) :- kind(f, k), dk(k), field(f, \"name\", n), text(n, x).\n",
+        "qn(f, x) :- def(f, x), !nearest(f, _, dk).\n",
+        "qn(f, q) :- def(f, x), nearest(f, s, dk), kind(s, \"class_definition\"), qn(s, p), q = @concat(p, \".\", x).\n",
+        "qn(f, q) :- def(f, x), nearest(f, s, dk), kind(s, \"function_definition\"), qn(s, p), q = @concat(p, \"/\", x).\n",
+        "top(f) :- def(f, _), nearest(f, s, dk), kind(s, \"module\").\n",
+        "up(f, s) :- def(f, _), nearest(f, s, dk).\n",
+        "up(f, s) :- up(f, t), nearest(t, s, dk).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let lowered = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    assert!(lowered.rules().all(|x| !lowered.show_rule(x).contains("rr_near")), "the lowered program is T's");
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("near ends", lowered);
+    p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::NearEnds);
+    let (v, _) = p.finish().unwrap();
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let helpers: Vec<&String> = rules.iter().filter(|x| x.starts_with("rr_near")).collect();
+    assert_eq!(helpers.len(), 1, "one helper for qn's two rules: {rules:#?}");
+    assert!(helpers[0].contains("def(") && helpers[0].contains("nearest"), "the part: {}", helpers[0]);
+    let recursive: Vec<&String> = rules.iter().filter(|x| x.starts_with("qn(") && x.contains("qn($s")).collect();
+    assert_eq!(recursive.len(), 2, "{rules:#?}");
+    assert!(recursive.iter().all(|x| x.contains("rr_near0(") && !x.contains("nearest") && !x.contains("def(")), "the recursion reads the helper: {recursive:#?}");
+    // No recursion, and a recursion that binds the near end (`up(f, t)` binds `t`): as written.
+    assert!(rules.iter().filter(|x| x.starts_with("top(") || x.starts_with("up(")).all(|x| !x.contains("rr_near")), "{rules:#?}");
+}
+
 /// `whole()`'s last passes before `front::finish_checks_on` run on a modular text's version (decision 0281's path, step 7b): a
 /// nullary relation is a set of the unit (a column, a `1` in its atoms), the `.scope` settings set the globs, and a
 /// reader of `value` asks for it, as the tree's `lower::whole_back` makes them; a debug build checks the image against the tree's (`link_seeded_version`).
