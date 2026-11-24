@@ -206,12 +206,14 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   Windows gives up on the server, about 21 s, where a hook or a command lives a second or less.
 - Node makes a child process on the thread that asks for it, and on Windows it returns only once Windows has made the
   process: a second or more each on a busy machine where every process start stalls. The daemon starts each Git that
-  does not block, and each `icacls`, in a starter thread (`src/engine/git-thread.ts`), up to four at once, so its own
-  thread goes on answering hooks, `rerail status` and health probes while those starts wait. A Git that blocks, such
-  as the one that lists a repository's worktrees, still starts on the daemon's thread. A read's time limit counts
-  from its Git's start, not from its wait for a thread, and a read stopped while its start waits never starts its
-  Git. A starter thread that fails before it runs is replaced; after two such failures in a row the daemon makes no
-  more, and starts Git on its own thread while no starter thread runs.
+  does not block, and each `icacls` it does not wait for, in a starter thread (`src/engine/git-thread.ts`), up to four
+  at once, so its own thread goes on answering hooks, `rerail status` and health probes while those starts wait. A Git
+  that blocks, such as the one that lists a repository's worktrees, and the `icacls` that makes a new session records
+  folder outside the profile folder private before its first record, still start on the daemon's thread. A read's
+  time limit counts from its Git's start, not from its wait for a thread, and a read stopped while its start waits
+  never starts its Git. A starter thread that fails before it runs is replaced; after two such failures in a row the
+  daemon makes no more, and starts Git on its own thread while no starter thread runs. `daemon.log` gets a line for
+  each starter thread lost and one when the daemon makes no more.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside

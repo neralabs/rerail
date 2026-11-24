@@ -19,6 +19,10 @@ export interface Printed {
  * `file` with `args` and this process's environment, run to its end with no input, as `promisify(execFile)` runs it
  * with UTF-8 output and `timeoutMs` (none when undefined): its output once it ends with code 0, else a rejection with
  * `execFile`'s error ("Command failed: <command>" and its stderr, with its `code`, `killed`, `signal` and output).
+ * Started in a thread, it differs from `execFile` in two ways no caller here meets: a start that fails rejects with
+ * Node's spawn error alone, without the `cmd`, `stdout` and `stderr` `execFile` adds, and its output has no
+ * `maxBuffer` cut (`execFile`'s is 1 MiB). Every `icacls` here prints a few lines, and its callers read only an
+ * error's message.
  */
 export async function execFileInThread(file: string, args: readonly string[], timeoutMs?: number): Promise<Printed> {
   const child = threadStart(file, args, process.env, "pipe");

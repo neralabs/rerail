@@ -1,1 +1,1 @@
-On Windows, the daemon starts the Git reads that do not block, and `icacls`, in up to four threads of its own, so on a machine where each process start takes a second or more, hooks, `rerail status` and health checks no longer wait while a worktree's walk starts its Git reads.
+On Windows, the daemon starts the Git reads that do not block, and the `icacls` runs it does not wait for, in up to four threads of its own, so on a machine where each process start takes a second or more, hooks, `rerail status` and health checks no longer wait for those starts.
