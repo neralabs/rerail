@@ -1,8 +1,30 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1 and 2 done. The user, 2026-11-24: "I want to work on this in parallel with the current
+Status: in progress. Step 1 done. Step 2 cut down by the user's constraints (below) to the reads of a column and of a
+chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
+
+## The user's constraints (2026-11-24)
+
+Given while reviewing step 2's first build, which was a general trace of many versions:
+
+1. **Two versions, never more.** "Nothing reads more than two versions. I don't want a generic MVCC system. It's
+   always one version plus one delta. Deadness is: always alive, alive then dead, always dead. That's it." Then:
+   "maybe we can allow dead then alive for an optimization to resurrect rather than re-insert items".
+2. **Sorted on zero or one column.** "All facts are stored sorted on zero or one column. The column can vary. This
+   enables better join shapes."
+3. **No write order.** "I don't care about write order. There are no guarantees about that since we're memory
+   mapping. We can use other means for publication."
+4. **Linear history.** "there should be no forks, it's always linear". And: "we don't need forks, although maybe in
+   the future we will want them".
+5. **One stored form.** "one stored form: that is better, although under the hood it may use different bits. Take
+   a look at the MLDB tabular datasets."
+6. **States, not histories.** Asked whether anything reads a kept input's changes incrementally: "no, we only ever
+   read a state, not a history".
+
+So a row has four states across a change: always alive, alive then dead (gone), dead then alive (resurrected: added),
+and always dead. A row past the version's end is new: alive (added) or dead.
 
 ## Intro
 
@@ -74,7 +96,7 @@ Today's types that are states already:
 arithmetic is gone, so every reader of a version (`version_view`, `version_delta`, `DeltaIds`, the frames' deltas)
 goes through the shared code. One answer differs: a row dead at the start and live now is in `Plus`. The old
 arithmetic counted only rows past `n0`, so it left such a row out of both `Plus` and `Minus`, and the version broke
-L1. No test exercised the case.
+L1. No test exercised the case. The user's constraint 1 allows such a row (a resurrection), and it is added.
 
 Tests:
 
@@ -91,13 +113,9 @@ On the way, the roll-up 116 merge left `rerail-facts` uncompiled. One side passe
 other's functions now take `&dyn AtomTable`, and an unsizing coercion does not deref. Six call sites now pass
 `&*`.
 
-## Step 2 (done): traces, their versions, and reads of a column and of a chunk
+## Step 2: reads of a column and of a chunk
 
-The design choices below were Claude's, made while building, without the user's review, and they are open: one
-stored form or a trait over many, where liveness lives, forks and roll-up, kept files as snapshots, a fork's kills,
-the reads' shape, and the directory's growth. What is recorded here is what was built.
-
-### Three grains of read
+### What stays: three grains of read
 
 How a reader reads decides `Read`'s shape. A join step reads the few columns its literal binds, for each row it
 visits. A probe reads a key's columns. A scan of a kept relation decodes a chunk of rows, a column at a time. Only
@@ -107,109 +125,41 @@ has three grains:
 - **`get(id, c)`**: one cell. Every other read is built from it by default.
 - **`column(c) -> Self::Column<'_>`**: the column resolved once, a `ColumnRead` whose `get(id)` is the column's
   own read. `View`'s is the base's and the delta's `Rows::reader`. `Kept`'s is its packed column's `ColDec`.
-  `Version`'s is the reader of the layer it last read, found again only when a read leaves that layer. `Marked`
-  has no column of its own and reads through its `get` (`Cells`).
+  `Marked` has no column of its own and reads through its `get` (`Cells`).
 - **`fill(cols, from, out)`**: rows `from .. from + n` of several columns into `out`, a column at a time
   (`out[j * n + i]`). The default reads each column through `column`. `Kept`'s decodes each column's parts `FILL`
   rows at a time (`ColDec::fill`), as `Kept::each_row` does. `out` is the reader's chunk, reused as it goes, not a
   second store of the relation.
 
-### `blocks::trace`: the `Trace` trait
+Tests: `bistate::tests` (a view's columns and fills on both sides of its base's end) and `kept::tests` (a kept
+relation's columns and fills across `FILL`'s runs).
 
-A trace is one relation's history: its states at frontiers `EMPTY ..= frontier()`. A **`Frontier`** is a count of
-layers. Ids below a frontier's end are the same rows at every later frontier, so any two states are a `Bistate`:
+### What was removed
 
-```rust
-pub trait Trace {
-    type Version<'s>: Read where Self: 's;
-    fn frontier(&self) -> Frontier;
-    fn at(&self, f: Frontier) -> Self::Version<'_>;
-    fn between(&self, a: Option<Frontier>, b: Frontier) -> Bistate<Self::Version<'_>>;  // cold when a is None
-}
-```
+The first build of step 2 (commit `6cbc4e3d6e`) was a trace of many versions: a `Trace` trait with frontiers, a
+`BlockTrace` with a directory of layers and a column of each row's death, adapters reading `View`, continuation
+chains and kept files as traces, and `Upto` for earlier frontiers. Constraints 1, 4 and 6 leave no reader of more
+than two versions and no history to read, so all of it was removed (`blocks/src/trace.rs`, `KeptChain::trace`). The
+design choices it raised are on the page *Trace design choices*.
 
-`Upto<S>` reads a state below an end. That is how an adapter reads its earlier frontiers and its empty one from a
-store that reads its latest.
+## Next steps, proposed (Claude's, not agreed)
 
-Four stores are traces. Each reads what it already holds and writes nothing:
+The shape the constraints leave, for the user to accept or change:
 
-| Store | Its frontiers | Its version |
-|---|---|---|
-| `BlockTrace` (new) | its committed layers | `BlockVersion`: rows of layers `..f` whose death is 0 or past `f` |
-| `relation::View` (also `FrozenFacts::view(r)`) | 1: the base alone; 2: the view | `Upto<View>`: the base's view stopped at `base_rows`, then the view |
-| a continuation chain (`trace::chain(top)`) | one per relation, root first | `Upto<ChainRead>`: the relation read down its chain (`Relation::get`), stopped where the next one continues it |
-| a kept key's files (`KeptChain::trace(key)`) | one per file, oldest first | `KeptVersion`: each file's rows for the key at ids past the older files'; live, the newest entry's |
-
-How each one's change reads:
-
-- **A view:** what the delta kills is gone and what it adds is added. Its change between frontiers 1 and 2 is
-  `View::bistate`'s, and a test checks that they are equal.
-- **A chain:** a fork from row 6 of ten reads its own rows at ids 6 on, so the root's frontier stops at 6. A chain
-  must lie in one block, down to a relation of its own. A far base is read through another block, so its link is
-  not one.
-- **A kept key:** a file's entry with rows replaces the relation. Its change kills every older row and adds its own,
-  which keeps L1 but is not the least change. A reads-only entry is the identity, and a gone entry kills every row.
-  Kept files are snapshots, not deltas, and the trace says so.
-
-### `BlockTrace`
-
-All of a `BlockTrace`'s state lies in one block:
-
-- **Its directory** (`TraceDir`): its arity, the room for layers, the layers committed (its latest frontier,
-  written last on a commit), and each layer's record (`LayerRec`: its relation and the id past its last row).
-- **Its rows**: each layer is a `relation::Relation` that continues the layer before's (`Relation::try_continue`,
-  0384 step 7). A row's id is the same in every layer. The trace adds no storage of rows: a layer is today's
-  continuation.
-- **Each row's death** (`died`): a 4-byte column by id, 0 while the row is live, else the first frontier at which
-  it is dead. It is the layers' kills indexed by id, written once per kill, beside them in the block. Each layer
-  also records its kills in its relation's `killed` rows, for step 3.
-
-A committed frontier's rows and deaths are never written again (a kill in the open layer marks the row dead from the
-next frontier), so a version reads the same rows however far the trace has gone on. `BlockTrace::open` makes the next
-layer (`LayerW`: `push`, `kill` of a row of any layer, `commit`), one at a time. A trace is found again from its
-directory's offset in its block (`BlockTrace::at_offset`), which a block's root records.
-
-Tests:
-
-- `trace::tests`:
-  - three layers, each frontier reading its layers' rows less their kills, and a kill in an open layer changing no
-    committed frontier;
-  - a chain of frontiers composing to the cold run (L3), walked id by id in place;
-  - a version's columns and fills across layers' boundaries;
-  - the trace found again from its block;
-  - a view as a two-frontier trace;
-  - a continuation chain as a trace, a fork dropping its base's later rows.
-
-  Each trace checks L1 for every pair of its frontiers and every cold run.
-- `kept::tests`: a kept key over four files (rows, reads-only, new rows, gone) as a trace, every pair checked; and a
-  kept relation's columns and fills.
-- `bistate::tests`: a view's columns and fills on both sides of its base's end.
-
-Cost: a version's `live_word` is O(rows) for a `BlockTrace` (64 deaths a word) and O(1) a word for the others. A
-kept version finds a row's file by walking the key's files, once per file its column enters. Step 3 reads a change
-from the layers' kills and own rows instead of every word.
-
-`InRel`'s start count is still a Rust value. It becomes a frontier when its relation is a `BlockTrace`'s layer, which
-the maintain mode's wrapping (step 6) decides.
-
-## The next steps
-
-Each adds to `blocks`, makes an existing type share it, and keeps the old path.
-
-3. **Kills recorded per layer, so a change costs its size (P1).** A delta's `killed` rows and its own new rows
-   are its change. `Bistate::gone` and `added` over a trace read those, not the liveness words, and a test doubles
-   the relation and checks that the work counters stay the same.
-4. **Probes through `Read`.** `Read::probe(index, key)` over the layers' own indexes, as `View::probe_iter` merges
-   two today. `InRel`'s probes of a version's `Old` read through it.
-5. **The four maintain-mode sources from one bistate.** The planner's `ModeInputs` (old, minus, plus, new) and
-   `Delta::Marks` are made from an input's `Bistate`, so the planner holds one value where it holds four sources.
-   The old type stays as the form the setfix spec reads.
-6. **`DeltaOp` and its harness.** The trait (a delta form and the plain `run`) and a test harness that checks L1
-   (the square) and L3 (a chain of deltas equals a cold run). Two runs' outputs have different ids, so the harness
-   compares them by value: each run's ids, ordered by their rows' values, in a block, and the two orders walked
-   together, reading every cell in place. The first operator is a stratum's maintain mode,
-   wrapped, not rewritten.
-7. **`Cache` with its header** (the state it was made from, and an open mark), shared first by the plan caches
-   that are keyed by version identity today.
-
-The design page's Part IV holds the full mapping from today's types to these abstractions.
+- **A bistate is a version and its delta, and that is the stored form.** The version is a relation: its columns,
+  its dead bits (rows always dead), sorted on one column or none. The delta is the same form over the version's ids:
+  its own rows (new ids, sorted on the version's column), the version's rows it kills, and the ones it resurrects.
+  `View` is this already. A change reads the delta alone: gone are its kills, added its own live rows and its
+  resurrections. That is the change's size (P1), with no scan of the version's liveness.
+- **One stored form, encodings varied underneath (constraint 5).** As MLDB's `RawMappedIntTable` does (one
+  descriptor whose first bits pick bit-compressed, run-length or factored), a column's directory entry names its
+  encoding, and freeze picks the smallest from the column's statistics. Today's `rows::Rows` (an open column, 4 or
+  8 bytes) and `packed::Packed` (a kept column, bit-packed) become two encodings of one column, read through one
+  CLIF read. A sorted column is nearly linear, so MLDB's predictor-plus-residuals layer (`MappedIntTable`) is the
+  encoding to try for it.
+- **The sort column (constraint 2).** A relation records its sort column or none. A probe of it is a range in the
+  version and one in the delta, and a read in its order is a merge of the two runs. Freeze no longer sorts on every
+  column, so duplicates are found by hashing (`insert_unique`'s table) rather than by order.
+- **Publication (constraint 3).** A state is read only once published by other means. The code claims no write
+  order.
+- **Roll-up.** A delta grows until it is folded into a new version, freezing a new state, as MLDB's commit does.

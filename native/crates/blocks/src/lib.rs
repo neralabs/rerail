@@ -22,7 +22,6 @@
 pub mod alloc;
 pub mod atoms;
 pub mod bistate;
-pub mod trace;
 pub mod block;
 pub mod bloom;
 pub mod chunk;

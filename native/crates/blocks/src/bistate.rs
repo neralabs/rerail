@@ -11,8 +11,12 @@
 //!   rows with the dead bits they had at the start, after is all its rows with its dead bits now;
 //! - a cold run: no before, every live row of after added.
 //!
-//! Both states are one type: they read the same rows, so they are read the same way. (Step 2 makes them two
-//! frontiers of one trace.)
+//! Both states are one type: they read the same rows, so they are read the same way.
+//!
+//! Nothing reads more than two states (the user, 2026-11-24): one version and one delta of it, in a linear history
+//! with no forks. A row of the before state is, across the change, always alive, alive then dead (gone), dead then
+//! alive (resurrected rather than inserted again: added), or always dead. A row past the before state's end is new:
+//! alive (added) or dead.
 //!
 //! `Read` is what a state gives. `Bistate` reads the change. A row is no value of its own: it is a `RowId` into
 //! its relation's block, and its cells are read where they lie (`Read::get`). `check` is the law a bistate keeps,
@@ -191,7 +195,7 @@ impl<S: Read> Bistate<S> {
         self.before.as_ref().map_or(RowId::ZERO, Read::end)
     }
 
-    /// The ids live after and not before, ascending: rows added since, and rows of before brought back.
+    /// The ids live after and not before, ascending: rows added since, and rows of before resurrected.
     pub fn added(&self) -> Bits<impl Fn(WordIndex) -> u64 + '_> {
         Bits::new(self.after.end(), move |w| self.after.live_word(w) & !self.before_word(w))
     }
@@ -511,14 +515,14 @@ mod tests {
     }
 
     /// Two states of one run of rows kept in place (setfix's `InRel` versions): rows dead at the start stay out of
-    /// both, rows killed since are gone, rows past the start's end added, a row brought back added.
+    /// both, rows killed since are gone, rows past the start's end added, a row resurrected added.
     #[test]
     fn marked_states_read_their_change_by_words() {
         let n = 200u32;
         let get = |id: RowId, c: ColumnIndex| i64::from(id.get()) * 10 + c.get() as i64;
         let mut dead0 = vec![0u64; 2];
         dead0[0] |= 1 << 5;
-        dead0[1] |= 1 << 3; // id 67, dead at the start and brought back
+        dead0[1] |= 1 << 3; // id 67, dead at the start and resurrected
         let mut dead = dead0.clone();
         dead[1] &= !(1 << 3);
         dead[0] |= 1 << 9;
@@ -532,7 +536,7 @@ mod tests {
         check(&s);
         assert_eq!(s.gone().map(RowId::get).collect::<Vec<_>>(), vec![9, 84]);
         let added: Vec<u32> = s.added().map(RowId::get).collect();
-        assert_eq!(added[0], 67, "a row brought back is added");
+        assert_eq!(added[0], 67, "a row resurrected is added");
         assert_eq!(added[1..], (100..n).filter(|&id| id != 129).collect::<Vec<_>>()[..]);
     }
 
