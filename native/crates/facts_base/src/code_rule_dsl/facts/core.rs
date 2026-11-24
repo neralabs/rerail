@@ -261,6 +261,14 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     Ok((with_programs(built, &grammar, image.derived)?, doc))
 }
 
+/// Whether a file of `grammar`'s dialect has no programs but its parse's (`FileImage::embedding`'s derived documents):
+/// no embedding of the dialect reads the scope, so [`with_programs`] adds none. Then a file's derived documents are
+/// its whole record of programs, and their count is recorded with its tape (decision 0431 step 6), whichever path
+/// writes it.
+pub fn programs_are_the_parse(grammar: &crate::code_rule_dsl::tape::Grammar) -> bool {
+    grammar.lang.embeds().iter().all(|&(via, _)| !crate::code_rule_dsl::embed::embedder(via).reads_scope())
+}
+
 /// `built`'s facts with the file's programs (decision 0431 §7, step 6): `derived`, those its parse made over the tape
 /// (`FileImage::embedding`), and those of each embedding that reads the scope (`call-argument`, decision 0470), made
 /// over a document over the facts' own tape, read in place. The batch reads them off the facts.

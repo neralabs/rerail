@@ -3880,3 +3880,22 @@ fn text_probed_by_node_is_read_off_the_tape_as_its_rows_hold_it() {
     }
     assert_eq!(lazy.docs.made_count(), 1, "its document projected, once");
 }
+
+/// Decision 0431 step 6: a dialect whose embeddings are all the parse's (`programs_are_the_parse`: none reads the
+/// scope) has a file's derived documents as its whole record of programs, so a writer that has only those (the
+/// workspace's publication) records their count with the tape. HTML's scripts and styles are the parse's: the facts'
+/// programs are exactly the parse's derived documents. Python's embedding by call argument reads the scope
+/// (decision 0470), so its derived documents are not all its programs, and its count is left to the engine's record.
+#[test]
+fn a_dialect_whose_embeddings_are_the_parse_s_has_its_derived_documents_as_its_programs() {
+    let grammar = |label: &str| crate::code_rule_dsl::tape::Grammar::embedded(dialect_by_label(label).unwrap()).unwrap();
+    assert!(core::programs_are_the_parse(&grammar("html")), "HTML embeds by its structure alone");
+    assert!(!core::programs_are_the_parse(&grammar("python")), "Python embeds by call argument, which reads the scope");
+    let source = "<html><body><script>let a = 1;</script><style>p { color: red }</style></body></html>\n";
+    let file = FileInput::new("p.html".to_owned(), "html".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+    let (Built::Facts(facts), _) = core::build_with_tape(&file, false).unwrap() else { panic!("p.html did not parse") };
+    let parsed = crate::code_rule_dsl::tape::TapeImage::parse(&grammar("html"), source, &|| false).unwrap().unwrap();
+    let programs = facts.programs.as_ref().expect("the facts know their programs");
+    assert!(!parsed.derived.is_empty(), "the page's script and style are programs");
+    assert_eq!(programs.len(), parsed.derived.len(), "the facts' programs are the parse's derived documents");
+}

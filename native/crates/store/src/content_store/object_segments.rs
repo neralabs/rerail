@@ -315,7 +315,7 @@ impl ContentStore {
             let mut ids = Vec::with_capacity(rows.len());
             for (i, row) in rows.iter().enumerate() {
                 let source = put_source_placed_tx(t, row.canonical, row.source_len, place(2 * i), created)?;
-                let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[] };
+                let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[], whole: false };
                 let tape_id = put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
                 // A file that holds no program records so with its tape (decision 0431 step 6), in this transaction;
                 // one that holds some has them written after (`put_programs`).

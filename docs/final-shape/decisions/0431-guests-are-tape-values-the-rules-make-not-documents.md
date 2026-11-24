@@ -1,7 +1,7 @@
 # 0431. No guest documents: strings the rules parse are tape values; programs the grammar holds are the file's
 
 Status: partly built (audited 2026-11-23). Left: @parse of computed strings checked against packs' use; embed_value
-placement; queued-tape programs record; publication.rs program count. Decided (2026-11-18), by the user: "there are no
+placement; queued-tape programs record. publication.rs's program count done (2026-11-23). Decided (2026-11-18), by the user: "there are no
 guest documents. The CPU and GPU run on exactly the same data"; "parsed strings are only for annotations and maybe
 format strings, not all strings; the rules decide them"; "if the rules say 'here is an embedded string, here is its
 sha and here is its tape', then why can't that be kept in the facts that the program produces and not changed next
@@ -317,8 +317,17 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    - Under `.embedded on` the tapes of the files the run reads for their programs are read before the first wave
      by their own tags (`host_text`), so an unchanged host file parses nothing either.
    - Left: a tape still queued for the writer (read before it is written, in the same run) gives no record, so its
-     file's programs are made in the batch. The matcher path's own publication (`publication.rs`) writes `at` but
-     records no count: its tapes read as not known, as before.
+     file's programs are made in the batch.
+   - The matcher path's publication (`publication.rs`) records the count (2026-11-23). A dialect whose embeddings
+     are all the parse's (`core::programs_are_the_parse`: none reads the scope) has a file's derived documents as
+     its whole record of programs, so the workspace marks them whole (`TapePayload::whole`) and the store writes
+     their count with the tape, in the statement that writes it. A dialect with an embedding that reads the scope
+     (Python's by call argument, 0470) leaves the count not known (-1), as the workspace's documents lack those
+     programs, and the engine's run records it. Tests: `a_published_tape_keeps_its_count_of_programs_where_its_
+     documents_are_all_of_them`, `a_dialect_whose_embeddings_are_the_parse_s_has_its_derived_documents_as_its_programs`.
+   - Found on the way: `ContentStore::programs_counts` joined a tape's own hash (its identity, `tape_identity`) with
+     its text's, so it found no tape and every count read as not known. 0563 A's `may_embed` never saw a stored
+     "no programs". It now joins through the text's source.
 
 7. (Q325 item 2, 2026-11-20.) No round outside the fixpoint (§1; R12). `rr_parse_req` and `rr_splice_req` are
    answered inside the file-local part's fixpoint as `rr_embed_req` is (decision 0065 §2a): `guests::answering`

@@ -583,6 +583,7 @@ fn snapshot_publication_is_atomic() {
                     tape_format_version: 1,
                     bytes: b"persisted tape",
                     documents: &[],
+                    whole: false,
                 }),
             },
         )
@@ -656,6 +657,7 @@ fn overlay_publication_replaces_payload_atomically() {
                 tape_format_version: 1,
                 bytes: tape_bytes,
                 documents: &[],
+                whole: false,
             }),
         },
         OverlayFilePublication {
@@ -2468,6 +2470,41 @@ fn publication_completes_a_tree_with_duplicate_entry_names() {
     );
 }
 
+/// A published tape keeps its count of programs (decision 0431 step 6) where its documents are all of them (`whole`):
+/// one derived document, one program; none, none. Where they are not (a dialect whose embedding reads the scope, whose
+/// programs the engine adds), the count is not known (-1), as before, and the engine's run records it.
+#[test]
+fn a_published_tape_keeps_its_count_of_programs_where_its_documents_are_all_of_them() {
+    let (_path, store) = store("published-programs");
+    let snapshot = store.put_snapshot(published_tree(&store, HashKey::git_sha1([62; 20])), 1, HashKey::sha256(b"grammar"), 1).unwrap();
+    let workspace = store.open_workspace("/published-programs", "repo", "owner", snapshot, 1, 100).unwrap();
+    let document = DocumentPayload {
+        parent_ordinal: 0,
+        role_id: 2,
+        via_id: 7,
+        source: b"<?php echo e($title); ?>",
+        grammar_id: 0x1_0101,
+        tape: b"derived tape",
+        source_map: b"map",
+        host_errors: b"",
+        at: None,
+    };
+    let cases: [(&str, &[u8], &[DocumentPayload<'_>], bool, Option<i64>); 3] = [
+        ("one.blade.php", b"{{ e($title) }}", std::slice::from_ref(&document), true, Some(1)),
+        ("none.blade.php", b"plain", &[], true, Some(0)),
+        ("unknown.blade.php", b"{{ e($other) }}", std::slice::from_ref(&document), false, None),
+    ];
+    for (state, (path, source, documents, whole, _)) in cases.iter().enumerate() {
+        let tape = TapePayload { grammar_id: 8, grammar_version: 1, tape_format_version: 1, bytes: path.as_bytes(), documents, whole: *whole };
+        store
+            .publish_overlay_file(workspace, OverlayFilePublication { path, state_id: state as i64 + 1, source, aliases: &[], tape: Some(tape) })
+            .unwrap();
+    }
+    let texts: Vec<(HashKey, i64)> = cases.iter().map(|(_, source, ..)| (HashKey::sha256(source), 8)).collect();
+    let counts = store.programs_counts(&texts, 1, 1).unwrap();
+    assert_eq!(counts, cases.iter().map(|c| c.4).collect::<Vec<_>>(), "each tape's count of programs");
+}
+
 /// A derived document's tape and text (`file_documents`) are published with the primary tape
 /// that derives them, live while that tape is, and collected once it is gone.
 #[test]
@@ -2509,6 +2546,7 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
                     tape_format_version: 1,
                     bytes: b"primary tape",
                     documents: std::slice::from_ref(&document),
+                    whole: false,
                 }),
             },
         )
@@ -2594,6 +2632,7 @@ fn a_single_language_tape_writes_no_document_rows() {
                     tape_format_version: 1,
                     bytes: b"python tape",
                     documents: &[],
+                    whole: false,
                 }),
             },
         )
