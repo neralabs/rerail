@@ -147,6 +147,11 @@ prototype's rule, "never key postings to known rules".
        `src_line` or `rx_span`) have their text made with them: a relation of those rows alone, bound after the view's
        (`places::join`, as their places are). Not counted by value (`place_statistics`): that would intern every text.
      - The device reads no `text` (`device_chunk::device_view`), as it reads no `op`.
+     - *An atom, not a span* (the user, 2026-11-24, of the trade-offs: "that's okay, leave it as atoms"). A span would
+       intern nothing until an output and let the device read `text` in place, but it is a new kind of value in every
+       join, dedup, sort, SQL read and statistic of a string, and a derived fact holding one holds its tape.
+       `text_atom` and `text_matches` hide how an atom is made and a string is matched, not the column's type: spans
+       would change its readers too.
      - *A text test's scan* (`contains("ol", x)` over a batch's strings, `Tested::scan`) tests the view's texts too,
        a document's at a time: they are no group's strings. A whole scan made every document already; it interns
        what the rows interned, and only there.
