@@ -242,8 +242,7 @@ pub mod w {
 }
 
 const FLAG_IN_BLOCK: u32 = 1 << 0;
-const FLAG_NEGATING: u32 = 1 << 1;
-const FLAG_NO_NAMED: u32 = 1 << 2;
+const FLAG_NO_NAMED: u32 = 1 << 1;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
@@ -2145,21 +2144,11 @@ impl<L: Layout> P<'_, L> {
     fn conjunction(&mut self) -> R {
         self.deeper()?;
         self.open(k::CONJUNCTION);
-        let flags = self.flags;
-        self.flags = self.flags & !FLAG_NEGATING;
-        let word = self.word;
         self.literal()?;
-        self.word = word;
-        self.flags = flags;
         self.field_made(f::LITERAL);
         while self.word() == w::COMMA_12 {
             self.skip_as::<false, false>(true)?;
-            let flags = self.flags;
-            self.flags = self.flags & !FLAG_NEGATING;
-            let word = self.word;
             self.literal()?;
-            self.word = word;
-            self.flags = flags;
             self.field_made(f::LITERAL);
         }
         self.close()?;
@@ -2212,22 +2201,12 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.open(UNSET);
         self.retag(k::CONJUNCTION);
-        let flags = self.flags;
-        self.flags = self.flags & !FLAG_NEGATING;
-        let word = self.word;
         self.literal()?;
-        self.word = word;
-        self.flags = flags;
         self.field_made(f::LITERAL);
         while self.word() == w::COMMA_12 {
             self.tk_as::<false, false>(true, k::COMMA, 0)?;
             self.drop_made()?;
-            let flags = self.flags;
-            self.flags = self.flags & !FLAG_NEGATING;
-            let word = self.word;
             self.literal()?;
-            self.word = word;
-            self.flags = flags;
             self.field_made(f::LITERAL);
         }
         self.close()?;
@@ -2262,31 +2241,15 @@ impl<L: Layout> P<'_, L> {
             }
             1 => {
                 self.group()?;
-                match self.word() {
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                        self.group_term()?;
-                    }
-                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                        self.group_term()?;
-                    }
-                    _ => {
-
-                    }
+                if matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31) {
+                    self.group_term()?;
                 }
             }
             2 => {
                 self.term()?;
                 self.field_made(f::BARE);
-                match self.word() {
-                    w::TILDE_31 => {
-                        self.literal_tail()?;
-                    }
-                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                        self.literal_tail()?;
-                    }
-                    _ => {
-
-                    }
+                if matches!(self.word(), w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31) {
+                    self.literal_tail()?;
                 }
             }
             _ => {
@@ -2306,11 +2269,11 @@ impl<L: Layout> P<'_, L> {
     fn literal_tail(&mut self) -> R {
         self.relabel_field(0)?;
         match self.word() {
+            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
+                self.comparison_tail()?;
+            }
             w::TILDE_31 => {
                 self.pattern_tail()?;
-            }
-            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                self.comparison_tail()?;
             }
             _ => {
                 return self.refuse();
@@ -2321,41 +2284,18 @@ impl<L: Layout> P<'_, L> {
 
     /// `group_term`.
     fn group_term(&mut self) -> R {
-        let arm: usize;
         match self.word() {
-            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                arm = 0;
-            }
-            w::TILDE_31 => {
-                arm = 1;
-            }
-            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                arm = 0;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
+            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                 self.reread_parenthesized()?;
                 match self.word() {
                     w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                         self.relabel_field(f::BARE)?;
                         self.more1()?;
-                        match self.word() {
-                            w::TILDE_31 => {
-                                self.literal_tail()?;
-                            }
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                                self.literal_tail()?;
-                            }
-                            _ => {
-
-                            }
+                        if matches!(self.word(), w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31) {
+                            self.literal_tail()?;
                         }
                     }
-                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                         self.comparison_tail()?;
                     }
                     _ => {
@@ -2363,7 +2303,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
             }
-            1 => {
+            w::TILDE_31 => {
                 self.reread_parenthesized_strict()?;
                 self.pattern_tail()?;
             }
@@ -2429,13 +2369,11 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.open(k::NEGATION);
         self.word_skip_as::<false, false>(w::BANG_19)?;
-        let flags = self.flags;
-        self.flags = self.flags | FLAG_NEGATING;
-        let word = self.word;
         self.literal()?;
-        self.word = word;
-        self.flags = flags;
         self.field_made(f::OPERAND);
+        if self.made_is(k::COMPARISON) {
+            return self.refuse();
+        }
         self.close()?;
         self.depth -= 1;
         Ok(())
@@ -2583,29 +2521,15 @@ impl<L: Layout> P<'_, L> {
 
     /// `primary`.
     fn primary(&mut self) -> R {
-        let arm: usize;
         match self.word() {
             w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                arm = 1;
+                self.unsigned()?;
             }
             _ if self.at_number() => {
-                arm = 0;
-            }
-            _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                arm = 1;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
                 self.numeric()?;
             }
-            1 => {
-                let word = self.word;
+            _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
                 self.unsigned()?;
-                self.word = word;
             }
             _ => {
                 return self.refuse();
@@ -2634,6 +2558,7 @@ impl<L: Layout> P<'_, L> {
     /// `unsigned`.
     fn unsigned(&mut self) -> R {
         self.deeper()?;
+        let word = self.word;
         match self.word() {
             w::X_60 => {
                 self.tk_as::<false, false>(true, k::WILDCARD, 0)?;
@@ -2765,6 +2690,7 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
+        self.word = word;
         self.depth -= 1;
         Ok(())
     }
@@ -2802,9 +2728,7 @@ impl<L: Layout> P<'_, L> {
             2 => {
                 self.wrap(k::UNARY_EXPRESSION, 0)?;
                 self.drop_made()?;
-                let word = self.word;
                 self.unsigned()?;
-                self.word = word;
                 self.field_made(f::OPERAND);
                 self.close()?;
             }
@@ -3058,9 +2982,7 @@ impl<L: Layout> P<'_, L> {
                 self.count_value()?;
             }
             3 => {
-                let word = self.word;
                 self.word_in_value()?;
-                self.word = word;
             }
             _ => {
                 return self.refuse();
@@ -3097,6 +3019,7 @@ impl<L: Layout> P<'_, L> {
     /// `word_in_value`.
     fn word_in_value(&mut self) -> R {
         self.deeper()?;
+        let word = self.word;
         match self.word() {
             w::MIN_48 => {
                 self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
@@ -3160,6 +3083,7 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.more()?;
+        self.word = word;
         self.depth -= 1;
         Ok(())
     }

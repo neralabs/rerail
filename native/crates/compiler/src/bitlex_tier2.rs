@@ -415,6 +415,18 @@ impl Emit<'_> {
 
     /// A call's field, set on the node it made where it returns to state `st`
     /// (`StateRow::returned_field`): on the node made last at the level, where it has none.
+    /// A level's end at a state: the `c` closes inside it, its endings, then (`own`) its own
+    /// node's close, each `CLOSE m=mode`. Every way a level ends comes here.
+    fn end_closes(&mut self, st: &StateRow, c: u8, mode: u8, own: bool) {
+        for _ in 0..c {
+            self.push("CLOSE", mode, Arg::None);
+        }
+        self.endings(st);
+        if own {
+            self.push("CLOSE", mode, Arg::None);
+        }
+    }
+
     /// Where a level ends, after the closes inside it and before its own: its endings
     /// (`StateRow::endings`), each a test of the node made last at it (`RETAG m=4`) before each
     /// word. A relabel's words in the order that keeps the kind tested to the last.
@@ -673,9 +685,8 @@ impl Emit<'_> {
                     let callee = outer.get(i + 1).copied().unwrap_or(p);
                     self.call(o, callee, &flags, i);
                 }
-                for _ in 0..c + u8::from(st.own) {
-                    self.push("CLOSE", 1, Arg::None);
-                }
+                let st = st.clone();
+                self.end_closes(&st, c, 1, st.own);
                 self.push("GOTO", 0, Arg::State(p));
             }
             _ => {
@@ -1141,13 +1152,7 @@ impl Emit<'_> {
                 if mode == 0 {
                     self.marked[s] = self.pc();
                 }
-                for _ in 0..c {
-                    self.push("CLOSE", mode, Arg::None);
-                }
-                self.endings(&st);
-                if st.own {
-                    self.push("CLOSE", mode, Arg::None);
-                }
+                self.end_closes(&st, c, mode, st.own);
                 // After a mark, the token is not taken: the caller switches on it again
                 // (`RETURN m=1`), as a return lands past `TOKEN` only where none was taken.
                 self.push("RETURN", u8::from(mode == 0), Arg::None);
@@ -1247,15 +1252,7 @@ impl Emit<'_> {
             None => REFUSE,
             Some(c) => {
                 let pc = self.pc();
-                for _ in 0..c {
-                    self.push("CLOSE", 0, Arg::None);
-                }
-                if nested {
-                    self.endings(&st);
-                }
-                if nested && st.own {
-                    self.push("CLOSE", 0, Arg::None);
-                }
+                self.end_closes(&st, c, 0, nested && st.own);
                 self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested || self.padded), Arg::None);
                 pc
             }
@@ -1735,9 +1732,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         e.push("SWITCH", 0, Arg::Table(t as u16));
         let end = e.pc();
         e.switches.push(Switch { offset: 0, targets: vec![end; 256], end, words: Vec::new() });
-        for _ in 0..c + u8::from(st.own) {
-            e.push("CLOSE", 0, Arg::None);
-        }
+        let st = st.clone();
+        e.end_closes(&st, c, 0, st.own);
         e.push("RETURN", 1, Arg::None);
         returns.insert(p, at);
     }
@@ -2072,6 +2068,7 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[Switch], pc: usize) -> (V
         }
         "WORD" if mode != 0 => (vec![], 2),
         "FLAG" if mode >= 2 => (vec![], 2),
+        "RETAG" if mode == 4 => (vec![], 2),
         "MARK" | "ROW" => (vec![], 2),
         _ => (vec![], 1),
     }

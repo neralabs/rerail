@@ -399,13 +399,13 @@ tree rr {
   node agg_argument_list nested = retag argument_list '(' [argument: term (',' drop argument: term)*] ')'
   # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
   choice body           = without no_named conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
-  node conjunction nested = literal: without negating literal (',' literal: without negating literal)*
+  node conjunction nested = literal: literal (',' literal: literal)*
   node group nested     = '(' body: group_body ')'
   # A group's body: its first conjunction's `,` is written, then dropped, as an aggregate's
   # word's (`agg_argument_list`): a reading of the group as a term, which names no gone node,
   # refuses a second literal as the engine does.
   choice group_body     = without no_named group_conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
-  node group_conjunction nested = retag conjunction literal: without negating literal (',' drop literal: without negating literal)*
+  node group_conjunction nested = retag conjunction literal: literal (',' drop literal: literal)*
   # A literal: a negation, a group, or a term and what follows it, as the lean parser's
   # `literal`: a comparison or a pattern after the term makes it a literal's (`literal_tail`).
   # A term alone that is a call is an atom (`ending`, the lean parser's `retag_atom`), its
@@ -413,15 +413,13 @@ tree rr {
   # hold. A `(` is a group's first: a group a term turns out to be is read again as one
   # (`group_term`).
   # A literal decided (`decide`) has no field of its own: its caller's, `literal` or a negation's
-  # `operand`, set where it returns, as the lean parser's `self.literal()?; self.field(..)`. A
-  # negation's operand is a literal read with `negating` set: no comparison there.
-  flag negating
+  # `operand`, set where it returns, as the lean parser's `self.literal()?; self.field(..)`.
   choice literal nested = negation | group [group_term] | bare: term [literal_tail]
   ending literal call as atom inner relation
-  choice literal_tail   = decide (unless negating comparison_tail | pattern_tail)
+  choice literal_tail   = decide (comparison_tail | pattern_tail)
   # After a group's `)`: an operator or a comparison, it was a term; a `~`, a term too, unless
   # it holds an atom (then the engine keeps the group, which no `~` follows).
-  choice group_term     = reread parenthesized (relabel bare more1 [literal_tail] | unless negating comparison_tail)
+  choice group_term     = reread parenthesized (relabel bare more1 [literal_tail] | comparison_tail)
                         | reread parenthesized_strict pattern_tail
   provisional bare
   # `min (…) : {…}`: the call read again inside the aggregate around it.
@@ -438,8 +436,10 @@ tree rr {
   # A term's rest, at least one operator.
   choice more1          = (wrap binary_expression left operator: multiplicative right: primary)+ (wrap binary_expression left operator: additive right: product)*
                         | (wrap binary_expression left operator: additive right: product)+
-  # `!` before an atom, a pattern match or a negation: never a comparison.
-  node negation nested  = '!' operand: with negating literal
+  # `!` before any literal, which is never a comparison: the lean parser's `inner == Lit::Cmp`, asked
+  # where the negation ends (`ending`).
+  node negation nested  = '!' operand: literal
+  ending negation comparison refused
   choice comparison_tail = wrap comparison left operator: comparison_operator right: term
   # A pattern's literal, then `at` and a string: the node kind it selects.
   choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal [at_on 'at' selector: string]

@@ -119,3 +119,29 @@ Three of the rr parser_tests had been red since 0650 and 0655, and are fixed at 
   `rr_syntax::as_lean_reads`. The marks test names the grammar's `hidden` line as it is since 0655 step 9.
 
 Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
+## Step 3: a negation refuses a comparison where it ends; no flag, no save around a literal (done)
+
+`negation` is lean's: `'!' operand: literal`, then `ending negation comparison refused`, the lean parser's
+`inner == Lit::Cmp`. The `negating` flag is gone, with its `with`, `without` and `unless`. So is the flag save
+around every literal's call. The calls form's `negation` is the body, then
+`if self.made_is(k::COMPARISON) { return self.refuse(); }`, then the close.
+
+The state machine's words end a level in four places: the end of a state with arms, one with none, a call whose
+level ends at its first token (`ends_at_once`), and the return entry of a state that takes no token. Step 2 put the
+endings in the first two. A negation's end is a return entry, so all four now go through one helper (`end_closes`):
+the closes inside the level, its endings, then its own close. The words' merge (`ways`) takes `RETAG m=4` as a test
+with two successors, as `FLAG m=2`.
+
+The level's word (`remember aggregate_word`) was saved around every call of a level that might set it, and a level
+that reads a reading counted as one. Only `REMEMBER` sets the word in the machine; a reading only reads it. So:
+
+- a level sets the word only where its own code takes a remembered token (`word_setters`, both forms);
+- in the calls form, such a level keeps its caller's word itself: `let word = self.word;` where it begins,
+  `self.word = word;` where it ends, as the machine's `PUSH` keeps it. Its callers save nothing.
+
+`unsigned` and `word_in_value` are rr's two. `conjunction`'s loop is now lean's:
+`self.literal()?; self.field_made(f::LITERAL); while self.word() == w::COMMA_12 { … }`.
+
+rr's `tier2.rs` is 4,362 lines. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11,
+clippy.

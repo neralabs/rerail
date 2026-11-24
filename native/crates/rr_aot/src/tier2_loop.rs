@@ -242,8 +242,7 @@ pub mod w {
 }
 
 const FLAG_IN_BLOCK: u32 = 1 << 0;
-const FLAG_NEGATING: u32 = 1 << 1;
-const FLAG_NO_NAMED: u32 = 1 << 2;
+const FLAG_NO_NAMED: u32 = 1 << 1;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
@@ -2248,9 +2247,7 @@ impl<L: Layout> P<'_, L> {
                 49 => {
                     self.deeper()?;
                     self.open(k::CONJUNCTION);
-                    stack.push(u64::from(self.flags));
-                    self.flags = self.flags & !FLAG_NEGATING;
-                    stack.push(52 | u64::from(self.word) << 32);
+                    stack.push(52);
                     st = 53;
                     continue 'run;
                 }
@@ -2267,9 +2264,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.skip_as::<false, false>(true)?;
-                            stack.push(u64::from(self.flags));
-                            self.flags = self.flags & !FLAG_NEGATING;
-                            stack.push(52 | u64::from(self.word) << 32);
+                            stack.push(52);
                             st = 53;
                             continue 'run;
                         }
@@ -2280,7 +2275,6 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 52 => {
-                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::LITERAL);
                     st = 51;
                     continue 'run;
@@ -2335,9 +2329,7 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let top = stack.pop().unwrap_or(0);
-                    let ret = top as u32 as usize;
-                    self.word = (top >> 32) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -2345,15 +2337,15 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(k::NEGATION);
                     self.word_skip_as::<false, false>(w::BANG_19)?;
-                    stack.push(u64::from(self.flags));
-                    self.flags = self.flags | FLAG_NEGATING;
-                    stack.push(56 | u64::from(self.word) << 32);
+                    stack.push(56);
                     st = 53;
                     continue 'run;
                 }
                 56 => {
-                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::OPERAND);
+                    if self.made_is(k::COMPARISON) {
+                        return self.refuse();
+                    }
                     self.close()?;
                     self.depth -= 1;
                     self.marked = false;
@@ -2363,44 +2355,17 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 57 => {
-                    let arm: usize;
                     match self.word() {
-                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                            arm = 0;
-                        }
-                        w::TILDE_31 => {
-                            arm = 1;
-                        }
-                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
+                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                             self.reread_parenthesized()?;
-                            let arm: usize;
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                                    arm = 0;
-                                }
-                                w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                                    arm = 1;
-                                }
-                                _ => {
-                                    arm = usize::MAX;
-                                }
-                            }
-                            match arm {
-                                0 => {
                                     self.relabel_field(f::BARE)?;
                                     stack.push(61);
                                     st = 62;
                                     continue 'run;
                                 }
-                                1 => {
+                                w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                                     stack.push(5);
                                     st = 59;
                                     continue 'run;
@@ -2410,7 +2375,7 @@ impl<L: Layout> P<'_, L> {
                                 }
                             }
                         }
-                        1 => {
+                        w::TILDE_31 => {
                             self.reread_parenthesized_strict()?;
                             self.pattern_tail()?;
                             st = 5;
@@ -2423,25 +2388,13 @@ impl<L: Layout> P<'_, L> {
                 }
                 58 => {
                     self.relabel_field(0)?;
-                    let arm: usize;
                     match self.word() {
-                        w::TILDE_31 => {
-                            arm = 1;
-                        }
-                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
+                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                             stack.push(5);
                             st = 59;
                             continue 'run;
                         }
-                        1 => {
+                        w::TILDE_31 => {
                             self.pattern_tail()?;
                             st = 5;
                             continue 'run;
@@ -2469,20 +2422,8 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 61 => {
-                    let arm: usize;
                     match self.word() {
-                        w::TILDE_31 => {
-                            arm = 0;
-                        }
-                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
+                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                             stack.push(5);
                             st = 58;
                             continue 'run;
@@ -2583,20 +2524,8 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 69 => {
-                    let arm: usize;
                     match self.word() {
-                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                            arm = 0;
-                        }
-                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
+                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                             stack.push(54);
                             st = 57;
                             continue 'run;
@@ -2677,9 +2606,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(UNSET);
                     self.retag(k::CONJUNCTION);
-                    stack.push(u64::from(self.flags));
-                    self.flags = self.flags & !FLAG_NEGATING;
-                    stack.push(78 | u64::from(self.word) << 32);
+                    stack.push(78);
                     st = 53;
                     continue 'run;
                 }
@@ -2688,9 +2615,7 @@ impl<L: Layout> P<'_, L> {
                         w::COMMA_12 => {
                             self.tk_as::<false, false>(true, k::COMMA, 0)?;
                             self.drop_made()?;
-                            stack.push(u64::from(self.flags));
-                            self.flags = self.flags & !FLAG_NEGATING;
-                            stack.push(78 | u64::from(self.word) << 32);
+                            stack.push(78);
                             st = 53;
                             continue 'run;
                         }
@@ -2701,27 +2626,14 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 78 => {
-                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::LITERAL);
                     st = 77;
                     continue 'run;
                 }
                 79 => {
                     self.field_made(f::BARE);
-                    let arm: usize;
                     match self.word() {
-                        w::TILDE_31 => {
-                            arm = 0;
-                        }
-                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
+                        w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                             stack.push(54);
                             st = 58;
                             continue 'run;

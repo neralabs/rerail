@@ -788,8 +788,9 @@ impl<'a> G<'a> {
                     format!("{pad}let asks = self.asks;\n{pad}self.asks = asks & {keep:#x} | {set:#x};\n{pad}self.{}()?;\n{pad}self.asks = asks;\n", rule_fn(n))
                 };
                 let saves = self.call_saves.borrow();
+                // Where only some levels set the word (`call_saves`), each of those keeps its caller's itself (`rule`).
                 let (refuses, words) = match saves.as_ref() {
-                    Some((r, w)) => (r.contains(n.as_str()), w.contains(n.as_str())),
+                    Some((r, _)) => (r.contains(n.as_str()), false),
                     None => (true, true),
                 };
                 // The level's word is the caller's again where the call returns (the machine's `PUSH`).
@@ -1019,6 +1020,12 @@ impl<'a> G<'a> {
         if nested {
             out.push_str("        self.deeper()?;\n");
         }
+        // A level that may set the level's word (`remember`) gives its caller's back where it ends, as the machine's
+        // `PUSH` keeps it: one save, here, not one at each call.
+        let keeps_word = nested && !self.remember.is_empty() && self.call_saves.borrow().as_ref().is_some_and(|(_, w)| w.contains(name));
+        if keeps_word {
+            out.push_str("        let word = self.word;\n");
+        }
         if let Some(one) = self.statements(name, body)? {
             let _ = writeln!(out, "{}    }}\n", self.statement_loop(name, "self.statement()", "")?);
             let _ = write!(out, "    /// A statement of `{name}`: one of its repetition, as the lean parser's `statement`.\n    fn statement(&mut self) -> R {{\n");
@@ -1042,6 +1049,9 @@ impl<'a> G<'a> {
             out.push_str(&self.ending_code(name, "        ")?);
             if node {
                 out.push_str("        self.close()?;\n");
+            }
+            if keeps_word {
+                out.push_str("        self.word = word;\n");
             }
             if nested {
                 out.push_str("        self.depth -= 1;\n");

@@ -44,24 +44,13 @@ struct Rl<'g, 'a> {
     hot: HashSet<String>,
     /// The levels whose call saves its caller's refused marks: a level that refuses one, or one a hot rule calls.
     saves: HashSet<String>,
-    /// The levels whose own code may change the level's word (`remember`, a reading), which their call saves with the
-    /// place it returns to: another leaves its caller's word as it found it.
+    /// The levels whose own code may change the level's word (`remember`), which their call saves with the place it
+    /// returns to: another leaves its caller's word as it found it.
     words: HashSet<String>,
 }
 
-/// Whether `g` holds a reading (`Gram::Reread`), itself or inside.
-fn rereads(g: &Gram) -> bool {
-    match g {
-        Gram::Reread { .. } => true,
-        Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().any(rereads),
-        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => rereads(a),
-        Gram::Wrap { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => rereads(body),
-        _ => false,
-    }
-}
-
-/// The levels whose own code (theirs and the rules that are no level it reaches) takes a `remember` choice or reads a
-/// reading: what may set the level's word (`Rl::words`).
+/// The levels whose own code (theirs and the rules that are no level it reaches) takes a `remember` choice: what may
+/// set the level's word (`Rl::words`). A reading only reads it (`REMEMBERED`), as the machine's `REMEMBER` alone sets it.
 fn word_setters(g: &G<'_>) -> HashSet<String> {
     let mut out = HashSet::new();
     for &level in g.rules.keys().filter(|n| g.nested(n)) {
@@ -73,7 +62,6 @@ fn word_setters(g: &G<'_>) -> HashSet<String> {
                 Some(Stmt::Node { body, .. } | Stmt::Choice { body, .. }) => body,
                 _ => continue,
             };
-            sets |= rereads(body);
             let mut ns = Vec::new();
             names(body, &mut ns);
             for n in ns {
@@ -460,7 +448,8 @@ pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
 
 /// Tier 2 of the grammar as calls (the CPU's form, beside the loop, the device's): the same levels, a level's call a
 /// call of its method, which saves in its locals what the loop's call saves on the stack, where the same level may
-/// change it (`refusers`, `word_setters`); the code after it the code that follows. Its depth bounded as the loop's
+/// change it (`refusers`); a level that may set the level's word keeps its caller's itself (`word_setters`, `G::rule`).
+/// The code after it the code that follows. Its depth bounded as the loop's
 /// (`deeper`, `DEPTH`).
 pub(super) fn tier2_calls(x: &Input<'_>) -> Result<(String, u32), String> {
     let g = G::new(x);
