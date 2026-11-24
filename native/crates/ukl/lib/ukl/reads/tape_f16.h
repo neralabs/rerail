@@ -17,25 +17,37 @@ UKL_INLINE uint64_t clif_f16_ld(CLIF_T_ARGS, uint32_t base, uint32_t off, uint32
 #define CLIF_16_RARE UKL_RARE
 #include <ukl/body/tape_f16.h>
 
-// The node's parent, or NONE at the root: the node before is the parent (an inner node), or a leaf naming the
-// previous sibling or, every K-th sibling, the parent. Each step moves back, and a step that would not (a slot no
-// tape's) ends the walk.
+// A parent walk's first step from node `i` (`CLIF_T_NONE` at the root): the parent, or (`CLIF_T_LINK` set) the node
+// `j` the walk goes on from, a previous sibling's: the node before is the parent (an inner node), or a leaf naming the
+// previous sibling or, every K-th sibling, the parent. A walk's only state is its node, so `i`'s parent is `j`'s, and
+// `j` is before `i`; a step that would not move back (a slot no tape's) ends the walk.
+#define CLIF_T_LINK (((uint64_t)1) << 32)
+UKL_INLINE uint64_t clif_f16_parent_step(CLIF_T_ARGS, uint32_t i)
+{
+    if (i == 0u)
+        return CLIF_T_NONE;
+    uint32_t before = i - 1u;
+    uint64_t s = clif_f16_slot(t, v, before);
+    if ((s & 1u) == 0u)
+        return before;
+    uint32_t step = (uint32_t)(s >> 2);
+    if (step - 1u >= i)
+        return CLIF_T_NONE;
+    uint32_t j = i - step;
+    if ((s & 2u) != 0u)
+        return j;
+    if (j == 0u)
+        return CLIF_T_NONE;
+    return CLIF_T_LINK | j;
+}
+
+// The node's parent, or NONE at the root: its walk's steps, each to a node before the last (at most K - 1 siblings).
 UKL_INLINE uint32_t clif_f16_parent(CLIF_T_ARGS, uint32_t i)
 {
-    uint32_t j = i;
-    while (j != 0u) {
-        uint32_t before = j - 1u;
-        uint64_t s = clif_f16_slot(t, v, before);
-        if ((s & 1u) == 0u)
-            return before;
-        uint32_t step = (uint32_t)(s >> 2);
-        if (step - 1u >= j)
-            return CLIF_T_NONE;
-        j -= step;
-        if ((s & 2u) != 0u)
-            return j;
-    }
-    return CLIF_T_NONE;
+    uint64_t r = clif_f16_parent_step(t, v, i);
+    while ((r & CLIF_T_LINK) != 0u)
+        r = clif_f16_parent_step(t, v, (uint32_t)r);
+    return (uint32_t)r;
 }
 
 // ---- the newline index (`rerail_tape_format::newlines`) ---------------------------------------------------------------

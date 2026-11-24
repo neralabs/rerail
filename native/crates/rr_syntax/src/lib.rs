@@ -10,7 +10,7 @@ mod micro;
 pub mod syntax;
 pub mod tape;
 
-/// The tape image's format and its in-place reader (`View`), for the readers of this crate's images.
+/// The tape's format and its in-place readers (`f16`, `tape::Tape`), for the readers of this crate's tapes.
 pub use rerail_tape_format as tape_format;
 
 /// A `.rerail` file that does not parse: the engine's `Error::Syntax`.
@@ -20,15 +20,15 @@ pub enum Error {
 }
 
 /// A `.rerail` file's tree, as its tape holds it (decision 0061): its nodes in preorder, comments
-/// as extras, and an ERROR leaf for each statement that does not parse. Never fails: a file
-/// the engine refuses to run still has a tape.
+/// as extras, and an ERROR leaf for each statement that does not parse: a file the engine refuses
+/// to run still has a tape.
 ///
-/// Written by the lean parser (`lean::tape`, docs/parser-generators/30) as the engine's image, its
-/// bytes (decision 0140: `rerail_tape_format::Writer`), each node's columns at their place as the
-/// parse goes, with no statements built and no conversion after it. It is `engine_tape`'s tree
-/// through the writer, byte for byte (`lean_tape_is_the_engines`, every `.rerail` file of the
-/// repository and seven cuts of each).
-pub fn tape(src: &str) -> Vec<u8> {
+/// Written by the lean parser (`lean::tape`, docs/parser-generators/30) in format 16 (decisions 0140, 0434, 0631:
+/// `rerail_tape_format::Writer`), each statement's nodes passed to format 16's ops as the parse commits them, with no
+/// statements built and no conversion after it. It is `engine_tape`'s tree written by format 16's reference ops,
+/// byte for byte (`lean_tape_is_the_engines`, every `.rerail` file of the repository and seven cuts of each). `Err`
+/// only for a code the language's table lacks.
+pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
     lean::tape(src)
 }
 
@@ -46,7 +46,7 @@ pub fn engine_tape(src: &str) -> Vec<tape::Node> {
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_rr_syntax;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {

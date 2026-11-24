@@ -5,7 +5,7 @@
 //! the corpus runner (`corpus.rs`, `rerail-logic`'s), which phase 0 runs its bootstrap program through: the runner is
 //! behind a trait the program's composition registers (`plan::corpus::RUNNER`).
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items under the same names:
 // the glob's name and the private one are one item. The mounts also widen what the crates above read (the split's
 // facades, not a design).
@@ -17,7 +17,7 @@
 extern crate cranelift_jit_wasm as cranelift_jit;
 pub use rerail_corpus_prep::{content_store, git_access, git_workspace, threads};
 extern crate self as rerail_rr_root;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_corpus_prep::code_rule_dsl::*;
     #[path = "logic"]
@@ -74,11 +74,13 @@ pub mod code_rule_dsl {
                 pub mod analysis_history;
                 pub mod combined;
                 pub mod constants;
+                pub mod frame;
                 pub mod git;
                 pub mod git_content;
                 pub mod import_closure;
                 pub mod inputs;
                 pub mod kept_link;
+                pub mod leaves;
                 pub mod kept_texts;
                 pub mod link;
                 pub mod phase0;

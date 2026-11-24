@@ -127,17 +127,56 @@ pub fn simd_group() -> usize {
     device().map_or(32, |d| d.simd_width() as usize)
 }
 
-thread_local! {
-    /// This thread's scratch buffers, two sets by slot: a sort's or probe's intermediates, kept for the next. A
-    /// submission uses one set (`scratch_set`); the lane has at most two in flight, each on its own set, and starts
-    /// a third only once the first completed, so no two in flight share one.
-    static SCRATCH: RefCell<[Vec<Option<shared::Pooled>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
-    static SET: Cell<usize> = const { Cell::new(0) };
+/// A submission's scratch: a sort's or probe's intermediates by slot, kept for the next submission given it. The GPU
+/// lane's space holds a few (`space::start` gives a submission one no other in flight holds); the submission carries
+/// it, and its second pass encodes on it on whichever thread finishes it (`on_scratch`).
+///
+/// Each thread's scratch, two sets the thread alternated, was a lane submission's before: a submission begins on one
+/// of the lanes' pool threads and is finished on any of them, and its second pass (a probe's spill, a tile's scatter)
+/// encoded on the set of that number of the thread that finished it, which a submission begun on that thread could be
+/// running on: two submissions' intermediates in one buffer, and pairs past their sides (`setfix::level::take`, the
+/// M3's 300-file run ab218, a pair's left 31,379 of 5,735 rows).
+#[derive(Default)]
+pub struct Scratch(std::sync::Mutex<Vec<Option<shared::Pooled>>>);
+
+/// Dropped, its buffers go back as `scratch_return`'s do: to Metal, which frees each once the command buffers that
+/// hold it completed, not to the pool, whose next lease a command buffer still running could write.
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        release(self.0.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner));
+    }
 }
 
-/// Makes `set` (0 or 1) this thread's scratch set; the previous one.
-pub fn scratch_set(set: usize) -> usize {
-    SET.with(|c| c.replace(set & 1))
+thread_local! {
+    /// This thread's own scratch by slot (a device stratum's stages on its thread), where no submission's is bound.
+    static SCRATCH: RefCell<Vec<Option<shared::Pooled>>> = const { RefCell::new(Vec::new()) };
+    /// The scratch of the submission this thread encodes for (`on_scratch`).
+    static BOUND: RefCell<Option<Arc<Scratch>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with `scratch` as every `scratch` slot's (a lane submission's, on the thread that encodes it now).
+pub fn on_scratch<R>(scratch: &Arc<Scratch>, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Arc<Scratch>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let was = self.0.take();
+            BOUND.with_borrow_mut(|b| *b = was);
+        }
+    }
+    let _restore = Restore(BOUND.with_borrow_mut(|b| b.replace(Arc::clone(scratch))));
+    f()
+}
+
+fn release(slots: &mut Vec<Option<shared::Pooled>>) -> usize {
+    let mut n = 0;
+    for b in slots.drain(..).flatten() {
+        n += b.length() as usize;
+        b.release();
+    }
+    if n > 0 {
+        shared::kept_change(shared::Kept::Scratch, -(n as isize));
+    }
+    n
 }
 
 /// A join kernel: its function, and its buffer arguments' names in the order it declares them (`Pass` binds a
@@ -174,6 +213,11 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     }
     device()?;
     let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
+    // Launched at `GROUP` threads a group: a pipeline that allows fewer (its registers, its group's memory) is fatal,
+    // as a kernel that does not compile is.
+    if let Some(most) = function.max_threads_per_group() {
+        assert!(most >= GROUP, "the kernel {name} ({variant}) allows {most} threads a group, under the {GROUP} it is launched with");
+    }
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
     let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
@@ -364,25 +408,19 @@ pub const FREE: usize = 16;
 /// write it (returned to the pool, a sort still running wrote into the block the pool's next lease made of it: Q265's
 /// check, `metal_join`), and Metal frees it once every command buffer that holds it completed.
 pub fn scratch_return() -> usize {
-    let n = SCRATCH.with_borrow_mut(|sets| {
-        let mut n = 0;
-        for b in sets.iter_mut().flat_map(|s| s.drain(..)).flatten() {
-            n += b.length() as usize;
-            b.release();
-        }
-        n
-    });
-    if n > 0 {
-        shared::kept_change(shared::Kept::Scratch, -(n as isize));
-    }
-    n
+    SCRATCH.with_borrow_mut(release)
 }
 
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
 pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
-    let set = SET.with(Cell::get);
-    SCRATCH.with_borrow_mut(|sets| {
-        let s = &mut sets[set];
+    match BOUND.with_borrow(Clone::clone) {
+        Some(bound) => slot_of(&mut bound.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner), slot, bytes),
+        None => SCRATCH.with_borrow_mut(|s| slot_of(s, slot, bytes)),
+    }
+}
+
+fn slot_of(s: &mut Vec<Option<shared::Pooled>>, slot: usize, bytes: usize) -> Result<Buffer, String> {
+    {
         if s.len() <= slot {
             s.resize_with(slot + 1, || None);
         }
@@ -400,7 +438,7 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             s[slot] = Some(new);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
-    })
+    }
 }
 
 /// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,
@@ -484,9 +522,14 @@ pub struct Pass {
     /// The launches charged so far (the evaluation's ledger holds the budget; this is the pass's own count, for
     /// its reports).
     dispatches: Cell<usize>,
+    /// Whether it is a stack (`stack`): its dispatches one launch.
+    stacked: Cell<bool>,
     /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
     /// the launches write it.
     resident: RefCell<Vec<(Buffer, bool)>>,
+    /// The queue's residency span (`ComputeQueue::residency_span`) its last launch was in, and how many of
+    /// `resident` were made resident in it: a stack's thousands of dispatches make them resident once (decision 0641).
+    applied: Cell<(u64, usize)>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
     /// This submission's key in the evaluation's records (`launch::attempt`, `launch::mark`).
@@ -495,16 +538,27 @@ pub struct Pass {
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), stacked: Cell::new(false), resident: RefCell::new(Vec::new()), applied: Cell::new((u64::MAX, 0)), error: RefCell::new(None), key: Box::new(0) })
     }
 
     fn pointer(&self) -> usize {
         std::ptr::from_ref::<u8>(&self.key) as usize
     }
 
-    /// The launches made so far.
+    /// The dispatches made so far.
     pub fn dispatches(&self) -> usize {
         self.dispatches.get()
+    }
+
+    /// Makes this pass a stack (decision 0648): its dispatches, one program's dependent levels, are one launch in the
+    /// evaluation's budget, charged at its first.
+    pub fn stack(&self) {
+        self.stacked.set(true);
+    }
+
+    /// The launches it is in the budget: its dispatches, or one for a stack that made any.
+    pub fn launches(&self) -> usize {
+        if self.stacked.get() { self.dispatches.get().min(1) } else { self.dispatches.get() }
     }
 
     fn launch(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: Grid<'_>) {
@@ -529,7 +583,11 @@ impl Pass {
             Grid::Indirect { .. } => [GROUP, 1, 1],
         };
         let bound = buffers.iter().map(|(b, _)| (b.contents() as usize, b.length())).collect();
-        launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        if self.stacked.get() {
+            launch::attempt_stacked(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        } else {
+            launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
@@ -541,9 +599,14 @@ impl Pass {
             if pipe.args {
                 l = l.bytes("a", bytes);
             }
-            for (b, write) in self.resident.borrow().iter() {
+            // Made resident once a span (`residency_span`, Metal's encoder): those added since, or all in a new one.
+            let span = self.queue.residency_span();
+            let (was, done) = self.applied.get();
+            let resident = self.resident.borrow();
+            for (b, write) in &resident[if was == span { done } else { 0 }..] {
                 l = if *write { l.uses(b) } else { l.uses_read(b) };
             }
+            self.applied.set((span, resident.len()));
             match grid {
                 Grid::Groups(groups, threads) => l.run(&[groups.max(1) as u64, 1, 1], &[threads, 1, 1]),
                 Grid::Indirect { grid, offset, most } => l.run_indirect(grid, offset, &[most.max(1) as u64, 1, 1], &[GROUP, 1, 1]),
@@ -617,10 +680,23 @@ impl Pass {
         match call(&self.queue) {
             Ok(made) => {
                 self.dispatches.set(self.dispatches.get() + made);
-                launch::charge_made(self.pointer(), "a UKL library launch", made);
+                // A stack's are its own: the stack one launch (decision 0648).
+                if self.stacked.get() {
+                    launch::charge_made_stacked(self.pointer(), "a UKL library launch", made);
+                } else {
+                    launch::charge_made(self.pointer(), "a UKL library launch", made);
+                }
             }
             Err(e) => *self.error.borrow_mut() = Some(format!("the UKL library: {e}")),
         }
+    }
+
+    /// Holds `b` by this submission's fence from now until its work completes (`holds`), for a launch encoded later in
+    /// it: a job queued for a level's one launch (decision 0603) reaches its buffers when it is queued, and what drops
+    /// one before the level launches keeps it from the pool until then (decision 0491 step 2). Without it the lease is
+    /// back in the pool at its drop, and the next buffer taken (a program's control words) is the one the job writes.
+    pub fn hold_for_later(&self, b: &Buffer, write: bool) {
+        self.holds(b, "a queued job", 0, write);
     }
 
     /// Makes `buffers` resident for the launches after it: buffers a kernel reaches by address (a view's directory
@@ -639,6 +715,12 @@ impl Pass {
         self.resident.borrow_mut().push((buffer.clone(), true));
     }
 
+    /// The buffers made resident on it (`use_read`, `use_read_write`), each with whether it is written: what a pass
+    /// that goes on with its work declares again.
+    pub fn residents(&self) -> Vec<(Buffer, bool)> {
+        self.resident.borrow().clone()
+    }
+
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
     pub fn wait_for_event(&self, event: &SharedEvent, value: u64) {
         self.queue.wait_for_event(event, value);
@@ -648,14 +730,6 @@ impl Pass {
     /// work completes (decision 0491 step 2): what drops it meanwhile keeps it from the pool until then. A block's
     /// own region, while a handle holds it, is pinned as the kernel declares the argument, read or written (step 5). Every mapped
     /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
-    /// Holds `b`'s block or pooled lease by this submission's fence until its work completes (decision 0491 step 2),
-    /// as a launch's bind does, before any launch binds it: a job queued now (its buffers reached by address) and
-    /// launched later in the pass, whose caller may drop what it reaches meanwhile. Without it the lease is back in
-    /// the pool at its drop, and the next buffer taken (a program's control words) is the one the job writes.
-    pub fn hold(&self, b: &Buffer, write: bool) {
-        self.holds(b, "a queued job's buffer", 0, write);
-    }
-
     fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
         let at = b.contents() as usize;
         let known = at == 0 || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);
@@ -1294,7 +1368,7 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<
 
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.
 pub struct Probed {
-    pub pairs: Vec<(u32, u32)>,
+    pub pairs: rerail_blocks::vector::Vector<[u32; 2]>,
     pub gpu_seconds: f64,
     /// Command buffers: one, or two when the pairs overflowed the space expected for them.
     pub submissions: u32,
@@ -1486,14 +1560,14 @@ impl ProbeJob {
     }
 
     /// The pairs, (left row, right host row), in left row order: after the submission completed.
-    pub fn pairs(&self) -> Vec<(u32, u32)> {
+    pub fn pairs(&self) -> rerail_blocks::vector::Vector<[u32; 2]> {
         let total = self.total();
         let Some(space) = &self.space else {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         };
         // SAFETY: `total` pairs, written by a completed scatter into space for at least that many.
         let flat = unsafe { std::slice::from_raw_parts(space.buffer.contents().cast::<[u32; 2]>(), total) };
-        flat.iter().map(|p| (p[0], p[1])).collect()
+        flat.iter().copied().collect()
     }
 }
 
@@ -1617,10 +1691,10 @@ impl ProbeOne {
 
     /// The pairs, in left row order (block by block), after the submission completed. `None` when they did not
     /// fit.
-    pub fn pairs(&self, arena: &Arena) -> Option<Vec<(u32, u32)>> {
+    pub fn pairs(&self, arena: &Arena) -> Option<rerail_blocks::vector::Vector<[u32; 2]>> {
         let blocks = self.read_blocks(arena);
         let total: usize = blocks.iter().map(|&(_, n)| n as usize).sum();
-        let mut out = Vec::with_capacity(total);
+        let mut out = rerail_blocks::vector::Vector::with_capacity(total);
         for (at, n) in blocks {
             if n == 0 {
                 continue;
@@ -1630,7 +1704,8 @@ impl ProbeOne {
             }
             // SAFETY: `n` pairs at `at`, inside the arena (the device checked the capacity), written by it.
             let flat = unsafe { std::slice::from_raw_parts(arena.pairs.buffer.contents().cast::<[u32; 2]>().add(at as usize), n as usize) };
-            out.extend(flat.iter().map(|p| (p[0], p[1])));
+            // copy: not block data: the pairs read back from the device arena, as `read` does (gpu/mod.rs)
+            out.extend_from_slice(flat);
         }
         let _ = self.nl;
         Some(out)
@@ -1961,7 +2036,7 @@ mod tests {
         let Ok(dev) = device() else { return };
         use rerail_blocks::bloom::{Bloom, hash};
         let right: Vec<i64> = (0..20_000i64).map(|i| i * 6 - 50_000).collect();
-        let left: Vec<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
+        let left: rerail_blocks::vector::Vector<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
         // copy: not block data (a test's literal keys)
         let own = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
         own.settle();

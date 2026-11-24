@@ -29,6 +29,12 @@
     {
       "language": "javascript",
       "via": "script-block"
-    }
+    },
+    { "language": "typescript", "via": "vue-script", "demand": true },
+    { "language": "typescript", "via": "vue-expression", "dialects": ["typescript"], "demand": true },
+    { "language": "typescript", "via": "vue-statements", "dialects": ["typescript"], "demand": true },
+    { "language": "typescript", "via": "vue-params", "dialects": ["typescript"], "demand": true },
+    { "language": "typescript", "via": "vue-for-alias", "dialects": ["typescript"], "demand": true },
+    { "language": "typescript", "via": "vue-for-source", "dialects": ["typescript"], "demand": true }
   ]
 }

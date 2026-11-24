@@ -1,7 +1,7 @@
 # 0407: Token marks that tier 2 tests alone hold no bit of the code
 
-Status: decided (2026-11-18, while moving Kotlin off `back_fill`, 0416). Changes 0129 (token
-marks tested from the records).
+Status: built (audited 2026-11-23). Decided (2026-11-18, while moving Kotlin off `back_fill`, 0416). Changes 0129
+(token marks tested from the records).
 
 ## Intro
 

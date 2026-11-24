@@ -412,6 +412,8 @@ typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 #define RT_SET (0u)
 #define RT_PUSH (1u)
 #define RT_POP (2u)
+// A text row's type is its two bits; past them, its piece's start plus one (`lp_pragma_text`), so a piece read
+// again voids its first reading's rows (`lp_void`): a void row's type bits are 0.
 // A row that gives no value (a push, a pop with no push): a lookup walks past it.
 #define V_SKIP (0xfffffff0u)
 // The tests' operators, by their names' keys (`IF_OPKEYS`, the dialect's table): the `__has_*`
@@ -940,7 +942,7 @@ UKL_INLINE uint32_t paren_delta(Ux u, uint32_t g) {
 // The arena, as the loop reads it.
 typedef struct Ar {
     // The pieces' columns (decision 0520): each one's source, length and flags, start, origin.
-    PP_GLOBAL uint32_t* psrc; PP_GLOBAL uint32_t* pn; PP_GLOBAL uint32_t* pst; PP_GLOBAL uint32_t* pexp;
+    PP_GLOBAL uint32_t* psrc; PP_GLOBAL uint32_t* pn; PP_GLOBAL uint32_t* pst; PP_GLOBAL uint32_t* pexp; PP_GLOBAL uint32_t* pxp;
     PP_GLOBAL uint32_t* out; PP_GLOBAL uint32_t* ctl;
     uint32_t tok_cap, out_cap;
     PP_GLOBAL uint8_t* sbytes; PP_GLOBAL PxScratch* stoks; uint32_t sb_cap, st_cap;
@@ -948,6 +950,8 @@ typedef struct Ar {
     // scratch token), and their room.
     PP_GLOBAL uint32_t* cnt; uint32_t cnt_cap;
     Tf tf;
+    // The loop's queue and its pieces' words (`LPQ`, decision 0613 §4: `lp_wq`), for tops of `lpq_top` tokens at most.
+    PP_GLOBAL uint32_t* lpq; uint32_t lpq_top;
 } Ar;
 
 // Whether the sorted table has a pop of `key` at exactly `slot`: one a `_Pragma` of the invocation
@@ -1051,7 +1055,7 @@ UKL_INLINE Ov ov_new(PP_GLOBAL const uint32_t* cols, uint32_t cap, uint32_t np) 
     Ov o; o.cols = cols; o.cap = cap; o.np = ukl_min(np, cap); o.ci = OV_NONE; o.cp = 0u; o.cn = 0u;
     return o;
 }
-// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_place`).
+// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_roll_place`).
 UKL_INLINE void ov_at(UKL_PRIVATE Ov* o, uint32_t i) {
     PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
     PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
@@ -1246,10 +1250,12 @@ UKL_INLINE void px_counter_value(Tf tf, PP_GLOBAL const uint32_t* cnt, uint32_t 
 // the directives' (`at` its first place there).
 UKL_INLINE void tf_row(Tf tf, PP_GLOBAL uint64_t* sort_keys, PP_GLOBAL uint64_t* name_keys, PP_GLOBAL uint32_t* values, PP_GLOBAL uint32_t* types, uint32_t at, uint32_t k) {
     if (k >= ukl_min(tf.n[0], tf.cap)) return;
-    sort_keys[at + k] = tf.sk[k];
-    name_keys[at + k] = tf.nk[k];
+    // A void row (`lp_void`): a push of no name, past every key's slots.
+    bool void_ = (tf.ty[k] & 3u) == 0u;
+    sort_keys[at + k] = void_ ? 0xfffffffffffffffful : tf.sk[k];
+    name_keys[at + k] = void_ ? 0ul : tf.nk[k];
     values[at + k] = V_UNDEF;
-    types[at + k] = tf.ty[k];
+    types[at + k] = void_ ? RT_PUSH : (tf.ty[k] & 3u);
 }
 // Mark `k`, its file not entered again past its slot.
 UKL_INLINE void tf_once(Tf tf, PP_GLOBAL uint32_t* once, uint32_t k) {
@@ -1262,13 +1268,17 @@ UKL_INLINE void tf_key(Tf tf, PP_GLOBAL uint32_t* ctl, uint32_t k) {
     uint32_t nr = ukl_min(tf.n[0], tf.cap), no = ukl_min(tf.n[1], tf.cap), nu = tf.n[3] != 0u ? ukl_min(tf.n[2], tf.cap) : 0u;
     uint64_t h = 0ul;
     if (k < nr) {
-        h = key_mix(key_mix(0x51ul, tf.sk[k]), tf.nk[k] ^ ((uint64_t)(tf.ty[k])));
-        for (uint32_t j = 0u; j < k; j++) if (tf.sk[j] == tf.sk[k] && tf.nk[j] == tf.nk[k]) px_refuse(ctl, X_PRAGMA);
+        // A void row is none (`lp_void`).
+        if ((tf.ty[k] & 3u) == 0u) return;
+        h = key_mix(key_mix(0x51ul, tf.sk[k]), tf.nk[k] ^ ((uint64_t)(tf.ty[k] & 3u)));
+        for (uint32_t j = 0u; j < k; j++) if ((tf.ty[j] & 3u) != 0u && tf.sk[j] == tf.sk[k] && tf.nk[j] == tf.nk[k]) px_refuse(ctl, X_PRAGMA);
     } else if (k < nr + no) {
         uint32_t j = k - nr;
         h = key_mix(0x52ul, (((uint64_t)(tf.of[j])) << 32) | ((uint64_t)(tf.os[j])));
     } else if (k < nr + no + nu) {
         uint32_t j = k - nr - no;
+        // A use that counts nothing (a line not read, a piece's first reading voided) is none.
+        if (tf.cslot[j] == PP_NONE) return;
         h = key_mix(key_mix(0x53ul, (((uint64_t)(tf.cslot[j])) << 32) | ((uint64_t)(tf.csub[j]))), (uint64_t)(tf.cunit[j]));
     } else {
         return;
@@ -1296,9 +1306,9 @@ UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t
     u.tline = tline; u.tlinen = tlinen; u.ldelta = ldelta; u.lt0 = lt0; u.sc = sc;
     Ar a;
     // The pieces' columns, `tok_cap` words each: the source, the length and flags, the start, the
-    // origin (decision 0520).
+    // origin (decision 0520), and its expansion (decision 0613 §6).
     uint32_t tc = words[1];
-    a.psrc = cols; a.pn = cols + tc; a.pst = cols + 2u * tc; a.pexp = cols + 3u * tc;
+    a.psrc = cols; a.pn = cols + tc; a.pst = cols + 2u * tc; a.pexp = cols + 3u * tc; a.pxp = cols + 4u * tc;
     a.out = out; a.ctl = ctl;
     a.tok_cap = words[1]; a.out_cap = words[4];
     a.sbytes = sbytes; a.stoks = stoks; a.sb_cap = words[8]; a.st_cap = words[9];

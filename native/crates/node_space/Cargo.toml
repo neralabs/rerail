@@ -1,0 +1,19 @@
+# Written by the crate split (step 8b) and kept by hand: its sources are where they were, mounted in place (src/lib.rs).
+[package]
+name = "rerail-node-space"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A wave's node space and its chunked node sets (decision 0024 §1, 0045)."
+
+[features]
+# The dense set, the containers' reference (`space::DenseSet`), for the tests above.
+test-hooks = []
+
+[dependencies]
+
+[dev-dependencies]
+# A container test reads a segment back with the postings' decoder (`content_store::segment_positions`).
+rerail-store-base = { path = "../store_base", features = ["test-hooks"] }
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-node-space = { path = ".", features = ["test-hooks"] }

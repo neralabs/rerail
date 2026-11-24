@@ -1,6 +1,7 @@
 # 0058: What a rule sees of guests, normalized strings, and tape operations
 
-Status: accepted (2026-11-07). Built for `.py` and `.rs` corpus runs; see [What was built](#what-was-built).
+Status: built (audited 2026-11-23). Accepted (2026-11-07). Built for `.py` and `.rs` corpus runs; see [What was
+built](#what-was-built).
 
 ## Intro
 

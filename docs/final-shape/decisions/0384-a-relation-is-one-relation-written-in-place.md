@@ -1,7 +1,7 @@
 # 0384. A relation is one relation, written in place
 
-Status: decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two other forms: relations of many parts with
-an index per part, and nesting only the fixpoint's runs in blocks.
+Status: built (audited 2026-11-23). Decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two
+other forms: relations of many parts with an index per part, and nesting only the fixpoint's runs in blocks.
 
 ## Intro
 

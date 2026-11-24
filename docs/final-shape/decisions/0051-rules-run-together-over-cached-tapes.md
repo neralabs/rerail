@@ -1,6 +1,6 @@
 # 0051: All rules run together over cached tapes; a cross-file rule's file-local part runs in the chunks
 
-Status: accepted (2026-11-06; built and measured)
+Status: built (audited 2026-11-23). Accepted (2026-11-06; built and measured)
 
 ## Intro
 

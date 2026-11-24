@@ -16,6 +16,8 @@
 //!   binary search of the runs and tests the run's rows on the other keys. Its pairs are in left row order, and
 //!   within a left row in right row order (the sort is stable): the device's probe's order, exactly.
 
+use rerail_blocks::vector::Vector;
+
 /// Below this many rows a comparison sort of the packed words is the faster.
 const SMALL: usize = 2048;
 
@@ -41,7 +43,7 @@ pub fn bits(min: i64, max: i64) -> u32 {
 }
 
 /// A word an LSD pass sorts: its 8-bit digit at `shift`.
-trait Packed: Copy + Ord + Default {
+trait Packed: Copy + Ord + Default + rerail_blocks::Pod {
     fn digit(self, shift: u32) -> usize;
     fn row(self) -> u32;
 }
@@ -65,21 +67,21 @@ impl Packed for u128 {
 }
 
 /// Sorts `words` by their bits `32..32 + bits` (the offsets; the row below them keeps it stable).
-fn radix<T: Packed>(words: &mut Vec<T>, bits: u32) {
+fn radix<T: Packed>(words: &mut Vector<T>, bits: u32) {
     if words.len() < SMALL {
         words.sort_unstable();
         return;
     }
     let passes = bits.div_ceil(8) as usize;
     // Every digit's histogram, in one pass over the rows.
-    let mut hist = vec![[0u32; 256]; passes];
+    let mut hist: Vector<[u32; 256]> = rerail_blocks::vector![[0u32; 256]; passes];
     for &w in words.iter() {
         for (p, h) in hist.iter_mut().enumerate() {
             h[w.digit(32 + 8 * p as u32)] += 1;
         }
     }
     let n = words.len() as u32;
-    let mut other = vec![T::default(); words.len()];
+    let mut other: Vector<T> = rerail_blocks::vector![T::default(); words.len()];
     for (p, h) in hist.iter().enumerate() {
         // A digit every row shares orders nothing.
         if h.contains(&n) {
@@ -103,42 +105,61 @@ fn radix<T: Packed>(words: &mut Vec<T>, bits: u32) {
 
 /// Rows in the order of their keys, stable: each place's row, and each place's key.
 pub struct Sorted {
-    pub perm: Vec<u32>,
-    pub keys: Vec<i64>,
+    pub perm: Vector<u32>,
+    pub keys: Vector<i64>,
 }
 
 /// The rows of `keys` in the keys' order, stable.
 pub fn sort(keys: &[i64]) -> Sorted {
-    let Some((min, max)) = span(keys) else { return Sorted { perm: Vec::new(), keys: Vec::new() } };
+    let Some((min, max)) = span(keys) else { return Sorted { perm: Vector::new(), keys: Vector::new() } };
     let b = bits(min, max);
-    let (perm, keys): (Vec<u32>, Vec<i64>) = if b <= 32 {
-        let mut w: Vec<u64> = keys.iter().enumerate().map(|(r, &v)| (v.wrapping_sub(min) as u64) << 32 | r as u64).collect();
+    let (mut perm, mut out) = (Vector::with_capacity(keys.len()), Vector::with_capacity(keys.len()));
+    if b <= 32 {
+        let mut w: Vector<u64> = keys.iter().enumerate().map(|(r, &v)| (v.wrapping_sub(min) as u64) << 32 | r as u64).collect();
         radix(&mut w, b);
-        w.iter().map(|&w| (w.row(), ((w >> 32) as i64).wrapping_add(min))).unzip()
+        for &w in w.iter() {
+            perm.push(w.row());
+            out.push(((w >> 32) as i64).wrapping_add(min));
+        }
     } else {
-        let mut w: Vec<u128> = keys.iter().enumerate().map(|(r, &v)| u128::from(v.wrapping_sub(min) as u64) << 32 | r as u128).collect();
+        let mut w: Vector<u128> = keys.iter().enumerate().map(|(r, &v)| u128::from(v.wrapping_sub(min) as u64) << 32 | r as u128).collect();
         radix(&mut w, b);
-        w.iter().map(|&w| (w.row(), ((w >> 32) as u64 as i64).wrapping_add(min))).unzip()
-    };
-    Sorted { perm, keys }
+        for &w in w.iter() {
+            perm.push(w.row());
+            out.push(((w >> 32) as u64 as i64).wrapping_add(min));
+        }
+    }
+    Sorted { perm, keys: out }
 }
 
 /// The runs of sorted keys: each value, its first place and its count.
-pub fn runs(sorted: &[i64]) -> Vec<(i64, u32, u32)> {
-    let mut out: Vec<(i64, u32, u32)> = Vec::new();
+pub fn runs(sorted: &[i64]) -> Vector<Run> {
+    let mut out: Vector<Run> = Vector::new();
     for (i, &k) in sorted.iter().enumerate() {
         match out.last_mut() {
-            Some(last) if last.0 == k => last.2 += 1,
-            _ => out.push((k, i as u32, 1)),
+            Some(last) if last.key == k => last.count += 1,
+            _ => out.push(Run { key: k, start: i as u32, count: 1 }),
         }
     }
     out
 }
 
+/// A run of one key among sorted keys: the key, its first place and its count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct Run {
+    pub key: i64,
+    pub start: u32,
+    pub count: u32,
+}
+
+// SAFETY: `repr(C)`, an `i64` and two `u32`s: no padding.
+unsafe impl rerail_blocks::Pod for Run {}
+
 /// A relation's rows sorted by its key 0, and the key's runs: what a join probes, kept while the relation holds.
 pub struct Keyed {
     pub sorted: Sorted,
-    pub runs: Vec<(i64, u32, u32)>,
+    pub runs: Vector<Run>,
 }
 
 impl Keyed {
@@ -151,37 +172,37 @@ impl Keyed {
 
 /// The equi-join of `left` and `right` on their columns (key `k` is each one's column `k`): the pairs of rows,
 /// (left, right), in key order.
-pub fn join(left: &[&[i64]], right: &[&[i64]]) -> Vec<(u32, u32)> {
-    let Some(r0) = right.first() else { return Vec::new() };
+pub fn join(left: &[&[i64]], right: &[&[i64]]) -> rerail_blocks::vector::Vector<[u32; 2]> {
+    let Some(r0) = right.first() else { return rerail_blocks::vector::Vector::new() };
     join_keyed(left, &Keyed::new(r0), right)
 }
 
 /// `join` with the right side sorted already (`right` its columns, `keyed` its key 0's order and runs): the left
 /// sorted, the two run lists merged.
-pub fn join_keyed(left: &[&[i64]], keyed: &Keyed, right: &[&[i64]]) -> Vec<(u32, u32)> {
-    let Some(l0) = left.first() else { return Vec::new() };
+pub fn join_keyed(left: &[&[i64]], keyed: &Keyed, right: &[&[i64]]) -> rerail_blocks::vector::Vector<[u32; 2]> {
+    let Some(l0) = left.first() else { return rerail_blocks::vector::Vector::new() };
     let ls = sort(l0);
     let lr = runs(&ls.keys);
     let (rr, rperm) = (&keyed.runs, &keyed.sorted.perm);
-    let mut pairs = Vec::new();
+    let mut pairs = rerail_blocks::vector::Vector::new();
     let mut r = 0;
-    for &(key, start, count) in &lr {
-        while r < rr.len() && rr[r].0 < key {
+    for &Run { key, start, count } in &lr {
+        while r < rr.len() && rr[r].key < key {
             r += 1;
         }
-        let Some(&(rk, rstart, rcount)) = rr.get(r) else { break };
+        let Some(&Run { key: rk, start: rstart, count: rcount }) = rr.get(r) else { break };
         if rk != key {
             continue;
         }
         let rows = &rperm[rstart as usize..(rstart + rcount) as usize];
         for &a in &ls.perm[start as usize..(start + count) as usize] {
             if left.len() == 1 {
-                pairs.extend(rows.iter().map(|&b| (a, b)));
+                pairs.extend(rows.iter().map(|&b| [a, b]));
                 continue;
             }
             for &b in rows {
                 if (1..left.len()).all(|k| left[k][a as usize] == right[k][b as usize]) {
-                    pairs.push((a, b));
+                    pairs.push([a, b]);
                 }
             }
         }
@@ -191,16 +212,16 @@ pub fn join_keyed(left: &[&[i64]], keyed: &Keyed, right: &[&[i64]]) -> Vec<(u32,
 
 /// The equi-join of `left` and `right` (sorted by its key 0 already: `keyed`), in left row order and then right row
 /// order: each left row's key found among the runs by binary search.
-pub fn probe(left: &[&[i64]], keyed: &Keyed, right: &[&[i64]]) -> Vec<(u32, u32)> {
-    let Some(l0) = left.first() else { return Vec::new() };
+pub fn probe(left: &[&[i64]], keyed: &Keyed, right: &[&[i64]]) -> rerail_blocks::vector::Vector<[u32; 2]> {
+    let Some(l0) = left.first() else { return rerail_blocks::vector::Vector::new() };
     let (runs, perm) = (&keyed.runs, &keyed.sorted.perm);
-    let mut pairs = Vec::new();
+    let mut pairs = rerail_blocks::vector::Vector::new();
     for (a, &key) in l0.iter().enumerate() {
-        let Ok(r) = runs.binary_search_by(|run| run.0.cmp(&key)) else { continue };
-        let (_, start, count) = runs[r];
+        let Ok(r) = runs.binary_search_by(|run| run.key.cmp(&key)) else { continue };
+        let Run { start, count, .. } = runs[r];
         for &b in &perm[start as usize..(start + count) as usize] {
             if (1..left.len()).all(|k| left[k][a] == right[k][b as usize]) {
-                pairs.push((a as u32, b));
+                pairs.push([a as u32, b]);
             }
         }
     }
@@ -232,7 +253,7 @@ mod tests {
             want.sort_by_key(|&r| keys[r as usize]);
             assert_eq!(got.perm, want, "n {n} modulus {modulus}");
             assert!(got.keys.iter().zip(&got.perm).all(|(&k, &r)| k == keys[r as usize]));
-            assert_eq!(runs(&got.keys).iter().map(|r| r.2 as usize).sum::<usize>(), n);
+            assert_eq!(runs(&got.keys).iter().map(|r| r.count as usize).sum::<usize>(), n);
         }
         let (a0, a1) = (rows(6000, 1, 900, 1 << 32), rows(6000, 2, 3, 0));
         let (b0, b1) = (rows(4000, 3, 900, 1 << 32), rows(4000, 4, 3, 0));
@@ -242,7 +263,7 @@ mod tests {
         for a in 0..a0.len() {
             for b in 0..b0.len() {
                 if a0[a] == b0[b] && a1[a] == b1[b] {
-                    want.push((a as u32, b as u32));
+                    want.push([a as u32, b as u32]);
                 }
             }
         }

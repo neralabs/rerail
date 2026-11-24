@@ -26,10 +26,10 @@ fn load() -> String {
 }
 
 /// A graph whose condensation has about `layers` levels (the closure's spike shape, as the GPU's timing test).
-fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<[u32]>, Arc<[u32]>) {
+fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u32>>) {
     let layer = |v: usize| v * layers / n;
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
+    let mut off = rerail_blocks::vector![0u32];
+    let mut dst = rerail_blocks::vector::Vector::new();
     for v in 0..n {
         let lo = (0..v).find(|&w| layer(w) == layer(v)).unwrap_or(v);
         for _ in 0..rng.below(2 * deg + 1) {
@@ -60,7 +60,10 @@ fn workloads() -> Vec<(&'static str, Kernel)> {
     // W3: 12,000 nodes, about 35 levels.
     let (coff, cdst) = layered(&mut rng, 12000, 5, 35);
     let w3 = Kernel::Closure { n: 12000, off: coff, dst: cdst };
-    vec![("W1 bit product", w1), ("W5 bit product", w5), ("W2 count table", w2), ("W2 count table, pairs", w2e), ("W4 histogram", w4), ("W3 closure", w3)]
+    let all = vec![("W1 bit product", w1), ("W5 bit product", w5), ("W2 count table", w2), ("W2 count table, pairs", w2e), ("W4 histogram", w4), ("W3 closure", w3)];
+    // `RERAIL_PRICE_ONLY=<text>`: the workloads whose names hold it (one kernel's prices, its reference alone run).
+    let only = std::env::var("RERAIL_PRICE_ONLY").ok();
+    all.into_iter().filter(|(name, _)| only.as_deref().is_none_or(|o| name.contains(o))).collect()
 }
 
 /// The smallest launch of each form: what a launch costs beyond its work.
@@ -70,15 +73,15 @@ fn tiny(f: Form) -> Kernel {
         Form::Program => unreachable!("a program prices itself"),
         Form::BitProduct => Kernel::BitProduct { a: bits(&mut rng, 4, 64, 4), b: bits(&mut rng, 4, 64, 4), min: None },
         Form::CountTable | Form::CountPairs => {
-            Kernel::CountTable { loff: vec![0, 2].into(), left: vec![1, 2].into(), roff: vec![0, 2].into(), right: vec![2, 1].into(), emit: f == Form::CountPairs }
+            Kernel::CountTable { loff: rerail_blocks::vector![0, 2].into(), left: rerail_blocks::vector![1, 2].into(), roff: rerail_blocks::vector![0, 2].into(), right: rerail_blocks::vector![2, 1].into(), emit: f == Form::CountPairs }
         }
-        Form::Histogram => Kernel::Histogram { off: vec![0, 2].into(), codes: vec![0, 1].into(), width: 2 },
+        Form::Histogram => Kernel::Histogram { off: rerail_blocks::vector![0, 2].into(), codes: rerail_blocks::vector![0, 1].into(), width: 2 },
         Form::Closure => {
             let (off, dst) = graph(&mut rng, 8, 1);
             Kernel::Closure { n: 8, off, dst }
         }
         Form::Probe | Form::Tile => {
-            let keys: crate::kernel::Keys = vec![crate::col::Col::from(vec![1i64, 2])].into();
+            let keys: crate::kernel::Keys = vec![crate::col::Col::from(rerail_blocks::vector![1i64, 2])].into();
             let by = if f == Form::Tile { crate::kernel::JoinBy::Tile } else { crate::kernel::JoinBy::Probe };
             Kernel::Join { left: keys.clone(), right: keys, right_id: None, by }
         }
@@ -194,7 +197,8 @@ fn gpu() {
         dev = dev.min(s.device);
         w
     });
-    let ks: Vec<Kernel> = Form::ALL.iter().cycle().take(20).map(|&f| tiny(f)).collect();
+    // The forms one submission holds (`run`): a join runs in its space's own command buffers (`submit`'s `space::run`).
+    let ks: Vec<Kernel> = Form::ALL.iter().filter(|f| !matches!(f, Form::Probe | Form::Tile)).cycle().take(20).map(|&f| tiny(f)).collect();
     let refs: Vec<&Kernel> = ks.iter().collect();
     let w20 = best(50, || {
         let t = Instant::now();
@@ -300,7 +304,7 @@ fn ane_overlap() {
                 splits.push(lane.last_split());
             }
             let med = |f: &dyn Fn(&Split) -> f64| {
-                let mut v: Vec<f64> = splits.iter().map(f).collect();
+                let mut v: rerail_blocks::vector::Vector<f64> = splits.iter().map(f).collect();
                 v.sort_by(f64::total_cmp);
                 v[v.len() / 2] * 1e3
             };

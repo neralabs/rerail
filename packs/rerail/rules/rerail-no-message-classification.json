@@ -7,14 +7,25 @@
   "scope": {
     "include": [
       "src/**/*.ts",
-      "native/src/**/*.rs"
+      "native/src/**/*.rs",
+      "native/crates/*/src/code_rule_dsl/**/*.rs",
+      "native/crates/*/src/content_store/**/*.rs",
+      "native/crates/*/src/git_access/**/*.rs",
+      "native/crates/*/src/tree_watch/**/*.rs",
+      "native/crates/*/src/git_*.rs",
+      "native/crates/*/src/source_tree.rs",
+      "native/crates/*/src/threads.rs",
+      "native/crates/*/src/panic_boundary.rs"
     ],
     "exclude": [
       "**/*.test.ts",
       "src/**/*.generated.ts",
       "native/src/**/tests/**",
+      "native/crates/*/src/**/tests/**",
       "native/src/**/*tests.rs",
+      "native/crates/*/src/**/*tests.rs",
       "native/src/**/test_support.rs",
+      "native/crates/*/src/**/test_support.rs",
       "src/runtime/npm.ts",
       "src/setup/rule-pack-store.ts"
     ]

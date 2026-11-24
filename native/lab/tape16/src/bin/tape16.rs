@@ -5,7 +5,7 @@
 //!              (A: codec, layout, cut, dict, k, extras, dictcut; all = every one but codec and dictcut)
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
-//! tape16 writer <cap> (--features lean for A)           E6: format 16's writer against format 15's, on .rerail files
+//! tape16 writer <cap> (--features lean for A)           E6: the one-pass event writer, on .rerail files
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
 //! tape16 scan  <cap>                                    T5 on Metal: positions, depth, parents, ends from events
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
@@ -166,7 +166,7 @@ fn cmd_grid_streamed(path: &str, full: bool, axis: &str, check: bool, shards: u6
     let mut train_nodes: BTreeMap<u8, u64> = BTreeMap::new();
     let (mut files, mut nodes) = (0usize, 0u64);
     capture::stream(p, |f| {
-        let t = rerail_tape_lab::v15::read(&f.image)?;
+        let t = rerail_tape_lab::captured::read(&f.image)?;
         cand.learn(f.tag, &t);
         files += 1;
         if !f.is_test() {
@@ -654,17 +654,19 @@ fn columns_row(name: &str, corpus: &Corpus, test: &[&solution::Prepared], ins: &
     println!(" {:.0} | {:.2} | {:.1} | {:.1} | {ok} |", total * 1e6, total * 1e9 / nodes as f64, cpu_nanos as f64 / 1e6, cpu_nanos as f64 / nodes as f64);
 }
 
-/// E6: format 16's writer against format 15's on the captured `.rerail` files (tag 13); with `--features lean`,
-/// the lean parse too (A), else A is left out.
+/// E6: the lab's one-pass event writer on the captured `.rerail` files (tag 13), checked against its reference;
+/// with `--features lean`, the lean parse and its format 16 write too (A), else A is left out.
 fn cmd_writer(path: &str) {
     use rerail_tape_lab::measure::cost;
     use rerail_tape_lab::writer;
     let files: Vec<capture::File> = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e)).into_iter().filter(|f| f.tag == 13).collect();
+    // A's parts, set only with the `lean` feature.
     #[allow(unused_mut)]
-    let (mut a, mut b, mut c) = (rerail_tape_lab::measure::Cost::default(), rerail_tape_lab::measure::Cost::default(), rerail_tape_lab::measure::Cost::default());
-    let (mut nodes, mut bytes, mut same) = (0usize, 0usize, 0usize);
+    let (mut a, mut same, mut first_differs) = (rerail_tape_lab::measure::Cost::default(), 0usize, None::<String>);
+    let (mut c, mut nodes, mut bytes) = (rerail_tape_lab::measure::Cost::default(), 0usize, 0usize);
     for f in &files {
-        let recs = writer::records(&f.image).unwrap_or_else(|e| die(&format!("{}: {e}", f.path)));
+        let tree = rerail_tape_lab::captured::read(&f.image).unwrap_or_else(|e| die(&format!("{}: {e}", f.path)));
+        let recs = writer::records(&tree);
         nodes += recs.len();
         bytes += f.source.len();
         #[cfg(feature = "lean")]
@@ -672,12 +674,18 @@ fn cmd_writer(path: &str) {
             let src = std::str::from_utf8(&f.source).unwrap_or("");
             let (img, x) = cost(|| rerail_rr_syntax::lean::tape(src));
             a += x;
-            same += (img == f.image) as usize;
-        }
-        let (img, x) = cost(|| rerail_tape_format::preorder_image(f.tag, &f.source, &recs));
-        b += x;
-        if !cfg!(feature = "lean") {
-            same += (img == f.image) as usize;
+            // The capture's tape without the presence the engine keeps after it (0434 §4): what `lean::tape` writes.
+            let held = rerail_tape_format::f16::Tape16::from_bytes(f.image.clone()).unwrap_or_else(|e| die(&format!("{}: {e}", f.path)));
+            let want = held.as_bytes();
+            match img {
+                Ok(t) if t.as_bytes() == want => same += 1,
+                Ok(t) if first_differs.is_none() => {
+                    let at = t.as_bytes().iter().zip(want).position(|(x, y)| x != y).unwrap_or(t.as_bytes().len().min(want.len()));
+                    first_differs = Some(format!("{}: byte {at} of {} / {}", f.path, t.as_bytes().len(), want.len()));
+                }
+                Ok(_) => {}
+                Err(e) => die(&format!("{}: {e}", f.path)),
+            }
         }
         let (planes, x) = cost(|| std::hint::black_box(writer::events_writer(f.source.len() as u64, &recs)));
         c += x;
@@ -686,18 +694,16 @@ fn cmd_writer(path: &str) {
         }
     }
     let m = |x: &rerail_tape_lab::measure::Cost| x.instructions as f64 / 1e6;
-    println!("{path}: {} .rerail files, {nodes} nodes, {} KB of source; images equal to the capture: {same}\n", files.len(), bytes / 1024);
-    println!("| part | M instructions | instructions/node | ms |");
+    println!("{path}: {} .rerail files, {nodes} nodes, {} KB of source", files.len(), bytes / 1024);
+    if cfg!(feature = "lean") {
+        println!("tapes the lean parse writes equal to the capture: {same}; the first that differs: {}", first_differs.as_deref().unwrap_or("none"));
+    }
+    println!("\n| part | M instructions | instructions/node | ms |");
     println!("|---|---|---|---|");
     if cfg!(feature = "lean") {
-        println!("| A: lean parse + format-15 write | {:.1} | {:.0} | {:.1} |", m(&a), a.instructions as f64 / nodes as f64, a.nanos as f64 / 1e6);
+        println!("| A: lean parse + format 16 write | {:.1} | {:.0} | {:.1} |", m(&a), a.instructions as f64 / nodes as f64, a.nanos as f64 / 1e6);
     }
-    println!("| B: format-15 writer alone | {:.1} | {:.0} | {:.1} |", m(&b), b.instructions as f64 / nodes as f64, b.nanos as f64 / 1e6);
-    println!("| C: format-16 writer alone (events + byte planes) | {:.1} | {:.0} | {:.1} |", m(&c), c.instructions as f64 / nodes as f64, c.nanos as f64 / 1e6);
-    if cfg!(feature = "lean") {
-        let e = a.instructions as f64 - b.instructions as f64 + c.instructions as f64;
-        println!("| A − B + C: lean parse + format-16 write | {:.1} | {:.0} | |", e / 1e6, e / nodes as f64);
-    }
+    println!("| C: the events writer alone (events + byte planes) | {:.1} | {:.0} | {:.1} |", m(&c), c.instructions as f64 / nodes as f64, c.nanos as f64 / 1e6);
 }
 
 /// E9 (T8): the engine's base relations as copied rows against the tape kept and rebuilt (`base`).
@@ -714,7 +720,7 @@ fn cmd_base(path: &str, dump: Option<&str>) {
     let mut per_doc = [0usize; 5];
     let mut corpus_bytes = [0usize; 5];
     let mut last: Vec<Vec<i64>> = WIDTHS.iter().map(|&w| vec![0i64; w]).collect();
-    let (mut v15, mut ev_zstd) = (0usize, 0usize);
+    let (mut image, mut ev_zstd) = (0usize, 0usize);
     // Rebuild costs, one thread: rows decoded (+ span_within sorted by outer, the other probe's order); the tape's
     // events decoded to a tree (`events::decode`) and its reader columns derived.
     let (mut decode_rows, mut sort_outer, mut decode_tape, mut derive) = (Cost::default(), Cost::default(), Cost::default(), Cost::default());
@@ -731,7 +737,7 @@ fn cmd_base(path: &str, dump: Option<&str>) {
     let mut base_id = 0i64;
     let (mut line_search, mut line_table) = (0u128, 0usize);
     for (d, p) in corpus.files.iter().enumerate() {
-        v15 += p.v15_stored;
+        image += p.image_stored;
         let (bs, _) = blocks::split(&p.events, Cut::Whole);
         for b in &bs {
             let laid = layout::lay(b, Layout::BytePlanes, Extras { parent: false, size: false }, &[], &[]);
@@ -864,7 +870,7 @@ fn cmd_base(path: &str, dump: Option<&str>) {
     }
     let (pd, cb): (usize, usize) = (per_doc.iter().sum(), corpus_bytes.iter().sum());
     println!("| **all five** | {} | | | **{:.2}** | | **{:.2}** |", count.iter().sum::<usize>(), pd as f64 / nf, cb as f64 / nf);
-    println!("| the tape: format 15 as stored | | | | {:.2} | | |", v15 as f64 / nf);
+    println!("| the tape: format 16 as stored | | | | {:.2} | | |", image as f64 / nf);
     println!("| the tape: format 16 events, byte planes, zstd 3 (no dictionary) | | | | {:.2} | | |", ev_zstd as f64 / nf);
     println!("| the line table, stored (a varint a line) | | | | {:.2} | | |\n", line_table as f64 / nf);
     let per = |c: Cost| format!("{:.1} ns, {:.0} instr", c.nanos as f64 / nf, c.instructions as f64 / nf);
@@ -1079,8 +1085,8 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
 
 /// E10 (0156 T9, t38): candidate in-memory tapes, every question answered in place on each, checked against
 /// the tree, and costed one thread at a time.
-fn cmd_inplace(path: &str, f11: bool) {
-    use rerail_tape_lab::inplace::{B, CodeMap, Codes, Cols, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X, XF, XR};
+fn cmd_inplace(path: &str) {
+    use rerail_tape_lab::inplace::{B, CodeMap, Codes, Cols, E16, EfEf, EfGap, ForLen, PredGap, PredLen, X, XF, XR};
     use rerail_tape_lab::measure::{Cost, cost};
     let cap = std::path::Path::new(path);
     // Pass 1: each language's codes, as the grammar would number them, and its commonest kind.
@@ -1088,7 +1094,7 @@ fn cmd_inplace(path: &str, f11: bool) {
     let mut kinds: BTreeMap<u8, HashMap<u16, usize>> = BTreeMap::new();
     let mut cands = events::Candidates::default();
     capture::stream(cap, |f| {
-        let tree = rerail_tape_lab::v15::read(&f.image)?;
+        let tree = rerail_tape_lab::captured::read(&f.image)?;
         codes.entry(f.tag).or_default().learn(&tree);
         cands.learn(f.tag, &tree);
         let k = kinds.entry(f.tag).or_default();
@@ -1105,15 +1111,14 @@ fn cmd_inplace(path: &str, f11: bool) {
         (tag, c.table.iter().map(|t| t.0 == top).collect())
     }).collect();
     const Q: [&str; 8] = ["sweep: code in a set", "code at random", "start at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)", "end at random"];
-    // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
-    // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
-    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR", "F16"];
+    // E16: the engine's format 16 tape as captured, read by its own reads.
+    let names = ["E16", "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF", "XR", "F16"];
     const C: usize = 12;
     // F16 (E24): each language's numbering and widths, over every file (as XF's widths are).
     let f16langs: BTreeMap<u8, rerail_tape_lab::f16::F16Lang> = {
         let mut learn: BTreeMap<u8, rerail_tape_lab::f16::Learner> = BTreeMap::new();
         capture::stream(cap, |f| {
-            let tree = rerail_tape_lab::v15::read(&f.image)?;
+            let tree = rerail_tape_lab::captured::read(&f.image)?;
             learn.entry(f.tag).or_default().add(&Cols::of_tree(&tree, &codes[&f.tag]));
             Ok(())
         }).unwrap_or_else(|e| die(&e));
@@ -1131,7 +1136,7 @@ fn cmd_inplace(path: &str, f11: bool) {
     let (mut nodes, mut files, mut wrong) = (0usize, 0usize, [0usize; C]);
     let mut rng = 0x9e37_79b9_7f4a_7c15u64;
     capture::stream(cap, |f| {
-        let tree = rerail_tape_lab::v15::read(&f.image)?;
+        let tree = rerail_tape_lab::captured::read(&f.image)?;
         let n = tree.len();
         if n == 0 {
             return Ok(());
@@ -1147,7 +1152,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             rng ^= rng << 17;
             order.swap(i, (rng % (i as u64 + 1)) as usize);
         }
-        let f15 = F15::new(&f.image, lang);
+        let e16 = E16::new(&f.image, lang);
         let x = X::<ForLen>::new(&tree, lang);
         let m = X::<PredGap>::new(&tree, lang);
         let xe = X::<EfGap>::new(&tree, lang);
@@ -1227,7 +1232,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             }
             build[c + 1] += *k;
         }
-        bench(&f15, &tree, &want, &order, set, &mut costs[0], &mut counts[0], &mut wrong[0], &mut bytes[0]);
+        bench(&e16, &tree, &want, &order, set, &mut costs[0], &mut counts[0], &mut wrong[0], &mut bytes[0]);
         bench(&x, &tree, &want, &order, set, &mut costs[1], &mut counts[1], &mut wrong[1], &mut bytes[1]);
         bench(&m, &tree, &want, &order, set, &mut costs[2], &mut counts[2], &mut wrong[2], &mut bytes[2]);
         bench(&xe, &tree, &want, &order, set, &mut costs[3], &mut counts[3], &mut wrong[3], &mut bytes[3]);
@@ -1241,9 +1246,6 @@ fn cmd_inplace(path: &str, f11: bool) {
         bench(&f16, &tree, &want, &order, set, &mut costs[11], &mut counts[11], &mut wrong[11], &mut bytes[11]);
         nodes += n;
         files += 1;
-        if f11 {
-            bytes[0] += 32;
-        }
         Ok(())
     }).unwrap_or_else(|e| die(&e));
     println!("{}\n", rerail_tape_lab::measure::machine());
@@ -1305,7 +1307,7 @@ fn cmd_prim_gpu(path: &str) {
     use rerail_tape_lab::prim::{Names, SETS};
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     // One language (the one with the most nodes), its files as one forest.
-    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
+    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::captured::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
     let mut by_tag: BTreeMap<u8, usize> = BTreeMap::new();
     for (tag, t) in &trees {
         *by_tag.entry(*tag).or_default() += t.len();
@@ -1342,7 +1344,7 @@ fn cmd_climb(path: &str) {
     use rerail_tape_lab::inplace::{Codes, Cols, forest};
     use rerail_tape_lab::prim::{Names, SETS};
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
-    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
+    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::captured::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
     let mut by_tag: BTreeMap<u8, Vec<&rerail_tape_lab::tree::Tree>> = BTreeMap::new();
     for (tag, t) in &trees {
         by_tag.entry(*tag).or_default().push(t);
@@ -1381,7 +1383,7 @@ fn cmd_climb(path: &str) {
 fn cmd_inplace_gpu(path: &str) {
     use rerail_tape_lab::inplace::{Codes, forest};
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
-    let trees: Vec<_> = files.iter().map(|f| rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e))).collect();
+    let trees: Vec<_> = files.iter().map(|f| rerail_tape_lab::captured::read(&f.image).unwrap_or_else(|e| die(&e))).collect();
     let tree = forest(&trees);
     drop(trees);
     let mut codes = Codes::default();
@@ -1408,7 +1410,7 @@ fn cmd_inplace_gpu(path: &str) {
 /// E12 (t39): the tree primitives rules ask for, bulk (every node, one pass) and point (one node at random),
 /// on each credible candidate, every answer checked against the tree.
 fn cmd_prim(path: &str) {
-    use rerail_tape_lab::inplace::{B, Codes, EfEf, F15, ForLen, PredGap, Reader, XF, XR};
+    use rerail_tape_lab::inplace::{B, Codes, E16, EfEf, ForLen, PredGap, Reader, XF, XR};
     use rerail_tape_lab::measure::Cost;
     use rerail_tape_lab::prim::{self, Names, SETS, WRAP};
     use rerail_tape_lab::tree::NONE;
@@ -1416,7 +1418,7 @@ fn cmd_prim(path: &str) {
     let names = Names::load();
     let mut codes: BTreeMap<u8, Codes> = BTreeMap::new();
     capture::stream(cap, |f| {
-        codes.entry(f.tag).or_default().learn(&rerail_tape_lab::v15::read(&f.image)?);
+        codes.entry(f.tag).or_default().learn(&rerail_tape_lab::captured::read(&f.image)?);
         Ok(())
     }).unwrap_or_else(|e| die(&e));
     // Per language: each set's code mask, the wrapper mask, each code's field, the name and body fields.
@@ -1429,11 +1431,11 @@ fn cmd_prim(path: &str) {
         field_of: c.table.iter().map(|t| t.1).collect(),
         fields: [names.field(tag, "name").unwrap_or(255), names.field(tag, "body").unwrap_or(255)],
     })).collect();
-    const C: [&str; 6] = ["F15", "XF", "MF", "BE", "XR", "F16"];
+    const C: [&str; 6] = ["E16", "XF", "MF", "BE", "XR", "F16"];
     let f16langs: BTreeMap<u8, rerail_tape_lab::f16::F16Lang> = {
         let mut learn: BTreeMap<u8, rerail_tape_lab::f16::Learner> = BTreeMap::new();
         capture::stream(cap, |f| {
-            let tree = rerail_tape_lab::v15::read(&f.image)?;
+            let tree = rerail_tape_lab::captured::read(&f.image)?;
             learn.entry(f.tag).or_default().add(&rerail_tape_lab::inplace::Cols::of_tree(&tree, &codes[&f.tag]));
             Ok(())
         }).unwrap_or_else(|e| die(&e));
@@ -1600,7 +1602,7 @@ fn cmd_prim(path: &str) {
         }
     }
     capture::stream(cap, |f| {
-        let tree = rerail_tape_lab::v15::read(&f.image)?;
+        let tree = rerail_tape_lab::captured::read(&f.image)?;
         let n = tree.len();
         if n == 0 {
             return Ok(());
@@ -1655,8 +1657,7 @@ fn cmd_prim(path: &str) {
             rng ^= rng << 17;
             (rng % n as u64) as usize
         }).collect();
-        // Format 15 has no parent (each step is a search): its point questions on 1 node in 1,024.
-        one(&F15::new(&f.image, lang), 0, &tree, &code, l, &lines, &line_truth, &sample[..sample.len().div_ceil(64)], &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
+        one(&E16::new(&f.image, lang), 0, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&XF::<ForLen>::new(&tree, lang), 1, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&XF::<PredGap>::new(&tree, lang), 2, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
         one(&B::<EfEf>::new(&tree, lang), 3, &tree, &code, l, &lines, &line_truth, &sample, &truths, &mut cost, &mut count, &mut wrong, &mut sum_bytes);
@@ -1672,7 +1673,7 @@ fn cmd_prim(path: &str) {
         code_bits[0] as f64 / 8.0 / nodes as f64, code_bits[1] as f64 / 8.0 / nodes as f64, code_bits[2] as f64 / 8.0 / nodes as f64, code_bits[3] as f64 / 8.0 / nodes as f64);
     println!("BE close searches crossing 2 or more second-level groups: {:.3}% of nodes, {:.1} groups each on average, at most {far_max}; the largest file {biggest} nodes.\n",
         100.0 * far as f64 / nodes as f64, far_groups as f64 / far.max(1) as f64);
-    println!("| ns a node (every node) or a call (one node, 1 in 16 at random; F15 1 in 1,024); instructions | {} |", C.join(" | "));
+    println!("| ns a node (every node) or a call (one node, 1 in 16 at random); instructions | {} |", C.join(" | "));
     println!("|---|{}", "---|".repeat(C.len()));
     println!("| answers wrong | {} |", wrong.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | "));
     println!("| line index (Elias–Fano of the newlines) bytes a node | {} |", C.iter().map(|_| format!("{:.3}", line_bytes as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
@@ -1692,7 +1693,7 @@ fn cmd_relative(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     let mut by_tag: BTreeMap<u8, Vec<rerail_tape_lab::tree::Tree>> = BTreeMap::new();
     for f in &files {
-        by_tag.entry(f.tag).or_default().push(rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)));
+        by_tag.entry(f.tag).or_default().push(rerail_tape_lab::captured::read(&f.image).unwrap_or_else(|e| die(&e)));
     }
     println!("{}\n", rerail_tape_lab::measure::machine());
     for (tag, trees) in &by_tag {
@@ -1831,11 +1832,12 @@ fn cmd_gcodes(path: &str) {
     }
 }
 
-/// Decisions 0293 §3 and 0626: each language's format 16 choices, from its grammar, written for the engine to ship.
+/// Decisions 0293 §3 and 0631: each language's format 16 choices, from its grammar, written for the engine to ship.
 #[cfg(feature = "grammar")]
-fn cmd_table(tags: &[&str], out: &str) {
+fn cmd_table(tags: &[&str], out: &str, counts: &[&str]) {
+    let counts = rerail_tape_lab::table::Counts::read(counts).unwrap_or_else(|e| die(&e));
     // Every tape tag the engine stores (the languages' registry, `languages/*.json`), or those named.
-    const ALL: [u8; 31] = [1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34];
+    const ALL: [u8; 32] = [1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 250];
     let tags: Vec<u8> = if tags.is_empty() || tags == ["all"] { ALL.to_vec() } else { tags.iter().map(|t| t.parse().unwrap_or_else(|_| die(&format!("{t}: not a tape tag")))).collect() };
     let scratch = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tmp/e25");
     let out = std::path::Path::new(out);
@@ -1843,7 +1845,7 @@ fn cmd_table(tags: &[&str], out: &str) {
     println!("|---|---|---|");
     let mut failed = Vec::new();
     for &tag in &tags {
-        match rerail_tape_lab::table::run(tag, &scratch, out) {
+        match rerail_tape_lab::table::run(tag, &scratch, out, &counts) {
             Ok(r) => println!("| {}{} | {tag} | {} |", capture::language(tag), if r.bound { " (bound)" } else { "" }, r.codes),
             Err(e) => {
                 println!("| {} | {tag} | {e} |", capture::language(tag));
@@ -1889,7 +1891,7 @@ fn cmd_f16_gpu(path: &str) {
     }
 }
 
-/// E28 (t39 step 20): format 16's writer against format 15's (`f16w.rs`).
+/// E28 (t39 step 20): format 16's writer driven as a parser drives it (`f16w.rs`).
 fn cmd_f16w(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
@@ -1924,7 +1926,7 @@ fn cmd_repeat(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
     let mut by_tag: BTreeMap<u8, Vec<rerail_tape_lab::tree::Tree>> = BTreeMap::new();
     for f in &files {
-        by_tag.entry(f.tag).or_default().push(rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)));
+        by_tag.entry(f.tag).or_default().push(rerail_tape_lab::captured::read(&f.image).unwrap_or_else(|e| die(&e)));
     }
     println!("{}\n", rerail_tape_lab::measure::machine());
     for (tag, trees) in &by_tag {
@@ -1964,7 +1966,7 @@ fn main() {
         #[cfg(target_os = "macos")]
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
-        "inplace" => cmd_inplace(path, flag("--f11")),
+        "inplace" => cmd_inplace(path),
         "climb" => cmd_climb(path),
         "prim" => cmd_prim(path),
         "repeat" => cmd_repeat(path),
@@ -1985,8 +1987,9 @@ fn main() {
         #[cfg(feature = "grammar")]
         "table" => {
             let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).map_or("../../crates/tape_format/tables", String::as_str);
-            let tags: Vec<&str> = args[1..].iter().take_while(|a| *a != "--out").map(String::as_str).collect();
-            cmd_table(&tags, out)
+            let tags: Vec<&str> = args[1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect();
+            let counts: Vec<&str> = args.iter().position(|a| a == "--counts").map_or(Vec::new(), |i| args[i + 1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect());
+            cmd_table(&tags, out, &counts)
         }
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),

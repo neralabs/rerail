@@ -4,7 +4,7 @@
 //
 // Interface:
 //   vscript(p, setup)       p is the program of a <script> block; setup is "true" for <script setup>
-//   vsetup_doc(d)           document d has a <script setup>;  vin_setup(n): n is its code;  vin_script(n): any script's
+//   vsetup_doc(d)           document d has a <script setup> (its start tag's, the host's);  vin_setup(n): n is its code;  vin_script(n): any script's
 //   vcomp(o)                object o is a component (utils.getVueObjectType): `export default {…}` outside
 //                           <script setup>, defineComponent({…}), createApp({…}), component("x", {…}),
 //                           Vue.component / mixin / extend, app.component / mixin, defineNuxtComponent, new Vue({…}),
@@ -27,22 +27,31 @@
 //
 //   export default { props: ['a'], computed: { b() { return 1 } }, data() { return { c: 1 } } }
 //     vcomp(o); vname(o, "props", "a", …), vname(o, "computed", "b", …), vname(o, "data", "c", …); vcomputed(o, "b", f)
+//
+// The scripts are the context `script` (decision 0597): vscript, vscript_setup and vsetup_doc are the host's (its
+// markup, rule 3), every other relation here the context's, over the scripts' nodes alone. A policy that reads a
+// script does so in the context: its rules there, its finding's relation exported, read by the host's `.violation`
+// (vue/script); a finding stands at the node's own bytes.
 #include "vue/code.rerail"
 #include "tsx/eslint-a-common.rerail"
 //   deparen(e, x), key_static(k, x), static_prop(n, o, x), call_arg(c, a, i), function_node(f)
 
 // ---- script blocks ---------------------------------------------------------------------------------------------------
 .decl vscript(p: node, setup: symbol)
-vscript(p, s) :- kind(se, "script_element"), child(se, raw, _), kind(raw, "raw_text"), parsed(raw, g, p),
-    (g = "javascript" ; g = "typescript" ; g = "tsx"), child(se, t, 0), (vscript_setup(t), s = "true" ;
-    !vscript_setup(t), s = "false").
+vscript(p, s) :- kind(se, "script_element"), child(se, raw, _), kind(raw, "raw_text"),
+    parsed(raw, "typescript", p), child(se, t, 0),
+    (vscript_setup(t), s = "true" ; !vscript_setup(t), s = "false").
 .decl vscript_setup(t: node)  // a start tag with a `setup` attribute: <script setup lang="ts">
 vscript_setup(t) :- kind(t, "start_tag"), child(t, a, _), kind(a, "attribute"), child(a, n, 0),
     kind(n, "attribute_name"), text(n, "setup").
-.decl vsetup_doc(d: number)  // document d has a <script setup>
-vsetup_doc(d) :- vscript(p, "true"), docof(p, d).
+.decl vsetup_doc(d: number)  // file d has a <script setup>
+vsetup_doc(d) :- kind(se, "script_element"), child(se, t, 0), vscript_setup(t), docof(se, d).
 .decl vin_setup(n: node)  // n is code of <script setup>
 vin_setup(n) :- vscript(p, "true"), within(n, p).
+.decl vscript_root(p: node, d: number)
+vscript_root(p, d) :- vscript(p, _), docof(p, d).
+.context script of vue roots vscript_root exports vcomp
+.from vue vscript, vsetup_doc for script
 
 // ---- the component object ------------------------------------------------------------------------------------------
 .decl vcomp(o: node)

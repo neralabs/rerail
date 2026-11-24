@@ -1,6 +1,6 @@
 //! JavaScript, TypeScript and Vue: manifests, imports, values.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -17,7 +17,7 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_lang_ecma;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -73,6 +73,7 @@ pub mod code_rule_dsl {
     pub mod embed {
         pub use rerail_lang::code_rule_dsl::embed::*;
         pub mod script_block;
+        pub mod vue_code;
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         pub(crate) use crate::code_rule_dsl::embed::test_script::TestScript;
@@ -645,6 +646,24 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: ECMAScript's and Vue's language packs are registered
+/// as the binary loads, as the engine registers them (`boot::install_languages`), so its tests parse with their
+/// terminators (decision 0612) here.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{ecma::Ecma, pack::{Pack, register}, vue::Vue}};
+        register(Family::Ecma, &Pack::<Ecma>::NEW);
+        language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
+        register(Family::Vue, &Pack::<Vue>::NEW);
+        language::register_base(Family::Vue, &Pack::<Vue>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
 
 // The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
 // host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.

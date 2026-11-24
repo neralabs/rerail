@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 57
+VERSION = 59
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -63,7 +63,7 @@ COPY_SECONDS = 120
 COMPILE_SECONDS = 900
 # What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
 # RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
-# text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
+# text (`oracle!`, native/crates/lang/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
 # every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
 # hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
 # dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,
@@ -523,6 +523,49 @@ def same_in_every_checkout(args, out_dir, crate):
     return out
 
 
+def sccache_remaps(cwd, out_dir, dirs):
+    """The `--remap-path-prefix` arguments the farm's sccache puts before a compile's own when it runs
+    it (SCCACHE_BASEDIRS_REMAP_PATHS; `basedirs_remap_arguments` in sccache-patches/0000), in its
+    order. A hot compile runs rustc without sccache and passes them itself: rustc counts the remaps
+    in its incremental state's options, so a crate compiled once each way threw that state away
+    and compiled whole (the first edit after a miss: 528 s CPU for 10 crates, against 41 s)."""
+    out = os.path.join(cwd, out_dir or ".")
+    if ".." in cwd.split(os.sep) or ".." in out.split(os.sep):
+        return []
+    def ancestors(p):
+        while True:
+            yield p
+            parent = os.path.dirname(p)
+            if parent == p:
+                return
+            p = parent
+    def depth(p):
+        return len([c for c in p.split(os.sep) if c])
+    def up_to(d):
+        return os.path.join(*[".."] * (depth(cwd) - depth(d))) if depth(cwd) > depth(d) else ""
+    args = []
+    in_cwd = [d for d in ancestors(cwd) if d in dirs]
+    for d in reversed(in_cwd):
+        if d != cwd:
+            args += ["--remap-path-prefix", f"{d}={up_to(d)}"]
+    if in_cwd:
+        args += ["--remap-path-prefix", f"{cwd}=."]
+    in_out = [d for d in ancestors(out) if d in dirs and not (cwd == d or cwd.startswith(d + os.sep))]
+    if in_out:
+        root = in_out[-1]
+        for d in reversed(in_out):
+            to = None
+            for outer in in_cwd:
+                if d == outer or d.startswith(outer + os.sep):
+                    to = os.path.join(up_to(outer), os.path.relpath(d, outer)) if d != outer else up_to(outer)
+                    break
+            if to is None:
+                rest = os.path.relpath(d, root)
+                to = "/sccache/basedir" + ("" if rest == "." else "/" + rest)
+            args += ["--remap-path-prefix", f"{d}={to}"]
+    return args
+
+
 TIDY_SECONDS = 15 * 60
 # `diagnose --brief` after a clean runs at most this often per checkout: its findings change slowly.
 DIAGNOSE_SECONDS = 3600
@@ -944,7 +987,13 @@ def wrapper(rustc, args):
             hot = False
         if hot:
             log(f"{crate}: hot, incremental here")
-            os.execv(rustc, [rustc] + args)
+            # Still being edited: the window runs from its last compile, not its first miss.
+            try:
+                os.utime(marker)
+            except OSError:
+                pass
+            # As sccache would run it (`sccache_remaps`), so its incremental state serves both ways.
+            os.execv(rustc, [rustc] + sccache_remaps(os.getcwd(), out_dir, basedirs()) + args)
         env["RERAIL_FARM_INCREMENTAL"] = inc
         env["RERAIL_FARM_HOT"] = marker
         args = stripped
@@ -1184,6 +1233,26 @@ def cpu_env(cpu):
 def entry(name):
     """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
     return next((h for h in hosts() if h["name"] == name), {})
+
+
+def bench_cores(name):
+    """The job count `bench` rates `name` at: its cores as the farm counts them (the configuration's
+    `cores`, SMT threads included; this Mac's logical CPUs for `local`), the load the farm gives it."""
+    if name == "local":
+        return os.cpu_count() or 8
+    return int(entry(name).get("cores") or 8)
+
+
+def bench_rating(name):
+    """(jobs, seconds) of `name`'s compile benchmark (`bench`) at its own cores (`bench_cores`), else
+    at the most jobs measured; None when it has not been measured. With SMT a host's 8-job time
+    undersold it: the Ryzen 7 7735HS PC's Linux side took 46.4 s at 8 jobs and 34.6 s at its 16 (2026-11-22)."""
+    runs = {int(j): x for j, x in read_json(state("bench", name + ".json"), {}).get("runs", {}).items()
+            if x.get("s") is not None}
+    if not runs:
+        return None
+    j = bench_cores(name) if bench_cores(name) in runs else max(runs)
+    return j, runs[j]["s"]
 
 
 def shared_base(host):

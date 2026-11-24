@@ -1,7 +1,7 @@
 # 0271. A slow line is bounded on every path
 
-Status: decided (2026-11-15). Closes O-adaptive-worst-case. Amends decisions 0203 §3 (a slow seed is planned
-again), 0206 §3 (a handoff's replacement cut too) and 0207 §2 (when a line is trialled).
+Status: built (audited 2026-11-23). Decided (2026-11-15). Closes O-adaptive-worst-case. Amends decisions 0203 §3 (a
+slow seed is planned again), 0206 §3 (a handoff's replacement cut too) and 0207 §2 (when a line is trialled).
 
 ## Intro
 

@@ -1,0 +1,869 @@
+//! `translate.translate(doc)`: one JSON policy as display `.rerail` text. The clauses are lowered construct by
+//! construct (lower.rs), simplified (simplify.rs, fold.rs), given shared metavariable columns (share.rs) and
+//! demand (demand.rs), then printed: notes, declarations, rules, the library part and the helpers.
+
+use rerail_blocks::vector::Vector;
+use super::demand::{demand, hoist_ancestor_steps, node_demand, unroll_negative};
+use super::lower::{R, col, fix_edits, grouped, ident, lower, mv, render_util, snake, transform_lits, transform_targets, violation_columns, violation_lines};
+use super::program::{Entry, PRule, Program, Vars};
+use super::patterns::Patterns;
+use super::pyre::{find, findall, findall_groups, g, is_full, re, search, split1, sub};
+use super::share::{drop_dead_columns, inline_unsafe, passed_in_patterns, share_metavariables, stop_with_columns};
+use super::simplify::simplify;
+use super::souffle::check_rule;
+use super::text::{Set, binders, bind_read_nodes, head_span_ok, mask_ticks, masked, split_top_text, strip_strings, transform_defs_for, wrap};
+use super::value::{Obj, Value, compact, parse, py_str, q, q_val};
+use fancy_regex::Regex;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// An item of the body, in order (`("opt" | "rule" | "note" | "viol" | "raw", item)`).
+#[derive(Clone, Debug)]
+enum Item {
+    Line(String),
+    Rule(usize),
+    Note(Vec<String>),
+    Viol(Vec<String>),
+}
+
+
+fn empty_obj() -> &'static Obj {
+    static E: Obj = Obj(Vec::new());
+    &E
+}
+
+/// An `ast` that is itself `{"$option": O, "cases": {v: ast}, "default": ast}`, where each case is only a
+/// `language`, an empty `languageOptions` and a `rule`: the one `ast` whose `rule` is the `$option` over the cases'
+/// rules, which the rule lowering guards per configured value. Any other form is left as it is (`None`).
+fn option_ast(a: &Obj) -> Option<Obj> {
+    let name = a.get("$option").filter(|n| n.is_str())?;
+    let plain = |c: &Value| {
+        c.as_obj().is_some_and(|o| {
+            o.has("rule")
+                && o.iter().all(|(k, v)| k == "rule" || k == "language" || (k == "languageOptions" && !v.truthy()))
+        })
+    };
+    let cases = a.get("cases").and_then(Value::as_obj);
+    let default = a.get("default");
+    if !cases.is_some_and(|c| c.iter().all(|(_, v)| plain(v))) || !default.is_none_or(plain) {
+        return None;
+    }
+    let first = cases.and_then(|c| c.iter().next().map(|(_, v)| v)).or(default)?;
+    let mut rule = Obj::default();
+    rule.insert("$option", name.clone());
+    let mut cs = Obj::default();
+    for (k, v) in cases.expect("cases").iter() {
+        cs.insert(k, v.get("rule").expect("a rule").clone());
+    }
+    rule.insert("cases", Value::Obj(cs));
+    if let Some(d) = default {
+        rule.insert("default", d.get("rule").expect("a rule").clone());
+    }
+    let mut out = Obj::default();
+    if let Some(l) = first.get("language") {
+        out.insert("language", l.clone());
+    }
+    out.insert("rule", Value::Obj(rule));
+    Some(out)
+}
+
+fn obj_of(v: Option<&Value>) -> &Obj {
+    v.and_then(Value::as_obj).unwrap_or(empty_obj())
+}
+
+fn name_of(head: &str) -> &str {
+    head.split('(').next().unwrap_or("")
+}
+
+fn chars(s: &str) -> Vec<char> {
+    s.chars().collect()
+}
+
+fn common_prefix(xs: &[Vec<char>]) -> Vec<char> {
+    let mut n = xs.iter().map(|v| v.len()).min().unwrap_or(0);
+    for x in &xs[1..] {
+        n = n.min(xs[0].iter().zip(x).take_while(|(a, b)| a == b).count());
+    }
+    xs[0][..n].to_vec()
+}
+
+fn st(cs: &[char]) -> String {
+    cs.iter().collect()
+}
+
+/// `fold_messages`: clauses that differ only in their messages become one violation with a `detail` column.
+fn fold_messages(px: &Patterns, prog: &mut Program, body: Vec<Item>) -> Vec<Item> {
+    let rels_with_rules: Set = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(prog.arena[*e].name().to_owned()) } else { None }).collect();
+    let mut viols: Vec<((String, String, Vec<String>), Vec<(usize, String, String)>)> = Vec::new();
+    for (i, item) in body.iter().enumerate() {
+        let Item::Viol(lines) = item else { continue };
+        let Some(m) = find(&px.translate_viol_head, &lines[0]) else { continue };
+        if !rels_with_rules.contains(g(&m, 1)) || g(&m, 2).contains("detail") {
+            continue;
+        }
+        let code = if super::pyre::has(&m, 3) { g(&m, 3).to_owned() } else { format!(r#" code "{}""#, g(&m, 1)) };
+        let key = (g(&m, 2).to_owned(), code, lines[1..].to_vec());
+        let msg = match parse(g(&m, 4)) {
+            Ok(Value::Str(s)) => s,
+            _ => String::new(),
+        };
+        let val = (i, g(&m, 1).to_owned(), msg);
+        match viols.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, v)) => v.push(val),
+            None => viols.push((key, vec![val])),
+        }
+    }
+    let groups: Vec<Vec<(usize, String, String)>> = viols.into_iter().map(|(_, v)| v).filter(|v| v.len() > 1).collect();
+    if groups.is_empty() {
+        return body;
+    }
+    let mut rename: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
+    let mut drop: BTreeSet<usize> = BTreeSet::new();
+    let mut header: BTreeMap<usize, (Vec<String>, Vec<String>)> = BTreeMap::new();
+    for grp in &groups {
+        let msgs: Vec<Vec<char>> = grp.iter().map(|x| chars(&x.2)).collect();
+        let mut pre = common_prefix(&msgs);
+        let rev: Vec<Vec<char>> = msgs.iter().map(|x| x.iter().rev().cloned().collect()).collect();
+        let mut suf: Vec<char> = common_prefix(&rev).into_iter().rev().collect();
+        let short = msgs.iter().map(|v| v.len()).min().unwrap_or(0);
+        if pre.len() + suf.len() > short {
+            suf = suf[pre.len() + suf.len() - short..].to_vec();
+        }
+        if !pre.is_empty() && *pre.last().expect("a char") != ' ' && msgs.iter().any(|x| x.len() > pre.len() && x[pre.len()] != ' ') {
+            let cut = pre.iter().rposition(|c| *c == ' ').map_or(0, |p| p + 1);
+            pre.truncate(cut);
+        }
+        if !suf.is_empty() && !" ,.;:)".contains(suf[0]) && msgs.iter().any(|x| x.len() > suf.len() && x[x.len() - suf.len() - 1] != ' ') {
+            let found: Vector<usize> = " ,.;:)".chars().filter_map(|c| suf.iter().position(|x| *x == c)).collect();
+            let cut = found.into_iter().min().unwrap_or(suf.len());
+            suf = suf[cut..].to_vec();
+        }
+        let holes: Vec<String> = msgs
+            .iter()
+            .map(|x| {
+                let end = if suf.is_empty() { x.len() } else { x.len() - suf.len() };
+                if end > pre.len() { st(&x[pre.len()..end]) } else { String::new() }
+            })
+            .collect();
+        if holes.iter().any(|h| h.contains('{') || h.contains('}')) || grp.iter().any(|x| x.2.contains("{detail}")) {
+            continue;
+        }
+        let same = msgs.iter().all(|x| *x == msgs[0]);
+        let name = grp.iter().map(|x| x.1.clone()).min_by(|a, b| (a.chars().count(), a).cmp(&(b.chars().count(), b))).expect("a member");
+        let first_i = grp[0].0;
+        let Item::Viol(first_lines) = &body[first_i] else { unreachable!() };
+        let m = find(&px.translate_viol_head, &first_lines[0]).expect("a violation head");
+        let cols = format!("{}{}", g(&m, 2), if same { "" } else { ", detail: symbol" });
+        let tmpl = if same { grp[0].2.clone() } else { format!("{}{{detail}}{}", st(&pre), st(&suf)) };
+        let (mut cids, mut extra): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        for (i, _, _) in grp {
+            if *i > 0
+                && let Item::Note(lines) = &body[i - 1]
+            {
+                cids.extend(findall(&px.translate_from_clause, &lines[0]));
+                let add: Vec<String> = lines.iter().skip(2).filter(|l| !extra.contains(l)).cloned().collect();
+                extra.extend(add);
+            }
+        }
+        let mut shown = cids.iter().take(4).map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ");
+        if cids.len() > 4 {
+            shown.push_str(&format!(" and {} more", cids.len() - 4));
+        }
+        let has3 = super::pyre::has(&m, 3);
+        let code = if has3 { g(&m, 3).to_owned() } else { format!(" code {}", q(&grp[0].1)) };
+        let mut lines = vec![format!(".violation {name}({cols}){} {}", if has3 || name != grp[0].1 { code.as_str() } else { "" }, q(&tmpl))];
+        lines.extend(first_lines[1..].iter().cloned());
+        let mut note = if same {
+            vec![format!("// {name}(n): findings from clauses {shown}, which say the same."), "// Each rule is one way a JSON `rule` can match.".to_owned()]
+        } else {
+            vec![
+                format!("// {name}(n, detail): findings from clauses {shown}. Their messages differ only in"),
+                "// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.".to_owned(),
+            ]
+        };
+        note.extend(extra);
+        header.insert(first_i, (lines, note));
+        for ((i, rel, _), h) in grp.iter().zip(holes) {
+            rename.insert(rel.clone(), (name.clone(), if same { None } else { Some(h) }));
+            if *i != first_i {
+                drop.insert(*i);
+            }
+        }
+    }
+    if rename.is_empty() {
+        return body;
+    }
+    let group_of: BTreeMap<String, String> = rename.iter().map(|(r, v)| (r.clone(), v.0.clone())).collect();
+    let mut out: Vec<Item> = Vec::new();
+    let mut moved: BTreeSet<usize> = BTreeSet::new();
+    for (i, item) in body.iter().enumerate() {
+        if drop.contains(&i) {
+            if matches!(out.last(), Some(Item::Note(_))) {
+                out.pop();
+            }
+            continue;
+        }
+        if let Item::Rule(e) = item
+            && rename.contains_key(prog.arena[*e].name())
+            && moved.contains(e)
+        {
+            continue;
+        }
+        if let Some((lines, note)) = header.get(&i) {
+            if matches!(out.last(), Some(Item::Note(_))) {
+                *out.last_mut().expect("a note") = Item::Note(note.clone());
+            }
+            out.push(Item::Viol(lines.clone()));
+            let Item::Viol(own) = item else { unreachable!() };
+            let target = group_of[g(&find(&px.translate_viol_head, &own[0]).expect("a violation head"), 1)].clone();
+            for it2 in &body {
+                let Item::Rule(e) = it2 else { continue };
+                let rel = prog.arena[*e].name().to_owned();
+                if group_of.get(&rel) == Some(&target) {
+                    let head = prog.arena[*e].head.clone();
+                    let t = head.split_once('(').map_or("", |(_, t)| t);
+                    let args = &t[..t.len().saturating_sub(1)];
+                    prog.arena[*e].head = match &rename[&rel].1 {
+                        None => format!("{target}({args})"),
+                        Some(h) => format!("{target}({args}, {})", q(h)),
+                    };
+                    out.push(Item::Rule(*e));
+                    moved.insert(*e);
+                }
+            }
+            continue;
+        }
+        out.push(item.clone());
+    }
+    out
+}
+
+/// The text of one translated policy (the display form, before the engine's dialect), and how many JSON terms it
+/// left as `ast(..)` atoms.
+pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize)> {
+    let empty_list = Vec::new();
+    let clauses: &Vec<Value> = doc.get("clauses").and_then(Value::as_list).unwrap_or(&empty_list);
+    let mut langs: Vec<Option<&Value>> = Vec::new();
+    for c in clauses {
+        if obj_of(c.get("forbid")).has("ast") {
+            langs.push(obj_of(c.get("forbid")).get("ast").and_then(|a| a.get("language")));
+        }
+    }
+    for c in clauses {
+        if c.has("define") {
+            langs.push(c.get("define").and_then(|d| d.get("language")));
+        }
+    }
+    let lang = langs.into_iter().flatten().find(|l| l.truthy()).map(py_str).unwrap_or_default();
+    let mut prog = Program::new(&lang);
+    let mut head = vec![
+        format!(".policy {} revision {}", doc.get("id").map_or(q(""), q_val), doc.get("revision").map_or("1".to_owned(), py_str)),
+    ];
+    if let Some(d) = doc.get("description").filter(|d| d.truthy()) {
+        head.push(format!(".description {}", q_val(d)));
+    }
+    if !lang.is_empty() {
+        head.push(format!(".language {lang}"));
+    }
+    head.push(format!(".mode {}", doc.get("mode").map_or("log".to_owned(), py_str)));
+    let scope_v = doc.get("scope").filter(|s| s.truthy());
+    let scope = obj_of(scope_v);
+    for (k, word) in [("include", "include"), ("exclude", "exclude")] {
+        if let Some(gs) = scope.get(k).filter(|v| v.truthy()) {
+            let items: Vec<String> = gs.as_list().map(|l| l.iter().map(q_val).collect()).unwrap_or_default();
+            head.push(format!(".scope {word} {}", items.join(", ")));
+        }
+    }
+    for (k, val) in scope.iter() {
+        if k != "include" && k != "exclude" {
+            head.push(format!(".scope {k} {}", compact(val)));
+        }
+    }
+
+    let mut body: Vec<Item> = Vec::new();
+    let mut seen_rel = Set::new();
+    // The embedding the policy's clauses read (decision 0222): a shared util's `host` is a program node's.
+    let reads_program = super::embedded::reads_program(&lang, clauses);
+    for c in clauses {
+        let cid = c.get("id").map_or("clause".to_owned(), py_str);
+        prog.embedded = super::embedded::clause_via(&lang, c).or_else(|| c.has("define").then(|| reads_program.clone()).flatten());
+        if prog.embedded.is_some() {
+            prog.use_("view");
+        }
+        if let Some(d) = c.get("define") {
+            prog.scope = Default::default();
+            let mut utils = Vec::new();
+            for (name, rule) in obj_of(d.get("utils").filter(|u| u.truthy())).iter() {
+                render_util(px, &mut prog, name, rule, &mut utils)?;
+            }
+            if let Some(o) = d.get("options").filter(|o| o.truthy()) {
+                body.push(Item::Line(format!(".options {}", compact(o))));
+            }
+            for (h, lits) in utils {
+                let id = prog.entry(Entry { head: h, lits, ..Default::default() });
+                body.push(Item::Rule(id));
+            }
+            continue;
+        }
+        let forbid = obj_of(c.get("forbid"));
+        let viol = obj_of(c.get("violation"));
+        let code = viol.get("code").map_or(cid.clone(), py_str);
+        let mut rel = ident(&code);
+        if seen_rel.contains(&rel) {
+            rel = format!("{rel}_{}", snake(&cid));
+        }
+        seen_rel.insert(rel.clone());
+        if c.has("relational") && !c.has("forbid") {
+            body.push(Item::Note(vec![format!(
+                "// {rel}: a finding from a relational clause (main's `relational`: evidence queries joined as rows). The"
+            ), "// translator does not translate one yet, so it has no rule here and finds nothing.".to_owned()]));
+            body.push(Item::Viol(violation_lines(viol, &rel, &[], false, &BTreeSet::new(), &BTreeSet::new())));
+            prog.untranslated += 1;
+            continue;
+        }
+        if !forbid.has("ast") {
+            body.push(Item::Note(vec![format!("// {rel}: a finding from a text rule. It has no AST pattern, so it stays as JSON.")]));
+            body.push(Item::Viol(violation_lines(viol, &rel, &[], false, &BTreeSet::new(), &BTreeSet::new())));
+            body.push(Item::Line(format!("{rel}(d) :- text_rule(d, {}).", compact(&Value::Obj(forbid.clone())))));
+            prog.untranslated += 1;
+            continue;
+        }
+        let a_owned = option_ast(obj_of(forbid.get("ast")));
+        let a = a_owned.as_ref().unwrap_or_else(|| obj_of(forbid.get("ast")));
+        let utils = obj_of(a.get("utils").filter(|u| u.truthy()));
+        let mut sc = indexmap::IndexMap::new();
+        for name in utils.keys() {
+            let s = super::lower::util_name(name);
+            let v = if prog.util_rels.contains(&s) { format!("{s}_{}", snake(&cid)) } else { s };
+            sc.insert(name.to_owned(), v);
+        }
+        prog.scope = sc;
+        let mut local = Vec::new();
+        for (name, rule) in utils.iter() {
+            render_util(px, &mut prog, name, rule, &mut local)?;
+        }
+        let cols = violation_columns(viol);
+        let mut note = vec![format!("// {rel}(n): a finding at node n, from clause `{cid}`."), "// Each rule below is one way the JSON `rule` can match.".to_owned()];
+        if !cols.is_empty() {
+            note.push("// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.".to_owned());
+        }
+        let opts = a.without(&["language", "rule", "utils", "constraints", "transform", "embedded"]);
+        let mut vs = Vars::default();
+        let tr_v = a.get("transform").filter(|t| t.is_obj() && t.truthy());
+        let tlits = match tr_v {
+            Some(tr) => transform_lits(&mut prog, tr, &mut vs, &transform_targets(tr))?,
+            None => Vec::new(),
+        };
+        if let Some(tr) = tr_v {
+            note.push(format!(
+                "// The JSON `transform` computes {} from other metavariables' text; its literals end each rule.",
+                transform_targets(tr).into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+        let mut vl = violation_lines(viol, &rel, &cols, true, &BTreeSet::new(), &prog.symbolic);
+        let edits = fix_edits(viol);
+        if edits.as_ref().is_some_and(|e| !e.is_empty()) {
+            note.push("// `=> replace(…)` is today's fix template: the edit suggested with each finding.".to_owned());
+        }
+        if !opts.is_empty() {
+            vl.push(format!("    options {}", compact(&Value::Obj(opts.clone()))));
+        }
+        if let Some(cons) = a.get("constraints").filter(|c| c.truthy()) {
+            let names: Vec<String> = match cons {
+                Value::Obj(o) => o.keys().map(str::to_owned).collect(),
+                Value::List(l) => l.iter().map(py_str).collect(),
+                Value::Str(s) => s.chars().map(String::from).collect(),
+                _ => Vec::new(),
+            };
+            note.push(format!("// The JSON `constraints` on {} are added to every rule.", names.join(", ")));
+        }
+        if !opts.is_empty() {
+            note.push("// `options` carries JSON settings that have no .rerail form yet.".to_owned());
+        }
+        body.push(Item::Note(note));
+        body.push(Item::Viol(vl));
+        let default_rule = Value::Obj(Obj(Vec::new()));
+        let rule = a.get("rule").unwrap_or(&default_rule);
+        let bodies = match rule {
+            Value::Obj(o) if o.key_set_is(&["any"]) && o.get("any").is_some_and(Value::is_list) => grouped(px, &mut prog, o.get("any").and_then(Value::as_list).expect("a list"), "n", &mut vs)?,
+            _ => vec![lower(px, &mut prog, rule, "n", &mut vs, &[])?],
+        };
+        let mut cons = Vec::new();
+        for (var, crule) in obj_of(a.get("constraints").filter(|c| c.truthy())).iter() {
+            cons.extend(lower(px, &mut prog, crule, &mv(var), &mut vs, &[])?);
+        }
+        let hd = format!("{rel}(n{})", cols.iter().map(|c| format!(", {c}")).collect::<String>());
+        // A plain transform's targets, in order, each with its root source (the metavariable its chain reads).
+        let targets: Vec<(String, String)> = match (tr_v, prog.transform_defs.as_ref()) {
+            (Some(tr), Some(defs)) if !tr.as_obj().is_some_and(|o| o.has("$option")) => transform_targets(tr)
+                .into_iter()
+                .filter(|t| defs.contains_key(t))
+                .map(|t| {
+                    let mut root = defs[&t].0.clone();
+                    let mut depth = 0;
+                    while let Some((src, _)) = defs.get(&root).filter(|_| depth < 20) {
+                        root = src.clone();
+                        depth += 1;
+                    }
+                    (t, root)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let entry = match a.get("embedded").and_then(Value::as_str) {
+            Some(via) => Some(super::embedded::entry(&lang, via, "n", &mut vs)?),
+            None => None,
+        };
+        for b in bodies {
+            let mut lits = b;
+            lits.splice(0..0, entry.iter().cloned());
+            lits.extend(cons.iter().cloned());
+            if targets.is_empty() {
+                lits.extend(tlits.iter().cloned());
+            } else {
+                // A target whose source the rule binds only inside a negation or an aggregate (a util that binds it
+                // there, in its own frame) is not computed here: grounding its source would range it over every
+                // node. The helper that reads it computes it itself (transform_defs_for), so it stays local there.
+                // ast-grep leaves such a target unset where the rule's own match does not bind it.
+                let mut bound = binders(px, &lits.join(", "), false);
+                // And, in a clause over an embedded program, what a util called here outside a negation or an
+                // aggregate binds (`matches: item` binds K). Elsewhere it is left as decision 0201 has it: counted
+                // there, it would change nine of the Python pack's rules, which the Ruff comparison has not checked.
+                if entry.is_some() {
+                    bound.extend(util_binds(px, &prog, &local, &lits));
+                }
+                let defs = prog.transform_defs.as_ref().expect("transform defs");
+                for (t, root) in &targets {
+                    if root.is_empty() || bound.contains(root) {
+                        lits.extend(defs[t].1.iter().cloned());
+                    } else if cols.contains(t) {
+                        lits.push(format!("unset({t})"));
+                    }
+                }
+            }
+            let id = prog.entry(Entry { head: hd.clone(), lits, edits: edits.clone(), ..Default::default() });
+            body.push(Item::Rule(id));
+        }
+        for (h, lits) in local {
+            let id = prog.entry(Entry { head: h, lits, ..Default::default() });
+            body.push(Item::Rule(id));
+        }
+    }
+
+    // simplify.rs: duplicate helpers, helpers used once, grounding atoms something else provides
+    let mut entries: Vector<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
+    let mut protected = seen_rel.clone();
+    for &e in &entries {
+        if prog.arena[e].head.contains(',') {
+            protected.insert(prog.arena[e].name().to_owned());
+        }
+    }
+    simplify(px, &mut entries, &mut prog, protected, reserved);
+    // A util no finding reaches (main defines it, and no clause of this file calls it) is not emitted: nothing
+    // passes its metavariables in, so it could not be grounded, and nothing reads it.
+    {
+        // A relation is read where it is named: called, or passed as an argument (`within_stop(c, p, stop_40)`).
+        let words = regex::Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").expect("a regex");
+        let mut calls: BTreeMap<String, Set> = BTreeMap::new();
+        let ids: Vector<usize> = entries.iter().copied().chain(prog.rules.iter().filter_map(|r| if let PRule::Rule(id) = r { Some(*id) } else { None })).collect();
+        for &e in &ids {
+            let en = &prog.arena[e];
+            calls.entry(en.name().to_owned()).or_default().extend(words.find_iter(&masked(px, &en.lits.join(", "))).map(|m| m.as_str().to_owned()));
+        }
+        let mut reached: Set = Set::new();
+        let mut todo: Vec<String> = seen_rel.iter().cloned().collect();
+        for i in &body {
+            let text = match i {
+                Item::Line(l) => l.clone(),
+                Item::Viol(ls) => ls.join("\n"),
+                Item::Rule(e) => prog.arena[*e].edits.clone().unwrap_or_default().join(" "),
+                _ => continue,
+            };
+            todo.extend(words.find_iter(&masked(px, &text)).map(|m| m.as_str().to_owned()));
+        }
+        while let Some(r) = todo.pop() {
+            if reached.insert(r.clone()) {
+                todo.extend(calls.get(&r).into_iter().flatten().filter(|c| !reached.contains(*c)).cloned());
+            }
+        }
+        let dead: Set = calls.keys().filter(|r| !reached.contains(*r)).cloned().collect();
+        if !dead.is_empty() {
+            entries.retain(|e| !dead.contains(prog.arena[*e].name()));
+            prog.rules.retain(|r| !matches!(r, PRule::Rule(id) if dead.contains(prog.arena[*id].name())));
+            for d in &dead {
+                prog.decls.shift_remove(d);
+                prog.notes.shift_remove(d);
+            }
+        }
+    }
+    let keep: BTreeSet<usize> = entries.iter().copied().collect();
+    body.retain(|i| !matches!(i, Item::Rule(e) if !keep.contains(e)));
+
+    // helper relations share the JSON's metavariables with their callers
+    let entries: Vector<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
+    let mut helper_entries = Vec::new();
+    for r in prog.rules.clone() {
+        if let PRule::Rule(id) = r {
+            let (h, l) = (prog.arena[id].head.clone(), prog.arena[id].lits.clone());
+            helper_entries.push(prog.entry(Entry { head: h, lits: l, ..Default::default() }));
+        }
+    }
+    let helpers: Set = prog.decls.keys().cloned().collect();
+    let mut all: Vector<usize> = entries.clone();
+    all.extend(helper_entries.iter().copied());
+    let mut shared = share_metavariables(px, &mut prog, &all, &helpers);
+    for (name, ps) in &shared.order {
+        if !ps.is_empty() && prog.decls.contains_key(name) {
+            let d = prog.decls[name].clone();
+            let add: String = ps
+                .iter()
+                .map(|p| format!(", {}: {}", col(p), if prog.numeric.contains(p) { "number" } else if prog.symbolic.contains(p) { "symbol" } else { "loc" }))
+                .collect();
+            prog.decls.insert(name.clone(), format!("{}{add})", &d[..d.len() - 1]));
+            let ins: Vec<String> = ps.iter().filter(|p| shared.inputs[name].contains(*p)).cloned().collect();
+            let outs: Vec<String> = ps.iter().filter(|p| !ins.contains(p)).cloned().collect();
+            if !ins.is_empty() {
+                let s = if ins.len() > 1 { "s" } else { "" };
+                prog.notes.entry(name.clone()).or_default().push(format!("//   {}: metavariable{s} of the calling rule, passed in (bound by the caller)", ins.join(", ")));
+            }
+            if !outs.is_empty() {
+                let s = if outs.len() > 1 { "s" } else { "" };
+                prog.notes.entry(name.clone()).or_default().push(format!("//   {}: metavariable{s} this relation binds for the calling rule", outs.join(", ")));
+            }
+        }
+    }
+    passed_in_patterns(&mut prog, &all, &shared.inputs);
+    drop_dead_columns(px, &mut prog, &all, &helpers, &shared);
+    stop_with_columns(&mut prog, &all);
+    inline_unsafe(px, &mut prog, &all, &helpers, &shared.inputs, false);
+    let sites = demand(px, &mut prog, &all, &helpers, &shared.inputs)?;
+    inline_unsafe(px, &mut prog, &all, &helpers, &shared.inputs, true);
+    node_demand(px, &mut prog, &all, &helpers)?;
+    for (dname, owner, i) in sites {
+        for &e in &all {
+            if prog.arena[e].drop || prog.arena[e].name() != owner {
+                continue;
+            }
+            let first = prog.arena[e].lits.first().cloned().unwrap_or_default();
+            let rules = &mut prog.lib.get_mut(&dname).expect("a demand relation").2;
+            if first.starts_with(&format!("demand_{owner}(")) && !rules[i].1.contains(&first) {
+                rules[i].1.insert(0, first);
+            }
+            break;
+        }
+    }
+    let (unrolled, empty) = unroll_negative(px, &mut prog, &all, &helpers, &mut shared.inputs);
+    body.extend(unrolled.iter().map(|&e| Item::Rule(e)));
+    let live: Vector<usize> = all.iter().chain(&unrolled).copied().filter(|&e| !prog.arena[e].drop).collect();
+    hoist_ancestor_steps(px, &mut prog, &live);
+    for (name, decl) in empty {
+        prog.lib.insert(name.clone(), (decl, vec![format!("// {name}: level -1 of an unrolled recursion, empty")], Vec::new()));
+    }
+    body.retain(|i| !matches!(i, Item::Rule(e) if prog.arena[*e].drop));
+    let body = fold_messages(px, &mut prog, body);
+    let mut hi = helper_entries.iter();
+    enum HR {
+        Facts(String, Vec<Value>),
+        Rule(String, Vec<String>),
+    }
+    let mut helper_rules = Vec::new();
+    for r in &prog.rules {
+        match r {
+            PRule::Facts { name, vals } => helper_rules.push(HR::Facts(name.clone(), vals.clone())),
+            PRule::Rule(_) => {
+                let &e = hi.next().expect("a helper entry");
+                if !prog.arena[e].drop {
+                    helper_rules.push(HR::Rule(prog.arena[e].head.clone(), prog.arena[e].lits.clone()));
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<String> = head;
+    out.push("// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).".to_owned());
+    out.push(String::new());
+    if !prog.host_reads.is_empty() {
+        // engine_dialect's same_document_joins reads this line: these are compared by text across documents
+        let names: Vec<&str> = prog.host_reads.iter().map(String::as_str).collect();
+        out.push(format!("// Guest captures a host rule reads, by text (another document): {}", names.join(", ")));
+        out.push(String::new());
+    }
+    if !prog.uses.is_empty() {
+        out.extend(prog.uses.iter().map(|u| format!("#include \"{u}.rerail\"")));
+        out.push(String::new());
+    }
+    let mut em = Emit { px, prog: &prog, inputs: &shared.inputs, declared: Set::new(), out };
+    for item in &body {
+        match item {
+            Item::Rule(e) => {
+                let en = &prog.arena[*e];
+                em.decl(name_of(&en.head));
+                em.rule(&en.head, &en.lits, en.edits.as_deref())?;
+            }
+            Item::Note(lines) => {
+                if em.out.last().is_some_and(|l| !l.is_empty()) {
+                    em.out.push(String::new());
+                }
+                em.out.extend(lines.iter().cloned());
+            }
+            Item::Viol(lines) => {
+                let mut first = lines[0].clone();
+                for c in &prog.numeric {
+                    let l = c.to_lowercase();
+                    first = sub(&re(&format!(r"\b{l}: loc\b")), &first, |_| format!("{l}: number"));
+                }
+                // a capture found symbolic while the rules were lowered (a token's text): a symbol
+                for c in &prog.symbolic {
+                    let l = c.to_lowercase();
+                    first = sub(&re(&format!(r"\b{l}: loc\b")), &first, |_| format!("{l}: symbol"));
+                }
+                em.out.push(first);
+                em.out.extend(lines[1..].iter().cloned());
+            }
+            Item::Line(l) => em.out.push(l.clone()),
+        }
+    }
+    for (_, (decl, note, rules)) in &prog.lib {
+        em.out.push(String::new());
+        em.out.extend(note.iter().cloned());
+        em.out.push(decl.clone());
+        for (h, lits) in rules {
+            em.out.push(wrap(h, &bind_read_nodes(px, lits.clone()), None));
+        }
+    }
+    if !helper_rules.is_empty() {
+        em.out.push(String::new());
+        for r in &helper_rules {
+            match r {
+                HR::Facts(name, vals) => {
+                    em.decl(name);
+                    let mut line = String::new();
+                    for v in vals {
+                        let args = match v {
+                            Value::List(l) => l.iter().map(q_val).collect::<Vec<_>>().join(", "),
+                            _ => q_val(v),
+                        };
+                        let f = format!("{name}({args}).");
+                        if !line.is_empty() && line.chars().count() + f.chars().count() + 1 > 88 {
+                            em.out.push(std::mem::take(&mut line));
+                        }
+                        line = format!("{line} {f}").trim().to_owned();
+                    }
+                    if !line.is_empty() {
+                        em.out.push(line);
+                    }
+                }
+                HR::Rule(h, lits) => {
+                    em.decl(name_of(h));
+                    em.rule(h, lits, None)?;
+                }
+            }
+        }
+    }
+    let mut out = em.out;
+    if out.iter().any(|l| !l.trim_start().starts_with("//") && l.contains("ast(")) {
+        let i = out.iter().position(String::is_empty).unwrap_or(out.len());
+        out.insert(i, "// ast(n, {…}) atoms are JSON terms with no .rerail form yet; the engine matches them as it does today.".to_owned());
+    }
+    Ok((format!("{}\n", out.join("\n").trim_end()), prog.untranslated))
+}
+
+struct Emit<'a> {
+    px: &'a Patterns,
+    prog: &'a Program,
+    inputs: &'a BTreeMap<String, Set>,
+    declared: Set,
+    out: Vec<String>,
+}
+
+/// The metavariables the utils `lits` call outside a negation or an aggregate bind, through the utils they call so
+/// (decision 0222): before the shared columns are added, a call is `item_p(n)`, and the rule's K is the util's. The
+/// utils are the program's and the clause's own (`local`, rendered but not yet added).
+fn util_binds(px: &Patterns, prog: &Program, local: &[(String, Vec<String>)], lits: &[String]) -> Set {
+    let called = |text: &str| -> Vec<String> {
+        let outside = super::text::drop_aggregates(px, text);
+        let positive = re(r"(?<![!\w.@])([a-z_]\w*)\(");
+        findall(&positive, &masked(px, &outside))
+    };
+    let (mut out, mut seen, mut todo) = (Set::new(), Set::new(), called(&lits.join(", ")));
+    while let Some(name) = todo.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let own = local.iter().filter(|(h, _)| h.split('(').next() == Some(name.as_str())).map(|(_, l)| l);
+        for body in prog.arena.iter().filter(|e| e.name() == name).map(|e| &e.lits).chain(own) {
+            let text = body.join(", ");
+            out.extend(binders(px, &text, false));
+            todo.extend(called(&text));
+        }
+    }
+    out
+}
+
+fn check(px: &Patterns, text: &str, inputs: &[String]) -> R<Vec<String>> {
+    check_rule(px, text, &BTreeSet::new(), inputs).map_err(|e| e.0)
+}
+
+impl Emit<'_> {
+    fn decl(&mut self, name: &str) {
+        if self.prog.decls.contains_key(name) && !self.declared.contains(name) {
+            if self.out.last().is_some_and(|l| !l.is_empty()) {
+                self.out.push(String::new());
+            }
+            self.out.extend(self.prog.notes.get(name).cloned().unwrap_or_default());
+            self.out.push(self.prog.decls[name].clone());
+            self.declared.insert(name.to_owned());
+        }
+    }
+
+    fn rule(&mut self, h: &str, lits: &[String], edits: Option<&[String]>) -> R<()> {
+        let (prog, px) = (self.prog, self.px);
+        let mut lits: Vec<String> = lits.to_vec();
+        let hname = name_of(h);
+        if hname.chars().next().is_some_and(char::is_lowercase)
+            && let Some(defs) = prog.transform_defs.as_ref().filter(|d| !d.is_empty())
+        {
+            let add = transform_defs_for(px, defs, &lits);
+            lits.extend(add);
+        }
+        if !prog.symbolic.is_empty() {
+            let syms = prog.symbolic.iter().cloned().collect::<Vec<_>>().join("|");
+            let pat = re(&format!(r"(?<![\w$@])(?:text|value)\(({syms}), (\w+)\)"));
+            lits = lits.iter().map(|l| sub(&pat, l, |c| format!("{} = {}", g(c, 2), g(c, 1)))).collect();
+            let body = lits.join(", ");
+            let pairs: BTreeSet<(String, String)> = findall_groups(&re(&format!(r"(?<![\w$@])([a-z]\w*) = ({syms})\b")), &body).into_iter().map(|v| (v[0].clone(), v[1].clone())).collect();
+            for (t, x) in pairs {
+                if findall(&re(&format!(r"(?<![\w$@]){t} = ")), &body).len() != 1 {
+                    continue;
+                }
+                let eq = format!(r"(?<![\w$@]){t} = {x}\b");
+                let (r1, r2, r3) = (re(&format!(r",\s*{eq}")), re(&format!(r"{eq},\s*")), re(&eq));
+                let tv = re(&format!(r"(?<![\w$@]){t}\b"));
+                lits = lits
+                    .iter()
+                    .map(|l| {
+                        let d = sub(&r3, &sub(&r2, &sub(&r1, l, |_| String::new()), |_| String::new()), |_| String::new());
+                        sub(&tv, &d, |_| x.clone())
+                    })
+                    .filter(|l| !l.trim().is_empty())
+                    .collect();
+            }
+        }
+        let mut lits = bind_read_nodes(px, lits);
+        let mut text = wrap(h, &lits, edits);
+        let inputs: Vec<String> = self.inputs.get(hname).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+        let mut bad = check(px, &text, &inputs)?;
+        if bad.iter().any(|x| x == "n") && h.split_once('(').is_some_and(|(_, t)| t.starts_with('n')) {
+            lits.insert(0, "node(_, n, _, _, _)".to_owned());
+            text = wrap(h, &lits, edits);
+            bad = check(px, &text, &inputs)?;
+        }
+        let masked = mask_ticks(px, &strip_strings(px, &text));
+        let once: Vec<String> = bad.iter().filter(|x| is_full(r"[a-z]\w*", x) && findall(&re(&format!(r#"(?<![\w"@$]){x}\b"#)), &masked).len() == 1).cloned().collect();
+        if !once.is_empty() {
+            let pat = re(&format!(r"(?<![\w@$])({})\b(?!\s*\()", once.join("|")));
+            lits = lits.iter().map(|l| split1(&px.text_pieces, l).into_iter().map(|p| if p.starts_with('"') || p.starts_with('`') { p } else { sub(&pat, &p, |_| "_".into()) }).collect()).collect();
+            text = wrap(h, &lits, edits);
+            bad = check(px, &text, &inputs)?;
+        }
+        let empty: Vec<String> = bad.iter().filter(|x| is_full(r"[A-Z][A-Z0-9_]*", x)).cloned().collect();
+        if !empty.is_empty() {
+            let mut rest = Vec::new();
+            for x in &empty {
+                let mut done = false;
+                for i in 0..lits.len() {
+                    let t = lits[i].trim().to_owned();
+                    if !(t.starts_with('(') && t.ends_with(')') && head_span_ok(px, &t)) {
+                        continue;
+                    }
+                    let branches = split_top_text(&t[1..t.len() - 1], ';');
+                    let call = re(&format!(r"(?<![!\w.@])[a-z_]\w*\([^()]*(?<![\w$]){x}\b[^()]*\)"));
+                    // A branch sets x (binds it to a node), unsets it (`unset(x)`: the catch-all `regex: "^"`), or
+                    // neither; first-match guards go between branches that differ in whether they set it.
+                    let sets: Vec<bool> = branches
+                        .iter()
+                        .map(|b| binders(px, &sub(&px.translate_no_match_group, b, |_| String::new()), false).contains(x) || search(&call, b))
+                        .collect();
+                    let binding: Vec<bool> = branches.iter().zip(&sets).map(|(b, s)| *s || b.contains(&format!("unset({x})"))).collect();
+                    if branches.len() > 1 && binding.iter().any(|b| *b) {
+                        // ast-grep's `any` takes its first alternative that matches: a branch holds only where
+                        // no earlier one that binds x otherwise does (`any: [{pattern: $TI}, {regex: "^"}]` leaves
+                        // TI unset only where it cannot bind it).
+                        let mut outer: Set = lits.iter().enumerate().filter(|(j, _)| *j != i).flat_map(|(_, l)| super::demand::vars_of(px, l)).collect();
+                        outer.extend(inputs.iter().cloned());
+                        outer.insert("n".to_owned());
+                        lits[i] = format!(
+                            "({})",
+                            branches
+                                .iter()
+                                .enumerate()
+                                .map(|(k, b)| {
+                                    let mut out = if binding[k] { b.trim().to_owned() } else { format!("{}, unset({x})", b.trim()) };
+                                    for j in (0..k).filter(|j| sets[*j] != sets[k]) {
+                                        if let Some(not) = not_earlier(px, &branches[j], &outer, j) {
+                                            out.push_str(&format!(", {not}"));
+                                        }
+                                    }
+                                    out
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ; ")
+                        );
+                        done = true;
+                        break;
+                    }
+                }
+                if !done {
+                    rest.push(x.clone());
+                }
+            }
+            lits.extend(rest.iter().map(|x| format!("unset({x})")));
+            text = wrap(h, &lits, edits);
+            bad = check(px, &text, &inputs)?;
+            let all = rest == empty;
+            self.out.push(format!(
+                "// {}: not bound by {}, so empty (unset) {}, as in ast-grep.",
+                empty.join(", "),
+                if all { "this rule" } else { "every branch" },
+                if all { "here" } else { "where not bound" }
+            ));
+        }
+        if !bad.is_empty() {
+            self.out.push(format!("// Not grounded: no positive atom binds {}.", bad.join(", ")));
+        }
+        self.out.push(text);
+        Ok(())
+    }
+}
+
+/// `count : { b } = 0` for an earlier `any` branch b, its own variables renamed so they are the aggregate's: the
+/// branch does not hold here.
+pub(super) fn not_earlier(px: &Patterns, b: &str, outer: &Set, j: usize) -> Option<String> {
+    // `unset(X)` always holds (it binds X empty): whether the branch holds is the rest of it.
+    let kept: Vec<String> = split_top_text(b, ',').into_iter().filter(|l| !is_full(r"\s*unset\(\w+\)\s*", l)).collect();
+    if kept.is_empty() {
+        return Some("0 = 1".to_owned());
+    }
+    let b = &kept.join(",");
+    let own: Vec<String> = super::demand::vars_of(px, b).into_iter().filter(|v| !outer.contains(v)).collect();
+    if own.is_empty() {
+        return Some(format!("count : {{ {} }} = 0", b.trim()));
+    }
+    let var = re(&format!(r"(?<![\w@$])({})\b(?!\s*\()", own.join("|")));
+    // A pattern metavariable is upper case: one the branch binds inside a pattern (`` `$MV` ``) is renamed there and
+    // outside alike, to X_E<j>.
+    let pieces = split1(&px.text_pieces, b);
+    let in_pattern = pieces.iter().any(|p| p.starts_with('`') && own.iter().any(|v| p.contains(&format!("${v}"))));
+    let suffix = if in_pattern { format!("_E{j}") } else { format!("_e{j}") };
+    let pvar = re(&format!(r"\$({})\b", own.join("|")));
+    let mut out = String::new();
+    for p in pieces {
+        if p.starts_with('`') {
+            out.push_str(&sub(&pvar, &p, |c| format!("${}{suffix}", g(c, 1))));
+        } else if p.starts_with('"') {
+            out.push_str(&p);
+        } else {
+            out.push_str(&sub(&var, &p, |c| format!("{}{suffix}", g(c, 1))));
+        }
+    }
+    Some(format!("count : {{ {} }} = 0", out.trim()))
+}

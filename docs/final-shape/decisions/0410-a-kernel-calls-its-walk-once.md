@@ -1,6 +1,6 @@
 # 0410. A kernel calls its walk once
 
-Status: accepted (2026-11-18)
+Status: built (audited 2026-11-23). Accepted (2026-11-18)
 
 ## Intro
 

@@ -1,10 +1,12 @@
 # 0353: Blocks are never copied: every reader reads the data where it lives
 
-Status: decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on exactly
-the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different data-structures for
-'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325 step 5 named in
-"What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
-0310 (reads written once, three backends) and 0325 (relations are blocks).
+Status: partly built (audited 2026-11-23; steps 3-8 merged 2026-11-23). Left: 5 marked copies, step 3's one
+(core.rerail's per-node rows) and step 4a's four (a queued tape not in a room, the parsers' columns, a source made in
+memory). Decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on
+exactly the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different
+data-structures for 'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325
+step 5 named in "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API,
+read in place), 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
 Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
 
@@ -326,6 +328,14 @@ and each line span's place.
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
   rows), deferred (Q121). T's rows of a bound node are read since 2026-11-23 (below).
+- core.rerail's tape answers that `core_rr` made as rows are views (2026-11-22): `op` (`View::Op`: a numbered node's
+  anonymous children, the rank item `Item::Op`, zero-width ones included; a Python two-word operator is one child,
+  the grammar's alias, so no row is made for it or for any other), `end_point` (`View::End`: a node's position among `Locs::ends`),
+  `spread` (`View::Spread`: a rank item the walk marks from the code table) and the token order, `first_token`,
+  `last_token`, `token_before`, `token_after` (`View::Tok`, `syntax/tokens.rs`): the lexemes are a rank item,
+  each answer a rank and a select, each relation's rows the places marked as having one. The rank index's groups
+  are 15 words for its ten items. Tests hold each to what `core_rr` made (`the_token_order_is_the_sorted_tokens`,
+  `core_rr_relations_hold_what_core_rr_says`, `op_is_every_anonymous_child_and_op_ats_two_word_operators`).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -676,10 +686,13 @@ Each step ends with:
          `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
          lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
          its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
-         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
-         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
-       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
-         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a guest's entry holds
+         its spans placed (`ViewDoc::placed`, `PLACED_TABLE`: each position's host span, made once into the block
+         as the host places it, `Placement::host`), so its batch's places are read in place too (2026-11-22: a
+         stratum over a Vue guest made `line` and `docof` by launches of their own, past decision 0603's one
+         launch). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent).
+         `expand_view`, `VIEW_EXPAND`,
          ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.
@@ -1277,9 +1290,10 @@ On the 300-file bench they were 49.9 MB: `text` 19.6, `structural_before` and `s
 
 What `text`'s pass did for `text` (`t = @rr_node_text_any(v)`) the same pass, `NodeReads`, now does for every
 single-valued per-node relation of `core.rerail` (`NODE_READ_OF`): `r(v, x)` of a node `v` the rest of the body binds
-reads `x = @rr_node_<r>(v)`, through the run's binding of the batch (`LongTexts::core_read`): `rr_node_before`,
-`rr_node_after`, `rr_node_name`, `rr_node_comment`, `rr_node_strprefix`. Each value has one definition, which the walk
-makes its row with and the read answers (`core_rr::node_structural`, `node_name`, `node_comment`, `node_strprefix`).
+reads `x = @rr_node_<r>(v)`, through the run's binding of the batch (`LongTexts::core_read`): `rr_node_name`,
+`rr_node_comment`, `rr_node_strprefix` (and `rr_node_before`, `rr_node_after` until the hub's merge, below). Each value
+has one definition, which the walk makes its row with and the read answers (`core_rr::node_name`, `node_comment`,
+`node_strprefix`).
 A per-node atom binds no node for this (`name(n, "x")` alone is a lookup by value), and the rules the pass leaves
 (their node bound by no other atom, or only cross-file) are named per relation in the profile, as `text`'s were. A
 relation no rule reads as rows any more is not made: the walk's skips follow the projection.
@@ -1316,18 +1330,15 @@ library and bench rule reads `op_at` so; a place nothing binds is read as rows, 
 `per_node_values_of_a_bound_node_are_read_in_place` the four forms. Bench 463, row 7 14.2 MB (`op` 0.9, `text` 16.0);
 hogql 1,629 (d82234cb).
 
-`op` is a view (`View::Op`), as `next_sibling` is: in core.rerail's shape a row is a token the projection marks
-(`Item::Token`, an anonymous child of a numbered node with text), in tape order; `n` its parent's id, `s` its name.
-Its names are a table per entry (`ViewDoc::names`, by tape code beside `kinds` and `fields`), interned where the
-batch reads `op`; the CPU and the kernels read a row through the views' read written once (`view_op` in CLIF,
-`Doc::op`, `vread`'s case 12). By `n`, a node's tokens are its tape children that are tokens; by `s`, the tape's kind
-postings of the kinds of that name (`Facts::of_kind`), the tokens among them. The two-word merge `core_rr` did
-("not in") was dead on tree-sitter's tapes, which store each as one token. Its names go into the batch's vocabulary
-as a made relation's strings do: a text test of `s` (`glob("{===,!==}", o)`) reads the vocabulary. Bringing it in
-found four places that took a view's row for a node's: `op` keyed no row by its node (`keys_rows`), looked up nothing
-by its name, gave its name column as a document (`reads_id`), and had no vocabulary; `views_read_both_ways` now checks
-every view's keyed and indexed lookups and its documents by column against its rows. Tests: the views' both-ways
-check, `a_probe_makes_the_document_it_names_alone`, and on the M1 Max `views_read_on_the_device_are_the_hosts_rows`.
+`op` was made a view of the tokens here (`Item::Token`, its names a table per entry, `view_op` in CLIF), while the
+hub made it one of its own rank item (`View::Op` on `Item::Op`, c6129a7d93: every anonymous child, zero-width ones
+included, its name `Batch::op_atom`). The merge of the hub (2026-11-23) keeps the hub's, one `op`; this branch's
+token view, its names table and its kernel read are superseded by it. The hub's `op` is read on the host alone; its
+read on the kernels follows as its own step. The merge also takes the hub's `structural_before` and
+`structural_after`, views of the tape (`tape_rows`' `Gap`, a derived column made on first read): a lookup by node
+reads them in place, so their node reads (`rr_node_before`, `rr_node_after`) and `core_rr::node_structural` go.
+`core_rr` makes no `op_at` (one definition, `tree::node_operators`), so the hub's narrowing of `core_rr`'s `op_at` to
+the nodes rules read (`op_nodes`) goes with it.
 
 T's shape's `NodeRows` (Q121, 2026-11-23). T's per-node relations (`syntax::TRel`: `text`, `name`, `str`,
 `strprefix`, `intval`, `op`, which is `op_t` in core.rerail's shape) have one definition, `syntax::t_value`: the

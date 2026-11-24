@@ -16,9 +16,22 @@
     "Remove the unused ref '{x}', or read it through the component's refs, useTemplateRef or a matching setup binding."
     suppress eslint "vue/no-unused-refs"
 unused_ref(q, x) :- vplain(_, a, n), vlower(n, "ref"), vval(a, v), text(v, x), child(a, q, _),
-    kind(q, "quoted_attribute_value"), docof(a, d), !used(d, x), !unknown(d).
+    kind(q, "quoted_attribute_value"), docof(a, d), !read_ref(d, x), !unknown_ref(d).
 unused_ref(v, x) :- vplain(_, a, n), vlower(n, "ref"), vval(a, v), text(v, x), !child_quoted(a), docof(a, d),
-    !used(d, x), !unknown(d).
+    !read_ref(d, x), !unknown_ref(d).
+// What reads the refs is code: the scripts' (the context `script`) and the template's (`expression`), each its own
+// instance of `used` and `unknown` below, over its nodes alone (decision 0597); `script_used` is the script's alone.
+.decl read_ref(d: number, x: symbol)
+read_ref(d, x) :- script_reads(d, x).
+read_ref(d, x) :- template_reads(d, x).
+read_ref(d, x) :- script_bindings(d, x).
+.decl unknown_ref(d: number)
+unknown_ref(d) :- script_unknown(d).
+unknown_ref(d) :- template_unknown(d).
+.context script of vue roots vscript_root exports used, unknown, script_used
+.context expression of vue roots vexpr_root exports used, unknown
+.from script used as script_reads, unknown as script_unknown, script_used as script_bindings
+.from expression used as template_reads, unknown as template_unknown
 .decl child_quoted(a: node)
 child_quoted(a) :- child(a, q, _), kind(q, "quoted_attribute_value").
 
@@ -31,11 +44,13 @@ refs(i) :- vin_script(i), kind(i, "identifier"), text(i, "$refs").
 .decl used(d: number, x: symbol)
 used(d, x) :- refs(n), estree_parent(n, m), static_prop(m, o, x), deparen(o, n), docof(n, d).
 used(d, x) :- refs(n), destructured(n, l), child(l, p, _), vprop_key_pattern(p, x), docof(n, d).
-used(d, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
+// The script's own: useTemplateRef("name"), setup()'s returns, <script setup>'s bindings.
+.decl script_used(d: number, x: symbol)
+script_used(d, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
     text(f, "useTemplateRef"), call_arg(c, s, 0), (kind(s, "string") ; kind(s, "template_string")), value(s, x),
     docof(c, d).
-used(d, x) :- vname(o, "setup", x, _), docof(o, d).
-used(d, x) :- vsetup_doc(d), vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
+script_used(d, x) :- vname(o, "setup", x, _), docof(o, d).
+script_used(d, x) :- vsetup_doc(d), vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
 // destructured(n, l): `const { a } = $refs` or `({ a } = $refs)`: l is the object pattern.
 .decl destructured(n: node, l: node)
 destructured(n, l) :- refs(n), estree_parent(n, p), kind(p, "variable_declarator"), field(p, "value", w), deparen(w, n),

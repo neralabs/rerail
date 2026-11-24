@@ -1,5 +1,7 @@
 # 0491. A block's regions are held by handles that say what they may do
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-20. Status: decided (the user, 2026-11-20, on 0487: "I was expecting some arc-type thing for blocks
 that tracks frozenness, readers, writers, allocation, GPU placement, versions (after mutation), implicit freeing when
 there are no users left and detection of invariant issues like two writers, simultaneous readers and writers, etc. It

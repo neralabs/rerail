@@ -8,12 +8,17 @@ rerail-device	core
 rerail-simd8	core
 rerail-simdjson-native	core
 rerail-registry	core
+rerail-vector	core
+rerail-section-derive	core
+rerail-section	core
 rerail-blocks	core
 rerail-simdjson	core
 rerail-clif	core
 rerail-json-lean	core
 rerail-tape-format	core
 rerail-json-aot	core
+rerail-ukl-aot	core
+rerail-error	core
 rerail-compiler	core
 rerail-rir	core
 rerail-rr-syntax	core
@@ -45,7 +50,9 @@ rerail-forest	core
 rerail-accel	core
 rerail-prof	core
 rerail-metal	core
+rerail-metal-programs	core
 rerail-store-base	core
+rerail-observe	core
 rerail-store	core
 rerail-program-image	core
 rerail-cpu-stream	core
@@ -65,6 +72,9 @@ rerail-json-rules	core
 rerail-matcher	core
 rerail-run	core
 rerail-rules-base	core
+rerail-p-anchors	core
+rerail-d-relational	core
+rerail-d-anchors	core
 rerail-setfix	core
 rerail-rules	core
 rerail-plan-base	core
@@ -75,6 +85,7 @@ rerail-cpython	provider
 rerail-lang-python	provider
 rerail-lang-rust	provider
 rerail-lang-sql	provider
+rerail-node-space	core
 rerail-transducer-base	core
 rerail-transducer-cpu	core
 rerail-transducer	core

@@ -4,7 +4,7 @@
 //! reader above reads every transducer path here, as before. It is the transducer's one crate that reads W
 //! (rerail-rules).
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -17,7 +17,7 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 pub use rerail_transducer_cpu::{content_store, git_access, git_workspace};
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_transducer_cpu::code_rule_dsl::*;
     pub use rerail_rules::code_rule_dsl::calls;

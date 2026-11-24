@@ -1,8 +1,8 @@
 # 0495. A rule file holds its JSON objects, regexes and patterns as programs
 
-Status: decided (2026-11-20), by the user: "Do it now", for Q325 item 4 (the rule-file language declares no embeds).
-Continues 0431 §4 (a file's programs are its grammar's declaration), 0466 (a fragment starts at a node kind, by a
-hand-written parser) and 0470 (a language declares the places its strings hold code).
+Status: built (audited 2026-11-23). Decided (2026-11-20), by the user: "Do it now", for Q325 item 4 (the rule-file
+language declares no embeds). Continues 0431 §4 (a file's programs are its grammar's declaration), 0466 (a fragment
+starts at a node kind, by a hand-written parser) and 0470 (a language declares the places its strings hold code).
 
 ## Intro
 

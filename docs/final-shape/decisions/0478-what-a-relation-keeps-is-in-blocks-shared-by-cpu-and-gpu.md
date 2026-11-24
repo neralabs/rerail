@@ -1,5 +1,7 @@
 # 0478. What a relation keeps is in blocks, the same for the CPU and the GPU
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-19. Status: decided (user, 2026-11-19, on Q314); built in steps below. Numbered 0450 on
 Native-GPU-strata (renumbered in the roll-up: the hub has its own 0450).
 

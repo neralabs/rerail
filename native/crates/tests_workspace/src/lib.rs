@@ -35,11 +35,12 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
     #[cfg_attr(test, path = "workspace")]
     pub(crate) mod workspace {
@@ -79,3 +80,9 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::workspace::storage::StorageContext;
     }
 }
+
+// The engine's allocator (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` declares it): without it the
+// test binary ran on the system allocator, which no build of the engine runs on.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;

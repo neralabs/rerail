@@ -10,11 +10,11 @@ fn main() {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for pass in 0..passes {
         for f in &files {
-            let t = rerail_rr_syntax::tape(f);
+            let t = rerail_rr_syntax::tape(f).expect("a .rerail tape");
             if pass == 0 {
-                std::hash::Hash::hash(&t, &mut h);
+                std::hash::Hash::hash(t.as_bytes(), &mut h);
             }
-            n += t.len();
+            n += t.as_bytes().len();
             bytes += f.len();
         }
     }

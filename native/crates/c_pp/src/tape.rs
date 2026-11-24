@@ -1,7 +1,7 @@
 //! The preprocessor tape (decision 0436), written by the lean reading: the reference the Bitlex
 //! grammar's tape is held to.
 //!
-//! A file's tape is a v9np document. Every preprocessing token of the file is a leaf, exactly
+//! A file's tape is a format 16 document (decision 0468 §1). Every preprocessing token of the file is a leaf, exactly
 //! once and in order, of a token kind (`identifier`, `number`, `literal`, `punct`, `digraph`,
 //! `hash`, `hashhash`, `other`). The nodes over the leaves are:
 //!
@@ -22,7 +22,8 @@ use crate::directives::{self, Form, Kind, Span, Variadic};
 use rerail_c_lean::pp::{DIGRAPH, Options, P, Phase2, PpLexer};
 use rerail_tape_format::f16::{Lang, Tape16, Written};
 use rerail_tape_format::tape::{CodeTable, Entry};
-use rerail_tape_format::{Redo, Sixteen, Target, View, Widths, Writer, key};
+use rerail_tape_format::tape::Tape as _;
+use rerail_tape_format::{Redo, Sixteen, Target, Widths, Writer, key};
 
 /// The tape's kinds, by id.
 pub const KINDS: &[&str] = &[
@@ -148,25 +149,13 @@ impl Gather<'_> {
     }
 }
 
-/// `src`'s preprocessor tape, read as `opts` say.
-pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
+/// `src`'s preprocessor tape, read as `opts` say, in format 16 (decision 0468 §1): its nodes written in one pass,
+/// with the source's newline index and each block's presence, as every parser's run writes it. Every reader reads
+/// this one, and the Bitlex grammar's tape is held to it (0436 R4).
+pub fn image(src: &[u8], opts: Options) -> Tape16 {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
-    loop {
-        match write(&nodes, src, widths, Target::F15).and_then(|w| w.finish(src)) {
-            Ok(image) => return image,
-            Err(Redo(w)) => widths = w,
-        }
-    }
-}
-
-/// The tape as format 16 (decision 0468 §1): the same nodes as `image`'s, written in one pass
-/// with the source's newline index. Every reader reads this one; `image`'s format 15 is the
-/// Bitlex grammar's comparison (0436 R4) until its tier 2 writes format 16 (0426).
-pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
-    let nodes = nodes(src, opts);
-    let mut widths = Widths::guess(src.len());
-    let target = Target::F16(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number), rooms: None });
+    let target: Target = Ok(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: true, number: std::sync::Arc::new(number), rooms: None });
     loop {
         match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
             Ok(Ok(f)) => match f.tape {
@@ -369,7 +358,7 @@ fn nodes(src: &[u8], opts: Options) -> Vec<Node> {
 /// The nodes, sorted by start, then the longest first, then by rank, written in preorder under the
 /// root: a node is inside the open ones that end after its start.
 fn write(nodes: &[Node], src: &[u8], widths: Widths, target: Target) -> Result<Writer<Widths>, Redo> {
-    let mut w = Writer::new(TAG, widths, nodes.len() + 16).to(target, src);
+    let mut w = Writer::new(widths, nodes.len() + 16).to(target, src);
     let root = w.push(key(PP, 0, 0), 0);
     let mut open: Vec<(usize, u32)> = Vec::new();
     for n in nodes {
@@ -405,8 +394,8 @@ pub struct Row {
 /// A tape's directives, read in place in one walk. A conditional directive that is a group's child
 /// is of the group's chain: its parent is the directive the group sits under. Any other directive sits under
 /// its innermost group's chain directive before it.
-pub fn rows(image: &[u8]) -> Result<Vec<Row>, String> {
-    let v = View::new(image)?;
+pub fn rows(tape: &Tape16) -> Result<Vec<Row>, String> {
+    let v = tape.reader(lang())?;
     let mut out = Vec::new();
     // The open groups: each its end (a node index), the parent of its chain, and its chain's
     // directive so far.
@@ -420,8 +409,8 @@ pub fn rows(image: &[u8]) -> Result<Vec<Row>, String> {
         while groups.last().is_some_and(|g| g.0 <= i) {
             groups.pop();
         }
-        let kind = (v.key(i) & 0x3ff) as u16;
-        let end = i + v.size(i);
+        let kind = v.table().entry(v.code(i)).kind;
+        let end = v.subtree_end(i);
         if kind == GROUP {
             let parent = groups.last().and_then(|g| g.2);
             groups.push((end, parent, None));
@@ -440,7 +429,7 @@ pub fn rows(image: &[u8]) -> Result<Vec<Row>, String> {
                 Some(g) => g.2,
                 None => None,
             };
-            out.push(Row { kind: KINDS[kind as usize], start: v.start(i), end: v.end(i), parent });
+            out.push(Row { kind: KINDS[kind as usize], start: v.start(i) as u32, end: v.end(i) as u32, parent });
         }
         open.push((end, kind));
     }
@@ -448,10 +437,10 @@ pub fn rows(image: &[u8]) -> Result<Vec<Row>, String> {
 }
 
 /// A tape's leaves: each token's kind and bytes, in order.
-pub fn leaves(image: &[u8]) -> Result<Vec<(u16, u32, u32)>, String> {
-    let v = View::new(image)?;
-    let kind = |i: usize| (v.key(i) & 0x3ff) as u16;
-    Ok((1..v.len()).filter(|&i| (IDENTIFIER..PARAMS).contains(&kind(i))).map(|i| (kind(i), v.start(i), v.end(i))).collect())
+pub fn leaves(tape: &Tape16) -> Result<Vec<(u16, u32, u32)>, String> {
+    let v = tape.reader(lang())?;
+    let kind = |i: usize| v.table().entry(v.code(i)).kind;
+    Ok((1..v.len()).filter(|&i| (IDENTIFIER..PARAMS).contains(&kind(i))).map(|i| (kind(i), v.start(i) as u32, v.end(i) as u32)).collect())
 }
 
 #[cfg(test)]

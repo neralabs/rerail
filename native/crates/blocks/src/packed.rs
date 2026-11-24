@@ -211,6 +211,9 @@ struct ColPlan<'s> {
     split: u32,
     rel: bool,
     parts: Vec<(Part<'s>, Choice)>,
+    /// Its greatest value, `None` with no rows: found as its form is chosen, so a kept entry records its atoms'
+    /// greatest without reading them again (`Prepared::col_max`).
+    max: Option<i64>,
 }
 
 impl ColPlan<'_> {
@@ -276,8 +279,9 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
     }
     let stats = joined.unwrap_or_default();
     let part = |k: usize| -> (Part<'s>, Choice) { (Part { src, order, n, c, form: forms[k] }, stats.get(k).map_or_else(|| choose(&x), |s| s.choice(n))) };
-    let whole = ColPlan { split: 0, rel: false, parts: vec![part(0)] };
     let (lo, hi) = stats.first().map_or((0, 0), |s| s.range());
+    let max = (n > 0).then_some(hi);
+    let whole = ColPlan { split: 0, rel: false, parts: vec![part(0)], max };
     if n < 2 || (hi as i128 - lo as i128) < 1 << ID_SPLIT {
         return whole;
     }
@@ -288,14 +292,14 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
             best = cand;
         }
     };
-    take(ColPlan { split: s, rel: false, parts: vec![part(1), part(2)] });
+    take(ColPlan { split: s, rel: false, parts: vec![part(1), part(2)], max });
     if rel {
         // A searched column keeps its order less a constant only where no difference wraps; the split parts' never
         // do (each part is under 2^46).
         if may_rel == Rel::Any || !wraps {
-            take(ColPlan { split: 0, rel: true, parts: vec![part(3)] });
+            take(ColPlan { split: 0, rel: true, parts: vec![part(3)], max });
         }
-        take(ColPlan { split: s, rel: true, parts: vec![part(4), part(5)] });
+        take(ColPlan { split: s, rel: true, parts: vec![part(4), part(5)], max });
     }
     best
 }
@@ -664,6 +668,16 @@ impl Prepared<'_> {
         self.plan.n == 0
     }
 
+    /// Its columns.
+    pub fn arity(&self) -> usize {
+        self.plan.arity
+    }
+
+    /// Column `c`'s greatest value, `None` with no rows: what choosing its encoding found.
+    pub fn col_max(&self, c: usize) -> Option<i64> {
+        self.plan.choices[c].max
+    }
+
     /// The most bytes placing it takes.
     pub fn bytes(&self) -> usize {
         self.plan.bytes()
@@ -781,8 +795,12 @@ impl<'a> Col<'a> {
         if self.col.split == 0 && self.base.is_none() {
             self.col.hi.for_each(f)
         } else {
-            let d = self.dec();
-            (0..self.len()).for_each(|i| f(d.get(i)))
+            let (d, n, mut buf) = (self.dec(), self.len(), [0i64; FILL]);
+            for at in (0..n).step_by(FILL) {
+                let m = (n - at).min(FILL);
+                d.fill(at, &mut buf[..m]);
+                buf[..m].iter().for_each(|&v| f(v));
+            }
         }
     }
 
@@ -800,6 +818,9 @@ impl<'a> Col<'a> {
 
 /// A part pair resolved for reads: the high (or whole) part, the low when split, and the split.
 type Parts<'a> = (Dec<'a>, Option<Dec<'a>>, u32);
+
+/// The values `ColDec::fill` decodes at once: a chunk of rows read column by column, then row by row.
+pub const FILL: usize = 256;
 
 /// A `Col` resolved for reads: its parts' and column 0's loaded once.
 #[derive(Clone, Copy)]
@@ -834,6 +855,38 @@ impl ColDec<'_> {
         match lo {
             None => hi.get(i).wrapping_add(b),
             Some(lo) => hi.get(i).wrapping_add(b >> s) << s | (lo.get(i) + (b & ((1i64 << s) - 1))),
+        }
+    }
+
+    /// `whole`'s values `at..at + out.len()`, `low` the low part's scratch.
+    fn whole_fill((hi, lo, s): &Parts<'_>, at: usize, out: &mut [i64], low: &mut [i64]) {
+        hi.fill(at, out);
+        if let Some(lo) = lo {
+            lo.fill(at, low);
+            out.iter_mut().zip(low.iter()).for_each(|(o, l)| *o = *o << s | l);
+        }
+    }
+
+    /// Values `at..at + out.len()` into `out`, in order, as `get` gives them: each part decoded as it goes
+    /// (`Dec::fill`), at most `FILL` at once.
+    pub fn fill(&self, at: usize, out: &mut [i64]) {
+        let n = out.len();
+        assert!(n <= FILL, "at most FILL values at once");
+        let mut low = [0i64; FILL];
+        let Some(base) = &self.base else { return Self::whole_fill(&self.own, at, out, &mut low[..n]) };
+        let mut b = [0i64; FILL];
+        Self::whole_fill(base, at, &mut b[..n], &mut low[..n]);
+        let (hi, lo, s) = &self.own;
+        hi.fill(at, out);
+        match lo {
+            None => out.iter_mut().zip(&b[..n]).for_each(|(o, b)| *o = o.wrapping_add(*b)),
+            Some(lo) => {
+                lo.fill(at, &mut low[..n]);
+                let m = (1i64 << s) - 1;
+                for ((o, b), l) in out.iter_mut().zip(&b[..n]).zip(&low[..n]) {
+                    *o = o.wrapping_add(b >> s) << s | (l + (b & m));
+                }
+            }
         }
     }
 
@@ -1006,6 +1059,15 @@ mod tests {
             let mut got = Vec::new();
             c1.for_each(|v| got.push(v));
             assert_eq!(got, rows.iter().map(|r| r[1]).collect::<Vec<_>>(), "every value, by for_each");
+            // A chunk at once from any place, split and relative (`ColDec::fill`), as `get` reads it.
+            for c in [c0, c1] {
+                let (d, mut buf) = (c.dec(), [0i64; FILL]);
+                for at in (0..n).step_by(97) {
+                    let m = (n - at).min(FILL);
+                    d.fill(at, &mut buf[..m]);
+                    assert_eq!(buf[..m].to_vec(), (at..at + m).map(|i| d.get(i)).collect::<Vec<_>>(), "{} from {at}", c.form());
+                }
+            }
             for (i, r) in rows.iter().enumerate().step_by(7) {
                 let at: Vec<usize> = packed.probe(&[0], &[r[0]]).collect();
                 assert_eq!(at, vec![i], "the order's probe of row {i}");

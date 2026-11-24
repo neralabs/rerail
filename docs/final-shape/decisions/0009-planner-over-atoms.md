@@ -1,7 +1,6 @@
 # 0009: The planner lowers programs, statistics and inputs to the same integers
 
-Status: accepted
-Date: 2026-10-27
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-27
 
 ## Question
 `logic::plan` (T's planner, Phase 6 row 5) compares and builds symbols as text, as T's facts file

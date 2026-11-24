@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
@@ -1518,9 +1518,15 @@ describe("code rule schema and engine agree on unsupported fields", () => {
   });
 
   it("pins parse's grammars and kinds to the engine's", () => {
-    const literal = (file: string) => readFileSync(new URL(`../../../native/src/code_rule_dsl/literal/${file}`, import.meta.url), "utf8");
+    // The literal grammars' files, in whichever engine crates keep them (each crate's sources are in its own src/).
+    const crates = new URL("../../../native/crates/", import.meta.url);
+    const where = new Map(readdirSync(crates).flatMap(crate => {
+      const dir = new URL(`${crate}/src/code_rule_dsl/literal/`, crates);
+      return existsSync(dir) ? readdirSync(dir).filter(file => file.endsWith(".rs")).map(file => [file, new URL(file, dir)] as const) : [];
+    }));
+    const literal = (file: string) => readFileSync(where.get(file)!, "utf8");
     // Each grammar names itself (`LiteralGrammar::name`) in its own file; `testChars` is the tests' grammar.
-    const files = readdirSync(new URL("../../../native/src/code_rule_dsl/literal/", import.meta.url)).filter(file => file.endsWith(".rs"));
+    const files = [...where.keys()];
     const grammars = files.flatMap(file => [...literal(file).matchAll(/fn name\(&self\) -> &'static str \{\s+"(\w+)"/g)].map(match => match[1])).filter(name => name !== "testChars");
     expect(grammars.sort()).toEqual([...CODE_RULE_PARSE_GRAMMARS].sort());
     const kinds = (file: string) => [...(literal(file).split("KINDS: &[&str] = &[")[1]!.split("];")[0]!.matchAll(/"(\w+)"/g))].map(match => match[1]);
@@ -1536,7 +1542,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     const table = JSON.parse(readFileSync(new URL("../../../native/src/code_rule_dsl/scope/data/es_globals.generated.json", import.meta.url), "utf8")) as { latest: number; versions: Record<string, unknown> };
     expect(table.latest).toBe(CODE_RULE_LATEST_ECMA_VERSION);
     expect(Object.keys(table.versions)).toContain(String(CODE_RULE_LATEST_ECMA_VERSION));
-    const python = JSON.parse(readFileSync(new URL("../../../native/src/code_rule_dsl/scope/data/python_builtins.generated.json", import.meta.url), "utf8")) as { versions: Record<string, unknown> };
+    const python = JSON.parse(readFileSync(new URL("../../../native/crates/adapters/src/code_rule_dsl/scope/data/python_builtins.generated.json", import.meta.url), "utf8")) as { versions: Record<string, unknown> };
     expect(Object.keys(python.versions)).toEqual([...CODE_RULE_PYTHON_VERSIONS]);
   });
 

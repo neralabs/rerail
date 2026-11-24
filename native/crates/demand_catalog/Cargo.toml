@@ -81,9 +81,10 @@ test-hooks = ["rerail-boot/test-hooks", "rerail-c-pp/test-hooks", "rerail-clif/t
   "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-php",
   "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala",
   "ast-grep-language/tree-sitter-swift",
-  "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+  "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
+rerail-blocks = { path = "../blocks" }
 rerail-boot = { path = "../boot", default-features = false }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
@@ -94,9 +95,9 @@ base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../../../accel" }
-# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
+# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources are in its `src/`.
 rerail-tree-watch = { path = "../tree_watch" }
-# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+# The content store and the git workspace, built apart (`crates/store`): their sources are in its `src/`.
 rerail-store = { path = "../store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
@@ -107,8 +108,6 @@ ast-grep-core = "=0.51.0"
 ast-grep-language = { version = "=0.51.0", default-features = false }
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
-# Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
-rerail-compiler = { path = "../compiler" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-tape-format = { path = "../tape_format" }
 # The C and C++ preprocessor (0327): directives as facts, translation units applied (`language::adapter::c_pp`,
@@ -118,8 +117,6 @@ rerail-c-pp = { path = "../c_pp" }
 rerail-c-directives = { path = "../c_directives" }
 # The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
 rerail-clif = { path = "../clif" }
-# The .rerail parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
-rerail-rr-parser = { path = "../rr_parser" }
 rerail-prof = { path = "../prof" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
@@ -227,8 +224,6 @@ metal = "0.33.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 rerail-device-metal = { path = "../device_metal", default-features = false }
-# The Metal runtime, the slab residency's arena and the block programs' backend.
-rerail-metal = { path = "../metal" }
 
 # The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 
@@ -249,7 +244,6 @@ rerail-rr = { path = "../rr", default-features = false, features = ["test-hooks"
 rerail-sessions = { path = "../sessions", default-features = false, features = ["test-hooks"] }
 rerail-transducer = { path = "../transducer", default-features = false, features = ["test-hooks"] }
 rerail-workspace = { path = "../workspace", default-features = false, features = ["test-hooks"] }
-rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 tempfile = "=3.27.0"
@@ -257,6 +251,4 @@ tempfile = "=3.27.0"
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
 # The tape's views run as UKL kernels, launched through the device layer (decision 0440 step C).
 rerail-gpu = { path = "../../../gpu" }
-# Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).
-rerail-metal = { path = "../metal", features = ["test-hooks"] }
 rerail-device-metal = { path = "../device_metal", default-features = false, features = ["test-hooks"] }

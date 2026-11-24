@@ -149,7 +149,7 @@ jobs:
               conformance
               scripts
               src/engine
-              native/src/code_rule_dsl/scope/options.rs
+              native/crates/adapters/src/code_rule_dsl/scope/options.rs
               'packs/*/upstream/*'
               'packs/*/licenses/*'
               'packs/*/conformance.json'

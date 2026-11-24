@@ -1,7 +1,8 @@
 # 0601. Every launch counts in one ledger, and past it is a hard failure
 
-Status: accepted (2026-11-22). Changes 0540's ledger (where it lives, who charges it, what a refusal does) and list
-step 13's plan-time bound; the budget itself (`KERNEL_LAUNCH_LIMIT`, 200) and 0540's reruns' budget are unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-22). Changes 0540's ledger (where it lives, who charges it, what
+a refusal does) and list step 13's plan-time bound; the budget itself (`KERNEL_LAUNCH_LIMIT`, 200) and 0540's reruns'
+budget are unchanged.
 
 ## Intro
 

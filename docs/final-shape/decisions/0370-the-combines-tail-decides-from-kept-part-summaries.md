@@ -1,6 +1,7 @@
 # 0370: The combine's tail decides from kept part summaries, and rewrites only the changed part
 
-Status: proposed (2026-11-17). 0345's stage 3, after 0368 (the kept link). Work queue Q18.
+Status: superseded by 0393 (audited 2026-11-23). Proposed (2026-11-17). 0345's stage 3, after 0368 (the kept link).
+Work queue Q18.
 
 ## Intro
 

@@ -1,8 +1,8 @@
 # 0296. The cross part's tail off the critical path: its kept part framed in jobs, the file-local part's writes sealed before the cross part, and its new atoms written while its kept part is framed; collection keeps a watched root's answers
 
-Status: decided (2026-11-16). Builds on 0294 (the cross part's strata off one thread), 0102 and 0104 (writes behind
-the run, in waves), 0049 §4.3 (the run's atoms at its end), 0117 and 0212 (the kept part's frames, digests of
-content), 0053 (collection after the manifest).
+Status: built (audited 2026-11-23). Decided (2026-11-16). Builds on 0294 (the cross part's strata off one thread),
+0102 and 0104 (writes behind the run, in waves), 0049 §4.3 (the run's atoms at its end), 0117 and 0212 (the kept
+part's frames, digests of content), 0053 (collection after the manifest).
 
 ## Intro
 

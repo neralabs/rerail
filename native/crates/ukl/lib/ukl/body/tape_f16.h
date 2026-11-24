@@ -57,14 +57,19 @@ CLIF_16_RARE uint64_t CLIF_16(side)(CLIF_16_ARGS, uint32_t k, uint32_t i)
     uint32_t hi = (uint32_t)CLIF_16(ld)(CLIF_16_PASS, side, ukl_min(start + 2u * j, limit), 2u);
     uint32_t offsets = start + 2u * nsub;
     uint32_t low = i & (CLIF_T_BLOCK - 1u);
-    // The first offset at or past the node's low byte.
-    while (lo < hi) {
-        uint32_t middle = (lo + hi) >> 1;
-        if ((uint32_t)CLIF_16(ld)(CLIF_16_PASS, side, ukl_min(offsets + middle, limit), 1u) < low)
-            lo = middle + 1u;
-        else
-            hi = middle;
+    // The first offset at or past the node's low byte: in the ascending run, the count of its offsets below it, 8 a
+    // word, each byte compared unsigned within the word (its low 7 bits by a subtraction that borrows from no other
+    // byte, its high bit apart), the bytes past the run's end masked off. No load waits on another, as a halving's do.
+    uint64_t h = 0x8080808080808080ul, l8 = (uint64_t)low * 0x0101010101010101ul;
+    uint32_t found = lo;
+    for (uint32_t q = lo; q < hi; q += 8u) {
+        uint64_t x = CLIF_16(ld)(CLIF_16_PASS, side, ukl_min(offsets + q, limit), 8u);
+        uint64_t d = (x | h) - (l8 & ~h);
+        uint64_t lt = h & ((~x & l8) | (~(x ^ l8) & ~d));
+        uint32_t left = hi - q;
+        found += ukl_popcount64(left >= 8u ? lt : lt & ((((uint64_t)1) << (8u * left)) - 1u));
     }
+    lo = found;
     // The values follow the part's offsets.
     uint32_t vw = (CLIF_16(view)(CLIF_16_PASS, CLIF_T_WIDTHS) >> ((4u * k + 16u) & 31u)) & 15u;
     uint32_t count = (uint32_t)CLIF_16(ld)(CLIF_16_PASS, side, ukl_min(start + 2u * (nsub - 1u), limit), 2u);

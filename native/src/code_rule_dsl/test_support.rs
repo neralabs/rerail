@@ -432,13 +432,23 @@ pub(super) fn pattern_for<D: 'static>(
 }
 
 /// This test binary as a child process at the lowest priority (AGENTS.md: every test run at a high nice value):
-/// through `nice -n 19` on Unix; on Windows, which has no `nice`, started in the idle priority class.
+/// at nice 19 on Unix, set in the child before it runs (`nice -n 19`'s `setpriority`), the binary itself the program
+/// started: a runner that knows its own executable (Relax runs a spawn of it as the same program) sees it, where
+/// `nice <binary>` is a spawn of another program. On Windows, which has no `nice`, started in the idle priority class.
 pub(crate) fn niced_self() -> std::process::Command {
     let exe = std::env::current_exe().expect("the test binary's path");
     #[cfg(unix)]
     {
-        let mut c = std::process::Command::new("nice");
-        c.args(["-n", "19"]).arg(exe);
+        use std::os::unix::process::CommandExt as _;
+        let mut c = std::process::Command::new(exe);
+        // SAFETY: runs in the child between fork and exec, calling only `setpriority` (async-signal-safe). Lowering
+        // a process's own priority needs no privilege; where it fails the child runs at its parent's.
+        unsafe {
+            c.pre_exec(|| {
+                libc::setpriority(libc::PRIO_PROCESS as _, 0, 19);
+                Ok(())
+            });
+        }
         c
     }
     #[cfg(windows)]

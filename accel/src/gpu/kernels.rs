@@ -85,11 +85,18 @@ pub struct Key {
 
 impl Key {
     pub fn of(source: &str, name: &str, constant: Option<u32>) -> Key {
-        // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too.
+        Key::for_target(&places().target, source, name, constant)
+    }
+
+    /// The key of `source`'s kernel prepared for the Metal tier `target` (decision 0645): a build ships each tier's.
+    pub fn for_target(target: &str, source: &str, name: &str, constant: Option<u32>) -> Key {
+        // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too,
+        // and the target its text is prepared for (decision 0645: an M1's and an M5's texts differ).
         let library: [u8; 32] = if rerail_ukl::takes_library(source) {
             let mut d = Sha256::new();
             d.update(source.as_bytes());
             d.update(rerail_ukl::fingerprint().to_le_bytes());
+            d.update(target.as_bytes());
             d.finalize().into()
         } else {
             Sha256::digest(source.as_bytes()).into()
@@ -113,11 +120,13 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Where the store and the shipped kernels are, and this device's tag in them.
+/// Where the store and the shipped kernels are, this device's tag in them, and its target (decision 0645).
 struct Places {
     store: Option<PathBuf>,
     shipped: Option<PathBuf>,
     tag: String,
+    /// The name of the target a source that takes UKL's library is prepared for (`msl`): Metal's tier.
+    target: String,
     /// This process's wanted list.
     run: String,
 }
@@ -134,18 +143,20 @@ fn places() -> Arc<Places> {
             Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
             _ => std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches/rerail/metal-kernels")),
         };
-        let shipped = match std::env::var("RERAIL_SHIPPED_KERNELS") {
-            Ok(v) if v == "off" => None,
-            Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
-            _ => std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join("rerail-kernels"))).filter(|p| p.is_dir()),
-        };
+        // The device layer's (one definition: beside the program, or the library the engine was loaded from).
+        let shipped = rerail_device::store::shipped_dir().map(Path::to_path_buf);
         #[cfg(target_os = "macos")]
         let tag = super::shared::get().map(|s| device_tag(&s.device)).unwrap_or_else(|| "no-device".to_owned());
         // Elsewhere the device layer's store keeps the backend's compiled kernels, by its own device and driver.
         #[cfg(not(target_os = "macos"))]
         let tag = "no-device".to_owned();
+        // Without a device, Metal's baseline tier (every Apple GPU's).
+        #[cfg(target_os = "macos")]
+        let target = super::shared::get().map(|s| rerail_device::compute_kernel_metal::target_name(&s.device).to_owned()).unwrap_or_else(|| "apple7".to_owned());
+        #[cfg(not(target_os = "macos"))]
+        let target = "apple7".to_owned();
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        Arc::new(Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) })
+        Arc::new(Places { store, shipped, tag, target, run: format!("{started:024}-{}", std::process::id()) })
     });
     Arc::clone(places)
 }
@@ -210,6 +221,17 @@ struct Linked {
     library: Library,
     depth: Option<u64>,
     _units: Vec<metal::DynamicLibrary>,
+    /// The function constant's value is in the library's source (`baked`), not given to its functions.
+    baked: bool,
+}
+
+/// What a source's library is: one library, or (a split source that declares the function constant) one library a
+/// value of the constant, each made from the split with the value baked in.
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+enum Libraries {
+    Linked(Linked),
+    PerValue(Arc<rerail_ukl::split::Split>),
 }
 
 /// The process's compiled libraries and pipelines, by key (one manager, decision 0100 §2). A thread that asks
@@ -217,7 +239,9 @@ struct Linked {
 #[derive(Default)]
 struct Made {
     #[cfg(target_os = "macos")]
-    libraries: HashMap<[u8; 32], Slot<Linked>>,
+    /// By the source's digest, and for a split source that declares the function constant (`Libraries::PerValue`), each
+    /// value's by the digest and the value.
+    libraries: HashMap<([u8; 32], Option<u32>), Slot<Libraries>>,
     pipelines: HashMap<[u8; 32], Slot<Arc<Function>>>,
     /// Pipelines a background compile is making (`Mode::Background`).
     #[cfg(target_os = "macos")]
@@ -503,10 +527,10 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
     if !compile && archive.is_none() {
         return None;
     }
-    let linked = library(key.library, source, name);
+    let linked = library(key.library, source, name, constant);
     let library = &linked.library;
     let function = objc::rc::autoreleasepool(|| {
-        let constants = constant.map(|value| {
+        let constants = constant.filter(|_| !linked.baked).map(|value| {
             let c = metal::FunctionConstantValues::new();
             c.set_constant_value_at_index((&value as *const u32).cast(), metal::MTLDataType::UInt, 0);
             c
@@ -616,24 +640,78 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
 }
 
 /// `source` as the Metal front end takes it: a source that takes UKL's library (`#include <ukl/...>`: the reads
-/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, any other as it is.
+/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, for the device's target (decision
+/// 0645), any other as it is.
 #[cfg(target_os = "macos")]
 pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
+    msl_for(&places().target, source, name)
+}
+
+/// `source` prepared for the Metal tier `target` (decision 0645), as `msl` prepares it for the device's.
+#[cfg(target_os = "macos")]
+pub fn msl_for<'a>(target: &str, source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
     if !rerail_ukl::takes_library(source) {
         return Ok(std::borrow::Cow::Borrowed(source));
     }
-    rerail_ukl::metal_source(name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+    let target = rerail_ukl::Target::named(target).ok_or_else(|| format!("{name}: no target {target}"))?;
+    rerail_ukl::metal_source(&target, name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+}
+
+/// The function constant's declaration as Metal's front end reads it (`UKL_CONSTANT_U32`, `ukl/backend.h`).
+#[cfg(target_os = "macos")]
+const FUNCTION_CONSTANT: &str = "[[function_constant(0)]];";
+
+/// `source` with its function constant's declaration given `value`: a dynamic library holds no unresolved function
+/// constant (Metal: "cannot lower module with unresolved function constants").
+#[cfg(target_os = "macos")]
+fn baked(source: &str, value: u32) -> String {
+    source.replace(FUNCTION_CONSTANT, &format!("= {value}u;"))
 }
 
 /// The library of `source` (its digest `library`): this process's, else, where the source splits (decision 0571),
-/// its units linked, else the shipped AIR library, else the front end's compile.
+/// its units linked, else the shipped AIR library, else the front end's compile. A split source that declares the
+/// function constant (`UKL_CONSTANT_U32`) has `constant`'s value baked into its units and kernel, since a unit is a
+/// dynamic library: one library a value, whose functions take no constant values.
 #[cfg(target_os = "macos")]
-fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
-    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(library).or_default());
-    let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(l) = &*s {
+fn library(library: [u8; 32], source: &str, name: &str, constant: Option<u32>) -> Linked {
+    let slot = |key| Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(key).or_default());
+    let first = slot((library, None));
+    let made = {
+        let mut s = first.lock().unwrap_or_else(|p| p.into_inner());
+        if s.is_none() {
+            *s = Some(compiled(library, source, name));
+        }
+        s.clone().expect("the library made")
+    };
+    let split = match made {
+        Libraries::Linked(l) => return l,
+        Libraries::PerValue(split) => split,
+    };
+    let value = constant.unwrap_or_else(|| panic!("the Metal kernel {name} declares a function constant and is given none"));
+    let of_value = slot((library, Some(value)));
+    let mut s = of_value.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(Libraries::Linked(l)) = &*s {
         return l.clone();
     }
+    let started = std::time::Instant::now();
+    let mut split = (*split).clone();
+    split.kernel = baked(&split.kernel, value);
+    for u in &mut split.units {
+        u.source = baked(&u.source, value);
+    }
+    let device = &super::shared::get().expect("a Metal device").device;
+    let (l, units) = crate::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}, constant {value}): {e}", hex(&library[..8])));
+    let seconds = started.elapsed().as_secs_f64();
+    count(|c| c.front_end_s += seconds);
+    let l = Linked { library: l, depth: Some(split.depth), _units: units, baked: true };
+    *s = Some(Libraries::Linked(l.clone()));
+    l
+}
+
+/// `library`'s compile: its split's units linked (or, declaring the function constant, the split, for each value's
+/// library), else the shipped AIR library, else the front end's.
+#[cfg(target_os = "macos")]
+fn compiled(library: [u8; 32], source: &str, name: &str) -> Libraries {
     let device = &super::shared::get().expect("a Metal device").device;
     // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is loaded.
     if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
@@ -644,14 +722,15 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
     // A measurement aid: `RERAIL_METAL_UNITS=off` compiles a split source whole, as before decision 0571.
     let whole = std::env::var("RERAIL_METAL_UNITS").is_ok_and(|v| v == "off");
     if let Some(split) = rerail_ukl::split::split(&source_msl).filter(|_| !whole) {
+        if source_msl.contains(FUNCTION_CONSTANT) {
+            return Libraries::PerValue(Arc::new(split));
+        }
         let (l, units) = crate::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}): {e}", hex(&library[..8])));
         let seconds = started.elapsed().as_secs_f64();
         count(|c| c.front_end_s += seconds);
-        let linked = Linked { library: l, depth: Some(split.depth), _units: units };
-        *s = Some(linked.clone());
-        return linked;
+        return Libraries::Linked(Linked { library: l, depth: Some(split.depth), _units: units, baked: false });
     }
-    let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
+    let shipped = places().shipped.as_ref().and_then(|d| shipped_air(d, &library, source, &source_msl, name));
     let l = match shipped {
         Some(file) => crate::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
             .unwrap_or_else(|e| panic!("the shipped Metal library {} (kernel {name}) does not load: {e}", file.display())),
@@ -685,9 +764,22 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
             l
         }
     };
-    let linked = Linked { library: l, depth: None, _units: Vec::new() };
-    *s = Some(linked.clone());
-    linked
+    Libraries::Linked(Linked { library: l, depth: None, _units: Vec::new(), baked: false })
+}
+
+/// The shipped AIR library of `source` (`library` its digest for the device's tier, `msl` its text): the device's
+/// tier's, else a lower tier's whose text is the same (decision 0645 §4: no feature of the device's text lost).
+#[cfg(target_os = "macos")]
+fn shipped_air(dir: &Path, library: &[u8; 32], source: &str, msl: &str, name: &str) -> Option<PathBuf> {
+    let own = dir.join(format!("{}.metallib", hex(library)));
+    if own.is_file() {
+        return Some(own);
+    }
+    let target = rerail_ukl::Target::named(&places().target)?;
+    target.runs().into_iter().skip(1).find_map(|lower| {
+        let file = dir.join(format!("{}.metallib", hex(&Key::for_target(&lower, source, name, None).library)));
+        (file.is_file() && msl_for(&lower, source, name).ok()?.as_ref() == msl).then_some(file)
+    })
 }
 
 /// A split source's library (decision 0571): each unit a dynamic library, compiled level by level, a level's units
@@ -713,7 +805,8 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut made: HashMap<&str, metal::DynamicLibrary> = HashMap::new();
     for level in split.levels() {
-        let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = std::thread::scope(|scope| {
+        // A level's units compile side by side on the caller's scoped threads (the one executor's, decision 0100).
+        let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = crate::exec::scoped(|scope| {
             let running: Vec<_> = level
                 .iter()
                 .map(|u| {
@@ -1037,7 +1130,7 @@ impl crate::upkeep::Job for Maintenance {
 /// front end), made by Xcode's offline compiler (its Metal Toolchain component). Run on another device into the same
 /// `dir`, it adds that device's archives. A source that does not compile is an error.
 #[cfg(target_os = "macos")]
-pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
+pub fn ship(dir: &Path, from: &Path, air: bool, targets: &[rerail_ukl::Target]) -> Result<Vec<String>, String> {
     let device = &super::shared::get().ok_or("no Metal device")?.device;
     let tag = device_tag(device);
     let manifest = std::fs::read_to_string(from.join("fixed.list")).map_err(|e| format!("{}: {e} (run the engine with this store first)", from.join("fixed.list").display()))?;
@@ -1052,9 +1145,16 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
         }
     }
     let mut lines = Vec::new();
+    let mut stale = 0;
     for (library, kernels) in &by_library {
-        let source = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
-        let source = msl(&source, library)?.into_owned();
+        let raw = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
+        // The manifest keeps every build's fixed kernels: a library this build keys apart (another UKL library, or
+        // another tier) is an older build's, and not shipped.
+        if hex(&Key::of(&raw, "", None).library) != *library {
+            stale += 1;
+            continue;
+        }
+        let source = msl(&raw, library)?.into_owned();
         // A split source (decision 0571) is its units, compiled in seconds where it runs: no AIR or archive shipped.
         if let Some(split) = rerail_ukl::split::split(&source) {
             lines.push(format!("{} {:>3} kernels  split into {} units: compiled where it runs", &library[..16], kernels.len(), split.units.len()));
@@ -1062,21 +1162,19 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
         }
         let lib = dir.join(format!("{library}.metallib"));
         let started = std::time::Instant::now();
-        if air && !lib.is_file() {
-            let src = dir.join("src").join(format!("{library}.metal"));
-            write_whole(&src, source.as_bytes()).map_err(|e| format!("{}: {e}", src.display()))?;
-            let air = lib.with_extension("air");
-            let run = |args: &[&std::ffi::OsStr]| -> Result<(), String> {
-                let out = std::process::Command::new("xcrun").args(args).output().map_err(|e| format!("xcrun: {e} (shipping kernels needs Xcode's Metal compiler)"))?;
-                if out.status.success() {
-                    Ok(())
-                } else {
-                    Err(format!("{library}: {} (the Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`)", String::from_utf8_lossy(&out.stderr).trim()))
-                }
-            };
-            run(&["-sdk".as_ref(), "macosx".as_ref(), "metal".as_ref(), "-c".as_ref(), src.as_os_str(), "-o".as_ref(), air.as_os_str()])?;
-            run(&["-sdk".as_ref(), "macosx".as_ref(), "metallib".as_ref(), air.as_os_str(), "-o".as_ref(), lib.as_os_str()])?;
-            let _ = std::fs::remove_file(&air);
+        // AIR for each tier asked for (decision 0645 step 3; `--air` alone: the device's), each from its own text by its
+        // own key. The library store's name is the device's tier's key.
+        let own = rerail_ukl::Target::named(&places().target).into_iter().collect::<Vec<_>>();
+        for t in if targets.is_empty() && air { &own[..] } else { targets } {
+            let rerail_ukl::Backend::Metal { version } = t.backend else { continue };
+            let key = Key::for_target(&t.name, &raw, library, None);
+            let file = dir.join(format!("{}.metallib", hex(&key.library)));
+            if file.is_file() {
+                continue;
+            }
+            let text = msl_for(&t.name, &raw, library)?;
+            let code = rerail_device::device::compile_offline(&t.name, Some(version), &text, &format!("{library} ({})", t.name))?;
+            write_whole(&file, &code).map_err(|e| format!("{}: {e}", file.display()))?;
         }
         let l = if lib.is_file() {
             device.new_library_with_file(&lib).map_err(|e| format!("{}: {e}", lib.display()))?
@@ -1111,6 +1209,9 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
         let names: Vec<&str> = kernels.iter().map(|(n, _)| n.as_str()).take(3).collect();
         lines.push(format!("{} {:>3} kernels  front end {:>7.2} s  back end {:>7.2} s  {}{}", &library[..16], kernels.len(), front, started.elapsed().as_secs_f64(), names.join(" "), if kernels.len() > 3 { " …" } else { "" }));
     }
+    if stale > 0 {
+        lines.push(format!("{stale} libraries of other builds in the manifest, not shipped"));
+    }
     Ok(lines)
 }
 
@@ -1138,6 +1239,72 @@ pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    /// Decision 0645 §4: on an `apple10` device (the M5), a lower tier's shipped AIR is taken where its text is the
+    /// device's, and not where it differs (a source taking the matrix header, whose `apple10` text has the M5's unit).
+    #[test]
+    fn a_lower_tiers_air_is_taken_only_for_the_same_text() {
+        if super::super::shared::get().is_none() || places().target != "apple10" {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-air-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = "#include <ukl/backend.h>\nDEFINE_KERNEL2(air, air_tier_test, RWBUFFER, uint32_t, o, \"[n]\", GID0, uint32_t, i, ) { o[i] = i * 7u; }\n";
+        let matrix = format!("#include <ukl/matrix.h>\n{plain}");
+        for (source, same) in [(plain.to_owned(), true), (matrix, false)] {
+            let own = msl_for("apple10", &source, "air_tier_test").unwrap().into_owned();
+            let lower = msl_for("apple7", &source, "air_tier_test").unwrap().into_owned();
+            assert_eq!(own == lower, same, "the tiers' texts are {}", if same { "the same" } else { "different" });
+            let code = rerail_device::device::compile_offline("apple7", Some(310), &lower, "air_tier_test").unwrap_or_else(|e| panic!("{e}"));
+            let file = dir.join(format!("{}.metallib", hex(&Key::for_target("apple7", &source, "air_tier_test", None).library)));
+            std::fs::write(&file, code).unwrap();
+            let library = Key::for_target("apple10", &source, "air_tier_test", None).library;
+            let found = shipped_air(&dir, &library, &source, &own, "air_tier_test");
+            assert_eq!(found.as_deref(), same.then_some(file.as_path()), "apple7's AIR taken exactly where its text is the M5's");
+            if let Some(f) = found {
+                let device = &super::super::shared::get().unwrap().device;
+                let l = device.new_library_with_file(&f).unwrap();
+                assert!(l.get_function("air_tier_test", None).is_ok(), "the kernel is in apple7's library");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Decision 0571: a split source that declares the function constant (as the JIT's, whose barriered functions read
+    /// the batch's tape format) is a library a value, the value baked into its units, since a dynamic library holds no
+    /// unresolved function constant. Each value's pipeline is made.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_split_source_with_a_function_constant_is_a_library_a_value() {
+        if super::super::shared::get().is_none() {
+            return;
+        }
+        let source = r#"#include <metal_stdlib>
+using namespace metal;
+constant uint32_t c [[function_constant(0)]];
+static __attribute__((noinline)) uint low(threadgroup uint* t, uint x) {
+    t[0] = x + c;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return t[0];
+}
+kernel void kernels_constant_split_test(device uint* out [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+    threadgroup uint t[1];
+    out[i] = low(t, i);
+}
+"#;
+        let name = "kernels_constant_split_test";
+        assert!(rerail_ukl::split::split(source).is_some(), "the source splits");
+        let library = Key::of(source, name, None).library;
+        for value in [16, 3] {
+            let linked = super::library(library, source, name, Some(value));
+            assert!(linked.baked && linked.depth.is_some(), "value {value}: split, the value baked in");
+            let _ = function(source, name, Some(value));
+        }
+        let held = made();
+        let m = held.0.lock().unwrap();
+        assert!(matches!(m.libraries.get(&(library, None)).and_then(|s| s.lock().unwrap().clone()), Some(Libraries::PerValue(_))), "the source's split kept");
+        assert!([16, 3].iter().all(|v| m.libraries.contains_key(&(library, Some(*v)))), "a library a value");
+    }
 
     /// Decision 0395: a pipeline compiled once is in the store, and made from its archive once this process's
     /// memory is released (as a process that never compiled it would); `ready` in `defer` says `None` for one not

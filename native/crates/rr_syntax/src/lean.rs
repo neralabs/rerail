@@ -11,13 +11,12 @@
 //! - **The lexer** is simdjson's shape over Bitlex's 64-byte block masks (`micro`): a block's
 //!   token starts found at once and taken one at a time (`lex`). A word ends at its run of
 //!   word bits; a comment, string or backtick literal by its micro-lexer, run from its start.
-//! - **No statements.** Only the tape is built: the engine's tape (v9np), its bytes written by
-//!   `rerail_tape_format::Writer` as the parse goes. Each node's code, offset and size
-//!   and tail columns are written at their final widths in preorder as it opens, its size and
-//!   tail where it closes; at the end the columns are moved into place and the header written
-//!   (decision 0140). The widths are guessed from the source's length, and the file parsed
-//!   again at the right ones where the guess was wrong. The open nodes and their children are
-//!   a stack.
+//! - **No statements.** Only the tape is built: the engine's tape, format 16, written by
+//!   `rerail_tape_format::Writer` as the parse goes. Each node's key, size and tail are written in
+//!   the writer's window as it opens and closes, and each statement's nodes passed to format 16's ops
+//!   at its commit (decisions 0140, 0434, 0631). The window's widths are guessed from the source's
+//!   length, and the file parsed again at the right ones where the guess was wrong. The open nodes and
+//!   their children are a stack.
 //! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node
 //!   before the operand: the nodes from there on move up one.
 //! - **Comments** are placed as the parse passes them, by `tape::flatten`'s rules; the next
@@ -614,20 +613,66 @@ pub fn token_count(src: &str) -> usize {
     lex(src).n
 }
 
-/// `src`'s tape: the engine's (`code_rule_dsl::tape`'s image of `crate::tape(src)`), its bytes.
-pub fn tape(src: &str) -> Vec<u8> {
-    struct Image<'s>(&'s str);
-    impl Finish for Image<'_> {
-        type Out = Vec<u8>;
-        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Vec<u8>, Redo> {
-            w.finish(self.0.as_bytes())
-        }
-    }
-    tape_into(src, &mut Image(src))
+/// The `.rerail` parser's format 16 sink (decision 0631): each key numbered in the language's table
+/// (`tape::number`), the lines `syntax::TERMINATORS` ends; 16z where `z`, each block's presence where `blocks`. The
+/// engine's run gives its own `z` and `blocks` (its `formats::rr_tape`), and the rooms its tape is written in
+/// (`Sixteen::rooms`, decision 0353 row 17).
+pub struct Sink16 {
+    target: rerail_tape_format::Sixteen,
 }
 
-/// [`tape`], the writer writing to `finish`'s target and finished by it: format 15's image (`tape`), or format 16
-/// written by its ops as the statements are committed (`Writer::finish_16`, decision 0434).
+impl Sink16 {
+    pub fn new(z: bool, blocks: bool) -> Self {
+        Self::placing(z, blocks, None)
+    }
+
+    /// `new`, its tape written in a room of `rooms` where there is one (`None`: its own vector).
+    pub fn placing(z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>) -> Self {
+        let number = std::sync::Arc::new(crate::tape::number);
+        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, rooms } }
+    }
+}
+
+impl rerail_tape_format::Sink<Result<rerail_tape_format::f16::Finished, String>> for Sink16 {
+    fn target(&self) -> rerail_tape_format::Target {
+        Ok(self.target.clone())
+    }
+    fn finish(&mut self, mut w: Writer) -> Result<Result<rerail_tape_format::f16::Finished, String>, Redo> {
+        w.finish_16()
+    }
+}
+
+impl Finish for Sink16 {
+    type Out = Result<rerail_tape_format::f16::Finished, String>;
+    fn target(&self) -> rerail_tape_format::Target {
+        Ok(self.target.clone())
+    }
+    fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
+        w.finish_16()
+    }
+}
+
+/// `src`'s tape in format 16, with each block's presence: the engine's (`crate::tape::image` of
+/// `crate::engine_tape(src)`). `Err` only for a code the language's table lacks, or a tape past format 16's bounds.
+pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
+    match tape_into(src, &mut Sink16::new(false, true))?.tape {
+        rerail_tape_format::f16::Written::F16(t) => Ok(t),
+        rerail_tape_format::f16::Written::F16Z(_) => unreachable!("16z was not asked for"),
+    }
+}
+
+/// `src`'s tape in format 16 or 16z (`Sink16`'s target), written by its ops as the statements are committed, in a room
+/// of `rooms` where there is one (decision 0353 row 17): an error
+/// where a code is not in its language's table or the nodes pass format 16's bounds (the engine holds format 16 alone,
+/// decision 0631). Not generic, so the parser is compiled here (optimized in dev builds), not in the engine's crate
+/// (`tape_into`'s caller).
+#[inline(never)]
+pub fn tape_to(src: &str, z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>) -> Result<rerail_tape_format::f16::Finished, String> {
+    tape_into(src, &mut Sink16::placing(z, blocks, rooms))
+}
+
+/// [`tape`], the writer writing to `finish`'s target and finished by it: format 16 or 16z, written by its ops as the
+/// statements are committed (`Writer::finish_16`, decision 0434).
 pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
     let lexed = lex(src);
     let mut widths = Widths::guess(src.len());
@@ -644,7 +689,7 @@ pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
 /// `tape` at `layout`'s widths, the lexer's tokens given.
 fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &mut F) -> Result<F::Out, Redo> {
     let Lexed { toks, n, comments } = lexed;
-    let mut out = Writer::new(rerail_tape_format::RR_TAG, layout, n + n / 2 + comments.len() + 8).to(finish.target(), src.as_bytes());
+    let mut out = Writer::new(layout, n + n / 2 + comments.len() + 8).to(finish.target(), src.as_bytes());
     out.push(code(Kind::SourceFile as u16, 0, false), 0);
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
     let mut p = Parser { b: src.as_bytes(), t: toks, n: *n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
@@ -1747,50 +1792,21 @@ mod tests {
         files
     }
 
-    /// An image read in place (`rerail_tape_format::View`) is the image decoded (`decode`): each
-    /// node's key and span, and each node's children the nodes whose parent it is, on every `.rerail`
-    /// file and on one with columns at 4 bytes (more than 65,535 nodes).
+    /// Tapes whose window cells need 4 bytes, each parsed again at them (`Widths::guess` writes 2 below
+    /// `SIZE_GUESS_BYTES`): a tail of a 70,000-byte string, more than 65,535 facts in one window (none is committed
+    /// before the last), and a comment of 70,000 bytes between statements. Each is the reference tape, byte for byte.
     #[test]
-    fn a_view_reads_each_node_as_decode_does() {
-        let mut texts = corpus();
-        texts.push(("20,000 facts".to_owned(), (0..20_000).map(|i| format!("f({i}, \"x\").\n")).collect()));
-        for (path, src) in &texts {
-            let image = crate::tape(src);
-            let decoded = rerail_tape_format::decode(&image).unwrap_or_else(|e| panic!("{path}: {e}"));
-            let view = rerail_tape_format::View::new(&image).unwrap_or_else(|e| panic!("{path}: {e}"));
-            assert_eq!(view.len(), decoded.len(), "{path}");
-            let mut parent = vec![None; decoded.len()];
-            for (i, d) in decoded.iter().enumerate() {
-                assert_eq!((view.key(i), view.start(i), view.end(i)), (d.key, d.start, d.end), "{path}: node {i}");
-                for c in view.children(i) {
-                    parent[c] = Some(i as u32);
-                }
-            }
-            assert!(decoded.iter().zip(&parent).all(|(d, p)| d.parent == *p), "{path}: parents");
+    fn wide_tapes_are_parsed_again_at_their_widths() {
+        let long = "x".repeat(70_000);
+        let cases = [format!("r(\"{long}\").\n"), format!("r(1).\n/* {long} */\nr(2).\nr(3).\n"), "r(1).\n".repeat(20_000)];
+        for src in &cases {
+            assert!(src.len() < rerail_tape_format::SIZE_GUESS_BYTES);
+            lean_tape_or_difference(src).unwrap_or_else(|diff| panic!("{} bytes: {diff}", src.len()));
         }
     }
 
     /// The lexer's tokens and comments are the engine's lexer's (`syntax::lex`), kind for kind
     /// and span for span, on every `.rerail` file.
-    /// Tapes whose columns need 4 bytes, each parsed again at them (`Widths::guess` writes 2
-    /// below `SIZE_GUESS_BYTES`): a tail of a 70,000-byte string, an offset across a 70,000-byte
-    /// comment, more than 65,535 nodes (20,000 facts). Each is the reference parser's tape, byte for byte.
-    #[test]
-    fn wide_tapes_are_parsed_again_at_their_widths() {
-        let long = "x".repeat(70_000);
-        let many = "r(1).\n".repeat(20_000);
-        let cases = [
-            (format!("r(\"{long}\").\n"), [2, 2, 4]),
-            (format!("r(1).\n/* {long} */\nr(2).\nr(3).\n"), [2, 4, 4]),
-            (many, [4, 2, 2]),
-        ];
-        for (src, want) in &cases {
-            assert!(src.len() < rerail_tape_format::SIZE_GUESS_BYTES);
-            let t = super::tape(src);
-            assert_eq!(t, crate::tape::image(&crate::engine_tape(src), src), "{} bytes", src.len());
-            assert_eq!([t[9], t[10], t[11]], *want, "{} bytes", src.len());
-        }
-    }
 
     #[test]
     fn lean_tokens_are_the_engines() {
@@ -1837,30 +1853,6 @@ mod tests {
 
     /// Every `.rerail` file of the repository, and every prefix of each at a few cut points (to run
     /// the recovery paths), gives `crate::tape`'s tape.
-    /// The width guess (`rerail_tape_format::Widths::guess`) against the widths each file's tape
-    /// needs: the files parsed twice, and the most nodes a byte (what `SIZE_GUESS_BYTES` is
-    /// set from). By hand: it prints the numbers.
-    #[test]
-    #[ignore = "a calibration: run by hand"]
-    fn widths_guess_calibration() {
-        let files: Vec<String> = corpus().into_iter().map(|(_, text)| text).collect();
-        let (mut again, mut most, mut big, mut largest) = (0, 0f64, 0, 0);
-        for src in &files {
-            let t = super::tape(src);
-            let nodes = u64::from_le_bytes(t[56..64].try_into().unwrap());
-            let need = rerail_tape_format::Widths { size: t[9], off: t[10], tail: t[11] & 0x7f, from_start: t[11] & 0x80 != 0 };
-            let guess = rerail_tape_format::Widths::guess(src.len());
-            if need != guess {
-                again += 1;
-                eprintln!("  {} bytes, {nodes} nodes: needs {need:?}, guessed {guess:?}", src.len());
-            }
-            most = most.max(nodes as f64 / src.len().max(1) as f64);
-            big += usize::from(src.len() >= 1 << 16);
-            largest = largest.max(src.len());
-        }
-        eprintln!("{} files: {again} parsed again; most nodes a byte {most:.3}; {big} of 64 KiB or more, the largest {largest} bytes", files.len());
-    }
-
     #[test]
     fn lean_tape_is_the_engines() {
         let files = corpus();
@@ -1872,7 +1864,7 @@ mod tests {
                 let lean = lean_tape_or_difference(src).unwrap_or_else(|diff| panic!("{path} cut at {at}: {diff}"));
                 // And the image reads back as the tree it was written from (`tape::nodes`, what the
                 // engine reads a rule file's statements off).
-                assert_eq!(crate::tape::nodes(&lean).expect("decodes"), crate::engine_tape(src), "{path} cut at {at}: decoded");
+                assert_eq!(crate::tape::nodes(&lean).expect("reads"), crate::engine_tape(src), "{path} cut at {at}: read back");
                 checked += 1;
             }
         }
@@ -1923,14 +1915,16 @@ mod tests {
     }
 
     /// The lean parser's tape of `src` when it is the engine's, byte for byte; else how the two differ: their
-    /// lengths, and the first byte that differs, placed in the engine's tape.
-    fn lean_tape_or_difference(src: &str) -> Result<Vec<u8>, String> {
-        let (lean, engine) = (super::tape(src), crate::tape::image(&crate::engine_tape(src), src));
-        if lean == engine {
+    /// lengths, and the first node that differs.
+    fn lean_tape_or_difference(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
+        let lean = super::tape(src)?;
+        let engine = crate::tape::image(&crate::engine_tape(src), src)?;
+        if lean.as_bytes() == engine.as_bytes() {
             return Ok(lean);
         }
-        let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
-        Err(format!("tapes of {} / {} bytes differ from byte {k}: {}", lean.len(), engine.len(), rerail_tape_format::place(&engine, k)))
+        let (a, b) = (crate::tape::nodes(&lean)?, crate::tape::nodes(&engine)?);
+        let k = a.iter().zip(&b).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
+        Err(format!("tapes of {} / {} nodes differ from node {k}: {:?} / {:?}", a.len(), b.len(), a.get(k), b.get(k)))
     }
 
     /// `text`'s bytes after `edits` edits by `edit`, fewer when no byte is left to edit.

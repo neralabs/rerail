@@ -8,16 +8,15 @@
 //! The views no CLIF reads yet (`tape`, `ast_depth`, `node_order`, `next_sibling`, `rr_report_location`) are read here
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
-use crate::reads::{NONE, f15, f16, f16z::Z};
+use crate::reads::{NONE, f16, f16z::Z};
 use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
-use rerail_clif::view_reads::{NO_ROW, PLACED_AT, ViewDoc};
+use rerail_clif::view_reads::{NO_ROW, PLACED_AT, PLACED_TABLE, ViewDoc};
 
 /// A document's tape as the views read it: its bytes from its view's base, its view, in its format; a 16z tape with
 /// the cache its reads share.
 #[derive(Clone, Copy)]
 pub enum Tape<'a> {
-    F15(&'a [u8], &'a TapeView),
     F16(&'a [u8], &'a TapeView),
     F16Z(Z<'a>),
 }
@@ -27,21 +26,19 @@ impl<'a> Tape<'a> {
     /// the view's entry size), unread for another format.
     pub fn new(t: &'a [u8], v: &'a TapeView, cache: *const u8) -> Tape<'a> {
         match v.format {
-            15 => Tape::F15(t, v),
             F16Z_FORMAT => Tape::F16Z(Z { t, v, cache }),
             _ => Tape::F16(t, v),
         }
     }
     fn view(&self) -> &TapeView {
         match self {
-            Tape::F15(_, v) | Tape::F16(_, v) => v,
+            Tape::F16(_, v) => v,
             Tape::F16Z(z) => z.v,
         }
     }
     #[inline]
     pub fn number(&self, i: u32) -> u32 {
         match *self {
-            Tape::F15(t, v) => f15::number(t, v, i),
             Tape::F16(t, v) => f16::number(t, v, i),
             Tape::F16Z(z) => z.number(i),
         }
@@ -49,7 +46,6 @@ impl<'a> Tape<'a> {
     #[inline]
     pub fn size(&self, i: u32) -> u32 {
         match *self {
-            Tape::F15(t, v) => f15::size(t, v, i),
             Tape::F16(t, v) => f16::size(t, v, i),
             Tape::F16Z(z) => z.size(i),
         }
@@ -57,7 +53,6 @@ impl<'a> Tape<'a> {
     #[inline]
     pub fn start(&self, i: u32) -> u32 {
         match *self {
-            Tape::F15(t, v) => f15::start(t, v, i),
             Tape::F16(t, v) => f16::start(t, v, i),
             Tape::F16Z(z) => z.start(i),
         }
@@ -65,7 +60,6 @@ impl<'a> Tape<'a> {
     #[inline]
     pub fn end(&self, i: u32) -> u32 {
         match *self {
-            Tape::F15(t, v) => f15::end(t, v, i),
             Tape::F16(t, v) => f16::end(t, v, i),
             Tape::F16Z(z) => z.end(i),
         }
@@ -77,7 +71,6 @@ impl<'a> Tape<'a> {
             return NONE;
         }
         match *self {
-            Tape::F15(t, v) => f15::parent(t, v, i),
             Tape::F16(t, v) => f16::parent(t, v, i),
             Tape::F16Z(z) => z.parent(i),
         }
@@ -280,18 +273,6 @@ impl<'a> Doc<'a> {
         let order = unsafe { self.numbering().order_of(l) };
         (i64::from(self.entry.key) << 32) | i64::from(order)
     }
-    /// `view_op(i, col)`, of the document's `i`-th token (core.rerail's shape): its parent's id, its name atom (by its
-    /// code, `ViewDoc::names`).
-    #[inline]
-    pub fn op(&self, i: u32, col: u32) -> i64 {
-        // SAFETY: as `tape_node`.
-        let x = unsafe { self.numbering().select(1, i) };
-        match col {
-            // A token is no root (`parent_id`'s `l` is not 0).
-            0 => self.parent_id(1, x),
-            _ => i64::from(self.items(&self.entry.names)[self.tape.number(x) as usize]),
-        }
-    }
     /// The numbered node of the `next_sibling` view's row `i` (a node after a numbered sibling), and its tape node.
     #[inline]
     pub fn after_sibling(&self, i: u32) -> (u32, u32) {
@@ -418,6 +399,18 @@ impl<'a> Doc<'a> {
             }
         }
     }
+    /// `Loc` position `l`'s span where it stands in its host: by the entry's table where its placement is one
+    /// (`PLACED_TABLE`: no word maps it, its spans placed once), else its span as read, placed (`placed`). The CLIF
+    /// read's (`loc`).
+    #[inline]
+    fn placed_loc(&self, l: u32) -> (u32, u32) {
+        if self.entry.placement == PLACED_TABLE {
+            // SAFETY: the entry's table of u64s (`ViewDoc::placed`), one a position, set where it was made, in its block.
+            let span = unsafe { self.entry.placed.as_slice::<u64>() }[l as usize];
+            return ((span >> 32) as u32, span as u32);
+        }
+        self.placed(self.loc_span(l))
+    }
     /// The 1-based line holding byte `at` (`LineTable::line` + 1: the `line` view's read, `lines_line`).
     #[inline]
     fn loc_line(&self, at: u32) -> u32 {
@@ -433,7 +426,7 @@ impl<'a> Doc<'a> {
         if place == Place::Docof {
             return i64::from(self.entry.file);
         }
-        let (s, e) = self.placed(self.loc_span(l));
+        let (s, e) = self.placed_loc(l);
         if place == Place::Report {
             let at = if col <= 2 { s } else { e };
             let line = self.loc_line(at);

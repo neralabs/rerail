@@ -1,6 +1,7 @@
 # 0165: A finding is keyed by its column, and an annotation is not code
 
-Status: decided and built (2026-11-13). It amends 0058 §1 (what a rule sees) and the findings relation of `rr::lower`.
+Status: built (audited 2026-11-23). Decided and built (2026-11-13). It amends 0058 §1 (what a rule sees) and the
+findings relation of `rr::lower`.
 
 ## Intro
 

@@ -1,11 +1,12 @@
 //! A time limit for each test of the engine's test binary, enforced from inside it.
 //!
 //! libtest runs each test on its own thread, named after the test (`code_rule_dsl::…::name`). A watchdog thread,
-//! started before `main`, lists the process's threads once a second and times each test thread from when it first
-//! sees it. A test past its limit is named on stderr and the process exits with status 124, as `timeout` does: a
+//! started before `main`, lists the process's threads once a second (an eighth of the limit, when that is less:
+//! `tick`) and times each test thread from when it first sees it. A test past its limit is named on stderr and the process exits with status 124, as `timeout` does: a
 //! hung test (a deadlock, a run that never ends) fails in minutes, not hours.
 //!
-//! - The limit is `DEFAULT` (10 minutes) unless `RERAIL_TEST_TIMEOUT=<seconds>` sets another; `0` turns it off.
+//! - The limit is `DEFAULT` (10 minutes) unless `RERAIL_TEST_TIMEOUT=<seconds>` sets another (a fraction too: `0.5`);
+//!   `0` turns it off.
 //! - A test that is known to run longer asks for more with `allow`, as its first line. The environment variable,
 //!   when set, still caps it.
 //!
@@ -81,8 +82,15 @@ fn short(name: &str) -> String {
 /// The limit from the environment: `None` when unset, `Some(None)` when off (`0`).
 fn configured() -> Option<Option<Duration>> {
     let v = std::env::var("RERAIL_TEST_TIMEOUT").ok()?;
-    let secs: u64 = v.trim().parse().ok()?;
-    Some((secs > 0).then(|| Duration::from_secs(secs)))
+    let secs: f64 = v.trim().parse().ok().filter(|s: &f64| s.is_finite() && *s >= 0.0)?;
+    Some((secs > 0.0).then(|| Duration::from_secs_f64(secs)))
+}
+
+/// How often the watchdog lists the threads under limit `env` (the environment's): once a second, or an eighth of a
+/// shorter limit (at least 50 ms), so a limit under a few seconds is kept to within an eighth of it. The watchdog's
+/// own tests ran a child to a 2 s limit and a fault past the first 1 s listing, 5.8 s of the suite between them.
+fn tick(env: Option<Duration>) -> Duration {
+    env.map_or(Duration::from_secs(1), |l| (l / 8).clamp(Duration::from_millis(50), Duration::from_secs(1)))
 }
 
 // Started before `main`, so every run of the test binary has it, whatever the filter.
@@ -108,8 +116,9 @@ fn watch() {
     std::thread::sleep(Duration::from_millis(200));
     #[cfg(unix)]
     faults::install();
+    let every = tick(env);
     loop {
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(every);
         let now = Instant::now();
         let threads = threads();
         // A thread's id may be reused once it ends: its allowance ends with it. (Only threads seen before: one that
@@ -147,9 +156,9 @@ fn watch() {
 /// Names the test and exits at once: `exit` would run atexit handlers, which may wait on a lock a hung thread holds.
 fn fail(name: &str, ran: Duration, limit: Duration) -> ! {
     let msg = format!(
-        "\ntest watchdog: `{name}` ran {} s, past its limit of {} s (RERAIL_TEST_TIMEOUT, or the test's `test_watchdog::allow`); exiting with status 124\n",
-        ran.as_secs(),
-        limit.as_secs()
+        "\ntest watchdog: `{name}` ran {:.1} s, past its limit of {:.1} s (RERAIL_TEST_TIMEOUT, or the test's `test_watchdog::allow`); exiting with status 124\n",
+        ran.as_secs_f64(),
+        limit.as_secs_f64()
     );
     #[cfg(unix)]
     unsafe {
@@ -259,7 +268,7 @@ mod tests {
         let out = std::process::Command::new(exe)
             .args(["test_watchdog::tests::a_test_past_its_limit_ends_the_run", "--exact", "--nocapture"])
             .env("RERAIL_WATCHDOG_CHILD", "1")
-            .env("RERAIL_TEST_TIMEOUT", "2")
+            .env("RERAIL_TEST_TIMEOUT", "0.4")
             .output()
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
@@ -276,8 +285,16 @@ mod tests {
     #[test]
     fn a_segmentation_fault_names_the_test() {
         if std::env::var_os("RERAIL_WATCHDOG_CHILD").is_some() {
-            // Past the watchdog's first listing of the tests.
-            std::thread::sleep(Duration::from_millis(1500));
+            // Past the watchdog's first listing of the tests (200 ms after `main`, then every 125 ms under the
+            // parent's limit of 1 s).
+            std::thread::sleep(Duration::from_millis(500));
+            // Its fault writes no core: where the kernel hands cores to a program (a `|` core pattern, which no core
+            // limit stops), the dump was most of the test's time. Still ended by the signal.
+            // SAFETY: a flag of this process alone.
+            #[cfg(target_os = "linux")]
+            unsafe {
+                libc::prctl(libc::PR_SET_DUMPABLE, 0);
+            }
             // SAFETY: none: the fault is the test.
             unsafe { std::ptr::null_mut::<u64>().write_volatile(1) };
             return;
@@ -286,6 +303,7 @@ mod tests {
         let out = std::process::Command::new(exe)
             .args(["test_watchdog::tests::a_segmentation_fault_names_the_test", "--exact", "--nocapture"])
             .env("RERAIL_WATCHDOG_CHILD", "1")
+            .env("RERAIL_TEST_TIMEOUT", "1")
             .output()
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);

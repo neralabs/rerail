@@ -12,7 +12,6 @@
 
 /// Block programs on Metal (decision 0066): the forward carry's generated UKL, over a batch of
 /// files read in place from source slabs.
-pub mod block_program;
 pub mod buffer_observation;
 /// The engine's commands on the device layer (decision 0440 step C).
 pub mod lane;
@@ -24,7 +23,6 @@ pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
 pub mod pp_expand;
 /// The preprocessing words on the device (decision 0348, stage 5).
-pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
 pub mod pool;
 pub mod runtime;
@@ -33,7 +31,7 @@ pub mod slabs;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_pool;
 
-pub use rerail_compiler::Error;
+pub use rerail_error::Error;
 
 /// The pool's hooks into this crate, installed before the process's device is first used through it (by
 /// `METAL_DEVICE` or the device layer's `lane::device`): whatever its backend, the pool counts the ledger's

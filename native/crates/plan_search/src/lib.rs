@@ -3,7 +3,7 @@
 //! that read the model (`keeps`, `select`, `prepared`, `choices`, `demand`, `replanning`). Over the planner's base
 //! (`rerail-plan-base`), under its run (`rerail-planner`: `plan.rs`), which re-exports its `plan`.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items under the same names:
 // the glob's name and the private one are one item. The mounts also widen what the crates above read (the split's
 // facades, not a design).
@@ -19,7 +19,7 @@ pub use rerail_plan_base::content_store;
 pub use rerail_plan_base::git_access;
 pub use rerail_plan_base::git_workspace;
 extern crate self as rerail_plan_search;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_plan_base::code_rule_dsl::*;
     #[path = "logic"]
@@ -32,14 +32,21 @@ pub mod code_rule_dsl {
             pub use rerail_plan_base::code_rule_dsl::logic::plan::*;
             pub mod search;
             pub use search::*;
+            /// The tree's statistics, its kinds' and edges', in a section (decision 0628 §4).
+            pub mod tree_stats;
             pub mod choices;
             /// A memo entry of program facts kept as kept facts, held by its source (t33 step 3).
             pub mod kept_entry;
             pub mod demand;
             pub mod keeps;
             pub mod prepared;
+            /// The analyses of a version kept by its identity, with the kept plans (t33 K4).
+            pub mod kept_analyses;
             pub mod replanning;
             pub mod select;
+            /// A rule read as a filter of one relation (decision 0611).
+            pub mod filters;
+            pub use filters::{filter_of, plain_filter};
             // `plan.rs`'s imports, for the children' `use super::*`.
             #[allow(unused_imports)]
             use super::front::Value;

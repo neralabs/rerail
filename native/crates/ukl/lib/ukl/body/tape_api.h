@@ -1,6 +1,6 @@
 // ukl/body/tape_api.h: the reads made of a format's own (decision 0576), written once and included once for each
 // format by `<ukl/reads/tape.h>` and `<ukl/reads/tape_z.h>`, with, defined first, `CLIF_F(name)`: that format's
-// reads' names (`clif_f15_*`, `clif_f16_*`, `clif_f16z_*`). It is undefined at the end. Not `#pragma once`.
+// reads' names (`clif_f16_*`, `clif_f16z_*`). It is undefined at the end. Not `#pragma once`.
 
 #if !defined(CLIF_F)
 #error "ukl/body/tape_api.h needs CLIF_F (ukl/reads/tape.h, tape_z.h)"

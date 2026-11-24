@@ -67,7 +67,7 @@ pub fn placement<'a>(
     let codes = lang.table().len();
     let table = Table { key: u32::from(rerail_tape_format::f16::Lang::revision(lang)) << 8, len: 24 * codes };
     let bytes = document_bytes(tape_len, source_len);
-    let place = move |slab: &Arc<crate::slabs::Slab>, offset: usize, table_at: Option<TableAt>| -> Result<Placed, Error> {
+    let place = move |slab: &Arc<crate::slabs::Slab>, offset: usize, table_at: TableAt| -> Result<Placed, Error> {
         let base = slab.host();
         let source_at = offset + crate::slabs::aligned(tape_len);
         // SAFETY: `insert` gave `offset..offset + bytes` of the slab to this document alone.
@@ -75,10 +75,9 @@ pub fn placement<'a>(
         write(tape, source);
         let p = rerail_tape_format::f16::placement(tape).map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let placed = p.view(lang, 0).map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
-        let table_at = table_at.ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let new_table = (!table_at.held).then(|| {
             let mut t = vec![0u8; 24 * codes];
-            for (n, e) in lang.table().entries().iter().enumerate() {
+            for (n, e) in lang.table().entries().enumerate() {
                 // `DeviceCode`: kind, field (u16s), flags, class count, then room for its classes.
                 t[24 * n..24 * n + 2].copy_from_slice(&e.kind.to_le_bytes()); // copy: not block data
                 t[24 * n + 2..24 * n + 4].copy_from_slice(&e.field.to_le_bytes()); // copy: not block data
@@ -114,11 +113,11 @@ pub fn placement<'a>(
             len: bytes,
             bytes: [crate::slabs::aligned(tape_len), crate::slabs::aligned(source_len + crate::slabs::SOURCE_MARGIN), 0],
             tape_length: tape_len,
-            table: Some(table),
+            table,
         };
         Ok(Placed { document, table: new_table })
     };
-    (digest, bytes, Some(table), Box::new(place))
+    (digest, bytes, table, Box::new(place))
 }
 
 impl Unit {

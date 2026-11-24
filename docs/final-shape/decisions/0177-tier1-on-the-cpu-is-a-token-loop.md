@@ -1,11 +1,11 @@
 # 0177: Tier 1 on the CPU is a token loop, as the lean lexer is
 
-Status: decided (2026-11-13); stage 1 landed (the rules, their meaning, the CPU's ends from
-them; see Stage 1); the token loop runs in the block loop; the starts, ends and the
-loop's masks are the lean lexer's (see The shape); the marks and checks at the token next.
-Replaces 0139's way on the CPU (its constructs stay; its "take operations out of the one
-pass" does not). Metal keeps the bit-parallel form.
-The design: docs/parser-generators/36; the log: docs/parser-generators/35.
+Status: partly built (audited 2026-11-23). Left: marks and checks made at the token as its bits, so the CPU makes no
+mask but the loop's. Decided (2026-11-13); stage 1 landed (the rules, their meaning, the CPU's ends from them; see
+Stage 1); the token loop runs in the block loop; the starts, ends and the loop's masks are the lean lexer's (see The
+shape); the marks and checks at the token next. Replaces 0139's way on the CPU (its constructs stay; its "take
+operations out of the one pass" does not). Metal keeps the bit-parallel form. The design: docs/parser-generators/36;
+the log: docs/parser-generators/35.
 
 ## Intro
 

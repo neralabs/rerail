@@ -35,7 +35,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
@@ -69,6 +69,9 @@ pub mod code_rule_dsl {
                 pub mod warm_tests;
                 #[cfg(test)]
                 pub mod cache_tests;
+                // Which states of an edited corpus are checked against a fresh run (`RERAIL_TEST_FRESH`).
+                #[cfg(test)]
+                pub mod fresh_tier;
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
                 pub mod phase0 {
                     pub use rerail_boot::code_rule_dsl::logic::plan::corpus::phase0::*;
@@ -100,6 +103,18 @@ pub mod code_rule_dsl {
                     pub use rerail_boot::code_rule_dsl::logic::plan::corpus::session::*;
                     #[cfg(test)]
                     pub mod tests;
+                }
+                // The matchers' tests: they compile rules through the engine (`rule_api`).
+                pub mod matchers {
+                    pub use rerail_boot::code_rule_dsl::logic::plan::corpus::matchers::*;
+                    #[cfg(test)]
+                    pub mod tests;
+                    #[allow(unused_imports)]
+                    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
+                    #[allow(unused_imports)]
+                    use std::collections::{BTreeSet, HashMap};
+                    #[allow(unused_imports)]
+                    use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
                 }
                 // The corpus runner's tests: they parse files, so they run where the languages are registered.
                 #[cfg(test)]
@@ -177,5 +192,12 @@ pub mod code_rule_dsl {
         }
     }
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
 }
+
+// The engine's allocator (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` declares it): without it the
+// test binary ran on the system allocator, which no build of the engine runs on.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;

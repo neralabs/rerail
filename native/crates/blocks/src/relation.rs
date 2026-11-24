@@ -641,7 +641,7 @@ impl Relation {
         let ix = self.indexes.as_slice();
         // An entry given back is taken first (`give_back_index`) when its room is the block's already; one that keeps
         // its room (a block of no free list) is left for an index that fits it (`dead_room`), and taken last.
-        let dead = |i: usize, room: bool| ix[i].state == DEAD && (ix[i].offs.len() != 0) == room;
+        let dead = |i: usize, room: bool| ix[i].state == DEAD && (!ix[i].offs.is_empty()) == room;
         // Its taker marks it live (`state` 0) once its room is had.
         (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))
     }
@@ -787,10 +787,34 @@ impl Relation {
     /// # Safety
     /// As `try_reserve_index`'s.
     pub unsafe fn try_reserve_index_buckets(&self, block: &Block, cols: &[u16], n: u32, keys: usize) -> Option<IndexRoom> {
+        // SAFETY: the caller's.
+        unsafe { self.try_reserve_index_cap(block, cols, n, keys.min(n as usize).next_power_of_two().max(1)) }
+    }
+
+    /// `try_reserve_index_from` of room for `n` rows with `buckets` buckets (a power of two), whatever its rows: a live
+    /// relation's, whose rows grow past its first room within a program (`grow_index_rows`), its buckets as they are.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s, its rows `from..` written as the device claims them.
+    pub unsafe fn try_reserve_index_live(&self, block: &Block, cols: &[u16], from: u32, n: u32, buckets: usize) -> Option<IndexRoom> {
+        assert!(buckets.is_power_of_two(), "{buckets} buckets");
+        // SAFETY: the caller's.
+        let mut room = unsafe { self.try_reserve_index_cap(block, cols, n, buckets) }?;
+        let ix = std::ptr::from_ref(&self.indexes.as_slice()[room.index]).cast_mut();
+        // SAFETY: the entry is the caller's, not yet built.
+        unsafe { (*ix).from = from };
+        room.from = from;
+        Some(room)
+    }
+
+    /// `try_reserve_index_buckets` of `cap` buckets (a power of two).
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s.
+    unsafe fn try_reserve_index_cap(&self, block: &Block, cols: &[u16], n: u32, cap: usize) -> Option<IndexRoom> {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            let cap = keys.min(n as usize).next_power_of_two().max(1);
             // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
             // allocation is.
             let (ob, rb) = (4 * (cap + 1), 4 * (n as usize).max(1));
@@ -837,6 +861,34 @@ impl Relation {
             Span::set(&raw mut (*ix).rows, rows, n as usize);
             self.nindex.fetch_max(i as u32 + 1, Release);
             Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
+        }
+    }
+
+    /// Index `index`'s rows given room for `n` rows (more than it has), its buckets as they are: a live relation's,
+    /// whose rows a program of rounds maps as they reach them (decision 0603), between its launches. Its old rows' room
+    /// goes back to the block as `forget_indexes` gives it. The new room's offset in the block, or `None` where the
+    /// block has no room for it (the index as it was).
+    ///
+    /// # Safety
+    /// The entry is the caller's, built by the device only, and nothing reads or writes it meanwhile.
+    pub unsafe fn grow_index_rows(&self, block: &Block, index: usize, n: u32) -> Option<usize> {
+        let ix = std::ptr::from_ref(&self.indexes.as_slice()[index]).cast_mut();
+        // SAFETY: the caller's: the entry is ours, and no reader runs.
+        unsafe {
+            let (old, len) = (block.offset_of((*ix).rows.as_ptr()), 4 * (*ix).rows.len().max(1));
+            if (n as usize) <= (*ix).rows.len() {
+                return Some(old);
+            }
+            let rb = 4 * n as usize;
+            let rewritten = self.flags.load(Acquire) & REWRITTEN != 0;
+            let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit_zeroed(rb, 8)?.0 };
+            if rewritten {
+                block.free_chunk_resident(old, len);
+            } else {
+                block.free_chunk_fit_resident(old, block.fit_kept(len));
+            }
+            Span::set(&raw mut (*ix).rows, block.ptr::<u32>(r), n as usize);
+            Some(r)
         }
     }
 

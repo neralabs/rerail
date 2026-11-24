@@ -658,8 +658,9 @@ jobs:
 
   # The engine's browser build (native/wasm/README.md): no other job builds the engine for wasm32-wasip1, so a change
   # that broke it failed no check. Checks, not builds: the library with its default features, then the shape a page
-  # ships, the rule explorer's (the binary and its library, `headless` and one language, without `tape-cache` or
-  # `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
+  # ships, the rule explorer's (the binary and its library, `headless`, one language and the rules' own (`lang-rr`, which
+  # phase 0 reads the rule files with), without `tape-cache` or `dump-cli`), since code gated on those features
+  # compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
   # and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Gated as rust-windows is, when the change reaches
   # the engine (`rust-engine`). A job of its own with no compile cache: its failure, or a failed download for it, leaves
   # what rust-clippy saves as it was. Cold, at 4 jobs, the check takes 2.5 to 7 minutes.
@@ -713,7 +714,7 @@ jobs:
           export WASI_SDK_PATH="$RUNNER_TEMP/$WASI_SDK"
           . native/wasm/env.sh
           cargo check -p rerail-engine --lib --target wasm32-wasip1
-          cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python
+          cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python,lang-rr
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
@@ -1009,7 +1010,7 @@ jobs:
           cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
           cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
-  # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
+  # The tree watch's FSEvents adapter (native/crates/tree_watch/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
   # tests and the tree watch's shared tests run here, when the change reaches its crate (rerail-tree-watch, which builds
   # without the engine: a minute or two cold, where the engine's test target took 16). They read no pack test data. A
   # debug build, as in the rust job.

@@ -16,14 +16,14 @@ import re
 import subprocess
 import sys
 
-PROFILE = "native/src/code_rule_dsl/logic/profile.rs"
+PROFILE = "native/crates/prof/src/code_rule_dsl/logic/profile.rs"
 
 # (file, calls) -> why it may read the mode. A new reader, or another read in a listed file, needs the user's approval.
 READERS = {
     PROFILE: (None, "the mode's own implementation: the faults, the commit hook, the writer's scope"),
-    "native/src/code_rule_dsl/logic/plan/corpus.rs": (1, "the maintained part's delta check: reads the deltas held in memory, and faults"),
-    "native/src/code_rule_dsl/logic/plan/corpus/reuse.rs": (1, "`NOT_OUTPUTS`: the mode is left out of the cutoff's key"),
-    "native/src/code_rule_dsl/logic/plan/corpus/tests.rs": (1, "a test's child process: the variable removed from its environment, the mode not read (approved 2026-11-16)"),
+    "native/crates/logic/src/code_rule_dsl/logic/plan/corpus.rs": (1, "the maintained part's delta check: reads the deltas held in memory, and faults"),
+    "native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/reuse.rs": (1, "`NOT_OUTPUTS`: the mode is left out of the cutoff's key"),
+    "native/crates/tests_corpus/src/code_rule_dsl/logic/plan/corpus/tests.rs": (1, "a test's child process: the variable removed from its environment, the mode not read (approved 2026-11-16)"),
 }
 
 # The writes a warm run may make (`profile::WARM_WRITES_ALLOWED`): approved by the user (decision 0211; the cost

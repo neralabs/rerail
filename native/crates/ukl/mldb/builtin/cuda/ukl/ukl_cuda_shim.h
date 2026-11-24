@@ -14,17 +14,40 @@
     - positions: `GID0` is `blockIdx.x * blockDim.x + threadIdx.x` (upstream multiplied by `gridDim`);
     - SIMD-group operations are warp intrinsics over the full warp (`*_sync(0xffffffff, ...)`): every lane of
       the warp must call them (they are convergent), as Metal's simd_* functions require of their SIMD group.
+
+    HIP (UKL_HIP, decision 0440 "HIP") is CUDA's language for hiprtc: this shim, with a wavefront for a warp (32
+    or 64 lanes, `__AMDGCN_WAVEFRONT_SIZE`), AMD's SIMD-group intrinsics (`__shfl*`, `__ballot`, with no mask: a
+    wavefront's lanes run together), the integer types as the compiler names them, and every unmarked function a
+    device's, as NVRTC's `-default-device` makes it.
 */
 
 #pragma once
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
-#define UKL_SIMD_WIDTH 32
+#if defined(UKL_HIP)
+#  define UKL_SIMD_WIDTH __AMDGCN_WAVEFRONT_SIZE
+#  pragma clang force_cuda_host_device begin
+#  ifndef __align__
+#    define __align__(n) __attribute__((aligned(n)))
+#  endif
+#  ifndef __forceinline__
+#    define __forceinline__ inline __attribute__((always_inline))
+#  endif
+#  ifndef __noinline__
+#    define __noinline__ __attribute__((noinline))
+#  endif
+// A wavefront's lanes run together; the barrier orders their memory (CUDA's `__syncwarp`).
+#  define __UKL_SYNCWARP() (__builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront"), __builtin_amdgcn_wave_barrier(), \
+                            __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront"))
+#else
+#  define UKL_SIMD_WIDTH 32
+#  define __UKL_SYNCWARP() __syncwarp()
+#endif
 
 
 // The thread's lane in its warp: its linear index in the block, modulo the warp.
-#define __UKL_CUDA_LANE ((threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z)) & 31u)
+#define __UKL_CUDA_LANE ((threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z)) & (UKL_SIMD_WIDTH - 1u))
 
 // Address spaces. CUDA has one generic address space for pointers; `__shared__` and `__constant__` qualify
 // variables, never pointers, so only the variable form of `__constant` keeps its qualifier.
@@ -57,7 +80,7 @@
 #define UKL_GLOBAL_PTR(Type) Type *
 #define UKL_GLOBAL_PTR_CAST(Type) (Type *)
 
-#define ukl_simdgroup_barrier() __syncwarp()
+#define ukl_simdgroup_barrier() __UKL_SYNCWARP()
 #define ukl_threadgroup_barrier() __syncthreads()
 #define printf(...)
 
@@ -88,6 +111,17 @@
 #define SYNC_CALL_18(...) SYNC_CALL(__VA_ARGS__)
 #define SYNC_CALL_19(...) SYNC_CALL(__VA_ARGS__)
 
+#if defined(UKL_HIP)
+// As hiprtc's own headers name them (a 64-bit integer is `long` on Linux, `long long` on Windows).
+typedef __UINT32_TYPE__ uint32_t;
+typedef __INT32_TYPE__ int32_t;
+typedef __UINT16_TYPE__ uint16_t;
+typedef __INT16_TYPE__ int16_t;
+typedef __UINT8_TYPE__ uint8_t;
+typedef __INT8_TYPE__ int8_t;
+typedef __UINT64_TYPE__ uint64_t;
+typedef __INT64_TYPE__ int64_t;
+#else
 typedef unsigned int uint32_t;
 typedef int int32_t;
 typedef unsigned short uint16_t;
@@ -96,6 +130,7 @@ typedef unsigned char uint8_t;
 typedef signed char int8_t;
 typedef unsigned long long uint64_t;
 typedef long long int64_t;
+#endif
 typedef unsigned int atomic_uint;
 typedef int atomic_int;
 
@@ -153,6 +188,35 @@ static __device__ __forceinline__ float reinterpretIntAsFloat(int32_t val)
 }
 
 // SIMD-group operations. `simd_lane` and `tmp` are the signature Metal's and the CPU's share; CUDA needs neither.
+// HIP's: a 32-lane wavefront's (these return 32 lanes' bits; ukl/backend.h's are every width's).
+#if defined(UKL_HIP)
+static __device__ __forceinline__ uint32_t ukl_simdgroup_ballot(bool val, uint16_t simd_lane, atomic_uint * tmp)
+{
+    return (uint32_t)__ballot(val);
+}
+
+static __device__ __forceinline__ uint32_t ukl_simdgroup_sum(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
+{
+    for (int d = UKL_SIMD_WIDTH / 2; d > 0; d >>= 1)
+        val += __shfl_xor(val, d, UKL_SIMD_WIDTH);
+    return val;
+}
+
+static __device__ __forceinline__ uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t n)
+{
+    return __popc(bits & ((1u << n) - 1u));
+}
+
+static __device__ __forceinline__ uint32_t ukl_simdgroup_prefix_exclusive_sum_bools(bool val, uint16_t simd_lane, atomic_uint * tmp)
+{
+    return ukl_prefix_exclusive_sum_bitmask((uint32_t)__ballot(val), simd_lane);
+}
+
+static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
+{
+    return __shfl(val, __ffsll((unsigned long long)__ballot(1)) - 1, UKL_SIMD_WIDTH);
+}
+#else
 static __device__ __forceinline__ uint32_t ukl_simdgroup_ballot(bool val, uint16_t simd_lane, atomic_uint * tmp)
 {
     return __ballot_sync(0xffffffffu, val);
@@ -183,6 +247,7 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 {
     return __shfl_sync(0xffffffffu, val, __ffs(__activemask()) - 1);
 }
+#endif
 
 // A kernel's parameters: what its body sees (inner), what the launch passes (outer), and how the one becomes the
 // other. Positions and sizes are no parameters of the launch; they come from CUDA's built-in variables.
@@ -241,7 +306,7 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 #define PASS_INNER_ARG_TGID1(Type, Name) (blockIdx.y)
 #define PASS_INNER_ARG_TGID2(Type, Name) (blockIdx.z)
 #define PASS_INNER_ARG_LANE(Type, Name) __UKL_CUDA_LANE
-#define PASS_INNER_ARG_NLANES(Type, Name) 32u
+#define PASS_INNER_ARG_NLANES(Type, Name) ((uint32_t)UKL_SIMD_WIDTH)
 
 #define PASS_INNER_ARG_SHARED(Type, Name) Name
 

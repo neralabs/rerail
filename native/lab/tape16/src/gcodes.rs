@@ -92,7 +92,8 @@ pub fn ids_tag(tag: u8) -> u8 {
     match tag {
         30 | 34 => 1,
         31 => 6,
-        32 => 20,
+        // html-element (a fragment), and the tests' HTML (`GrammarDialect::TestHtml`): HTML's grammar.
+        32 | 250 => 20,
         t => t,
     }
 }
@@ -318,8 +319,8 @@ pub fn run(tag: u8, files: &[&crate::capture::File], scratch: &Path) -> Result<R
     }
     let mut seen: HashMap<Tuple, u64> = HashMap::new();
     for f in files {
-        let tree = crate::v15::read(&f.image)?;
-        let aliases = crate::v15::aliases(&f.image);
+        let tree = crate::captured::read(&f.image)?;
+        let aliases = crate::captured::aliases(&f.image);
         for n in &tree.nodes {
             r.nodes += 1;
             let kind = if n.kind & 0x8000 != 0 {

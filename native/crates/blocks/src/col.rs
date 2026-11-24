@@ -831,7 +831,11 @@ impl IntCol {
                     }
                 }
             }
-            _ => (0..n).for_each(|i| f(self.get(i))),
+            // Resolved once (`dec`), not per value as `get` resolves a grouped or lined column.
+            _ => {
+                let d = self.dec();
+                (0..n).for_each(|i| f(d.get(i)))
+            }
         }
     }
 
@@ -1047,6 +1051,25 @@ impl Dec<'_> {
         }
     }
 
+    /// Values `lo..lo + out.len()` into `out`, in order: a run's value once per run, its first run found by one
+    /// search (`get` searches for each value's).
+    pub fn fill(&self, lo: usize, out: &mut [i64]) {
+        match self.tag {
+            CONST => out.fill(self.base),
+            PACK => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.val(lo + j)),
+            RUNS => {
+                let (mut k, mut i) = (if lo == 0 { 0 } else { self.run_of(lo) }, 0);
+                while i < out.len() {
+                    let end = self.start(k + 1).min(lo + out.len()) - lo;
+                    out[i..end].fill(self.val(k));
+                    (i, k) = (end, k + 1);
+                }
+            }
+            GROUPS => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.grp(lo + j)),
+            _ => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.on_line(lo + j)),
+        }
+    }
+
     /// The first position in `lo..hi` whose value is not less than `key`, the column sorted over that range.
     #[inline]
     pub fn lower_bound(&self, lo: usize, hi: usize, key: i64) -> usize {
@@ -1186,6 +1209,13 @@ mod tests {
             let mut each = Vec::new();
             c.for_each(|x| each.push(x));
             assert_eq!(&each, v);
+            // A window of values at once, from any place (`Dec::fill`).
+            let d = c.dec();
+            for (lo, m) in [(0, v.len()), (1, v.len() - 1), (v.len() / 3, v.len() / 3), (v.len() - 1, 1)] {
+                let mut out = vec![0i64; m];
+                d.fill(lo, &mut out);
+                assert_eq!(&out[..], &v[lo..lo + m], "{} from {lo}", c.tag_name());
+            }
         }
     }
 

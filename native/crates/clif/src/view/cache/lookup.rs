@@ -391,6 +391,31 @@ fn clear(l: &Look, g: *mut u8, stamp: u32) {
     s.store(stamp, SeqCst);
 }
 
+/// Whether `e`, an entry `get` gave for `key` complete at epoch `stamp`, still holds it: its generation still stamped
+/// `stamp` (not turned, so its arena unchanged: no entry made over `e`), its key `key` and its completion `stamp`. A
+/// reader that found the entry before reads it again without a lookup, and asks this again after its read (a turn or
+/// a writer between them changes one of the three: a writer marks the completion before it writes the key).
+///
+/// # Safety
+/// `cache` is a live cache, and `e` an entry `get` gave of it (`ALIGN`-aligned, in a generation's arena).
+pub unsafe fn still(cache: *const u8, e: *const u8, key: u64, stamp: u32) -> bool {
+    // SAFETY: the caller's: the header's words, and `e`'s generation's and its own.
+    unsafe {
+        let stride = word(cache, GEN_STRIDE).load(SeqCst) as usize;
+        let g = (e as usize - cache as usize - HEAD) / stride * stride;
+        word(cache, (HEAD + g + STAMP as usize) as i32).load(SeqCst) == stamp && key_of(e).load(SeqCst) == key && word(e, READY).load(SeqCst) == stamp
+    }
+}
+
+/// Whether `e` is `cache`'s dead entry (`get` found no room).
+///
+/// # Safety
+/// `cache` is a live cache.
+pub unsafe fn is_dead(cache: *const u8, e: *const u8) -> bool {
+    // SAFETY: the caller's.
+    unsafe { e == cache.add(word(cache, DEAD).load(SeqCst) as usize) }
+}
+
 /// Entry `r` an open lookup took (`TAKEN`'s bits cleared or not), written: completed, and its writer gone from its
 /// generation's count (`reads::cache_done`).
 ///
@@ -470,12 +495,13 @@ pub unsafe fn verdict_put(cache: *const u8, test: u32, sym: u32, v: u32) -> bool
     true
 }
 
-/// The entry of `key` (`reads::cache_get`): found, waited for, or on a miss an entry of `size` bytes taken and
-/// `fill`ed (it gives whether the payload fits); the dead entry where none was kept (a failure counted). A 16z tape's
-/// block is read so (`tape_z_block`, `rerail_tape_format::reads::f16z`).
+/// The entry of `key` (`reads::cache_get`, as a 16z block's read takes it: `tape_z_block`,
+/// `rerail_tape_format::reads::f16z`): found in the live generations, or on a miss an entry of `size` bytes taken and
+/// `fill`ed (it gives whether its payload fit) and completed; an entry another thread writes waited for. The dead
+/// entry where the cache had no room (`FAILED` counted): its caller reads it as no entry.
 ///
 /// # Safety
-/// `cache` is a live cache, and `fill` writes only its entry's `size` bytes.
+/// `cache` is a live cache (`Spec::init`), and `fill` writes only its entry's `size` bytes.
 pub unsafe fn get(cache: *const u8, key: u64, size: u32, fill: &dyn Fn(*mut u8) -> bool) -> *mut u8 {
     // SAFETY: the caller's.
     unsafe { lookup(cache.cast_mut(), key, size, Some(fill)) as *mut u8 }
