@@ -887,8 +887,23 @@ let workspaceBusy: unknown;
 /** Whether this process has named Rerail's package to its engine (`setPackageRoot`): once, as the engine never forgets it. */
 let packageRootNamed = false;
 
+/**
+ * The engine this process loaded, with the `RERAIL_ENGINE_PATH` it was found under. Every call into the engine goes
+ * through `loadNativeBinding`, a walk once per file and per Git ignore question, and Node never unloads an addon: so the
+ * file is found and required once, and found again only where `RERAIL_ENGINE_PATH` has changed since.
+ */
+let loaded: { readonly configuredPath: string | undefined; readonly binding: NativeBinding } | undefined;
+
 export function loadNativeBinding(): NativeBinding {
-  const addonPath = resolveNativeBindingPath();
+  const configuredPath = process.env.RERAIL_ENGINE_PATH;
+  if (loaded === undefined || loaded.configuredPath !== configuredPath) {
+    loaded = { configuredPath, binding: requireEngine(resolveNativeBindingPath(configuredPath)) };
+  }
+  return loaded.binding;
+}
+
+/** The engine at `addonPath`, with what the process keeps from its first load. */
+function requireEngine(addonPath: string): NativeBinding {
   let binding: NativeBinding;
   try {
     binding = require(addonPath) as NativeBinding;
