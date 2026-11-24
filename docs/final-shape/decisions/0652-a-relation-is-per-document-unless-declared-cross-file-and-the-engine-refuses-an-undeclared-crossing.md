@@ -161,6 +161,27 @@ fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled ar
 - Python's `perf403` and Vue's `no-child-content` ran `match` over a node the span binder could not place: the first
   reads the key's text, the second names its element's kinds.
 
+## Amended (2026-11-24, user, at the hub's green pass): demand keeps a left-out atom's document
+
+Merged with the hub (roll-up 125), the check refused a crossing no source wrote. python/compare.rerail's `same_pair`
+carries a comparison's asks down to children; `unparen`'s demand from its recursive rule must leave
+`same_pair(x, y)` out to stay stratified (it negates `same_leaf`, which reads `value`), and what was left,
+`magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)`, joined any two nodes of the corpus
+(`an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack`, #932). Asked whether demand may make
+such a crossing, be exempt from the check, or keep the document, the user chose the last:
+
+- **A positive atom demand leaves out keeps its document.** A relation not declared `cross_file` holds rows of one
+  document each, so its atom's node variables lie in one. The magic rule that leaves it out keeps
+  `@doc(x) = @doc(y)` for each pair of those variables its kept literals bind (`magic::same_documents`). It is still
+  wider than the atom, so the demand stays sound, and it is a file's pairs, not the corpus's.
+- An atom of a `cross_file` relation says nothing of documents, and leaves no join.
+
+Tests: `a_left_out_per_document_atom_keeps_its_nodes_in_one_document` (the shape, both ways); #932's test, whose own
+`twin` (a crossing by `d != e`) is now declared `cross_file`.
+
+The pack-wide test reads each pack from the repository's root: the Django pack moved to `packs/django` (main's #930)
+the day this record's test listed it under `docs/rule-syntax/packs`.
+
 ## Order of work
 
 1. The qualifier and the check (2, 3), and the test (4). It goes red on the gaps.

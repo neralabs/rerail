@@ -1409,7 +1409,7 @@ fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack()
     let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
                 .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
                 cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
-    let across = ".language python\n.decl twin(v: symbol)\n\
+    let across = ".language python\n.decl twin(v: symbol) cross_file\n\
                   twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
     let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
     let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
