@@ -273,10 +273,41 @@ fn a_units_groups_are_one_a_small_grids_nodes() {
     assert_eq!(groups_for(usize::MAX / 2), most);
 }
 
+/// A dispatch's runs (`runs`, `LPRUN`) are laid out as the kernel reads them: a group's `RUN_SLOTS` slots of
+/// `RUN_BYTES` each (`pp_grid.uglykl`'s `LP_SLOTS`, `LP_RUN_BYTES`), and the run fits its slot (the source's
+/// static assertion: it compiles).
+#[test]
+fn a_dispatchs_runs_are_the_kernels_slots() {
+    let src = source();
+    assert!(src.contains(&format!("#define LP_RUN_BYTES ({}u)", RUN_BYTES)), "LP_RUN_BYTES is RUN_BYTES");
+    assert!(src.contains(&format!("#define LP_SLOTS ({}u / UKL_SIMD_WIDTH)", TG)), "LP_SLOTS is TG's SIMD groups");
+    assert_eq!(RUN_SLOTS as u64, TG / 32);
+    assert!(src.contains("UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES"), "the run's size is checked");
+}
+
+/// The expansion's loops are bounded by the unit's work (`LP_UNIT_WORK`, `lp_spend`): a run that does not progress
+/// (a write lost, a piece posted again and again) is refused for work, never a launch that holds the GPU. One held
+/// for minutes restarted a Mac (2026-11-24). The two loops with no count in their heads count in their bodies: a
+/// piece's rounds, and the queue's items, each spending work.
+#[test]
+fn the_expansions_loops_are_bounded_by_the_units_work() {
+    let src = source();
+    assert!(src.contains("#define LP_UNIT_WORK ("), "the unit's work bound");
+    let forever = src.matches("for (;;)").count() + src.matches("while (true)").count() + src.matches("while (1)").count();
+    assert_eq!(forever, 2, "two loops with no count in their heads: a piece's rounds and the queue's");
+    let queue = src.split("for (;;)").nth(2).expect("the queue's loop");
+    let body = &queue[..queue.find("\n    }\n").expect("its end")];
+    assert!(body.contains("lp_spend(a, trn, LP_ITEM_WORK)"), "the queue's loop spends work per item");
+    assert!(src.contains("for (uint32_t turn = 0u; ; turn++)") && src.contains("if (turn == LP_WORK)"), "lp_lex's turns are bounded");
+    assert!(src.contains("if (++rounds >= LP_WORK"), "a piece's rounds are bounded");
+}
+
 /// The setup's Metal source splits one unit a barriered phase function (decision 0571): the grid's
 /// primitives, the expansion's loop (`lp_loop`, decision 0588) and a unit's setup (`pp_unit`, the
-/// grid's or a team's: 0588 §6) and the loop's look for a `(` (`lp_next_is_lparen`: inlined, it crashed the
-/// M3's back end), 10 dynamic libraries; the small tape reads stay in their callers.
+/// grid's or a team's: 0588 §6), the loop's look for a `(` (`lp_next_is_lparen`: inlined, it crashed the
+/// M3's back end), a helper's reading of another unit's loop (`lp_help`, 0613 §4), and one a large body called at
+/// several sites (decision 0672: `lp_substitute`, `lp_call_next`, `p1_if_line`, `p1_find_header`), 15 dynamic
+/// libraries; the small tape reads stay in their callers.
 #[test]
 fn the_setup_splits_one_unit_a_barriered_function() {
     let msl = rerail_ukl::metal_source("pp_setup", source()).expect("the setup's source preprocesses");
@@ -289,8 +320,19 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     assert!(split.units.iter().any(|u| u.name == "pp_unit"), "pp_unit is a unit");
     assert!(split.local.iter().any(|n| n.starts_with("node_")), "the tape's reads stay local");
     assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen"), "the look for a `(` is a unit");
-    assert_eq!(split.units.len(), 10);
-    assert_eq!(split.depth, 7);
+    // Compiled once and called, each its own unit (decision 0672): inlined at their several sites, their loop exits
+    // counted past 255 in `lp_piece` and `pp_step`, which the M1's back end miscompiles. The rare cases those
+    // reached inlined (a region's growth, a line splice's end) are calls kept in their callers' units.
+    for once in ["lp_substitute", "lp_call_next", "p1_if_line", "p1_find_header"] {
+        assert!(split.units.iter().any(|u| u.name == once), "{once} is a unit");
+    }
+    for rare in ["lp_grow", "splice_end"] {
+        assert!(split.local.iter().any(|n| n == rare), "{rare} is called in its callers' units");
+    }
+    assert!(split.units.iter().any(|u| u.name == "lp_help"), "a helper's reading is a unit");
+    assert_eq!(split.units.len(), 15);
+    // `pp_unit`, `lp_loop`, `lp_call_next` and `lp_substitute` under the kernel and the grid's calls: 8 deep.
+    assert_eq!(split.depth, 8);
     assert!(split.kernel.contains("kernel void pp_setup") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 

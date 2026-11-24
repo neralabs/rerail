@@ -1599,7 +1599,7 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
         // refused run grows (`pp_arena::groups_for`).
         let groups = groups.min(crate::pp_arena::groups_for(unit.node_bound.max(r.x.fit(r.p1.top).tok)));
         let arena = Arena::new();
-        let m = match r.make(&arena, groups) {
+        let m = match r.make(&arena, groups, None) {
             Ok(m) => m,
             Err(done) => return done,
         };
@@ -1686,11 +1686,13 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
             .collect();
         let all: usize = live.iter().map(|&k| work[k]).sum::<usize>().max(1);
         let arena = Arena::new();
+        // The batch's runs: its dispatch is at most `most` groups, each reading any unit (`pp_teams`' helpers).
+        let slots = crate::pp_arena::runs(&arena, most)?;
         let mut made: Vec<(usize, Made, u64)> = Vec::new();
         for &k in &live {
             let share = (most as usize * work[k]).div_ceil(all) as u64;
             let team = if alone[k] { 1 } else { share.clamp(1, most) };
-            match runs[k].make(&arena, team) {
+            match runs[k].make(&arena, team, Some(&slots)) {
                 Ok(m) => made.push((k, m, team)),
                 Err(done) => out[k] = Some(done),
             }
@@ -1794,6 +1796,8 @@ struct Made {
     vis: Vis,
     exp: Exp,
     l: Lay,
+    /// Its own runs (`pp_arena::runs`), where it is not one of a batch's units (theirs are the batch's).
+    _runs: Option<Buf>,
 }
 
 impl<'u> Runs<'u> {
@@ -1802,8 +1806,8 @@ impl<'u> Runs<'u> {
     }
 
     /// The next run's stores in `arena`, for a grid of `groups`; or the unit's answer, where they
-    /// are past the device's room.
-    fn make(&mut self, arena: &Arena, groups: u64) -> Result<Made, Result<Expanded, Error>> {
+    /// are past the device's room. A batch's unit reads the batch's runs (`shared`), any other its own.
+    fn make(&mut self, arena: &Arena, groups: u64, shared: Option<&Buf>) -> Result<Made, Result<Expanded, Error>> {
         let (unit, lay) = (self.unit, self.lay);
         self.x = self.x.fit(self.p1.top);
         let rung = self.x.rung;
@@ -1812,9 +1816,10 @@ impl<'u> Runs<'u> {
             let defs = Defs::new(arena, unit, self.def_rung)?;
             let vis = Vis::new(arena, unit, lay, self.p1, rung)?;
             let exp = Exp::new(arena, unit, lay, self.x, self.p1)?;
-            Ok((front, defs, vis, exp))
+            let own = if shared.is_none() { Some(crate::pp_arena::runs(arena, groups)?) } else { None };
+            Ok((front, defs, vis, exp, own))
         })();
-        let (front, defs, vis, exp) = match made {
+        let (front, defs, vis, exp, own) = match made {
             Ok(m) => m,
             Err(Error::BackendCapacity) if self.short.is_some() => return Err(Ok(self.short.take().unwrap())),
             Err(e) => return Err(Err(e)),
@@ -1824,8 +1829,9 @@ impl<'u> Runs<'u> {
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
+        l.at("LPRUN", shared.or(own.as_ref()).expect("a run's runs"));
         arena_log(arena, &l, format_args!("expansion at rung {rung}, p1 rung {}, defs rung {}", self.p1.rung, self.def_rung));
-        Ok(Made { front, defs, vis, exp, l })
+        Ok(Made { front, defs, vis, exp, l, _runs: own })
     }
 
     /// The run `m` read (its `launches` and GPU time; the groups that ran it): the unit's answer,
@@ -1970,11 +1976,13 @@ fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Resu
         let vis = Vis::new(&arena, unit, lay, p1, x_rung)?;
         // The expansion's stores: the tests' lines are expanded in P1 (decision 0467 §4).
         let exp = Exp::new(&arena, unit, lay, x, p1)?;
+        let slots = crate::pp_arena::runs(&arena, groups)?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
+        l.at("LPRUN", &slots);
         arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
         on_grid(&arena, unit, &front, &l, groups)?;
@@ -2064,12 +2072,14 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     let defs = Defs::new(&arena, unit, def_rung)?;
     let vis = Vis::new(&arena, unit, lay, caps, xcaps.rung)?;
     let exp = Exp::new(&arena, unit, lay, xcaps, caps)?;
+    let slots = crate::pp_arena::runs(&arena, groups)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, last);
     defs.lay(&mut l);
     vis.lay(&mut l);
     exp.lay(&mut l);
+    l.at("LPRUN", &slots);
     l.word("STOP", stop);
     if iters != 0 {
         l.word("P1_ITERS", iters);
@@ -2086,12 +2096,14 @@ pub fn phase_lines(unit: &Unit, lay: &Layout, x: &Expanded) -> Result<Vec<u32>, 
     let defs = Defs::new(&arena, unit, x.def_rung)?;
     let vis = Vis::new(&arena, unit, lay, x.caps, x.xcaps.rung)?;
     let exp = Exp::new(&arena, unit, lay, x.xcaps, x.caps)?;
+    let slots = crate::pp_arena::runs(&arena, x.groups)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, TO_ALL);
     defs.lay(&mut l);
     vis.lay(&mut l);
     exp.lay(&mut l);
+    l.at("LPRUN", &slots);
     l.word("STOP", u32::MAX);
     on_grid(&arena, unit, &front, &l, x.groups)?;
     Ok(front.trace().into_iter().map(|(line, _)| line).collect())

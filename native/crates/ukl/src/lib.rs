@@ -58,8 +58,15 @@ pub fn takes_library(text: &str) -> bool {
 /// headers in place, the source's own text and macros as written. A hand-written MSL kernel includes the generated
 /// reads so (decision 0440 §3.3) until it is UKL itself.
 pub fn metal_source(name: &str, text: &str) -> Result<String, Error> {
+    metal_source_for(name, text, false)
+}
+
+/// `metal_source` for a device: `g13`, an Apple G13 GPU (the M1s), whose back end numbers a function's loop exits by
+/// their low byte, takes its large bodies as calls (`UKL_METAL_G13`, `ukl/backend.h`; decision 0672).
+pub fn metal_source_for(name: &str, text: &str, g13: bool) -> Result<String, Error> {
     let path = format!("/<kernels>/{name}");
-    Preprocess::new(Backend::Metal { version: 310 }).file(&path, text).run(&path)
+    let p = Preprocess::new(Backend::Metal { version: 310 }).file(&path, text);
+    if g13 { p.define("UKL_METAL_G13", None) } else { p }.run(&path)
 }
 
 /// A GPU backend a kernel is preprocessed for.

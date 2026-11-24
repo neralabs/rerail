@@ -50,6 +50,18 @@ typedef uint32_t ukl_mask_t;
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// A large body many places of a kernel reach (an interpreter's step, its evaluators): `UKL_LARGE`. Inlined here;
+// a call on CUDA and OpenCL. A rare case's body, called on every backend but OpenCL: `UKL_RARE`.
+// On the Apple G13 (the M1s; `UKL_METAL_G13`, which the engine defines for that device) a large body is a call:
+// inlined, the interpreter's task, steps and evaluators numbered their loops' exits past 255 in one function, and the
+// G13's back end tests an exit's number by its low byte, so a thread past 255 left its loop as though it had returned
+// (decision 0672). Called, each function's highest is under 190.
+#if defined(UKL_METAL_G13)
+#define UKL_LARGE UKL_ONCE
+#else
+#define UKL_LARGE UKL_INLINE
+#endif
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
@@ -161,6 +173,9 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #define UKL_PRIVATE
 #define UKL_TABLE __constant__
 #define UKL_TABLE_SPACE
+// A large body many places reach: `UKL_LARGE`, a call here. A rare case's body, called: `UKL_RARE` (decision 0672).
+#define UKL_LARGE UKL_ONCE
+#define UKL_RARE UKL_COLD
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return __popc(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll(x); }
@@ -230,6 +245,9 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #define UKL_PRIVATE
 #define UKL_TABLE static const
 #define UKL_TABLE_SPACE
+// A large body many places reach: `UKL_LARGE`, inlined here. A rare case's body, called: `UKL_RARE` (decision 0672).
+#define UKL_LARGE UKL_INLINE
+#define UKL_RARE UKL_COLD
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return (uint32_t)__builtin_popcount(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)__builtin_popcountll(x); }
@@ -344,6 +362,10 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #define UKL_PRIVATE
 #define UKL_TABLE __constant
 #define UKL_TABLE_SPACE __constant
+// A large body many places reach: `UKL_LARGE`, a call here. A rare case's body is inlined (`UKL_RARE`): a call
+// on OpenCL costs its arguments' spills (decision 0672).
+#define UKL_LARGE UKL_ONCE
+#define UKL_RARE UKL_INLINE
 #define UKL_OVERLOAD __attribute__((overloadable))
 #define UKL_STATIC_ASSERT(c, m) _Static_assert(c, m)
 

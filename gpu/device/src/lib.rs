@@ -14,6 +14,8 @@
 pub mod compute_kernel;
 #[path = "mldb/block/compute_kernel_grid.rs"]
 pub mod compute_kernel_grid;
+#[path = "mldb/builtin/metal/agx.rs"]
+pub mod agx;
 #[cfg(target_os = "macos")]
 #[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
 pub mod compute_kernel_metal;

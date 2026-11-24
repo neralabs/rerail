@@ -27,7 +27,8 @@
 //!   `background`), one line each, so `compile_wanted` compiles exactly the last run's.
 //!
 //! Shipped kernels (`rerail-engine kernels ship`) are the interpreters' fixed sources compiled ahead of time:
-//! `<library>.metallib` (AIR, any Apple GPU: skips the front end) and `<device>/<pipeline>.archive` for the
+//! `<library>.metallib` (AIR, any Apple GPU but a G13, whose is `<library>.g13.metallib`: its large bodies are calls,
+//! decision 0672; skips the front end) and `<device>/<pipeline>.archive` for the
 //! devices they were built on. They are the middle tier between a kernel generated for the work (compiled later)
 //! and the CPU.
 //!
@@ -169,23 +170,10 @@ pub fn device_tag(device: &Device) -> String {
     device.name().chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect()
 }
 
-/// A file URL of `path`, owned. Not `metal::URL::new_with_string`: it wraps `URLWithString:`'s autoreleased URL as
-/// owned, so dropping it releases the URL once too often (a crash in the next autorelease drain).
+/// A file URL of `path`, owned (the device layer's: `URL::new_with_string` releases its URL once too often).
 #[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
 fn url_of(path: &Path) -> metal::URL {
-    use metal::foreign_types::ForeignType;
-    use objc::runtime::Object;
-    use objc::{class, msg_send, sel, sel_impl};
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("a path without a NUL");
-    // SAFETY: an NSString of the path (autoreleased: the caller's pool), and a URL made by alloc/init (+1, owned).
-    unsafe {
-        let s: *mut Object = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
-        let u: *mut Object = msg_send![class!(NSURL), alloc];
-        let u: *mut Object = msg_send![u, initFileURLWithPath: s];
-        metal::URL::from_ptr(u.cast())
-    }
+    rerail_device::compute_kernel_metal::file_url(path)
 }
 
 /// Writes `bytes` to `path` whole: a temporary file renamed over it, so a reader in another process sees the old
@@ -493,6 +481,8 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         Arc::new(Function::Native(f))
     };
     if let Some(path) = archive {
+        // An archive made before its exits were read, or shipped from elsewhere: read on a G13 (decision 0672).
+        rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, &path, &format!("the Metal kernel {name}")).unwrap_or_else(|e| panic!("{e}"));
         let loaded = crate::score::phase("pipeline from archive", || from_archive(device, &descriptor, &path));
         match loaded {
             Some(p) => {
@@ -508,8 +498,8 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         }
     }
     let started = std::time::Instant::now();
-    let p = crate::score::phase("pipeline back end", || objc::rc::autoreleasepool(|| compile_archived(device, &descriptor, &key)))
-        .unwrap_or_else(|e| panic!("the Metal kernel {name} (library {}) does not compile: {e}", hex(&key.library[..8])));
+    let p = crate::score::phase("pipeline back end", || objc::rc::autoreleasepool(|| compile_archived(device, &descriptor, &key, name)))
+        .unwrap_or_else(|e| panic!("the Metal kernel {name} (library {}) is not made: {e}", hex(&key.library[..8])));
     let seconds = started.elapsed().as_secs_f64();
     count(|c| {
         c.compiled += 1;
@@ -551,12 +541,14 @@ fn from_archive(device: &Device, descriptor: &metal::ComputePipelineDescriptorRe
 }
 
 /// The back end's compile, into an archive the store keeps: adding the pipeline to a new archive compiles it, and
-/// the pipeline is then made from that archive (no second compile). Without a store, a plain compile.
+/// the pipeline is then made from that archive (no second compile). On a G13 the archive is read first, and a kernel
+/// whose exits wrap refused (decision 0672). Without a store, the device layer's compile (read the same way).
 #[cfg(target_os = "macos")]
-fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, key: &Key) -> Result<Reflected, String> {
+fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, key: &Key, name: &str) -> Result<Reflected, String> {
+    let what = format!("the Metal kernel {name}");
     let p = places();
     let Some(store) = p.store.as_ref() else {
-        return device.new_compute_pipeline_state_with_reflection(descriptor, reflected());
+        return rerail_device::compute_kernel_metal::checked_pipeline(device, descriptor, reflected(), &what);
     };
     let archive = device.new_binary_archive_with_descriptor(&metal::BinaryArchiveDescriptor::new())?;
     if archive.add_compute_pipeline_functions_with_descriptor(descriptor).is_err() {
@@ -569,10 +561,17 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    // A store that cannot be written (full, read-only) costs the next process this compile, nothing else.
-    if archive.serialize_to_url(&url_of(&tmp)).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
+    // A store that cannot be written (full, read-only) costs the next process this compile, nothing else; on a G13
+    // the archive is then read from a temporary file (the device layer's compile).
+    if archive.serialize_to_url(&url_of(&tmp)).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return rerail_device::compute_kernel_metal::checked_pipeline(device, descriptor, reflected(), &what);
     }
+    if let Err(e) = rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, &tmp, &what) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    let _ = std::fs::rename(&tmp, &path);
     descriptor.set_binary_archives(&[&archive]);
     let p = device
         .new_compute_pipeline_state_with_reflection(descriptor, metal::MTLPipelineOption::FailOnBinaryArchiveMiss | reflected())
@@ -581,14 +580,21 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
     p
 }
 
-/// `source` as the Metal front end takes it: a source that takes UKL's library (`#include <ukl/...>`: the reads
-/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, any other as it is.
+/// `source` as the Metal front end takes it on `device`: a source that takes UKL's library (`#include <ukl/...>`: the
+/// reads written once in CLIF, decision 0440 §3.3) preprocessed with it in place, on a G13 with its large bodies
+/// called (decision 0672); any other as it is.
 #[cfg(target_os = "macos")]
-pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
+pub fn msl<'a>(source: &'a str, name: &str, device: &metal::DeviceRef) -> Result<std::borrow::Cow<'a, str>, String> {
     if !rerail_ukl::takes_library(source) {
         return Ok(std::borrow::Cow::Borrowed(source));
     }
-    rerail_ukl::metal_source(name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+    rerail_ukl::metal_source_for(name, source, rerail_device::compute_kernel_metal::is_g13(device)).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+}
+
+/// The shipped AIR library of `library` for `device`: a G13's apart, its source preprocessed apart (`msl`).
+#[cfg(target_os = "macos")]
+fn air_name(library: &str, device: &metal::DeviceRef) -> String {
+    if rerail_device::compute_kernel_metal::is_g13(device) { format!("{library}.g13.metallib") } else { format!("{library}.metallib") }
 }
 
 /// The library of `source` (its digest `library`): this process's, else, where the source splits (decision 0571),
@@ -606,7 +612,7 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
         eprintln!("RERAIL_DEVICE_TRACE a library loaded, kernel {name} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
     }
     let started = std::time::Instant::now();
-    let source_msl = msl(source, name).unwrap_or_else(|e| panic!("the Metal library of kernel {name} does not preprocess: {e}"));
+    let source_msl = msl(source, name, device).unwrap_or_else(|e| panic!("the Metal library of kernel {name} does not preprocess: {e}"));
     // A measurement aid: `RERAIL_METAL_UNITS=off` compiles a split source whole, as before decision 0571.
     let whole = std::env::var("RERAIL_METAL_UNITS").is_ok_and(|v| v == "off");
     if let Some(split) = rerail_ukl::split::split(&source_msl).filter(|_| !whole) {
@@ -617,7 +623,7 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
         *s = Some(linked.clone());
         return linked;
     }
-    let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
+    let shipped = places().shipped.as_ref().map(|d| d.join(air_name(&hex(&library), device))).filter(|f| f.is_file());
     let l = match shipped {
         Some(file) => crate::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
             .unwrap_or_else(|e| panic!("the shipped Metal library {} (kernel {name}) does not load: {e}", file.display())),
@@ -698,6 +704,17 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
     let l = objc::rc::autoreleasepool(|| {
         let o = metal::CompileOptions::new();
         o.set_libraries(&units.iter().map(|d| d.as_ref()).collect::<Vec<_>>());
+        if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+            let _ = std::fs::write(Path::new(&dir).join("kernel.metal"), &split.kernel);
+            // Each unit's level and the units it links, and the pipeline's call depth.
+            let mut t = format!("depth {}\n", split.depth);
+            for level in split.levels() {
+                for u in level {
+                    t += &format!("unit {} {}\n", u.name, u.calls.join(" "));
+                }
+            }
+            let _ = std::fs::write(Path::new(&dir).join("units.txt"), t);
+        }
         device.new_library_with_source(&split.kernel, &o)
     })
     .map_err(|e| format!("the kernel's library, linking its units, does not compile: {e}"))?;
@@ -708,8 +725,11 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
 #[cfg(target_os = "macos")]
 fn unit(device: &Device, u: &rerail_ukl::split::Unit, links: &[metal::DynamicLibrary], path: &Path) -> Result<metal::DynamicLibrary, String> {
     objc::rc::autoreleasepool(|| {
+        let what = format!("unit {}", u.name);
         if path.is_file() {
             if let Ok(d) = device.new_dynamic_library_with_url(&url_of(path)) {
+                // Kept before its exits were read: read on a G13 (decision 0672).
+                rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, path, &what)?;
                 // Its use, for the store's pruning (the oldest unused first).
                 let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
                 return Ok(d);
@@ -719,12 +739,31 @@ fn unit(device: &Device, u: &rerail_ukl::split::Unit, links: &[metal::DynamicLib
         o.set_library_type(metal::MTLLibraryType::Dynamic);
         o.set_install_name(path.to_str().ok_or_else(|| format!("{}: not UTF-8", path.display()))?);
         o.set_libraries(&links.iter().map(|d| d.as_ref()).collect::<Vec<_>>());
+        // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`), for a split source: each unit's by its name, beside the
+        // kernel's and `units.txt` (`linked`), to link and run apart as the engine does.
+        if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+            let _ = std::fs::write(Path::new(&dir).join(format!("{}.metal", u.name)), &u.source);
+        }
         let lib = device.new_library_with_source(&u.source, &o).map_err(|e| format!("unit {} does not compile: {e}", u.name))?;
         let d = device.new_dynamic_library(&lib).map_err(|e| format!("unit {} is not made a dynamic library: {e}", u.name))?;
-        // Kept whole: written apart, renamed over, so another process loads the old one or the new one.
+        // Kept whole: written apart, renamed over, so another process loads the old one or the new one. On a G13 its
+        // code is read from there first, and a unit whose exits wrap refused (decision 0672).
         let tmp = path.with_file_name(format!("{}.{}.tmp.metallib", u.name, std::process::id()));
-        if d.serialize_to_url(&url_of(&tmp)).is_ok() {
-            let _ = std::fs::rename(&tmp, path);
+        let serialized = d.serialize_to_url(&url_of(&tmp));
+        let read = match &serialized {
+            Ok(_) => rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, &tmp, &what),
+            Err(e) if rerail_device::compute_kernel_metal::is_g13(device) => Err(format!("{what}: not serialized, so its Apple G13 code is not read (decision 0672): {e}")),
+            Err(_) => Ok(()),
+        };
+        match read {
+            Ok(()) if serialized.is_ok() => {
+                let _ = std::fs::rename(&tmp, path);
+            }
+            Ok(()) => {}
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
         }
         Ok(d)
     })
@@ -999,8 +1038,8 @@ impl crate::upkeep::Job for Maintenance {
 
 /// Ships the fixed kernels of the store `from` (its manifest, `fixed.list`: what runs on this machine compiled
 /// through [`pipeline_fixed`]) into `dir`: this device's archive of each kernel (`<device>/<pipeline>.archive`,
-/// which skips the back end) and, with `air`, each library's AIR (`<library>.metallib`, any Apple GPU: skips the
-/// front end), made by Xcode's offline compiler (its Metal Toolchain component). Run on another device into the same
+/// which skips the back end) and, with `air`, each library's AIR (`<library>.metallib`, any Apple GPU but a G13, whose
+/// is `<library>.g13.metallib`: skips the front end), made by Xcode's offline compiler (its Metal Toolchain component). Run on another device into the same
 /// `dir`, it adds that device's archives. A source that does not compile is an error.
 #[cfg(target_os = "macos")]
 pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
@@ -1020,13 +1059,13 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     for (library, kernels) in &by_library {
         let source = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
-        let source = msl(&source, library)?.into_owned();
+        let source = msl(&source, library, device)?.into_owned();
         // A split source (decision 0571) is its units, compiled in seconds where it runs: no AIR or archive shipped.
         if let Some(split) = rerail_ukl::split::split(&source) {
             lines.push(format!("{} {:>3} kernels  split into {} units: compiled where it runs", &library[..16], kernels.len(), split.units.len()));
             continue;
         }
-        let lib = dir.join(format!("{library}.metallib"));
+        let lib = dir.join(air_name(library, device));
         let started = std::time::Instant::now();
         if air && !lib.is_file() {
             let src = dir.join("src").join(format!("{library}.metal"));
@@ -1071,6 +1110,10 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
                 archive.add_compute_pipeline_functions_with_descriptor(&descriptor).map_err(|e| format!("{library} {name}: {e}"))?;
                 std::fs::create_dir_all(path.parent().expect("a device's directory")).map_err(|e| e.to_string())?;
                 archive.serialize_to_url(&url_of(&path)).map_err(|e| format!("{}: {e}", path.display()))?;
+                // On a G13, read (decision 0672): a kernel whose exits wrap is not shipped.
+                rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, &path, &format!("{library} {name}")).inspect_err(|_| {
+                    let _ = std::fs::remove_file(&path);
+                })?;
                 Ok(())
             })?;
         }
@@ -1105,11 +1148,20 @@ pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
+    /// The tests that make kernels or read the process's made ones: one at a time, since one releases them all
+    /// (`release`) and another reads what it made.
+    static MADE: Mutex<()> = Mutex::new(());
+
+    fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+        MADE.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Decision 0395: a pipeline compiled once is in the store, and made from its archive once this process's
     /// memory is released (as a process that never compiled it would); `ready` in `defer` says `None` for one not
     /// compiled and records it as wanted; once compiled (as maintenance does), `ready` finds it.
     #[test]
     fn a_pipeline_is_kept_in_the_store_and_wanted_ones_compiled_later() {
+        let _one = one_at_a_time();
         if super::super::shared::get().is_none() || store_dir().is_none() {
             return;
         }
@@ -1138,5 +1190,51 @@ mod tests {
         release();
         assert!(ready_function(&other, name, None).is_some(), "compiled, it is ready from its archive");
         set_mode(rerail_context::shared_here().machine(), Mode::Wait);
+    }
+
+    /// The kernel of decision 0672's reproduction: `n` calls of a loop whose early return skips the code after it,
+    /// in the kernel (`unit` false) or in a function of its own with a barrier, a split unit (decision 0571).
+    fn exits_source(n: usize, unit: bool) -> String {
+        let mut s = String::from(
+            "#include <metal_stdlib>\nusing namespace metal;\n\
+             static inline uint find(device const uchar* p, uint n, uint key, device uint* out) {\n\
+             for (uint i = 0; i < n; i++) { if (p[i] == key) return i; out[1u + (i & 7u)] += 1u; }\n\
+             out[9] = key;\n\
+             for (uint i = 0; i < n; i++) if (p[i] == (key ^ 8u)) return 100u + i;\n\
+             return 0xffffffffu;\n}\n",
+        );
+        s += if unit { "static __attribute__((noinline)) uint finds(device const uchar* p, uint n, device uint* out, threadgroup uint* t) {\n" } else { "kernel void kernels_exits_test(device const uchar* p [[buffer(0)]], device uint* out [[buffer(1)]], constant uint& n [[buffer(2)]]) {\n" };
+        s += "    uint acc = 0u;\n";
+        for j in 0..n {
+            s += &format!("    acc = acc * 31u + find(p, n, (acc + {j}u) & 15u, out);\n");
+        }
+        s += if unit { "    t[0] = acc;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    return t[0];\n}\nkernel void kernels_exits_test(device const uchar* p [[buffer(0)]], device uint* out [[buffer(1)]], constant uint& n [[buffer(2)]]) {\n    threadgroup uint t[1];\n    out[0] = finds(p, n, out, t);\n}\n" } else { "    out[0] = acc;\n}\n" };
+        s
+    }
+
+    /// Decision 0672: on an Apple G13 (M1) a kernel whose loop exits the back end numbers past 255 (67 calls of the
+    /// reproduction's loop) is refused, as a whole kernel (its binary archive read) and as a split unit (its dynamic
+    /// library read); 10 calls are made. Elsewhere all are made.
+    #[test]
+    fn a_kernel_whose_exits_the_g13_numbers_past_255_is_refused() {
+        let Some(shared) = super::super::shared::get() else { return };
+        let _one = one_at_a_time();
+        let g13 = rerail_device::compute_kernel_metal::is_g13(&shared.device);
+        for unit in [false, true] {
+            for n in [10, 67] {
+                let source = exits_source(n, unit);
+                assert_eq!(rerail_ukl::split::split(&source).is_some(), unit, "split as meant");
+                let made = std::panic::catch_unwind(|| function(&source, "kernels_exits_test", None));
+                let refused = g13 && n == 67;
+                match made {
+                    Ok(_) => assert!(!refused, "{n} calls (unit {unit}) on a G13: made, not refused"),
+                    Err(e) => {
+                        let message = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+                        assert!(refused, "{n} calls (unit {unit}): {message}");
+                        assert!(message.contains("decision 0672") && message.contains("past 255"), "{message}");
+                    }
+                }
+            }
+        }
     }
 }
