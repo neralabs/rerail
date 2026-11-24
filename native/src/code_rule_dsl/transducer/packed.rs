@@ -1224,7 +1224,7 @@ impl PackedPattern {
         matches!(self, Self::Terminal { named: false, .. })
     }
 
-    /// The end-of-children goal (`PatternNode::children_end`, RER-131): it matches no node, so a
+    /// The end-of-children goal (`PatternNode::children_end`, decision 0161): it matches no node, so a
     /// token or a comment is skipped and a named node refused, and it holds where the candidates end.
     pub fn is_children_end(&self) -> bool {
         matches!(self, Self::Terminal { kind, .. } if *kind == ast_grep_core::matcher::kind_utils::CHILDREN_END)
@@ -1478,14 +1478,14 @@ impl Slotted {
         bindings: &mut AstBindings,
     ) -> bool {
         if candidates.is_empty() {
-            // A node with no children (its tokens all implied, RER-131): ellipses bind nothing.
+            // A node with no children (its tokens all implied, decision 0161): ellipses bind nothing.
             return goals.iter().all(|goal| match goal {
                 Self::Ellipsis(name) => name.is_none_or(|name| bindings.bind_multi(name, &[], tape)),
                 goal => goal.is_children_end(),
             });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
-        // The candidate the last goal matched, for the end of children (RER-131).
+        // The candidate the last goal matched, for the end of children (decision 0161).
         let mut last_matched: Option<usize> = None;
         while goal < goals.len() {
             if let Self::Ellipsis(name) = &goals[goal] {
@@ -1582,7 +1582,7 @@ impl Slotted {
                     // The end of children refused a named candidate: where the tokens the
                     // candidate leaves out after the last matched child begin with the goal's,
                     // those are the goal's and the rest trails (`ast_grep_core`'s
-                    // `match_nodes_impl_recursive`, RER-131).
+                    // `match_nodes_impl_recursive`, decision 0161).
                     PatternVerdict::NoMatch => {
                         let Self::Terminal { text, .. } = &goals[goal] else { return false };
                         let word: Vec<&str> = text.split('\u{1f}').filter(|token| !token.is_empty()).collect();
@@ -1871,7 +1871,7 @@ impl Program {
 
     pub fn canonical_digest(&self, language: &str, scm_source: &[u8]) -> String {
         let mut digest = Sha256::new();
-        digest.update(b"tempo-program-v7\0");
+        digest.update(b"rerail-program-v7\0");
         digest.update((language.len() as u64).to_le_bytes());
         digest.update(language.as_bytes());
         digest.update((scm_source.len() as u64).to_le_bytes());

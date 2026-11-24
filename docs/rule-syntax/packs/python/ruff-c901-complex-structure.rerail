@@ -40,7 +40,7 @@ catch_all_last(c) :- kind(c, "case_clause"), !next_case(c), !field(c, "guard", _
 next_case(c) :- kind(c, "case_clause"), next_sibling(c, d), kind(d, "case_clause").
 // catch_all(p): Ruff's is_irrefutable: `_`, a capture `x`, `(x)`, `_ as y`, `a | _`.
 .decl catch_all(p: node)
-// A bare `case _` is all its kind says (the tape stores no `_` there, RER-131): a case_pattern with no child. In a
+// A bare `case _` is all its kind says (the tape stores no `_` there, decision 0161): a case_pattern with no child. In a
 // union_pattern the `_` is stored.
 catch_all(p) :- kind(p, "case_pattern"), !child(p, _, _).
 catch_all(p) :- kind(p, "case_pattern"), child(p, c, 0), !child(p, _, 1), catch_all(c).

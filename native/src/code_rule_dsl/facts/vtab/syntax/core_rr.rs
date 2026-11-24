@@ -936,7 +936,7 @@ impl CoreRows {
             let id = p.core[local as usize];
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
         }
-        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // A pattern is a tape, its implied tokens left out (decision 0161's `tape::pattern_doc`): it is matched over the
         // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
         let tape = match tape {
             Some(t) => t.clone(),

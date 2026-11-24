@@ -597,7 +597,7 @@ impl Language for SubLang {
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         // Patterns are the host's syntax, which only a host-syntax grammar's trees hold (Python's annotations):
-        // written as its trees are, with no token the grammar implies (RER-131).
+        // written as its trees are, with no token the grammar implies (decision 0161).
         ast_grep_core::Language::build_pattern(&self.0.host_language(), builder)
     }
 }

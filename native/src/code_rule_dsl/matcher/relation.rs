@@ -295,7 +295,7 @@ impl StopBy {
 
 /// A sibling walk from `node` that spends, before each sibling and past the last, one matcher call for each implied
 /// token it passes (`gap::ImpliedPassed`), as a walk over the full tree tests each of them as a candidate: a work
-/// budget buys a named-only tape's walk what it buys a full tree's, and a clause runs out where it did before RER-131.
+/// budget buys a named-only tape's walk what it buys a full tree's, and a clause runs out where it did before decision 0161.
 /// The walk ends where the budget does, as a candidate's test then would.
 fn charged<'t, D: Doc>(
     node: &Node<'t, D>,

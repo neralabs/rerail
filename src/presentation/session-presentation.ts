@@ -1,7 +1,9 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
-import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
+import {
+  ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type EventAnswerFacts, type RerailHost,
+} from "../engine/adapter-contract.js";
 import {
   presentationDaemonSchema,
   presentationReadSchema,
@@ -18,7 +20,7 @@ import {
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
-import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { cappedLine, ruleUrl, sessionPageUrl, sessionStartNote, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -263,29 +265,97 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 }
 
 /**
+ * The session-start note of `session` for a hook (Claude Code, Codex, Cursor): its dashboard link and what it says of
+ * the rules come from the daemon's answer to the session's start (`answered`), and are read from the daemon after that
+ * answer only where it carried none (a daemon older than those facts).
+ */
+export async function presentedSessionStartNote(session: AdapterSession, answered: EventAnswerFacts): Promise<string> {
+  const dashboard = await steerDashboard(session.cwd, answered);
+  return sessionStartNote(dashboard, session.host, session.sessionId, await presentedSessionNoteRules(session, answered));
+}
+
+/**
  * Deliveries with each of their rules linked to its page on `cwd`'s dashboard, scoped to its repository: the link the
  * person's `why?` opens; and the conflict a note surfaces linked to its card on the Merge Assist page (`open`). The
  * runtime records no link; each coding agent's adapter links them as it hands them over, and without a dashboard
  * leaves them unlinked.
  */
-export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
-  // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict to link is worth asking
-  // the daemon.
-  const links = deliveries.some(delivery => delivery.rules.length > 0 || delivery.conflict !== undefined);
-  const dashboard = cwd === undefined || !links ? undefined : await steerDashboard(cwd);
-  if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => ({
+export async function linkDeliveries<Delivery extends AdapterDelivery>(
+  deliveries: readonly Delivery[], cwd: string | undefined, answered: EventAnswerFacts = {},
+): Promise<Delivery[]> {
+  if (cwd === undefined) return deliveries.map(delivery => ({ ...delivery }));
+  // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict still to link is worth
+  // asking the daemon. A steer a hook held keeps the links of the answer that found it (`linkedByAnswer`) while the
+  // daemon still listens where they point.
+  const current = await currentLinks(deliveries, cwd);
+  const dashboard = current.some(unlinked) ? await steerDashboard(cwd, answered) : undefined;
+  if (dashboard === undefined) return current.map(delivery => ({ ...delivery }));
+  return current.map(delivery => linked(delivery, dashboard));
+}
+
+/**
+ * `deliveries` with each link a held steer kept dropped where the Rerail home's state file names a daemon at another
+ * origin (one restarted that could not get its port back), so `linkDeliveries` links it again from the daemon that
+ * answers. The state file is read only when a delivery holds a link, and nothing is asked of the daemon; where it names
+ * no daemon a hook may link to, or cannot be read, nothing says the links moved and they stay.
+ */
+async function currentLinks<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string): Promise<readonly Delivery[]> {
+  if (!deliveries.some(holdsLink)) return deliveries;
+  const daemon = await verifyDaemon(cwd).catch(() => "daemon unavailable");
+  if (typeof daemon === "string") return deliveries;
+  return deliveries.map(delivery => linksAt(delivery, daemon.origin.origin));
+}
+
+/** Whether `delivery` holds a rule or a conflict linked already. */
+function holdsLink(delivery: AdapterDelivery): boolean {
+  return delivery.rules.some(rule => rule.url !== undefined) || delivery.conflict?.url !== undefined;
+}
+
+/** `delivery` with each link it holds kept only where it points at `origin`. */
+function linksAt<Delivery extends AdapterDelivery>(delivery: Delivery, origin: string): Delivery {
+  const at = (url: string | undefined): string | undefined => url !== undefined && URL.canParse(url) && new URL(url).origin === origin ? url : undefined;
+  const { conflict } = delivery;
+  return {
     ...delivery,
-    rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })),
-    ...(delivery.conflict === undefined ? {} : { conflict: { ...delivery.conflict, url: conflictUrl(dashboard, delivery.conflict.id) } }),
-  }));
+    rules: delivery.rules.map(rule => ({ ...rule, url: at(rule.url) })),
+    ...(conflict === undefined ? {} : { conflict: { ...conflict, url: at(conflict.url) } }),
+  };
+}
+
+/**
+ * `deliveries` linked into the dashboard the daemon's answer named (`answered`), asking nothing: a hook links the steers
+ * it holds for a later event with the answer that found them, so that event, whose own answer usually links nothing,
+ * reads nothing after it. As they are where the answer named no dashboard: the later event links them then.
+ */
+export function linkedByAnswer<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], answered: EventAnswerFacts): Delivery[] {
+  const dashboard = answered.dashboard;
+  if (dashboard === undefined || dashboard === null) return [...deliveries];
+  return deliveries.map(delivery => linked(delivery, dashboard));
+}
+
+/** Whether `delivery` holds a rule or a conflict with no link yet. */
+function unlinked(delivery: AdapterDelivery): boolean {
+  return delivery.rules.some(rule => rule.url === undefined) || (delivery.conflict !== undefined && delivery.conflict.url === undefined);
+}
+
+/** `delivery` with each rule and its conflict linked into `dashboard`, keeping a link it already holds. */
+function linked<Delivery extends AdapterDelivery>(delivery: Delivery, dashboard: string): Delivery {
+  const { conflict } = delivery;
+  return {
+    ...delivery,
+    rules: delivery.rules.map(rule => ({ ...rule, url: rule.url ?? ruleUrl(dashboard, rule.id) })),
+    ...(conflict === undefined ? {} : { conflict: { ...conflict, url: conflict.url ?? conflictUrl(dashboard, conflict.id) } }),
+  };
 }
 
 /**
  * The dashboard a steer's `why?` links point into for `cwd`: the origin scoped to `cwd`'s repository and checkout
- * (`?repository=&checkout=`) when the daemon names them, else the bare origin. Never starts anything.
+ * (`?repository=&checkout=`) when the daemon names them, else the bare origin. Never starts anything. The daemon's
+ * answer to the event (`answered`) gives it where it carries it, so the hook asks nothing more of a daemon that may be
+ * busy again by then; a daemon older than that field is asked as before.
  */
-export async function steerDashboard(cwd: string): Promise<string | undefined> {
+export async function steerDashboard(cwd: string, answered: EventAnswerFacts = {}): Promise<string | undefined> {
+  if (answered.dashboard !== undefined) return answered.dashboard ?? undefined;
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string") return undefined;
@@ -454,7 +524,7 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
   // A hook's start check, before its event: it waits for a busy daemon's engine pipe as main's hook did.
-  const state = await daemonRepositoryState(cwd, host, recordedDaemonStatusForEvent);
+  const { state } = await daemonRepositoryState(cwd, host, recordedDaemonStatusForEvent);
   return state === "not-answering" ? null : state;
 }
 
@@ -464,18 +534,24 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
  */
 export type SummaryState = RepositoryStartState | "not-answering" | null;
 
+/** What the daemon said of a repository without a session, and its answer, which only a live daemon gives. */
+interface RepositoryOutcome {
+  state: SummaryState;
+  answer?: LiveResponse;
+}
+
 /**
  * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`), and
  * asks the recorded daemon's state through `status`.
  */
-async function daemonRepositoryState(cwd: string, host: RerailHost, status: DaemonStatusRead = recordedDaemonStatus): Promise<SummaryState> {
+async function daemonRepositoryState(cwd: string, host: RerailHost, status: DaemonStatusRead = recordedDaemonStatus): Promise<RepositoryOutcome> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, status))) return null;
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, status))) return { state: null };
     const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host })}`, presentationReadSchema);
-    return response.repositoryState;
+    return { state: response.repositoryState, answer: { daemon, response } };
   } catch (error) {
-    return error instanceof NotAnswering ? "not-answering" : null;
+    return { state: error instanceof NotAnswering ? "not-answering" : null };
   }
 }
 
@@ -533,13 +609,10 @@ export function stoppedDaemonPresentation(state: RepositoryStartState | undefine
 }
 
 /**
- * The repository state `/rerail` shows without a session: the live daemon's answer, else the caller's local
- * reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
+ * The repository state `/rerail` shows without a session: the live daemon's answer (`fromDaemon`), else the caller's
+ * local reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
  */
-export async function readSummaryState(
-  cwd: string, host: RerailHost, startState: NonNullable<PresentationRequest["startState"]>,
-): Promise<SummaryState> {
-  const fromDaemon = await daemonRepositoryState(cwd, host);
+async function summaryState(fromDaemon: SummaryState, startState: NonNullable<PresentationRequest["startState"]>): Promise<SummaryState> {
   if (fromDaemon !== null && fromDaemon !== "not-answering") return fromDaemon;
   // In a started checkout, or one whose state cannot be read, what the daemon gave decides: nothing, or no answer in time.
   try {
@@ -557,7 +630,11 @@ function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknow
 
 type PresentationResponse = PresentationRead;
 type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
-/** A live daemon, the checkout it was asked about, and what it answered for the session. */
+/**
+ * A live daemon, the checkout it was asked about, and what it answered for the session or the repository. The session
+ * read's answer is the recorded pid's (`readLiveResponse`); the repository read's names no pid, and is taken as its start
+ * state is.
+ */
 type LiveResponse = { daemon: Pick<VerifiedDaemon, "origin" | "workspace">; response: PresentationResponse };
 
 /** The daemon's answer for the session; undefined when no live daemon of this checkout answers as itself. */
@@ -611,30 +688,84 @@ export async function answeredSessionFooter(
   return await answeredPresentation({ daemon: { origin, workspace: await realpath(request.cwd) }, response }, request);
 }
 
-/** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
-export async function readPresentation(request: PresentationRequest): Promise<SessionPresentation> {
+/** A session's presentation, and the answer it was made from, which only a daemon that answered as itself gives. */
+interface PresentationOutcome {
+  presentation: SessionPresentation;
+  answer?: LiveResponse;
+}
+
+/** `readPresentation`, with the daemon's answer kept for the rules page `/rerail` links (`readRerailSummary`). */
+async function presentationOutcome(request: PresentationRequest): Promise<PresentationOutcome> {
   const { sessionId, host, cwd, startState } = request;
   const onDemand = request.onDemand === true;
-  if (!isPresentationRequest(sessionId, host, cwd)) return unavailable("unavailable", "session unavailable", "compact");
-  let presence: PresentationPresence | undefined;
+  if (!isPresentationRequest(sessionId, host, cwd)) return { presentation: unavailable("unavailable", "session unavailable", "compact") };
+  let answer: LiveResponse | undefined;
   try {
-    const answer = await readLiveResponse(request);
-    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand, "not-running");
-    presence = answer.response.presence;
-    return await answeredPresentation(answer, request);
+    answer = await readLiveResponse(request);
+    if (answer === undefined) return { presentation: await withoutDaemon(startState, "compact", onDemand, "not-running") };
+    return { presentation: await answeredPresentation(answer, request), answer };
   } catch (error) {
-    if (presence !== undefined) return unavailable("not-running", NOT_RUNNING, presence);
+    if (answer !== undefined) return { presentation: unavailable("not-running", NOT_RUNNING, answer.response.presence), answer };
     // The locator named a live process, but nothing answered as the daemon: none listens, or it is busy.
-    return await withoutDaemon(startState, "compact", onDemand, error instanceof NotAnswering ? "not-answering" : "not-running");
+    const silence = error instanceof NotAnswering ? "not-answering" : "not-running";
+    return { presentation: await withoutDaemon(startState, "compact", onDemand, silence) };
   }
+}
+
+/** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
+export async function readPresentation(request: PresentationRequest): Promise<SessionPresentation> {
+  return (await presentationOutcome(request)).presentation;
+}
+
+/** What `/rerail` shows of the daemon (`renderRerailSummary`), from one read of it (`readRerailSummary`). */
+export interface RerailSummaryRead {
+  /** The session's presentation, read on demand; null where the coding agent cannot name its session (Cursor). */
+  presentation: SessionPresentation | null;
+  /** The presentation's repository state; without a session, the repository's (`SummaryState`). */
+  repositoryState: SummaryState;
+  /**
+   * The rules page of the daemon that answered the read, scoped to the repository and checkout its answer names (the
+   * repository picker where it names none); null when no daemon answered.
+   */
+  rulesUrl: string | null;
+}
+
+export interface RerailSummaryRequest {
+  host: RerailHost;
+  /** The session to present; undefined where the coding agent cannot name it (Cursor). */
+  sessionId: string | undefined;
+  cwd: string;
+  /** The checkout's start state as the caller reads it locally, for when no daemon answers (`PresentationRequest`). */
+  startState: NonNullable<PresentationRequest["startState"]>;
+}
+
+/**
+ * What `/rerail` shows: the session's presentation (or, without a session, the repository's state) and the rules page,
+ * from one read of the daemon. The answer that shows the daemon runs carries the page's origin and scope, so the page
+ * is never asked for apart, and a daemon that gave no answer in time is not asked again: the person waits at most one
+ * read's time, and gets no link, which the lines for that state never show. Passive, as `readPresentation`.
+ */
+export async function readRerailSummary({ host, sessionId, cwd, startState }: RerailSummaryRequest): Promise<RerailSummaryRead> {
+  if (sessionId === undefined) {
+    const { state, answer } = await daemonRepositoryState(cwd, host);
+    return { presentation: null, repositoryState: await summaryState(state, startState), rulesUrl: rulesPage(answer) };
+  }
+  const { presentation, answer } = await presentationOutcome({ sessionId, host, cwd, onDemand: true, startState });
+  return { presentation, repositoryState: presentation.repositoryState, rulesUrl: rulesPage(answer) };
+}
+
+/** The rules page of the daemon that gave `answer`, scoped as the answer names; null with no answer. */
+function rulesPage(answer: LiveResponse | undefined): string | null {
+  return answer === undefined ? null : rulesDashboardUrl(answer.daemon.origin, answer.response.scope ?? null);
 }
 
 /**
  * What the session-start note says about the session's rules, as the daemon presents them (hosts that cannot open the
  * database). Read on demand: the note is the agent's, so the person's footer preference (silent) must not hide that the
- * repository is not set up.
+ * repository is not set up. The daemon's answer to the session's start (`answered`) gives it where it carries it.
  */
-export async function presentedSessionNoteRules(session: AdapterSession): Promise<SessionNoteRules> {
+export async function presentedSessionNoteRules(session: AdapterSession, answered: EventAnswerFacts = {}): Promise<SessionNoteRules> {
+  if (answered.sessionNote !== undefined) return answered.sessionNote;
   const presentation = await readPresentation({ sessionId: session.sessionId, host: session.host, cwd: session.cwd, onDemand: true });
   return presentation.status === "not-set-up" ? { setUp: false } : { setUp: true, ruleCount: presentation.counts?.rules ?? null };
 }

@@ -13,6 +13,7 @@
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { relative, sep } from "node:path";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
@@ -31,7 +32,8 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 /**
  * How long walks trust change notices for a worktree: a walk reads one whose last read began this long ago, and one is
  * timed for it though every session watching it is idle. A write no notice tells of (through a hard link, a memory
- * map, a file another program holds open on Windows, or one the system lost without saying so) is found then.
+ * map, on Linux only one its program still holds, a file another program holds open on Windows, or one the system
+ * lost without saying so) is found then.
  */
 export const WORKTREE_FULL_WALK_MS = 600_000;
 
@@ -217,8 +219,18 @@ export type WorktreeRecords = ReadonlyMap<string, ReadonlySet<string>>;
 export interface WorktreeWatcher {
   /** The filesystem's clock (`filesystemClock`). */
   clock(): Promise<number>;
-  /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
-  start(): WatcherWalk | undefined;
+  /**
+   * Called before each walk begins, before {@link WorktreeWatcher.start}: what `start` would ask Git, learnt through `git`
+   * as processes no thread waits on, so `start` finds it kept, or the list stored for the registry, read with no Git,
+   * which `start` takes as read here; undefined, with nothing started, when there is nothing to learn. What it gives to
+   * wait on never rejects; a throw is taken as nothing to learn.
+   */
+  prepare?(git: GitReads): WorktreeListLearning | undefined;
+  /**
+   * Called as each walk begins, before it reads anything, with the list its {@link WorktreeWatcher.prepare} read when no
+   * wait came between them; undefined once the session has closed or cannot say.
+   */
+  start(registry?: WorktreeRegistry): WatcherWalk | undefined;
 }
 
 /** A session's watch of the shared walk. */
@@ -467,6 +479,23 @@ async function listedFor(
   return firstSeen.has(root) ? await listChanged(git, checkouts) : new Map<string, readonly string[] | undefined>();
 }
 
+/** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */
+export function storedRegistry(learnt: WorktreeListLearning | undefined): WorktreeRegistry | undefined {
+  return learnt?.kind === "stored" ? learnt.registry : undefined;
+}
+
+/**
+ * What `watcher` learns before a walk begins ({@link WorktreeWatcher.prepare}), through `git`. A throw is taken as nothing
+ * to learn, as a walk takes a throw of `start`: the walk begins, and its start meets what failed.
+ */
+function preparedBy(watcher: WorktreeWatcher, git: GitReads): WorktreeListLearning | undefined {
+  try {
+    return watcher.prepare?.(git);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The walks of a repository's other worktrees for every session that watches them: one per repository, shared by the
  * runtimes of an engine service (`RepositoryWorktreeWalks`), or one per session where nothing shares it. Each walk reads
@@ -514,11 +543,13 @@ export class WorktreeWalks {
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
   readonly #onWatching: ((watching: boolean) => void) | undefined;
+  readonly #sessionWatch: (() => TreeWatch | undefined) | undefined;
 
   /**
    * `notices`: none by default, so every worktree is read on every walk; `RepositoryWorktreeWalks` gives each walk the
    * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`). `onWatching`: told `true` as a
-   * first session starts watching, and `false` as the last stops.
+   * first session starts watching, and `false` as the last stops. `sessionWatch`: a watch of a session folder through
+   * the engine watch the notices come from, none by default (`sessionWatch()`).
    */
   constructor(options: {
     gapMs?: number;
@@ -526,12 +557,19 @@ export class WorktreeWalks {
     notices?: WorktreeNotices;
     looks?: WorktreeLooks;
     onWatching?: (watching: boolean) => void;
+    sessionWatch?: () => TreeWatch | undefined;
   } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
     this.#fullWalkMs = options.fullWalkMs ?? WORKTREE_FULL_WALK_MS;
     this.#notices = options.notices ?? new WorktreeNotices();
     this.#looks = options.looks ?? new WorktreeLooks();
     this.#onWatching = options.onWatching;
+    this.#sessionWatch = options.sessionWatch;
+  }
+
+  /** A watch of a session folder through the engine watch these walks take their notices from; undefined without one. */
+  sessionWatch(): TreeWatch | undefined {
+    return this.#sessionWatch?.();
   }
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {
@@ -760,7 +798,12 @@ export class WorktreeWalks {
 
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
-    const starts = this.#start();
+    // A walk with nothing to learn begins at once, and each session's start takes the list its learn step read. After a
+    // wait, each reads the registry as it is then, a worktree added meanwhile included.
+    const prepared = this.#prepare();
+    const learning = [...prepared.values()].flatMap(learnt => (learnt?.kind === "learning" ? [learnt.done] : []));
+    if (learning.length > 0) await Promise.allSettled(learning);
+    const starts = this.#start(learning.length === 0 ? prepared : new Map());
     this.#forget([...starts.values()].map(walk => rootsOf(walk)));
     this.#watchRegistries(starts.values());
     const askers = [...starts.keys()].filter(watching => watching.requested);
@@ -836,13 +879,22 @@ export class WorktreeWalks {
     this.#departed = this.#departed.filter(departed => (found.get(departed.checkout)?.readFrom ?? -Infinity) <= departed.closedAt);
   }
 
-  /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */
-  #start(): Map<Watching, WatcherWalk> {
+  /** Each watching session's {@link WorktreeWatcher.prepare}, through the walks' Git reads, which stop with the last session. */
+  #prepare(): Map<Watching, WorktreeListLearning | undefined> {
+    const git = this.#git;
+    return new Map(this.#watching.map(watching => [watching, preparedBy(watching.watcher, git)]));
+  }
+
+  /**
+   * Each open session's part in the walk beginning now, given the list its learn step stored where `prepared` holds one;
+   * one that cannot say has its request dropped.
+   */
+  #start(prepared: ReadonlyMap<Watching, WorktreeListLearning | undefined>): Map<Watching, WatcherWalk> {
     const starts = new Map<Watching, WatcherWalk>();
     for (const watching of [...this.#watching]) {
       let walk: WatcherWalk | undefined;
       try {
-        walk = watching.watcher.start();
+        walk = watching.watcher.start(storedRegistry(prepared.get(watching)));
       } catch {
         walk = undefined;
       }
@@ -1141,6 +1193,8 @@ export class RepositoryWorktreeWalks {
     const walks: WorktreeWalks = new WorktreeWalks({
       ...this.#options,
       notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }),
+      // A session folder's watch is one more user of the engine watch the walks share (`SessionNotices`).
+      sessionWatch: () => this.#treeWatch?.user(),
       // A session handed this walk before it was dropped brings it back while no other took its place.
       onWatching: watching => {
         if (!watching && this.#walks.get(repository) === walks) this.#walks.delete(repository);

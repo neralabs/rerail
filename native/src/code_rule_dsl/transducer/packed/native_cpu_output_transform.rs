@@ -60,7 +60,7 @@ pub(super) fn define_downcase(
         signature.params.push(AbiParam::new(types::I32));
     }
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_output_downcase", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_output_downcase", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -349,7 +349,7 @@ pub(super) fn define_strip(
         signature.params.push(AbiParam::new(types::I32));
     }
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_output_strip", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_output_strip", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let find = module.declare_func_in_func(find, &mut context.func);
@@ -924,7 +924,7 @@ pub(super) fn define_language_from_mime(
     }
     signature.returns.push(AbiParam::new(types::I32));
     let id = module.declare_function(
-        "tempo_output_language_from_mime",
+        "rerail_output_language_from_mime",
         Linkage::Local,
         &signature,
     )?;

@@ -1,4 +1,4 @@
-//! The named-only tape's rule (RER-131's) on every `.rerail` file of the repository. A token is a
+//! The named-only tape's rule (decision 0161's) on every `.rerail` file of the repository. A token is a
 //! **delimiter** (a bracket, `,`, `;`, `|`, `<`, `>`, a quote) or not. A delimiter is left out
 //! where its gap is implied. Any other token (a keyword, an operator, `:`, `.`, `=>`) is left out
 //! only where its parent's kind implies it in every gap it can stand in: under one parent kind,
@@ -31,7 +31,7 @@ fn corpus() -> Vec<(String, String)> {
     files
 }
 
-/// RER-131's delimiters (`tape/tokens.rs`, `is_delimiter`).
+/// Decision 0161's delimiters (`tape/tokens.rs`, `is_delimiter`).
 fn is_delimiter(text: &str) -> bool {
     matches!(text, "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">" | "," | ";" | "|" | "\"" | "'" | "`")
 }

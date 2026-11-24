@@ -267,7 +267,13 @@ gitlink (submodule) is recorded as a nested path, not descended into.
 A clean file's committed blob is its alias, found without reading the file (`clean_source_alias`).
 Before a restore, `holds_blob_bytes` confirms the worktree still holds the blob's bytes: one `lstat`
 while the stat matches the index entry, else a hash. The conversions `filter`, `ident` and
-`working-tree-encoding` always force the hash, as they can change bytes without changing size.
+`working-tree-encoding` always force the hash, as they can change bytes without changing size. On
+Windows the stat holds the creation time where Unix keeps the change time, so a write that keeps the
+size and puts the modification time back leaves it equal: there the `lstat` also needs NTFS's change
+time, read through the same handle, to equal the modification time, else the file is hashed, at
+every restore. Where the volume keeps no change time to trust (FAT, exFAT, a network share), the
+file's data is not all on this disk (a cloud placeholder, an offline file) or the file cannot be
+read, the stat decides, as it does for Git ([windows.md](windows.md#edits-that-keep-a-files-time)).
 
 Publication promotes clean overlay files into the snapshot (`promote_overlay_files_to_snapshot`, at
 most 64 paths).

@@ -404,18 +404,22 @@ recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its ve
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line starts Node
 only on Windows and where you had a status line of your own, which Node runs first
 ([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)). On Windows Claude Code runs it through
-Git Bash, so its `sh -c` fallback works there. Where
-set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
-runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
-Node rather than two. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or
-where `cmd.exe` would split a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of
-`& ( ) ^ | < > , ; =`. Its look for `node` on `PATH` ends at the first folder on a server (`\\server\share`), which it
-never opens, since a share that does not answer holds each look for about 21 s, and it writes the `cmd.exe` entry
-there. A drive letter mapped to such a share is looked into: set-up then waits about 21 s once, and each hook event
-afterwards does not. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
-exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
-`rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard count Claude Code as
-connected in either case, without reading `PATH`.
+Git Bash, so its `sh -c` fallback works there.
+Claude Code's hooks on Windows start through `cmd.exe`, which runs the recorded Node itself while it exists and
+`node.exe` from `PATH` once it is gone: each hook event runs two processes, `cmd.exe` and one Node, whatever `PATH`
+Claude Code has. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, where
+that `cmd.exe` runs no command (`cmd.exe /d /c exit 0` does not end with exit 0, as under the `DisableCMD` policy at
+1: [what such a policy does to hooks](windows.md#each-coding-agents-shell)), or where `cmd.exe` would split a path of
+the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of `& ( ) ^ | < > , ; =`. Where the
+start of `cmd.exe` failed, set-up says so in one line, with what it costs and that `rerail install --refresh` tries
+again. Claude Code
+finds that `node` on its own `PATH`, and where that is another Node than the recorded one, the launcher starts the
+recorded one as a second process on each event. Set-up reads no `PATH` to choose the entry. Where the recorded Node is
+there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry exits 0 with no answer, as the
+launcher answers for a hook that fails, so Claude Code shows no hook error.
+Rerail 0.2.1 and earlier wrote the `node` entry wherever set-up's `PATH` found the recorded Node, though Claude Code's
+`PATH` may find another; `rerail update` writes the `cmd.exe` entry over it, and `rerail status` and the dashboard
+count Claude Code as connected with either, reading the settings alone: they start no `cmd.exe` to check.
 
 Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
 its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the
@@ -488,8 +492,8 @@ the npm dist-tag (`latest`, `beta`, or `next`).
 
 `rerail update` names each step on stderr as it starts (checking npm, downloading, checking signatures, checking the
 new version starts, switching to it) and says when one runs long enough that npm may be stuck
-([reference](reference.md#update)). Rule packs update separately: it ends by listing each installed pack with a newer
-version on its channel and the `rerail packs add` command that installs them ([rule packs](rule-packs.md#rerail-packs)).
+([reference](reference.md#update)). Rule packs update with it: it ends by updating each installed pack to the newest
+version that fits the new core (`rerail packs update`; [rule packs](rule-packs.md#rerail-packs)).
 
 <details>
 <summary>Registry and credentials</summary>
@@ -557,7 +561,7 @@ The managed installation uses `~/.cache/rerail/content-v5.sqlite`, and on Window
 a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
 build from a Git checkout uses `<checkout>/.rerail/content-v5.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
-Rerail 0.2.0 moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
+Rerail 0.2.0, first published as 0.2.1, moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
 earlier version rebuilds it. The old file (with its `-wal` and `-shm`) is no longer read and stays beside the new one
 until you delete it; the managed installation's goes when `rerail install --remove` deletes the content cache folder.
 

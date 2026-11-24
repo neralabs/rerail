@@ -1,7 +1,7 @@
 {
   "schema": "rerail.packs/1",
   "packs": [
-    { "id": "complexity", "version": "0.1.8" },
+    { "id": "complexity", "version": "0.1.9", "config": { "ceiling": 10 } },
     { "path": "packs/rerail" }
   ]
 }

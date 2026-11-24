@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DAEMON_STATE_FILE, type DaemonMachine } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
@@ -18,7 +19,7 @@ interface Machine {
   listeners: Map<number, number>;
 }
 
-type FetchStep = Response | Error | ((machine: Machine) => Promise<Response>);
+type FetchStep = Response | Error | ((machine: Machine, init: RequestInit) => Promise<Response>);
 
 interface BridgeRun {
   stdout: readonly string[];
@@ -49,6 +50,10 @@ interface BridgeSetup {
   daemon?: RecordedDaemon | null;
   /** The pid that answers on the recorded port; null when nothing listens there. Defaults to the recorded pid. */
   listener?: number | null;
+  /** How the listener answers `/healthz`; by default at once, as the pid it is. */
+  health?: (init: RequestInit) => Promise<Response>;
+  /** The machine the bridge asks whether the recorded daemon may be sent the capability; by default this one. */
+  machine?: DaemonMachine;
 }
 
 const NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon start";
@@ -92,7 +97,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     databasePath: join(home, "rerail.sqlite"),
     kernelSocketPath,
     ui: "bundled",
-    startedAt: daemon.startedAt ?? 0,
+    startedAt: daemon.startedAt ?? 1,
     packageRoot: "/tmp/rerail-bridge-test-package",
     ...(daemon.accessToken === undefined ? {} : { accessToken: daemon.accessToken }),
   }));
@@ -125,14 +130,14 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[], 
     if (endpoint.pathname === "/healthz") {
       probes.push(endpoint.href);
       if (listener === undefined) throw new TypeError("fetch failed");
-      return jsonResponse(200, { status: "ok", pid: listener });
+      return await (setup.health?.(init) ?? jsonResponse(200, { status: "ok", pid: listener }));
     }
     endpoints.push(endpoint.href);
     requests.push(String(init.body));
     if (listener === undefined) throw new TypeError("fetch failed");
     const step = remaining.shift();
     if (step === undefined) throw new Error("unexpected request");
-    if (typeof step === "function") return await step(machine);
+    if (typeof step === "function") return await step(machine, init);
     if (step instanceof Error) throw step;
     return step;
   });
@@ -146,6 +151,7 @@ async function runBridge(lines: readonly string[], steps: readonly FetchStep[], 
     stderr,
     fetch: fetchImpl,
     home,
+    ...(setup.machine === undefined ? {} : { machine: setup.machine }),
   });
   return { stdout: collectedStdout(), stderr: collectedStderr(), requests, endpoints, probes };
 }
@@ -314,7 +320,7 @@ describe("Rerail MCP bridge", () => {
     const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
     const pongs = [1, 2].map(id => JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
     const restartedInPlace = async (machine: Machine): Promise<Response> => {
-      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 1 });
+      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 2 });
       return new Response(pongs[0], { status: 200 });
     };
     const run = await runBridge([first, second], [restartedInPlace, new Response(pongs[1], { status: 200 })]);
@@ -410,5 +416,300 @@ describe("Rerail MCP bridge", () => {
     // One that stops being accepted after the check: the 401 body is no MCP answer, so the client gets the same error.
     expect(await bridge("kept", "kept", () => jsonResponse(401, { error: "access-required", message: "…" })))
       .toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [refused] });
+  });
+});
+
+describe("Rerail MCP bridge beside a busy daemon", () => {
+  const NOT_ANSWERING = "Rerail daemon is running but did not answer within 30 s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start";
+  /** A Windows engine pipe, named as an engine names its fallback pipe: its name as `\\.\pipe\` lists it, and its path. */
+  const PIPE_NAME = "rerail-0123456789abcdef01234567-1f";
+  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567-1f`;
+  const ping = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+  const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
+  const notAnswering = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: NOT_ANSWERING } });
+
+  // The call's bound runs on a fake clock, the monotonic one included: a test moves it, and none waits on the real one.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A Windows machine where the recorded pid is a live process of this user and its engine pipe exists; `proof` answers the engine's proof. */
+  function windows(proof: DaemonMachine["capabilityProof"]): DaemonMachine {
+    return fakeMachine("win32", { kill: () => true, pipes: () => [PIPE_NAME], capabilityProof: proof });
+  }
+  const windowsDaemon = { pid: process.pid, port: 4321, kernelSocketPath: PIPE, accessToken: "kept" };
+
+  /**
+   * An answer the test gives (`release`), or that fails as fetch fails once the request's signal aborts, at once when it
+   * already has; `asked` has that signal.
+   */
+  function heldAnswer(): { answer: (init: RequestInit) => Promise<Response>; asked: Promise<AbortSignal>; release: (response: Response) => void } {
+    const asked = Promise.withResolvers<AbortSignal>();
+    const released = Promise.withResolvers<Response>();
+    const answer = async (init: RequestInit): Promise<Response> => {
+      const signal = init.signal;
+      if (!(signal instanceof AbortSignal)) throw new Error("the request carries no signal");
+      asked.resolve(signal);
+      if (signal.aborted) throw signal.reason;
+      return await new Promise<Response>((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        void released.promise.then(resolve);
+      });
+    };
+    return { answer, asked: asked.promise, release: released.resolve };
+  }
+
+  it("relays to a Windows daemon whose engine proves itself only after 2 s, its proof given the call's 30 s", async () => {
+    const proofs: number[] = [];
+    // An engine in a 3 s audit answers a proof that may take 3 s, and only that one.
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return timeoutMs >= 3_000 ? "proved" : "silent";
+    });
+    const run = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon: windowsDaemon, machine });
+    expect(run.stdout).toEqual([pong]);
+    expect(proofs).toEqual([30_000]);
+  });
+
+  it("calls a Windows daemon whose engine stays silent for the whole bound busy, never not running, and sends it nothing", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "silent";
+    });
+    const run = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon: windowsDaemon, machine });
+    expect(run.stdout).toEqual([notAnswering]);
+    expect(run.stderr).toEqual([`rerail: mcp bridge: ${NOT_ANSWERING}`]);
+    expect(proofs).toEqual([30_000]);
+    expect(run.probes).toEqual([]);
+    expect(run.requests).toEqual([]);
+  });
+
+  it("waits for a newly recorded daemon's health answer as long as the call's bound, then relays", async () => {
+    const clocks = vi.spyOn(AbortSignal, "timeout");
+    const health = heldAnswer();
+    const pending = runBridge([ping], [new Response(pong, { status: 200 })], { health: health.answer });
+    const signal = await health.asked;
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(signal.aborted).toBe(false);
+    health.release(jsonResponse(200, { status: "ok", pid: process.pid }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong]);
+    expect(run.requests).toEqual([ping]);
+    // Every wait of the call is on the call's own bound, and none on a clock of its own beside it.
+    expect(clocks).not.toHaveBeenCalled();
+    clocks.mockRestore();
+    // The call's bound ends with the call: an idle bridge keeps no timer to fire after its answer.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("gives a tool the whole bound from its send, however long the health check before it waited", async () => {
+    const health = heldAnswer();
+    const relayed = heldAnswer();
+    const pending = runBridge([ping], [async (_machine, init) => await relayed.answer(init)], { health: health.answer });
+    await health.asked;
+    // The new daemon is busy 1.5 s at the check, then runs a tool that takes up to the bound to answer.
+    await vi.advanceTimersByTimeAsync(1_500);
+    health.release(jsonResponse(200, { status: "ok", pid: process.pid }));
+    const signal = await relayed.asked;
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(signal.aborted).toBe(false);
+    relayed.release(new Response(pong, { status: 200 }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong]);
+  });
+
+  const ping2 = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+  const pong2 = JSON.stringify({ jsonrpc: "2.0", id: 2, result: {} });
+
+  /**
+   * A Windows engine whose proof number `late` proves itself 50 ms past the checks' 30 s, as on Windows when hooks
+   * waiting on a busy daemon hold every instance of the engine's pipe: the proof's own limit does not count the wait for
+   * a free one. Every other proof passes at once; `asked` resolves when the late one starts.
+   */
+  function lateProof(late: number): { machine: DaemonMachine; asked: Promise<void> } {
+    const asked = Promise.withResolvers<void>();
+    let proofs = 0;
+    const machine = windows(async () => {
+      proofs += 1;
+      if (proofs === late) {
+        asked.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 30_050));
+      }
+      return "proved";
+    });
+    return { machine, asked: asked.promise };
+  }
+
+  it("gives a call whose engine proves itself only past the checks' 30 s its tool's whole 30 s from the send", async () => {
+    // The first call confirms the daemon; the second one's proof passes past the checks' bound.
+    const late = lateProof(2);
+    const relayed = heldAnswer();
+    const steps = [new Response(pong, { status: 200 }), async (_machine: Machine, init: RequestInit) => await relayed.answer(init)];
+    const pending = runBridge([ping, ping2], steps, { daemon: windowsDaemon, machine: late.machine });
+    await late.asked;
+    await vi.advanceTimersByTimeAsync(30_050);
+    const signal = await relayed.asked;
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(signal.aborted).toBe(false);
+    relayed.release(new Response(pong2, { status: 200 }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong, pong2]);
+  });
+
+  /** A first call to a Windows daemon whose engine proves itself past the checks' 30 s, up to its health check, held. */
+  async function lateHealthCheck(): Promise<{ pending: Promise<BridgeRun>; release: (response: Response) => void; signal: AbortSignal }> {
+    const late = lateProof(1);
+    const health = heldAnswer();
+    const pending = runBridge([ping], [new Response(pong, { status: 200 })], { daemon: windowsDaemon, machine: late.machine, health: health.answer });
+    await late.asked;
+    await vi.advanceTimersByTimeAsync(30_050);
+    return { pending, release: health.release, signal: await health.asked };
+  }
+
+  it("gives the health check after a proof that passed past the checks' 30 s the 2 s every check had, then relays", async () => {
+    const { pending, release, signal } = await lateHealthCheck();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(signal.aborted).toBe(false);
+    release(jsonResponse(200, { status: "ok", pid: process.pid }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong]);
+    expect(run.requests).toEqual([ping]);
+  });
+
+  it("calls a daemon still silent to that late health check busy once its 2 s pass, and sends it nothing", async () => {
+    const { pending, signal } = await lateHealthCheck();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.aborted).toBe(true);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+    expect(run.requests).toEqual([]);
+  });
+
+  it("relays lines one at a time in the order they come, each call's checks counted from when the bridge takes it", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "proved";
+    });
+    const first = heldAnswer();
+    // Both lines come before the first call has its answer, and the first call's tool takes 25 s.
+    const steps = [async (_machine: Machine, init: RequestInit) => await first.answer(init), new Response(pong2, { status: 200 })];
+    const pending = runBridge([ping, ping2], steps, { daemon: windowsDaemon, machine });
+    await first.asked;
+    await vi.advanceTimersByTimeAsync(25_000);
+    // Nothing of the second call, its proof included, reaches the daemon before the first call has its answer.
+    expect(proofs).toEqual([30_000]);
+    first.release(new Response(pong, { status: 200 }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong, pong2]);
+    expect(run.requests).toEqual([ping, ping2]);
+    // The second call's checks have their whole 30 s from when the bridge took it, 25 s after it came.
+    expect(proofs).toEqual([30_000, 30_000]);
+  });
+
+  it("calls a newly recorded daemon still silent to its health check at the bound busy, and sends it nothing", async () => {
+    const health = heldAnswer();
+    const pending = runBridge([ping], [new Response(pong, { status: 200 })], { health: health.answer });
+    const signal = await health.asked;
+    await vi.advanceTimersByTimeAsync(30_000);
+    // The health check's wait is the call's: it ends at the bound, not on a clock of its own.
+    expect(signal.aborted).toBe(true);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+    expect(run.requests).toEqual([]);
+  });
+
+  it("calls a daemon that took the call and stays silent until the bound busy, and reads nothing again for it", async () => {
+    const relayed = heldAnswer();
+    const pending = runBridge([ping], [async (_machine, init) => await relayed.answer(init)]);
+    await relayed.asked;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+    // The daemon took the request, so the home's daemon is not looked up again: one health check, the first.
+    expect(run.probes).toEqual(["http://127.0.0.1:4321/healthz"]);
+  });
+
+  it("calls a daemon whose answer is still coming at the bound busy, in whatever words its transport cuts it", async () => {
+    const relayed = Promise.withResolvers<void>();
+    const streaming = async (_machine: Machine, init: RequestInit): Promise<Response> => {
+      const signal = init.signal;
+      if (!(signal instanceof AbortSignal)) throw new Error("the request carries no signal");
+      relayed.resolve();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"jsonrpc":"2.0",'));
+          // As the https transport ends a body it cut: with an error of its own, not the signal's reason.
+          signal.addEventListener("abort", () => controller.error(new Error("terminated")), { once: true });
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const pending = runBridge([ping], [streaming]);
+    await relayed.promise;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([notAnswering]);
+  });
+
+  const fetchFailed = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "fetch failed" } });
+
+  it("gives a proof that starts at the very end of the bound the 2 s every check had, never 0 ms, which a socket's timeout reads as no limit", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "proved";
+    });
+    // The relay fails to connect at the very end of the bound, on a timer made before the call's own, so the bound's
+    // timer has not run yet when the home is checked again.
+    const asked = Promise.withResolvers<void>();
+    const refusal = Promise.withResolvers<Response>();
+    setTimeout(() => refusal.reject(new TypeError("fetch failed")), 30_000);
+    const pending = runBridge([ping], [async () => {
+      asked.resolve();
+      return await refusal.promise;
+    }], { daemon: windowsDaemon, machine });
+    await asked.promise;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([fetchFailed]);
+    expect(proofs).toEqual([30_000, 2_000]);
+  });
+
+  it("keeps every wait of a call when the wall clock steps forward, as after a time sync", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "proved";
+    });
+    // The new daemon answers its first health check after 1.5 s, and every later one at once.
+    const firstCheck = Promise.withResolvers<void>();
+    let checks = 0;
+    const health = async (): Promise<Response> => {
+      checks += 1;
+      if (checks === 1) {
+        firstCheck.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      }
+      return jsonResponse(200, { status: "ok", pid: process.pid });
+    };
+    // The wall clock jumps a minute while the relay fails to connect: the home's check after it still has the whole
+    // time the send gave the call, counted from the send.
+    const steppedRefusal = async (): Promise<Response> => {
+      vi.setSystemTime(Date.now() + 60_000);
+      throw new TypeError("fetch failed");
+    };
+    const pending = runBridge([ping], [steppedRefusal], { daemon: windowsDaemon, machine, health });
+    await firstCheck.promise;
+    await vi.advanceTimersByTimeAsync(1_500);
+    const run = await pending;
+    expect(run.stdout).toEqual([fetchFailed]);
+    expect(proofs).toEqual([30_000, 30_000]);
   });
 });

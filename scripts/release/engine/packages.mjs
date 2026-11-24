@@ -75,6 +75,7 @@ export function enginePackageJson(enginePackage, core) {
   return {
     name: enginePackage.name,
     version: core.version,
+    description: `The native engine of Rerail for ${SYSTEMS[enginePackage.os]} on ${enginePackage.cpu}. Install ${core.name}, not this package.`,
     license: core.license,
     repository: core.repository,
     os: [enginePackage.os],
