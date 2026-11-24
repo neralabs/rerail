@@ -42,6 +42,7 @@ pub mod ranged;
 pub mod program;
 pub mod refs;
 pub mod region;
+pub mod order;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
