@@ -1251,12 +1251,15 @@ impl P {
         // `(C | …)*`: a run of them (`Many`), alone in its element.
         if self.eat_p("(") {
             let inner = self.token_choices()?;
+            // `with M`, `without M`: each token of the run with or without mark `M`, as the lean parser's
+            // `on_line` asks of each word it reads.
+            let inner = if matches!(inner.as_slice(), [TokenElem::Not(_)]) { inner } else { self.with_marks(inner)? };
             self.want_p(")")?;
             self.want_p("*")?;
             // Kinds and words, or one `~` of them: a run of any other tokens.
             let not = matches!(inner.as_slice(), [TokenElem::Not(_)]);
-            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                return self.err("a run of kinds and words, or of a `~` of them");
+            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::With(_) | TokenElem::Without(_))) {
+                return self.err("a run of kinds and words (`with`, `without` a mark), or of a `~` of them");
             }
             // `nest (O to C) …`: the depths it counts (`Nest`).
             let mut nests = vec![];
@@ -1580,6 +1583,8 @@ impl P {
                 }
                 Ok(Gram::Any(except))
             }
+            // `refused`: no way on, as the lean parser's `Err(())`: a choice with no alternative.
+            "refused" => Ok(Gram::Alt(vec![])),
             "balanced" => {
                 let kind = self.kind()?;
                 let open = self.kind()?;
@@ -2787,6 +2792,12 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
         );
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
+        // Each token of a run without a mark (decision 0673 step 4); not after a `~`.
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (name | \",\" without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(","), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
+        assert!(mark("mark k = lf, before \"{\" (~name without k)* \"}\"").is_err());
     }
 
     /// A settling mark's `drops` (decision 0416, its questions 0451): parsed with `settles`,

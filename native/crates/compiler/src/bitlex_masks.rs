@@ -4847,7 +4847,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         without |= 1 << k;
                     }
                 }
-                token_read |= without | with;
+                // A token mark past the code's bits is tier 2's alone, which asks a gap mark it reads of the bytes where
+                // tier 1 sets none (`lazy_marks`), as the lean parser asks whether a word is on its line: the token step
+                // reads only the code's marks' bits.
+                if usize::from(*order) < code_marks.min(crate::records::MARKS) {
+                    token_read |= without | with;
+                }
                 let mut nests = Vec::new();
                 for (counter, open, ns, ws) in nest_rows {
                     let (kinds, except, rows) = kind_set(ns)?;

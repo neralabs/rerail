@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 3 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: in progress, steps 1 to 4 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -108,3 +108,35 @@ first token, the statement; `agg_value` is `count`, then its other values, then 
 
 rr's `tier2.rs` is 3,573 lines. Tests for steps 1 to 3: rr 58, the 8 corpus tests, Kotlin 70, JSON 26,
 parser_tests 95, Bitlex 11, clippy.
+
+## Step 4: a statement is decided by its `.` and the word after it (done)
+
+Gap 2. `rr.bitlex`'s statement is the lean parser's `statement`:
+
+- `statement` is a `.test` or `.fixtures` block, else a `directive`. `directive` takes one arm per directive, each by a
+  peek at `.` and its word (`decl_on`, `io_on`, `policy_on` with its `{`, …), else a `setting`. Each directive is a node
+  of its own that starts with its `.`. There is no `setting` retagged by a `_tail` rule, and no `setting` body written
+  twice.
+- A `.end` outside a block is refused where the file's statements are read (`end_on refused`), as the lean parser's
+  `Err(())`. `refused` is a grammar element with no way on (`Gram::Alt` of none). Its state refuses every token, a
+  nested level's too (`bitlex_tier2`).
+- A block's statements do not hold a block: `block_statement` refuses `.test` and `.fixtures` there, as the lean
+  parser's `test` does, with no flag.
+- A setting's words are read as the lean parser's are: `{` a JSON object, any other token a word, to the line's end.
+  The lean parser asks whether a word is on its line from the first byte of the word before. So a JSON object over
+  lines ends the setting. `json_flat` holds at a `{` whose tokens, its `}` too, have no line break before them. Where it
+  holds the setting goes on; a JSON object where it does not is the setting's last word.
+
+  A run of a token mark may say `without M` (or `with M`) of its tokens (`syntax.rs`). The run's tokens are tier 2's,
+  so `line`, which `json_flat` reads, stays a mark tier 2 asks of the bytes (`lazy_marks`): a token mark past the
+  code's bits does not make the marks it reads coded (`bitlex_masks`). The JIT asks a lazy mark at any record a token
+  mark reads (`Lazy`, `lazy_mark` at a record), as the Rust writer's `bit_at` does.
+- A covered peek (step 3) is kept only for a mark tested after it that takes another arm. One tested before it is asked
+  first either way. So `statement` tests `.end`'s peek, then the `.` word, and no directive's peek.
+
+The old form of the token rules' test strips the directive marks: it compares tier 1's starts and lasts only. The
+ladder generator picks no arm that cannot be derived (a `refused` one).
+
+rr's `tier2.rs` is 3,582 lines, about as before: eleven directive nodes and their peeks replace the `_tail` rules. Kotlin's
+generated code is unchanged. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95 (the ladder's four
+new cases of a setting's JSON), Bitlex 11, clippy.

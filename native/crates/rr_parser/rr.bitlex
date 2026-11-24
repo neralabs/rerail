@@ -23,10 +23,9 @@
 # A `.test` or a `.fixtures` block runs to its `.end` (decision 0130); its statements are a file's, but for
 # another block: blocks do not nest. Its `.`, its word, `uses` and its `,`, and the `.end` are implied; its
 # name, `exactly` and each set `uses` names are stored:
-#   - `test_tail`, `fixtures_tail`: the setting opened at the `.` is the block.
-#   - `end_on`: the `.` of a `.end`, which ends a block's statements. Not hidden: a `.end`
-#     outside a block refuses the file, as the engine refuses it.
-#   - `in_block`: a block's statements are read with it set, and no block opens there.
+#   - `test_on`, `fixtures_on`: a statement's `.` and the block's word; the statement is the block.
+#   - `end_on`: the `.` of a `.end`, which ends a block's statements. A statement that starts
+#     with one is refused, as the lean parser refuses it.
 
 lexer rr
 
@@ -262,9 +261,6 @@ mark fix_on      = tokens "fix" identifier
 mark suppress_on = tokens "suppress" identifier string
 mark options_on  = tokens "options" "{"
 mark over_on     = tokens "over" "{"
-# `policy` after a statement's `.`, then a `{`: a policy document, whose `.` is implied; any
-# other `.policy` is a setting's, whose `.` is stored.
-mark policy_on   = tokens after "." "policy" "{"
 # A `{` around one name: a column's name, not its raw text.
 mark one_name    = tokens "{" identifier "}"
 # A `(` whose next token is `)`.
@@ -275,8 +271,7 @@ mark at_on       = tokens "at" string
 # aggregate there, with no value, and refuses it. A mark the grammar takes nowhere, so the
 # file is refused wherever it is.
 mark no_value   = tokens after "min" | "max" | "sum" | "product" | "mean" | "join" "(" ")" ":"
-# A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments. After the
-# line breaks' marks, which a statement before it takes.
+# A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments.
 mark end_on      = tokens "." "end"
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
 # feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
@@ -305,59 +300,73 @@ mark io_bare     = tokens "." "input" | "output" hash_word | "#include" | end | 
 mark comma_rule  = tokens "," string
 # `@` and a name with no `(` after it: a lattice's functor named, not called, as the engine peeks.
 mark bare_functor = tokens "@" identifier ~"("
+# A statement's `.` and its word: the directive it is, as the lean parser's `statement` peeks at
+# the word after the `.`. `.policy`, then a `{`: a policy document; any other `.policy` is a setting.
+mark test_on     = tokens "." "test"
+mark fixtures_on = tokens "." "fixtures"
+mark policy_on   = tokens "." "policy" "{"
+mark decl_on     = tokens "." "decl"
+mark violation_on = tokens "." "violation"
+mark edit_on     = tokens "." "edit"
+mark functor_on  = tokens "." "functor"
+mark type_on     = tokens "." "type"
+mark io_on       = tokens "." "input" | "output"
+mark lattice_on  = tokens "." "lattice"
+mark pragma_on   = tokens "." "pragma"
+# A `{` whose JSON object is on one line: no line break before any of its tokens, its `}` too. The lean parser asks
+# whether a setting's word is on its line from the word before's first byte: a JSON object over lines ends the setting.
+mark json_flat   = tokens "{" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char without line)* nest ("{" to "}") "}" without line
 
 # --- The tree ----------------------------------------------------------------------------------
 
 tree rr {
-  node source_file whole = (include | setting | clause)*
+  # A `.end` outside a block is refused, as the lean parser refuses a statement that starts with one; a block's
+  # statements end at theirs (`block_body`).
+  node source_file whole = (include | end_on refused | statement | clause)*
   # A statement that fails: cut back to its first token, and one ERROR leaf from it to where the next can start, as the
   # engine's parser recovers (decision 0650): at a `#` word, at a `.` first on its line before a name, past any other `.`.
   recover source_file at hash_word | "#include", at first "." identifier, past "."
   node include          = '#include' path: string
-  # A setting's arguments to its line's end; a JSON object ends it.
-  # `.policy`: a setting, or before a `{` a policy document.
-  # A setting's `.` is stored: its arguments may hold a `.`. A directive's is dropped, but a
-  # declaration's and a functor's, whose modifiers may hold one.
-  node setting          = '.' (directive
-                              | line (directive | name: identifier | name: ('policy' as identifier))
-                              | name: identifier (argument: word | punctuation)* (argument: json | newline)
-                              | name: ('policy' as identifier) ((argument: word | punctuation)+ (argument: json | newline) | newline))
-  # A `.test` or a `.fixtures` block (decision 0130): the node opened as a setting at the `.` is
-  # the block. Its statements are a file's, read with `in_block` set: no block opens there.
-  flag in_block
-  choice test_tail      = drop retag test_block 'test' name: identifier [modifier: ('exactly' as identifier)] ['uses' argument: identifier (',' argument: identifier)*] block_body
-  choice fixtures_tail  = drop retag fixtures_block 'fixtures' name: identifier block_body
+  # A statement at a `.`: the word after it says which, as the lean parser's `statement` (decision 0673 step 4).
+  choice statement      = test_on test_block | fixtures_on fixtures_block | directive
+  choice directive      = policy_on policy_document | decl_on declaration | violation_on violation_declaration
+                        | edit_on edit_declaration | functor_on functor_declaration | type_on type_declaration
+                        | io_on io_directive | lattice_on lattice_declaration | pragma_on pragma | setting
+  # A setting: a name and the rest of its line, as the lean parser's: a `{` a JSON object, any other token a word. A
+  # name on the line after the `.` has none. Its `.` is stored: its arguments may hold a `.`.
+  node setting          = '.' (line name: identifier | name: identifier (json_flat argument: json | argument: word | punctuation)* (newline | argument: json))
+  # A `.test` or a `.fixtures` block (decision 0130). Its statements are a file's, but a block's own: blocks do
+  # not nest, as the lean parser's `test` refuses one before it reads a statement.
+  node test_block       = '.' 'test' name: identifier [modifier: ('exactly' as identifier)] ['uses' argument: identifier (',' argument: identifier)*] block_body
+  node fixtures_block   = '.' 'fixtures' name: identifier block_body
   choice block_body     = (body: block_statement)* end_on '.' 'end'
-  # A level of its own: a block's setting is one, and holds the block. A setting is the one
-  # statement that may open a block, so it is the one read with the flag.
-  choice block_statement nested = include | with in_block setting | clause
+  choice block_statement nested = include | test_on refused | fixtures_on refused | directive | clause
   # A word of a setting's, a declaration's tail: a leaf with a field.
   choice word           = value | code_literal
-  # Each directive: the node opened as a setting at the `.` is its node, the word one leaf with
-  # the `.`.
-  choice directive      = unless in_block test_tail | unless in_block fixtures_tail | policy_tail | declaration_tail | violation_tail | edit_tail | functor_tail | type_tail | io_tail | lattice_tail | pragma_tail
-  choice edit_tail      = drop retag edit_declaration 'edit' name: identifier columns: column_list
-  choice functor_tail   = retag functor_declaration 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation | '{')* line
+  node edit_declaration = '.' 'edit' name: identifier columns: column_list
+  # A declaration's `.` and a functor's are stored: their modifiers may hold one.
+  node functor_declaration = '.' 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation | '{')* line
+  node declaration      = '.' 'decl' name: identifier columns: column_list (modifier: word | punctuation | '{')* line
+  node type_declaration = '.' 'type' name: identifier (definition: raw_line | relabel definition line)
+  # `.input`, `.output`: a level of its own, which takes every name after it as a relation.
+  node io_directive nested = '.' (merge '.input' 'input' | merge '.output' 'output') [relation: io_relation (',' relation: io_relation)*]
+  node pragma           = '.' 'pragma' (argument: string)*
+  node lattice_declaration = '.' 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
+  node policy_document  = '.' 'policy' document: json_document
+  node violation_declaration = '.' 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
   # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
   # the type first).
   node functor_type nested = retag type name: identifier ['<' (drop argument: identifier '>' | angle_close)]
-  # `.type`: the rest of the line, one leaf; none, and the name takes its field.
-  choice type_tail      = drop retag type_declaration 'type' name: identifier (definition: raw_line | relabel definition line)
+  # `.type`'s definition: the rest of the line, one leaf; none, and the name takes its field.
   choice raw_line       = any as raw_text (merge raw_text any)* line
-  # `.input`, `.output`: a nested level, which takes every word after it as a relation.
-  choice io_tail nested = retag io_directive (merge '.input' 'input' | merge '.output' 'output') [relation: io_relation (',' relation: io_relation)*]
   node io_relation      = name: identifier ['(' (drop parameters: io_parameters ')' | relabel parameters paren_close)]
   # The tokens inside the parentheses, pairs counted: one leaf.
   choice io_parameters nested = (any except '(' ')' as raw_text | '(' as raw_text io_inner) (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)*
   choice io_inner nested = (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)* merge raw_text ')'
-  choice pragma_tail    = drop retag pragma 'pragma' (argument: string)*
-  choice lattice_tail   = drop retag lattice_declaration 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
   # A value: `@` and a name with no `(` after it, a functor named, not called (`bare_functor`); else a term, as
   # the engine reads it.
   node lattice_operation = name: identifier '->' (bare_functor value: lattice_functor | value: term)
   node lattice_functor  = retag functor_call '@' function: identifier
-  # The setting's `.` and name, one `.policy` leaf; the node a policy document.
-  choice policy_tail    = policy_on drop retag policy_document 'policy' document: json_document
   # JSON, every token merged into the document's leaf.
   choice json_document nested = '{' as json_object [json_member (merge json_object ',' json_member)*] merge json_object '}'
   choice json_member    = merge json_object string merge json_object ':' json_value
@@ -367,11 +376,6 @@ tree rr {
   choice json_inner_object nested = merge json_object '{' [json_member (merge json_object ',' json_member)*] merge json_object '}'
   choice json_inner_array nested = merge json_object '[' [json_value (merge json_object ',' json_value)*] merge json_object ']'
   refuse json_bad in json_document json_inner_object json_inner_array
-  # A `.decl`: the node opened as a setting at the `.` is a declaration.
-  choice declaration_tail = retag declaration 'decl' name: identifier columns: column_list (modifier: word | punctuation | '{')* line
-  # A `.violation`: the node opened as a setting at the `.` is one. It goes on while a part
-  # follows.
-  choice violation_tail = drop retag violation_declaration 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
   # `code "X"`; `code {c}`, the word and the column in a node, which takes the word's field.
   choice code_part      = 'code' (drop code: string | relabel code (wrap code_column _ drop braced_column ['in' codes: string]))
   choice tag_part       = 'tag' relabel tag (wrap tag_column _ drop braced_column)
@@ -511,22 +515,22 @@ tree rr {
   choice paren_close    = ')'
   # The tokens the grammar implies: no leaf.
   implied include '#include'
-  implied test_tail 'test' 'uses' ','
-  implied fixtures_tail 'fixtures'
+  implied test_block '.' 'test' 'uses' ','
+  implied fixtures_block '.' 'fixtures'
   implied block_body '.' 'end'
-  implied edit_tail 'edit'
-  implied functor_tail 'functor'
-  implied policy_tail 'policy'
+  implied edit_declaration '.' 'edit'
+  implied functor_declaration 'functor'
+  implied policy_document '.' 'policy'
   implied functor_type '>'
-  implied type_tail 'type'
-  implied io_tail ','
+  implied type_declaration '.' 'type'
+  implied io_directive ','
   implied io_relation ')'
-  implied pragma_tail 'pragma'
-  implied lattice_tail 'lattice' '<' '>' '{' ',' '}'
+  implied pragma '.' 'pragma'
+  implied lattice_declaration '.' 'lattice' '<' '>' '{' ',' '}'
   implied lattice_operation '->'
   implied lattice_functor '@'
-  implied declaration_tail 'decl'
-  implied violation_tail 'violation' 'options'
+  implied declaration 'decl'
+  implied violation_declaration '.' 'violation' 'options'
   implied code_part 'in'
   implied braced_column '{' '}'
   implied suppress_line 'suppress' ',' 'over' '{' '}'
@@ -548,7 +552,7 @@ tree rr {
   implied aggregated ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden float_at line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
+  hidden float_at line newline end_on test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
   extra comment
   # The lexer's errors, a byte's and a character's: no rule takes them, nor `any`, as the lean
   # parser fails at a `Bad` where it reads any token (its raw line's).

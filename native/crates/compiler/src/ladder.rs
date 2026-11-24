@@ -27,6 +27,9 @@ use crate::program::Words;
 use ::bitlex::syntax::{Gram, Stmt, parse};
 use std::collections::HashMap;
 
+/// The cost of a sentence that cannot be derived: a refusal, or a rule with none.
+const FAR: usize = 1 << 20;
+
 /// A seeded xorshift: the corpus is the same on every run.
 pub struct Rng(pub u64);
 
@@ -236,7 +239,6 @@ impl Lang {
     }
 
     fn cost(&self, g: &Gram) -> usize {
-        const FAR: usize = 1 << 20;
         match g {
             Gram::Lit(_) => 1,
             Gram::Sym(s) => match self.rules.get(s) {
@@ -263,8 +265,11 @@ impl Lang {
                 None => out.push(self.token(rng, s)),
             },
             Gram::Seq(gs) => gs.iter().for_each(|g| self.derive(rng, g, depth, out)),
+            // An arm that refuses (`refused`, no arms) derives no sentence: the others are picked from.
             Gram::Alt(gs) => {
-                let g = if deep { gs.iter().min_by_key(|g| self.cost(g)).unwrap() } else { rng.pick(gs) };
+                let arms: Vec<&Gram> = gs.iter().filter(|g| self.cost(g) < FAR).collect();
+                let Some(&least) = arms.iter().min_by_key(|g| self.cost(g)) else { return };
+                let g = if deep { least } else { *rng.pick(&arms) };
                 self.derive(rng, g, depth, out)
             }
             Gram::Opt(g) => {

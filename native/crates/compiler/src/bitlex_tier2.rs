@@ -1140,8 +1140,9 @@ impl Emit<'_> {
         let nested = st.level != self.root;
         self.entry[s] = self.pc();
         self.marked[s] = self.pc();
-        if nested && mine.is_empty() {
-            let Some(c) = st.end else { return Err(format!("state {s} takes no token and may not end: {st:?}")) };
+        // A nested level's state of no arms ends there. One that does not end either (`refused`) refuses every token,
+        // as a file's level's does: a switch of no arms, below.
+        if let (true, true, Some(c)) = (nested, mine.is_empty(), st.end) {
             // A nested choice's level has no node of its own to close. Its nodes end at the
             // token taken (`CLOSE m=1`); after a mark's arm, which took none, at the last token
             // taken (`m=0`).

@@ -31,7 +31,7 @@ fn a_float_is_its_records() {
     assert!(tier1.contains("let (pick, kind1, word1) = TOKEN["), "the lean lexer's loop");
     assert!(tier1.contains("(l, u32::from(kind1) | u32::from(once) << 16, false, 0)"), "the number arm writes the float's bit");
     assert!(!tier1.contains("// `float_at`\n"), "a token test of `float_at` asked of the bytes");
-    assert!(tier1.contains("pub const TESTED: u32 = 0x2000;"), "`TESTED` holds `json_bad` alone");
+    assert!(tier1.contains("pub const TESTED: u32 = 0x1000;"), "`TESTED` holds `json_bad` alone");
     let text = "a(1.5, 2, 3.25).\n";
     let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
     let floats: Vec<&str> = lx.recs.iter().filter(|r| r.code >> 16 & 1 == 1).map(|r| &text[r.start as usize..=r.last as usize]).collect();

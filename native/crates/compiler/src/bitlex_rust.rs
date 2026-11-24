@@ -476,7 +476,9 @@ impl<'a> G<'a> {
         marks.retain(|(m, f, t)| !self.implied_kind(*m).is_some_and(|k| kinds.iter().any(|x| x.0 == k && x.1 == *f && x.2 == *t)));
         // A peek whose first words all go to its own arm: no test of its own (decision 0673 step 3). Where it holds, its
         // first word does, and the word's test takes the arm; the lean parser tests the token once.
-        // Another mark that may hold at its words and takes another arm keeps it: the marks' order decides there.
+        // Another mark tested after it (the marks are tested in their order) that may hold at its words and takes another
+        // arm keeps it: there the peek's test comes first. One tested before it is asked first either way (`.end` before
+        // a directive's word).
         let peeks = self.peeks();
         let firsts = |m: usize| -> Option<Vec<String>> {
             let defs = self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name);
@@ -486,7 +488,7 @@ impl<'a> G<'a> {
         marks.retain(|(m, f, t)| {
             let Some(ws) = firsts(*m).filter(|ws| peeks >> *m & 1 == 1 && !ws.is_empty()) else { return true };
             let covered = ws.iter().all(|w| words.iter().any(|x| format!("w::{}", self.word_const(x.0)) == *w && x.1 == *f && x.2 == *t));
-            let alone = all.iter().all(|o| o.2 == *t || firsts(o.0).is_some_and(|os| os.iter().all(|w| !ws.contains(w))));
+            let alone = all.iter().all(|o| o.0 < *m || o.2 == *t || firsts(o.0).is_some_and(|os| os.iter().all(|w| !ws.contains(w))));
             !(covered && alone)
         });
         for &m in &exits {
@@ -1574,7 +1576,8 @@ impl<'a> G<'a> {
     fn loose_marks(&self, g: &Gram, next: Option<&Gram>, loose: &mut u64) {
         match g {
             Gram::Sym(n) if self.mark_of(n).is_some() => {
-                if !next.is_some_and(|x| self.takes_first(x, &mut HashSet::new())) {
+                // Before a token's take, or `refused` (a choice of none), after which nothing is asked.
+                if !next.is_some_and(|x| matches!(x, Gram::Alt(v) if v.is_empty()) || self.takes_first(x, &mut HashSet::new())) {
                     *loose |= 1 << self.mark_of(n).expect("a mark");
                 }
             }

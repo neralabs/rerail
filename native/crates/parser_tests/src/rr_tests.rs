@@ -291,6 +291,12 @@ const CASES: &[(&str, &str)] = &[
     // `.input` with no relation, before an `#include` (`io_bare`'s `hash_word`, a keyword's
     // token), a comment between: the engine refuses it, so every step does.
     (".input #include \"a\"", "never"),
+    // A setting's JSON object on its line, a word after it; one over lines ends the setting, as the lean parser asks
+    // whether a word is on its line from the word before's first byte (decision 0673 step 4).
+    (".s {} x\nr(x).", "parses"),
+    (".s {\"a\": {\"b\": 1}} x y\n", "parses"),
+    (".s {\n} x\nr(x).", "never"),
+    (".s {\"a\": {\n}} x\n", "never"),
     (". /* a\n b */input // c\n#include \"a\"", "never"),
 ];
 
@@ -390,7 +396,7 @@ fn a_refused_mark_is_checked() {
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
         (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
         (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("hidden float_at line newline policy_on json_bad fix_on", "hidden float_at line newline policy_on fix_on", "no hidden mark"),
+        ("pragma_on json_flat json_bad fix_on", "pragma_on json_flat fix_on", "no hidden mark"),
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");

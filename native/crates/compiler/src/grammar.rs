@@ -1771,7 +1771,8 @@ pub fn with_extras(
         // A merge joins the leaf before the extras: they must be pending, to be its text.
         let merges = merging.contains(&s) || mine.iter().any(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. })) || (a.call && merging.contains(&a.to)));
         let early = !merges && if marked { through(s).is_some_and(|w| w.iter().all(|&x| x == 0)) } else { ways.iter().all(|&w| w == ways[0]) };
-        let m = if marked { 0 } else { ways[0] };
+        // A state of no arms (`refused`) refuses every token: nothing closes early.
+        let m = if marked { 0 } else { ways.first().copied().unwrap_or(0) };
         if early {
             let to = if m == 0 {
                 s
