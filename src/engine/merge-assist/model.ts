@@ -18,6 +18,15 @@ export const githubReadinessSchema = z.object({
 });
 export type GithubReadiness = z.infer<typeof githubReadinessSchema>;
 
+/** `gh`'s readiness as a status shows it: as `gh` last said it, when, and how long until it is read again. */
+export const shownReadinessSchema = githubReadinessSchema.extend({
+  readAt: z.string().nullable().describe("When gh last said it (an ISO time to the second); null when Rerail ran no gh for it (unchecked, not-github)."),
+  readAgainInMs: z.number().int().nonnegative().optional().describe(
+    "Milliseconds until a status reads gh's sign-in again: a reading is reused for five minutes (one minute when gh could not tell), counted on the daemon's clock; 0 once due, while the read runs. Absent where Rerail ran no gh for it (unchecked, not-github).",
+  ),
+});
+export type ShownReadiness = z.infer<typeof shownReadinessSchema>;
+
 export const lastScanSchema = z.object({
   at: z.string(),
   peers: z.object({ branches: z.number().int(), pullRequests: z.number().int() })
@@ -115,7 +124,7 @@ export const mergeAssistStatusSchema = z.object({
   enabled: z.boolean(),
   settings: mergeAssistSettingsSchema,
   readiness: z.object({
-    github: githubReadinessSchema,
+    github: shownReadinessSchema,
   }),
   scanning: z.boolean(),
   lastScan: lastScanSchema.nullable(),
