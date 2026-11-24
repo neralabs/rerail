@@ -130,9 +130,10 @@ fn strings(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
 }
 
 /// `file`, `package`, `package_field`, `package_for` and the `tsconfig*` rows of the tree under `root`, for documents
-/// `docs` (paths relative to it).
-pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
-    let mut packages: BTreeMap<String, Option<Value>> = BTreeMap::new();
+/// `docs` (paths relative to it). The configuration files' rows (`package`, `package_field`, `tsconfig`,
+/// `tsconfig_path`) are those `kept` keeps where every file their reading read is as it was (`settings_rows`).
+pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows, files: &mut dyn Files, kept: Option<&ContentStore>) -> StoreResult<()> {
+    let mut packages: BTreeMap<String, String> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in sorted_entries(&dir) {
@@ -140,10 +141,121 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
         }
     }
     rows.file.sort();
-    package_rows(&packages, rows);
+    let configs = tsconfig_files(rows);
+    settings_rows(root, &packages, &configs, rows, files, kept)?;
     package_for_rows(docs, &packages, rows);
-    tsconfig_rows(root, docs, rows);
+    tsconfig_for_rows(docs, &configs, rows);
+    Ok(())
 }
+
+/// What a run reads of the configuration files (decision 0665): a file's digest, which the observer reuses while the
+/// file's stat is the one kept with it (no read), and its bytes. `Plain` reads the disk each time.
+pub trait Files {
+    fn digest(&mut self, path: &Path) -> Option<[u8; 32]>;
+    fn read(&mut self, path: &Path) -> Option<Vec<u8>>;
+}
+
+/// The disk, read each time.
+pub struct Plain;
+
+impl Files for Plain {
+    fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
+        use sha2::Digest as _;
+        std::fs::read(path).ok().filter(|_| path.is_file()).map(|b| sha2::Sha256::digest(&b).into())
+    }
+    fn read(&mut self, path: &Path) -> Option<Vec<u8>> {
+        std::fs::read(path).ok().filter(|_| path.is_file())
+    }
+}
+
+impl Files for crate::content_store::observe::Observer {
+    fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
+        crate::content_store::observe::Observer::digest(self, path)
+    }
+    fn read(&mut self, path: &Path) -> Option<Vec<u8>> {
+        crate::content_store::observe::Observer::read(self, path).map(|(bytes, _)| bytes)
+    }
+}
+
+/// One question the reading of the configuration files asked of the disk, with its answer: what a later run asks
+/// again to know the kept rows still hold.
+#[derive(Clone, Debug, PartialEq)]
+enum Probe {
+    /// A file's digest (`None`: not a readable file).
+    Text(String, Option<[u8; 32]>),
+    IsFile(String, bool),
+    IsDirectory(String, bool),
+    RealPath(String, String),
+}
+
+impl Probe {
+    fn json(&self) -> Value {
+        let hex = |d: &Option<[u8; 32]>| d.map_or(Value::Null, |d| Value::String(crate::content_store::observe::hex(&d)));
+        match self {
+            Probe::Text(p, d) => serde_json::json!(["t", p, hex(d)]),
+            Probe::IsFile(p, b) => serde_json::json!(["f", p, b]),
+            Probe::IsDirectory(p, b) => serde_json::json!(["d", p, b]),
+            Probe::RealPath(p, r) => serde_json::json!(["r", p, r]),
+        }
+    }
+
+    /// Whether the disk answers as it did, asked through `files` (a file's digest without reading it, where the
+    /// observer keeps its stat).
+    fn holds(probe: &Value, disk: &Disk<'_>) -> bool {
+        let (Some(op), Some(path)) = (probe.get(0).and_then(Value::as_str), probe.get(1).and_then(Value::as_str)) else { return false };
+        let answer = probe.get(2).unwrap_or(&Value::Null);
+        match op {
+            "t" => {
+                let now = disk.files.borrow_mut().digest(&disk.on_disk(path));
+                now.map_or(Value::Null, |d| Value::String(crate::content_store::observe::hex(&d))) == *answer
+            }
+            "f" => Value::Bool(disk.on_disk(path).is_file()) == *answer,
+            "d" => Value::Bool(disk.on_disk(path).is_dir()) == *answer,
+            "r" => Value::String(disk.real_path_unrecorded(path)) == *answer,
+            _ => false,
+        }
+    }
+}
+
+/// The configuration files' rows: `package` and `package_field` of each `package.json` (`packages`, by folder), and
+/// `tsconfig` and `tsconfig_path` of each project configuration (`configs`, by folder). Where `kept` keeps them for
+/// these files, and the disk answers each question their reading asked (`Probe`) as it did, they are the kept rows,
+/// and no file is read; otherwise they are read, and kept with the questions.
+fn settings_rows(root: &Path, packages: &BTreeMap<String, String>, configs: &BTreeMap<String, String>, rows: &mut Rows, files: &mut dyn Files, kept: Option<&ContentStore>) -> StoreResult<()> {
+    use sha2::Digest as _;
+    let mut key = sha2::Sha256::new();
+    key.update(b"rerail.settings-kept/v1\0");
+    key.update(root.to_string_lossy().as_bytes());
+    for (dir, file) in packages.iter().chain([(&String::new(), &String::new())]).chain(configs) {
+        key.update([0]);
+        key.update(dir.as_bytes());
+        key.update([0]);
+        key.update(file.as_bytes());
+    }
+    let key: [u8; 32] = key.finalize().into();
+    let disk = Disk::new(root, files);
+    if let Some(blob) = kept.map(|k| k.settings_blob(key)).transpose()?.flatten()
+        && let Ok(Value::Object(blob)) = serde_json::from_slice::<Value>(&blob)
+        && blob.get("probes").and_then(Value::as_array).is_some_and(|p| p.iter().all(|p| Probe::holds(p, &disk)))
+        && let Ok(got) = serde_json::from_value::<KeptRows>(blob.get("rows").cloned().unwrap_or(Value::Null))
+    {
+        (rows.package, rows.package_field, rows.tsconfig, rows.tsconfig_path) = got;
+        return Ok(());
+    }
+    disk.probes.borrow_mut().clear();
+    package_rows(&disk, packages, rows);
+    tsconfig_rows(&disk, configs, rows);
+    if let Some(kept) = kept {
+        let probes: Vec<Value> = disk.probes.borrow().iter().map(Probe::json).collect();
+        let got: KeptRows = (rows.package.clone(), rows.package_field.clone(), rows.tsconfig.clone(), rows.tsconfig_path.clone());
+        let blob = serde_json::json!({"probes": probes, "rows": got});
+        kept.put_settings_blob(key, &serde_json::to_vec(&blob).expect("settings serialize"))?;
+    }
+    Ok(())
+}
+
+/// `package`, `package_field`, `tsconfig` and `tsconfig_path`, as kept.
+type KeptRows = (Vec<(String, String)>, Vec<(String, String, String)>, Vec<(String, String)>, Vec<(String, String, String)>);
 
 /// The names a project configuration has, the first found in a folder governing it.
 const TSCONFIG_NAMES: [&str; 2] = ["tsconfig.json", "jsconfig.json"];
@@ -169,17 +281,20 @@ fn join(dir: &str, rel: &str) -> String {
 
 /// The files on disk below a root, by absolute `/`-separated path, as the shared `extends` resolver reads them
 /// (`tsconfig::ConfigFiles`, decision 0660).
-struct Disk {
+struct Disk<'f> {
     base: String,
     /// The root with its symlinks resolved, as `real_path` resolves a path below it.
     canonical: Option<PathBuf>,
+    files: std::cell::RefCell<&'f mut dyn Files>,
+    /// Each question asked, with its answer (`settings_rows`).
+    probes: std::cell::RefCell<Vec<Probe>>,
 }
 
-impl Disk {
-    fn new(root: &Path) -> Self {
+impl<'f> Disk<'f> {
+    fn new(root: &Path, files: &'f mut dyn Files) -> Self {
         let base = root.to_string_lossy().replace('\\', "/");
         let base = if base.starts_with('/') { base } else { format!("/{base}") };
-        Disk { base: base.trim_end_matches('/').to_owned(), canonical: std::fs::canonicalize(root).ok() }
+        Disk { base: base.trim_end_matches('/').to_owned(), canonical: std::fs::canonicalize(root).ok(), files: std::cell::RefCell::new(files), probes: Default::default() }
     }
 
     /// The path on disk of an absolute path here (`/C:/a` on Windows is `C:/a`).
@@ -193,17 +308,35 @@ impl Disk {
     }
 }
 
-impl tsconfig::ConfigFiles for Disk {
+impl tsconfig::ConfigFiles for Disk<'_> {
     fn base(&self) -> &str {
         &self.base
     }
     fn is_file(&self, path: &str) -> bool {
-        self.on_disk(path).is_file()
+        let got = self.on_disk(path).is_file();
+        self.probes.borrow_mut().push(Probe::IsFile(path.to_owned(), got));
+        got
     }
     fn is_directory(&self, path: &str) -> bool {
-        self.on_disk(path).is_dir()
+        let got = self.on_disk(path).is_dir();
+        self.probes.borrow_mut().push(Probe::IsDirectory(path.to_owned(), got));
+        got
     }
     fn real_path(&self, path: &str) -> String {
+        let got = self.real_path_unrecorded(path);
+        self.probes.borrow_mut().push(Probe::RealPath(path.to_owned(), got.clone()));
+        got
+    }
+    fn text(&self, path: &str) -> Option<String> {
+        use sha2::Digest as _;
+        let bytes = self.files.borrow_mut().read(&self.on_disk(path));
+        self.probes.borrow_mut().push(Probe::Text(path.to_owned(), bytes.as_ref().map(|b| sha2::Sha256::digest(b).into())));
+        String::from_utf8(bytes?).ok()
+    }
+}
+
+impl Disk<'_> {
+    fn real_path_unrecorded(&self, path: &str) -> String {
         // A path below the root is spelled from the root; one linked from outside it keeps its own spelling, which
         // `relative` refuses: nothing above the root is read.
         let Ok(real) = std::fs::canonicalize(self.on_disk(path)) else { return path.to_owned() };
@@ -213,16 +346,13 @@ impl tsconfig::ConfigFiles for Disk {
             None => format!("/{}", real.to_string_lossy().replace('\\', "/").trim_start_matches('/')),
         }
     }
-    fn text(&self, path: &str) -> Option<String> {
-        std::fs::read_to_string(self.on_disk(path)).ok()
-    }
 }
 
 /// The `compilerOptions` of the configuration at `file` (from the root), the chain it `extends` merged beneath its
 /// own (later bases over earlier ones), with `baseUrl` resolved from the root where each configuration of the chain
 /// sets it. A base is a relative or absolute path, or a package's configuration in a `node_modules` folder at or
 /// above it (`tsconfig::extends_path`); one outside the root is not read. `None` where it cannot be read.
-fn compiler_options(disk: &Disk, file: &str, depth: usize) -> Option<serde_json::Map<String, Value>> {
+fn compiler_options(disk: &Disk<'_>, file: &str, depth: usize) -> Option<serde_json::Map<String, Value>> {
     use tsconfig::ConfigFiles;
     let text = disk.text(&format!("{}/{file}", disk.base))?;
     let json: Value = serde_json::from_str(&tsconfig::strip_jsonc(&text)).ok()?;
@@ -249,9 +379,8 @@ fn compiler_options(disk: &Disk, file: &str, depth: usize) -> Option<serde_json:
     Some(merged)
 }
 
-/// `tsconfig`, `tsconfig_path` of each project configuration in the tree, and `tsconfig_for` of each document.
-fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
-    let disk = Disk::new(root);
+/// The project configuration of each folder that has one, by folder: the first of `TSCONFIG_NAMES` in it.
+fn tsconfig_files(rows: &Rows) -> BTreeMap<String, String> {
     let name = |f: &str| f.rsplit_once('/').map_or(f, |(_, n)| n).to_owned();
     let mut configs: BTreeMap<String, String> = BTreeMap::new();
     for f in &rows.file {
@@ -264,8 +393,13 @@ fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
             }
         }
     }
-    for (dir, file) in &configs {
-        let Some(opts) = compiler_options(&disk, file, 0) else { continue };
+    configs
+}
+
+/// `tsconfig`, `tsconfig_path` of each project configuration (`configs`).
+fn tsconfig_rows(disk: &Disk<'_>, configs: &BTreeMap<String, String>, rows: &mut Rows) {
+    for (dir, file) in configs {
+        let Some(opts) = compiler_options(disk, file, 0) else { continue };
         let base = opts.get("baseUrl").and_then(Value::as_str).map_or_else(|| dir.clone(), str::to_owned);
         rows.tsconfig.push((dir.clone(), base));
         if let Some(Value::Object(paths)) = opts.get("paths") {
@@ -276,6 +410,10 @@ fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
             }
         }
     }
+}
+
+/// `tsconfig_for` of each document: the nearest folder above it with a project configuration (`configs`).
+fn tsconfig_for_rows(docs: &[String], configs: &BTreeMap<String, String>, rows: &mut Rows) {
     for path in docs {
         let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
         loop {
@@ -299,8 +437,8 @@ fn sorted_entries(dir: &Path) -> Vec<std::fs::DirEntry> {
 }
 
 /// One entry of the tree: a folder the host's walk enters goes on `stack`; a file is a `file` row (up to
-/// `MAX_FILES`), and a `package.json` is read into `packages`, by its folder.
-fn tree_entry(root: &Path, entry: &std::fs::DirEntry, stack: &mut Vec<PathBuf>, packages: &mut BTreeMap<String, Option<Value>>, rows: &mut Rows) {
+/// `MAX_FILES`), and a `package.json`'s path goes in `packages`, by its folder (`settings_rows` reads it).
+fn tree_entry(root: &Path, entry: &std::fs::DirEntry, stack: &mut Vec<PathBuf>, packages: &mut BTreeMap<String, String>, rows: &mut Rows) {
     let name = entry.file_name().to_string_lossy().into_owned();
     let path = entry.path();
     let Ok(kind) = entry.file_type() else { return };
@@ -314,15 +452,17 @@ fn tree_entry(root: &Path, entry: &std::fs::DirEntry, stack: &mut Vec<PathBuf>, 
     let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
     if name == "package.json" {
         let dir = rel.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
-        packages.insert(dir, std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()));
+        packages.insert(dir, rel.clone());
     }
     rows.file.push(rel);
 }
 
-/// `package` and `package_field` of each `package.json` that parses to an object.
-fn package_rows(packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
-    for (dir, json) in packages {
-        let Some(json @ Value::Object(o)) = json else { continue };
+/// `package` and `package_field` of each `package.json` (`packages`, by folder) that parses to an object.
+fn package_rows(disk: &Disk<'_>, packages: &BTreeMap<String, String>, rows: &mut Rows) {
+    use tsconfig::ConfigFiles;
+    for (dir, file) in packages {
+        let json: Option<Value> = disk.text(&format!("{}/{file}", disk.base)).and_then(|t| serde_json::from_str(&t).ok());
+        let Some(json @ Value::Object(o)) = &json else { continue };
         if let Some(Value::String(name)) = o.get("name") {
             rows.package.push((dir.clone(), name.clone()));
         }
@@ -333,7 +473,7 @@ fn package_rows(packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
 }
 
 /// `package_for` of each document: the nearest folder above it that holds a `package.json`.
-fn package_for_rows(docs: &[String], packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
+fn package_for_rows(docs: &[String], packages: &BTreeMap<String, String>, rows: &mut Rows) {
     for path in docs {
         let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
         loop {
@@ -350,13 +490,13 @@ fn package_for_rows(docs: &[String], packages: &BTreeMap<String, Option<Value>>,
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool, files: &mut dyn Files) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
     if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path"].iter().any(|r| reads(r)) {
-        tree(root, docs, &mut rows);
+        tree(root, docs, &mut rows, files, Some(store))?;
     }
     let mut texts: Vec<&str> = Vec::new();
     rows.option.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
@@ -425,13 +565,78 @@ pub mod tests {
             std::fs::write(p, t).unwrap();
         }
         let mut rows = Rows::default();
-        tree(&root, &["web/src/a.ts".to_owned(), "c.py".to_owned()], &mut rows);
+        tree(&root, &["web/src/a.ts".to_owned(), "c.py".to_owned()], &mut rows, &mut Plain, None).unwrap();
         assert_eq!(rows.file, ["c.py", "web/package.json", "web/src/a.ts"]);
         assert_eq!(rows.package, [("web".to_owned(), "@a/web".to_owned())]);
         assert!(rows.package_field.contains(&("web".to_owned(), "engines/node".to_owned(), ">=18".to_owned())));
         assert!(!rows.package_field.iter().any(|(_, k, _)| k == "n"));
         assert_eq!(rows.package_for, [("web/src/a.ts".to_owned(), "web".to_owned())]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The configuration files' rows are kept (decision 0665): a run whose configuration files, and every file their
+    /// reading looked at, are as the last run read them reads none of them; an edit of one, or a base its chain
+    /// `extends` appearing, is read again, and the rows are a fresh reading's.
+    #[test]
+    fn kept_settings_are_not_read_again_while_their_files_are_unchanged() {
+        struct Counted(usize);
+        impl Files for Counted {
+            fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
+                Plain.digest(path)
+            }
+            fn read(&mut self, path: &Path) -> Option<Vec<u8>> {
+                self.0 += 1;
+                Plain.read(path)
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("web/package.json", r#"{"name": "@a/web", "engines": {"node": ">=18"}}"#);
+        write("web/tsconfig.json", r#"{"extends": "./base", "compilerOptions": {"paths": {"x": ["y"]}}}"#);
+        write("web/src/a.ts", "");
+        let store = ContentStore::open(&tmp.path().join("store.db")).unwrap();
+        let docs = ["web/src/a.ts".to_owned()];
+        let run = |counted: &mut Counted| {
+            let mut rows = Rows::default();
+            tree(&root, &docs, &mut rows, counted, Some(&store)).unwrap();
+            rows
+        };
+        let fresh = || {
+            let mut rows = Rows::default();
+            tree(&root, &docs, &mut rows, &mut Plain, None).unwrap();
+            rows
+        };
+        let mut first = Counted(0);
+        let rows = run(&mut first);
+        assert_eq!(first.0, 2, "the first run reads both");
+        assert_eq!(rows, fresh());
+        let mut again = Counted(0);
+        assert_eq!(run(&mut again), rows);
+        assert_eq!(again.0, 0, "an unchanged run reads no configuration file");
+        // A source edit reads none either.
+        write("web/src/a.ts", "export const a = 1;\n");
+        let mut edited = Counted(0);
+        assert_eq!(run(&mut edited), rows);
+        assert_eq!(edited.0, 0);
+        // The package's edit is read.
+        write("web/package.json", r#"{"name": "@a/web2"}"#);
+        let mut package = Counted(0);
+        let got = run(&mut package);
+        assert!(package.0 > 0);
+        assert_eq!(got.package, [("web".to_owned(), "@a/web2".to_owned())]);
+        assert_eq!(got, fresh());
+        // The base the configuration extends appears: it was looked for, so it is read now.
+        write("web/base.json", r#"{"compilerOptions": {"baseUrl": "src"}}"#);
+        let mut base = Counted(0);
+        let got = run(&mut base);
+        assert!(base.0 > 0);
+        assert_eq!(got.tsconfig, [("web".to_owned(), "web/src".to_owned())]);
+        assert_eq!(got, fresh());
     }
 
     /// A project configuration is read as TypeScript reads it (decision 0660): JSONC, a chain of `extends` merged
@@ -453,13 +658,14 @@ pub mod tests {
         write("app/src/a.ts", "export const a = 1;\n");
         write("b.ts", "export const b = 1;\n");
         let mut rows = Rows::default();
-        tree(root, &["app/src/a.ts".to_owned(), "b.ts".to_owned()], &mut rows);
+        tree(root, &["app/src/a.ts".to_owned(), "b.ts".to_owned()], &mut rows, &mut Plain, None).unwrap();
         // `./base` is merged over `@org/cfg` (later over earlier), the app's own `paths` over both.
         assert_eq!(rows.tsconfig, vec![("app".to_owned(), "app/src".to_owned())]);
         assert_eq!(rows.tsconfig_path, vec![("app".to_owned(), "~/*".to_owned(), "src/*".to_owned())]);
         assert_eq!(rows.tsconfig_for, vec![("app/src/a.ts".to_owned(), "app".to_owned())]);
         // The package's configuration alone: its `baseUrl` from its own folder.
-        let disk = Disk::new(root);
+        let mut plain = Plain;
+        let disk = Disk::new(root, &mut plain);
         let base = compiler_options(&disk, "node_modules/@org/cfg/strict.json", 0).unwrap();
         assert_eq!(base.get("baseUrl"), Some(&Value::String("node_modules/@org/cfg/lib".to_owned())));
     }

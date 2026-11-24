@@ -222,6 +222,15 @@ farm host, so it is in the slow tier.
   still reads `tape_line` (removed by 0612, whose fixed overlay is staged in `publish/` for the next archive). The
   tests' overlay directory is each file's staged copy where the tree stages one, else the pulled one (links).
 
+- **The configuration files' rows are kept.** A run read every `package.json` and project configuration (and the
+  chain each `extends`) again. Their rows (`package`, `package_field`, `tsconfig`, `tsconfig_path`) are now kept in
+  the store under the root and the configuration files' paths, with each question their reading asked of the disk
+  (a file's digest, whether a path is a file or a folder, a real path) and its answer. A later run asks them again
+  through the observer, which answers a digest from the file's kept stat without reading it, and reuses the rows when
+  every answer is the same; otherwise it reads them and keeps them anew. A base that a chain looked for and that
+  appears later is such a question. An unchanged run, or one after a source edit, reads no configuration file
+  (`kept_settings_are_not_read_again_while_their_files_are_unchanged`).
+
 ## Left open
 
 - **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through every

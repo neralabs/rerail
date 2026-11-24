@@ -1682,7 +1682,6 @@ fn run_observed_within(
     // The run's settings, as `env` facts (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the
     // command line's `--env`).
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
-    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let read = given.read;
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
     let masked_texts = masked(programs);
@@ -3092,7 +3091,8 @@ fn run_observed_within(
     let repository: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>)> = {
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let reads = |r: &str| read.contains(r) && head_inputs.iter().any(|i| i == r);
-        crate::code_rule_dsl::facts::repository::relations(store, root, &files, &crate::code_rule_dsl::facts::repository::with_declared(&head_settings, options), &reads)
+        // Through the observer: a configuration file whose stat is kept is not read (decision 0665, kept settings).
+        observe(|o| crate::code_rule_dsl::facts::repository::relations(store, root, &files, &crate::code_rule_dsl::facts::repository::with_declared(&head_settings, options), &reads, o))
             .map_err(|e| Error::Plan(e.to_string()))?
             .into_iter()
             .filter(|(name, _)| reads(name))

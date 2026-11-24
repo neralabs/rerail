@@ -248,6 +248,26 @@ impl ContentStore {
     }
 
 
+    /// Keeps the project's settings as a run read them (decision 0665): `blob` under `key` (the root and its
+    /// configuration files' paths), what the run read with each answer, and the rows they gave.
+    pub fn put_settings_blob(&self, key: [u8; 32], blob: &[u8]) -> StoreResult<()> {
+        self.immediate_transaction(|tx| {
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS settings_blob(key BLOB PRIMARY KEY, blob BLOB NOT NULL) WITHOUT ROWID")?;
+            tx.execute_cached("INSERT OR REPLACE INTO settings_blob(key, blob) VALUES (?1, ?2)", params![&key[..], blob])?;
+            Ok(())
+        })
+    }
+
+    /// The settings kept under `key` (`put_settings_blob`), if a run kept them.
+    pub fn settings_blob(&self, key: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let kept: i64 = connection.query_row_cached("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='settings_blob'", [], |r| r.get(0))?;
+        if kept == 0 {
+            return Ok(None);
+        }
+        Ok(connection.query_row_cached("SELECT blob FROM settings_blob WHERE key=?1", [&key[..]], |r| r.get(0)).optional()?)
+    }
+
     /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
     pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
         // Its statistics name symbols by the store's ids: the reader maps them (decision 0170, `Keeper::map_symbols`).
