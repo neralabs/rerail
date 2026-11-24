@@ -291,6 +291,7 @@ impl State {
             s.device |= t.device;
             s.forms = t.forms;
             s.missing = t.missing;
+            s.lacking = t.lacking;
             s.planned_work += t.planned_work;
             s.planned_scanned += t.planned_scanned;
             s.steps += t.steps;
@@ -348,6 +349,8 @@ pub struct PlacedTotal {
     pub device: bool,
     pub forms: Vec<&'static str>,
     pub missing: Vec<&'static str>,
+    /// The operations behind the forms the device lacks (`Shape::lacking`), each `form: operation`.
+    pub lacking: Vec<String>,
     pub planned_work: f64,
     /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
     pub planned_scanned: f64,

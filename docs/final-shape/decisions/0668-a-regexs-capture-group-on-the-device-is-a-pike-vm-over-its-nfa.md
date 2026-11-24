@@ -1,6 +1,7 @@
 # 0668. A regex's capture group on the device is a Pike VM over its NFA
 
-Status: in progress (2026-11-24). The function runs on the device; the `ask_c` component that needs it is next.
+Status: done (2026-11-24). `rx_group` and the component's other terms run on the device; the component itself is
+refused at run time for its gates and requests (below).
 
 ## Intro
 
@@ -56,6 +57,29 @@ A group read only as positive atoms' keys (`c_inc_found`'s `dir_entry(dd, bb, 0)
 (`ROW_FIND`, decision 0666), as other text functions are. An atom keyed by it alone is then a probe by value too;
 before, the compile refused any atom keyed by a made text alone.
 
+### The component's other terms
+
+`placement.tsv` now names the operations behind each form a stratum lacks (`lacking`, `Shape::lacking`). For the
+`ask_c` cone (75 relations: the C includes, the bootstrap's and python's module loading under demand) they were
+`@substr` and `@concat` in comparisons:
+
+- `n = substr(s, 1, strlen(s) - 2)`: a text function's numbers may be row code (a name's characters, arithmetic),
+  bound by stages before it, as the device's compile already bound them.
+- `c = cat(l, "/", n)` with `c` bound (the demand's `bbf`) inverts to `n = str_between(c, cat(l, "/"), "")`.
+  `str_between`'s prefix and suffix are now each of their own kind on the device (a symbol, a held cat's two parts,
+  an arena text: `agg[1] >> 4` and `>> 8`, keys 2–3 and 4–5), and placement takes cats there.
+- A cat binding a variable in a recursive stratum is row code, as a head's cat is: since 0661 the rounds keep each
+  made text one value a content, and an atom keyed by it finds the atom (0666). Placement had kept 0307's rule.
+
+### What still keeps it on the CPU
+
+With every term the device's, the cone is placed on the device and refused at run time: "a component with gates or
+requests". Its fixpoint loads files (each resolved include is a request the host's loader answers inside the
+fixpoint, `c_pp_file_req`), and it negates its own relations through its recursion (`c_inc_from`'s `!c_found_by`,
+`c_resolved`'s `!c_inc_before`), which the native engine runs as gates. The same refusal keeps the annotations'
+component (`ann_host/ann_parse/…`, 1.3 s of CPU at 10 files) off the device. That is a form of its own: a device
+fixpoint that stops for the host's requests and gates and goes on.
+
 ## Tests
 
 - `a_groups_program_captures_as_regex_does` (`text::table`): the program walked as the device walks it gives
@@ -63,4 +87,8 @@ before, the compile refused any atom keyed by a made text alone.
   a repeat, a group that takes no part, multi-byte classes and padded texts. The refusals are each refused.
 - `text_functions_on_the_device_are_the_cpus` (`setfix::device`) gained six groups made into the arena (one made
   into a cat after it) and two as atoms' keys, one an atom's only key. Rows and every step's count are the CPU's.
-- The device crate's 91 tests pass on Metal (M1 Max), and its 90 on the CPU's device (a Linux host).
+- It gained `str_between` of a cat prefix (a name's and a constant's, dotted and plain), a text function's value as
+  a prefix, and a cat as a suffix.
+- The device crate's 91 tests pass on Metal (M1 Max), and its 90 on the CPU's device (a Linux host). The planner's
+  103 tests pass; its test of a cat in a recursive stratum now finds it row code.
+- The 10-file django run on the device (M1 Max), twice: the CPU's findings each time. The `ask_c` cone lacks no form.

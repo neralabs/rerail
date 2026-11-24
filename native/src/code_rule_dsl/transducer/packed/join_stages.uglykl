@@ -1420,7 +1420,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 continue;
             }
         }
-        Txt y = txt_of(s, L, row, D, A, 2, s->agg[1] >> 4, &unheld), z = y;
+        Txt y = txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld), z = y;
         uint32_t f = (s->agg[0] >> 16) & 255;
         uint32_t lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         uint64_t u = 0;
@@ -1445,9 +1445,10 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 len += pad;
             }
         } else if (f == 12) {
-            // str_between(x, y, z): x less prefix y (key 2) and suffix z (key 4); no row where x has not both.
-            y = txt_of(s, L, row, D, A, 2, 0, &unheld);
-            z = txt_of(s, L, row, D, A, 4, 0, &unheld);
+            // str_between(x, y, z): x less prefix y (keys 2, 3) and suffix z (keys 4, 5), each of its kind (agg[1] >> 4
+            // and >> 8: a symbol, a held cat's parts, an arena text); no row where x has not both.
+            y = txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld);
+            z = txt_of(s, L, row, D, A, 4, (s->agg[1] >> 8) & 15, &unheld);
             uint32_t ly = txt_len(y), lz = txt_len(z);
             bool fits = lx >= ly + lz;
             bool diff = !fits;

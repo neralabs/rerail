@@ -177,5 +177,6 @@ the intended outcome: they can run on the device; at 10 files they should not.
 
 ## Still to build
 
-- **The `ask_c` component**: `@rx_group` (a regex's capture group, which the device's automata do not give), and
-  `@concat` and `@substr` in comparisons.
+- **The `ask_c` component**: its terms are the device's since decision 0668 (`@rx_group`, `@substr` of row numbers,
+  `str_between` of cats). The component is refused at run time for its gates and requests (0668, "What still keeps it
+  on the CPU").

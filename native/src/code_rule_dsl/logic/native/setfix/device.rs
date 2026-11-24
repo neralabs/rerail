@@ -860,6 +860,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         || matches!(s, Step::Test { op, .. } if literal_test(op).is_some())
                         || matches!(s, Step::Test { p, matcher: Some(_), .. } if !matches!(p, Key::Slot(x) if *x == out))
                         || matches!(s, Step::Func { name: "replace_all" | "rx_replace", args, bind: true, .. } if arena_reader(s, out))
+                        || matches!(s, Step::Func { name: "str_between", args, bind: true, .. } if args.len() == 3 && arena_reader(s, out) && !matches!(args[0], Key::Slot(x) if x == out))
                         || joined(s).is_some_and(|(o, ..)| o != out)
                 };
                 if made && !bind {
@@ -1017,30 +1018,34 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     extra - 1
                 };
                 let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
-                let mut xk = mj::OPND_SYM;
+                // Each text's kind (`OPND_*`): a symbol, a held cat (read from its parts) or an arena text.
+                let mut kinds = [mj::OPND_SYM; 3];
                 let kind = if ntexts > 0 {
-                    // X (keys 0, 1), Y and Z (keys 2 and 4).
-                    let mut keys = vec![args[0], args[0]];
-                    if ntexts == 3 {
-                        keys.extend([args[1], args[1], args[2]]);
-                    }
-                    if let Key::Slot(x) = args[0] {
-                        if is_arena(x) {
-                            xk = mj::OPND_ARENA;
-                        } else if let Some(&(pa, pb, form)) = deferred.get(&x) {
-                            // A held cat's text: read from its parts.
-                            keys[0] = pa;
-                            keys[1] = pb;
-                            xk = if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT };
+                    // X (keys 0, 1), Y (keys 2, 3) and Z (keys 4, 5), each a text or a held cat's two parts.
+                    let mut keys = Vec::with_capacity(2 * ntexts);
+                    for (t, &a) in args[..ntexts].iter().enumerate() {
+                        match a {
+                            Key::Slot(x) if is_arena(x) => {
+                                keys.extend([a, a]);
+                                kinds[t] = mj::OPND_ARENA;
+                            }
+                            Key::Slot(x) if let Some(&(pa, pb, form)) = deferred.get(&x) => {
+                                keys.extend([pa, pb]);
+                                kinds[t] = if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT };
+                            }
+                            _ => keys.extend([a, a]),
                         }
                     }
-                    if args[1..ntexts].iter().any(|k| matches!(k, Key::Slot(x) if is_arena(*x) || deferred.contains_key(x))) {
+                    // A made prefix or suffix (`str_between` of a cat, as a cat compared with a bound text inverts to:
+                    // `n = str_between(c, cat(l, "/"), "")`); another function's pattern or replacement is a name.
+                    if f != mj::TEXTFN_STR_BETWEEN && kinds[1..].iter().any(|&k| k != mj::OPND_SYM) {
                         return Err(format!("the function {name}'s pattern or replacement made by the rule has no device form"));
                     }
                     text_keys(&mut d, &keys, &origin, &known, &format!("the function {name}"))?
                 } else {
                     Kind::Names
                 };
+                let xk = kinds[0] | kinds[1] << 4 | kinds[2] << 8;
                 // The numbers (keys 5 and 6).
                 for (n, a) in args[ntexts..].iter().enumerate() {
                     let k = 5 + n;
@@ -1290,6 +1295,8 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         Step::Func { name, args, bind: true, .. } if caps::device_fn(name) == Some(caps::DeviceFn::RegexReplace) => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
         // An atom keyed by it (one key of several), compared with the column as texts.
         Step::Atom { neg: false, keys, binds, .. } => keys.iter().any(|(_, k)| me(k)) && keys.len() > 1 && !binds.iter().any(|&(_, s)| s == x),
+        // `str_between`'s prefix or suffix (each read of its own kind), its value bound.
+        Step::Func { name: "str_between", args, out, bind: true, .. } if args.len() == 3 && *out != x && args[1..].iter().any(me) => true,
         // A text function of it, bound or compared with a bound slot; or compared with it (as texts).
         Step::Func { name, args, out, bind, .. } => {
             text_function(name).is_some_and(|(_, nt, _)| nt > 0) && (me(&args[0]) && !args[1..].iter().any(me) || !*bind && *out == x && !args.iter().any(me))

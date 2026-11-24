@@ -1423,6 +1423,13 @@
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?:(?<p>[A-Za-z]+)_)+.*)$"), sym("p")),
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<u>x9)|(?<g>[αβé]+).*)$"), sym("g")),
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nfunc str_concat v3 v2 {}\nhead v3 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d"), sym("/x.h")),
+            // `str_between` of made texts, as a cat compared with a bound text inverts to (`n = str_between(c,
+            // cat(l, "/"), "")`): a prefix that is a cat of a name, of a constant, a text function's value; a suffix
+            // that is a cat.
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("/"), sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\ncat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("b"), sym("")),
+            format!("pos {n} v0 v1\nfunc head v2 v0\nfunc str_between v3 v0 v2 {}\nhead v3 v1", sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v0\nfunc str_between v4 v1 {} v3\nhead v4 v2", sym("_"), sym("")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
