@@ -1,0 +1,5 @@
+// An example app's own schema: its Usage model is not the app's.
+model Usage {
+  id          String @id
+  accessToken String
+}

@@ -1,0 +1,196 @@
+.policy "prisma-practice-read-modify-write" revision 1
+.description "Change a counter, stock level or balance with Prisma's atomic operators (increment, decrement) or a guarded update, not by reading the row and writing back arithmetic on the value read."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. A row read with `<client>.<model>.findUnique/findFirst(...)` (or their OrThrow
+// forms, or a row of a findMany loop) and written back with `<client>.<model>.update/updateMany/upsert(...)` whose
+// `data` sets a field to arithmetic on the value read (`stock: product.stock - qty`) loses updates: two concurrent
+// requests both read the old value and the second write overwrites the first. A `$transaction` at Postgres's
+// default READ COMMITTED does not prevent it. Prisma's atomic number operations do ("update a field based on its
+// current value ... without risking a race condition"). Prisma 5-7 API; Prisma 8's `tx.orm.<schema>.<Model>` delegates
+// are not matched yet (the same shape, one more member level).
+//   const p = await prisma.product.findUniqueOrThrow({ where: { id } })
+//   await prisma.product.update({ where: { id }, data: { stock: p.stock - qty } })            reported
+//   const next = p.stock - qty; ... data: { stock: next }                                    reported (local const)
+//   ... data: { balance: w.balance.minus(amount) }                                           reported (Decimal)
+//   for (const r of rows) await db.item.update({ where: { id: r.id }, data: { pos: r.pos + 1 } })   reported
+//   ... data: { stock: { decrement: qty } }                                                  not reported (atomic)
+//   ... where: { id, version: p.version }, or where: { id, stock: p.stock } / { gte: qty }   not reported (guarded)
+//   ... data: { title: p.title + " (copy)" }                                                 not reported (string)
+//   ... data: { total: p.price * qty }                                                       not reported (other field)
+//   ... where: { id: otherId }, data: { position: p.position + 1 }                           not reported (other row)
+//   a function that runs `SELECT ... FOR UPDATE` or a pg advisory lock through $queryRaw     not reported (row locked)
+//   `await lockAssetForQuantityUpdate(tx, id)` (a call named lock… or …ForUpdate) before the write   not reported
+//   ... where: { id, armedCouponId: c }, data: { armedCouponId: null, ... } (compare-and-set) not reported
+//   inside $transaction(fn, { isolationLevel: Serializable | RepeatableRead })               not reported
+//   a different model, or a row made by create()                                             not reported
+// No type checker: the client is any receiver of `<x>.<model>.<op>(...)` with Prisma's op names and an object
+// argument with `data`, a shape the other ORMs in this stack (Drizzle's `.update(t).set()`, TypeORM's two-argument
+// update) do not write.
+// Gaps: a read in one function and the write in another (a helper taking the row), a row passed in as a parameter,
+// destructured reads (`const { stock } = await ...`), `.map(r => db.x.update(...))` over a findMany, Prisma 8
+// delegates; single-writer rows (a record only its owner's one request touches) are reported though they cannot race;
+// an isolation level passed in a variable (`$transaction(fn, opts)`) is not seen, so that write is reported.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+
+.violation ReadModifyWrite(at: node, o: symbol, x: symbol, m: symbol)
+    "{o}.{x} is read from the database and written back as arithmetic on the value read: two concurrent requests both read the old {x} and one change is lost (a $transaction at the default READ COMMITTED isolation does not prevent it). Let the database do the arithmetic: `data: {{ {x}: {{ increment: n }} }}` (or decrement, multiply, divide), adding a guard such as `where: {{ id, {x}: {{ gte: n }} }}` when the result must stay in range; or keep the read and make the write conditional on it, `where: {{ id, {x}: {o}.{x} }}` or a version field, and retry when it matches nothing (update throws P2025, updateMany returns count 0). Leave it when nothing else can write this {m} row at the same time (a one-off script, a lock taken elsewhere)."
+ReadModifyWrite(pr, o, x, m) :- rmwp_read(site, o, m, rc), rmwp_write(w, m, dobj), rmwp_before(rc, w),
+    rmwp_set(dobj, x, pr, site), rmwp_same_row(w, site, rc), !rmwp_guarded(w, x), !rmwp_locked(w).
+// rmwp_before(a, b): a starts before b in the same file (core's `earlier` gives no rows for TypeScript here).
+.decl rmwp_before(a: node, b: node)
+rmwp_before(a, b) :- rmwp_read(_, _, m, a), rmwp_write(b, m, _), node(d, a, _, s, _), node(d, b, _, t, _), s < t.
+
+// ---- Prisma calls ---------------------------------------------------------------------------------------------------
+// rmwp_model_call(c, m, op): c is `<x>.<m>.<op>(...)`, `this.prisma.<m>.<op>(...)` too.
+.decl rmwp_model_call(c: node, m: symbol, op: symbol)
+rmwp_model_call(c, m, op) :- called(c, f), static_prop(f, d, op), rmwp_op(op), static_prop(d, _, m).
+.decl rmwp_op(op: symbol)
+rmwp_op("findUnique"). rmwp_op("findUniqueOrThrow"). rmwp_op("findFirst"). rmwp_op("findFirstOrThrow").
+rmwp_op("findMany"). rmwp_op("update"). rmwp_op("updateMany"). rmwp_op("upsert").
+.decl rmwp_find_one(op: symbol)
+rmwp_find_one("findUnique"). rmwp_find_one("findUniqueOrThrow"). rmwp_find_one("findFirst").
+rmwp_find_one("findFirstOrThrow").
+// rmwp_arg_prop(c, k, v): the object argument of call c has `k: v` (v without parentheses).
+.decl rmwp_arg_prop(c: node, k: symbol, v: node)
+rmwp_arg_prop(c, k, v) :- call_arg(c, a, 0), deparen(a, o), rmwp_pair(o, k, _, v).
+// rmwp_pair(o, k, p, v): object literal o has pair p `k: v`; `{ k }` gives v the shorthand name itself.
+.decl rmwp_pair(o: node, k: symbol, p: node, v: node)
+rmwp_pair(o, k, p, v) :- kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", kn), key_static(kn, k),
+    field(p, "value", v0), deparen(v0, v).
+rmwp_pair(o, k, p, p) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, k).
+// rmwp_unawait(e, c): e is c, or `await c`, parentheses dropped.
+.decl rmwp_unawait(e: node, c: node)
+rmwp_unawait(e, c) :- deparen(e, c), !kind(c, "await_expression").
+rmwp_unawait(e, c) :- deparen(e, a), kind(a, "await_expression"), child(a, x, 0), deparen(x, c).
+
+// ---- the read -------------------------------------------------------------------------------------------------------
+// rmwp_read(site, o, m, rc): the binding at site, named o, holds a row of model m read by call rc:
+// `const o = await x.m.findUnique(...)`, or `for (const o of rows)` over such a findMany result (or the call itself).
+.decl rmwp_read(site: node, o: symbol, m: symbol, rc: node)
+rmwp_read(d, o, m, c) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), text(n, o),
+    field(d, "value", v), rmwp_unawait(v, c), rmwp_model_call(c, m, op), rmwp_find_one(op).
+rmwp_read(n, o, m, c) :- for_binding(l, n, o), kind(n, "identifier"), op(l, "of"), field(l, "right", r),
+    rmwp_rows(r, m, c).
+// rmwp_rows(e, m, c): e is the result of findMany call c on model m, directly or through a local const.
+.decl rmwp_rows(e: node, m: symbol, c: node)
+rmwp_rows(e, m, c) :- rmwp_unawait(e, c), rmwp_model_call(c, m, "findMany").
+rmwp_rows(e, m, c) :- deparen(e, i), kind(i, "identifier"), ref_site(i, d), kind(d, "variable_declarator"),
+    field(d, "value", v), rmwp_unawait(v, c), rmwp_model_call(c, m, "findMany").
+
+// ---- the write ------------------------------------------------------------------------------------------------------
+// rmwp_write(w, m, dobj): w is an update of model m and dobj the object it writes: update's and updateMany's
+// `data`, upsert's `update`.
+.decl rmwp_write(w: node, m: symbol, dobj: node)
+rmwp_write(w, m, d) :- rmwp_model_call(w, m, op), (op = "update" ; op = "updateMany"), rmwp_arg_prop(w, "data", d),
+    kind(d, "object").
+rmwp_write(w, m, d) :- rmwp_model_call(w, m, "upsert"), rmwp_arg_prop(w, "update", d), kind(d, "object").
+// rmwp_set(dobj, x, p, site): pair p of dobj sets field x to arithmetic on site's x, directly or through a const
+// declared in the same function (`const next = o.x - n; ... { x: next }`, `{ x }` too).
+.decl rmwp_set(dobj: node, x: symbol, p: node, site: node)
+rmwp_set(dobj, x, p, site) :- rmwp_pair(dobj, x, p, v), kind(v, k), k != "shorthand_property_identifier",
+    rmwp_calc(v, x, site).
+rmwp_set(dobj, x, p, site) :- rmwp_pair(dobj, x, p, v), (kind(v, "identifier") ; kind(v, "shorthand_property_identifier")),
+    ref_site(v, d), kind(d, "variable_declarator"), field(d, "value", e0), deparen(e0, e), rmwp_calc(e, x, site).
+// rmwp_calc(e, x, site): e computes a new number from site's field x: `o.x ± n`, `n * o.x`, `(o.x ?? 0) + 1`,
+// `o.x - a - b`, `Number(o.x) + n`, a Decimal's `o.x.plus(n)` / minus / add / sub / times / mul.
+// A `+` with a string or template operand is concatenation, not a count.
+.decl rmwp_calc(e: node, x: symbol, site: node)
+rmwp_calc(e, x, site) :- kind(e, "binary_expression"), rmwp_arith_op(e), !rmwp_concat(e), rmwp_operand(e, s),
+    rmwp_field_of(s, x, site).
+rmwp_calc(e, x, site) :- kind(e, "binary_expression"), rmwp_arith_op(e), !rmwp_concat(e), rmwp_operand(e, s),
+    rmwp_calc(s, x, site).
+rmwp_calc(e, x, site) :- called(e, f), static_prop(f, r, meth), rmwp_decimal_op(meth), rmwp_field_of(r, x, site).
+.decl rmwp_arith_op(e: node)
+rmwp_arith_op(e) :- kind(e, "binary_expression"), (op(e, "+") ; op(e, "-") ; op(e, "*") ; op(e, "/")).
+.decl rmwp_decimal_op(m: symbol)
+rmwp_decimal_op("plus"). rmwp_decimal_op("minus"). rmwp_decimal_op("add"). rmwp_decimal_op("sub").
+rmwp_decimal_op("times"). rmwp_decimal_op("mul").
+.decl rmwp_operand(e: node, s: node)
+rmwp_operand(e, s) :- (field(e, "left", s0) ; field(e, "right", s0)), deparen(s0, s).
+.decl rmwp_concat(e: node)
+rmwp_concat(e) :- op(e, "+"), rmwp_operand(e, s), (kind(s, "string") ; kind(s, "template_string")).
+// rmwp_field_of(s, x, site): s is `o.x` with o bound at site; also `o.x ?? d`, `o.x || d`, `Number(o.x)`.
+.decl rmwp_field_of(s: node, x: symbol, site: node)
+rmwp_field_of(s, x, site) :- static_prop(s, o, x), kind(o, "identifier"), ref_site(o, site).
+rmwp_field_of(s, x, site) :- kind(s, "binary_expression"), (op(s, "??") ; op(s, "||")), field(s, "left", l0),
+    deparen(l0, l), rmwp_field_of(l, x, site).
+rmwp_field_of(s, x, site) :- called(s, f), kind(f, "identifier"), text(f, "Number"), call_arg(s, a, 0), deparen(a, l),
+    rmwp_field_of(l, x, site).
+
+// ---- same row, guards, locks ----------------------------------------------------------------------------------------
+// rmwp_same_row(w, site, rc): the write's `where` names the row read: it reads o itself (`o.id`), or it and the
+// read's `where` share a variable (`where: { id }` in both), or the two `where` objects are the same text.
+.decl rmwp_same_row(w: node, site: node, rc: node)
+rmwp_same_row(w, site, rc) :- rmwp_read(site, _, m, rc), rmwp_write(w, m, _), rmwp_where_ref(w, site).
+rmwp_same_row(w, site, rc) :- rmwp_read(site, _, m, rc), rmwp_write(w, m, _), rmwp_where_ref(w, v),
+    rmwp_where_ref(rc, v), !kind(v, "import_specifier").
+rmwp_same_row(w, site, rc) :- rmwp_read(site, _, m, rc), rmwp_write(w, m, _), rmwp_arg_prop(w, "where", a),
+    rmwp_arg_prop(rc, "where", b), text(a, t), text(b, t).
+// rmwp_where_ref(c, d): a name in call c's `where` refers to the binding at d.
+.decl rmwp_where_ref(c: node, d: node)
+rmwp_where_ref(c, d) :- rmwp_arg_prop(c, "where", wo), (r = wo ; within(r, wo)),
+    (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), ref_site(r, d).
+// rmwp_guarded(w, x): the write's `where` also tests x or a version / timestamp / lock-holder field, so a lost race
+// updates nothing.
+.decl rmwp_guarded(w: node, x: symbol)
+rmwp_guarded(w, x) :- rmwp_model_call(w, _, _), rmwp_arg_prop(w, "where", wo), rmwp_where_key(wo, x, x).
+rmwp_guarded(w, x) :- rmwp_model_call(w, _, _), rmwp_arg_prop(w, "where", wo), rmwp_where_key(wo, k, x),
+    rmwp_version_key(k).
+// rmwp_where_key(wo, k, x): `where` object wo has key k at any depth (AND/OR lists too), x a field some write sets.
+.decl rmwp_where_key(wo: node, k: symbol, x: symbol)
+rmwp_where_key(wo, k, x) :- rmwp_set(_, x, _, _), rmwp_arg_prop(_, "where", wo), (o = wo ; within(o, wo)),
+    rmwp_pair(o, k, _, _).
+.decl rmwp_version_key(k: symbol)
+rmwp_version_key(k) :- rmwp_pair(_, k, _, _), iglob("*{version,revision,updatedAt,updated_at,etag}*", k).
+rmwp_version_key(k) :- rmwp_pair(_, k, _, _), iprefix("lock", k).
+// rmwp_locked(w): w runs inside a $transaction with Serializable or RepeatableRead isolation, or in a function that
+// takes a row lock or an advisory lock through raw SQL (`SELECT ... FOR UPDATE`, pg_advisory_xact_lock) or, before
+// w, through a helper named for it (`lockAssetForQuantityUpdate(tx, id)`, `selectForUpdate(…)`), or w releases a
+// claim on the row (its data sets `lockedAt`, `lockId`, `lockedBy`, ...): a worker that claimed the row is its only
+// writer. Also a compare-and-set: w's `where` pins, beside the id, a column its own data sets
+// (`where: { id, armedCouponId: couponId }, data: { armedCouponId: null, … }`), so a second writer matches no row.
+.decl rmwp_locked(w: node)
+rmwp_locked(w) :- rmwp_write(w, _, _), within(w, fa), called(t, f), static_prop(f, _, "$transaction"),
+    call_arg(t, fa0, 0), deparen(fa0, fa), call_arg(t, opts0, 1), deparen(opts0, opts),
+    rmwp_pair(opts, "isolationLevel", _, lv), text(lv, s), (contains("Serializable", s) ; contains("RepeatableRead", s)).
+rmwp_locked(w) :- rmwp_write(w, _, _), nearest(w, f, fn_scope), within(s, f),
+    (kind(s, "template_string") ; kind(s, "string")), text(s, t),
+    (icontains("for update", t) ; icontains("advisory_xact_lock", t) ; icontains("advisory_lock", t)).
+rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_pair(d, k, _, _), iprefix("lock", k).
+rmwp_locked(w) :- rmwp_write(w, _, _), nearest(w, f, fn_scope), kind(k, "call_expression"), within(k, f),
+    callee(k, n), (kind(n, "identifier"), text(n, x) ; static_prop(n, _, x)), (iprefix("lock", x) ; icontains("forupdate", x)),
+    node(dd, k, _, s, _), node(dd, w, _, t, _), s < t.
+rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_arg_prop(w, "where", wo), rmwp_pair(wo, k, _, _), k != "id",
+    rmwp_pair(d, k, _, _).
+
+// The cases, `cases/prisma-practice-read-modify-write/`, read as one repository: each line ending in `// caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-read-modify-write/package.json"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-read-modify-write/tsconfig.json"
+    .fixture "prisma/schema.prisma" from "../cases/prisma-practice-read-modify-write/prisma/schema.prisma"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-read-modify-write/src/lib/db.ts"
+    .fixture "src/app/api/orders/route.ts" from "../cases/prisma-practice-read-modify-write/src/app/api/orders/route.ts"
+    .fixture "src/server/wallet.ts" from "../cases/prisma-practice-read-modify-write/src/server/wallet.ts"
+    .fixture "src/server/board.ts" from "../cases/prisma-practice-read-modify-write/src/server/board.ts"
+    .fixture "src/server/jobs.ts" from "../cases/prisma-practice-read-modify-write/src/server/jobs.ts"
+    .fixture "src/server/stock.ts" from "../cases/prisma-practice-read-modify-write/src/server/stock.ts"
+    .fixture "src/server/wallet.test.ts" from "../cases/prisma-practice-read-modify-write/src/server/wallet.test.ts"
+    .expect _ at "src/app/api/orders/route.ts":13
+    .expect _ at "src/app/api/orders/route.ts":25
+    .expect _ at "src/server/board.ts":8
+    .expect _ at "src/server/board.ts":32
+    .expect _ at "src/server/jobs.ts":24
+    .expect _ at "src/server/stock.ts":21
+    .expect _ at "src/server/wallet.ts":13
+    .expect _ at "src/server/wallet.ts":23
+.end

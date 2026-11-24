@@ -1,0 +1,11 @@
+name: CI
+on: [pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx prisma migrate reset --force
+  release-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm release  # caught

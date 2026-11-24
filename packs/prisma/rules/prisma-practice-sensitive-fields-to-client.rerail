@@ -1,0 +1,313 @@
+.policy "prisma-practice-sensitive-fields-to-client" revision 1
+.description "Don't send a Prisma row whose model has a password hash, token or secret column to the browser whole: pick the columns with select, or drop the secrets with omit."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.prisma"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope text "**/*.prisma"
+// Rerail's own rule, not a port. A Prisma query returns every scalar column of its model unless it says otherwise,
+// so a `User` row carries its password hash, an `Account` row its OAuth tokens. When that row is the body of a JSON
+// response, a server action's or tRPC procedure's result, loader or getServerSideProps data, or a prop of a
+// 'use client' component, it is serialised to the browser: visible in devtools, caches and logs. The schema
+// (`*.prisma`, read as text) says which columns are secret: a String or Bytes column whose name, lowercased without
+// `_`, is or ends in password..., salt, secret, token, apikey, privatekey, secretkey, backupcode(s),
+// recoverycode(s), keyhash/tokenhash/secrethash, or starts with hashedkey/hashedtoken. The query is
+// `<anything>.<model>.<op>(...)`, op a row-returning one (findUnique, findFirst, findMany and their OrThrow forms,
+// create, update, upsert, delete, createManyAndReturn, updateManyAndReturn), model a schema model's accessor (its
+// name with the first letter lowercased). It follows `include` and relation keys of `select` (`true` or nested).
+//   return NextResponse.json(await prisma.user.findUnique({ where }))               reported (route handler)
+//   const user = await prisma.user.findUnique(...); return Response.json({ user })   reported (one local hop)
+//   res.status(200).json(users); c.json(users); json(users) from Remix / React Router  reported
+//   'use server' module: export async function getUser() { return prisma.user.findFirst() }   reported (action)
+//   publicProcedure.query(({ ctx }) => ctx.db.user.findMany())                       reported (tRPC)
+//   export async function loader() / getServerSideProps() returning the row          reported
+//   const members = await prisma.user.findMany(); return <MemberList members={members} />   reported when
+//     MemberList's module (relative, `@/`, `~/` or `@scope/pkg/...` import) is 'use client'
+//   prisma.post.findMany({ include: { author: true } }) returned                     reported (User via author)
+//   findUnique({ where, select: { id: true, email: true } })                          not reported
+//   findUnique({ where, omit: { passwordHash: true } }) omitting every secret column  not reported
+//   new PrismaClient({ omit: { user: { passwordHash: true } } }) anywhere in the repository   not reported
+//   findMany(args), findMany({ ...args }), omit: SOME_CONST: shape not visible here    not reported
+//   a model without secret columns; the row used only on the server (bcrypt.compare(pw, user.passwordHash))
+//   or mapped to a DTO first (`toPublicUser(user)`, `users.map(...)`, `{ id: user.id }`)   not reported
+//   a prop of a server component, or of a component defined in the same file         not reported
+//   protectedProcedure.output(UserOut).query(...): tRPC strips what UserOut does not name   not reported
+//   a display copy (`displaySecretKey`, `maskedToken`, `tokenHint`, `keyPrefix`), a token or secret column with a
+//   short literal default (`token String @default("usdt")`), a model of a schema under examples/, templates/,
+//   docs/ or samples/                                                                 not secret, not read
+// Gaps: a row passed through more than one local (`const result = { user }; return result`), a destructured
+// Promise.all, helpers that return a row to an action in another file, NestJS controllers, tRPC handlers kept in
+// their own files (cal.diy), barrel re-exports of a client component, a global omit held in a variable, `$extends`
+// result fields. A client component in another package of a monorepo is matched by path suffix, not by its
+// package.json. The engine runs .ts, .tsx and .js files apart (the schema, read as text, is seen by all): a .tsx
+// page and a .jsx client component do not meet, nor a .tsx query and a global omit in a .ts file. Models are joined by
+// name across the schemas read, so two app schemas that both declare `User` merge their columns. A JSON reply to
+// another server (a webhook subscription) is reported like one to a browser. Prisma 8 (release candidate,
+// `tx.orm.public.User.findMany`) is not matched yet; its rows also carry every column, so a later revision should add
+// its accessor shape.
+
+.violation SensitiveFieldsToClient(at: node, op: symbol, model: symbol, fields: symbol, sink: symbol)
+    "This {model}.{op}() returns whole rows with secret columns ({fields}), and its result is sent to the browser ({sink}), where anyone with the page can read them in devtools, caches and logs. Pick the columns the client needs with `select: {{ ... }}`, or drop the secret ones with `omit: {{ <column>: true }}` (Prisma 6.2+, or the omitApi preview feature from 5.13; nested under `include: {{ <relation>: {{ omit: ... }} }}` for a related row), or omit them for every query with `new PrismaClient({{ omit: {{ <model>: {{ <column>: true }} }} }})`. If the client really must receive one of them (a new API key shown once to its owner), select it explicitly so the intent is visible."
+SensitiveFieldsToClient(c, op, acc, fs, sink) :- sfc_sent(c, _), k = min k0 : { sfc_sent(c, k0) }, sfc_sink_name(k, sink),
+    sfc_query(c, acc, op), fs = join f by f sep ", " : { sfc_leak(c, f) }, fs != "".
+
+// ---- the schema: models, their secret columns and relations (schema.prisma read as text) ----
+// library candidate: pr_schema_model / pr_schema_field
+// sfc_line(d, l, t): line l of a schema. Schemas of examples, templates, docs and samples are left out: their models
+// share names with the app's (`User`) but not its columns, and models are joined by name.
+.decl sfc_line(d: number, l: number, t: symbol)
+sfc_line(d, l, t) :- doc(d, p, _), suffix(".prisma", p),
+    !match("(.*/)?(examples?|templates?|fixtures|docs|samples?|starters?)/.*", p), split_line(d, l, t).
+// sfc_open(d, l, kw, m): line l opens a block `model User {` (also view, type, enum, generator, datasource).
+.decl sfc_open(d: number, l: number, kw: symbol, m: symbol)
+sfc_open(d, l, kw, m) :- sfc_line(d, l, t),
+    match("\\s*(?<kw>model|view|type|enum|generator|datasource)\\s+(?<m>\\w+)\\s*\\{.*", t).
+.decl sfc_close(d: number, l: number)
+sfc_close(d, l) :- sfc_line(d, l, t), match("\\s*\\}\\s*(//.*)?", t).
+// sfc_field(m, f, ty): model (or view) m has field f of type ty (`String`, `String?`, `Post[]` give the bare type).
+.decl sfc_field_line(d: number, l: number, f: symbol, ty: symbol)
+sfc_field_line(d, l, f, ty) :- sfc_line(d, l, t), !contains("@ignore", t),
+    match("\\s*(?<f>[A-Za-z_]\\w*)\\s+(?<ty>[A-Za-z_]\\w*)(\\?|\\[\\])?(\\s.*)?", t), f != "model", f != "view".
+.decl sfc_field_at(d: number, l: number, m: symbol, f: symbol, ty: symbol)
+sfc_field_at(d, l, m, f, ty) :- sfc_field_line(d, l, f, ty), s = max s0 : { sfc_open(d, s0, _, _), s0 < l },
+    sfc_open(d, s, kw, m), (kw = "model" ; kw = "view"), count : { sfc_close(d, e), e > s, e < l } = 0.
+.decl sfc_field(m: symbol, f: symbol, ty: symbol)
+sfc_field(m, f, ty) :- sfc_field_at(_, _, m, f, ty).
+// sfc_model(acc, m): the client's accessor for model m: `User` is `prisma.user`, `APIKey` is `prisma.aPIKey`.
+.decl sfc_model(acc: symbol, m: symbol)
+sfc_model(cat(@lower(substr(m, 0, 1)), substr(m, 1, strlen(m) - 1)), m) :- sfc_open(_, _, kw, m), (kw = "model" ; kw = "view").
+// sfc_secret(m, f): a String or Bytes column of m whose name says it is a credential. Not one whose name says it is
+// a display copy (`displaySecretKey`, `maskedToken`, `tokenHint`, `keyPrefix`), nor a token or secret column with a
+// short literal default (`token String @default("usdt")` names a currency, not a credential).
+.decl sfc_secret(m: symbol, f: symbol)
+sfc_secret(m, f) :- sfc_field(m, f, ty), (ty = "String" ; ty = "Bytes"), sfc_secret_name(f), !sfc_literal_default(m, f).
+.decl sfc_secret_name(f: symbol)
+sfc_secret_name(f) :- sfc_field(_, f, _), n = @lower(@replace_all(f, "_", "")),
+    match("(.*password.*|.*salt|.*secret|.*secretkey|.*token|.*apikey|.*privatekey|.*(backup|recovery)codes?|.*(key|token|secret)hash|hashed(api)?(key|token|secret).*)", n),
+    !match(".*(display|masked|partial|preview|hint|last4|prefix|redacted).*", n).
+.decl sfc_literal_default(m: symbol, f: symbol)
+sfc_literal_default(m, f) :- sfc_field_at(d, l, m, f, _), n = @lower(f), !contains("password", n), sfc_line(d, l, t),
+    match(".*@default\\(\\s*\"[^\"]{1,24}\"\\s*\\).*", t).
+// sfc_rel(m, f, m2): field f of m is a relation to model m2 (`author User @relation(...)`, `posts Post[]`).
+.decl sfc_rel(m: symbol, f: symbol, m2: symbol)
+sfc_rel(m, f, m2) :- sfc_field(m, f, m2), sfc_model(_, m2).
+
+// ---- the query and the shape of its result ----
+// library candidate: pr_model_op (row-returning ops only)
+.decl sfc_row_op(op: symbol)
+sfc_row_op("findUnique"). sfc_row_op("findUniqueOrThrow"). sfc_row_op("findFirst"). sfc_row_op("findFirstOrThrow").
+sfc_row_op("findMany"). sfc_row_op("create"). sfc_row_op("update"). sfc_row_op("upsert"). sfc_row_op("delete").
+sfc_row_op("createManyAndReturn"). sfc_row_op("updateManyAndReturn").
+// sfc_query(c, acc, op): c is `<receiver>.<acc>.<op>(...)` on a schema model; Drizzle's `db.query.users.findMany()`
+// is left out.
+.decl sfc_query(c: node, acc: symbol, op: symbol)
+sfc_query(c, acc, op) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", p), text(p, op), sfc_row_op(op), field(fn, "object", mo), kind(mo, "member_expression"),
+    field(mo, "property", mp), text(mp, acc), sfc_model(acc, _), field(mo, "object", r), !sfc_drizzle(r).
+.decl sfc_drizzle(r: node)
+sfc_drizzle(r) :- kind(r, "member_expression"), field(r, "property", p), text(p, "query").
+// sfc_key(o, k, v): object literal o has key k with value v (`k: v`, `"k": v`, shorthand `{ k }`, where v is k).
+.decl sfc_key(o: node, k: symbol, v: node)
+sfc_key(o, k, v) :- kind(o, "object"), child(o, pr, _), kind(pr, "pair"), field(pr, "key", kn), field(pr, "value", v),
+    (kind(kn, "property_identifier"), text(kn, k) ; kind(kn, "string"), str(kn, k)).
+sfc_key(o, k, s) :- kind(o, "object"), child(o, s, _), kind(s, "shorthand_property_identifier"), text(s, k).
+.decl sfc_spread(o: node)
+sfc_spread(o) :- kind(o, "object"), child(o, s, _), kind(s, "spread_element").
+// sfc_shape(c, o, m, path): object literal o says which columns of model m the query c returns, at relation path
+// path ("" at the root, "author." under `include: { author: ... }`).
+.decl sfc_shape(c: node, o: node, m: symbol, path: symbol)
+sfc_shape(c, o, m, "") :- sfc_query(c, acc, _), sfc_model(acc, m), field(c, "arguments", as), child(as, o, 0),
+    kind(o, "object").
+sfc_shape(c, o, m2, cat(path, k, ".")) :- sfc_shape(c, o0, m, path), (sfc_key(o0, "include", sel) ; sfc_key(o0, "select", sel)),
+    kind(sel, "object"), sfc_key(sel, k, o), kind(o, "object"), sfc_rel(m, k, m2).
+// sfc_whole(c, m, path): a whole row of m reaches the result at path: the query has no arguments, or an argument
+// object with no select (the root), or `include`/`select` of a relation with `true`.
+.decl sfc_whole(c: node, m: symbol, path: symbol, o: node)
+sfc_whole(c, m, "", c) :- sfc_query(c, acc, _), sfc_model(acc, m), field(c, "arguments", as), !child(as, _, 0).
+sfc_whole(c, m, path, o) :- sfc_shape(c, o, m, path), !sfc_key(o, "select", _), !sfc_spread(o), !sfc_opaque_omit(o).
+sfc_whole(c, m2, cat(path, k, "."), c) :- sfc_shape(c, o0, m, path), (sfc_key(o0, "include", sel) ; sfc_key(o0, "select", sel)),
+    kind(sel, "object"), sfc_key(sel, k, t), kind(t, "true"), sfc_rel(m, k, m2).
+.decl sfc_opaque_omit(o: node)  // `omit: SAFE` with no literal: assume it drops the secrets
+sfc_opaque_omit(o) :- sfc_key(o, "omit", v), !kind(v, "object").
+.decl sfc_omitted(o: node, f: symbol)
+sfc_omitted(o, f) :- sfc_key(o, "omit", v), sfc_key(v, f, t), kind(t, "true").
+// sfc_global_omit(acc, f): `new PrismaClient({ omit: { acc: { f: true } } })` somewhere in the repository.
+.decl sfc_global_omit(acc: symbol, f: symbol)
+sfc_global_omit(acc, f) :- kind(n, "new_expression"), field(n, "constructor", k), text(k, "PrismaClient"),
+    field(n, "arguments", as), child(as, o, 0), sfc_key(o, "omit", om), sfc_key(om, acc, mo), sfc_key(mo, f, t),
+    kind(t, "true").
+// sfc_leak(c, label): secret column f of a whole row in c's result, labelled with its relation path.
+.decl sfc_leak(c: node, label: symbol)
+sfc_leak(c, cat(path, f, " of ", m)) :- sfc_whole(c, m, path, o), sfc_secret(m, f), !sfc_omitted(o, f),
+    sfc_model(acc, m), !sfc_global_omit(acc, f).
+
+// ---- where the result goes ----
+// sfc_strip(e, x): e with await, parentheses, `as`, `satisfies` and `!` taken off.
+.decl sfc_strip(e: node, x: node)
+sfc_strip(e, e) :- sfc_value(_, e, _).
+sfc_strip(e, x) :- sfc_strip(e, y), (kind(y, "await_expression") ; kind(y, "parenthesized_expression") ;
+    kind(y, "as_expression") ; kind(y, "satisfies_expression") ; kind(y, "non_null_expression")), child(y, x, 0).
+// sfc_value(r, e, k): e is r or a part of r that is serialised as it is: an object's values and spreads, an array's
+// elements, a conditional's branches, `a ?? b` and `a || b`; k is the sink r came from.
+.decl sfc_value(r: node, e: node, k: number)
+sfc_value(r, r, k) :- sfc_root(r, k).
+sfc_value(r, x, k) :- sfc_value(r, e, k), sfc_strip(e, y), y != e, x = y.
+sfc_value(r, x, k) :- sfc_value(r, o, k), kind(o, "object"), child(o, p, _),
+    (kind(p, "pair"), field(p, "value", x) ; kind(p, "shorthand_property_identifier"), x = p ; kind(p, "spread_element"), child(p, x, 0)).
+sfc_value(r, x, k) :- sfc_value(r, a, k), kind(a, "array"), child(a, s, _),
+    (kind(s, "spread_element"), child(s, x, 0) ; !kind(s, "spread_element"), x = s).
+sfc_value(r, x, k) :- sfc_value(r, t, k), kind(t, "ternary_expression"), (field(t, "consequence", x) ; field(t, "alternative", x)).
+sfc_value(r, x, k) :- sfc_value(r, b, k), kind(b, "binary_expression"), (op(b, "??") ; op(b, "||")),
+    (field(b, "left", x) ; field(b, "right", x)).
+sfc_value(r, x, k) :- sfc_value(r, s, k), kind(s, "spread_element"), child(s, x, 0).
+// sfc_sent(c, k): query c's result is a value sent by sink k: the call itself, or a local bound to it in the same
+// function and block (`const user = await prisma.user.findUnique(...)`).
+.decl sfc_sent(c: node, k: number)
+sfc_sent(c, k) :- sfc_value(_, c, k), sfc_query(c, _, _).
+sfc_sent(c, k) :- sfc_value(_, e, k), (kind(e, "identifier") ; kind(e, "shorthand_property_identifier")), text(e, x),
+    sfc_local(dcl, x, c), nearest(dcl, b, sfc_block), within(e, b), nearest(e, f, sfc_fn), nearest(dcl, f, sfc_fn).
+.decl sfc_local(dcl: node, x: symbol, c: node)
+sfc_local(dcl, x, c) :- kind(dcl, "variable_declarator"), field(dcl, "name", n), kind(n, "identifier"), text(n, x),
+    field(dcl, "value", v), sfc_unwrap(v, c), sfc_query(c, _, _).
+.decl sfc_unwrap(v: node, c: node)
+sfc_unwrap(v, v) :- kind(dcl, "variable_declarator"), field(dcl, "value", v).
+sfc_unwrap(v, c) :- sfc_unwrap(v, y), (kind(y, "await_expression") ; kind(y, "parenthesized_expression") ;
+    kind(y, "as_expression") ; kind(y, "satisfies_expression") ; kind(y, "non_null_expression")), child(y, c, 0).
+.decl sfc_fn(k: symbol)
+sfc_fn("program"). sfc_fn("function_declaration"). sfc_fn("function_expression"). sfc_fn("arrow_function").
+sfc_fn("method_definition"). sfc_fn("generator_function_declaration"). sfc_fn("generator_function").
+.decl sfc_block(k: symbol)
+sfc_block("program"). sfc_block("statement_block"). sfc_block("switch_body").
+
+// sfc_root(r, k): an expression sent to the browser, by sink kind k (sfc_sink_name).
+.decl sfc_root(r: node, k: number)
+.decl sfc_sink_name(k: number, s: symbol)
+sfc_sink_name(1, "the body of a JSON response").
+sfc_sink_name(2, "a server action's return value").
+sfc_sink_name(3, "a tRPC procedure's result").
+sfc_sink_name(4, "loader or getServerSideProps data").
+sfc_sink_name(5, "a prop of a 'use client' component").
+// 1. NextResponse.json(v), Response.json(v); res/response/reply/c.json(v) or .send(v), also after .status(n);
+// json(v), typedjson(v), data(v) imported from Remix or React Router; new Response(JSON.stringify(v)).
+sfc_root(v, 1) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", p), text(p, "json"), field(fn, "object", o), (text(o, "NextResponse") ; text(o, "Response")),
+    sfc_arg0(c, v).
+sfc_root(v, 1) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", p), (text(p, "json") ; text(p, "send")), field(fn, "object", o), sfc_res(o), sfc_arg0(c, v).
+sfc_root(v, 1) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "identifier"),
+    (text(fn, "json") ; text(fn, "typedjson") ; text(fn, "data")), text(fn, x), docof(c, d), sfc_imports(d, x, s),
+    match("(@remix-run/.*|react-router.*|remix-typedjson|@vercel/remix)", s), sfc_arg0(c, v).
+sfc_root(v, 1) :- kind(n, "new_expression"), field(n, "constructor", k), (text(k, "Response") ; text(k, "NextResponse")),
+    field(n, "arguments", as), child(as, j, 0), kind(j, "call_expression"), field(j, "function", jf),
+    text(jf, "JSON.stringify"), sfc_arg0(j, v).
+.decl sfc_arg0(c: node, v: node)
+sfc_arg0(c, v) :- field(c, "arguments", as), child(as, v, 0), !kind(v, "comment").
+.decl sfc_res(o: node)  // the response object of Express, Next's Pages API routes, Fastify or Hono
+sfc_res(o) :- kind(o, "identifier"), (text(o, "res") ; text(o, "response") ; text(o, "reply") ; text(o, "c")).
+sfc_res(o) :- kind(o, "call_expression"), field(o, "function", f), kind(f, "member_expression"), field(f, "property", p),
+    (text(p, "status") ; text(p, "code")), field(f, "object", r), sfc_res(r).
+// 2-4. What an entry function returns: `return v`, or an arrow's expression body.
+sfc_root(v, k) :- sfc_entry(f, k), kind(r, "return_statement"), nearest(r, f, sfc_fn), child(r, v, 0), !kind(v, "comment").
+sfc_root(v, k) :- sfc_entry(f, k), kind(f, "arrow_function"), field(f, "body", v), !kind(v, "statement_block").
+.decl sfc_entry(f: node, k: number)
+// A server action: a top-level function of a 'use server' module inside an export (next-safe-action's
+// `export const a = client.action(async () => ...)` too), or a function whose body starts with 'use server'.
+sfc_entry(f, 2) :- kind(p, "program"), sfc_directive(p, "use server"), docof(p, d), kind(f, k), sfc_fn(k), k != "program",
+    docof(f, d), nearest(f, p, sfc_fn), inside(f, e, "export_statement").
+sfc_entry(f, 2) :- kind(f, k), sfc_fn(k), field(f, "body", b), sfc_directive(b, "use server").
+// tRPC: the resolver of `<...procedure...>.query(fn)` or `.mutation(fn)`, unless the chain has `.output(schema)`:
+// tRPC then parses the result with that schema and strips every key it does not name.
+sfc_entry(f, 3) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", p), (text(p, "query") ; text(p, "mutation")), field(fn, "object", o), match("(?s).*[Pp]rocedure.*", o),
+    !match("(?s).*\\.\\s*output\\s*\\(.*", o), sfc_arg0(c, f), (kind(f, "arrow_function") ; kind(f, "function_expression")).
+// Remix / React Router `loader` and `action` exports under routes/, Next's getServerSideProps and getStaticProps.
+sfc_entry(f, 4) :- sfc_exported_fn(f, x), (x = "getServerSideProps" ; x = "getStaticProps").
+sfc_entry(f, 4) :- sfc_exported_fn(f, x), (x = "loader" ; x = "action"), docof(f, d), doc(d, p, _), contains("routes/", p).
+.decl sfc_exported_fn(f: node, x: symbol)
+sfc_exported_fn(f, x) :- kind(e, "export_statement"), field(e, "declaration", f), kind(f, "function_declaration"),
+    field(f, "name", n), text(n, x).
+sfc_exported_fn(f, x) :- kind(e, "export_statement"), field(e, "declaration", l), child(l, dcl, _),
+    kind(dcl, "variable_declarator"), field(dcl, "name", n), text(n, x), field(dcl, "value", f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
+// 5. A JSX attribute value or spread `{...v}` on a component whose module is 'use client', in a file that is not.
+sfc_root(v, 5) :- sfc_client_tag(el), (child(el, a, _), kind(a, "jsx_attribute"), child(a, j, _) ; child(el, j, _)),
+    kind(j, "jsx_expression"), child(j, v, 0), !kind(v, "comment").
+.decl sfc_client_tag(el: node)
+sfc_client_tag(el) :- sfc_tag(el, d, x, s), sfc_target(d, s, d2), sfc_use_client(d2), !sfc_use_client(d).
+.decl sfc_tag(el: node, d: number, x: symbol, s: symbol)  // <X ...> with X imported from s in document d
+sfc_tag(el, d, x, s) :- (kind(el, "jsx_opening_element") ; kind(el, "jsx_self_closing_element")), field(el, "name", t),
+    kind(t, "identifier"), text(t, x), match("[A-Z].*", x), docof(el, d), sfc_imports(d, x, s).
+
+// sfc_directive(b, x): b (a program or a function body) starts with the directive x ("use client", "use server").
+.decl sfc_directive(b: node, x: symbol)
+sfc_directive(b, x) :- (kind(b, "program") ; kind(b, "statement_block")), child(b, st, i), kind(st, "expression_statement"),
+    child(st, l, 0), kind(l, "string"), str(l, x), prefix("use ", x),
+    count : { child(b, o, j), j < i, !kind(o, "comment"), !sfc_string_stmt(o) } = 0.
+.decl sfc_string_stmt(st: node)
+sfc_string_stmt(st) :- kind(st, "expression_statement"), child(st, l, 0), kind(l, "string").
+.decl sfc_use_client(d: number)
+sfc_use_client(d) :- kind(p, "program"), docof(p, d), sfc_directive(p, "use client").
+
+// ---- library candidate: import resolution (no tsconfig facts in the runner) ----
+// sfc_imports(d, x, s): document d imports local name x from specifier s (default or named).
+.decl sfc_imports(d: number, x: symbol, s: symbol)
+sfc_imports(d, x, s) :- kind(i, "import_statement"), docof(i, d), field(i, "source", src), str(src, s), within(n, i),
+    (kind(n, "import_specifier"), (field(n, "alias", a) ; !field(n, "alias", _), field(n, "name", a)), text(a, x) ;
+     kind(n, "import_clause"), child(n, a, 0), kind(a, "identifier"), text(a, x)).
+// sfc_target(d, s, d2): specifier s, imported by d for a client-component check, names document d2. Relative
+// specifiers join d's directory; `@/x`, `~/x`, `#/x` match a file ending in /x (tsconfig `paths` are not facts);
+// `@scope/pkg/x` a file ending in /pkg/x or /pkg/src/x. Extensions and index files as TypeScript tries them.
+.decl sfc_wanted(d: number, s: symbol)
+sfc_wanted(d, s) :- sfc_tag(el, d, _, s), (child(el, a, _), kind(a, "jsx_attribute"), child(a, j, _) ; child(el, j, _)),
+    kind(j, "jsx_expression").
+.decl sfc_target(d: number, s: symbol, d2: number)
+sfc_target(d, s, d2) :- sfc_wanted(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), sfc_ext(e),
+    f = cat(b, e), doc(d2, f, _).
+sfc_target(d, s, d2) :- sfc_wanted(d, s), match("[@~#]/(?<r>.+)", s), sfc_ext(e), t = cat("/", r, e), doc(d2, f, _),
+    (suffix(t, f) ; f = cat(r, e)).
+sfc_target(d, s, d2) :- sfc_wanted(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), sfc_ext(e), doc(d2, f, _),
+    (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+.decl sfc_ext(e: symbol)
+sfc_ext(".tsx"). sfc_ext(".ts"). sfc_ext(".jsx"). sfc_ext(".js").
+sfc_ext("/index.tsx"). sfc_ext("/index.ts"). sfc_ext("/index.jsx"). sfc_ext("/index.js").
+
+// The cases, `cases/prisma-practice-sensitive-fields-to-client/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/routes/settings.tsx" from "../cases/prisma-practice-sensitive-fields-to-client/app/routes/settings.tsx"
+    .fixture "pages/api/legacy.ts" from "../cases/prisma-practice-sensitive-fields-to-client/pages/api/legacy.ts"
+    .fixture "pages/profile/[id].tsx" from "../cases/prisma-practice-sensitive-fields-to-client/pages/profile/[id].tsx"
+    .fixture "prisma/schema.prisma" from "../cases/prisma-practice-sensitive-fields-to-client/prisma/schema.prisma"
+    .fixture "examples/demo/prisma/schema.prisma" from "../cases/prisma-practice-sensitive-fields-to-client/examples/demo/prisma/schema.prisma"
+    .fixture "src/actions/user.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/actions/user.ts"
+    .fixture "src/app/api/keys/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/keys/route.ts"
+    .fixture "src/app/api/me/route.test.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/me/route.test.ts"
+    .fixture "src/app/api/me/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/me/route.ts"
+    .fixture "src/app/api/posts/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/posts/route.ts"
+    .fixture "src/app/api/users/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/users/route.ts"
+    .fixture "src/app/api/wallets/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/wallets/route.ts"
+    .fixture "src/app/team/avatar.tsx" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/team/avatar.tsx"
+    .fixture "src/app/team/legacy/page.tsx" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/team/legacy/page.tsx"
+    .fixture "src/components/legacy-table.jsx" from "../cases/prisma-practice-sensitive-fields-to-client/src/components/legacy-table.jsx"
+    .fixture "src/app/team/page.tsx" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/team/page.tsx"
+    .fixture "src/app/team/server-list.tsx" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/team/server-list.tsx"
+    .fixture "src/components/member-list.tsx" from "../cases/prisma-practice-sensitive-fields-to-client/src/components/member-list.tsx"
+    .fixture "src/lib/auth.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/lib/auth.ts"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/lib/db.ts"
+    .fixture "src/server/routers/user.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/server/routers/user.ts"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-sensitive-fields-to-client/tsconfig.json"
+    .expect _ at "app/routes/settings.tsx":6
+    .expect _ at "pages/api/legacy.ts":6
+    .expect _ at "pages/profile/[id].tsx":5
+    .expect _ at "src/actions/user.ts":8
+    .expect _ at "src/app/api/me/route.ts":7
+    .expect _ at "src/app/api/posts/route.ts":7
+    .expect _ at "src/app/api/users/route.ts":7
+    .expect _ at "src/app/team/page.tsx":7
+    .expect _ at "src/app/team/page.tsx":8
+    .expect _ at "src/server/routers/user.ts":7
+.end

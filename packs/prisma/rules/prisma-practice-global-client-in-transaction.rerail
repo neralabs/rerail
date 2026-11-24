@@ -1,0 +1,236 @@
+.policy "prisma-practice-global-client-in-transaction" revision 1
+.description "Inside an interactive $transaction callback, query through tx and pass tx to helpers, not through the outer Prisma client, whose queries run outside the transaction."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. An interactive transaction, `<client>.$transaction(async (tx) => …)`, runs its
+// queries on one connection, through `tx`. A query made inside the callback through the outer client goes out on
+// another pooled connection, outside the transaction: a write commits even when the callback throws and the
+// transaction rolls back (an order marked paid with its line items gone), a read misses the transaction's own
+// uncommitted writes, and a write to a row the transaction has locked waits for it until the transaction times out
+// (P2028). Prisma's issue #17215 calls the helper form easy to write and hard to catch in review. Prisma 5 to 7;
+// Prisma 8's `db.transaction(async (tx) => …)` and `tx.orm.<schema>.<Model>` are not matched yet.
+// Reported, inside the body of a function written inline as the first argument of `<r>.$transaction(…)`, or in a
+// callback an array method there runs at once (`ids.map((id) => …)`, forEach, flatMap, filter, reduce, some, every,
+// find):
+//   - a query through the same client r: `r.<model>.<op>(…)` (findMany … groupBy and their OrThrow forms),
+//     `r.$queryRaw` / `$executeRaw` (tagged or Unsafe), `r.$runCommandRaw(…)`, and a nested `r.$transaction(…)`,
+//     which is a transaction of its own. r is the same binding (`prisma`, an import), the same chain of the same
+//     binding (`ctx.db`, `this.prisma`), or, through an import, the same exported client (a default export of the
+//     client counts as the client).
+//   - a call `g(…)` of a function g of the project (same file, or imported, one hop) whose body queries that same
+//     client by its module binding, when the call passes nothing that names the callback's parameters.
+//   - the same with a callback that takes no parameter: every query in it then runs outside the transaction.
+// Left alone:
+//   - `tx.<model>.<op>(…)`, and a helper given `tx` (`auditWith(tx, …)`, `recordEvent("x", tx)`, `g({ tx })`).
+//   - a callback whose parameter shadows the client's name (`async (prisma) => prisma.order.update(…)`).
+//   - another client (a second database's `analytics.event.create(…)`): its writes were never in the transaction.
+//   - the array form `prisma.$transaction([prisma.a.create(…), …])`: its queries are the transaction's.
+//   - queries before or after the `$transaction` call, and in its catch.
+//   - queries in a function the callback only defines, to run later: `after(async () => …)`,
+//     `onCommit.push(() => …)`, a closure it returns. They run after the commit (on `tx` they would fail, P2028),
+//     which is the deliberate out-of-transaction write. Other nested functions (`.then(…)`, event handlers) are not
+//     followed either, a gap (below).
+//   - a helper whose query goes through a parameter, defaulted to the client or not (`client = prisma`).
+//   - a callback that takes a Postgres advisory transaction lock (`tx.$queryRaw\`SELECT pg_try_advisory_xact_lock(…)\``):
+//     the transaction is a mutex, and work on the outer client is chosen so it holds no row locks under it
+//     (nextcrm-app's plugin upgrade).
+// Gaps: a callback passed by name (`$transaction(work)`); helpers reached through a method (`this.svc.f()`), an
+// object (`repo.f()`), two hops or more, or a default export of a function; a helper that defaults to the client
+// and is called without `tx` (`recordEvent("x")`); the outer client passed to a helper (`f(prisma)`); a client from
+// a workspace package the importer and the helper name by different specifiers (`@repo/db` and `./client`); a second
+// client of the same database under another name (`db.$transaction(async (tx) => prisma.x.create(…))`); a query in a
+// `.then(…)` callback of an awaited promise, or in a callback a wrapper runs at once (`withRetries(() => …)`), which
+// do run inside the transaction.
+
+#include "tsx/eslint-a-common.rerail"
+
+.violation OuterClientInTransaction(at: node, call: symbol, r: symbol, l: number) "`{call}(…)` runs inside the interactive `{r}.$transaction(…)` callback at line {l} but goes through the outer client `{r}`, not the callback's transaction client: Prisma sends it on another pooled connection, outside the transaction, so a write commits even when the transaction rolls back, a read misses the transaction's uncommitted writes, and a write to a row the transaction has locked waits until the transaction times out (P2028). Call it on the transaction client the callback receives (`async (tx) => tx.<model>.<op>(…)`; add that parameter if the callback has none). If it must run outside the transaction on purpose (an audit or failure record that has to survive a rollback), make it after the `$transaction` call or in its catch instead."
+OuterClientInTransaction(q, call, rt, l) :- gct_direct(q, c, r), callee(q, m), text(m, call), text(r, rt), line(c, l).
+
+.violation HelperUsesOuterClient(at: node, g: symbol, r: symbol, l: number, q: symbol, p: symbol, ql: number) "`{g}(…)`, called inside the interactive `{r}.$transaction(…)` callback at line {l}, queries the module's Prisma client itself (`{q}(…)` at {p}:{ql}) instead of a client it is given, so that query runs on another connection, outside this transaction: a write commits even when the transaction rolls back, and a read misses the transaction's uncommitted writes. Give `{g}` a client parameter (`client: Prisma.TransactionClient = prisma`), query through it, and pass the callback's `tx`. If `{g}` must write outside the transaction on purpose (an audit or failure record that has to survive a rollback), call it after the `$transaction` call or in its catch instead."
+HelperUsesOuterClient(k, gx, rt, l, qt, p, ql) :- gct_helper(k, c, r, g, _), gct_fn_name(g, gx), text(r, rt), line(c, l),
+    ql = min m : { gct_helper(k, c, r, g, q0), line(q0, m) }, gct_helper(k, c, r, g, q2), line(q2, ql),
+    callee(q2, m2), text(m2, qt), docof(q2, d), doc(d, p, _).
+
+// gct_tx(c, r, f): call c is `<r>.$transaction(f, …)`, f a function written inline: the interactive form.
+.decl gct_tx(c: node, r: node, f: node)
+gct_tx(c, r, f) :- callee(c, m), kind(m, "member_expression"), field(m, "property", p), text(p, "$transaction"),
+    field(m, "object", r0), deparen(r0, r), call_arg(c, a, 0), deparen(a, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
+// gct_in_tx(n, c, r, f): call n runs while f, the callback of transaction call c on client r, runs: it is in f's own
+// body, or in a callback an array method there calls at once (`ids.map((id) => …)`, also under `Promise.all`). A
+// function the callback only defines runs later, after the commit or never inside it (`after(() => …)`,
+// `onCommit.push(() => …)`, a returned closure), and is not followed: moving its query to `tx` would break it.
+.decl gct_in_tx(n: node, c: node, r: node, f: node)
+gct_in_tx(n, c, r, f) :- gct_tx(c, r, f), kind(n, "call_expression"), nearest(n, g, gct_fn), gct_runs(g, f).
+.decl gct_fn(k: symbol)
+gct_fn("arrow_function"). gct_fn("function_expression"). gct_fn("function_declaration").
+gct_fn("method_definition"). gct_fn("generator_function"). gct_fn("generator_function_declaration").
+// gct_runs(g, f): g's body runs while transaction callback f runs (the set side-effect-in-transaction uses).
+.decl gct_runs(g: node, f: node)
+gct_runs(f, f) :- gct_tx(_, _, f).
+gct_runs(g, f) :- gct_runs(h, f), kind(k, "call_expression"), nearest(k, h, gct_fn), callee(k, m),
+    static_prop(m, _, x), gct_iter(x), call_arg(k, a, 0), deparen(a, g),
+    (kind(g, "arrow_function") ; kind(g, "function_expression")).
+.decl gct_iter(x: symbol)
+gct_iter("map"). gct_iter("forEach"). gct_iter("flatMap"). gct_iter("filter"). gct_iter("reduce").
+gct_iter("some"). gct_iter("every"). gct_iter("find").
+
+// gct_query(q, r): call q sends a query through client expression r: `r.<model>.<op>(…)` or `r.$queryRaw…`.
+.decl gct_query(q: node, r: node)
+gct_query(q, r) :- callee(q, m), kind(m, "member_expression"), field(m, "property", p), text(p, op), gct_op(op),
+    field(m, "object", mo0), deparen(mo0, mo), kind(mo, "member_expression"), field(mo, "property", mp),
+    kind(mp, "property_identifier"), text(mp, model), !prefix("$", model), field(mo, "object", r0), deparen(r0, r).
+gct_query(q, r) :- callee(q, m), kind(m, "member_expression"), field(m, "property", p), text(p, x), gct_raw(x),
+    field(m, "object", r0), deparen(r0, r).
+.decl gct_op(op: symbol)
+gct_op("findUnique"). gct_op("findUniqueOrThrow"). gct_op("findFirst"). gct_op("findFirstOrThrow").
+gct_op("findMany"). gct_op("create"). gct_op("createMany"). gct_op("createManyAndReturn"). gct_op("update").
+gct_op("updateMany"). gct_op("updateManyAndReturn"). gct_op("upsert"). gct_op("delete"). gct_op("deleteMany").
+gct_op("count"). gct_op("aggregate"). gct_op("groupBy").
+.decl gct_raw(x: symbol)
+gct_raw("$queryRaw"). gct_raw("$executeRaw"). gct_raw("$queryRawUnsafe"). gct_raw("$executeRawUnsafe").
+gct_raw("$queryRawTyped"). gct_raw("$runCommandRaw"). gct_raw("$transaction").
+
+// gct_direct(q, c, r): query q, in the callback of transaction c, goes through r itself.
+.decl gct_direct(q: node, c: node, r: node)
+gct_direct(q, c, r) :- gct_in_tx(q, c, r, f), !gct_lock_tx(f), gct_query(q, r2), gct_same(r, r2).
+// gct_lock_tx(f): callback f takes an advisory transaction lock with a raw query: the transaction is a mutex.
+.decl gct_lock_tx(f: node)
+gct_lock_tx(f) :- gct_in_tx(q, _, _, f), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, x), gct_raw(x), x != "$transaction", field(q, "arguments", a), text(a, t), contains("advisory_xact_lock", t).
+
+// gct_same(r, r2): two client expressions of the same text whose root names the same thing: the same declaration,
+// the same `this`, or (neither declared in the file) the same global name.
+.decl gct_recv(r: node)
+gct_recv(r) :- gct_tx(_, r, _).
+gct_recv(r) :- gct_in_tx(q, _, _, _), gct_query(q, r).
+.decl gct_chain(r: node, e: node)
+gct_chain(r, r) :- gct_recv(r).
+gct_chain(r, e2) :- gct_chain(r, e), kind(e, "member_expression"), field(e, "object", e0), deparen(e0, e2).
+.decl gct_root(r: node, o: node)
+gct_root(r, o) :- gct_chain(r, o), (kind(o, "identifier") ; kind(o, "this")).
+.decl gct_same(r: node, r2: node)
+gct_same(r, r2) :- gct_tx(_, r, _), gct_recv(r2), text(r, t), text(r2, t), gct_root(r, o), gct_root(r2, o2),
+    gct_same_root(o, o2).
+.decl gct_same_root(o: node, o2: node)
+gct_same_root(o, o2) :- gct_root(_, o), gct_root(_, o2), ref_site(o, s), ref_site(o2, s).
+gct_same_root(o, o2) :- gct_root(_, o), gct_root(_, o2), kind(o, "this"), kind(o2, "this"), this_owner(o, s),
+    this_owner(o2, s).
+gct_same_root(o, o2) :- gct_root(_, o), gct_root(_, o2), kind(o, "identifier"), kind(o2, "identifier"),
+    !ref_site(o, _), !ref_site(o2, _), text(o, x), text(o2, x), docof(o, d), docof(o2, d).
+
+// gct_helper(k, c, r, g, q): call k, in the callback of transaction c on client r, calls function g, whose body
+// sends query q through the client r names, by its module binding; k passes none of the callback's parameters.
+.decl gct_helper(k: node, c: node, r: node, g: node, q: node)
+gct_helper(k, c, r, g, q) :- gct_in_tx(k, c, r, f), !gct_lock_tx(f), callee(k, n), kind(n, "identifier"), gct_fn_of(n, g),
+    !gct_passes_param(k, f), field(g, "body", gb), within(q, gb), gct_query(q, r3), kind(r3, "identifier"),
+    gct_client_sym(r, s), gct_client_sym(r3, s).
+// gct_passes_param(k, f): an argument of call k names a parameter of f: `g(tx)`, `g({ tx })`, `g(a, tx)`.
+.decl gct_passes_param(k: node, f: node)
+gct_passes_param(k, f) :- gct_in_tx(k, _, _, f), call_arg(k, a, _), (i = a ; within(i, a)), ref_site(i, s),
+    decl_site(f, _, s, "param", "value").
+
+// gct_fn_of(n, g): identifier n calls function g of the project: a declaration in reach, or an imported one.
+.decl gct_fn_of(n: node, g: node)
+gct_fn_of(n, g) :- gct_callee(n), ref_site(n, s), gct_fn_site(s, g).
+gct_fn_of(n, g) :- gct_callee(n), ref_site(n, sp), import_binding(sp, _, _, _), gct_sym(n, q), gct_fn_sym(q, g).
+.decl gct_callee(n: node)
+gct_callee(n) :- gct_in_tx(k, _, _, _), callee(k, n), kind(n, "identifier").
+.decl gct_fn_site(s: node, g: node)
+gct_fn_site(g, g) :- kind(g, "function_declaration").
+gct_fn_site(s, g) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, g),
+    (kind(g, "arrow_function") ; kind(g, "function_expression")).
+.decl gct_fn_sym(q: symbol, g: node)
+gct_fn_sym(@qname(m, x), g) :- gct_fn_site(s, g), top_level(s, x), docof(s, d), doc(d, _, m).
+.decl gct_fn_name(g: node, x: symbol)
+gct_fn_name(g, x) :- gct_fn_site(s, g), (field(s, "name", n) ; s = g, field(g, "name", n)), text(n, x).
+
+// gct_client_sym(r, s): client identifier r denotes the exported or top-level binding s; `export default prisma`
+// stands for `prisma`.
+.decl gct_client_sym(r: node, s: symbol)
+gct_client_sym(r, s) :- gct_client_ask(r), gct_sym(r, s0), gct_default_of(s0, s).
+gct_client_sym(r, s) :- gct_client_ask(r), gct_sym(r, s), !gct_default_of(s, _).
+.decl gct_client_ask(r: node)
+gct_client_ask(r) :- gct_tx(_, r, _), kind(r, "identifier").
+gct_client_ask(r) :- gct_query(q, r), kind(r, "identifier"), gct_fn_of(_, g), field(g, "body", gb), within(q, gb).
+.decl gct_default_of(s0: symbol, s: symbol)
+gct_default_of(@qname(m, "default"), @qname(m, x)) :- kind(e, "export_statement"), field(e, "value", v0),
+    deparen(v0, v), kind(v, "identifier"), text(v, x), docof(e, d), doc(d, _, m).
+
+// ---- library candidate: import resolution -------------------------------------------------------------------------
+// The runner binds no tsconfig_for/tsconfig_path/file rows, so tsx/names' `target` (and with it sym_of across files)
+// resolves nothing, and a tsconfig.json read as text sits in a lane of its own that code cannot join; this rule
+// resolves its own imports, by file layout.
+// gct_sym(n, q): identifier n names the binding q ("module#name"): declared at the top of its file; imported from a
+// module of the run and followed through `export … from` and `export *`; or imported from a package the run does not
+// resolve (`@repo/db`), which then names it ("@repo/db#prisma"), as tsx/names does for packages.
+.decl gct_sym_ask(n: node)
+gct_sym_ask(n) :- gct_callee(n).
+gct_sym_ask(n) :- gct_client_ask(n).
+.decl gct_sym(n: node, q: symbol)
+gct_sym(n, @qname(m, x)) :- gct_sym_ask(n), ref_site(n, site), top_level(site, x), docof(n, d), doc(d, _, m).
+gct_sym(n, q) :- gct_sym_ask(n), ref_site(n, sp), import_binding(sp, _, s, x), x != "*", docof(n, d),
+    gct_target(d, s, t), gct_exports(t, x, q).
+gct_sym(n, @qname(s, x)) :- gct_sym_ask(n), ref_site(n, sp), import_binding(sp, _, s, x), x != "*", docof(n, d),
+    !prefix(".", s), !gct_target(d, s, _).
+.decl gct_exports(m: symbol, x: symbol, q: symbol)
+gct_exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), exported_decl(e, x).
+gct_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), export_from(e, s, y, x),
+    gct_target(d, s, t), gct_exports(t, y, q).
+gct_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), star_export(e, s),
+    gct_target(d, s, t), gct_exports(t, x, q), x != "default".
+// gct_target(d, s, t): import specifier s in document d names module t of the run: "./x" and "../x" from d's
+// directory, and the aliases "@/x" and "~/x" as `<dir>/src/x` or `<dir>/x` for a directory above d (the
+// create-next-app and T3 layouts), each with tsx/names' extension and index candidates (resolve_base).
+.decl gct_target(d: number, s: symbol, t: symbol)
+gct_target(d, s, t) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), resolve_base(@join(@dir(p), s), t).
+gct_target(d, s, t) :- import_spec(i, s), match("[@~]/(?<r>.+)", s), docof(i, d), doc(d, p, _), gct_anc(p, a),
+    (b = @join(a, cat("src/", r)) ; b = @join(a, r)), resolve_base(b, t).
+.decl gct_anc(p: symbol, a: symbol)  // a is a directory above document p ("" for the root)
+gct_anc(p, a) :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _), match("(?<a>.*)/[^/]*", p).
+gct_anc(p, "") :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _).
+gct_anc(p, a) :- gct_anc(p, b), match("(?<a>.*)/[^/]*", b).
+
+// The cases, `cases/prisma-practice-global-client-in-transaction/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-global-client-in-transaction/package.json"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-global-client-in-transaction/tsconfig.json"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-global-client-in-transaction/src/lib/db.ts"
+    .fixture "src/lib/analytics-db.ts" from "../cases/prisma-practice-global-client-in-transaction/src/lib/analytics-db.ts"
+    .fixture "src/lib/audit.ts" from "../cases/prisma-practice-global-client-in-transaction/src/lib/audit.ts"
+    .fixture "src/lib/__tests__/orders.test.ts" from "../cases/prisma-practice-global-client-in-transaction/src/lib/__tests__/orders.test.ts"
+    .fixture "src/app/orders/actions.ts" from "../cases/prisma-practice-global-client-in-transaction/src/app/orders/actions.ts"
+    .fixture "src/app/orders/deferred.ts" from "../cases/prisma-practice-global-client-in-transaction/src/app/orders/deferred.ts"
+    .fixture "src/server/billing/invoices.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/billing/invoices.ts"
+    .fixture "src/server/billing/ledger.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/billing/ledger.ts"
+    .fixture "src/server/jobs/migrate-plugins.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/jobs/migrate-plugins.ts"
+    .fixture "src/server/api/routers/post.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/api/routers/post.ts"
+    .fixture "src/server/db/index.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/db/index.ts"
+    .fixture "src/server/billing/refunds.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/billing/refunds.ts"
+    .fixture "src/server/jobs/stock.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/jobs/stock.ts"
+    .fixture "src/server/jobs/sync.ts" from "../cases/prisma-practice-global-client-in-transaction/src/server/jobs/sync.ts"
+    .fixture "src/app/admin/orders/page.tsx" from "../cases/prisma-practice-global-client-in-transaction/src/app/admin/orders/page.tsx"
+    .fixture "src/app/admin/orders/close-button.tsx" from "../cases/prisma-practice-global-client-in-transaction/src/app/admin/orders/close-button.tsx"
+    .fixture "src/app/admin/orders/archive.tsx" from "../cases/prisma-practice-global-client-in-transaction/src/app/admin/orders/archive.tsx"
+    .expect _ at "src/app/orders/actions.ts":10
+    .expect _ at "src/app/orders/actions.ts":11
+    .expect _ at "src/app/orders/deferred.ts":11
+    .expect _ at "src/app/orders/deferred.ts":12
+    .expect _ at "src/server/billing/invoices.ts":5
+    .expect _ at "src/server/billing/invoices.ts":6
+    .expect _ at "src/server/billing/invoices.ts":17
+    .expect _ at "src/server/billing/ledger.ts":9
+    .expect _ at "src/server/api/routers/post.ts":8
+    .expect _ at "src/server/billing/refunds.ts":7
+    .expect _ at "src/server/jobs/sync.ts":7
+    .expect _ at "src/app/admin/orders/page.tsx":9
+    .expect _ at "src/app/admin/orders/close-button.tsx":8
+.end

@@ -1,0 +1,301 @@
+.policy "prisma-practice-raw-unsafe-interpolation" revision 1
+.description "Pass values to $queryRawUnsafe, $executeRawUnsafe and Prisma.raw as query parameters, never pasted into the SQL text, which opens the query to SQL injection."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Prisma escapes nothing in the SQL text it is given by `$queryRawUnsafe(sql, …)`,
+// `$executeRawUnsafe(sql, …)` and `Prisma.raw(sql)`: a value pasted into that text with `${…}` or `+` is SQL, and a
+// quote in it rewrites the query (SQL injection: read any table with UNION, change or delete rows). Prisma's docs
+// give the fix: `$1…$n` placeholders with the values as extra arguments, or the tagged `$queryRaw\`…${v}\`` and
+// `Prisma.sql\`…${v}…\``, which send every `${}` as a parameter. Only a value can be a parameter, so the rule
+// reports a pasted expression only where the SQL around it reads a value: inside a '…' string literal, or after a
+// comparison (=, <>, <, >, LIKE, ILIKE, IN (, ANY (, VALUES (, ||, LIMIT, OFFSET). A table, column, schema or
+// savepoint name pasted in ("${schema}", FROM ${table}) cannot be a parameter and is left alone, except a sort or
+// group key (ORDER BY, GROUP BY, a direction after the first column) taken from a `string` parameter its function never
+// checks (no `.includes(x)`, `.has(x)`, `.test(x)`, `.parse(x)`, `switch (x)`, `x === "…"`), the commonest Prisma
+// injection: `ORDER BY ${sort}`, `$queryRaw\`… ORDER BY ${Prisma.raw(sort)}\``, `Prisma.raw(sortBy)`. A statement
+// Postgres takes no parameters in (SET, CREATE, ALTER, DROP, SAVEPOINT, …, by its first word) is left alone too,
+// except a value quoted in '…' in a SET (`SET LOCAL app.tenant = '${tenant}'`), whose fix is
+// `set_config(…, $1, true)`. The SQL
+// text is the first argument as written, a local variable holding it (its initialiser and every `=`/`+=` to it), the
+// pieces of a `+` chain, templates nested in a `${…}` or a ternary's branches, and the callback of
+// `list.map((x) => `'${x}'`).join(",")`.
+//   prisma.$queryRawUnsafe(`SELECT * FROM "Product" WHERE name ILIKE '%${q}%'`)     reported: in a string literal
+//   prisma.$executeRawUnsafe('DELETE FROM "Cart" WHERE id = ' + id)                 reported: after =
+//   Prisma.raw(`status = '${status}'`)                                              reported
+//   let sql = `SELECT … WHERE 1=1`; sql += ` AND "teamId" = ${teamId}`; $queryRawUnsafe(sql)   reported at the +=
+//   Prisma.raw(statuses.map((s) => `'${s}'`).join(", "))                            reported: use Prisma.join
+//   prisma.$queryRawUnsafe('SELECT * FROM "User" WHERE id = $1', id)                not reported: a parameter
+//   prisma.$queryRaw`SELECT * FROM "User" WHERE id = ${id}`                         not reported: tagged, parameters
+//   tx.$executeRawUnsafe(`SET search_path TO "${schema}"`)                          not reported: an identifier
+//   $executeRawUnsafe(`SET LOCAL statement_timeout = ${ms}`)                        not reported: no parameters in SET
+//   $executeRawUnsafe(`SET LOCAL app.tenant = '${tenant}'`)                         reported: quoted, use set_config
+//   (sort: string) => $queryRawUnsafe(`… ORDER BY ${sort}`), `ORDER BY ${Prisma.raw(sort)}`   reported
+//   the same after `if (!COLS.includes(sort)) throw`, or with `sort: "name" | "date"`         not reported
+//   (alias: string) => Prisma.sql`${Prisma.raw(alias)}."userId" = …`, FROM ${table}           not reported: a name
+//   $queryRawUnsafe(`… WHERE kind = '${KIND}'`), `= ${MAX}`, `= ${10}`             not reported: a constant
+//   $queryRawUnsafe(`… LIMIT ${Number(limit)}`), `= ${escapeLiteral(v)}`            not reported: coerced or escaped
+//   Prisma.raw("NOW()"), Prisma.raw(`"${alias}"`)                                   not reported
+// Constants: a literal, a variable bound to one in this file (static_value), a SCREAMING_CASE name or a member of
+// one, an enum member (`Reason.CSAM`), a callback parameter over a SCREAMING_CASE array or Object.values/keys(), a
+// parameter typed as a union of string literals. Coerced or escaped: Number(), parseInt(), parseFloat(), Math.*,
+// BigInt(), .toFixed(), .toISOString(), .length, a variable initialised to one of these, calls named
+// *escape*/*quote*, placeholder builders named bind/param/placeholder, and `s.replace(/'/g, "''")`. Prisma 8
+// (release candidate) has no Unsafe methods and no Prisma.raw: its raw SQL is the tagged `db.raw.sql` and
+// `fns.raw`, which send every interpolated value as a parameter, so this rule has no v8 shape.
+// Gaps: SQL text built in a helper or another file and passed in; values typed number or enum are reported (no type
+// checker; the fix still applies); a value after a comma in a VALUES or IN list beyond the first; `/* */` comments
+// with an apostrophe; `.concat()`; a constant list held in a variable or imported before `.map`; an SQL fragment
+// string pasted after `=`; hand-built TemplateStringsArray passed to `$queryRaw(…)`; a sort key that is not a
+// parameter typed `string` (a member `input.sort`, an untyped JavaScript parameter, a local from the query string);
+// a table name from the caller (`FROM ${table}`), left alone with the alias helpers it cannot be told from.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+
+.violation RawUnsafeInterpolation(at: node, e: symbol, api: symbol, fix: symbol) "`{e}` is pasted into the SQL text given to `{api}`, which Prisma does not escape: a quote in it rewrites the query (SQL injection). {fix}"
+
+// rui_fix(api, fix): how to send the value as a parameter instead.
+.decl rui_fix(api: symbol, fix: symbol)
+rui_fix("$queryRawUnsafe", "Send it as a parameter: write `$1` (`$2`, …) in the SQL and pass the value as an extra argument, `$queryRawUnsafe(sql, value)`, or use the tagged template `$queryRaw`, which sends each interpolated value as a parameter. Leave it pasted only if it is a table or column name, which cannot be a parameter, and then take it from a fixed list of literals.").
+rui_fix("$executeRawUnsafe", "Send it as a parameter: write `$1` (`$2`, …) in the SQL and pass the value as an extra argument, `$executeRawUnsafe(sql, value)`, or use the tagged template `$executeRaw`, which sends each interpolated value as a parameter. Leave it pasted only if it is a table or column name, which cannot be a parameter, and then take it from a fixed list of literals.").
+rui_fix("Prisma.raw", "Build this fragment with the tagged template `Prisma.sql` instead of `Prisma.raw`, so the value is sent as a parameter; for an IN list, interpolate `Prisma.join(values)` in it. Leave it pasted only if it is a table or column name, which cannot be a parameter, and then take it from a fixed list of literals.").
+// rui_fix_utility(fix): a quoted value in a SET, which Postgres takes no parameters in.
+.decl rui_fix_utility(fix: symbol)
+rui_fix_utility("Postgres takes no bind parameters in SET, so `$1` does not work here: run `SELECT set_config('app.tenant', $1, true)` with the value as a parameter instead (`true` keeps the setting to the transaction, as SET LOCAL does), or take the value from a fixed list.").
+// rui_fix_ident(fix): a sort or group key from an unchecked `string` parameter.
+.decl rui_fix_ident(fix: symbol)
+rui_fix_ident("It stands where the SQL reads a name or a fragment, which cannot be a parameter, and it comes from a `string` parameter that nothing in this function checks, so a caller that passes a query-string value injects SQL. Look the text up in a fixed map of literals (`const ORDER = { newest: Prisma.sql`\"createdAt\" DESC`, name: Prisma.sql`\"name\"` }; ORDER[sort]`), or check it against a list first and type the parameter as a union of literals. Leave it only if every caller passes a constant.").
+
+// rui_api(c, api): c is a call whose first argument Prisma runs as SQL text, unescaped.
+.decl rui_api(c: node, api: symbol)
+rui_api(c, p) :- kind(c, "call_expression"), field(c, "function", f), static_prop(f, _, p),
+    (p = "$queryRawUnsafe" ; p = "$executeRawUnsafe").
+rui_api(c, "Prisma.raw") :- kind(c, "call_expression"), field(c, "function", f), static_prop(f, o, "raw"),
+    kind(o, "identifier"), text(o, "Prisma").
+
+// rui_part(p, c): expression p is (a piece of) the SQL text of call c.
+.decl rui_part(p: node, c: node)
+rui_part(x, c) :- rui_api(c, _), call_arg(c, a, 0), rui_unwrap(a, x).
+// A variable that holds the SQL: its initialiser, and what is assigned or appended to it.
+rui_part(x, c) :- rui_part(r, c), kind(r, "identifier"), ref_site(r, d), binding_value(d, v), rui_unwrap(v, x).
+rui_part(x, c) :- rui_part(r, c), kind(r, "identifier"), ref_site(r, d), ref_site(l, d), field(a, "left", l),
+    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "right", v),
+    rui_unwrap(v, x).
+// The pieces of a `+` chain, and templates nested in a substitution or a ternary's branches.
+rui_part(x, c) :- rui_part(b, c), kind(b, "binary_expression"), op(b, "+"), (field(b, "left", v) ;
+    field(b, "right", v)), rui_unwrap(v, x).
+rui_part(x, c) :- rui_part(t, c), kind(t, "template_string"), child(t, s, _), kind(s, "template_substitution"),
+    child(s, v, 0), rui_unwrap(v, x), (kind(x, "template_string") ; kind(x, "ternary_expression") ;
+    kind(x, "binary_expression") ; rui_mapjoin(x, _)).
+rui_part(x, c) :- rui_part(t, c), kind(t, "ternary_expression"), (field(t, "consequence", v) ;
+    field(t, "alternative", v)), rui_unwrap(v, x).
+// A list built for IN: `ids.map((id) => `'${id}'`).join(",")`; the callback's result is SQL text. Not when the
+// list is an enum's own values, `Object.values(Status).filter(…).map(…)`: no input reaches it.
+rui_part(x, c) :- rui_part(j, c), rui_mapjoin(j, x), !rui_enum_list(j).
+.decl rui_mapjoin(j: node, body: node)
+rui_mapjoin(j, b) :- kind(j, "call_expression"), field(j, "function", f), static_prop(f, m, "join"),
+    kind(m, "call_expression"), field(m, "function", g), static_prop(g, _, "map"), call_arg(m, cb, 0),
+    kind(cb, "arrow_function"), field(cb, "body", b0), rui_unwrap(b0, b).
+// rui_enum_list(j): the array mapped in j comes from Object.values() or Object.keys(), through array methods.
+.decl rui_enum_list(j: node)
+rui_enum_list(j) :- rui_mapjoin(j, _), field(j, "function", f), static_prop(f, m, "join"), rui_enum_src(m).
+.decl rui_enum_src(n: node)
+rui_enum_src(n) :- kind(n, "call_expression"), field(n, "function", f), (text(f, "Object.values") ;
+    text(f, "Object.keys")).
+rui_enum_src(n) :- kind(n, "call_expression"), field(n, "function", f), static_prop(f, o, _), rui_enum_src(o).
+
+// rui_utility(c): the SQL of c is a statement Postgres takes no bind parameters in (SET, CREATE, ALTER, DROP,
+// SAVEPOINT, …): a pasted value there needs another fix than a parameter, so the rule leaves it alone.
+.decl rui_utility(c: node)
+rui_utility(c) :- rui_root(t, c), rui_head(t, s),
+    match("(?is)\\s*(?:set|reset|create|alter|drop|truncate|savepoint|release|rollback|begin|commit|comment|grant|revoke|vacuum|analyze|lock|listen|notify|do|refresh|reindex|cluster)\\b.*", s).
+// rui_root(t, c): t starts the SQL text of c: the first argument, the initialiser of the variable passed, the left
+// end of a `+` chain.
+.decl rui_root(t: node, c: node)
+rui_root(x, c) :- rui_api(c, _), call_arg(c, a, 0), rui_unwrap(a, x).
+rui_root(x, c) :- rui_root(r, c), kind(r, "identifier"), ref_site(r, d), binding_value(d, v), rui_unwrap(v, x).
+rui_root(x, c) :- rui_root(b, c), kind(b, "binary_expression"), op(b, "+"), field(b, "left", v), rui_unwrap(v, x).
+.decl rui_head(t: node, s: symbol)
+rui_head(t, s) :- kind(t, "template_string"), child(t, f, 0), kind(f, "string_fragment"), text(f, s).
+rui_head(t, s) :- kind(t, "string"), str(t, s).
+
+// rui_unwrap(e, x): x is e without parentheses, `as`, `satisfies` and `!`.
+.decl rui_unwrap(e: node, x: node)
+rui_unwrap(e, x) :- deparen(e, y), rui_unwrap2(y, x).
+.decl rui_unwrap2(e: node, x: node)
+rui_unwrap2(e, e) :- !kind(e, "as_expression"), !kind(e, "satisfies_expression"), !kind(e, "non_null_expression"),
+    node(_, e, _, _, _).
+rui_unwrap2(e, x) :- (kind(e, "as_expression") ; kind(e, "satisfies_expression") ; kind(e, "non_null_expression")),
+    child(e, y, 0), rui_unwrap(y, x).
+
+// rui_value_pos(pre, last): the SQL before a pasted expression reads a value there. pre is all the literal text
+// before it (an odd number of ' puts it inside a string literal); last is the text right before it. match() tests
+// the whole string.
+.decl rui_value_pos(pre: symbol, last: symbol)
+rui_value_pos(pre, last) :- rui_pre(pre, last), rui_quoted(pre).
+rui_value_pos(pre, last) :- rui_pre(pre, last),
+    match("(?is).*(?:[=<>]|\\|\\||\\blike|\\bilike|\\bin\\s*\\(|\\bany\\s*\\(|\\bvalues\\s*\\(|\\blimit|\\boffset)\\s*", last).
+// rui_quoted(pre): an odd number of ' in pre (one in a `-- …` comment line not counted): what follows is inside a
+// string literal.
+.decl rui_quoted(pre: symbol)
+rui_quoted(pre) :- rui_pre(pre, _),
+    match("(?s)(?:[^'\\-]|-[^\\-']|--[^\\n]*\\n)*(?:-?'[^']*'(?:[^'\\-]|-[^\\-']|--[^\\n]*\\n)*)*-?'[^']*", pre).
+// rui_ident_pos(last): the SQL right before a pasted expression reads a sort or group key, bare or in "…": ORDER BY,
+// GROUP BY, also after the first column (`ORDER BY "x" ${dir}`). Table and alias positions (FROM, JOIN,
+// `${alias}."userId"`) are left out: on the corpus they are SQL-builder helpers that every caller hands a constant.
+.decl rui_ident_last(last: symbol)
+rui_ident_last(last) :- rui_pre(_, last).
+rui_ident_last(last) :- rui_raw_slot(_, last).
+.decl rui_ident_pos(last: symbol)
+rui_ident_pos(last) :- rui_ident_last(last),
+    match("(?is).*\\b(?:order|group)\\s+by(?:\\s+[\\w\".]+)?\\s+\"?", last).
+// rui_raw_slot(r, last): Prisma.raw call r is pasted into a template (`$queryRaw\`…\``, `Prisma.sql\`…\``) right
+// after the text last.
+.decl rui_raw_slot(r: node, last: symbol)
+rui_raw_slot(r, last) :- kind(s, "template_substitution"), child(s, v, 0), rui_unwrap(v, r), rui_api(r, "Prisma.raw"),
+    child(t, s, i), kind(t, "template_string"), child(t, f, i - 1), kind(f, "string_fragment"), text(f, last).
+.decl rui_pre(pre: symbol, last: symbol)
+rui_pre(pre, last) :- rui_pasted(_, _, pre, last).
+
+// rui_pasted(e, c, pre, last): expression e is pasted into the SQL text of c, after the text pre (last: the piece
+// right before e).
+.decl rui_pasted(e: node, c: node, pre: symbol, last: symbol)
+rui_pasted(e, c, pre, last) :- rui_part(t, c), kind(t, "template_string"), child(t, s, i),
+    kind(s, "template_substitution"), child(s, v, 0), rui_unwrap(v, e),
+    pre = join x by k sep "" : { child(t, g, k), k < i, kind(g, "string_fragment"), text(g, x) },
+    child(t, f, i - 1), kind(f, "string_fragment"), text(f, last).
+// In a `+` chain, the literal text of everything left of the pasted operand.
+rui_pasted(e, c, pre, pre) :- rui_part(b, c), kind(b, "binary_expression"), op(b, "+"), field(b, "right", r),
+    rui_unwrap(r, e), field(b, "left", l), rui_cat(l, pre).
+
+// rui_cat(n, s): s is the literal text of n, an operand in a `+` chain of SQL text: a string's value, a template's
+// fixed text, the pieces of a `+` joined, "" for anything else.
+.decl rui_catn(n: node)
+rui_catn(l) :- rui_part(b, _), rui_plus(b), field(b, "left", l).
+rui_catn(x) :- rui_catn(n), rui_plus(n), (field(n, "left", x) ; field(n, "right", x)).
+rui_catn(x) :- rui_catn(n), kind(n, "parenthesized_expression"), deparen(n, x).
+.decl rui_cat(n: node, s: symbol)
+rui_cat(n, s) :- rui_catn(n), str(n, s).
+rui_cat(n, s) :- rui_catn(n), kind(n, "template_string"),
+    s = join x by k sep "" : { child(n, g, k), kind(g, "string_fragment"), text(g, x) }.
+rui_cat(n, s) :- rui_catn(n), kind(n, "parenthesized_expression"), deparen(n, y), y != n, rui_cat(y, s).
+rui_cat(n, cat(a, b)) :- rui_catn(n), kind(n, "binary_expression"), op(n, "+"), field(n, "left", l),
+    field(n, "right", r), rui_cat(l, a), rui_cat(r, b).
+rui_cat(n, "") :- rui_catn(n), !str(n, _), !kind(n, "template_string"), !kind(n, "parenthesized_expression"),
+    !rui_plus(n).
+.decl rui_plus(n: node)
+rui_plus(n) :- kind(n, "binary_expression"), op(n, "+").
+
+// rui_safe(e): e is a constant, or coerced to a number, or escaped.
+.decl rui_safe(e: node)
+rui_safe(e) :- static_value(e, _).
+rui_safe(e) :- str(e, _).
+rui_safe(e) :- kind(e, "number").
+rui_safe(e) :- kind(e, "template_string").
+rui_safe(e) :- kind(e, "ternary_expression").
+rui_safe(e) :- kind(e, "binary_expression").
+rui_safe(e) :- kind(e, "identifier"), text(e, x), match("^[A-Z][A-Z0-9_]*$", x).
+rui_safe(e) :- kind(e, "member_expression"), field(e, "object", o), rui_unwrap(o, x), rui_safe_root(x).
+rui_safe(e) :- kind(e, "member_expression"), field(e, "property", p), text(p, "length").
+// An enum member, `BlockedReason.CSAM`.
+rui_safe(e) :- rui_cand(e), kind(e, "member_expression"), field(e, "property", p), text(p, x),
+    match("[A-Z][A-Z0-9_]*", x).
+rui_safe(e) :- rui_mapjoin(e, _).
+rui_safe(e) :- rui_coerced(e).
+// A variable whose initialiser is coerced: `const n = Number(req.query.n)`.
+rui_safe(e) :- kind(e, "identifier"), ref_site(e, d), binding_value(d, v0), rui_unwrap(v0, v), rui_coerced(v).
+// An element of a constant list: the parameter of a callback over a SCREAMING_CASE array or an enum's values,
+// `PATHS.map((p) => Prisma.raw(`'{${p}}'`))`.
+rui_safe(e) :- rui_cand(e), kind(e, "identifier"), ref_site(e, p), rui_list_param(p).
+.decl rui_list_param(p: node)
+rui_list_param(p) :- kind(m, "call_expression"), field(m, "function", g), static_prop(g, o, _), call_arg(m, cb, 0),
+    kind(cb, "arrow_function"), (field(cb, "parameter", p) ; field(cb, "parameters", ps), within(p, ps)),
+    (rui_safe_root(o) ; rui_enum_src(o)).
+// rui_coerced(e): a call that yields a number or an escaped literal. Only for the candidates (rui_cand): without
+// that guard the negation of rui_safe misses these rows (engine gap, see the notes).
+.decl rui_cand(e: node)
+rui_cand(e) :- rui_pasted(e, _, _, _).
+rui_cand(v) :- rui_pasted(e, _, _, _), kind(e, "identifier"), ref_site(e, d), binding_value(d, v0), rui_unwrap(v0, v).
+.decl rui_coerced(e: node)
+rui_coerced(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f), text(f, n),
+    match("(?i)^(?:Number|parseInt|parseFloat|Math\\.\\w+|BigInt|[\\w$.]*(?:escape|quote)\\w*|[\\w$.]+\\.(?:toFixed|toISOString)|(?:[\\w$]+\\.)*(?:bind|param|placeholder)\\w*)$", n).
+// Quotes doubled by hand: `s.replace(/'/g, "''")`, `s.replaceAll("'", "''")`.
+rui_coerced(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f), static_prop(f, _, m),
+    (m = "replace" ; m = "replaceAll"), call_arg(e, a, 0), text(a, t), contains("'", t).
+// A parameter typed as a union of string literals: `(key: 'appealGranted' | 'appealUpheld')`.
+rui_safe(e) :- rui_cand(e), kind(e, "identifier"), ref_site(e, p), field(rp, "pattern", p), field(rp, "type", t),
+    text(t, s), match("(?s):\\s*\\|?\\s*(?:'[^']*'|\"[^\"]*\")(?:\\s*\\|\\s*(?:'[^']*'|\"[^\"]*\"))*\\s*", s).
+.decl rui_safe_root(x: node)
+rui_safe_root(x) :- kind(x, "identifier"), text(x, n), match("^[A-Z][A-Z0-9_]*$", n).
+rui_safe_root(x) :- kind(x, "member_expression"), field(x, "object", o), rui_unwrap(o, y), rui_safe_root(y).
+
+RawUnsafeInterpolation(e, x, api, fix) :- rui_pasted(e, c, pre, last), rui_value_pos(pre, last), !rui_safe(e),
+    !rui_utility(c), rui_api(c, api), rui_fix(api, fix), text(e, x).
+// SET: a value pasted inside a '…' literal there is still SQL (`SET LOCAL app.tenant = '${tenant}'`, the usual
+// row-level-security tenant switch), and `set_config(name, $1, true)` takes it as a parameter. The other statements
+// without parameters stay alone even quoted: on the corpus they are partition bounds computed from dates.
+RawUnsafeInterpolation(e, x, api, fix) :- rui_pasted(e, c, pre, _), rui_quoted(pre), !rui_safe(e), rui_set(c),
+    rui_api(c, api), rui_fix_utility(fix), text(e, x).
+.decl rui_set(c: node)
+rui_set(c) :- rui_utility(c), rui_root(t, c), rui_head(t, s), match("(?is)\\s*set\\b.*", s).
+// A sort or group key filled from a `string` parameter that nothing checks: `ORDER BY ${sort}` in the SQL text, and
+// `Prisma.raw(sort)` pasted after ORDER BY in a tagged template (`$queryRaw\`… ORDER BY ${Prisma.raw(sort)}\``) or
+// named for a sort key anywhere (`Prisma.raw(sortBy)`, `Prisma.raw(direction)`).
+RawUnsafeInterpolation(e, x, api, fix) :- rui_pasted(e, c, pre, last), !rui_value_pos(pre, last), rui_ident_pos(last),
+    rui_api(c, api), !rui_utility(c), rui_open_string(e), rui_fix_ident(fix), text(e, x).
+RawUnsafeInterpolation(e, x, "Prisma.raw", fix) :- rui_api(c, "Prisma.raw"), call_arg(c, a, 0), rui_unwrap(a, e),
+    rui_open_string(e), text(e, x),
+    (rui_raw_slot(c, last), rui_ident_pos(last) ; match("(?:.*(?:[Ss]ort|[Oo]rder|[Dd]irection).*|dir|.*Dir)", x)),
+    rui_fix_ident(fix).
+
+// rui_open_string(e): e names a parameter typed `string` (or `string | undefined`) that its function never checks: no
+// `list.includes(e)`, `set.has(e)`, `re.test(e)`, `schema.parse(e)`, `switch (e)`, or `e === "…"`/`e in o`.
+.decl rui_open_string(e: node)
+rui_open_string(e) :- rui_ident_cand(e), kind(e, "identifier"), ref_site(e, p), rui_string_param(p), !rui_checked(p).
+.decl rui_ident_cand(e: node)
+rui_ident_cand(e) :- rui_pasted(e, _, _, _).
+rui_ident_cand(e) :- rui_api(c, "Prisma.raw"), call_arg(c, a, 0), rui_unwrap(a, e).
+.decl rui_string_param(p: node)
+rui_string_param(p) :- rui_ident_cand(e), kind(e, "identifier"), ref_site(e, p), field(rp, "pattern", p),
+    field(rp, "type", t), text(t, s), match("(?s):\\s*string(?:\\s*\\|\\s*(?:undefined|null))*\\s*", s).
+.decl rui_checked(p: node)
+rui_checked(p) :- rui_string_param(p), ref_site(u, p), kind(k, "call_expression"), call_arg(k, a, 0), deparen(a, u),
+    field(k, "function", f), static_prop(f, _, m), (m = "includes" ; m = "has" ; m = "test" ; m = "parse").
+rui_checked(p) :- rui_string_param(p), ref_site(u, p), kind(s, "switch_statement"), field(s, "value", v),
+    deparen(v, u).
+rui_checked(p) :- rui_string_param(p), ref_site(u, p), kind(b, "binary_expression"),
+    (op(b, "===") ; op(b, "!==") ; op(b, "==") ; op(b, "!=") ; op(b, "in")), (field(b, "left", v) ; field(b, "right", v)),
+    deparen(v, u).
+
+// The cases, `cases/prisma-practice-raw-unsafe-interpolation/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-raw-unsafe-interpolation/package.json"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-raw-unsafe-interpolation/tsconfig.json"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-raw-unsafe-interpolation/src/lib/db.ts"
+    .fixture "src/app/api/search/route.ts" from "../cases/prisma-practice-raw-unsafe-interpolation/src/app/api/search/route.ts"
+    .fixture "src/server/reports.ts" from "../cases/prisma-practice-raw-unsafe-interpolation/src/server/reports.ts"
+    .fixture "src/server/tenancy.ts" from "../cases/prisma-practice-raw-unsafe-interpolation/src/server/tenancy.ts"
+    .fixture "src/server/sorting.ts" from "../cases/prisma-practice-raw-unsafe-interpolation/src/server/sorting.ts"
+    .fixture "src/server/__tests__/reports.test.ts" from "../cases/prisma-practice-raw-unsafe-interpolation/src/server/__tests__/reports.test.ts"
+    .expect _ at "src/app/api/search/route.ts":8
+    .expect _ at "src/app/api/search/route.ts":15
+    .expect _ at "src/app/api/search/route.ts":16
+    .expect _ at "src/server/reports.ts":6
+    .expect _ at "src/server/reports.ts":7
+    .expect _ at "src/server/reports.ts":8
+    .expect _ at "src/server/reports.ts":14
+    .expect _ at "src/server/reports.ts":25
+    .expect _ at "src/server/reports.ts":31
+    .expect _ at "src/server/sorting.ts":8
+    .expect _ at "src/server/sorting.ts":9
+    .expect _ at "src/server/sorting.ts":10
+    .expect _ at "src/server/sorting.ts":36
+    .expect _ at "src/server/sorting.ts":42
+.end

@@ -1,0 +1,6 @@
+{
+  "name": "@shop/emails",
+  "private": true,
+  "main": "src/index.ts",
+  "dependencies": { "nodemailer": "^6.9.0" }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "@neralabs/rerail-pack-prisma",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: Prisma practice rules for transactions, bulk writes, raw SQL, client set-up and data sent to clients.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "prisma",
+    "orm",
+    "typescript",
+    "postgres"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/prisma"
+  },
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

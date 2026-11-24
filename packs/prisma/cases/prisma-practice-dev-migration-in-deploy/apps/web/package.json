@@ -1,0 +1,13 @@
+{
+  "name": "@acme/web",
+  "private": true,
+  "scripts": {
+    "dev": "prisma migrate dev && next dev",
+    "build": "prisma generate && prisma migrate deploy && next build",
+    "vercel-build": "prisma migrate dev && next build",
+    "start": "next start",
+    "prestart": "npx prisma db push --force-reset",
+    "migrate:prod": "dotenv -e .env.production -- npx prisma migrate deploy",
+    "db:push": "prisma db push"
+  }
+}

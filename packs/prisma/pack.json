@@ -1,0 +1,252 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "prisma",
+  "name": "Prisma",
+  "category": "framework",
+  "covers": "Rerail's own Prisma rules, from the Prisma docs and maintainers' advice, for safe transactions, bulk writes and raw SQL, one client, and rows that do not leak to the browser.",
+  "reason": "matches Prisma",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "@prisma/client",
+            "prisma"
+          ]
+        }
+      },
+      {
+        "files": [
+          "**/schema.prisma"
+        ],
+        "label": "schema.prisma files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "prisma-practice-global-client-in-transaction",
+      "document": "rules/prisma-practice-global-client-in-transaction.rerail",
+      "title": "Prisma practice: inside an interactive $transaction callback, query through tx and pass tx to helpers, never the outer client",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/orders/actions.ts",
+          "text": "\"use server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function markPaid(orderId: string) {\n  await prisma.$transaction(async (tx) => {\n    await tx.order.update({ where: { id: orderId }, data: { status: \"PAID\" } });\n    await prisma.lineItem.deleteMany({ where: { orderId } });\n  });\n}\n"
+        },
+        "passes": {
+          "path": "app/orders/actions.ts",
+          "text": "\"use server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function markPaid(orderId: string) {\n  await prisma.$transaction(async (tx) => {\n    await tx.order.update({ where: { id: orderId }, data: { status: \"PAID\" } });\n    await tx.lineItem.deleteMany({ where: { orderId } });\n  });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-unawaited-transaction-query",
+      "document": "rules/prisma-practice-unawaited-transaction-query.rerail",
+      "title": "Prisma practice: await every tx query inside the $transaction callback; never leave one floating or start it from forEach(async …) or a timer",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/cart/actions.ts",
+          "text": "\"use server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function checkout(cartId: string) {\n  await prisma.$transaction(async (tx) => {\n    const cart = await tx.cart.findUniqueOrThrow({ where: { id: cartId }, include: { items: true } });\n    cart.items.forEach(async (i) => {\n      await tx.stock.update({ where: { sku: i.sku }, data: { qty: { decrement: i.qty } } });\n    });\n    tx.cart.delete({ where: { id: cartId } });\n  });\n}\n"
+        },
+        "passes": {
+          "path": "app/cart/actions.ts",
+          "text": "\"use server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function checkout(cartId: string) {\n  await prisma.$transaction(async (tx) => {\n    const cart = await tx.cart.findUniqueOrThrow({ where: { id: cartId }, include: { items: true } });\n    for (const i of cart.items) {\n      await tx.stock.update({ where: { sku: i.sku }, data: { qty: { decrement: i.qty } } });\n    }\n    await tx.cart.delete({ where: { id: cartId } });\n  });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-raw-unsafe-interpolation",
+      "document": "rules/prisma-practice-raw-unsafe-interpolation.rerail",
+      "title": "Prisma practice: pass values to $queryRawUnsafe, $executeRawUnsafe and Prisma.raw as query parameters, never pasted into the SQL text",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/api/search/route.ts",
+          "text": "import { NextRequest, NextResponse } from \"next/server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function GET(req: NextRequest) {\n  const q = req.nextUrl.searchParams.get(\"q\") ?? \"\";\n  const rows = await prisma.$queryRawUnsafe(`SELECT id, name FROM \"Product\" WHERE name ILIKE '%${q}%'`);\n  return NextResponse.json(rows);\n}\n"
+        },
+        "passes": {
+          "path": "app/api/search/route.ts",
+          "text": "import { NextRequest, NextResponse } from \"next/server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function GET(req: NextRequest) {\n  const q = req.nextUrl.searchParams.get(\"q\") ?? \"\";\n  const rows = await prisma.$queryRawUnsafe('SELECT id, name FROM \"Product\" WHERE name ILIKE $1', `%${q}%`);\n  return NextResponse.json(rows);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-bulk-write-without-where",
+      "document": "rules/prisma-practice-bulk-write-without-where.rerail",
+      "title": "Prisma practice: give every deleteMany and updateMany a where that is always set",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/settings/actions.ts",
+          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/db\";\n\nexport async function clearAllDrafts() {\n  await prisma.draft.deleteMany({});\n}\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel Draft {\n  id     String @id @default(cuid())\n  userId String\n  body   String\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/app/settings/actions.ts",
+          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/db\";\nimport { auth } from \"@/lib/auth\";\n\nexport async function clearMyDrafts() {\n  const session = await auth();\n  if (!session?.user?.id) throw new Error(\"Not signed in\");\n  await prisma.draft.deleteMany({ where: { userId: session.user.id } });\n}\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel Draft {\n  id     String @id @default(cuid())\n  userId String\n  body   String\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-request-body-as-data",
+      "document": "rules/prisma-practice-request-body-as-data.rerail",
+      "title": "Prisma practice: never pass a request body or a Server Action's argument to Prisma as `data`; parse it with a schema or pick the fields",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/api/profile/route.ts",
+          "text": "import { NextRequest, NextResponse } from \"next/server\";\nimport { db } from \"@/lib/db\";\n\nexport async function PATCH(req: NextRequest) {\n  const body = await req.json();\n  const user = await db.user.update({ where: { id: body.id }, data: body });\n  return NextResponse.json(user);\n}\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/app/api/profile/route.ts",
+          "text": "import { NextRequest, NextResponse } from \"next/server\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nconst UpdateProfile = z.object({ id: z.string(), name: z.string().max(80) });\n\nexport async function PATCH(req: NextRequest) {\n  const { id, ...data } = UpdateProfile.parse(await req.json());\n  const user = await db.user.update({ where: { id }, data });\n  return NextResponse.json(user);\n}\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-sensitive-fields-to-client",
+      "document": "rules/prisma-practice-sensitive-fields-to-client.rerail",
+      "title": "Prisma practice: never send a row with a password hash, token or secret column to the browser; select the columns it needs or omit the secret ones",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/api/me/route.ts",
+          "text": "import { NextResponse } from \"next/server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function GET(req: Request) {\n  const id = req.headers.get(\"x-user-id\") ?? \"\";\n  const user = await prisma.user.findUnique({ where: { id } });\n  return NextResponse.json(user);\n}\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "model User {\n  id           String @id @default(cuid())\n  email        String @unique\n  passwordHash String\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/app/api/me/route.ts",
+          "text": "import { NextResponse } from \"next/server\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function GET(req: Request) {\n  const id = req.headers.get(\"x-user-id\") ?? \"\";\n  const user = await prisma.user.findUnique({ where: { id }, select: { id: true, email: true } });\n  return NextResponse.json(user);\n}\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "model User {\n  id           String @id @default(cuid())\n  email        String @unique\n  passwordHash String\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-side-effect-in-transaction",
+      "document": "rules/prisma-practice-side-effect-in-transaction.rerail",
+      "title": "Prisma practice: send mail, charge payments, call HTTP APIs, enqueue jobs and revalidate caches after an interactive transaction returns, not inside it",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/orders/actions.ts",
+          "text": "\"use server\";\n\nimport Stripe from \"stripe\";\nimport { PrismaClient } from \"@prisma/client\";\n\nconst prisma = new PrismaClient();\nconst stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);\n\nexport async function placeOrder(userId: string) {\n  return prisma.$transaction(async (tx) => {\n    const order = await tx.order.create({ data: { userId, status: \"PENDING\" } });\n    const intent = await stripe.paymentIntents.create({ amount: 1000, currency: \"usd\" });\n    return tx.order.update({ where: { id: order.id }, data: { paymentIntentId: intent.id } });\n  });\n}\n"
+        },
+        "passes": {
+          "path": "src/app/orders/actions.ts",
+          "text": "\"use server\";\n\nimport Stripe from \"stripe\";\nimport { PrismaClient } from \"@prisma/client\";\n\nconst prisma = new PrismaClient();\nconst stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);\n\nexport async function placeOrder(userId: string) {\n  const order = await prisma.$transaction(async (tx) => {\n    return tx.order.create({ data: { userId, status: \"PENDING\" } });\n  });\n  const intent = await stripe.paymentIntents.create({ amount: 1000, currency: \"usd\" });\n  return prisma.order.update({ where: { id: order.id }, data: { paymentIntentId: intent.id } });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-dev-migration-in-deploy",
+      "document": "rules/prisma-practice-dev-migration-in-deploy.rerail",
+      "title": "Prisma practice: apply migrations on deploy with prisma migrate deploy, never migrate dev, migrate reset or a data-losing db push",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "package.json",
+          "text": "{\n  \"name\": \"shop\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"next dev\",\n    \"build\": \"prisma generate && prisma migrate dev && next build\",\n    \"start\": \"next start\"\n  }\n}\n"
+        },
+        "passes": {
+          "path": "package.json",
+          "text": "{\n  \"name\": \"shop\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"prisma migrate dev && next dev\",\n    \"build\": \"prisma generate && prisma migrate deploy && next build\",\n    \"start\": \"next start\",\n    \"db:reset\": \"prisma migrate reset\"\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-read-modify-write",
+      "document": "rules/prisma-practice-read-modify-write.rerail",
+      "title": "Prisma practice: change counters, stock and balances with increment/decrement or a guarded update, not by writing back arithmetic on a value read earlier",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/api/orders/route.ts",
+          "text": "import { db } from \"@/lib/db\";\n\nexport async function POST(req: Request) {\n  const { productId, qty } = await req.json();\n  const product = await db.product.findUniqueOrThrow({ where: { id: productId } });\n  if (product.stock < qty) return Response.json({ error: \"sold out\" }, { status: 409 });\n  await db.product.update({\n    where: { id: productId },\n    data: { stock: product.stock - qty },\n  });\n  return Response.json({ ok: true });\n}\n"
+        },
+        "passes": {
+          "path": "src/app/api/orders/route.ts",
+          "text": "import { db } from \"@/lib/db\";\n\nexport async function POST(req: Request) {\n  const { productId, qty } = await req.json();\n  const res = await db.product.updateMany({\n    where: { id: productId, stock: { gte: qty } },\n    data: { stock: { decrement: qty } },\n  });\n  if (res.count === 0) return Response.json({ error: \"sold out\" }, { status: 409 });\n  return Response.json({ ok: true });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-one-client",
+      "document": "rules/prisma-practice-one-client.rerail",
+      "title": "Prisma practice: create PrismaClient once per process, never per call in a handler, and cache it on globalThis in a Next.js app",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/api/users/route.ts",
+          "text": "import { PrismaClient } from \"@prisma/client\";\n\nexport async function GET() {\n  const prisma = new PrismaClient();\n  const count = await prisma.user.count();\n  return Response.json({ count });\n}\n"
+        },
+        "passes": {
+          "path": "src/lib/db.ts",
+          "text": "import { PrismaClient } from \"@prisma/client\";\n\nconst globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };\n\nexport const prisma = globalForPrisma.prisma ?? new PrismaClient();\n\nif (process.env.NODE_ENV !== \"production\") globalForPrisma.prisma = prisma;\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-query-in-loop",
+      "document": "rules/prisma-practice-query-in-loop.rerail",
+      "title": "Prisma practice: load or write a list's rows in one query (an `in` filter, include, createMany, updateMany or a $transaction batch), not one query per item",
+      "group": "Prisma practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/orders/queries.ts",
+          "text": "import { prisma } from \"@/lib/db\";\n\nexport async function ordersWithItems(userId: string) {\n  const orders = await prisma.order.findMany({ where: { userId } });\n  for (const o of orders) {\n    o.items = await prisma.orderItem.findMany({ where: { orderId: o.id } });\n  }\n  return orders;\n}\n"
+        },
+        "passes": {
+          "path": "app/orders/queries.ts",
+          "text": "import { prisma } from \"@/lib/db\";\n\nexport async function ordersWithItems(userId: string) {\n  return prisma.order.findMany({ where: { userId }, include: { items: true } });\n}\n\nexport async function ownersOf(ids: string[]) {\n  return Promise.all(ids.map((id) => prisma.user.findUnique({ where: { id } })));\n}\n"
+        }
+      }
+    }
+  ]
+}

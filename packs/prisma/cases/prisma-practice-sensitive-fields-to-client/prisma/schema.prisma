@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String?
+  passwordHash String
+  resetToken   String?   @unique
+  hasPassword  Boolean   @default(true)
+  posts        Post[]
+  accounts     Account[]
+  apiKeys      ApiKey[]
+}
+
+model Account {
+  id            String  @id @default(cuid())
+  userId        String
+  provider      String
+  access_token  String? @db.Text
+  refresh_token String? @db.Text
+  user          User    @relation(fields: [userId], references: [id])
+}
+
+model Post {
+  id       String @id @default(cuid())
+  title    String
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+}
+
+model ApiKey {
+  id        String @id @default(cuid())
+  name      String
+  hashedKey String @unique
+  userId    String
+  user      User   @relation(fields: [userId], references: [id])
+}
+
+model Usage {
+  id          String @id @default(cuid())
+  inputTokens Int
+  model       String
+}
+
+model Wallet {
+  id               String  @id @default(cuid())
+  token            String  @default("usdt")
+  displaySecretKey String?
+  apiKeyPrefix     String?
+}

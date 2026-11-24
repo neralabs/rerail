@@ -1,0 +1,9 @@
+{
+  "name": "@acme/api",
+  "private": true,
+  "scripts": {
+    "start": "prisma migrate dev && node dist/server.js",
+    "start:dev": "prisma migrate dev && tsx watch src/server.ts",
+    "build": "tsc -p ."
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "acme",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "db:migrate": "pnpm --filter @acme/db db:migrate",
+    "db:reset": "pnpm --filter @acme/db db:reset",
+    "release": "pnpm --filter @acme/db db:migrate && turbo run build",
+    "deploy:preview": "if [ \"$VERCEL_ENV\" = \"preview\" ]; then pnpm --filter @acme/db db:reset; fi",
+    "test:e2e": "prisma migrate reset --force && playwright test",
+    "deploy:web": "turbo run db:push --filter=@acme/web",
+    "deploy:db": "turbo run db:push --filter=./packages/db"
+  }
+}

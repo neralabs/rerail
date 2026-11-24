@@ -1,0 +1,306 @@
+.policy "prisma-practice-dev-migration-in-deploy" revision 1
+.description "Apply Prisma migrations on deploy paths (build and start scripts, Dockerfiles, platform configs, workflows) with prisma migrate deploy, never migrate dev, migrate reset or a data-losing db push."
+.language json
+.mode log
+.scope include "**/package.json", "**/vercel.json", "**/railway.json"
+.scope exclude "**/test/**", "**/tests/**", "**/__tests__/**", "**/e2e/**", "**/__mocks__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+// Rerail's own rule, not a port. Prisma's docs: "`migrate dev` is a development command and should never be used in a
+// production environment", and the same of `migrate reset`. On a deploy path they run against the production database:
+// `migrate reset` drops the schema and every row in it; `migrate dev` generates and applies new migrations from the
+// schema, needs a shadow database, and asks to reset the database when the history has drifted; `db push
+// --accept-data-loss` drops the columns and tables a schema change would lose, and `db push --force-reset` drops the
+// data outright. Deploy paths apply migrations with `prisma migrate deploy`. Prisma 5-7. Prisma 8 (release candidate)
+// replaces these commands: `prisma db migrate` applies migrations, and `prisma db update` (db push's successor) loses
+// data only with `--delete <subject>`; a later revision can report `db update --delete` on deploy paths.
+// A deploy path is a command that runs when the app is built, installed or started for real:
+//   package.json "build"/"start"/"install"/"prepare" (with pre/post), "postinstall", "vercel-build",
+//   "heroku-prebuild"/"heroku-postbuild", and any script whose name has a deploy/release/prod/production segment
+//   ("db:deploy", "start:prod", "migrate:production")                              reported at the script
+//   vercel.json buildCommand/installCommand, railway.json build.buildCommand, deploy.startCommand/preDeployCommand
+//   a line of a Dockerfile (not Dockerfile.dev/.local/.test, nor under dev/ or local/), a Procfile, fly.toml,
+//   render.yaml, railway.toml, nixpacks.toml, netlify.toml, a compose file named for prod/production
+//   a GitHub Actions workflow line in a deploy/release/prod job, or in a workflow so named outside a test job
+//   a line of a `.sh` script one of the above names                                 reported at the script's line
+// It reports when that command runs the destructive command itself (`npx`, `pnpm`, `bunx`, exec-form arrays,
+// `node node_modules/prisma/build/index.js` alike), or through scripts it calls: `npm run x`, `npm start`, `pnpm x`,
+// `yarn x`, `bun run x` in the same package.json, `pnpm --filter <name> x`, `yarn workspace <name> x`, `npm run x -w
+// <name>` in the package so named, `turbo run x` in any package; the message names the script that holds it.
+//   "build": "prisma migrate dev && next build"                                   reported
+//   "build": "npm run db:migrate && next build", "db:migrate": "prisma migrate dev"  reported at build
+//   CMD npx prisma migrate reset --force && node server.js                         reported
+//   "build": "prisma generate && prisma migrate deploy && next build"              not reported
+//   "dev": "prisma migrate dev && next dev", "db:reset": "prisma migrate reset"   not reported: not deploy paths
+//   "start": "prisma migrate dev && next dev"                                     not reported: starts a dev server
+//   "postinstall": "prisma db push"                                               not reported: plain db push stops
+//                                                                                  rather than lose data
+//   if [ "$VERCEL_ENV" = "preview" ]; then npx prisma migrate reset --force; fi   not reported: a guard for a
+//                                                                                  preview/test/CI/dev database
+//   a workflow's `test` job running `prisma migrate reset --force` on its service database   not reported
+//   a script reached only from dev scripts, a Dockerfile.dev, docker-compose.yml   not reported
+// Gaps: commands built in variables or Makefiles; `cd dir && npm run x` (resolved in the package.json beside the file
+// and those above it, not in dir); a guard that names a non-production word in a negation (`!= "development"`); a
+// workflow whose jobs are indented other than two spaces; Heroku app.json, Kubernetes manifests, AWS/GCP deploy files.
+
+.violation DevMigrationInDeploy(at: loc, where: symbol, cmd: symbol, via: symbol, why: symbol, fix: symbol) "{where} runs `{cmd}`{via} on deploy, against the deployed database. {why} {fix} If this path only ever runs against a throwaway database (a test, CI or per-branch preview database rebuilt on every run), leave it."
+
+// The deploy command (t) runs a command (t2, itself or a script it calls) that holds the destructive command; t2 does
+// not start a dev server or watcher, neither t nor t2 guards it to a non-production database on the same line
+// (`if [ "$VERCEL_ENV" = "preview" ]`, `[ -n "$CI" ] &&`), and the line is not inside such an `if` block.
+DevMigrationInDeploy(@place(p, i), w, c, v, why, fix) :- dmid_src(p, i, w, t, x), dmid_run(p, i, x, t, _, t2, leaf),
+    dmid_danger(t2, c), dmid_follow(t2), !dmid_guard_text(t), !dmid_guard_text(t2), !dmid_guarded(p, i),
+    dmid_says(c, why, fix), dmid_via(leaf, v), dmid_scope(p).
+.decl dmid_guard_text(t: symbol)
+dmid_guard_text(t) :- dmid_text(t),
+    match("(?is).*(?:\\bif\\b[^\\n]*|\\[\\[?\\s[^\\]]*)\\b(?:preview|tests?|testing|e2e|ci|demo|dev|development|local)\\b.*", t).
+
+// ---- the destructive commands -----------------------------------------------------------------------------------
+.decl dmid_danger(t: symbol, cmd: symbol)
+dmid_danger(t, "prisma migrate dev") :- dmid_text(t), match("(?s).*\\bprisma(?:/build/index\\.js)?[\\s\"',]+migrate[\\s\"',]+dev\\b.*", t).
+dmid_danger(t, "prisma migrate reset") :- dmid_text(t), match("(?s).*\\bprisma(?:/build/index\\.js)?[\\s\"',]+migrate[\\s\"',]+reset\\b.*", t).
+dmid_danger(t, "prisma db push --accept-data-loss") :- dmid_text(t),
+    match("(?s).*\\bprisma(?:/build/index\\.js)?[\\s\"',]+db[\\s\"',]+push\\b[^&;|\\n]*--accept-data-loss\\b.*", t).
+dmid_danger(t, "prisma db push --force-reset") :- dmid_text(t),
+    match("(?s).*\\bprisma(?:/build/index\\.js)?[\\s\"',]+db[\\s\"',]+push\\b[^&;|\\n]*--force-reset\\b.*", t).
+// Every command text the rule may follow: package.json scripts, vercel.json/railway.json commands, and the lines of
+// the files the walk found. It does not depend on dmid_run, so the regexes below (match_all among them, which gives
+// no rows inside a recursive rule) run outside the recursion.
+.decl dmid_text(t: symbol)
+dmid_text(t) :- dmid_script(_, _, t, _, _).
+dmid_text(t) :- dmid_jcmd(_, _, _, t, _).
+dmid_text(t) :- dmid_line(_, _, _, t).
+
+.decl dmid_says(cmd: symbol, why: symbol, fix: symbol)
+dmid_says("prisma migrate dev", "`migrate dev` is a development command: it generates and applies new migrations from the current schema, needs a shadow database, and asks to reset the database (dropping its data) when the migration history has drifted.", "Apply the committed migrations with `prisma migrate deploy` there, and keep `migrate dev` in a script you run by hand against a development database.").
+dmid_says("prisma migrate reset", "`migrate reset` drops the database schema with all its data and reapplies the migrations.", "Apply the committed migrations with `prisma migrate deploy` there, and keep `migrate reset` in a script you run by hand against a development database.").
+dmid_says("prisma db push --accept-data-loss", "`db push --accept-data-loss` changes the schema without a migration and drops the columns and tables whose data the change would lose.", "Commit migrations and apply them with `prisma migrate deploy`; at the least drop `--accept-data-loss`, so `db push` stops instead of dropping data.").
+dmid_says("prisma db push --force-reset", "`db push --force-reset` drops all the data and recreates the schema.", "Commit migrations and apply them with `prisma migrate deploy`; at the least drop `--force-reset`.").
+
+.decl dmid_via(leaf: symbol, v: symbol)
+dmid_via("", "").
+dmid_via(l, cat(" through the `", l, "` script")) :- dmid_run(_, _, _, _, _, _, l), l != "".
+
+// ---- package.json, vercel.json, railway.json (the rule's documents) --------------------------------------------
+// A JSON string's text without its quotes; escapes stay as written (`\"`), which the regexes read as quotes.
+.decl dmid_jstr(n: node, s: symbol)
+dmid_jstr(n, @slice(s, 1, -1)) :- kind(n, "string"), text(n, s).
+.decl dmid_jtop(d: number, p: node, k: symbol, v: node)
+dmid_jtop(d, p, k, v) :- kind(p, "pair"), field(p, "key", kn), dmid_jstr(kn, k), field(p, "value", v), child(o, p, _),
+    kind(o, "object"), child(r, o, _), kind(r, "document"), docof(p, d).
+.decl dmid_jsub(d: number, p: node, k1: symbol, k2: symbol, v: node)
+dmid_jsub(d, p, k1, k2, v) :- dmid_jtop(d, _, k1, o), kind(o, "object"), child(o, p, _), kind(p, "pair"),
+    field(p, "key", kn), dmid_jstr(kn, k2), field(p, "value", v).
+.decl dmid_json(f: symbol, dir: symbol, name: symbol)
+dmid_json(f, @dir(f), n) :- doc(_, f, _), match("(?:.*/)?(?<n>package|vercel|railway)\\.json", f).
+// dmid_script(dir, name, command, path, line): "scripts": { name: command } in dir/package.json.
+.decl dmid_script(dir: symbol, k: symbol, t: symbol, f: symbol, l: number)
+dmid_script(dir, k, t, f, l) :- dmid_json(f, dir, "package"), doc(d, f, _), dmid_jsub(d, p, "scripts", k, v),
+    dmid_jstr(v, t), line(p, l).
+// dmid_pkg_name(dir, name): the "name" of dir/package.json, for `pnpm --filter <name>`.
+.decl dmid_pkg_name(dir: symbol, n: symbol)
+dmid_pkg_name(dir, n) :- dmid_json(f, dir, "package"), doc(d, f, _), dmid_jtop(d, _, "name", v), dmid_jstr(v, n).
+.decl dmid_deploy_script(k: symbol)
+dmid_deploy_script(k) :- dmid_script(_, k, _, _, _),
+    match("(?:pre|post)?(?:build|start|install|prepare)|vercel-build|heroku-(?:pre|post)build", k).
+dmid_deploy_script(k) :- dmid_script(_, k, _, _, _), match("(?i)(?:.*[:_.-])?(?:deploy|release|prod|production)(?:[:_.-].*)?", k).
+
+// ---- the deploy commands: dmid_src(path, line, where, command, package dir it runs in) ---------------------------
+.decl dmid_src(p: symbol, i: number, w: symbol, t: symbol, x: symbol)
+dmid_src(f, l, cat("The `", k, "` script"), t, dir) :- dmid_script(dir, k, t, f, l), dmid_deploy_script(k).
+dmid_src(f, l, w, t, x) :- dmid_jcmd(f, l, w, t, x).
+dmid_src(p, i, w, t, x) :- dmid_deploy_line(p, i, w, t), dmid_ctx(p, x).
+.decl dmid_jcmd(f: symbol, l: number, w: symbol, t: symbol, x: symbol)
+dmid_jcmd(f, l, cat("Vercel's `", k, "`"), t, x) :- dmid_json(f, dir, "vercel"), doc(d, f, _), dmid_jtop(d, p, k, v),
+    (k = "buildCommand" ; k = "installCommand"), dmid_jstr(v, t), line(p, l), dmid_json_ctx(dir, x).
+dmid_jcmd(f, l, cat("Railway's `", k1, ".", k2, "`"), t, x) :- dmid_json(f, dir, "railway"), doc(d, f, _),
+    dmid_jsub(d, p, k1, k2, v), ((k1 = "build", k2 = "buildCommand") ; (k1 = "deploy", k2 = "startCommand") ;
+    (k1 = "deploy", k2 = "preDeployCommand")), dmid_rail_cmd(v, t), line(p, l), dmid_json_ctx(dir, x).
+.decl dmid_rail_cmd(v: node, t: symbol)
+dmid_rail_cmd(v, t) :- dmid_jstr(v, t).
+dmid_rail_cmd(v, t) :- kind(v, "array"), child(v, e, _), dmid_jstr(e, t).
+// The package dirs a command from a file in dir runs in: package.json files in dir and above it.
+.decl dmid_json_ctx(dir: symbol, x: symbol)
+dmid_json_ctx(dir, x) :- dmid_json(_, dir, _), dmid_json(_, x, "package"),
+    (x = "" ; x = dir ; prefix(cat(x, "/"), dir)).
+.decl dmid_ctx(p: symbol, x: symbol)
+dmid_ctx(p, x) :- dmid_file(p, _), dmid_json(_, x, "package"), dir = @dir(p), (x = "" ; x = dir ; prefix(cat(x, "/"), dir)).
+
+// ---- what a command runs: itself, and the scripts it calls, transitively ----------------------------------------
+// dmid_run(path, line, package dir, command, current package dir, command run, script): the source's command runs
+// command run, the text of `script` ("" for the command itself), in the current package dir. A command that starts
+// a dev server is not followed.
+.decl dmid_run(p: symbol, i: number, x: symbol, t: symbol, cx: symbol, t2: symbol, leaf: symbol)
+dmid_run(p, i, x, t, x, t, "") :- dmid_src(p, i, _, t, x).
+dmid_run(p, i, x, t, cx, t3, n) :- dmid_run(p, i, x, t, cx, t2, _), dmid_follow(t2), dmid_calls(t2, n),
+    dmid_script(cx, n, t3, _, _).
+dmid_run(p, i, x, t, cx2, t3, n) :- dmid_run(p, i, x, t, _, t2, _), dmid_follow(t2), dmid_calls_in(t2, q, n),
+    dmid_pkg_name(cx2, q), dmid_script(cx2, n, t3, _, _).
+dmid_run(p, i, x, t, cx2, t3, n) :- dmid_run(p, i, x, t, _, t2, _), dmid_follow(t2), dmid_calls_turbo(t2, n),
+    !dmid_turbo_filtered(t2), dmid_script(cx2, n, t3, _, _).
+dmid_run(p, i, x, t, cx2, t3, n) :- dmid_run(p, i, x, t, _, t2, _), dmid_follow(t2), dmid_calls_turbo(t2, n),
+    dmid_turbo_pkg(t2, cx2), dmid_script(cx2, n, t3, _, _).
+.decl dmid_follow(t: symbol)
+dmid_follow(t) :- dmid_text(t), !match("(?s).*(?:\\b(?:next|nuxt|vite|remix|astro|react-router|nest)[\\s\"',]+(?:dev|start[\\s\"',]+--watch)\\b|\\bnodemon\\b|\\btsx[\\s\"',]+watch\\b|\\bts-node-dev\\b|\\b(?:npm[\\s\"',]+run|pnpm(?:[\\s\"',]+run)?|yarn(?:[\\s\"',]+run)?|bun[\\s\"',]+run|turbo(?:[\\s\"',]+run)?)[\\s\"',]+dev(?:$|[\\s\"',;&|)])|\\s--watch\\b).*", t).
+// dmid_calls(command, script): `npm run x`, `npm start`, `pnpm [run] x`, `yarn [run] x`, `bun run x`, in the
+// current package.
+.decl dmid_calls(t: symbol, n: symbol)
+dmid_calls(t, s) :- dmid_text(t),
+    match_all("(?:^|[\\s;&|(\"'])(?:npm[\\s\"',]+run(?:-script)?|pnpm(?:[\\s\"',]+run)?|yarn(?:[\\s\"',]+run)?|bun[\\s\"',]+run)[\\s\"',]+(?<s>[A-Za-z0-9][\\w:.-]*)", t).
+dmid_calls(t, "start") :- dmid_text(t), match("(?s)(?:.*[\\s;&|(\"'])?npm[\\s\"',]+start\\b.*", t).
+// dmid_calls_in(command, package name, script): `pnpm --filter <name> [run] x`, `yarn workspace <name> x`,
+// `npm run x -w <name>`.
+.decl dmid_calls_in(t: symbol, q: symbol, n: symbol)
+dmid_calls_in(t, q, s) :- dmid_text(t),
+    match_all("\\bpnpm[\\s\"',]+(?:--filter|-F)(?:[\\s\"',]+|=)[\"']?(?<q>[^\\s\"']+)[\"']?[\\s\"',]+(?:run[\\s\"',]+)?(?<s>[A-Za-z0-9][\\w:.-]*)", t).
+dmid_calls_in(t, q, s) :- dmid_text(t),
+    match_all("\\byarn[\\s\"',]+workspace[\\s\"',]+(?<q>[^\\s\"']+)[\\s\"',]+(?:run[\\s\"',]+)?(?<s>[A-Za-z0-9][\\w:.-]*)", t).
+dmid_calls_in(t, q, s) :- dmid_text(t),
+    match_all("\\bnpm[\\s\"',]+run[\\s\"',]+(?<s>[A-Za-z0-9][\\w:.-]*)[\\s\"',]+(?:-w|--workspace)(?:[\\s\"',]+|=)(?<q>[^\\s\"']+)", t).
+// dmid_calls_turbo(command, script): `turbo [run] x` runs x in every package that has it, or with `--filter=<name>`
+// (or `--filter=./<dir>`, `-F <name>`) in the packages it names (dmid_turbo_pkg); other filter forms (`...`, globs)
+// select no package.
+.decl dmid_calls_turbo(t: symbol, n: symbol)
+dmid_calls_turbo(t, s) :- dmid_text(t), match_all("\\bturbo[\\s\"',]+(?:run[\\s\"',]+)?(?<s>[A-Za-z0-9][\\w:.-]*)", t).
+.decl dmid_turbo_filtered(t: symbol)
+dmid_turbo_filtered(t) :- dmid_calls_turbo(t, _), match("(?s).*\\bturbo\\b.*(?:--filter|\\s-F)\\b.*", t).
+.decl dmid_turbo_pkg(t: symbol, x: symbol)
+dmid_turbo_pkg(t, x) :- dmid_turbo_filtered(t), match_all("(?:--filter|\\s-F)(?:=|\\s+)[\"']?(?<q>[@\\w./-]+)", t),
+    dmid_pkg_name(x, q).
+dmid_turbo_pkg(t, x) :- dmid_turbo_filtered(t), match_all("(?:--filter|\\s-F)(?:=|\\s+)[\"']?\\./(?<q>[\\w./-]+)", t),
+    dmid_json(_, x, "package"), x = q.
+
+// ---- files beyond the documents: a walk of the checkout ---------------------------------------------------------
+// dir_entry and file_line read only paths the walk derives from the root, so none of this reads a document.
+.decl dmid_dir(p: symbol, k: number)
+dmid_dir("", 0).
+dmid_dir(".github/", 1) :- dir_entry("", ".github", 1).
+dmid_dir(cat(p, n, "/"), k + 1) :- dmid_dir(p, k), k < 6, dir_entry(p, n, 1), !prefix(".", n),
+    !match("node_modules|dist|build|out|coverage|vendor|tests?|__tests__|e2e|fixtures|__fixtures__|__mocks__|generated|__generated__|tmp", n).
+.decl dmid_file(p: symbol, kind: symbol)
+dmid_file(cat(p, n), "Dockerfile") :- dmid_dir(p, _), dir_entry(p, n, 0), match("(?i)(?:.*[.-])?dockerfile(?:[.-].*)?", n),
+    !match("(?i).*\\b(?:dev|devel|development|local|tests?|e2e|ci)\\b.*", n), !match("(?i)(?:.*/)?(?:dev|development|local)/.*", p).
+dmid_file(cat(p, n), "Procfile") :- dmid_dir(p, _), dir_entry(p, n, 0), match("Procfile(?:\\..*)?", n),
+    !match("(?i).*\\b(?:dev|development|local|tests?)\\b.*", n).
+dmid_file(cat(p, n), n) :- dmid_dir(p, _), dir_entry(p, n, 0),
+    (n = "fly.toml" ; n = "render.yaml" ; n = "render.yml" ; n = "railway.toml" ; n = "nixpacks.toml" ; n = "netlify.toml").
+dmid_file(cat(p, n), "compose") :- dmid_dir(p, _), dir_entry(p, n, 0), match("(?i)(?:docker-)?compose[.-].*\\.ya?ml", n),
+    match("(?i).*\\b(?:prod|production)\\b.*", n).
+dmid_file(cat(".github/workflows/", n), "workflow") :- dmid_dir(".github/workflows/", _), dir_entry(".github/workflows/", n, 0),
+    match(".*\\.ya?ml", n).
+dmid_file(cat(p, n), "sh") :- dmid_dir(p, _), dir_entry(p, n, 0), suffix(".sh", n).
+.decl dmid_scope(p: symbol)
+dmid_scope(p) :- dmid_src(p, _, _, _, _), !match("(?:.*/)?(?:tests?|__tests__|e2e|fixtures|__fixtures__|node_modules)/.*", p).
+
+// Every line that can run a command: not a comment, and naming a tool the rule follows.
+.decl dmid_line(p: symbol, kind: symbol, i: number, t: symbol)
+dmid_line(p, k, i, t) :- dmid_file(p, k), file_line(p, i, t), !match("\\s*#.*", t),
+    match("(?s).*(?:\\bprisma\\b|\\bnpm\\b|\\bpnpm\\b|\\byarn\\b|\\bbun\\b|\\bturbo\\b|\\.sh\\b).*", t).
+
+// dmid_deploy_line(path, line, where, command): a line that runs on deploy.
+.decl dmid_deploy_line(p: symbol, i: number, w: symbol, t: symbol)
+dmid_deploy_line(p, i, "This Dockerfile line", t) :- dmid_line(p, "Dockerfile", i, t).
+dmid_deploy_line(p, i, "This Procfile process", t) :- dmid_line(p, "Procfile", i, t).
+dmid_deploy_line(p, i, cat("This line of ", k), t) :- dmid_line(p, k, i, t), k != "Dockerfile", k != "Procfile",
+    k != "workflow", k != "sh", k != "compose".
+dmid_deploy_line(p, i, "This line of a production compose file", t) :- dmid_line(p, "compose", i, t).
+dmid_deploy_line(p, i, cat("This step of the `", j, "` job"), t) :- dmid_wf_job(p, i, j, t),
+    match("(?i).*(?:deploy|release|prod).*", j).
+dmid_deploy_line(p, i, cat("This step of the `", j, "` job"), t) :- dmid_wf_job(p, i, j, t),
+    !match("(?i).*(?:deploy|release|prod).*", j), !match("(?i).*(?:test|e2e|ci|check|lint|integration|spec).*", j),
+    match(".github/workflows/(?<wn>.*)", p), match("(?i).*\\b(?:deploy|deployment|release|prod|production|cd|publish)\\b.*", wn).
+// A .sh script a deploy command names (by file name) runs on deploy, unless it starts a dev server.
+dmid_deploy_line(p, i, cat("This line of `", b, "` (a script a deploy path runs)"), t) :- dmid_sh_named(p, b),
+    dmid_line(p, "sh", i, t), !dmid_sh_dev(p).
+.decl dmid_sh_named(p: symbol, b: symbol)
+dmid_sh_named(p, b) :- dmid_run(_, _, _, _, _, t, _), dmid_sh_ref(t, b), dmid_sh_base(p, b).
+.decl dmid_sh_ref(t: symbol, b: symbol)
+dmid_sh_ref(t, b) :- dmid_text(t), match_all("(?<b>[A-Za-z0-9_.-]+\\.sh)\\b", t).
+.decl dmid_sh_base(p: symbol, b: symbol)
+dmid_sh_base(p, b) :- dmid_file(p, "sh"), match("(?:.*/)?(?<b>[^/]+)", p).
+.decl dmid_sh_dev(p: symbol)
+dmid_sh_dev(p) :- dmid_file(p, "sh"), file_line(p, _, t), match("(?s).*(?:\\b(?:next|nuxt|vite|remix|astro|react-router|nest)[\\s\"',]+(?:dev|start[\\s\"',]+--watch)\\b|\\bnodemon\\b|\\btsx[\\s\"',]+watch\\b|\\bts-node-dev\\b|\\b(?:npm[\\s\"',]+run|pnpm(?:[\\s\"',]+run)?|yarn(?:[\\s\"',]+run)?|bun[\\s\"',]+run|turbo(?:[\\s\"',]+run)?)[\\s\"',]+dev(?:$|[\\s\"',;&|)])|\\s--watch\\b).*", t).
+
+// dmid_wf_job(path, line, job, command): a workflow line and the job it is in (the nearest `  <id>:` above it).
+.decl dmid_wf_job(p: symbol, i: number, j: symbol, t: symbol)
+dmid_wf_job(p, i, j, t) :- dmid_line(p, "workflow", i, t),
+    jl = max jj : { file_line(p, jj, tj), jj < i, match("  [A-Za-z0-9_-]+:\\s*", tj) },
+    file_line(p, jl, tjob), match("  (?<j>[A-Za-z0-9_-]+):\\s*", tjob).
+
+// dmid_guarded(path, line): the line sits in an `if` block (still open there) whose condition names a non-production
+// database (preview, test, CI, demo, dev, local).
+.decl dmid_guarded(p: symbol, i: number)
+dmid_guarded(p, i) :- dmid_line(p, _, i, _), file_line(p, j, tj), j < i, match("\\s*if\\b.*", tj), !match(".*\\bfi\\b.*", tj),
+    match("(?i).*\\b(?:preview|tests?|testing|e2e|ci|demo|dev|development|local)\\b.*", tj),
+    no = count : { file_line(p, k, tk), k > j, k < i, match("\\s*if\\b.*", tk), !match(".*\\bfi\\b.*", tk) },
+    nf = count : { file_line(p, k, tk), k > j, k < i, match("\\s*fi\\b.*", tk) }, nf <= no.
+
+// The cases, `cases/prisma-practice-dev-migration-in-deploy/`, read as one repository. Shell, YAML and TOML lines the
+// rule reports end in `# caught`; JSON, Dockerfile and Procfile lines cannot carry a comment, so the list below is the
+// record: nothing else may be reported.
+.test cases exactly
+    .fixture ".github/workflows/ci.yml" from "../cases/prisma-practice-dev-migration-in-deploy/.github/workflows/ci.yml"
+    .fixture ".github/workflows/deploy.yml" from "../cases/prisma-practice-dev-migration-in-deploy/.github/workflows/deploy.yml"
+    .fixture "Dockerfile.dev" from "../cases/prisma-practice-dev-migration-in-deploy/Dockerfile.dev"
+    .fixture "Procfile" from "../cases/prisma-practice-dev-migration-in-deploy/Procfile"
+    .fixture "apps/api/Dockerfile" from "../cases/prisma-practice-dev-migration-in-deploy/apps/api/Dockerfile"
+    .fixture "apps/api/package.json" from "../cases/prisma-practice-dev-migration-in-deploy/apps/api/package.json"
+    .fixture "apps/api/railway.json" from "../cases/prisma-practice-dev-migration-in-deploy/apps/api/railway.json"
+    .fixture "apps/web/Dockerfile" from "../cases/prisma-practice-dev-migration-in-deploy/apps/web/Dockerfile"
+    .fixture "apps/web/e2e/package.json" from "../cases/prisma-practice-dev-migration-in-deploy/apps/web/e2e/package.json"
+    .fixture "apps/web/package.json" from "../cases/prisma-practice-dev-migration-in-deploy/apps/web/package.json"
+    .fixture "apps/web/vercel.json" from "../cases/prisma-practice-dev-migration-in-deploy/apps/web/vercel.json"
+    .fixture "docker-compose.prod.yml" from "../cases/prisma-practice-dev-migration-in-deploy/docker-compose.prod.yml"
+    .fixture "docker-compose.yml" from "../cases/prisma-practice-dev-migration-in-deploy/docker-compose.yml"
+    .fixture "docker/dev/Dockerfile" from "../cases/prisma-practice-dev-migration-in-deploy/docker/dev/Dockerfile"
+    .fixture "fly.toml" from "../cases/prisma-practice-dev-migration-in-deploy/fly.toml"
+    .fixture "package.json" from "../cases/prisma-practice-dev-migration-in-deploy/package.json"
+    .fixture "packages/db/package.json" from "../cases/prisma-practice-dev-migration-in-deploy/packages/db/package.json"
+    .fixture "scripts/dev-setup.sh" from "../cases/prisma-practice-dev-migration-in-deploy/scripts/dev-setup.sh"
+    .fixture "scripts/docker-entrypoint.sh" from "../cases/prisma-practice-dev-migration-in-deploy/scripts/docker-entrypoint.sh"
+    .fixture "scripts/seed-local.sh" from "../cases/prisma-practice-dev-migration-in-deploy/scripts/seed-local.sh"
+    .expect _ at ".github/workflows/ci.yml":11
+    .expect _ at ".github/workflows/deploy.yml":18
+    .expect _ at "Procfile":2
+    .expect _ at "apps/api/Dockerfile":10
+    .expect _ at "apps/api/package.json":5
+    .expect _ at "apps/api/railway.json":5
+    .expect _ at "apps/web/package.json":7
+    .expect _ at "apps/web/package.json":9
+    .expect _ at "apps/web/vercel.json":2
+    .expect _ at "docker-compose.prod.yml":4
+    .expect _ at "fly.toml":4
+    .expect _ at "package.json":9
+    .expect _ at "package.json":13
+    .expect _ at "packages/db/package.json":10
+    .expect _ at "scripts/docker-entrypoint.sh":6
+.end
+
+// The pack's examples (pack.json).
+.test example_caught exactly
+    .fixture "package.json" ```
+        {
+          "name": "shop",
+          "private": true,
+          "scripts": {
+            "dev": "next dev",
+            "build": "prisma generate && prisma migrate dev && next build",
+            "start": "next start"
+          }
+        }
+        ```
+    .expect DevMigrationInDeploy at "package.json":6
+.end
+
+.test example_passes exactly
+    .fixture "package.json" ```
+        {
+          "name": "shop",
+          "private": true,
+          "scripts": {
+            "dev": "prisma migrate dev && next dev",
+            "build": "prisma generate && prisma migrate deploy && next build",
+            "start": "next start",
+            "db:reset": "prisma migrate reset"
+          }
+        }
+        ```
+.end

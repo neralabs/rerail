@@ -1,0 +1,4 @@
+services:
+  web:
+    build: .
+    command: sh -c "npx prisma migrate dev && pnpm start"

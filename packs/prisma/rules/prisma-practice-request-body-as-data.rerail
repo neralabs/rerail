@@ -1,0 +1,252 @@
+.policy "prisma-practice-request-body-as-data" revision 1
+.description "Do not pass a request body or a Server Action's argument straight to Prisma as data: parse it with a schema that lists the writable fields, or pick the fields."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.prisma"
+.scope text "**/*.prisma"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Mass assignment (OWASP API3:2023): Prisma writes every key of `data`, so when `data`
+// is the object the client sent, the client chooses the columns. It adds `role: "ADMIN"`, `ownerId`,
+// `emailVerified`, `balance`, or a nested `connect`/`create` relation write to the JSON, and Prisma writes it. A
+// TypeScript type on the body checks nothing at run time, and a zod `parse` whose result is thrown away leaves the
+// original object as it came.
+// A Prisma write is `<x>.<m>.<op>(...)` with op create, createMany, createManyAndReturn, update, updateMany,
+// updateManyAndReturn or upsert, and m a model of a `*.prisma` file of the repository (read as text, compared
+// without case: the client's property is the model name with a lower-case first letter). Its row data is the
+// object argument's `data` key (upsert: `create` and `update`). It reports where that value is, after parentheses,
+// `as`, `satisfies`, `!` and `await`:
+//   data: await req.json()                                  reported (`.json()` of a request)
+//   const body = await req.json(); ... data: body           reported (a const or never-reassigned let)
+//   data: { ...body, authorId: session.user.id }            reported (a spread of it)
+//   data: body.profile; const { id, ...rest } = body; data: rest     reported (a part of it)
+//   data: req.body                                          reported (Pages API, Express, Fastify)
+//   data: Object.fromEntries(formData)                      reported (a FormData parameter, or await req.formData())
+//   'use server' ... export async function save(input: PostInput) { ... data: input }   reported (Server Action
+//                                                           argument: a 'use server' file's exports, or a function
+//                                                           with its own 'use server')
+// A request is a parameter named `req` or `request`, one annotated with a `...Request` type, or `c.req` /
+// `ctx.request` of a parameter (Hono, Koa).
+//   data: Schema.parse(body); data: parsed.data (from safeParse)   not reported: a call's result
+//   data: { name: body.name, bio: body.bio }                not reported: fields picked
+//   data: { payload: body }                                 not reported: the body is one column's value (Json)
+//   let body = await req.json(); body = Schema.parse(body); data: body     not reported: reassigned
+//   ... .mutation(({ input }) => db.post.create({ data: input }))         not reported: tRPC validated `input`
+//   an exported function of a file without 'use server', or a non-exported one in it      not reported
+//   x.services.org.update({ data: req.body }) where no schema has a model `services`     not reported
+//   test files, stories, fixtures                           not reported
+// Prisma 8 (release candidate) writes through `tx.orm.<schema>.<Model>.create(...)`: one more member level, not
+// matched yet.
+// Gaps: a body passed to a data-layer function in another module that writes it (one hop); an argument object built
+// in a variable (`const args = { data: body }`); nested writes (`data: { posts: { create: body.posts } }`); bodies
+// read with `JSON.parse(await req.text())`; schemas that keep unknown keys (`.passthrough()`, `.loose()`,
+// `z.any()`) and `.strict()` schemas whose result is discarded (safe, still reported); Server Actions exported
+// through `export { f }` or built by wrappers.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+
+.violation RequestBodyAsData(at: node, k: symbol, src: symbol, m: symbol, op: symbol)
+    "`{k}` of `{m}.{op}()` is {src}, unfiltered: the client chooses every column Prisma writes, so it can add `role`, an owner id, a balance or a nested relation write. Parse it with a schema that lists the fields this endpoint may set and pass the parsed result (`const input = Schema.parse(body)`; zod drops unknown keys only in what parse returns, not in the object you passed), or copy the fields one by one (`name: body.name`); set the owner and other server-side fields from the session. Leave it only if every field of the model may be set by whoever can call this endpoint."
+RequestBodyAsData(v, k, src, m, op) :- rbd_write(c, m, op, k), rbd_arg_prop(c, k, v), rbd_tainted(v, src), docof(c, d),
+    !rbd_test_doc(d).
+
+// ---- Prisma writes ------------------------------------------------------------------------------------------------
+// rbd_model(x): x is a model of a schema file, lower-cased: `model ApiKey {` gives "apikey".
+.decl rbd_model(x: symbol)
+rbd_model(@lower(m)) :- doc(d, p, _), suffix(".prisma", p), source(d, sp),
+    match_all("(?m)^[ \\t]*model[ \\t]+[A-Za-z_][A-Za-z0-9_]*[ \\t]*\\{", sp, s), text(s, t),
+    match("\\s*model\\s+(?<m>[A-Za-z_][A-Za-z0-9_]*)\\s*\\{", t).
+// rbd_write(c, m, op, k): c is `<x>.<m>.<op>(...)`, a write of model m whose row data is under key k.
+.decl rbd_write(c: node, m: symbol, op: symbol, k: symbol)
+rbd_write(c, m, op, k) :- called(c, f), static_prop(f, o, op), rbd_write_key(op, k), static_prop(o, _, m),
+    rbd_model(@lower(m)).
+.decl rbd_write_key(op: symbol, k: symbol)
+rbd_write_key("create", "data"). rbd_write_key("createMany", "data"). rbd_write_key("createManyAndReturn", "data").
+rbd_write_key("update", "data"). rbd_write_key("updateMany", "data"). rbd_write_key("updateManyAndReturn", "data").
+rbd_write_key("upsert", "create"). rbd_write_key("upsert", "update").
+// rbd_arg_prop(c, k, v): call c's object argument has `k: v`, or the shorthand `{ k }` (v is then that name).
+.decl rbd_arg_prop(c: node, k: symbol, v: node)
+rbd_arg_prop(c, k, v) :- call_arg(c, a, 0), deparen(a, o), kind(o, "object"), child(o, p, _), kind(p, "pair"),
+    field(p, "key", kn), key_static(kn, k), field(p, "value", v).
+rbd_arg_prop(c, k, p) :- call_arg(c, a, 0), deparen(a, o), kind(o, "object"), child(o, p, _),
+    kind(p, "shorthand_property_identifier"), text(p, k).
+
+// ---- what carries the request -------------------------------------------------------------------------------------
+// rbd_tainted(e, src): expression e holds the client's object, or a part of it, as it came; src says whose.
+.decl rbd_tainted(e: node, src: symbol)
+rbd_tainted(e, src) :- rbd_bare(e, x), rbd_source(x, src).
+rbd_tainted(e, src) :- rbd_bare(e, x), (kind(x, "identifier") ; kind(x, "shorthand_property_identifier")),
+    ref_site(x, site), rbd_site(site, src).
+rbd_tainted(e, src) :- rbd_bare(e, x), static_prop(x, o, _), rbd_tainted(o, src).
+rbd_tainted(e, src) :- rbd_bare(e, x), kind(x, "object"), child(x, s, _), kind(s, "spread_element"), child(s, a, 0),
+    rbd_tainted(a, src).
+// rbd_source(x, src): x reads the request's body: `await req.json()`, `req.body`, `Object.fromEntries(formData)`.
+.decl rbd_source(x: node, src: symbol)
+rbd_source(x, "the request body") :- called(x, f), static_prop(f, r, "json"), rbd_request(r),
+    call_arg_count(x, 0).
+rbd_source(x, "the request body") :- static_prop(x, r, "body"), rbd_request(r).
+rbd_source(x, "the submitted form") :- called(x, f), static_prop(f, o, "fromEntries"), kind(o, "identifier"),
+    text(o, "Object"), call_arg(x, a, 0), rbd_form(a).
+// rbd_form(e): e is a FormData the client sent: `await req.formData()`, a parameter typed FormData, a name bound to
+// one, a Server Action's argument, or `.entries()` of one.
+.decl rbd_form(e: node)
+rbd_form(e) :- rbd_bare(e, x), called(x, f), static_prop(f, r, "formData"), rbd_request(r).
+rbd_form(e) :- rbd_bare(e, x), kind(x, "identifier"), ref_site(x, site), rbd_param_type(site, t), contains("FormData", t).
+rbd_form(e) :- rbd_bare(e, x), kind(x, "identifier"), ref_site(x, site), rbd_action_param(site).
+rbd_form(e) :- rbd_bare(e, x), kind(x, "identifier"), ref_site(x, site), rbd_const(site, v), rbd_form(v).
+rbd_form(e) :- rbd_bare(e, x), called(x, f), static_prop(f, o, "entries"), rbd_form(o).
+// rbd_request(r): r is a request object: a parameter named req or request, or typed `...Request` (NextRequest,
+// NextApiRequest, FastifyRequest), or `c.req` / `ctx.request` of a parameter (Hono, Koa).
+.decl rbd_request(r: node)
+rbd_request(r) :- kind(r, "identifier"), ref_site(r, site), site_form(site, "param"), text(site, x),
+    (x = "req" ; x = "request").
+rbd_request(r) :- kind(r, "identifier"), ref_site(r, site), rbd_param_type(site, t),
+    match(".*Request([^A-Za-z0-9_].*)?", t).
+rbd_request(r) :- static_prop(r, o, x), (x = "req" ; x = "request"), kind(o, "identifier"), ref_site(o, site),
+    site_form(site, "param").
+// rbd_param_type(site, t): parameter site is annotated with type text t (`req: NextRequest` gives ": NextRequest").
+.decl rbd_param_type(site: node, t: symbol)
+rbd_param_type(site, t) :- site_form(site, "param"), field(p, "pattern", site), field(p, "type", a), text(a, t).
+// rbd_site(site, src): the binding at site holds the client's object or a part of it, and is never reassigned:
+// `const body = <tainted>`, a name destructured from it, or a Server Action's argument.
+.decl rbd_site(site: node, src: symbol)
+rbd_site(site, src) :- rbd_const(site, v), rbd_tainted(v, src).
+rbd_site(site, src) :- pattern_name(site, _, d), field(d, "value", v), rbd_tainted(v, src), !rbd_reassigned(site).
+rbd_site(site, "a Server Action's argument") :- rbd_action_param(site), !rbd_param_type(site, _), !rbd_reassigned(site).
+rbd_site(site, "a Server Action's argument") :- rbd_action_param(site), rbd_param_type(site, t), !rbd_scalar_type(t),
+    !rbd_reassigned(site).
+// rbd_const(site, v): declarator site, `const x = v` or a `let x = v` that nothing reassigns.
+.decl rbd_const(site: node, v: node)
+rbd_const(site, v) :- kind(site, "variable_declarator"), field(site, "name", n), kind(n, "identifier"),
+    field(site, "value", v), !rbd_reassigned(site).
+.decl rbd_reassigned(site: node)
+rbd_reassigned(site) :- write_target(r, _), ref_site(r, site).
+// rbd_scalar_type(t): a parameter annotation that is no object: `: string`, `: number`, `: boolean`, `: Date`.
+.decl rbd_scalar_type(t: symbol)
+rbd_scalar_type(t) :- rbd_param_type(_, t), match(":\\s*(string|number|boolean|bigint|Date|FormData)\\s*", t).
+
+// ---- Server Actions -----------------------------------------------------------------------------------------------
+// rbd_action_param(site): site is a name a Server Action's parameter list binds. A Server Action is a function with
+// its own 'use server', or a function a 'use server' file exports (`export async function f`, `export const f =
+// async () => ...`, `export default async function`).
+.decl rbd_action_param(site: node)
+rbd_action_param(site) :- rbd_action(f), decl_site(f, _, site, "param", "value").
+.decl rbd_action(f: node)
+rbd_action(f) :- function_node(f), directive(f, _, "use server").
+rbd_action(f) :- rbd_server_file(d), kind(e, "export_statement"), docof(e, d),
+    (field(e, "declaration", f0) ; field(e, "value", f0)), deparen(f0, f), function_node(f).
+rbd_action(f) :- rbd_server_file(d), kind(e, "export_statement"), docof(e, d), field(e, "declaration", l),
+    kind(l, "lexical_declaration"), child(l, vd, _), kind(vd, "variable_declarator"), field(vd, "value", v),
+    deparen(v, f), function_node(f).
+.decl rbd_server_file(d: number)
+rbd_server_file(d) :- kind(p, "program"), directive(p, _, "use server"), docof(p, d).
+
+// ---- expressions --------------------------------------------------------------------------------------------------
+// rbd_bare(e, x): x is e without parentheses, `as T`, `<T>`, `satisfies T`, `!` and `await`. Asked only for the
+// values rbd_want collects.
+.decl rbd_want(e: node)
+rbd_want(v) :- rbd_write(c, _, _, k), rbd_arg_prop(c, k, v).
+rbd_want(a) :- rbd_want(e), rbd_bare(e, x), static_prop(x, a, _).
+rbd_want(a) :- rbd_want(e), rbd_bare(e, x), kind(x, "object"), child(x, s, _), kind(s, "spread_element"), child(s, a, 0).
+rbd_want(a) :- rbd_want(e), rbd_bare(e, x), called(x, f), static_prop(f, o, "fromEntries"), kind(o, "identifier"),
+    text(o, "Object"), call_arg(x, a, 0).
+rbd_want(o) :- rbd_want(e), rbd_bare(e, x), called(x, f), static_prop(f, o, "entries").
+rbd_want(v) :- rbd_want(e), rbd_bare(e, x), (kind(x, "identifier") ; kind(x, "shorthand_property_identifier")),
+    ref_site(x, site), rbd_site_value(site, v).
+.decl rbd_site_value(site: node, v: node)
+rbd_site_value(site, v) :- kind(site, "variable_declarator"), field(site, "value", v).
+rbd_site_value(site, v) :- pattern_name(site, _, d), field(d, "value", v).
+.decl rbd_bare(e: node, x: node)
+rbd_bare(e, e) :- rbd_want(e), !rbd_wrap(e).
+rbd_bare(e, x) :- rbd_want(e), rbd_wrap(e), rbd_inner(e, x).
+.decl rbd_inner(w: node, x: node)
+rbd_inner(w, x) :- rbd_wrap(w), child(w, c, 0), !rbd_wrap(c), x = c.
+rbd_inner(w, x) :- rbd_wrap(w), child(w, c, 0), rbd_wrap(c), rbd_inner(c, x).
+.decl rbd_wrap(e: node)
+rbd_wrap(e) :- kind(e, k), (k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression" ; k = "await_expression" ; k = "type_assertion").
+
+// rbd_test_doc(d): test code, stories, fixtures, seeds and scripts.
+.decl rbd_test_doc(d: number)
+rbd_test_doc(d) :- path_part(d, p), (p = "__tests__" ; p = "__mocks__" ; p = "test" ; p = "tests" ; p = "e2e" ;
+    p = "fixtures" ; p = "__fixtures__" ; p = "__stories__").
+rbd_test_doc(d) :- file_name(d, f), (glob("*.test.*", f) ; glob("*.spec.*", f) ; glob("*.cy.*", f) ;
+    glob("*.stories.*", f) ; glob("*.story.*", f)).
+
+// The cases, `cases/prisma-practice-request-body-as-data/`, read as one repository: each line ending in `// caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-request-body-as-data/package.json"
+    .fixture "prisma/schema.prisma" from "../cases/prisma-practice-request-body-as-data/prisma/schema.prisma"
+    .fixture "src/app/api/events/route.ts" from "../cases/prisma-practice-request-body-as-data/src/app/api/events/route.ts"
+    .fixture "src/app/api/profile/__tests__/route.test.ts" from "../cases/prisma-practice-request-body-as-data/src/app/api/profile/__tests__/route.test.ts"
+    .fixture "src/app/api/profile/route.ts" from "../cases/prisma-practice-request-body-as-data/src/app/api/profile/route.ts"
+    .fixture "src/app/posts/actions.ts" from "../cases/prisma-practice-request-body-as-data/src/app/posts/actions.ts"
+    .fixture "src/app/settings/page.tsx" from "../cases/prisma-practice-request-body-as-data/src/app/settings/page.tsx"
+    .fixture "src/lib/auth.ts" from "../cases/prisma-practice-request-body-as-data/src/lib/auth.ts"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-request-body-as-data/src/lib/db.ts"
+    .fixture "src/lib/posts.ts" from "../cases/prisma-practice-request-body-as-data/src/lib/posts.ts"
+    .fixture "src/lib/schemas.ts" from "../cases/prisma-practice-request-body-as-data/src/lib/schemas.ts"
+    .fixture "src/pages/api/users/[id].ts" from "../cases/prisma-practice-request-body-as-data/src/pages/api/users/[id].ts"
+    .fixture "src/server/hono.ts" from "../cases/prisma-practice-request-body-as-data/src/server/hono.ts"
+    .fixture "src/server/services.ts" from "../cases/prisma-practice-request-body-as-data/src/server/services.ts"
+    .fixture "src/server/trpc.ts" from "../cases/prisma-practice-request-body-as-data/src/server/trpc.ts"
+    .fixture "tsconfig.json" from "../cases/prisma-practice-request-body-as-data/tsconfig.json"
+    .expect _ at "src/app/api/events/route.ts":7
+    .expect _ at "src/app/api/events/route.ts":9
+    .expect _ at "src/app/api/profile/route.ts":9
+    .expect _ at "src/app/api/profile/route.ts":17
+    .expect _ at "src/app/posts/actions.ts":11
+    .expect _ at "src/app/posts/actions.ts":15
+    .expect _ at "src/app/settings/page.tsx":6
+    .expect _ at "src/pages/api/users/[id].ts":8
+    .expect _ at "src/server/hono.ts":7
+.end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "prisma/schema.prisma" ```
+        model User {
+          id    String @id @default(cuid())
+          name  String?
+          role  String @default("USER")
+        }
+        ```
+    .fixture "src/app/api/profile/route.ts" ```
+        import { NextRequest, NextResponse } from "next/server";
+        import { db } from "@/lib/db";
+
+        export async function PATCH(req: NextRequest) {
+          const body = await req.json();
+          const user = await db.user.update({ where: { id: body.id }, data: body });
+          return NextResponse.json(user);
+        }
+        ```
+    .expect RequestBodyAsData at "src/app/api/profile/route.ts":6
+.end
+.test example_passes exactly
+    .fixture "prisma/schema.prisma" ```
+        model User {
+          id    String @id @default(cuid())
+          name  String?
+          role  String @default("USER")
+        }
+        ```
+    .fixture "src/app/api/profile/route.ts" ```
+        import { NextRequest, NextResponse } from "next/server";
+        import { z } from "zod";
+        import { db } from "@/lib/db";
+
+        const UpdateProfile = z.object({ id: z.string(), name: z.string().max(80) });
+
+        export async function PATCH(req: NextRequest) {
+          const { id, ...data } = UpdateProfile.parse(await req.json());
+          const user = await db.user.update({ where: { id }, data });
+          return NextResponse.json(user);
+        }
+        ```
+.end

@@ -1,0 +1,4 @@
+app = "acme"
+
+[deploy]
+  release_command = "npx prisma db push --accept-data-loss"  # caught

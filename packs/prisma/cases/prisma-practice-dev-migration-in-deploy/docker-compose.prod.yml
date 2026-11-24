@@ -1,0 +1,4 @@
+services:
+  web:
+    image: acme/web
+    command: sh -c "npx prisma migrate reset --force && node server.js"  # caught

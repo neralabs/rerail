@@ -1,0 +1,38 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Product {
+  id       String  @id @default(cuid())
+  title    String
+  stock    Int
+  price    Decimal
+  sold     Int     @default(0)
+  version  Int     @default(0)
+}
+
+model Wallet {
+  id      String  @id @default(cuid())
+  userId  String  @unique
+  balance Decimal
+  credits Int     @default(0)
+  armedCode String?
+}
+
+model Card {
+  id       String @id @default(cuid())
+  columnId String
+  position Int
+}
+
+model Job {
+  id       String    @id @default(cuid())
+  attempts Int       @default(0)
+  lockId   String?
+  lockedAt DateTime?
+}

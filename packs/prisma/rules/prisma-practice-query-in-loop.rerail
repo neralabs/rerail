@@ -1,0 +1,214 @@
+.policy "prisma-practice-query-in-loop" revision 1
+.description "Do not send one Prisma query per item of a list in a for…of loop or array callback; load or write the items in one query: an in filter, include, createMany, updateMany or a $transaction batch."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope exclude "**/seed.*", "**/seed/**", "**/seeds/**", "**/seeders/**", "**/scripts/**", "**/migrations/**"
+.scope exclude "**/prisma/*.ts", "**/prisma/*.mts", "**/prisma/*.js", "**/seed-*", "**/*-seed.*"
+// Rerail's own rule, not a port. A Prisma query per item of a list is the n+1 problem Prisma's performance guide
+// names ("looping through query results and performing one additional query per result"): N round trips per
+// request, and under `Promise.all(xs.map(…))` N queries at once, which queue for the connection pool and fail with
+// P2024 ("Timed out fetching a new connection from the connection pool") once the list outgrows it. Prisma 5 to 7;
+// Prisma 8's `tx.orm.<schema>.<Model>.<op>(…)` delegates (one member level more) are not matched yet.
+// A query is `<r>.<model>.<op>(…)` (findMany … groupBy, their OrThrow and AndReturn forms) where the receiver r reads
+// as a Prisma client by name: its text contains "prisma" (`prisma`, `ctx.prisma`, `this.prismaService`,
+// `prisma.client`), or it ends in `db`, `tx`, `trx` or `database` (`db`, `ctx.db`, `this.db`). It is reported when
+// it runs once per item of a list and its arguments read the item:
+//   for (const o of orders) await prisma.item.findMany({ where: { orderId: o.id } })            reported (read)
+//   rows.map((r) => prisma.product.update({ where: { sku: r.sku }, data: { price: r.price } }))   reported (write)
+//   ids.forEach(async (id) => { await db.user.delete({ where: { id } }) })                        reported
+//   for (const x of xs) { await tx.x.update({ where: { id: x.id }, … }) } in a $transaction      reported
+//   for (const [k, v] of Object.entries(rates)) await db.rate.upsert(…)                       reported (data, not enum)
+// Left alone:
+//   ids.map((id) => prisma.user.findUnique({ where: { id } }))   Prisma's dataloader batches findUnique calls made
+//                                                                 in one tick into one query
+//   for (const chunk of chunks) await prisma.x.createMany({ data: chunk })   createMany per chunk is the batch fix
+//   a loop over a `chunk`/`batch`/`page` list                                each iteration already is a batch
+//   for (const s of ["a", "b"] as const) …, REGIONS.map(…) with `const REGIONS = [...]`, Object.values(Provider)
+//                                                                 a list fixed in the code ([...spread] is not)
+//   prisma.$transaction(xs.map((x) => prisma.y.update(…)))        the batch the fix asks for
+//   findMany({ where, take }) / findFirst({ where, orderBy }) per item   top-N or newest per key: no `in` query
+//   a for loop with `return` or its own `break`                   a search that stops at the first match
+//   a query in a `try` block inside the loop body                 each item may fail alone; a batch would not
+//   for (const x of xs) await prisma.setting.findFirst({ where: { key: "k" } })   the query ignores the item
+//   while / do / for (;;) loops                                               cursor and batch pagination loops
+//   a query in a function nested in the loop body (other than the iteration callbacks above)
+//   stripe.customers.create(…), openai.chat.completions.create(…)            not a Prisma client by name
+//   seed files, scripts, `prisma/*.ts`, migrations (scope), tests and stories
+// Gaps: a client under another name (umami's `client`, `this.repo`) is not seen, nor a client passed in as a
+// parameter of another name; a query in a helper the loop calls (`for (…) await loadUser(id)`); `while`/classic
+// `for` loops over a list (`for (let i = 0; i < xs.length; i++)`); the item read only through a variable derived
+// from it in the loop body (`const key = x.id;` then `where: { id: key }`); a validation loop that returns early on
+// a missing row is left alone; a list small by business rule but read from data, per-row guarded claims
+// (`updateMany({ where: { id, status } })` under a lease) and a write after a per-item external call are reported,
+// hence log mode.
+
+#include "tsx/eslint-a-common.rerail"
+
+.violation QueryInLoop(at: node, call: symbol, list: symbol, l: number, fix: symbol) "`{call}(…)` runs once per item of `{list}` (the loop at line {l}): N database round trips for N items (the n+1 problem), and when the calls run together under `Promise.all` they queue for the connection pool until requests fail with P2024. {fix} Leave it when the list is small and bounded by the code (a handful of fixed items), or when each iteration must see the previous one's write or must run one at a time on purpose (a job that processes rows singly with its own error handling)."
+QueryInLoop(q, call, lt, l, fix) :- prq_report(q, it), callee(q, m), text(m, call), text(it, lt), line(it, l),
+    prq_query(q, _, op), prq_fix(op, fix).
+
+// prq_report(q, it): query q runs once per item of list it and reads the item; the innermost such loop wins.
+.decl prq_report(q: node, it: node)
+prq_report(q, it) :- prq_hit(q, it, _), !prq_inner(q, it).
+.decl prq_hit(q: node, it: node, b: node)
+prq_hit(q, it, b) :- prq_loop(it, b, l, how), prq_query(q, _, op), (q = b ; within_stop(q, b, prq_fn)),
+    prq_reads(q, l), !prq_batched(op, how), !prq_fixed_list(it), !prq_per_group(q, op), !prq_exits(b),
+    !prq_guarded(q, b).
+// prq_per_group(q, op): a top-N or newest-row query per item (`findMany({ take })`, `findFirst({ orderBy })`): one
+// `in` query does not express a limit or an order per key.
+.decl prq_per_group(q: node, op: symbol)
+prq_per_group(q, "findMany") :- prq_arg_key(q, "take").
+prq_per_group(q, op) :- (op = "findFirst" ; op = "findFirstOrThrow"), prq_arg_key(q, "orderBy").
+.decl prq_arg_key(q: node, k: symbol)
+prq_arg_key(q, k) :- prq_query(q, _, _), call_arg(q, a0, 0), deparen(a0, a), kind(a, "object"), child(a, p, _),
+    ((kind(p, "pair"), field(p, "key", kk), text(kk, k)) ; (kind(p, "shorthand_property_identifier"), text(p, k))).
+// prq_exits(b): the for loop running b stops early, by `return` or its own `break`: a search for the first match
+// (`for (const l of links) { const r = await …findFirst(…); if (r) return r }`) usually runs once or twice.
+.decl prq_exits(b: node)
+prq_exits(b) :- kind(s, "for_in_statement"), field(s, "body", b), kind(r, "return_statement"), within_stop(r, b, prq_fn).
+prq_exits(b) :- kind(s, "for_in_statement"), field(s, "body", b), kind(r, "break_statement"), !field(r, "label", _),
+    within(r, b), nearest(r, s, prq_breakable).
+.decl prq_breakable(k: symbol)
+prq_breakable("for_in_statement"). prq_breakable("for_statement"). prq_breakable("while_statement").
+prq_breakable("do_statement"). prq_breakable("switch_statement").
+// prq_guarded(q, b): q sits in a `try` statement (its block or its catch) inside the loop body: each item is
+// handled, and may fail, on its own, which a batch would turn into all-or-nothing.
+.decl prq_guarded(q: node, b: node)
+prq_guarded(q, b) :- prq_loop(_, b, _, _), kind(t, "try_statement"), within(q, t), within_stop(t, b, prq_fn).
+// A query handed unsent to `ops.push(…)` is collected for a later `$transaction(ops)`: the batch the fix asks for.
+prq_guarded(q, b) :- prq_loop(_, b, _, _), prq_query(q, _, _), call_arg(k, a, 0), deparen(a, q), callee(k, m),
+    kind(m, "member_expression"), field(m, "property", p), text(p, "push"), within_stop(k, b, prq_fn).
+// prq_inner(q, it): another hit of q sits inside it's loop body: report only the innermost loop.
+.decl prq_inner(q: node, it: node)
+prq_inner(q, it) :- prq_hit(q, it, b), prq_hit(q, it2, b2), it2 != it, within(b2, b).
+
+.decl prq_fn(k: symbol)
+prq_fn("function_declaration"). prq_fn("function_expression"). prq_fn("arrow_function"). prq_fn("method_definition").
+prq_fn("generator_function_declaration"). prq_fn("generator_function"). prq_fn("class_declaration").
+prq_fn("class").
+
+// prq_loop(it, b, l, how): b runs once per item of list expression it; l holds the names bound to the item.
+//   `for (const x of it) b` and `for (const k in it) b` (how = "for"), and `it.map((x) => b)` and the other array
+//   iteration methods, whose callback's body is b and parameters are l (how = "callback").
+.decl prq_loop(it: node, b: node, l: node, how: symbol)
+prq_loop(it, b, l, "for") :- kind(s, "for_in_statement"), field(s, "right", it), field(s, "body", b),
+    field(s, "left", l).
+prq_loop(it, b, l, "callback") :- kind(k, "call_expression"), callee(k, m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, x), prq_iter(x), field(m, "object", it), call_arg(k, a, 0), deparen(a, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")), field(f, "body", b),
+    (field(f, "parameters", l) ; field(f, "parameter", l)), !prq_tx_batch(k).
+// prq_tx_batch(k): `<client>.$transaction(xs.map(…))`: the map builds the batch the fix asks for.
+.decl prq_tx_batch(k: node)
+prq_tx_batch(k) :- kind(t, "call_expression"), callee(t, m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, "$transaction"), call_arg(t, a, 0), deparen(a, k), kind(k, "call_expression").
+.decl prq_iter(x: symbol)
+prq_iter("map"). prq_iter("forEach"). prq_iter("flatMap"). prq_iter("reduce"). prq_iter("filter").
+prq_iter("some"). prq_iter("every"). prq_iter("find").
+
+// prq_query(q, r, op): call q is `<r>.<model>.<op>(…)` and r reads as a Prisma client.
+.decl prq_query(q: node, r: node, op: symbol)
+prq_query(q, r, op) :- kind(q, "call_expression"), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, op), prq_op(op), field(m, "object", mo0), deparen(mo0, mo), kind(mo, "member_expression"),
+    field(mo, "property", mp), kind(mp, "property_identifier"), text(mp, model), !prefix("$", model),
+    field(mo, "object", r0), deparen(r0, r), prq_client(r).
+.decl prq_client(r: node)
+prq_client(r) :- (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
+prq_client(r) :- kind(r, "identifier"), text(r, x), prq_client_name(x).
+prq_client(r) :- kind(r, "member_expression"), field(r, "property", p), text(p, x), prq_client_name(x).
+.decl prq_client_name(x: symbol)
+prq_client_name("db"). prq_client_name("tx"). prq_client_name("trx"). prq_client_name("database").
+prq_client_name("_db"). prq_client_name("prismaTx").
+.decl prq_op(op: symbol)
+prq_op("findUnique"). prq_op("findUniqueOrThrow"). prq_op("findFirst"). prq_op("findFirstOrThrow").
+prq_op("findMany"). prq_op("create"). prq_op("createMany"). prq_op("createManyAndReturn"). prq_op("update").
+prq_op("updateMany"). prq_op("updateManyAndReturn"). prq_op("upsert"). prq_op("delete"). prq_op("deleteMany").
+prq_op("count"). prq_op("aggregate"). prq_op("groupBy").
+
+// prq_reads(q, l): an argument of q reads a name bound in l (the loop's item, or a callback parameter).
+.decl prq_reads(q: node, l: node)
+prq_reads(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _), field(q, "arguments", al), within(i, al),
+    (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), text(i, x).
+.decl prq_bound(l: node, x: symbol)
+prq_bound(l, x) :- prq_loop(_, _, l, _), (i = l ; within(i, l)),
+    (kind(i, "identifier") ; kind(i, "shorthand_property_identifier_pattern")), text(i, x), !prq_type_part(i, l).
+// prq_type_part(i, l): i sits in a type annotation of the parameters, not a bound name.
+.decl prq_type_part(i: node, l: node)
+prq_type_part(i, l) :- prq_loop(_, _, l, _), within(i, t), within(t, l), kind(t, "type_annotation").
+
+// prq_batched(op, how): the query is already the batched form. createMany per item is one insert per chunk; a
+// findUnique made in an iteration callback joins the others of the same tick in one query (Prisma's dataloader).
+.decl prq_batched(op: symbol, how: symbol)
+prq_batched(op, how) :- (op = "createMany" ; op = "createManyAndReturn"), (how = "for" ; how = "callback").
+prq_batched("findUnique", "callback").
+prq_batched("findUniqueOrThrow", "callback").
+// prq_fixed_list(it): the list is written in the code (`["a", "b"]`, also `as const`, and a const bound to one),
+// is the values of an enum-like object (`Object.values(Provider)`, capitalised), or names batches (`chunks`).
+.decl prq_fixed_list(it: node)
+prq_fixed_list(it) :- prq_loop(it, _, _, _), prq_fixed_value(it).
+// A const bound to a non-empty array literal that nothing pushes to (`const out = []; out.push(…)` is data).
+prq_fixed_list(it) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it, s), kind(s, "variable_declarator"),
+    field(s, "value", v), prq_fixed_value(v), text(v, vt), !match("(?s)\\s*\\[\\s*\\].*", vt), !prq_grown(s).
+// prq_grown(s): the variable declared at s is grown in place: `x.push(…)`, `x.unshift(…)`, `x.splice(…)`.
+.decl prq_grown(s: node)
+prq_grown(s) :- prq_loop(it, _, _, _), ref_site(it, s), kind(k, "call_expression"), callee(k, m),
+    kind(m, "member_expression"), field(m, "property", p), text(p, x), (x = "push" ; x = "unshift" ; x = "splice"),
+    field(m, "object", o), kind(o, "identifier"), ref_site(o, s).
+prq_fixed_list(it) :- prq_loop(it, _, _, _), text(it, t), match("(?i).*(chunk|batch|page).*", t).
+.decl prq_fixed_value(v: node)
+prq_fixed_value(v) :- prq_unwrap(v, a), kind(a, "array"), !prq_spread(a).
+prq_fixed_value(v) :- prq_unwrap(v, c), kind(c, "call_expression"), callee(c, m), text(m, mt),
+    (mt = "Object.values" ; mt = "Object.keys" ; mt = "Object.entries"), call_arg(c, e, 0), kind(e, "identifier"),
+    text(e, et), match("[A-Z].*", et).
+// prq_unwrap(v, a): v without parentheses, `as T` and `satisfies T`.
+.decl prq_unwrap(v: node, a: node)
+prq_unwrap(v, a) :- prq_fixed_ask(v), deparen(v, a), !kind(a, "as_expression"), !kind(a, "satisfies_expression").
+prq_unwrap(v, a) :- prq_fixed_ask(v), deparen(v, w), (kind(w, "as_expression") ; kind(w, "satisfies_expression")),
+    child(w, a0, 0), deparen(a0, a).
+.decl prq_fixed_ask(v: node)
+prq_fixed_ask(it) :- prq_loop(it, _, _, _).
+prq_fixed_ask(v) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it, s), kind(s, "variable_declarator"),
+    field(s, "value", v).
+.decl prq_spread(a: node)
+prq_spread(a) :- kind(a, "array"), child(a, e, _), kind(e, "spread_element").
+
+.decl prq_fix(op: symbol, fix: symbol)
+prq_fix(op, "Load them in one query before the loop: `findMany({ where: { <key>: { in: keys } } })` and match the rows up in memory, or `include`/`select` the relation on the query that loaded the list (`_count`/`groupBy` for counts).") :-
+    (op = "findMany" ; op = "findFirst" ; op = "findFirstOrThrow" ; op = "findUnique" ; op = "findUniqueOrThrow" ;
+     op = "count" ; op = "aggregate" ; op = "groupBy").
+prq_fix(op, "Insert them in one query: build the rows first and call `createMany({ data: rows })` (`createManyAndReturn` when you need them back), or a nested `create: [...]` on the parent.") :-
+    op = "create".
+prq_fix(op, "Write them in one query when every item gets the same change (`updateMany`/`deleteMany` with `where: { id: { in: ids } }`); otherwise build the per-item writes first and send them together as one batch transaction, `prisma.$transaction(items.map((x) => prisma.<model>.update(…)))` (outside any interactive `$transaction` callback), or many upserts as one `INSERT … ON CONFLICT` through `$executeRaw`.") :-
+    (op = "update" ; op = "updateMany" ; op = "updateManyAndReturn" ; op = "upsert" ; op = "delete" ;
+     op = "deleteMany").
+
+// The cases, `cases/prisma-practice-query-in-loop/`, read as one repository: each line ending in `// caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/prisma-practice-query-in-loop/package.json"
+    .fixture "src/lib/db.ts" from "../cases/prisma-practice-query-in-loop/src/lib/db.ts"
+    .fixture "src/app/orders/actions.ts" from "../cases/prisma-practice-query-in-loop/src/app/orders/actions.ts"
+    .fixture "src/server/api/routers/team.ts" from "../cases/prisma-practice-query-in-loop/src/server/api/routers/team.ts"
+    .fixture "src/server/jobs/import-prices.ts" from "../cases/prisma-practice-query-in-loop/src/server/jobs/import-prices.ts"
+    .fixture "src/server/catalog/sync.ts" from "../cases/prisma-practice-query-in-loop/src/server/catalog/sync.ts"
+    .fixture "src/lib/billing/stripe-sync.ts" from "../cases/prisma-practice-query-in-loop/src/lib/billing/stripe-sync.ts"
+    .fixture "prisma/seed.ts" from "../cases/prisma-practice-query-in-loop/prisma/seed.ts"
+    .fixture "src/app/orders/__tests__/actions.test.ts" from "../cases/prisma-practice-query-in-loop/src/app/orders/__tests__/actions.test.ts"
+    .expect _ at "src/app/orders/actions.ts":7
+    .expect _ at "src/app/orders/actions.ts":13
+    .expect _ at "src/app/orders/actions.ts":24
+    .expect _ at "src/app/orders/actions.ts":31
+    .expect _ at "src/server/api/routers/team.ts":10
+    .expect _ at "src/server/api/routers/team.ts":14
+    .expect _ at "src/server/jobs/import-prices.ts":6
+    .expect _ at "src/server/catalog/sync.ts":76
+    .expect _ at "src/server/catalog/sync.ts":57
+    .expect _ at "src/server/catalog/sync.ts":63
+    .expect _ at "src/server/catalog/sync.ts":68
+.end
