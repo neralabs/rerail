@@ -270,6 +270,16 @@ Node.js and React would be suggested, but have no rules yet, so set-up does not 
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
 
+### A rule pack is left out, or its rules show as not running, after an update
+
+Rerail 0.2.1 and later leave out a pack version published before 17 November 2026, and mark as not running a rule of
+the 17 November versions that tests a token the new syntax trees leave out. Install the newest version of each pack
+that works with this Rerail:
+
+```sh
+rerail packs update
+```
+
 ### `No rule pack matches what it’s built with`
 
 ```text
