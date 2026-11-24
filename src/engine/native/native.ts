@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
 import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
+import type { CodeRuleSourceSpan } from "../code-rule/code-rule.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -375,6 +376,68 @@ export interface NativeCodeRuleDslRuntimeConstructor {
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
   testRr(pathsJson: string, filter?: string | null): string;
+  /**
+   * Each `.rerail` file of `pathsJson` (a JSON array of paths) read with its includes and checked, nothing run: a JSON
+   * array of `RrDescription`. A file that does not read or check is a row with its error; it never throws for one.
+   */
+  describeRr(pathsJson: string): string;
+  /** The policies of `requestJson` (a JSON `RrRunRequest`) run over its root, off the JavaScript thread: a JSON `RrRunResult`. */
+  runRr(requestJson: string): Promise<string>;
+}
+
+/** What a `.rerail` rule file states of itself, as the engine reads it (`describeRr`). */
+export type RrDescription =
+  | {
+      path: string;
+      ok: true;
+      id: string;
+      revision: number;
+      description: string | null;
+      mode: "block" | "steer" | "log";
+      language: string | null;
+      /** The files it reads, as its run selects them: `text` names those read as text whatever their language. */
+      scope: { include: string[]; exclude: string[]; text: string[]; toolCalls: boolean };
+      /** The codes its findings can have, sorted. */
+      codes: string[];
+      /** How many `.test` blocks it holds. */
+      tests: number;
+      /** Whether a `.violation` carries a `suppress` line. */
+      suppresses: boolean;
+      /** Whether a `.violation` carries a `fix` line. */
+      fixes: boolean;
+      /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
+      files: { path: string; sha256: string }[];
+    }
+  | { path: string; ok: false; error: string };
+
+/** A `runRr` request: the policies (absolute paths) over the corpus at `root`, written into the empty directory `out`. */
+export interface RrRunRequest {
+  root: string;
+  policies: string[];
+  out: string;
+  /** Root-relative files the run reads alone; omitted: the whole corpus. */
+  inputFiles?: string[];
+}
+
+/** A finding of a `.rerail` run. `span` has `CodeRuleViolation.span`'s bases; null only for a finding in no file. */
+export interface RrFinding {
+  policy: string;
+  clause: string;
+  code: string;
+  message: string;
+  path: string;
+  line: number;
+  span: CodeRuleSourceSpan | null;
+  tag: string | null;
+  parameters: Record<string, string>;
+}
+
+/** A `runRr` result. A failure's `policy` is the path of the policy whose run failed; the others ran without it. */
+export interface RrRunResult {
+  findings: RrFinding[];
+  failures: { policy: string | null; message: string }[];
+  /** The files the largest of the run's runs read. */
+  files: number;
 }
 
 /** One test of a `.rerail` file, as `testRr` reports it. */
@@ -526,6 +589,14 @@ export interface NativeLoadedRrPolicies {
   failedPolicy(path: string, source?: NativeGitRevisionSource): string | null;
 }
 
+/** The process holding the server end of a Windows named pipe ({@link NativeBinding.namedPipeServer}). */
+export interface NativeNamedPipeServer {
+  /** Absent when other clients kept every instance of the pipe taken until the wait ran out. */
+  pid?: number | null;
+  /** When it started, epoch ms; absent where this user may not ask. */
+  startedAt?: number | null;
+}
+
 export interface NativeBinding {
   AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string, expectedStore?: string) => NativeAnalysisScopeRun;
   prepareAnalysisStoreAsync(store: string): Promise<void>;
@@ -597,7 +668,13 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
-  /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
+  /**
+   * Windows only: the process holding the server end of the named pipe `path` and when it started, opening again while
+   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where no pipe
+   * of that name takes a connection, and on every other system. A binary built before it lacks it.
+   */
+  namedPipeServer?(path: string, timeoutMs: number): Promise<NativeNamedPipeServer | null>;
+  /** The content-store file name this binary's store schema owns (`content-v10.sqlite` at store floor 10). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
   releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;

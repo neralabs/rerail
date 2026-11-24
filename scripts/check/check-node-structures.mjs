@@ -5,7 +5,7 @@
 // 0.25 rows per node. In-memory state a reader builds from a tape is not covered.
 //
 // This check keeps the design's vocabulary to that rule, over the engine's non-test Rust
-// (`native/src`, `#[cfg(test)]` modules resolved from `lib.rs`) and the design documents
+// (`native/src` and each crate's `src/`, `#[cfg(test)]` modules resolved from each `lib.rs`) and the design documents
 // (`docs/final-shape/*.md`):
 //   no-sidecar          the word "sidecar": a structure kept beside the tape under its digest is
 //                       either stored (ruled out) or a reader's working state (not a structure of
@@ -20,31 +20,57 @@ const SRC = join(ROOT, "native/src");
 /** A cfg that only test builds enable. */
 const TEST_CFG = /#\[cfg\((?:all\()?\s*(?:test|feature\s*=\s*"metal-tests")/u;
 
-/** The module tree from lib.rs: each non-test file. */
+/** The module trees from the engine's `lib.rs` and each crate's: each non-test file. A module's file is found as
+ * rustc finds it: `mod m;` in a `mod.rs`, `lib.rs` or `#[path]` file is beside it, elsewhere under the file's stem;
+ * an inline `mod m { ... }` adds `m/` (or its `#[path]`); a `#[path]` is relative to the file's directory at its top
+ * level and to the inline module's directory inside one. Each crate's sources are in its own `src/`. */
 function productionFiles() {
-  const files = [];
-  const visit = (file, dir) => {
-    if (!existsSync(file)) return;
-    const text = readFileSync(file, "utf8");
-    files.push(file);
-    const lines = text.split("\n");
+  const files = new Set();
+  const visit = (file, modRs) => {
+    if (files.has(file) || !existsSync(file)) return;
+    files.add(file);
+    const own = modRs ? dirname(file) : join(dirname(file), file.slice(dirname(file).length + 1).replace(/\.rs$/u, ""));
+    // Each open inline module: its directory and the brace depth it closes at.
+    const inline = [];
+    let depth = 0;
+    let skipUntil = -1;
+    const lines = readFileSync(file, "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const declaration = /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z0-9_]+)\s*;/u.exec(lines[i]);
-      if (!declaration) continue;
-      let attributes = "";
-      for (let j = i - 1; j >= 0 && /^\s*(#\[|\/\/)/u.test(lines[j]); j--) attributes = lines[j] + attributes;
-      if (TEST_CFG.test(attributes)) continue;
-      const path = /#\[path\s*=\s*"([^"]+)"\]/u.exec(attributes);
-      const name = declaration[1];
-      const candidates = path ? [join(dir, path[1])] : [join(dir, `${name}.rs`), join(dir, name, "mod.rs")];
-      const child = candidates.find((candidate) => existsSync(candidate));
-      if (!child) continue;
-      const childDir = child.endsWith("mod.rs") ? dirname(child) : join(dirname(child), name);
-      visit(child, path ? dirname(child) : childDir);
+      const code = lines[i].replace(/\/\/.*$/u, "");
+      const declaration = /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z0-9_]+)\s*([;{])/u.exec(code);
+      if (declaration && skipUntil < 0) {
+        let attributes = "";
+        for (let j = i - 1; j >= 0 && /^\s*(#\[|\/\/)/u.test(lines[j]); j--) attributes = lines[j] + attributes;
+        const path = /#\[path\s*=\s*"([^"]+)"\]/u.exec(attributes);
+        const name = declaration[1];
+        const here = inline.length ? inline[inline.length - 1].dir : own;
+        const pathBase = inline.length ? inline[inline.length - 1].dir : dirname(file);
+        if (TEST_CFG.test(attributes)) {
+          if (declaration[2] === "{") skipUntil = depth;
+        } else if (declaration[2] === "{") {
+          inline.push({ dir: path ? join(pathBase, path[1]) : join(here, name), closes: depth });
+        } else if (path) {
+          visit(join(pathBase, path[1]), true);
+        } else {
+          const flat = join(here, `${name}.rs`);
+          if (existsSync(flat)) visit(flat, false);
+          else visit(join(here, name, "mod.rs"), true);
+        }
+      }
+      for (const ch of code) {
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (skipUntil >= 0 && depth === skipUntil) skipUntil = -1;
+          while (inline.length && depth === inline[inline.length - 1].closes) inline.pop();
+        }
+      }
     }
   };
-  visit(join(SRC, "lib.rs"), SRC);
-  return files;
+  visit(join(SRC, "lib.rs"), true);
+  const crates = join(ROOT, "native/crates");
+  for (const crate of readdirSync(crates).sort()) visit(join(crates, crate, "src", "lib.rs"), true);
+  return [...files];
 }
 
 /** A file's lines with each test-only item (a `#[cfg(test)]` module, function, impl, ...) blanked:

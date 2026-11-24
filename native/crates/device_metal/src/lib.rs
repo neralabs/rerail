@@ -1,6 +1,6 @@
 //! Metal, as the logic's and the transducer's device (macOS only; registered by the engine).
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -19,7 +19,7 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_device_metal;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -38,7 +38,6 @@ pub mod code_rule_dsl {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
-                pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::facts::vtab::{Modules, Relation, Source};
                 #[allow(unused_imports)]
@@ -136,7 +135,7 @@ pub mod code_rule_dsl {
     pub use rerail_rules::code_rule_dsl::literal;
     #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "logic")]
     pub mod logic {
-        pub use rerail_logic::code_rule_dsl::logic::*;
+        pub use rerail_rr_root::code_rule_dsl::logic::*;
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
             pub mod caches {
@@ -166,10 +165,10 @@ pub mod code_rule_dsl {
         }
         #[cfg_attr(any(target_os = "macos", target_os = "linux", windows), path = "native")]
         pub mod native {
-            pub use rerail_logic::code_rule_dsl::logic::native::*;
+            pub use rerail_rr_root::code_rule_dsl::logic::native::*;
             #[cfg_attr(any(target_os = "macos", target_os = "linux", windows), path = "setfix")]
             pub mod setfix {
-                pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
+                pub use rerail_rr_root::code_rule_dsl::logic::native::setfix::*;
                 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 pub mod device;
                 #[allow(unused_imports)]
@@ -187,7 +186,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
                 #[allow(unused_imports)]
-                use hashbrown::HashTable;
+                use rerail_blocks::maps::IdTable as HashTable;
                 #[allow(unused_imports)]
                 use rustc_hash::{FxHashMap as HashMap, FxHasher};
                 #[allow(unused_imports)]
@@ -201,7 +200,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::time::Instant;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
+                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, Join, JoinSpec, Line, Reprobe, Source, Start, Tok};
                 #[allow(unused_imports)]
                 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
                 #[allow(unused_imports)]
@@ -237,9 +236,9 @@ pub mod code_rule_dsl {
             use std::time::Instant;
         }
         pub mod plan {
-            pub use rerail_logic::code_rule_dsl::logic::plan::*;
+            pub use rerail_rr_root::code_rule_dsl::logic::plan::*;
             pub mod corpus {
-                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
+                pub use rerail_rr_root::code_rule_dsl::logic::plan::corpus::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
                 #[allow(unused_imports)]
@@ -284,7 +283,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::native::TOP;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
+            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, Join as PlanJoin, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]
@@ -308,8 +307,8 @@ pub mod code_rule_dsl {
         }
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
-            pub use rerail_logic::code_rule_dsl::logic::profile::report;
-            pub use rerail_logic::code_rule_dsl::logic::profile::watch;
+            pub use rerail_rr_root::code_rule_dsl::logic::profile::report;
+            pub use rerail_rr_root::code_rule_dsl::logic::profile::watch;
             #[allow(unused_imports)]
             use std::collections::BTreeMap;
             #[allow(unused_imports)]
@@ -324,7 +323,7 @@ pub mod code_rule_dsl {
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
         }
         pub mod rr {
-            pub use rerail_logic::code_rule_dsl::logic::rr::*;
+            pub use rerail_rr_root::code_rule_dsl::logic::rr::*;
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
@@ -399,8 +398,6 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_rules::code_rule_dsl::soundness;
     pub use rerail_transducer::code_rule_dsl::space;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_rules::code_rule_dsl::suppress;
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
@@ -567,10 +564,10 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tree;
     #[cfg_attr(any(test, feature = "test-hooks"), path = "typing")]
     pub mod typing {
-        pub use rerail_logic::code_rule_dsl::typing::*;
+        pub use rerail_rr_root::code_rule_dsl::typing::*;
         #[cfg_attr(any(test, feature = "test-hooks"), path = "file_local")]
         pub mod file_local {
-            pub use rerail_logic::code_rule_dsl::typing::file_local::*;
+            pub use rerail_rr_root::code_rule_dsl::typing::file_local::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub mod tests;
             #[allow(unused_imports)]
@@ -588,11 +585,11 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_rules::code_rule_dsl::walks;
     pub mod waves {
-        pub use rerail_logic::code_rule_dsl::waves::owner;
+        pub use rerail_rr_root::code_rule_dsl::waves::owner;
         #[cfg(any(test, feature = "test-hooks"))]
         pub use rerail_rules::code_rule_dsl::waves::relational;
-        pub use rerail_logic::code_rule_dsl::waves::schedule;
-        pub use rerail_logic::code_rule_dsl::waves::storage;
+        pub use rerail_rr_root::code_rule_dsl::waves::schedule;
+        pub use rerail_rr_root::code_rule_dsl::waves::storage;
     }
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;
@@ -614,8 +611,14 @@ pub mod code_rule_dsl {
     #[allow(unused_imports)]
     use std::sync::Arc;
 }
-pub use rerail_logic::threads;
+pub use rerail_rr_root::threads;
 // cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 
 /// The language packs this crate's tests read through the load-time registry (`language::base`), registered as the
 /// test binary loads (`device_metal::test_load`), as the engine registers them as it loads (`install_languages`).

@@ -1,7 +1,7 @@
 # 0244. A split part is a view of many ranges, its fields an overlay over it
 
-Status: decided (2026-11-15, the user's choice of t36 item 7 step 9's option 1). Continues decision 0173 (§7) for t36
-item 7, step 9.
+Status: built (audited 2026-11-23). Decided (2026-11-15, the user's choice of t36 item 7 step 9's option 1). Continues
+decision 0173 (§7) for t36 item 7, step 9.
 
 ## Intro
 

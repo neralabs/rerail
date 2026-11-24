@@ -2,7 +2,7 @@
 //! syntax table (`facts::vtab::syntax`) and the families' store reads (`facts::families`) are rerail-facts', over
 //! this crate, which re-exports it.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -15,11 +15,15 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
+// The store's interface (`content_store::FactStore`) and records; the tests open the store itself (crate split 10b-2).
+#[cfg(not(test))]
+pub use rerail_observe::content_store;
+#[cfg(test)]
 pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_facts;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -69,6 +73,7 @@ pub mod code_rule_dsl {
         }
         pub mod crypto;
         pub use rerail_prof::code_rule_dsl::logic::profile;
+        pub mod sql_names;
         pub mod strings;
     }
     pub use rerail_lang::code_rule_dsl::module_path;
@@ -77,9 +82,7 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub mod search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    #[path = "profile/sql.rs"]
-    pub mod sql_profile;
-    pub mod sql_admission;
+    pub use rerail_prof::code_rule_dsl::sql_frame;
     #[path = "stats"]
     pub mod stats {
         pub mod identity;

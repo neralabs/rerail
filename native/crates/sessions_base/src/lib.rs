@@ -2,7 +2,7 @@
 //! versions, phases, walks and work graph. The executor (`CodeRuleSqlExecutor`) and the retained traces (`temporal`)
 //! are rerail-sessions', which the parts here read through `session::Trace` and `maintenance::TEMPORAL`.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -20,7 +20,7 @@ pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 
 extern crate self as rerail_sessions_base;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -32,7 +32,6 @@ pub mod code_rule_dsl {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
-                pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::facts::vtab::{Modules, Relation, Source};
                 #[allow(unused_imports)]
@@ -93,7 +92,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::lines;
     
     pub mod logic {
-        pub use rerail_logic::code_rule_dsl::logic::*;
+        pub use rerail_corpus_memo::code_rule_dsl::logic::*;
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
             pub mod caches {
@@ -123,8 +122,8 @@ pub mod code_rule_dsl {
         }
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
-            pub use rerail_logic::code_rule_dsl::logic::profile::report;
-            pub use rerail_logic::code_rule_dsl::logic::profile::watch;
+            pub use rerail_corpus_memo::code_rule_dsl::logic::profile::report;
+            pub use rerail_corpus_memo::code_rule_dsl::logic::profile::watch;
             #[allow(unused_imports)]
             use std::collections::BTreeMap;
             #[allow(unused_imports)]
@@ -139,7 +138,8 @@ pub mod code_rule_dsl {
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
         }
         pub mod rr {
-            pub use rerail_logic::code_rule_dsl::logic::rr::*;
+            pub use rerail_corpus_memo::code_rule_dsl::logic::rr::*;
+            pub use rerail_rr::code_rule_dsl::logic::rr::translate;
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
@@ -197,8 +197,8 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod sql_executor;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
+    pub use rerail_sql_profile::code_rule_dsl::sql_profile;
+    pub use rerail_sql_profile::code_rule_dsl::sql_admission;
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
@@ -212,7 +212,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tape;
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
-    pub use rerail_logic::code_rule_dsl::typing;
+    pub use rerail_corpus_memo::code_rule_dsl::typing;
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]
@@ -235,9 +235,9 @@ pub mod code_rule_dsl {
         pub(crate) use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
     }
     pub mod waves {
-        pub use rerail_logic::code_rule_dsl::waves::owner;
-        pub use rerail_logic::code_rule_dsl::waves::schedule;
-        pub use rerail_logic::code_rule_dsl::waves::storage;
+        pub use rerail_corpus_memo::code_rule_dsl::waves::owner;
+        pub use rerail_corpus_memo::code_rule_dsl::waves::schedule;
+        pub use rerail_corpus_memo::code_rule_dsl::waves::storage;
     }
     #[allow(unused_imports)]
     #[cfg(any(test, feature = "test-hooks"))]
@@ -253,5 +253,5 @@ pub mod code_rule_dsl {
     #[allow(unused_imports)]
     use std::sync::Arc;
 }
-pub use rerail_logic::threads;
+pub use rerail_corpus_memo::threads;
 // cratify: mounts end

@@ -110,3 +110,126 @@ UKL_INLINE ukl_mask_t ukl_sg_match(uint32_t v __UKL_PARAMS) { return ukl_sg_matc
 
 // Lane `from`'s value, in every lane.
 UKL_INLINE uint32_t ukl_sg_broadcast(uint32_t v, uint32_t from __UKL_PARAMS) { return ukl_sg_shuffle(v, from __UKL_ARGS); }
+
+// The thread's place in the order the SIMD groups start: lane 0 takes a ticket for the group's lanes from `counter`
+// (one atomic add a group, zero before the launch), every lane gets it plus its own lane, so a group started later
+// has later places. A kernel that reads what earlier places wrote (a look-back) finds it written more often. Where
+// the groups run in their ids' order (the CPU's backends, a group's chunks in turn), the place is the thread's id and
+// no ticket is taken. Every thread of the launch calls it once, before any returns: the places are then the
+// launch's threads, each once.
+#if defined(UKL_VEC) || defined(UKL_CPU)
+// A macro, so the id stays what it is (consecutive lanes) and the lane is not computed.
+#define ukl_sg_ticket(counter, gid, lane) (gid)
+#else
+UKL_INLINE uint32_t ukl_sg_ticket(UKL_GLOBAL uint32_t* counter, uint32_t gid, uint32_t lane __UKL_PARAMS)
+{
+    (void)gid;
+    uint32_t t = 0u;
+    if (lane == 0u)
+        t = ukl_atomic_add(counter, UKL_SIMD_WIDTH);
+    return ukl_sg_shuffle(t, 0u __UKL_ARGS) + lane;
+}
+#endif
+
+// Every word of `out[0..n)` set to `v` by the launch's own threads, before any of them reads one: the words in
+// ranges of `UKL_FILL_RANGE`, each taken from `counts[0]` (started) by a SIMD group, filled by its lanes together
+// and counted in `counts[UKL_FILL_APART]` (finished, after a fence; a cache line from the ranges taken, so the waits'
+// polls do not slow the takes); a group that finds no range left waits until every range
+// is finished. A range it waits for was taken by a group that is running and waits for nothing until it has filled
+// it (decision 0540, point 1), and the wait is bounded: `false` after `UKL_FILL_SPINS` turns, when the caller must
+// not read the words (its own answer, computed without them, is still right). both counts are 0 before the launch.
+// Where the groups run in their ids' order (the CPU's), each thread takes ranges alone, and the first ones fill all.
+#ifndef UKL_FILL_RANGE
+#define UKL_FILL_RANGE 4096u
+#endif
+#ifndef UKL_FILL_APART
+#define UKL_FILL_APART 32u
+#endif
+#ifndef UKL_FILL_SPINS
+#define UKL_FILL_SPINS 65536u
+#endif
+#if defined(UKL_VEC) || defined(UKL_CPU)
+UKL_INLINE bool ukl_sg_fill(UKL_GLOBAL uint32_t* out, uint32_t n, uint32_t v, UKL_GLOBAL uint32_t* counts)
+{
+    uint32_t ranges = (n + UKL_FILL_RANGE - 1u) / UKL_FILL_RANGE;
+    for (;;) {
+        uint32_t r = ukl_atomic_load(&counts[0]) < ranges ? ukl_atomic_add(&counts[0], 1u) : ranges;
+        if (r >= ranges)
+            break;
+        uint32_t end = r * UKL_FILL_RANGE + UKL_FILL_RANGE < n ? r * UKL_FILL_RANGE + UKL_FILL_RANGE : n;
+        for (uint32_t w = r * UKL_FILL_RANGE; w < end; w++)
+            out[w] = v;
+        ukl_fence_device();
+        ukl_atomic_add(&counts[UKL_FILL_APART], 1u);
+    }
+    for (uint32_t t = 0u; t < UKL_FILL_SPINS; t++)
+        if (ukl_atomic_load(&counts[UKL_FILL_APART]) >= ranges)
+            return true;
+    return false;
+}
+#define ukl_sg_fill_lanes(out, n, v, counts, lane) ukl_sg_fill(out, n, v, counts)
+#else
+UKL_INLINE bool ukl_sg_fill_lanes(UKL_GLOBAL uint32_t* out, uint32_t n, uint32_t v, UKL_GLOBAL uint32_t* counts, uint32_t lane __UKL_PARAMS)
+{
+    uint32_t ranges = (n + UKL_FILL_RANGE - 1u) / UKL_FILL_RANGE;
+    // Done already, by a plain read: the count only grows, so a cached value that says so is right, and the groups
+    // that start after the fill (most) read no atomic. One that does not say so goes on to the atomics.
+    if (counts[UKL_FILL_APART] >= ranges) {
+        ukl_fence_device();
+        return true;
+    }
+    for (;;) {
+        uint32_t r = 0u;
+        if (lane == 0u)
+            r = ukl_atomic_load(&counts[0]) < ranges ? ukl_atomic_add(&counts[0], 1u) : ranges;
+        r = ukl_sg_shuffle(r, 0u __UKL_ARGS);
+        if (r >= ranges)
+            break;
+        uint32_t end = r * UKL_FILL_RANGE + UKL_FILL_RANGE < n ? r * UKL_FILL_RANGE + UKL_FILL_RANGE : n;
+        for (uint32_t w = r * UKL_FILL_RANGE + lane; w < end; w += UKL_SIMD_WIDTH)
+            out[w] = v;
+        ukl_fence_device();
+        ukl_sg_barrier();
+        if (lane == 0u)
+            ukl_atomic_add(&counts[UKL_FILL_APART], 1u);
+    }
+    for (uint32_t t = 0u; t < UKL_FILL_SPINS; t++)
+        if (ukl_atomic_load(&counts[UKL_FILL_APART]) >= ranges) {
+            ukl_fence_device();
+            return true;
+        }
+    return false;
+}
+#endif
+
+// A SIMD group's places published: its bit in `seen` (a bit a group of `UKL_SIMD_WIDTH` places), set once its lanes'
+// stores are done (a fence, the group's barrier, then lane 0's or), and read by `ukl_sg_published`. Every lane calls
+// it. Where a group's chunks run in turn (the CPU's), its last lane sets it, after the others' stores; a place of the
+// reader's own launch group (from `first`) is written already, so only earlier groups' bits are read.
+#if defined(UKL_VEC) || defined(UKL_CPU)
+UKL_INLINE void ukl_sg_publish(UKL_GLOBAL uint32_t* seen, uint32_t place, uint32_t lane)
+{
+    if (lane == UKL_SIMD_WIDTH - 1u)
+        ukl_atomic_or(&seen[place >> 10], 1u << ((place >> 5) & 31u));
+}
+UKL_INLINE bool ukl_sg_published(UKL_GLOBAL uint32_t* seen, uint32_t place, uint32_t first)
+{
+    uint32_t w = ukl_atomic_load(&seen[place >> 10]);
+    return place >= first || ((w >> ((place >> 5) & 31u)) & 1u) != 0u;
+}
+#else
+UKL_INLINE void ukl_sg_publish(UKL_GLOBAL uint32_t* seen, uint32_t place, uint32_t lane __UKL_PARAMS)
+{
+    ukl_fence_device();
+    ukl_sg_barrier();
+    if (lane == 0u)
+        ukl_atomic_or(&seen[place >> 10], 1u << ((place >> 5) & 31u));
+}
+UKL_INLINE bool ukl_sg_published(UKL_GLOBAL uint32_t* seen, uint32_t place, uint32_t first)
+{
+    (void)first;
+    bool on = ((ukl_atomic_load(&seen[place >> 10]) >> ((place >> 5) & 31u)) & 1u) != 0u;
+    ukl_fence_device();
+    return on;
+}
+#endif

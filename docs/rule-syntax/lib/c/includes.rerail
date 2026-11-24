@@ -7,8 +7,14 @@
 //   - `<…>`: the `angle`, `system`, `framework` and `after` directories, in that order and each
 //     kind in its `order`; a framework directory has `<A/b.h>` as `A.framework/Headers/b.h`;
 //   - `#include_next`: the search from the entry after the one the includer was found by (from
-//     the first where it was not found by one);
+//     the first where it was a unit, or found in an includer's own directory: rank 0);
 //   - a name from `/` is that file.
+//
+// The closure is recursive, and no rule negates a relation of it: a negation there would be
+// gated on rows other includers can still add. The first file found is a walk along the
+// configuration's search order (`c_clear`), which is computed below the closure, and the only
+// negation inside it is of `dir_entry`, whose answer for a directory is whole. A file found at
+// several ranks starts an `#include_next` after each of them.
 //
 // Every branch is taken, so the closure holds every file a unit may read under any macro state:
 // what an analysis of headers wants, and more than mode (b) enters. An `#include` whose operand is
@@ -26,7 +32,8 @@ c_reach(c, p) :- c_resolved(c, _, _, _, p).
 c_inc_name(c, f, i, k, form, n) :- c_reach(c, f), c_include(f, i, k, form, s), form != "macro", k != "embed",
     n = substr(s, 1, strlen(s) - 2).
 
-// A search entry's rank: its kind's band, then its order.
+// A search entry's rank: its kind's band, then its order (an option's place in its command, or a
+// profile line's), so a configuration has one entry a rank.
 .decl c_dir_band(kind: symbol, band: number)
 c_dir_band("quote", 1). c_dir_band("angle", 2). c_dir_band("system", 3). c_dir_band("framework", 4).
 c_dir_band("after", 5).
@@ -50,8 +57,30 @@ c_inc_try(c, f, i, r, p) :- c_inc_name(c, f, i, k, _, n), match("(?<fw>[^/]+)/(?
 // the first (rank 0 is below every entry's).
 .decl c_inc_from(cfg: symbol, f: symbol, kind: symbol, rank: number)
 c_inc_from(c, f, k, 0) :- c_inc_name(c, f, _, k, _, _), k != "include_next".
-c_inc_from(c, f, "include_next", r) :- c_inc_name(c, f, _, "include_next", _, _), c_found_by(c, f, r).
-c_inc_from(c, f, "include_next", 0) :- c_inc_name(c, f, _, "include_next", _, _), !c_found_by(c, f, _).
+c_inc_from(c, f, "include_next", r) :- c_inc_name(c, f, _, "include_next", _, _), c_found_at(c, f, r).
+
+// The search order, below the closure: the entries a header name looks in, by its form (`quote`
+// looks in the `quote` directories too) and whether it has a framework's shape (`A/b.h`: the
+// `framework` directories too), and the first such entry after each rank.
+.decl c_inc_form(form: symbol)
+c_inc_form("quote"). c_inc_form("angle").
+.decl c_inc_fw(w: number)
+c_inc_fw(0). c_inc_fw(1).
+.decl c_order(cfg: symbol, form: symbol, w: number, rank: number)
+c_order(c, q, w, r) :- c_search(c, r, _, k), k != "framework", c_inc_form(q), (q = "quote" ; k != "quote"), c_inc_fw(w).
+c_order(c, q, 1, r) :- c_search(c, r, _, "framework"), c_inc_form(q).
+.decl c_rank_point(cfg: symbol, rank: number)
+c_rank_point(c, 0) :- c_search(c, _, _, _).
+c_rank_point(c, r) :- c_search(c, r, _, _).
+.decl c_order_between(cfg: symbol, form: symbol, w: number, from: number, rank: number)
+c_order_between(c, q, w, r0, r) :- c_rank_point(c, r0), c_order(c, q, w, r), c_order(c, q, w, m), r0 < m, m < r.
+.decl c_order_after(cfg: symbol, form: symbol, w: number, from: number, rank: number)
+c_order_after(c, q, w, r0, r) :- c_rank_point(c, r0), c_order(c, q, w, r), r > r0, !c_order_between(c, q, w, r0, r).
+
+// A relative header name's search: its kind, form, shape and start.
+.decl c_inc_order(cfg: symbol, f: symbol, i: number, kind: symbol, form: symbol, w: number, from: number)
+c_inc_order(c, f, i, k, q, 1, r0) :- c_inc_name(c, f, i, k, q, n), !match("/.*", n), match("[^/]+/.+", n), c_inc_from(c, f, k, r0).
+c_inc_order(c, f, i, k, q, 0, r0) :- c_inc_name(c, f, i, k, q, n), !match("/.*", n), !match("[^/]+/.+", n), c_inc_from(c, f, k, r0).
 
 // Each directory a path is looked for in is listed. Asked here, by the directory alone: below, the
 // entry's name comes from the path that also gives the directory, so that read asks for nothing
@@ -62,15 +91,28 @@ c_inc_listed(d) :- c_inc_try(_, _, _, _, p), match("(?<d>.*)/[^/]*", p), dir_ent
 .decl c_inc_found(cfg: symbol, f: symbol, i: number, rank: number, path: symbol)
 c_inc_found(c, f, i, r, p) :- c_inc_try(c, f, i, r, p), match("(?<dd>.*)/(?<bb>[^/]*)", p), dir_entry(dd, bb, 0).
 c_inc_found(c, f, i, r, p) :- c_inc_try(c, f, i, r, p), match("[^/]*", p), dir_entry(".", p, 0).
-.decl c_inc_before(cfg: symbol, f: symbol, i: number, rank: number)
-c_inc_before(c, f, i, r) :- c_inc_found(c, f, i, r, _), c_inc_found(c, f, i, q, _), q < r.
+// The paths that are no file.
+.decl c_inc_miss(cfg: symbol, f: symbol, i: number, rank: number)
+c_inc_miss(c, f, i, r) :- c_inc_try(c, f, i, r, p), match("(?<dd>.*)/(?<bb>[^/]*)", p), !dir_entry(dd, bb, 0).
+c_inc_miss(c, f, i, r) :- c_inc_try(c, f, i, r, p), match("[^/]*", p), !dir_entry(".", p, 0).
+
+// c_clear(cfg, f, i, rank): directive i of f's search reaches rank with nothing found before it:
+// its rank-0 path first (a name from `/`, or a `"…"`'s own directory), then each entry in order.
+.decl c_clear(cfg: symbol, f: symbol, i: number, rank: number)
+c_clear(c, f, i, 0) :- c_inc_try(c, f, i, 0, _).
+c_clear(c, f, i, r) :- c_inc_order(c, f, i, _, "angle", w, r0), c_order_after(c, "angle", w, r0, r).
+c_clear(c, f, i, r) :- c_inc_order(c, f, i, "include_next", "quote", w, r0), c_order_after(c, "quote", w, r0, r).
+c_clear(c, f, i, r2) :- c_clear(c, f, i, r), c_inc_miss(c, f, i, r), c_inc_order(c, f, i, _, q, w, _),
+    c_order_after(c, q, w, r, r2).
 
 // c_resolved(cfg, f, i, rank, path): directive i of f includes path, found at rank.
 .decl c_resolved(cfg: symbol, f: symbol, i: number, rank: number, path: symbol)
-c_resolved(c, f, i, r, p) :- c_inc_found(c, f, i, r, p), !c_inc_before(c, f, i, r).
-// The entries a file was found by (its own directory's is none).
-.decl c_found_by(cfg: symbol, f: symbol, rank: number)
-c_found_by(c, p, r) :- c_resolved(c, _, _, r, p), r > 0.
+c_resolved(c, f, i, r, p) :- c_clear(c, f, i, r), c_inc_found(c, f, i, r, p).
+// The ranks a file was entered at: 0 for a unit, or a file found in its includer's own directory
+// or by a name from `/`.
+.decl c_found_at(cfg: symbol, f: symbol, rank: number)
+c_found_at(c, t, 0) :- c_tu(t, c).
+c_found_at(c, p, r) :- c_resolved(c, _, _, r, p).
 // A header no search finds.
 .decl c_unresolved(cfg: symbol, f: symbol, i: number, n: symbol)
 c_unresolved(c, f, i, n) :- c_inc_name(c, f, i, _, _, n), !c_inc_found(c, f, i, _, _).

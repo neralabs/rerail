@@ -1,6 +1,7 @@
 # 0570. A walk keyed by its row runs as a closure in one wave: the climb W's lookup does, from the rule
 
-Status: accepted (2026-11-21), the CPU form built. t50 step 5, first part; extends 0098 §1.
+Status: partly built (audited 2026-11-23). Left: Metal form (t50's segmented scan by key); a per-scope-and-name probe
+as cheap as W's. Accepted (2026-11-21), the CPU form built. t50 step 5, first part; extends 0098 §1.
 
 Numbered 0523 where it was written (branch final-rerail-shape); renumbered past the hub's 0523 (the `.guests` setting retired) at the merge of the hub.
 

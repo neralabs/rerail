@@ -1,9 +1,9 @@
 # 0442. No process-global state: the run, the connection, and a shared object the caller passes
 
-Status: accepted (2026-11-19). The user: "we want the engine to be re-entrant, multi-thread possible and to not have
-global state"; "How can they stay global when multiple runs could be happening at once?"; and on what is shared by
-design: "things that are shared by design need to come from an explicit "shared by design" object that is passed.
-Otherwise we can't maintain security boundaries."
+Status: built (audited 2026-11-23). Accepted (2026-11-19). The user: "we want the engine to be re-entrant,
+multi-thread possible and to not have global state"; "How can they stay global when multiple runs could be happening
+at once?"; and on what is shared by design: "things that are shared by design need to come from an explicit "shared by
+design" object that is passed. Otherwise we can't maintain security boundaries."
 
 ## Intro
 

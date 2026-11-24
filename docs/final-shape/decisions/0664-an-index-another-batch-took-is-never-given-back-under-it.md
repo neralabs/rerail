@@ -70,3 +70,13 @@ probe of SQLite's step cost runs SQL in a database of its own in memory. It now 
 - The 10-file django run on the device, repeated: 24 runs on the M1 Max have the CPU's findings. One more ended at its
   120 s alarm while the farm removed 33 GB of build targets on that host. Before the fixes about one run in seven
   differed on the M3.
+
+## At the hub merge (2026-11-24)
+
+The hub fixed the same race on its own (`b5d3983148`, `ac66bcb1f8`): `InFlight::lent` is this record's `taken`, and
+`InFlight::whole` fails a taker whose builder's program stopped before the build (an arena passed, a queue's room).
+The merge keeps the hub's mechanism as the one definition: `lent` replaces `taken`, and a taker waits for its
+builder's work on the host before it encodes a read (the hub's). This record's check of what a taker read is kept
+where the hub's does not reach, a builder that parked before the build (its rest a later submission's), and it is now
+a host read: once the builder's work is done, the room's last bucket offset still `UNBUILT` fails the taker's batch
+to the CPU. The device copy (`check_taken`) and its words are gone.

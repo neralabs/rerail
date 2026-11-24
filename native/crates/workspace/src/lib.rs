@@ -2,7 +2,7 @@
 //! wolfeel 5cf4246e): its files, requests, cross-file state, storage and results, over the code rules
 //! (`rerail-rules`), the matcher (`rerail-matcher`) and the adapters (`rerail-adapters`).
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -19,7 +19,7 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_workspace;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -139,8 +139,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_matcher::code_rule_dsl::soundness;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub use rerail_adapters::code_rule_dsl::suppress;
     pub mod tape {
@@ -214,7 +212,13 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) use crate::code_rule_dsl::rule_api::CodeRuleDslEditor;
 }
-#[path = "../../../src/git_ignore.rs"]
+#[path = "git_ignore.rs"]
 pub mod git_ignore;
 pub use rerail_tree_watch::panic_boundary;
 // cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

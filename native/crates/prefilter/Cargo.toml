@@ -38,9 +38,12 @@ system-allocator = ["rerail-workspace/system-allocator", "rerail-transducer/syst
 code-rule-profile = ["rerail-workspace/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-run/code-rule-profile"]
 p-anchor-corpus = ["rerail-workspace/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-run/p-anchor-corpus"]
 metal-tests = ["rerail-workspace/metal-tests", "rerail-transducer/metal-tests", "rerail-run/metal-tests"]
-test-hooks = ["dep:tempfile", "rerail-workspace/test-hooks", "rerail-transducer/test-hooks", "rerail-prof/test-hooks", "rerail-run/test-hooks"]
+test-hooks = ["dep:tempfile", "rerail-workspace/test-hooks", "rerail-transducer/test-hooks", "rerail-prof/test-hooks", "rerail-run/test-hooks", "rerail-blocks/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
+# A 16z tape read through its own cache (`f16::ZCache`, decision 0628 §6).
+rerail-tape-format = { path = "../tape_format" }
+rerail-blocks = { path = "../blocks" }
 # The panic boundary (`panic_boundary`), mounted by the tree watch's crate, which needs nothing else of W's.
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
@@ -86,7 +89,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-prof = { path = "../prof" }
 rerail-accel = { path = "../../../accel" }

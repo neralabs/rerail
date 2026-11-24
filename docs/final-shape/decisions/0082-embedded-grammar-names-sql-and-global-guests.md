@@ -1,7 +1,7 @@
 # 0082: Embedded grammars: names in the registry, one SQL grammar, global guests in a later wave
 
-Status: accepted (2026-11-08). §1 built; §2 is the registry as it stands; §3 decided, not built (global embeds
-are not built).
+Status: built (audited 2026-11-23). Accepted (2026-11-08). §1 built; §2 is the registry as it stands; §3 decided, not
+built (global embeds are not built).
 
 ## Intro
 

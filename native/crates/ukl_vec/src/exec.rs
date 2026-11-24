@@ -212,6 +212,19 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
     if groups == 0 {
         return Ok(());
     }
+    // An aggregate argument's bytes, at its type's size.
+    let aggs: Vec<Vec<u8>> = args
+        .iter()
+        .enumerate()
+        .map(|(j, a)| match a {
+            Arg::Bytes(b) if M(params[2 * j + 1]).is_agg() => {
+                let mut x = b.clone();
+                x.resize(M(params[2 * j + 1]).bytes() as usize, 0);
+                x
+            }
+            _ => Vec::new(),
+        })
+        .collect();
     // The arguments as the compiled code reads a kernel's (a `u64` each, as its type holds it).
     let argv: Vec<u64> = args
         .iter()
@@ -225,6 +238,8 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                     x[..n].copy_from_slice(&b[..n]);
                     ops::norm(m, u64::from_le_bytes(x))
                 }
+                // An aggregate's bytes (its type's, padded), where the code reads a read-only one.
+                Arg::Bytes(_) => aggs[j].as_ptr() as u64,
                 _ => 0,
             }
         })

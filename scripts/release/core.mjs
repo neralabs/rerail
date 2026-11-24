@@ -270,7 +270,7 @@ export const LANGUAGE_SINCE = new Map([
 
 /**
  * The first core release that reads each ast rule key added after 0.1.5 (`AST_RULE_KEYS` in
- * native/src/code_rule_dsl/compile/ast_rule.rs): an older core refuses a rule document whose ast rule uses it.
+ * native/crates/rules_base/src/code_rule_dsl/compile/ast_rule.rs): an older core refuses a rule document whose ast rule uses it.
  */
 export const RULE_KEY_SINCE = new Map([
   ["filePath", "0.2.0"],
@@ -295,6 +295,18 @@ function ruleDocuments(directory) {
         return [];
       }
     });
+}
+
+/**
+ * The first core release that reads a rule written in `.rerail` in a pack (`rules/<id>.rerail` in pack.json): an older
+ * core refuses the document path, so it drops the whole pack. 0.2.0 is released and reads none (its rules test a
+ * `.rerail` file only from a source clone), so the first is the release after it, 0.2.1.
+ */
+export const RERAIL_DOCUMENTS_SINCE = "0.2.1";
+
+/** The ids of the rules a parsed `pack.json` ships written in `.rerail`. */
+export function rerailRules(packJson) {
+  return (packJson?.rules ?? []).filter((rule) => typeof rule.document === "string" && rule.document.endsWith(".rerail")).map((rule) => rule.id);
 }
 
 /**
@@ -358,12 +370,14 @@ export function shippedRuleKeys(directory) {
 }
 
 /**
- * The oldest core release that loads a pack holding the rules `heldOff` off and shipping rules in `languages` whose ast
- * rules use `ruleKeys`: the newest of the releases that first read each. Undefined when every core loads it.
+ * The oldest core release that loads a pack holding the rules `heldOff` off, shipping rules in `languages` whose ast
+ * rules use `ruleKeys`, and shipping the rules `rerail` written in `.rerail`: the newest of the releases that first
+ * read each. Undefined when every core loads it.
  */
-export function coreFloor(heldOff, languages, ruleKeys) {
+export function coreFloor(heldOff, languages, ruleKeys, rerail) {
   const since = [
     ...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []),
+    ...(rerail.length > 0 ? [RERAIL_DOCUMENTS_SINCE] : []),
     ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? []),
     ...ruleKeys.flatMap((key) => RULE_KEY_SINCE.get(key) ?? []),
   ];

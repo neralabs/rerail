@@ -1,7 +1,9 @@
 # 0065: Typing's cross-file facts are one fixpoint, recorded by the store, keyed by type terms
 
-Status: draft for review (2026-11-07). Reverses parts of 03 §13 (an adopted Typing-branch resolution), I10, I11,
-I18, 0035, 0047 and 0056, so it needs that branch's agreement before any code changes. Replaces 0059 and 0064.
+Status: partly built (audited 2026-11-23). Left: §3's instantiation as facts about signatures (inst_ret, widening) not
+found; §2's stored cross-file derivation replaced by 0090/0092's maintenance. Draft for review (2026-11-07). Reverses
+parts of 03 §13 (an adopted Typing-branch resolution), I10, I11, I18, 0035, 0047 and 0056, so it needs that branch's
+agreement before any code changes. Replaces 0059 and 0064.
 
 ## Intro
 

@@ -1,6 +1,8 @@
 # Implementation plan: copy, then mutate
 
-Status: plan, 2026-10-26.
+Status: plan, 2026-10-26. Not kept since early November (audited 2026-11-23): every phase's copies are done, and
+the adaptations its phases list were taken up by the decision records (0024 on), which say what is built. The
+phase statuses below are as of their dates.
 
 - Target: wolfeel, `final-rerail-shape`, based on `origin/main` 5cf4246e.
 - Requirements: `00-requirements.md` (locked).

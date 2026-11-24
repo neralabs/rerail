@@ -1,7 +1,6 @@
 # 0008: Base facts are read through per-wave vtab bindings over core facts; integers only
 
-Status: accepted
-Date: 2026-10-27
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-27
 
 ## Question
 How do SQL statements of a wave (Phase 7) and the logic planner (Phase 6 row 5) read base facts:

@@ -1,6 +1,7 @@
 # 0176: Python's format strings are guest dialects, `percent-format` and `brace-format`
 
-Status: decided (2026-11-13, in the work to run all of main's Python rules: "We need to get all of these running").
+Status: built (audited 2026-11-23). Decided (2026-11-13, in the work to run all of main's Python rules: "We need to
+get all of these running").
 
 ## Intro
 

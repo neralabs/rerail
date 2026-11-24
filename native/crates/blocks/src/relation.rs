@@ -38,6 +38,12 @@ pub const REWRITTEN: u32 = 8;
 /// lies in the same block at `base_off` from it (`try_continue`); every read of a row by its id goes there for them
 /// (`rel_get`), so a reader binds it as one relation of `base_rows + own` rows.
 pub const CONTINUES: u32 = 16;
+/// Its rows are another relation's of the same block, where they lie (`try_link`): its row directories are that
+/// relation's, so its release gives none of them back (that relation's holder does).
+pub const ALIASED: u32 = 32;
+/// A continuation whose base lies in another block (`try_link`, decision 0353 step 6): `base_off` is the base's
+/// descriptor's offset from that block's start, which a reader binds beside its own (`rel_get`'s `far`).
+pub const FAR_BASE: u32 = 64;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
 /// Indexes and sorted orders a relation can be given after it is made (`try_add_index`, `try_add_order`): its
@@ -142,6 +148,15 @@ structure! {
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
+        /// A continuation's jump: an ancestor down its chain in the same block (Myers' skew-binary jumps), its
+        /// descriptor's offset from this one's; 0 for none (a relation of its own, or a base in another block). A read
+        /// of an id below `jump_rows` goes there at once, so a read down a chain of `n` takes O(log n) steps, and a
+        /// chain needs no length bound (decision 0353 step 6: none of it is merged).
+        pub jump_off: AtomicI64,
+        /// The jump's `base_rows`: an id below them lies at or past the jump.
+        pub jump_rows: u32,
+        /// Its depth in its block's chain: 0 for a relation that continues none here (a full one, or a far base's link).
+        pub depth: u32,
         /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
         /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
         pub known: Span<Known>,
@@ -247,8 +262,75 @@ impl Relation {
         }
         let off = std::ptr::from_ref(base) as i64 - std::ptr::from_ref(rel) as i64;
         rel.base_off.store(off, Release);
+        // Its jump (Myers 1983): the base's jump's jump when the base's two jumps are as long, else the base. A base
+        // with none (depth 0) jumps to itself.
+        let jump = |r: &Relation| -> *const Relation {
+            let o = r.jump_off.load(Relaxed);
+            if o == 0 { r } else { std::ptr::from_ref(r).cast::<u8>().wrapping_offset(o as isize).cast() }
+        };
+        // SAFETY: a chain's jumps lie in its block, before it (each made with its base there).
+        let (j, depth_of) = (jump(base), |p: *const Relation| unsafe { (*p).depth });
+        let jj = unsafe { jump(&*j) };
+        let to = if base.depth - depth_of(j) == depth_of(j) - depth_of(jj) && base.depth > 0 { jj } else { std::ptr::from_ref(base) };
+        // SAFETY: just made, this caller's alone; `to` is a descriptor of the chain in this block.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).depth = base.depth + 1;
+            (*me).jump_rows = (*to).base_rows;
+        }
+        rel.jump_off.store(to as i64 - std::ptr::from_ref(rel) as i64, Release);
         rel.flags.fetch_or(DELTA | CONTINUES, Release);
         Some(rel)
+    }
+
+    /// A relation of `block` that reads a relation of several parts as one, nothing copied (decision 0353 step 6):
+    /// rows `0..base_rows` its base's, read down the base's chain (`base`: the base and the block it lies in, this
+    /// one or another, `FAR_BASE`; none for a first part, `base_rows` 0), then `rows_of`'s first `len` own rows, where
+    /// they lie in `block` (`ALIASED`). `None` when `block` cannot hold its descriptor, or `rows_of` is not `block`'s.
+    pub fn try_link<'b>(block: &'b Block, spec: &Spec, base: Option<(&Block, &Relation)>, base_rows: u32, rows_of: &Relation, len: u32) -> Option<&'b Relation> {
+        if !block.holds(std::ptr::from_ref(rows_of)) || len > rows_of.rows.len() || rows_of.rows.ncols as usize != spec.widths.len() {
+            return None;
+        }
+        let rel = match base {
+            None if base_rows == 0 => Relation::try_create(block, spec, None)?,
+            None => return None,
+            Some((home, b)) if std::ptr::eq(home, block) => Relation::try_continue(block, spec, b, base_rows)?,
+            Some((home, b)) => {
+                let full = b.base_rows == 0 && !b.is_delta();
+                let at = home.offset_of(std::ptr::from_ref(b));
+                if !(full || b.continues()) || base_rows > b.len_all() || !home.holds(std::ptr::from_ref(b)) || at == 0 {
+                    return None;
+                }
+                let rel = Relation::try_create(block, spec, None)?;
+                // SAFETY: just made, this caller's alone.
+                unsafe { (*std::ptr::from_ref(rel).cast_mut()).base_rows = base_rows };
+                rel.base_off.store(at as i64, Release);
+                rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
+                rel
+            }
+        };
+        // Its rows: `rows_of`'s directories, read where they lie; none of its own (its own directories, made with
+        // its descriptor, stay unused and go back with it).
+        // SAFETY: just made, this caller's alone; `rows_of` is frozen at `len` rows for as long as this lives (its
+        // holder keeps it).
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            let (src, dst) = (&rows_of.rows, &mut (*me).rows);
+            dst.min_log = src.min_log;
+            dst.ncols = src.ncols;
+            dst.nchunks.store(src.nchunks.load(Acquire), Relaxed);
+            dst.reserved.store(len, Relaxed);
+            dst.len.store(len, Release);
+            Span::set(&dst.cols, src.cols.as_ptr(), src.cols.len());
+        }
+        rel.flags.fetch_or(ALIASED | FROZEN, Release);
+        Some(rel)
+    }
+
+    /// Whether its base lies in another block (`try_link`).
+    #[inline]
+    pub fn far_base(&self) -> bool {
+        self.flags.load(Relaxed) & FAR_BASE != 0
     }
 
     /// Whether it continues another relation's rows (`try_continue`).
@@ -260,8 +342,9 @@ impl Relation {
     /// The relation it continues (`try_continue`).
     pub fn base(&self) -> Option<&Relation> {
         let off = self.base_off.load(Acquire);
-        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's).
-        (self.continues() && off != 0).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
+        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's). A base in another
+        // block is read through that block (`far_base`).
+        (self.continues() && off != 0 && !self.far_base()).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
     }
 
     /// Rows it reads by id: its own, and a continuation's base's first `base_rows` before them.
@@ -274,14 +357,30 @@ impl Relation {
     /// its own rows from `base_rows` on (a delta's own ids count from its base's too).
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.get_far(None, id, c)
+    }
+
+    /// `get`, a base in another block (`FAR_BASE`) read in `far`, the block it lies in (`rel_get`'s `far`).
+    #[inline]
+    pub fn get_far(&self, far: Option<&Block>, id: u32, c: usize) -> i64 {
         let mut rel = self;
         loop {
             let off = rel.base_off.load(Relaxed);
             if id >= rel.base_rows || off == 0 {
                 break;
             }
-            // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
-            rel = unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() };
+            let jump = rel.jump_off.load(Relaxed);
+            rel = if jump != 0 && id < rel.jump_rows {
+                // SAFETY: its jump lies in its block `jump` bytes from it, an ancestor its holder keeps.
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(jump as isize).cast::<Relation>() }
+            } else if rel.far_base() {
+                let far = far.expect("a relation whose base lies in another block, read with that block");
+                // SAFETY: its base's descriptor lies `off` bytes into `far`, kept while it is (its holder's).
+                unsafe { &*far.ptr::<Relation>(off as usize) }
+            } else {
+                // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() }
+            };
         }
         rel.rows.get(id.wrapping_sub(rel.base_rows), c)
     }
@@ -340,7 +439,9 @@ impl Relation {
     /// # Safety
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
-        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        // Aliased rows are their own relation's, given back with it.
+        let own_rows = if self.flags.load(Acquire) & ALIASED != 0 { 0 } else { unsafe { self.rows.release(block) } };
+        let given = own_rows + unsafe { self.killed.release(block) };
         let kept = self.known_kept.load(Acquire) as usize;
         if kept > 0 {
             block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
@@ -540,7 +641,7 @@ impl Relation {
         let ix = self.indexes.as_slice();
         // An entry given back is taken first (`give_back_index`) when its room is the block's already; one that keeps
         // its room (a block of no free list) is left for an index that fits it (`dead_room`), and taken last.
-        let dead = |i: usize, room: bool| ix[i].state == DEAD && (ix[i].offs.len() != 0) == room;
+        let dead = |i: usize, room: bool| ix[i].state == DEAD && (!ix[i].offs.is_empty()) == room;
         // Its taker marks it live (`state` 0) once its room is had.
         (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))
     }

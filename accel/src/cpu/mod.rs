@@ -10,7 +10,7 @@ use rayon::prelude::*;
 /// Runs `k` on the cores.
 pub fn run(k: &Kernel) -> Output {
     match k {
-        Kernel::BitProduct { a, b, min } => bit_product(a, b, min.as_deref()),
+        Kernel::BitProduct { a, b, min } => bit_product(a, b, min.as_deref().map(|m| &m[..])),
         Kernel::CountTable { loff, left, roff, right, emit } => count_table(loff, left, roff, right, *emit),
         Kernel::Histogram { off, codes, width } => histogram(off, codes, *width),
         Kernel::Closure { n, off, dst } => Output::Bits(closure(*n, off, dst)),
@@ -25,7 +25,7 @@ pub fn run(k: &Kernel) -> Output {
 
 /// The join's pairs: the right sorted by key 0 (or `keyed`, its sort kept), each left row's run found by search.
 /// The shape is the caller's to check ([`Kernel::join_shape`]).
-pub fn join(left: &crate::kernel::Keys, right: &crate::kernel::Keys, keyed: Option<&crate::rows::Keyed>) -> Vec<(u32, u32)> {
+pub fn join(left: &crate::kernel::Keys, right: &crate::kernel::Keys, keyed: Option<&crate::rows::Keyed>) -> rerail_blocks::vector::Vector<[u32; 2]> {
     let l: Vec<&[i64]> = left.iter().map(|c| &c[..]).collect();
     let r: Vec<&[i64]> = right.iter().map(|c| &c[..]).collect();
     match keyed {
@@ -40,7 +40,7 @@ pub fn bit_product(a: &Bits, b: &Bits, min: Option<&[u32]>) -> Output {
     let count = |i: usize, j: usize| -> u32 { a.row(i).iter().zip(b.row(j)).map(|(x, y)| (x & y).count_ones()).sum() };
     match min {
         None => {
-            let mut data = vec![0u32; a.rows * b.rows];
+            let mut data = rerail_blocks::vector![0u32; a.rows * b.rows];
             rerail_context::on_cores(|| {
                 data.par_chunks_mut(b.rows.max(1)).enumerate().for_each(|(i, out)| {
                     for (j, o) in out.iter_mut().enumerate() {
@@ -52,13 +52,14 @@ pub fn bit_product(a: &Bits, b: &Bits, min: Option<&[u32]>) -> Output {
         }
         Some(min) => {
             assert_eq!(min.len(), b.rows, "bit product: one threshold per row of b");
-            let per: Vec<Vec<(u32, u32)>> = rerail_context::on_cores(|| {
+            let per: Vec<rerail_blocks::vector::Vector<[u32; 2]>> = rerail_context::on_cores(|| {
                 (0..a.rows)
                     .into_par_iter()
-                    .map(|i| (0..b.rows).filter(|&j| count(i, j) >= min[j]).map(|j| (i as u32, j as u32)).collect())
+                    .map(|i| (0..b.rows).filter(|&j| count(i, j) >= min[j]).map(|j| [i as u32, j as u32]).collect())
                     .collect()
             });
-            Output::Pairs(per.concat())
+            // copy: growth: each core's pairs, into the one output
+            Output::Pairs(per.iter().flat_map(|p| p.iter().copied()).collect())
         }
     }
 }
@@ -72,7 +73,7 @@ pub fn count_table(loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit
     assert_eq!(parts(loff), parts(roff), "count table: the sides have different partitions");
     let n = parts(loff);
     if !emit {
-        let mut out = vec![0u32; left.len()];
+        let mut out = rerail_blocks::vector![0u32; left.len()];
         // Partitions own disjoint ranges of `out`: split it by the left offsets.
         let mut slices: Vec<&mut [u32]> = Vec::with_capacity(n);
         let mut rest = &mut out[..];
@@ -100,7 +101,7 @@ pub fn count_table(loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit
         });
         return Output::PerRow(out);
     }
-    let per: Vec<Vec<(u32, u32)>> = rerail_context::on_cores(|| {
+    let per: Vec<rerail_blocks::vector::Vector<[u32; 2]>> = rerail_context::on_cores(|| {
         (0..n)
             .into_par_iter()
             .map(|p| {
@@ -108,23 +109,24 @@ pub fn count_table(loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit
                 let mut order: Vec<u32> = (roff[p]..roff[p + 1]).collect();
                 order.sort_by_key(|&k| right[k as usize]);
                 let keys: Vec<u16> = order.iter().map(|&k| right[k as usize]).collect();
-                let mut out = Vec::new();
+                let mut out = rerail_blocks::vector::Vector::new();
                 for li in loff[p]..loff[p + 1] {
                     let c = left[li as usize];
                     let (lo, hi) = (keys.partition_point(|&x| x < c), keys.partition_point(|&x| x <= c));
-                    out.extend(order[lo..hi].iter().map(|&ri| (li, ri)));
+                    out.extend(order[lo..hi].iter().map(|&ri| [li, ri]));
                 }
                 out
             })
             .collect()
     });
-    Output::Pairs(per.concat())
+    // copy: growth: each partition's pairs, into the one output
+    Output::Pairs(per.iter().flat_map(|p| p.iter().copied()).collect())
 }
 
 /// Counts of each code below `width`, per partition.
 pub fn histogram(off: &[u32], codes: &[u16], width: u32) -> Output {
     let (n, w) = (parts(off), width as usize);
-    let mut data = vec![0u32; n * w];
+    let mut data = rerail_blocks::vector![0u32; n * w];
     rerail_context::on_cores(|| {
         data.par_chunks_mut(w.max(1)).enumerate().for_each(|(p, out)| {
             for &c in &codes[off[p] as usize..off[p + 1] as usize] {
@@ -234,7 +236,7 @@ pub fn closure(n: u32, off: &[u32], dst: &[u32]) -> Bits {
         }
         reach[c * words..(c + 1) * words].copy_from_slice(&row);
     }
-    let mut data = vec![0u64; n * words];
+    let mut data = rerail_blocks::vector![0u64; n * words];
     rerail_context::on_cores(|| {
         data.par_chunks_mut(words).enumerate().for_each(|(v, out)| {
             let c = comp[v] as usize;

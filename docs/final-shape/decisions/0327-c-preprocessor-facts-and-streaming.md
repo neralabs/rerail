@@ -1,8 +1,9 @@
 # 0327: A C and C++ preprocessor: directives recorded as facts, and applied while streaming
 
-Status: decided (user, 2026-11-16): "a C preprocessor, in two modes: a) recording the directives as
-facts and b) applying, streaming mode. On both CPU and Metal. We will need it for some of the
-header/library analyses". Building. Numbered past the highest number in any worktree (0326).
+Status: partly built (audited 2026-11-23). Left: c_pp_tape/c_pp_text as stored objects; header units; system headers
+as roots; compiled mode (b) moved to 0436/0448/0482. Decided (user, 2026-11-16): "a C preprocessor, in two modes: a)
+recording the directives as facts and b) applying, streaming mode. On both CPU and Metal. We will need it for some of
+the header/library analyses". Building. Numbered past the highest number in any worktree (0326).
 
 ## Intro
 

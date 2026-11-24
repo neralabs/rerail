@@ -1,5 +1,5 @@
 use rerail_logic::code_rule_dsl::logic::{plan::{Model, Stats, Inputs, Constant, body::Placed},rr};
-use std::collections::{HashMap,HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 #[test]
 // The model is the planner's, held by one thread: its `Arc`s are as the planner makes them.
@@ -7,10 +7,9 @@ use std::sync::Arc;
 fn current_kind_postings_override_biased_priors_and_preserve_missing_vs_zero() {
     let p=Placed::whole(rr::parse_version("").unwrap());
     let mut stats=Stats::empty_of(&p.fields().unwrap());
-    Arc::make_mut(&mut stats.kfreq).insert("1".into(),10_000);
-    Arc::make_mut(&mut stats.kfreq).insert("2".into(),100);
-    stats.dfreq.insert(("kind",1),HashMap::from([(Constant::Int(1),10)]));
-    let mut model=Model { shapes:Default::default(),analysis:Default::default(),stats,ndv:Default::default(),docof:Default::default(),view_src:Default::default(),inputs:Arc::new(Inputs::file()),docs_by_shift:false,derived:Arc::new(HashSet::from(["kind".into()])) };
+    stats.tree=rerail_logic::code_rule_dsl::logic::plan::tree_stats::TreeStats::of([("1".to_owned(),10_000,None),("2".to_owned(),100,None)],[]);
+    stats.dfreq.insert(("kind",1),Arc::new(HashMap::from([(Constant::Int(1),10)]).into_iter().collect()));
+    let mut model=Model { shapes:Default::default(),analysis:Default::default(),stats,ndv:Default::default(),docof:Default::default(),view_src:Default::default(),inputs:Arc::new(Inputs::file()),docs_by_shift:false,derived:["kind"].into_iter().collect() };
     assert_eq!(model.kind_frequency(&Constant::Int(1)),Some(10),"exact live counts must override sampled priors");
     assert_eq!(model.kind_frequency(&Constant::Int(2)),Some(0),"missing from a complete live histogram means zero");
     model.stats.card.insert("property",10_000.0);

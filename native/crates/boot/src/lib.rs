@@ -5,8 +5,8 @@
 //! name: the prefilter, the functors, the `ast` wave compiler and the waves' glue, and the syntax-only adapters.
 //! The engine (napi and the CLI) stands on it, and so can any test binary that needs a booted program.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, under the facades the engine
-//! mounted them through (tools/cratify/boot_mounts.py wrote them from the engine's `code_rule_dsl/mod.rs`; kept by
+//! Its sources are in its own `src/` (the crate split, step 9), under the facades the engine mounted them
+//! through (tools/cratify/boot_mounts.py wrote them from the engine's `code_rule_dsl/mod.rs`; kept by
 //! hand since step 2). A facade's re-exports are `pub`, and its tests' helpers are behind `test-hooks`: the test
 //! crates above (`native/crates/tests_*`) read every module through it.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -41,8 +41,11 @@ mod test_watchdog;
 #[cfg(test)]
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 pub use code_rule_dsl::prof::{lower_hex, purge_allocator_pages};
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     // The facades re-export their dependency's module by glob, and the mounted sources import the same items under
     // the same names: the glob's name and the private one are one item.
@@ -745,6 +748,8 @@ pub mod code_rule_dsl {
         pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
         #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
+        pub use rerail_lang_ecma::code_rule_dsl::embed::vue_code;
         #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
         #[allow(unused_imports)]
@@ -900,7 +905,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
+            use crate::code_rule_dsl::tape::{self, FileImage, TapeDoc, TapeImage};
             #[allow(unused_imports)]
             use crate::code_rule_dsl::build_ids::grammar_version;
             #[allow(unused_imports)]
@@ -926,6 +931,8 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub use rerail_facts::code_rule_dsl::facts::*;
+        // The overlay over the store its slices write through (rerail-overlay, crate split 10c).
+        pub use rerail_overlay::code_rule_dsl::facts::overlay;
         pub mod producers {
             pub mod python {
                 pub mod python_facts {
@@ -1588,7 +1595,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
                 #[allow(unused_imports)]
-                use hashbrown::HashTable;
+                use rerail_blocks::maps::IdTable as HashTable;
                 #[allow(unused_imports)]
                 use rustc_hash::{FxHashMap as HashMap, FxHasher};
                 #[allow(unused_imports)]
@@ -1602,7 +1609,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::time::Instant;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
+                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, Join, JoinSpec, Line, Reprobe, Source, Start, Tok};
                 #[allow(unused_imports)]
                 pub use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
                 #[allow(unused_imports)]
@@ -1667,8 +1674,8 @@ pub mod code_rule_dsl {
                     pub use rerail_logic::code_rule_dsl::logic::plan::corpus::prepared::*;
                 }
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
+                // The command line checks a command's frame (`reuse::command`), in every build.
                 pub mod reuse {
-                    #[cfg(any(test, feature = "test-hooks"))]
                     pub use rerail_logic::code_rule_dsl::logic::plan::corpus::reuse::*;
                 }
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
@@ -1721,7 +1728,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::native::TOP;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
+            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, Join as PlanJoin, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]
@@ -2896,10 +2903,10 @@ pub mod code_rule_dsl {
     pub use rerail_workspace::code_rule_dsl::profile;
     // The same SQL diagnostics serve standalone execution and the workspace profiler.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_sessions::code_rule_dsl::sql_profile;
     pub mod sql_admission {
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_facts::code_rule_dsl::sql_admission::*;
+        pub use rerail_sessions::code_rule_dsl::sql_admission::*;
         #[allow(unused_imports)]
         use parking_lot::Mutex;
         #[allow(unused_imports)]
@@ -3341,6 +3348,8 @@ pub mod code_rule_dsl {
             use super::*;
         }
         pub use rerail_lang::code_rule_dsl::tape::*;
+        // The lean parsers' adapters (rerail-lean-tapes), which boot registers in the parser router.
+        pub use rerail_lean_tapes::code_rule_dsl::tape::{c_lean, csharp_lean, css_lean, ecma_lean, go_lean, html_lean, java_lean, kotlin_lean, markdown_inline_lean, markdown_lean, php_lean, python_lean, rust_lean, scala_lean, sql_lean, swift_lean, vue_lean};
         #[allow(unused_imports)]
         use crate::code_rule_dsl::embed::segments::SegmentMap;
         #[allow(unused_imports)]
@@ -3386,6 +3395,7 @@ pub mod code_rule_dsl {
 
     pub use rerail_facts::code_rule_dsl::text;
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     pub mod test_support;
     /// The engine's text tools without Node (the CLI's commands); the engine adds their napi wrappers.
     pub mod tools;

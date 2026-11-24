@@ -1,8 +1,9 @@
 //! The transducer's base: the packed programs, their interpreter, Bitlex, the batch ABI, the device and CPU executor
-//! interfaces, the query front end and the label sets. It reads none of W (rerail-rules): the compiled CPU executor
+//! interfaces, the query front end and the label sets (their node space is rerail-node-space's, which it re-exports).
+//! It reads none of W (rerail-rules): the compiled CPU executor
 //! (rerail-transducer-cpu) and W's matchers and waves lowered, with `demand` (rerail-transducer), are above it.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -15,12 +16,12 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::content_store;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_transducer;
 extern crate self as rerail_transducer_base;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -54,7 +55,7 @@ pub mod code_rule_dsl {
             };
         }
         #[allow(unused_imports)]
-        use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
+        use crate::content_store::{Binding, Derivation, DerivationRecord, FactStore, StoreResult};
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
@@ -137,9 +138,7 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub mod space;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
+    pub use rerail_node_space::code_rule_dsl::space;
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]

@@ -2,10 +2,11 @@
 // `library_tests.rs` compares each primitive with its Rust reference, on random inputs and edge sizes, on the device.
 
 #include <ukl/memory.h>
+#include <ukl/dot.h>
 #include <ukl/group.h>
 #include <ukl/lz4.h>
 #include <ukl/workqueue.h>
-#include <ukl/grid.h>
+#include <ukl/stages.h>
 
 typedef struct TestArgs {
     uint32_t n;
@@ -266,125 +267,147 @@ DEFINE_KERNEL2(tests, t_workqueue_sg,
     }
 }
 
-// The grid of a test's dispatch: the groups that are running (`ukl_grid_join`); false in a group that is not its.
-UKL_INLINE bool test_grid(UKL_PRIVATE UklGrid* g, UKL_GLOBAL uint32_t* ctl, uint32_t gsz, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* words)
+// ukl/stages.h's stages: a launch a stage, of `UklTiles` its groups (`t.tiles` the groups dispatched, `t.tile` this
+// one), in the order the host gives.
+UKL_INLINE UklTiles test_tiles(uint32_t gsz, uint32_t group, uint32_t lid, uint32_t lsz)
 {
-    g->ctl = ctl; g->groups = 0u; g->group = 0u; g->lid = lid; g->lsz = lsz;
-    return ukl_grid_join(g, gsz / lsz, words);
+    UklTiles t;
+    t.tiles = gsz / lsz; t.tile = group; t.lid = lid; t.lsz = lsz;
+    return t;
 }
 
-// ukl/grid.h's barrier: `n` rounds, two barriers each. In a round each thread of the grid writes its slot, waits,
-// reads the slot of the thread a group ahead (another group's, a coherent read), and counts it wrong unless it is
-// that thread's write of this round; then waits again before the next round's writes. `out[group]` is the group's
-// wrong reads, by its ticket.
-DEFINE_KERNEL2(tests, t_grid_barrier,
-               ARGS,     TestArgs, args,  ,
-               RWBUFFER, uint32_t, ctl,   "[4]",
-               RWBUFFER, uint32_t, slots, "[w * 256]",
-               RWBUFFER, uint32_t, out,   "[w]",
-               SHARED,   uint32_t, flag,  1,
-               SHARED,   uint32_t, words, 2,
-               GSZ0,     uint32_t, gsz,   ,
-               LID0,     uint32_t, lid,   ,
-               LSZ0,     uint32_t, lsz,   )
-{
-    UklGrid g;
-    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
-        return;
-    UKL_COHERENT uint32_t* s = (UKL_COHERENT uint32_t*)slots;
-    uint32_t n = g.groups * lsz, i = g.group * lsz + lid;
-    uint32_t wrong = 0u, other = (i + lsz) % n;
-    for (uint32_t r = 0u; r < args.n; r++) {
-        s[i] = r * n + i;
-        if (!ukl_grid_barrier(g, flag))
-            break;
-        wrong += s[other] != r * n + other ? 1u : 0u;
-        if (!ukl_grid_barrier(g, flag))
-            break;
-    }
-    if (wrong != 0u)
-        ukl_atomic_add(&out[g.group], wrong);
-}
-
-// ukl/grid.h's scan: the exclusive scan of `in`'s first `count[0]` values, as the grid's phases.
-DEFINE_KERNEL2(tests, t_grid_scan,
+// The scan of `in`'s first `count[0]` values into `out`, its total at `out[count[0]]`: stage `w & 0xff` (0 one tile's
+// alone, 1 the tiles' sums, 2 their scan by one tile, 3 the shares from their offsets).
+DEFINE_KERNEL2(tests, t_stage_scan,
                ARGS,     TestArgs, args,    ,
-               RWBUFFER, uint32_t, ctl,     "[4]",
                ROBUFFER, uint32_t, count,   "[1]",
                RWBUFFER, uint32_t, in,      "[n]",
                RWBUFFER, uint32_t, out,     "[n + 1]",
-               RWBUFFER, uint32_t, sums,    "[w + 1]",
+               RWBUFFER, uint32_t, sums,    "[4 * 256 + 4]",
                SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
-               SHARED,   uint32_t, flag,    1,
-               SHARED,   uint32_t, words,   2,
                GSZ0,     uint32_t, gsz,     ,
+               TGID0,    uint32_t, group,   ,
                LID0,     uint32_t, lid,     ,
                LSZ0,     uint32_t, lsz,     )
 {
-    UklGrid g;
-    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
-        return;
-    ukl_grid_scan_exclusive_u32(g, count, (UKL_COHERENT const uint32_t*)in, (UKL_COHERENT uint32_t*)out,
-                                (UKL_COHERENT uint32_t*)sums, scratch, flag __UKL_ARGS);
+    UklTiles t = test_tiles(gsz, group, lid, lsz);
+    UklScanJob job;
+    job.n = count[0]; job.in = (UKL_COHERENT uint32_t*)in; job.out = (UKL_COHERENT uint32_t*)out; job.total = (UKL_COHERENT uint32_t*)out + count[0];
+    uint32_t stage = args.w & 0xffu;
+    if (stage == 0u) ukl_scans_one(t, &job, 1u, scratch __UKL_ARGS);
+    if (stage == 1u) ukl_scans_sum(t, &job, 1u, (UKL_COHERENT uint32_t*)sums, scratch __UKL_ARGS);
+    if (stage == 2u && t.tile == 0u) ukl_scans_sums(t, args.w >> 8, 1u, (UKL_COHERENT uint32_t*)sums, scratch __UKL_ARGS);
+    if (stage == 3u) ukl_scans_out(t, &job, 1u, (UKL_COHERENT uint32_t*)sums, scratch __UKL_ARGS);
 }
 
-// ukl/grid.h's segmented scan: `op` (`w >> 16`) over `in`'s first `count[0]` values, cut at `heads`.
-DEFINE_KERNEL2(tests, t_grid_seg,
+// The segmented scan `op` (`w >> 16`) of `in`'s first `count[0]` values, cut at `heads`: stage `w & 0xff` (0 one
+// tile's alone, 1 the tiles' aggregates, 2 their carries by one thread, 3 the shares from them); `(w >> 8) & 0xff`
+// the tiles of stages 1 and 3.
+DEFINE_KERNEL2(tests, t_stage_seg,
                ARGS,     TestArgs, args,  ,
-               RWBUFFER, uint32_t, ctl,   "[4]",
                ROBUFFER, uint32_t, count, "[1]",
                RWBUFFER, uint32_t, in,    "[n]",
                RWBUFFER, uint32_t, heads, "[n]",
                RWBUFFER, uint32_t, out,   "[n]",
-               RWBUFFER, uint32_t, sums,  "[2 * w]",
+               RWBUFFER, uint32_t, sums,  "[2 * 256]",
                SHARED,   uint32_t, sv,    1024,
                SHARED,   uint32_t, sf,    1024,
-               SHARED,   uint32_t, flag,  1,
-               SHARED,   uint32_t, words, 2,
                GSZ0,     uint32_t, gsz,   ,
+               TGID0,    uint32_t, group, ,
                LID0,     uint32_t, lid,   ,
                LSZ0,     uint32_t, lsz,   )
 {
-    UklGrid g;
-    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
-        return;
-    ukl_grid_seg_scan_n(g, args.w >> 16, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), (UKL_COHERENT const uint32_t*)in,
-                        (UKL_COHERENT const uint32_t*)heads, (UKL_COHERENT uint32_t*)out, (UKL_COHERENT uint32_t*)sums, sv, sf, flag __UKL_ARGS);
+    UklTiles t = test_tiles(gsz, group, lid, lsz);
+    uint32_t stage = args.w & 0xffu, op = args.w >> 16, n = count[0];
+    UKL_COHERENT const uint32_t* vi = (UKL_COHERENT const uint32_t*)in;
+    UKL_COHERENT const uint32_t* hi = (UKL_COHERENT const uint32_t*)heads;
+    UKL_COHERENT uint32_t* vo = (UKL_COHERENT uint32_t*)out;
+    UKL_COHERENT uint32_t* s = (UKL_COHERENT uint32_t*)sums;
+    if (stage == 0u) ukl_seg_one(t, op, n, vi, hi, vo, sv, sf __UKL_ARGS);
+    if (stage == 1u) ukl_seg_agg(t, op, n, vi, hi, vo, s, sv, sf __UKL_ARGS);
+    if (stage == 2u && t.tile == 0u && lid == 0u) ukl_seg_carry(op, (args.w >> 8) & 0xffu, s);
+    if (stage == 3u) ukl_seg_out(t, op, n, vi, hi, vo, s, sv, sf __UKL_ARGS);
 }
 
 #if UKL_SIMD_WIDTH >= 8
-// ukl/grid.h's sort: `keys`' first `count[0]` by their low `(w >> 16) & 0xff` bits, those below `w >> 24` known in
-// order already, the values their indexes before it.
-DEFINE_KERNEL2(tests, t_grid_sort,
+// The sort of `keys`' first `count[0]` by their low `bits` bits (`(w >> 8) & 0xff`), the values their indexes before
+// it: stage `w & 0xf`, of digit `(w >> 4) & 0xf`. Stages: 0 the few rows' ranks; 1 the varying bits' sums; 2 their
+// answer, by one thread, into `ctl` (0, 1 the bits that vary; 2 the passes so far; 3, the host's, stage 1's tiles); 3 a digit's histograms, where it
+// varies; 4 its scatter (the histograms scanned between, by `t_stage_scan`); 5 the passes counted, one thread; 6 the
+// rows moved where they end (`ukl_sort_in_input`), where they are not: the few rows' (`w >> 16`: 1) or the passes'.
+DEFINE_KERNEL2(tests, t_stage_sort,
                ARGS,     TestArgs, args,    ,
-               RWBUFFER, uint32_t, ctl,     "[4]",
                ROBUFFER, uint32_t, count,   "[1]",
+               RWBUFFER, uint32_t, ctl,     "[4]",
                RWBUFFER, uint64_t, keys,    "[n]",
                RWBUFFER, uint32_t, values,  "[n]",
                RWBUFFER, uint64_t, keys2,   "[n]",
                RWBUFFER, uint32_t, values2, "[n]",
                RWBUFFER, uint32_t, hist,    "[256 * n + 1]",
-               RWBUFFER, uint32_t, sums,    "[4 * w + 4]",
+               RWBUFFER, uint32_t, sums,    "[4 * 256 + 4]",
                SHARED,   uint32_t, h,       UKL_RADIX_DIGITS,
                SHARED,   uint32_t, counts,  UKL_RADIX_GROUPS * UKL_RADIX_DIGITS,
                SHARED,   uint32_t, before,  UKL_RADIX_DIGITS,
                SHARED,   uint32_t, base,    UKL_RADIX_DIGITS,
                SHARED,   uint32_t, digits,  UKL_RADIX_SPILL,
-               SHARED,   uint32_t, tile,    UKL_GRID_SORT_TILE_WORDS,
+               SHARED,   uint32_t, tile,    UKL_SORT_TILE_WORDS,
                SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
-               SHARED,   uint32_t, flag,    1,
-               SHARED,   uint32_t, words,   2,
                GSZ0,     uint32_t, gsz,     ,
+               TGID0,    uint32_t, group,   ,
                LID0,     uint32_t, lid,     ,
                LSZ0,     uint32_t, lsz,     )
 {
-    UklGrid g;
-    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
-        return;
-    UklGridSortLocal l;
+    UklTiles t = test_tiles(gsz, group, lid, lsz);
+    UklSortLocal l;
     l.h = h; l.counts = counts; l.before = before; l.base = base; l.digits = digits; l.tile = tile;
-    ukl_grid_sort_u64_from(g, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), args.w >> 24, (args.w >> 16) & 0xffu, true, (UKL_COHERENT uint64_t*)keys,
-                      (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2, (UKL_COHERENT uint32_t*)values2,
-                      (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, l, scratch, flag __UKL_ARGS);
+    uint32_t stage = args.w & 0xfu, d = (args.w >> 4) & 0xfu, bits = (args.w >> 8) & 0xffu, n = count[0];
+    UKL_COHERENT uint64_t* k1 = (UKL_COHERENT uint64_t*)keys;
+    UKL_COHERENT uint32_t* v1 = (UKL_COHERENT uint32_t*)values;
+    UKL_COHERENT uint64_t* k2 = (UKL_COHERENT uint64_t*)keys2;
+    UKL_COHERENT uint32_t* v2 = (UKL_COHERENT uint32_t*)values2;
+    UKL_COHERENT uint32_t* c = (UKL_COHERENT uint32_t*)ctl;
+    uint64_t vary = ((uint64_t)c[0] << 32) | (uint64_t)c[1];
+    bool varies = ((vary >> (8u * d)) & 0xffu) != 0u, even = c[2] % 2u == 0u;
+    if (stage == 0u) ukl_sort_rank(t, n, bits, true, k1, v1, k2, v2, l);
+    if (stage == 1u) ukl_sort_vary(t, n, bits, true, k1, v1, (UKL_COHERENT uint32_t*)sums, scratch __UKL_ARGS);
+    if (stage == 2u && t.tile == 0u && lid == 0u) {
+        uint64_t v = ukl_sort_varying(c[3], (UKL_COHERENT uint32_t*)sums);
+        c[0] = (uint32_t)(v >> 32); c[1] = (uint32_t)v; c[2] = 0u;
+    }
+    if (stage == 3u && varies) ukl_sort_hist(t, n, d, even ? k1 : k2, (UKL_COHERENT uint32_t*)hist, l);
+    if (stage == 4u && varies) ukl_sort_scatter(t, n, d, even ? k1 : k2, even ? v1 : v2, (UKL_COHERENT uint32_t*)hist, even ? k2 : k1, even ? v2 : v1, l __UKL_ARGS);
+    if (stage == 5u && varies && t.tile == 0u && lid == 0u) c[2] = c[2] + 1u;
+    if (stage == 6u) {
+        // In the second buffers: the few rows', or an odd count of passes'.
+        bool second = (args.w >> 16) != 0u || !even;
+        if (second == ukl_sort_in_input(bits)) ukl_sort_back(t, n, second, k1, v1, k2, v2);
+    }
 }
 #endif
+
+// ukl/dot.h: each dot product, the backend's form and the reference, on `a[i]`, `b[i]` and `c[i]` (the accumulator:
+// an i32, a u32 or an f32's bits); and the f16 conversion of `i`'s low 16 bits, the backend's and the reference's.
+DEFINE_KERNEL2(tests, t_dot,
+               ARGS,     TestArgs, args, ,
+               ROBUFFER, uint32_t, a,    "[n]",
+               ROBUFFER, uint32_t, b,    "[n]",
+               ROBUFFER, uint32_t, c,    "[n]",
+               RWBUFFER, uint32_t, out,  "[n * 10]",
+               GID0,     uint32_t, i,    )
+{
+    if (i >= args.n)
+        return;
+    uint32_t x = a[i], y = b[i], z = c[i];
+    float zf = reinterpretIntAsFloat((int32_t)z);
+    RWBUFFER(uint32_t) o = out + i * 10u;
+    o[0] = (uint32_t)ukl_dot4_i8(x, y, (int32_t)z);
+    o[1] = (uint32_t)ukl_dot4_i8_ref(x, y, (int32_t)z);
+    o[2] = ukl_dot4_u8(x, y, z);
+    o[3] = ukl_dot4_u8_ref(x, y, z);
+    o[4] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_f16(x, y, zf));
+    o[5] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_f16_ref(x, y, zf));
+    o[6] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_bf16(x, y, zf));
+    o[7] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_bf16_ref(x, y, zf));
+    o[8] = (uint32_t)reinterpretFloatAsInt(ukl_f16_to_f32(i & 0xffffu));
+    o[9] = (uint32_t)reinterpretFloatAsInt(ukl_f16_to_f32_ref(i & 0xffffu));
+}

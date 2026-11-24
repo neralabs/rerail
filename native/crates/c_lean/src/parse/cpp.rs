@@ -1033,6 +1033,12 @@ impl<'a> P<'a> {
                 Ok(n)
             }
             T::Name if t.word == w::OPERATOR && role != Role::Type => {
+                // tree-sitter-cpp's expressions hold no `operator_name` (a qualified name's `name` does): an operator
+                // function named bare where an expression stands is no tree of the grammar, and its code is in no
+                // table of it (decision 0631). The file is left to tree-sitter.
+                if s.ctx == Ctx::Expr {
+                    return self.refuse();
+                }
                 let n = self.operator_name(s)?;
                 if role == Role::Field && self.peek() == T::Lt && self.template_args_ahead(0) {
                     let m = self.wrap(n, K::TemplateMethod, s, slot(f::NAME, Ctx::Bare));

@@ -17,7 +17,7 @@ model/model.safetensors filter=lfs diff=lfs merge=lfs -text
 # these files' line ends (Git for Windows converts text to CRLF by default).
 model/config.json -text
 model/tokenizer.json -text
-native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text
+native/crates/adapters/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text
 native/grammars/*/src/parser.generated.c.gz filter=lfs diff=lfs merge=lfs -text
 # A Bitlex grammar's shipped prover answers (decision 0414): 16-byte digests and answers, tens of KB, kept as stored.
 native/crates/*/*.answers -text

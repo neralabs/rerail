@@ -39,7 +39,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-matcher/code-rule-profile", "rerail-rules/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-rules/p-anchor-corpus", "rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests"]
-test-hooks = ["rerail-adapters/test-hooks", "rerail-matcher/test-hooks", "rerail-rules/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks", "rerail-blocks/test-hooks"]
+test-hooks = ["rerail-adapters/test-hooks", "rerail-matcher/test-hooks", "rerail-rules/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
 # The panic boundary (`panic_boundary`), mounted by the tree watch's crate, which needs nothing else of W's.
@@ -88,7 +88,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-adapters = { path = "../adapters", default-features = false }
 rerail-matcher = { path = "../matcher", default-features = false }
@@ -102,8 +102,6 @@ rerail-blocks = { path = "../blocks" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
-rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

@@ -1,12 +1,13 @@
 # Plan: smaller crates, one at a time
 
-Status: plan, revision 2 (2026-11-21), at 066698e84e. Builds on the in-place split (`in-place-plan.md`), which
-landed. Nothing here is built yet.
+Status: built, steps 1 to 7i (2026-11-21 to 2026-11-22; each step in the Log at the end). Left: moving the files
+into the crates (§6), which this plan put after it. Plan revision 2 (2026-11-21), at 066698e84e. Builds on the
+in-place split (`in-place-plan.md`), which landed.
 
 The user's choices (2026-11-21):
 
 - **Keep mounting.** Each new crate mounts its files in place from `native/src`, as the first split did. The
-  files move into the crates later, as a separate step.
+  files move into the crates later, as a separate step. (Done in step 9, right after a hub merge.)
 - **Split the larger crates**, not only the engine. Logic, W and the compiler are cut to crates of about 20k
   production lines or fewer (§3, steps 4–7).
 
@@ -263,14 +264,8 @@ These are independent and small, one commit each:
 
 ## 4. Measuring it
 
-One `cargo build --timings` on one farm host, before step 1 and after each step. Each is a warm rebuild after a
-one-line edit in each layer (compiler, lang, facts, W, logic, the engine), for:
-
-- the CLI (`--bin rerail-engine --features test-hooks`);
-- the test crate a targeted run of that layer's tests builds.
-
-The numbers: wall time, CPU time, and the longest serial chain in the timings. They are recorded in each step's
-decision record. There are no A/B triples. One run per state, with the host's load noted.
+Each step is measured by its crates' sizes (production lines, less inline tests), not by build timings: the user
+dropped the `--timings` runs (2026-11-22).
 
 ## 5. Guards
 
@@ -286,8 +281,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 - **Test crate granularity:** the six in step 2, or one per crate below (`rerail-logic-tests`, …). As the
   library crates split in steps 4–7, the test crates follow them, one per library crate where its tests need the
   providers.
-- **Moving the files** into the crates (after this plan): one step for the whole tree, at a quiet point for the
-  other branches.
+- **Moving the files** into the crates: settled, done in step 9 (below), right after a hub merge.
 
 ## Log
 
@@ -1224,3 +1218,324 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 
     `definition_ids_are_pinned` reads its Ruff fixtures through `pack_test_data`. Tests: on a Linux host, both crates
     in full: 246 of 248. The 2 failures are pack data.
+- **Step 8a** (2026-11-22): rerail-rules-base's test-only engines, 31.4k lines behind `test-hooks`, are now three
+  crates above it. They are P's and D's SQL anchor engines and D's relational waves.
+
+  | crate | lines | what it holds |
+  |---|---:|---|
+  | rerail-p-anchors | 10.0k | `matcher::p_anchors`, its corpus (`Corpus`, `CorpusSlot`), and its part in a rule's evaluation (`p_anchors::evaluation`, the `p-anchor-corpus` path) |
+  | rerail-d-relational | 10.4k | `waves::relational`, over P's (its waves enter P's corpus) |
+  | rerail-d-anchors | 10.7k | `matcher::d_anchors`, over D's waves (its stores keep their database and pools) |
+
+  - rerail-rules-base keeps 18.2k of production code. It reads the engines back through slots:
+    - `compile::DATA_LAYER` is D's compiler of a clause's `relational` object.
+    - `CompiledClause::data_layer` holds D's plan as `Arc<dyn Any + Send + Sync>`. Only D reads it, through
+      `waves::relational::Plan::of`.
+    - `eval::ANCHOR_CORPUS` is P's corpus: `enter`, `prepare` and `roots`. These are the old `prepare_candidates` and
+      `anchor_roots`, moved into P unchanged.
+    - `eval::data_layer_rows` is D's, in `waves::relational`.
+  - rerail-rules re-exports the three engines in its `matcher` and `waves`, so every path above is unchanged.
+  - Boot's `install_with` registers both slots, under `test-hooks` (P's also needs `p-anchor-corpus`). Each new
+    crate's own test binary registers them too.
+  - A build without `test-hooks` mounts nothing in any of the three crates.
+  - Tests:
+    - On a Linux host, the three crates and rules-base: 137 of 137 (33 P, 34 D's waves, 41 D's anchors, 29 rules-base).
+    - On a Linux host, the hosted tests: rerail-tests-anchors (162), and rerail-tests-logic's `waves::` (33). All pass.
+    - Checks: the workspace with `--tests` is clean, and so is the `p-anchor-corpus` build of the four crates.
+- **Step 8b** (2026-11-22): the node space is a crate of its own, and the sizes are measured without inline tests.
+  - rerail-node-space (1.8k, with its 5 tests) holds `space`: a wave's node space and its chunked node sets (0024
+    §1, 0045).
+    - It reads nothing of the engine, so it sits under rerail-transducer-base, which re-exports it. Every path above
+      is unchanged.
+    - Its `test-hooks` keeps the dense reference set (`DenseSet`).
+    - One container test reads its segments back with the postings' decoder, through a dev-dependency on
+      rerail-store-base.
+    - What the crates above read is widened to `pub` (`fill_file`, `segment`, `shape`). `NodeSpace` and `NodeSet`
+      gain `is_empty`.
+  - The earlier figures counted a file's inline `#[cfg(test)] mod` blocks as production. Less those, the largest
+    crates are:
+
+    | crate | production | inline tests |
+    |---|---:|---:|
+    | rerail-store | 20.7k | 1.0k |
+    | rerail-lang-php | 19.5k | 0.3k |
+    | rerail-transducer-cpu | 19.3k | 0.0k |
+    | rerail-transducer-base | 18.0k | 1.6k |
+
+  - rerail-store stays one crate:
+    - 0.46k of its 20.7k is `tree_result_segments`, which is behind `test-hooks`.
+    - Every module left in it adds methods to `ContentStore` (25 files), and a type's methods stay in its crate.
+    - The modules that do not are the atoms, the kept facts and their SQL tables. They reach its connection,
+      write-back and guest keys, and every connection it opens installs the tables.
+    - So a further cut would turn store methods into traits across crates, for about 0.2k.
+  - Tests (Linux): rerail-node-space 5 of 5, rerail-transducer-base 60 of 60. The workspace check with `--tests` and
+    clippy on both crates are clean.
+- **Step 9** (2026-11-22): each crate's sources are in its own `src/`. The move came right after the hub merge
+  (09e8ac2f96), so the other branches meet it as renames.
+  - **9a** (ff01fd8d4a) is the moves alone, every file `R100`. `tools/cratify/move_sources.py plan` reads the module
+    trees as rustc resolves them and writes `tools/cratify/source-moves.tsv` (1,679 files). A file at `native/src/P`
+    goes to `<crate>/src/P`, so module paths, and the paths between two files of one crate, are unchanged.
+    - A file two crates compile goes to the lower one (`crate-order.tsv`). A file the engine compiles stays.
+    - A file that is not Rust goes with the one crate that includes or names it. One no source names goes with its
+      directory's files.
+    - The directories read whole stay where they are (`WHOLE`): the typing programs, which the package ships as a
+      directory, and the planner's goldens.
+  - **9b**: the paths. `move_sources.py repath` rewrote each `#[path]` and `include*!` the move changed (174 in 108
+    files) and added a `#[path]` where a module's file is now in another crate. A hand edit fixed the three that
+    climbed through a directory that no longer exists. Runtime paths were fixed the same way:
+    - the build script's names table and view sources;
+    - the pack rules' scopes (each rule's scope is unchanged for every case and every moved file);
+    - the check scripts' directory lists;
+    - REUSE, the notices, generators and docs.
+    - The tests that read the engine's sources now find them through `source_tree::source_paths` (a module-tree
+      path, in every crate that keeps a part of it). Each scanner reads what it read before.
+    - `check-node-structures.mjs` walks every crate's module tree. It had read only `native/src/lib.rs`'s since the
+      first split.
+  - Found on the way, from the hub: the width census's two maps went unlisted in `facts_only`'s `STATE`, and
+    `run_state` still listed the removed `crates/clif/src/rust.rs`. Both are fixed.
+  - `metal_host_guard_tests.rs` stays in `native/src`, uncompiled. 1b9c360dcf (RER-131) unmounted it when pattern
+    leaves moved to the host on the Metal path, and it fails as it stands.
+  - Checks: the workspace with `--tests` is clean on Linux and macOS. The guards pass. Tests (Linux): the source
+    scanners and the plan and schedule tests, 125. On a Mac: the Metal launch guard.
+- **Step 10** (2026-11-22): more cuts by §2's mechanism, each measured by what an edit to a crate recompiles and by
+  the longest chain. Both numbers come from `cargo metadata` (`tools/cratify/fanout.py`, with `--workspace` so that
+  test crates and their dev-dependencies count). Measured at the hub's tip: an edit to `rerail-compiler` (18k lines,
+  5 crates below it) rebuilt 72 crates, `rerail-store` 63 and `rerail-facts-base` 60. The longest chain is 35.
+  - **10a, the compiler.** It sat under the whole engine through three edges:
+    - `rerail-lang` reads `rerail-metal`'s runtime (slabs, the device, its buffers), and the runtime held the
+      compiler's programs on the device. Those programs (`block_program` with its serial form and
+      `block_common.uglykl`, and `pp_on`, 3.4k lines) are now `rerail-metal-programs`, above the runtime. Their
+      callers were the parser crates and device-metal, which were above it already. The runtime no longer reads the
+      compiler:
+      - its error is `rerail-error`, below both, which `rerail_compiler::Error` and `rerail_metal::Error` re-export;
+      - `slabs::SOURCE_MARGIN` is its own constant, which `rerail-metal-programs` asserts equal to
+        `block_native::BACK`;
+      - the serial kernels' release moved out of `runtime::drop_pipelines` into `rerail_metal_programs::drop_kernels`.
+        device-metal's `metal_backend::drop_pipelines` calls both.
+    - 48 crates declared the compiler, rr-parser, rir, cpu-block or metal without naming them (the split tool gave
+      each crate the engine's list): the language layer, facts, logic, the planner, typing, sessions and every test
+      crate. Those dependencies are gone.
+    - Then, crates above an edit: compiler 72 to 50, rir 69 to 36, bitlex and cpu-block 55 to 34, cpu-stream 54 to
+      33, rr-parser 49 to 29. metal 68 (5.8k lines, from 9.2k). The longest chain is unchanged (35): it runs through
+      store and facts-base, next.
+    - Checks: the workspace with `--tests` is clean on Linux, and the touched crates on macOS. Tests (Linux): metal,
+      metal-programs, error, compiler and parser_tests' block tests, 108.
+  - **10b, the store.** It had 63 crates above it. Above facts-base, no crate's library calls the store. With an
+    empty `ContentStore` in their facades, the libraries of transducer-base, logic-core, run, adapters and rr all
+    compile. Only names under its path held them: its records, the upkeep and the atoms. facts-base calls 29 of its
+    methods and facts two (`intern_atoms`, `atoms_handle`); their tests open stores. So the store's interface is
+    those calls and its records, below it; the store and its atoms go above. In three parts:
+    - **10b-1, the records.** What the crates above hold of the store is data. A tape's or a source's bytes where
+      they lie (`ObjectBytes`, `ObjectFrame`, `TapeFrame`, `TapeBytes`), the programs recorded with a file's tape,
+      the derivations (`Binding`, `Derivation*`, `ABSENT`), `Sym`, the tree diff, a tape's prefilter rows, its
+      positional search index and lookups, and a queued write's `Key` are now in `rerail-store-base`. The store
+      re-exports each at its old path. `ObjectFrame::of` and `TapeFrame::set_programs` replace the private fields the
+      store wrote.
+    - **10b-2, the store's calls.** `content_store::FactStore` (store-base) is what the crates below the store call
+      of an open one, 39 calls. `ContentStore` implements it (`as_fact_store.rs`), each call its method of the same
+      name:
+      - the derivations;
+      - sources and tapes, with the working set and a reader's collection lease;
+      - prefilters, the search indexes and Git trees;
+      - the atoms: `AtomTable`, the three a batch makes (`intern`, `intern_all`, `value`).
+      The SQL transaction is a `dyn FnMut` call, and `dyn FactStore`'s `candidate_transaction` returns its value.
+      - facts-base, facts and transducer-base hold `&dyn FactStore`. `Graph::store` returns one, and every
+        `FactStore` is a `Graph`. boot, the composition root, reads the rest of the store from it
+        (`ContentStore::of`).
+      - `upkeep::SqliteFile` (any SQLite file's upkeep, which logic-core registers for the cost statistics) and
+        `PREFILTER_VERSION` are in store-base too.
+      - The store leaves the dependencies of lang, facts-base, facts, adapters, rr, transducer-base, logic-core,
+        matcher, transducer-cpu, rules-base and rules: their facades are observe's. facts-base and facts keep it for
+        their tests (`#[cfg(test)]`, a dev-dependency). lang's `fixtures::open` went: its callers open the store, and
+        the prefilter's fixtures, which have the store, keep an `open`.
+      - Then: crates above an edit to the store, 63 to 48, its chain up 21 to 16. The longest chain is 34.
+      - Found on the way: `the_kernels_id_reads_are_the_hosts` counted three tape formats where there are two. It
+        counts `Format::ALL` now, as the test beside it does.
+      - Checks: the workspace with `--tests` is clean on Linux and macOS. Tests (Linux): the moved records' and
+        upkeep's, the overlay's, the observer's and propagation's, 41; facts' syntax and family tests, 70 (one needs
+        pack data the host lacks).
+    - **10b-3, the atoms.** The interner, its blocks and chain (`stored`), its id map after a fork (`map`), the
+      `atoms` vtab and the guests' keys' registry are `rerail-atoms` (3.2k lines), below the store, which re-exports
+      it as `content_store::atoms`. The store keeps what is its own:
+      - its calls over its arena (`intern_atoms`, the writer's flush, the commit that writes pending atoms), in
+        `atoms_store.rs`;
+      - the guests' keys' rows: `GuestKeys::read_once` and `replace_lost` replace the state the store reached into;
+      - the kept facts installed beside the atoms on a store's connection (`install_atoms`, `attach_atoms`).
+        `Atoms::attach` no longer installs them. Every connection that had them still does: the store's opener and
+        logic's corpus openers call `install_atoms`, and device-metal's parity fixture calls `attach_atoms` on the
+        store file it opens. setfix's and run's `attach` are only handed connections that carry them already, or
+        in-memory ones.
+      - Tests:
+        - the store's tests of the atoms open stores, so they stay in it. They read the atoms' state through test
+          hooks (`with_interner`, `leased_now`, `complete_now`, `of_path`).
+        - Blocks start small for them as before: `rerail_atoms::set_small_blocks`, which the store's test binary
+          sets as it loads. It was `cfg(test)` in one crate.
+        - The interner's own test is the atoms crate's.
+      - `AtomTable` is implemented in rerail-atoms. `FactStore` gains `database_path` and `open_connection`.
+      - Then run (atoms alone) and setfix (`&dyn FactStore` in the waves' owner and its database) leave the store.
+        setfix's tests keep it.
+      - Then: crates above an edit to the store, 48 to 47 (setfix's test target still opens stores). The store's
+        library has 42 direct users, its chain up 16 to 14, and it is 23.9k lines (from 27.3k). The longest chain
+        is 34.
+      - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files.
+        Tests (Linux): atoms, store, store-base and run, 287; setfix's owner and stores' tests, 43.
+- **10c, facts-base's cost.** Only facts depends on facts-base, and every crate above reaches it through facts, so an
+  edit there rebuilds facts' users (60) whatever each reads. What can drop is the cost of its lines: the modules few
+  crates name move up into crates near those users, and what the core calls of them stays as a small interface below.
+  - **10c-1, the SQL profiler and admission ledger** (1.7k lines) are `rerail-sql-profile`, which setfix's waves'
+    owner and the executor (sessions-base, sessions) mount. An edit to them rebuilds 35 crates, from 60. The facts'
+    virtual tables only count (`frame`, `FrameEvent`): those counters, the index-build span, the `EXPLAIN` flag
+    and the timers (`clock`, `timing`) are rerail-prof's `sql_frame`, below facts-base. The profiler drives them
+    through `explain`, `counts`, `statement_started` and `statement_ended`, and re-exports them at their old
+    paths. The facades that re-exported the profiler and never used it drop it. Boot mounts it from sessions.
+    - The profiler's tests are `cfg(test)`: no crate read them under test-hooks.
+    - `facts::rows::SOURCES_HELD` is a `rerail_registry::Slot` that boot registers, not a `OnceLock`. This was
+      check_crate_dag's one finding.
+    - Then: facts-base 17.2k lines (from 19.0k), 60 above. rerail-sql-profile 1.7k lines, 35 above.
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files.
+      The repository's checks pass. Tests (Linux): the profiler's, the executor's profile and admission tests, 44;
+      boot's library, 61 of 74. Of the 13 failures, 11 need pack test data the host lacks, one is a Metal test on
+      Linux, and one predates the split (`revision_cli_reads_commit_metadata_without_its_tree`: the run's settings
+      read of `rerail.env` meets the missing root tree, which `6f1867702e` made an error).
+  - **10c-2, the overlay** over the store and its frozen layers (`facts::overlay`, `facts::runs`, 1.4k lines) are
+    `rerail-overlay`, which boot mounts in its `facts`. Only boot's slices write through it, and tests-lang's
+    families tests through boot, and the overlay is `runs`' one user. An edit to them rebuilds 23 crates, from 60.
+    - observe's crash-recovery tests (a direct push and an overlay push) move beside the overlay with the
+      observer's test trees they used. observe's `push_root` is public for them.
+    - The methods only the tests call are `cfg(test)`. `Run::relation` and `Run::is_empty` had no caller and
+      are gone: facts-base's `allow(dead_code)` on the mounts hid them.
+    - Then: facts-base 15.8k lines, 61 above (the new crate is one of them). rerail-overlay 1.4k lines, 23 above.
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files. The
+      repository's checks pass. Tests (Linux): the overlay's and runs', 11; observe's, 3; families', 5.
+- **10d, accel off the device's stack.** The engine's crates stand one per level from boot down to prof, so a cut
+  between two of them shortens the longest chain by one at most (34: any one edge on it, 33). Below prof the chain
+  ran prof > accel > forest > gpu > ukl-vec > ukl > c-pp > c-lean > tape-format > clif > blocks, one crate a level
+  too: the executor every crate uses sat on the GPU's compiler. So an edit to UKL rebuilt 86 crates, and ukl-vec
+  (19.3k lines) cost the most of any crate. Its users take the pool and the executor (`exec`, `upkeep`, `budget`,
+  `gpu::shared`). Only the GPU lane's kernels and device join, and the models the forest trains on the device, need
+  the stack. They move to `rerail-accel-gpu` (`accel/gpu`), registered as the engine boots. With lang's tape home
+  off metal too, the longest chain is 28 and an edit to UKL rebuilds 40 (`fanout.py`, simulated).
+  - **10d-1:** the shared pool opens the device through rerail-device's `shared`, not forest's re-export of it.
+  - **10d-2, the models.** accel's `models` is their interface:
+    - `LearnedCost` and `LearnedJoin`, the models as the prices and the planner ask them;
+    - `Models`, what trains them and reads a saved cost model, in a `rerail_registry::Slot` (`MODELS`).
+
+    `cost_model` keeps the installed model's version and each thread's copy over `dyn LearnedCost`, and trains
+    through the slot (`train_until`, `compare`, `from_bytes`, `utility`). Each model keeps its memo of predictions.
+    `join_model` keeps the steps and their comparisons. Its `JoinModel` is `Arc<dyn LearnedJoin>`, and
+    `train`, `compare` and `compare_on` go through the slot. The forests' side, the cost model's memo and
+    comparison and the join model's forest and device queue, is rerail-accel-gpu's (`cost_model`, `join_model`,
+    macOS). It registers `Forest` in boot's install, and in logic-core's test binary as it loads. Callers pass no
+    configuration: every one passed the forest's default. The forest's own tests keep theirs.
+    - Then: accel no longer depends on forest. An edit to forest rebuilds 25 crates, from 80. The longest chain
+      is 33.
+    - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy has nothing in the changed files.
+      The repository's checks pass. Tests (macOS): accel's, the forests' (three join-model tests and the model in
+      placement) and logic-core's cost and join-step tests, 22.
+  - **10d-3, the GPU lane.** Its kernels, device joins and tiles (`gpu::{join, kernels, space, tile}`, and the
+    lane's backend in `gpu`) leave accel for rerail-accel-gpu's `gpu`, with their tests, the lanes' integration
+    test and the GPU's price bench. accel keeps what the crates below reach:
+    - the pool (`gpu::shared`, which now has `device`, join's before) and the launch ledger (`gpu::launch`);
+    - the lane's batches' counts (`gpu::programs`, `programs_begun`);
+    - two slots the lane registers into in `install` (boot's, a test binary's load): `gpu::BACKEND`, the backend
+      the executor takes, and `gpu::MAINTENANCE`, the kernels' upkeep job logic-core registers.
+
+    rerail-accel-gpu's `gpu` re-exports the low parts, so the crates above (boot, device-metal, metal,
+    metal-programs) name the lane there alone. Below it:
+    - facts-base's `InFlight` keeps its builder's flushed work (`Arc<shared::Flushed>`), and device-metal waits on
+      it as a watcher (`Submitted::watching`);
+    - col's gate takes the wait a pass encodes, not the pass.
+
+    accel no longer depends on rerail-gpu or UKL. The kernels' test generators were in three copies (the CPU's
+    tests, the GPU's, the lanes'), and are now one, in `workloads` (`test-hooks`). The bench's workloads are there
+    too.
+    - Then: an edit to UKL rebuilds 77 crates, from 87; to forest, 71 (rerail-metal is above the lane, and lang
+      above metal: 10d-4). The longest chain is 32.
+    - Fixed on the way:
+      - The executors' guard walks `accel/gpu/src`.
+      - 0571's units compile (`kernels`) ran on a bare `std::thread::scope`, which the guard refused (red at HEAD).
+        It now runs on `exec::scoped`.
+      - The joins' batch (`space::start`, `finish`) entered no evaluation of the launch budget, so each of its
+        sorts and probes outside a stratum was a hard failure (0601: "the GPU lane's batch" is a unit). Two lanes
+        tests failed on it.
+    - Red, not this step's:
+      - `gpu::tests::closure_is_the_reference` puts a 300-node chain in one batch. That is 300 level dispatches
+        against 0601's 200 a batch, so the closure's per-level dispatch and the budget disagree.
+      - device-metal's `an_index_built_twice_that_a_batch_took_is_kept`: `join_run` outside any evaluation.
+      - 18 of device-metal's setfix device tests fail the bound-buffer check (0491 step 2: "a test build fails on
+        one that is not"). Nothing turned accel's `test-hooks` on before 10d-2, so the check was compiled out
+        everywhere but accel's own tests. With the lane's test-hooks in device-metal's it is live there, and it
+        finds the label kit's arena (`metal_join.rs`, `Kit::counts`) when it is a `rerail_device::device::reserve`
+        mapping (`reserve_arena`). That mapping is no block and no lease: no ledger holds it.
+    - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy (accel, the lane, device-metal,
+      facts-base, metal) has nothing in the changed files. The repository's checks pass. Tests (macOS): accel's
+      and the lane's crate, 124 of 125 (the closure test above). logic-core's costs, tests-cpu's regex blocks and
+      tests-logic's costs pass. The executors' guard passes (Linux).
+  - **10d-4, a tape's home off metal.** lang placed a loaded tape in a residency slab (`tape::placed`, 0353 step
+    4a) through `rerail_metal::slabs`, so lang and every crate above it stood on metal, and metal stands on the
+    lane. The residency (`slabs`) moves to rerail-slabs (`native/crates/slabs`), below lang. It is on the pool
+    alone (accel's `gpu::shared`), the blocks, clif's views and prof; metal re-exports it as `slabs`. lang takes the
+    device the slabs are on from rerail-slabs's `device`, which adds the residency's evictor to the pool's order
+    once a process (it was metal's `pool_hooks`; both setters are the process's and idempotent). Metal keeps
+    `set_other_reserved` on its own first use: its ledger holds nothing before its code has run.
+    - Then: lang no longer depends on metal. The longest chain is 28, from 34 before 10d. An edit to UKL rebuilds
+      44 crates (87 before 10d) and to ukl-vec 42 (85); to metal, 35 (69).
+    - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy has nothing in rerail-slabs; its
+      `map_err` that returned what it read is an `inspect_err`. The copy checks scan `native/crates/slabs/src/`.
+      The repository's checks pass. Tests (macOS):
+      - the residency's own (an evicted slab recycled), metal's pool and test-pool tests, and lang's tape tests
+        pass;
+      - the filter also caught one preprocessor test on Metal, `pp_arena`'s `the_grid_is_the_devices_resident_count`.
+        It failed in Metal's compiler ("internal error" making a unit's dynamic library, 0571), not in anything
+        here.
+  - **10e-1, two facade edges off the longest chain.** The chain's steps were each crate's mounts of the crate
+    below (a glob of its whole tree), and two of them carried no code:
+    - typing mounted the planner's tree, yet names nothing the planner owns (`plan.rs` and its `compose`, `emit`,
+      `issue`, `join_spec`, `source_rows`, `sql_kernel`). It mounts plan-search's instead; the planner is a
+      dev-dependency, for the carrier its tests register. corpus-memo, which reads the planner's `plan` through
+      typing's mounts, mounts the planner's tree and typing's `typing` itself.
+    - prof mounted rr-syntax's `logic::front` (`ast`, `name`) and its code reads neither: the mount and the
+      dependency go.
+    - Not cut: planner -> plan-search. `plan.rs` reads plan-search's items through its `plan` glob (`Model`,
+      `same_order`, `keeps`, `choices`, `prepared`, ...): 231 errors with plan-base's alone. That edge is code.
+    - Then: the longest chain is 25 (28 before). An edit to rr-syntax rebuilds 66 crates (80).
+    - Checks: the workspace with `--tests` is clean (Linux). typing's and prof's tests pass (44). The repository's
+      checks pass.
+  - **10e-2, the mounts with no code behind them, by the compiler's resolution.** `tools/cratify/xrefs.sh` indexes
+    the workspace with rust-analyzer's SCIP on a farm Mac and joins each reference with the target that mounts its
+    file; `chainplan.py` reads it. A glob, a re-export or a mount no longer hides a use, and an import is not one
+    (10e-1's planner cut failed on uses its module analysis could not see). With no code moved, the chain's floor
+    was 20 (cargo's 25); these edges carried no code, or code a lower crate can hold:
+    - logic-core and run mounted rr's `front` and facts' modules, and read rr-syntax's and facts-base's: they mount
+      those. setfix mounts facts' `facts` (the syntax table) and logic-core's modules itself, as the run no longer
+      carries them; setfix reads nothing of rr.
+    - run -> logic-core carried two calls. The cost statistics (`logic::costs`, 1,764 lines) stand on accel, the
+      store's interface and prof alone: they are rerail-costs, below the run, with their test binary's
+      registrations (accel-gpu, the store). A relation's name in SQL (`ident`, `table`, `unquote`, the keywords) is
+      facts-base's `logic::sql_names`, which `logic::sql` re-exports.
+    - adapters mounted facts and reads facts-base. lang mounted observe for `content_store` and reads the store's
+      base: it mounts store-base (one test of the observer's digest has observe as a dev-dependency).
+    - sessions-base and sessions mounted logic and read none of its own files: sessions-base mounts corpus-memo's
+      tree (with rr's `translate`), sessions rr-root's `logic`. device-metal mounts rr-root's tree; logic is its
+      tests' dev-dependency (`CARRIERS`).
+    - transducer-base re-exported rr-parser for one test in tests-tape, which names it.
+    - demand-catalog mounted boot's tree: it mounts prefilter's (the rule API, the transducer's `space` and
+      `transducer`), transducer's `demand`, logic-core's `sql` and the packs' suppressions; boot boots its test
+      binary as a dev-dependency (with its languages). Its test binary declares the engine's allocator, as the test
+      crates do (`test_flush`'s jemalloc test was red without it).
+    - Then: the longest chain is 19 (25 before). An edit to observe rebuilds 65 crates; to facts, 54.
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. logic-core's, costs' and demand-catalog's
+      tests pass, but for demand-catalog's Metal dispatch test on a Linux host without the device; it passes on a
+      Mac.
+  - **10e-3, the lean parsers' adapters leave lang for rerail-lean-tapes.** lang stood on all 17 lean parsers for
+    its adapters (`tape::<language>_lean`, 1,497 lines) and for one read: an embedded program (`embed::Parse::read`)
+    went to the ECMAScript, PHP and HTML encoders by name. The adapters are rerail-lean-tapes, above lang; boot
+    already registered each in the parser router (`tape::install_parsers`), and mounts them in its `tape`. An
+    embedded program is read through the router too: `TreeParser` has `program` (the text as an embedder hands it,
+    `None` where the parser refuses it), which the three adapters implement as the encoders lang called. A process
+    with no router reads it with tree-sitter, which is the same tape (decision 0198). lang-ecma's test binary
+    registers ECMAScript's pack and its lean parsers as boot does, as lang-python's registers Python's.
+    - Then: the longest chain is 18 (19). An edit to a lean parser rebuilds 25 crates (lang and every crate above
+      it before).
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. lang's, lean-tapes', lang-ecma's and
+      lang-php's tests pass (124), and tests-tape's lean, embed, Vue, PHP and HTML tests (43).

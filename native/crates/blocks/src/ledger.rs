@@ -582,7 +582,7 @@ pub struct Fence {
     pinned: Mutex<Vec<(usize, bool)>>,
     /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
     /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
-    /// dispatches (decision 0639).
+    /// dispatches (decision 0641).
     bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
     signal: Condvar,
 }
@@ -988,5 +988,18 @@ mod tests {
         let b = Block::anon(kind::FACTS, 1 << 20);
         let (slab, _) = watched();
         drop(b.relocate(slab));
+    }
+}
+
+/// A block's ledger as a region's guard (`rerail_vector::Region::guarded`): a vector in the block has each CPU read and
+/// write checked against the device's queued uses (R4).
+impl rerail_vector::Guard for Ledger {
+    #[inline]
+    fn cpu_read(&self, at: usize, len: usize) {
+        Ledger::cpu_read(self, at, len)
+    }
+    #[inline]
+    fn cpu_write(&self, at: usize, len: usize) {
+        Ledger::cpu_write(self, at, len)
     }
 }

@@ -18,13 +18,11 @@ fn same(texts: &[&str]) {
     let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
     for &text in texts {
         let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
-        let image = c.parser.image(text.as_bytes()).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why:?}\n{}\n{}", c.explain(text), c.words));
+        let image = c.tape(text).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why}\n{}\n{}", c.explain(text), c.words));
         let got = image_text(&image).expect("a tape image");
         assert_eq!(got, want, "{text:?}");
         // The interpreter's, over the interpreter's tier 1: the same tape.
-        let run = c.program.block_programs[0].run(text.as_bytes());
-        let nodes = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
-        let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
+        let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         // Tier 1 as Rust: the interpreter's records; tier 2 as Rust over them: the same tape.
         if let Some(why) = tier1_differs(c, text) {
@@ -35,12 +33,81 @@ fn same(texts: &[&str]) {
     }
 }
 
-/// Each of `texts` refused by the compiled grammar (to the lean parser).
+/// Each of `texts` refused by the compiled grammar (to the lean parser), by tier 1 as Rust where
+/// the interpreter's tier 1 refuses it.
 fn refused(texts: &[&str]) {
     let c = compiled().expect("compiles");
     for &text in texts {
         assert!(c.image(text).is_none(), "accepted {text:?}");
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
     }
+}
+
+/// Each of `texts`: tier 1 as Rust is the interpreter's tier 1, refused or not.
+fn tier1_same(texts: &[&str]) {
+    let c = compiled().expect("compiles");
+    for &text in texts {
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
+    }
+}
+
+/// The template spans' escapes, each tested in the rows it may hold in (decision 0595): a raw
+/// string in a template's code, a string, a character or a backtick name in a raw string's
+/// template; and a template's span after its end. A `}` in a token of the code is no template's
+/// end (decision 0600): a string after it that never closes is refused.
+#[test]
+fn the_template_spans_are_the_interpreters() {
+    refused(&[
+        "val a = \"${\"}\"}\"\"\n",
+        "val a = \"${'}'}\"\"\n",
+    ]);
+    tier1_same(&[
+        "val a = \"${b}\"\n",
+        "val a = \"${b + c}\" + \"${d}\"\n",
+        "val a = \"${b}\"\nval c = \"\"\"x\"\"\"\n",
+        "val a = \"\"\"${b}\"\"\"\nval c = \"x\" + 'y' + `z`\n",
+        "val a = \"${b}\" + c.d { e }\n",
+        "val a = \"${b}\n",
+        "val a = \"${\n",
+    ]);
+}
+
+/// "A `0x` or `0b` with no digit", tested at a number's first byte and, where a `0` may start a
+/// number inside one (`1e+0x`), over its bytes after (decision 0587). There the `x` is also a name
+/// touching a number, refused either way.
+#[test]
+fn the_0x_escape_is_the_interpreters() {
+    refused(&["val a = 0x\n", "val a = 0xg\n", "val a = 0b\n", "val a = 0b2\n", "val a = 1e+0x\n"]);
+    tier1_same(&["val a = 0x", "val a = 0x1F\n", "val a = 0b10\n", "val a = x0x\n", "val a = \"0x\"\n", "val a = 0\nval x = 1\n", "val a = 10x\n"]);
+}
+
+/// "A dotted type after `as` before a `<`", which the token loop keeps (decision 0609): after a
+/// token, over a gap, over a token's bytes after its first (`..<`), and never from an `as` in a
+/// region or across one.
+#[test]
+fn the_as_escape_is_the_interpreters() {
+    refused(&[
+        "val a = b as java.util.List<Int>\n",
+        "val a = b as  x.y<Int>\n",
+        "val a = b as x?.y<Int>\n",
+        "val r = x as a.B..<c\n",
+    ]);
+    tier1_same(&[
+        "val a = b as List<Int>\n",
+        "val a = b // as\nval c = d.e<Int>()\n",
+        "val a = \"as\" + d.e<Int>()\n",
+        "val a = b /* as */ .e<Int>()\n",
+        "val a = b as x /* c */ .y<Int>()\n",
+        "val a = b as x\n.y<Int>()\n",
+        "val a = b as x.y\nval c = d<e>()\n",
+        "val a = b as(x.y<Int>)\n",
+        "val r = x as a..<c\n",
+        "val a = `as` .y<Int>()\n",
+    ]);
 }
 
 /// The parser as Rust (`rerail_kotlin_aot`, its `tier1.rs` and `tier2.rs`) is the Bitlex
@@ -57,9 +124,15 @@ fn rust_is_current() {
     }
 }
 
+/// `text`'s tape by the compiled tier 2 over tier 1's run `run` (the interpreter's, or a device's records), in format
+/// 16: or why it refuses the file.
+fn tape_over(c: &Compiled, text: &str, run: &rerail_compiler::block::BlockRun) -> Result<Tape, String> {
+    sixteen(c.parser.tier2.image16_on(text.as_bytes(), lean::TERMINATORS, run, lang(), c.numbers(), false)?)
+}
+
 /// `text`'s tape from the parser as Rust (`rerail_kotlin_aot`: tier 1, then tier 2), as text.
 fn aot_text(text: &str) -> Result<String, u32> {
-    let tape = rerail_kotlin_aot::parse(text.as_bytes())?;
+    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &mut lean::sink())?.unwrap_or_else(|e| panic!("kotlin_aot's tree is no format 16 tape of Kotlin's table: {e}"));
     Ok(lean::tape_text(&tape))
 }
 
@@ -73,7 +146,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
     // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
     // the escape. Either way the file is refused.
-    if lx.refused && !refused && c.parser.image(text.as_bytes()).is_err() {
+    if lx.refused && !refused && c.tape(text).is_err() {
         return None;
     }
     if refused != lx.refused {
@@ -83,10 +156,11 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         return None;
     }
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-    let n = starts.len().max(lx.starts.len());
+    let n = starts.len().max(lx.recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let ours = (lx.starts.get(k), lx.lasts.get(k), lx.codes.get(k));
+        let rec = lx.recs.get(k);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         if theirs != ours {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
             return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
@@ -502,34 +576,161 @@ fn raw_templates_are_the_lean_parsers() {
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+/// A template's tail goes back to the kind of string the template is in, whatever its code
+/// holds (the lean lexer's string reader, back from the template's code): a string, a character
+/// or a backtick name in a raw string's template, a raw string in a string's template.
+#[test]
+fn a_tail_is_the_strings_whose_template_it_ends() {
+    same(&[
+        "val h = \"\"\"${f(\"a\")}\"\"\"\n",
+        "val h = \"\"\"${f('a')}\"\"\"\n",
+        "val h = \"\"\"${`a`}\"\"\"\n",
+        "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")}\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")} b ${c}\" + \"\"\"${d}\"\"\"\n",
+    ]);
+}
+
+/// A string with templates is one record (decision 0600), with its templates' code's records
+/// inside it and none at a template's `}`, as the lean lexer reads it: Kotlin's grammar with its
+/// tails resuming their strings, tier 1 and tier 2 by the interpreter, the tape the lean
+/// parser's.
+#[test]
+fn a_string_with_templates_is_one_record() {
+    let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
+    let texts = [
+        "val a = \"x ${b} y\"\n",
+        "val a = \"${b}${c}\" + d\n",
+        "val a = \"${f(\"x\", 'y')} $z ${g}\"\nval b = \"\"\"${h(\"i\")} j\"\"\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")} b ${c}\" + \"\"\"${d}\"\"\"\n",
+        "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
+        "val a = \"${ b }\"\nval c = \"${ d } e\"\n.f()\n",
+        "fun f() = \"${ a }\"",
+        // A `}` in a string or a character of a template's code is no template's end; a `}` of
+        // code after a string ended opens no tail.
+        "val a = \"${f(\"}\")} b\"\n",
+        "val a = \"${\"}\"}\"\nval b = \"${'}'}\"\nval s = \"${f(\"}\")}\"\n",
+        "val a = \"${f('}')}\" + \"\"\"${g(\"}\")}\"\"\"\n",
+        "fun f() { val a = \"${b}\" }\nfun g() {\n    h(\"${c} d\") }\n",
+        "class A {\n    val s = \"${x}${y}\"\n    fun f() { }\n}\n",
+        // A tail read across a block's edge: the loop reads it again where its block is final.
+        "fun q() = \"${a} ${b} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n",
+        "fun q() = \"\"\"\n    SELECT * FROM ${t.name} WHERE a = ${b + 1}\n    AND c = '$d'\n\"\"\".trimIndent()\n",
+    ];
+    // A template at a block's edge (bytes 64, 65, 128): its `$`, its code and its `}` each
+    // across a block from the string's opener.
+    let at = |q: usize, line: &str| format!("//{}\n{line}\n", "x".repeat(q - line.find('$').expect("a dollar") - 3));
+    let lines = ["val v = \"c${a}d\"", "val v = \"\"\"${f(\"a\")} ${b}\"\"\"", "val v = \"c${ab} ${'d'}\""];
+    let edges: Vec<String> = [64, 65, 66, 128].iter().flat_map(|&q| lines.iter().map(move |l| at(q, l))).collect();
+    for text in texts.iter().copied().chain(edges.iter().map(String::as_str)) {
+        let bytes = text.as_bytes();
+        let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
+        let program = &c.program.block_programs[0];
+        let run = program.run(bytes);
+        let r = program.records.as_ref().expect("records");
+        assert!(run.totals.iter().all(|&t| t == 0), "tier 1 refuses {text:?}");
+        let (starts, lasts) = (&run.positions[usize::from(r.starts)], &run.positions[usize::from(r.lasts)]);
+        // Each string's record: from its quote to its last, outside the templates' code.
+        let mut at = 0usize;
+        while at < bytes.len() {
+            if bytes[at] == b'"' {
+                let raw = bytes[at..].starts_with(b"\"\"\"");
+                let k = starts.iter().position(|&s| s as usize == at).unwrap_or_else(|| panic!("a record at {at} of {text:?}"));
+                let mut e = at + if raw { 3 } else { 1 };
+                let mut code = 0usize;
+                loop {
+                    if code == 0 && bytes[e..].starts_with(if raw { b"\"\"\"" } else { b"\"" }) {
+                        e += if raw { 2 } else { 0 };
+                        break;
+                    }
+                    if code == 0 && bytes[e..].starts_with(b"${") {
+                        code = 1;
+                        e += 2;
+                        continue;
+                    }
+                    // A string or a character in the code: its bytes are no template's `}`.
+                    if code > 0 && matches!(bytes[e], b'"' | b'\'') {
+                        let q = bytes[e];
+                        e += 1;
+                        while bytes[e] != q {
+                            e += if bytes[e] == b'\\' { 2 } else { 1 };
+                        }
+                        e += 1;
+                        continue;
+                    }
+                    if code > 0 && bytes[e] == b'}' {
+                        assert!(!starts.contains(&(e as u32)), "no record at a template's `}}`, {e} of {text:?}");
+                    }
+                    code = match (code, bytes[e]) {
+                        (0, _) => 0,
+                        (_, b'}') => code - 1,
+                        (_, b'{') => code + 1,
+                        _ => code,
+                    };
+                    e += 1;
+                }
+                assert_eq!(lasts[k] as usize, e, "the string's record at {at} of {text:?}");
+                at = e + 1;
+                continue;
+            }
+            at += 1;
+        }
+        // The regions as rounds, Metal's form, settle to the walk's: every output.
+        let (walked, spans) = program.all_values(&[bytes]);
+        let (rounds, _) = program.rounds_values(&[bytes]);
+        for (k, &v) in program.outputs.iter().enumerate() {
+            let v = usize::from(v);
+            assert_eq!(rounds[v][spans[0].clone()], walked[v][spans[0].clone()], "output {k} as rounds, {text:?}");
+        }
+        // The records' masks, as a device without the token loop reads them (Metal): the loop's
+        // records, a region tier 2 splits its opener alone, and none at a template's `}`.
+        let bits = |o: u16| -> rerail_tape_format::Vector<u32> {
+            let words = &run.outputs[program.extract_outputs()[usize::from(o)]];
+            (0..words.len() * 64).filter(|&b| b < bytes.len() && words[b / 64] >> (b % 64) & 1 == 1).map(|b| b as u32).collect()
+        };
+        let opened: rerail_tape_format::Vector<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
+        assert_eq!((bits(r.starts), bits(r.lasts)), (starts.clone(), opened), "the records' masks, {text:?}");
+        // Tier 2 over them, coded by the record pass, as over a device's records.
+        let table = rerail_compiler::records::WordTable::new(&r.words).expect("the words fit a table");
+        let (ms, ml) = (bits(r.starts), bits(r.lasts));
+        let (codes, bad) = rerail_compiler::records::pass(r, &table, bytes, &ms, &ml, &run.outputs);
+        assert!(!bad, "the record pass refuses the masks' records, {text:?}");
+        let mut device = run.clone();
+        device.positions[usize::from(r.starts)] = ms.as_slice().into();
+        device.positions[usize::from(r.lasts)] = ml.as_slice().into();
+        device.codes = codes;
+        let over = tape_over(c, text, &device).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses the masks' records of {text:?}: {why}"));
+        assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the masks' records, {text:?}");
+        let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
+        assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
+        // The CPU's tier 1: the interpreter's records and codes.
+        let cpu = c.parser.tier1.extract(bytes);
+        assert_eq!(cpu.totals, run.totals, "the CPU's tier 1 refuses, {text:?}");
+        let n = run.codes.len();
+        assert_eq!((&cpu.positions[0][..n.min(cpu.positions[0].len())], &cpu.positions[1][..n.min(cpu.positions[1].len())], &cpu.codes[..]), (&starts[..], &lasts[..], &run.codes[..]), "the CPU's tier 1, {text:?}\n{}", c.explain(text));
+        // The CPU's tier 2, over the interpreter's tier 1 and over its own: the lean parser's.
+        let over = tape_over(c, text, &run).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses {text:?}: {why}\n{}", c.explain(text)));
+        assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the interpreter's tier 1, {text:?}");
+        let image = c.tape(text).unwrap_or_else(|why| panic!("the CPU refuses {text:?}: {why}\n{}", c.explain(text)));
+        assert_eq!(image_text(&image).expect("a tape image"), want, "the CPU, {text:?}");
+        // Tier 1 and tier 2 as Rust.
+        assert_eq!(tier1_differs(c, text), None, "tier 1 as Rust, {text:?}");
+        assert_eq!(aot_text(text).ok().as_ref(), Some(&want), "the parser as Rust, {text:?}");
+    }
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        // A string, a character or a backtick name in a raw string's template: its `}` would
-        // open a tail; a raw string in a template, a raw tail.
-        "val h = \"\"\"${f(\"a\")}\"\"\"\n",
-        "val h = \"\"\"${f('a')}\"\"\"\n",
-        "val h = \"${f(\"\"\"a\"\"\")}\"\n",
-        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
-        // after it comes too late to keep it.
-        "fun interface A {\n    fun f()\n}\n",
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
-        "val s = \"${f(\"}\")}\"\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
-        "fun interface P {\n    fun f()\n}\n",
-        "fun f(g: ((Int) -> Int) -> Int) {}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "val <T : Any> List<T>.second: T get() = this[1]\n",
         "val h = \"\"\"\"a\"\"\"\n",
         "val h = \"\"\"a\"\"\"\"\n",
         "val h = \"\"\"\\$a\"\"\"\n",
-        "val a = b to f<T>()\n",
-        "val a = x + f<T>(1)\n",
-        "val a = x < f<T>(1)\n",
         "import a.b import c\n",
         "val s = 'x\n",
         "val s = \"a\nb\"\n",
@@ -545,12 +746,8 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = 1_\n",
         "val x = 0x\n",
         "class A { val x = 1 }\n",
-        "val x: Int\n    get() = 1\n",
         "fun f(noinline: Int) {}\n",
-        "fun String?.h() = 1\n",
-        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
-        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
         // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
         "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
@@ -561,6 +758,212 @@ fn what_the_grammar_does_not_read_is_refused() {
 #[test]
 fn a_constructor_off_its_modifiers_line_is_refused() {
     refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
+}
+
+/// A generic call after a tighter operator's operand: over the whole operation, as the lean
+/// parser's `expr_in` reads it (its own test's texts, `generic_calls_over_tighter_operations`).
+#[test]
+fn generic_calls_over_tighter_operations_are_the_lean_parsers() {
+    same(&[
+        "val a = b ?: f<T>()!!\nval c = \"x\" to g<String>(y)\nval d = -h<T>()\nval e = p < q<T>()\nval f = p + q<T>()\nval g = p == q<T>()\nval h = x in q<T>()\nval i = !q<T>()\nval j = p * q<T>().z\n",
+        "val a = b to f<T>()\nval b = x + f<T>(1)\nval c = x < f<T>(1)\n",
+        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
+        "val a = mapOf(\"a\" to mutableListOf<String>(\"456\"), \"b\" to c)\n",
+        "val a = x && y == f<T> { z }\nval b = p || q as R\n",
+    ]);
+}
+
+/// An accessor alone at a statement's level, a property's on the line after: the lean parser's
+/// `declaration_ahead` reads it there too.
+#[test]
+fn accessors_on_their_own_line_are_the_lean_parsers() {
+    same(&[
+        "val x: Int\n    get() = 1\n",
+        "val x: Int\n    get() = this is A\nval y = 2\n",
+        "interface A {\n    val b: Boolean\n        get() = c\n}\n",
+        "var x: Int = 0\n    private set\n",
+        "fun f() {\n    val get = 1\n    get + 1\n}\n",
+        "fun f() {\n    get(1)\n    set\n    get\n    x = get ?: 2\n}\n",
+        "class A {\n    var b = 1\n        set\n    val c get() = 2\n}\n",
+    ]);
+}
+
+/// Types as the lean parser's `ty` reads them: annotations and `suspend` before any type, a
+/// function type where `->` follows its `)`, else a parenthesized type.
+#[test]
+fn types_are_the_lean_parsers() {
+    same(&[
+        "fun f(): @Nullable A = g()\nval s: Set<@JvmSuppressWildcards C> = d\n",
+        "val f: (Int) -> Int = g\nval h: ((Int) -> Int)? = null\nval k: suspend () -> Unit = l\n",
+        "fun f(g: ((Int) -> Int) -> Int) {}\nval m: @A suspend (B) -> C = n\nval p: (A) = q\n",
+        "val r: suspend A.() -> B = s\nval t: Map<String, (Int) -> Unit> = u\n",
+    ]);
+}
+
+/// Labels: a loop's before it, a trailing lambda's, and an expression's (`prefix_expression`), as
+/// the lean parser reads them.
+#[test]
+fn labels_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    loop@ for (i in a) break@loop\n    outer@ while (b) { continue@outer }\n}\n",
+        "fun f() {\n    set.forEach loop@{ value ->\n        return@loop\n    }\n    g(lit@{ 1 })\n}\n",
+    ]);
+}
+
+/// An assignment's target, flat as the lean parser's `assignable` reads it: its `!!` a leaf.
+#[test]
+fn assignment_targets_are_the_lean_parsers() {
+    same(&["fun f() {\n    stringPool!![s] = offset\n    a!!.b = c\n    d.e!! += 1\n}\n"]);
+}
+
+/// A line break inside brackets is no semicolon: the lean parser asks `asi` only at a statement's
+/// level (`level(false, …)`).
+#[test]
+fn line_breaks_in_brackets_are_the_lean_parsers() {
+    same(&["fun f() {\n    g(\n        a + \"b\"\n            + \"c\",\n        d)\n    val e = (h\n        - i)\n}\n"]);
+}
+
+/// The type after `as`, as the lean parser's `ty`: a parenthesized function type too.
+#[test]
+fn as_types_are_the_lean_parsers() {
+    same(&[
+        "val a = (b as ((C) -> Unit)).invoke(1)\n",
+        "val a = b as ((C) -> Unit)\n",
+        "val a = b as @A C\n",
+        "val a = b as suspend () -> Unit\n",
+    ]);
+}
+
+/// Delegation specifiers, as the lean parser's `delegation_specifiers`: `suspend` and a function
+/// type, a function type with a receiver, a parenthesized one, a constructor's call, a delegate.
+#[test]
+fn delegation_specifiers_are_the_lean_parsers() {
+    same(&[
+        "class Block : suspend LifecycleOwner.(View) -> Unit {\n}\n",
+        "class Block : LifecycleOwner.(View) -> Unit {\n}\n",
+        "class B : (Int) -> Unit, C(), D by e\n",
+        "class B : suspend (Int) -> Unit\n",
+    ]);
+}
+
+/// A class parameter's modifiers: any modifier a name follows (`vararg` among them).
+#[test]
+fn class_parameter_modifiers_are_the_lean_parsers() {
+    same(&[
+        "class X(a: Map<String, String>? = null, vararg args: Any?)\n",
+        "class X(private vararg val args: Int, @A override val b: B)\n",
+    ]);
+}
+
+/// Two templates in a block, the second's code across the block's end: the JIT's tier 1 reads
+/// the first again, its string's record open (decision 0600's slot) after it.
+#[test]
+fn templates_read_again_across_a_block_are_the_lean_parsers() {
+    let l1 = "val a = \"${A.B}\"\n";
+    let head = format!("//{}\n", "x".repeat(67));
+    let texts: Vec<String> = (122..127).map(|at| format!("{head}{l1}//{}\nval b = \"${{C.D}}\"\n", "x".repeat(at - head.len() - l1.len() - 11))).collect();
+    assert_eq!(texts[2].find("\"${C").expect("the second template"), 124);
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+/// A `?.` after a type is its `?` and a `.` (a nullable receiver, `x as T?.f`, `as?.`), and a
+/// `>=` that closes type arguments its `>` and a `=`, as the lean parser's `split_at` reads them;
+/// a safe call's `?.` and a comparison's `>=` are one leaf, and apart they are no operator.
+#[test]
+fn split_operators_are_the_lean_parsers() {
+    same(&[
+        "fun A?.f() {}\n",
+        "fun String?.h() = 1\n",
+        "val A?.b: Int get() = 1\n",
+        "fun <T> T?.g(c: T.() -> Unit) {}\n",
+        "fun A.B<C>?.f() {}\n",
+        "val a = b?.c?.d()\n",
+        "val a = b\n    ?.c\n",
+        "val a = (x as? T)?.y\n",
+        "val a = b?.let { it }?:c\n",
+        "val a: List<Int>= x\n",
+        "fun f(): Map<A, B>= m\n",
+        "val a = b >= c\n",
+        "val a = if (b>=c) 1 else 2\n",
+        "val a = b<c>=d\n",
+    ]);
+    for text in ["val a = b ? .c\n", "val a = b > = c\n", "val a = b >\n  = c\n"] {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+        assert!(compiled().expect("compiles").image(text).is_none(), "the grammar reads {text:?}");
+    }
+}
+
+/// A block comment first on a line where a semicolon may come, then another comment: the lean
+/// lexer's `asi` reads the block comment through and loses its bytes (no width, at the next
+/// comment's start), and its semicolon is past that comment (an import header's holds both).
+#[test]
+fn a_block_comment_before_a_comment_is_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  a()\n  /* x */\n\n  // c\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */ // c\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  .b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  // d\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  /* y */\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  /* y */\n  .b()\n}\n",
+        "class A {\n  val a = 1\n  /* x */\n  // c\n  fun b() {}\n}\n",
+        "val x = 1\n\n/** d */\n// c\n\nprivate val u = 1\n",
+        "import a.b\n\n/** d */\n// c\n\nprivate val u = 1\n",
+        "import a.b\n\n/** d */\n// c\n// e\n\nprivate val u = 1\n",
+        "package a\n/* x */\n// c\nimport b\n",
+    ]);
+    // The moved comment behind each count of statements before it (up to 16): the commit point it may be before.
+    let texts: Vec<String> = (0..16).map(|k| format!("fun f() {{\n{}  /* x */\n  // c\n  d()\n}}\n", "  a\n".repeat(k))).collect();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+/// A file's leading blanks are no node's: the root starts at its first token or comment, at
+/// the file's end where it has none, as tree-sitter's root starts past its padding.
+#[test]
+fn leading_blanks_are_the_lean_parsers() {
+    same(&["\n", "  \n", "\n// c\n", "\nval a = 1\n", "  val a = 1\n", "\n\n/* c */ val a = 1\n"]);
+    // Over many of the tape's blocks, which start at their first node's offset.
+    let long = format!("\n\n{}", "val a = f(b, c) // d\n".repeat(600));
+    same(&[&long]);
+}
+
+/// A block comment's `*/` is past its `/*` (`/*/` is open), and a raw string opened by more quotes
+/// than three.
+#[test]
+fn comment_ends_are_the_lean_parsers() {
+    same(&["val a = 1 /*/ x */ + 2\n", "val a = 1 /**/ + 2\n", "/*/ x\n */\nval b = 1\n"]);
+}
+
+/// `where` constraints, a function's, a property's and a class's.
+#[test]
+fn type_constraints_are_the_lean_parsers() {
+    same(&[
+        "fun <T> f(x: T): T where T : A, T : B = x\n",
+        "class C<S> : D() where S : PageScope {\n}\n",
+        "val <T> T.x: Int where T : A get() = 1\n",
+        "fun <T> g() where T : @A B {}\n",
+        "val <T : Any> List<T>.second: T get() = this[1]\n",
+    ]);
+}
+
+/// `fun interface`: a class, as the lean parser's `declaration_ahead` reads it.
+#[test]
+fn fun_interfaces_are_the_lean_parsers() {
+    same(&[
+        "fun interface A {\n    fun f()\n}\n",
+        "private fun interface P<T> : Q {\n    fun f(): T\n}\nfun g() = 1\nfun interface R\n",
+    ]);
+}
+
+/// `by` on the next line: a delegate where a property's or a supertype's is asked (the lean
+/// lexer's `asi` with `cx.by`), else a new statement's first name.
+#[test]
+fn by_on_the_next_line_is_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    a {\n        size_ = true\n        by = \"foo\"\n    }\n}\n",
+        "class A {\n    val m\n        by lazy { 1 }\n}\n",
+        "class A : I\n    by d {\n}\n",
+        "val x = 1\nby(2)\n",
+    ]);
 }
 
 #[test]
@@ -832,7 +1235,7 @@ fn show() {
                             eprintln!("rules {:?}; ends {:?}; kind of 1 {} 0 {}", r.rules, r.ends, r.kinds[usize::from(b'1')], r.kinds[usize::from(b'0')]);
                             for rule in &r.rules {
                                 if let rerail_compiler::records::EndRule::Last(o) = rule {
-                                    let w = |v: &Vec<Vec<u64>>| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
+                                    let w = |v: &[rerail_blocks::vector::Vector<u64>]| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
                                     eprintln!("last {o}: interp {:?} cpu {:?}", w(&run.outputs), w(&cpu.outputs));
                                 }
                             }
@@ -842,7 +1245,7 @@ fn show() {
                             let o = b.mask_outputs()[m.parse::<usize>().unwrap()];
                             let run = b.run(text.as_bytes());
                             let cpu = c.parser.tier1.extract(text.as_bytes());
-                            let w = |v: &Vec<Vec<u64>>| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
+                            let w = |v: &[rerail_blocks::vector::Vector<u64>]| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
                             eprintln!("mask {m} output {o}: interp {:?}\n  cpu {:?} (cpu outputs {})", w(&run.outputs), w(&cpu.outputs), cpu.outputs.len());
                         }
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
@@ -882,7 +1285,7 @@ fn show() {
                 Err(e) => eprintln!("reference: {e:?}"),
             }
         }
-        match c.parser.image(text.as_bytes()) {
+        match c.tape(&text) {
             Ok(image) => {
                 let got = image_text(&image).unwrap_or_default();
                 if got == lean {
@@ -1072,7 +1475,7 @@ fn tier1_cones() {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
     let b = &c.program;
     let n = b.ops.len();
@@ -1322,7 +1725,7 @@ fn token_level_probe() {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
     let mut by: HashMap<String, usize> = HashMap::new();
     for o in &c.origin {
@@ -1392,8 +1795,8 @@ fn reference_probe() {
         Err(e) => eprintln!("eval: {e:?}"),
     }
     let c = compiled().expect("compiles");
-    match c.parser.image(text.as_bytes()) {
-        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("an image")),
+    match c.tape(&text) {
+        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("a tape")),
         Err(e) => eprintln!("compiled refuses: {e:?}\n{}", c.explain(&text)),
     }
 }
@@ -1454,6 +1857,84 @@ fn walk_lemmas_keep_the_tapes() {
         "fun f() {\n    a(\"x\") /* y */ // z\n}\n",
     ];
     for t in texts {
-        assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
+        assert_eq!(with.tape(t).ok(), without.tape(t).ok(), "{t:?}");
+    }
+}
+
+
+/// Each text of the file `RERAIL_KOTLIN_PROBE` (texts separated by a line `---`): whether the lean
+/// parser and the compiled grammar read it, and whether their tapes agree. A tool, run by hand.
+#[test]
+#[ignore]
+fn probe() {
+    let Ok(path) = std::env::var("RERAIL_KOTLIN_PROBE") else { return };
+    let c = compiled().expect("compiles");
+    for text in std::fs::read_to_string(path).expect("the probe file").split("\n---\n") {
+        let text = format!("{}\n", text.trim_end_matches('\n'));
+        let lean = lean_text(&text);
+        let ours = c.image(&text).and_then(|i| image_text(&i).ok());
+        let verdict = match (&lean, &ours) {
+            (Some(a), Some(b)) if a == b => "same".to_string(),
+            (Some(a), Some(b)) => {
+                let (x, y): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+                let i = x.iter().zip(&y).position(|(p, q)| p != q).unwrap_or(x.len().min(y.len()));
+                format!("differ: lean {:?} ours {:?}", x.get(i), y.get(i))
+            }
+            (Some(_), None) => {
+                let run = c.program.block_programs[0].run(text.as_bytes());
+                let why = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).err();
+                let near = why.as_ref().and_then(|w| w.at).map(|a| text[a as usize..].chars().take(30).collect::<String>());
+                let jit2 = tape_over(c, &text, &run).map(|t| t.len());
+                let cpu = c.parser.tier1.extract(text.as_bytes());
+                let same1 = cpu.codes == run.codes && cpu.positions == run.positions;
+                let first = (0..cpu.codes.len().min(run.codes.len())).find(|&i| cpu.codes[i] != run.codes[i] || cpu.positions.iter().zip(&run.positions).any(|(a, b)| a.get(i) != b.get(i)));
+                let first = first.or((cpu.codes.len() < run.codes.len()).then_some(cpu.codes.len()));
+                let at = first.and_then(|i| run.positions.first().and_then(|p| p.get(i))).map(|&a| (a, text[a as usize..].chars().take(30).collect::<String>()));
+                format!("ours refuses: interpreter {why:?} {near:?}; JIT tier 2 over its tier 1: {jit2:?}; JIT tier 1 the same: {same1} (codes {} vs {}), first differing token at {at:?}", cpu.codes.len(), run.codes.len())
+            }
+            (None, Some(_)) => "lean refuses, ours reads".into(),
+            (None, None) => "both refuse".into(),
+        };
+        let shown: String = text.chars().take(120).collect();
+        eprintln!("PROBE {shown:?} ({} bytes)\n  => {verdict}", text.len());
+        {
+            // Tier 1: the JIT's records against the interpreter's.
+            let run = c.program.block_programs[0].run(text.as_bytes());
+            let cpu = c.parser.tier1.extract(text.as_bytes());
+            let n = cpu.codes.len().min(run.codes.len());
+            let first = (0..n).find(|&i| cpu.codes[i] != run.codes[i] || cpu.positions.iter().zip(&run.positions).any(|(a, b)| a.get(i) != b.get(i)));
+            let first = first.or((cpu.codes.len() != run.codes.len()).then_some(n));
+            if let Some(i) = first {
+                let at = run.positions.first().and_then(|p| p.get(i)).copied().unwrap_or(0) as usize;
+                eprintln!("  tier 1: the JIT's {} records, the interpreter's {}; first apart: record {i} at {at} {:?}", cpu.codes.len(), run.codes.len(), text.get(at..).map(|t| t.chars().take(30).collect::<String>()));
+            }
+        }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_LEAN").is_some() {
+            eprintln!("  lean:\n{}", lean.as_deref().unwrap_or("(refused)"));
+        }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_INTERP").is_some() {
+            // The interpreter's nodes, in its order: kind and span.
+            let run = c.program.block_programs[0].run(text.as_bytes());
+            match rerail_compiler::stream::run(&c.program, text.as_bytes(), &run) {
+                Ok(nodes) => {
+                    let shown: Vec<String> = nodes.iter().map(|n| format!("{}[{}..{}]", n.kind, n.start, n.end)).collect();
+                    eprintln!("  interpreter: {}", shown.join(" "));
+                }
+                Err(why) => eprintln!("  interpreter refuses: {why:?}"),
+            }
+            if let Ok(t) = tape_over(c, &text, &run) {
+                eprintln!("  JIT tier 2:\n{}", image_text(&t).unwrap_or_default());
+            }
+        }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_TOKENS").is_some() {
+            // The reference evaluator's errors and tokens, marks by name.
+            let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+            let out = ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &Default::default()).expect("runs");
+            eprintln!("  errors: {:?}", out.errors);
+            let toks: Vec<String> = out.tokens.iter().map(|t| if t.mark { format!("<{}>", t.kind) } else { format!("{:?}", &text[t.start..t.end]) }).collect();
+            eprintln!("  tokens: {}", toks.join(" "));
+            let tree = out.tree.as_ref().map(|d| ::bitlex::tree::nodes(d, &out.tokens, text.len()).map(|n| n.len()));
+            eprintln!("  the reference tree: {tree:?}");
+        }
     }
 }

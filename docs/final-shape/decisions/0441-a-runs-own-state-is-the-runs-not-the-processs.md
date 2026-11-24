@@ -1,7 +1,7 @@
 # 0441. A run's own state is the run's, not the process's
 
-Status: accepted (2026-11-19; the user: "we want the engine to be re-entrant, multi-thread possible and to not have
-global state", then "please move the rest of the tables that hold run data into the run").
+Status: built (audited 2026-11-23). Accepted (2026-11-19; the user: "we want the engine to be re-entrant, multi-thread
+possible and to not have global state", then "please move the rest of the tables that hold run data into the run").
 
 ## Intro
 

@@ -8,7 +8,7 @@ fn main() {
     let (mut n, mut passes) = (0usize, 0);
     while t0.elapsed().as_secs_f64() < secs {
         for f in &files {
-            n += if lex_only { rerail_python_lean::token_count(f).unwrap_or(0) } else { rerail_python_lean::tape(f).map_or(0, |t| t.code.len()) };
+            n += if lex_only { rerail_python_lean::token_count(f).unwrap_or(0) } else { rerail_python_lean::tape(f).map_or(0, |t| t.tape.len()) };
         }
         passes += 1;
     }

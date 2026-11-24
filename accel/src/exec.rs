@@ -211,7 +211,8 @@ pub fn command_opened() {
 
 /// A command buffer [`command_opened`] counted, committed or dropped unencoded.
 pub fn command_committed() {
-    UNCOMMITTED.with(|c| c.set(c.get().saturating_sub(1)));
+    // In the thread's teardown (a batch held in a thread-local, dropped there), nothing is left to count.
+    let _ = UNCOMMITTED.try_with(|c| c.set(c.get().saturating_sub(1)));
 }
 
 /// The command buffers this thread holds uncommitted.
@@ -765,7 +766,11 @@ impl Flight<'_> {
     /// [`end`](Self::end) on the lanes' pool where its finish is host work, else here ([`Pending::finish_on_pool`]).
     fn end_on(self, board: &Scoreboard, lane: Lane) {
         if self.pending.as_ref().is_ok_and(|p| p.finish_on_pool()) {
-            lane_host(lane, || self.end(board, lane));
+            let span = self.claims.span;
+            lane_host(lane, move || {
+                rerail_context::set_heap_span(span);
+                self.end(board, lane)
+            });
         } else {
             self.end(board, lane);
         }
@@ -908,13 +913,16 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                         let ks: Vec<&Kernel> = ids.iter().map(|&i| &claims.kernels[i]).collect();
                         // The job's host work runs on the lanes' pool: its CPU is counted on the thread it ran on.
                         ticket.pause();
-                        let (t, backend, ks) = (&mut ticket, &backend, &ks);
+                        let (t, backend, ks, span) = (&mut ticket, &backend, &ks, claims.span);
                         lane_host(lane, move || {
                             t.resume();
+                            let was = rerail_context::heap_span();
+                            rerail_context::set_heap_span(span);
                             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(ks))).unwrap_or_else(|p| {
                                 abort_over_budget(p);
                                 Err("its submission panicked".into())
                             });
+                            rerail_context::set_heap_span(was);
                             t.pause();
                             r
                         })
@@ -1063,6 +1071,10 @@ pub struct Claims {
     begun: Instant,
     send: std::sync::Mutex<std::sync::mpsc::Sender<Got>>,
     board: Arc<Scoreboard>,
+    /// The heap span of the code that submitted it (`rerail_context::heap_span`): a device lane's worker, a service
+    /// thread of no run, starts it on the lanes' pool, and charges what that allocates (its leases) to this span. Left
+    /// as the worker's, it was "no span open" (22.5 MB of leases on `rerail-lane-host 0` at the M3's 300-file peak).
+    span: u32,
 }
 
 impl Claims {
@@ -1536,6 +1548,7 @@ impl Executor {
             begun,
             send: std::sync::Mutex::new(send),
             board: Arc::clone(&self.board),
+            span: rerail_context::heap_span(),
         });
         let mut hosts = Vec::new();
         for (at, b) in self.backends.iter().enumerate() {

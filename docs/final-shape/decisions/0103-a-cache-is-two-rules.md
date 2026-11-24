@@ -1,8 +1,10 @@
 # 0103: A cache is two rules
 
-Status: accepted (2026-11-10). This is the only form a cache may take. A cache's facts are just facts: nothing in
-the engine treats them differently (§2). The caches made before this decision are listed in §8, each with its two
-rules and the column types it needs; a test holds that list, and the list may only shrink.
+Status: partly built (audited 2026-11-23). Left: move the remaining pre-0103 caches (tape/index tables, run_record,
+stat_blob, derivation graph) to two rules. Accepted (2026-11-10). This is the only form a cache may take. A cache's
+facts are just facts: nothing in the engine treats them differently (§2). The caches made before this decision are
+listed in §8, each with its two rules and the column types it needs; a test holds that list, and the list may only
+shrink.
 
 ## Intro
 

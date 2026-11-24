@@ -1,6 +1,6 @@
 # 0389: The byte order mark is stripped before the passes
 
-Status: decided (the user, 2026-11-17: "fix this: … the BOM handled before the loop, as
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "fix this: … the BOM handled before the loop, as
 simdjson does"). Follows 0335 and 0383.
 
 ## Intro

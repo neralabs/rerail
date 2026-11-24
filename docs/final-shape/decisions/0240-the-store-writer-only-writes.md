@@ -1,7 +1,8 @@
 # 0240: The store's writer only writes, and no run waits for it before the process ends
 
-Status: building (2026-11-15). Refines the write-back queue (decision 0102), the tape store (decision 0104) and the
-per-file memo's frames (decisions 0146, 0212). §4 supersedes the memo's frames (0146) and its numbering (0170).
+Status: built (audited 2026-11-23). Building (2026-11-15). Refines the write-back queue (decision 0102), the tape
+store (decision 0104) and the per-file memo's frames (decisions 0146, 0212). §4 supersedes the memo's frames (0146)
+and its numbering (0170).
 
 ## Intro
 

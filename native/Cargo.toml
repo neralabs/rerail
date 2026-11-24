@@ -73,19 +73,20 @@ metal-tests = ["rerail-device-metal/metal-tests", "rerail-facts/metal-tests", "r
 # dev-dependencies below add to the dependencies (the grammars, rusqlite's `array`, tempfile): then the CLI and the
 # tests build every dependency crate alike, once per edit, not twice (docs/final-shape/notes/t37-edit-loop-time.md,
 # "One feature set"). `scripts/check/check_dev_features.py` checks that the two stay alike.
-test-hooks = ["rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "dep:tempfile", "rusqlite/array", "rerail-c-directives/test-hooks",
+test-hooks = ["rerail-blocks/test-hooks", "rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "dep:tempfile", "rusqlite/array", "rerail-c-directives/test-hooks",
   "ast-grep-language/tree-sitter-bash", "ast-grep-language/tree-sitter-c", "ast-grep-language/tree-sitter-cpp",
   "ast-grep-language/tree-sitter-c-sharp", "ast-grep-language/tree-sitter-css", "ast-grep-language/tree-sitter-go",
   "ast-grep-language/tree-sitter-html", "ast-grep-language/tree-sitter-java", "ast-grep-language/tree-sitter-json",
   "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-php",
   "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala",
   "ast-grep-language/tree-sitter-swift",
-  "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks", "rerail-boot/test-hooks"]
+  "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-boot/test-hooks"]
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 # Only under `test-hooks` (above); the tests have it as a dev-dependency.
 tempfile = { version = "=3.27.0", optional = true }
+# Only under `test-hooks` (above), as `tempfile`: the tests' process keeps its folders private (`private_test_folders`).
 # `.rerail`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
@@ -93,6 +94,9 @@ ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std
 rerail-accel = { path = "../accel" }
 # The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
 rerail-tree-watch = { path = "crates/tree_watch" }
+# The engine's own structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as its crates' do.
+rerail-blocks = { path = "crates/blocks" }
+rerail-section = { path = "crates/section" }
 # The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
 rerail-store = { path = "crates/store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
@@ -115,8 +119,6 @@ rerail-c-pp = { path = "crates/c_pp" }
 rerail-c-directives = { path = "crates/c_directives" }
 # The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
 rerail-clif = { path = "crates/clif" }
-# The .rerail parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
-rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
@@ -172,7 +174,7 @@ tree-sitter = "=0.27.1"
 bitlex = { path = "../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 # The engine's crates (tools/cratify/apply.py): its sources, mounted in place.
 rerail-facts = { path = "crates/facts", default-features = false }
@@ -216,7 +218,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # `Win32_System_IO` and `Win32_System_Ioctl`: the tree watch's completion port, reads and oplock (`tree_watch/windows.rs`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+# `Win32_System_Pipes`: which process holds a named pipe's server end (`pipe_server.rs`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 # Windows' global allocator (`lib.rs`): jemalloc does not build for MSVC.
 mimalloc = { version = "=0.1.52", default-features = false }
 
@@ -225,6 +228,7 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+# The tests' process keeps its folders private (`private_test_folders`, decision 0574).
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "crates/simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).
@@ -295,7 +299,7 @@ napi-build = "2.2"
 sha2 = "0.11"
 # The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's
 # once the crate split gives it there (`BUILDS_GRAMMARS`).
-cc = "=1.11.1"
+cc = "=1.11.2"
 tree-sitter-generate = { version = "=0.27.2", default-features = false }
 flate2 = "=1.1.11"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.

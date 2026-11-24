@@ -3,7 +3,7 @@
 //! (rerail-facts-base: the other virtual tables, text, strings, producers, SQL profiles), which it re-exports, so a
 //! reader above reads every facts path here, as before.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -15,8 +15,13 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_facts_base::{content_store, git_access, git_workspace};
-#[path = "../../../src/code_rule_dsl"]
+pub use rerail_facts_base::{git_access, git_workspace};
+// The store's interface (`content_store::FactStore`) and records; the tests open the store itself (crate split 10b-2).
+#[cfg(not(test))]
+pub use rerail_observe::content_store;
+#[cfg(test)]
+pub use rerail_store::content_store;
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_facts_base::code_rule_dsl::*;
     #[path = "facts"]
@@ -31,3 +36,10 @@ pub mod code_rule_dsl {
         }
     }
 }
+// cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

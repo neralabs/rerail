@@ -58,17 +58,22 @@ export function configureBundledCodeRule(ruleCatalog: RuleCatalog, ruleId: strin
   }
   let outcome = outcomes.get(key);
   if (outcome === undefined) {
-    const source = ruleCatalog.sources.get(ruleId);
-    if (source === undefined) {
-      outcome = { ok: false, reason: `config applies to code rules by Rerail; ${ruleId} is not one` };
-    } else {
-      try {
-        outcome = { ok: true, rule: configuredRule(applyCodeRuleConfig(source, { ...config })) };
-      } catch (error) {
-        outcome = { ok: false, reason: reasonOf(error) };
-      }
-    }
+    outcome = configuredOutcome(ruleCatalog, ruleId, config);
     outcomes.set(key, outcome);
   }
   return outcome;
+}
+
+/** {@link configureBundledCodeRule}, worked out: a rule written in `.rerail` takes no options yet. */
+function configuredOutcome(ruleCatalog: RuleCatalog, ruleId: string, config: RuleConfig): ConfiguredCodeRule {
+  if (ruleCatalog.documents.get(ruleId)?.kind === "rerail") {
+    return { ok: false, reason: `config: ${ruleId} is written in .rerail, and options for a rule written in .rerail are not supported yet` };
+  }
+  const source = ruleCatalog.sources.get(ruleId);
+  if (source === undefined) return { ok: false, reason: `config applies to code rules by Rerail; ${ruleId} is not one` };
+  try {
+    return { ok: true, rule: configuredRule(applyCodeRuleConfig(source, { ...config })) };
+  } catch (error) {
+    return { ok: false, reason: reasonOf(error) };
+  }
 }

@@ -97,7 +97,7 @@ def document_session_request(files, scalar_consumers=False, projection=False):
 
 def corpus_session_request(workload):
     corpus = json.loads(subprocess.check_output([
-        "zstd", "-dc", str(ROOT / "native/src/code_rule_dsl/facts/vtab/golden/corpus.json.zst")]))
+        "zstd", "-dc", str(ROOT / "native/crates/tests_sql/src/code_rule_dsl/facts/vtab/golden/corpus.json.zst")]))
     files = [{"path": path, "language": "python", "source": source} for path, source in corpus]
     original = next(f for f in files if f["path"] == "json/decoder.py")
     edited = {**original, "source": original["source"] + "\n\ndef debug_extra(text):\n    return eval(text)\n"}
@@ -418,7 +418,7 @@ def main():
     parser.add_argument("--only", default="")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    corpus = json.loads(subprocess.check_output(["zstd", "-dc", str(ROOT/"native/src/code_rule_dsl/facts/vtab/golden/corpus.json.zst")]))
+    corpus = json.loads(subprocess.check_output(["zstd", "-dc", str(ROOT/"native/crates/tests_sql/src/code_rule_dsl/facts/vtab/golden/corpus.json.zst")]))
     corpus_root = args.out/"cpython"
     for path, source in corpus:
         target = corpus_root/path; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(source)

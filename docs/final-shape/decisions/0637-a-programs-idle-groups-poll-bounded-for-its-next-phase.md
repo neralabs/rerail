@@ -1,6 +1,6 @@
 # 0637. A program's idle groups poll, bounded, for its next phase
 
-Status: superseded by 0638 (2026-11-23), its program's phases now stacked dispatches. Was: accepted (2026-11-23). Amends 0540 step 7 (a worker that finds nothing to take ends at once) for 0603's
+Status: superseded by 0648 (2026-11-23), its program's phases now stacked dispatches. Was: accepted (2026-11-23). Amends 0540 step 7 (a worker that finds nothing to take ends at once) for 0603's
 program (`join_run`). Every other work queue keeps it.
 
 ## Intro

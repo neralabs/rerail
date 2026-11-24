@@ -1,9 +1,8 @@
 # 0161: The tape format from 11 to 15: named-only tapes, and no stored digest
 
-Status: recorded after the fact (2026-11-13). Built 2026-11-09 to 2026-11-11, in the
-named-only tapes work (RER-131), without a decision record and without the user's review.
-The user will revisit it on another branch. This record states what was done and why, so that
-a change to it is made in one place and knowingly.
+Status: built (audited 2026-11-23). Recorded after the fact (2026-11-13). Built 2026-11-09 to 2026-11-11, in the
+named-only tapes work (RER-131), without a decision record and without the user's review. The user will revisit it on
+another branch. This record states what was done and why, so that a change to it is made in one place and knowingly.
 
 ## Intro
 

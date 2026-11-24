@@ -1,6 +1,7 @@
 //! The block programs' native IR: a block program (`block::BlockProgram`) lowered for the code
 //! generators, one straight-line body of mask words per 64-byte block, and its passes.
 
+use rerail_blocks::vector::Vector;
 /// A block program lowered for the code generators: the ephemeral native IR that Cranelift
 /// (`native_cpu_block`) and MSL (`metal_block_program`) both emit, one straight-line body per
 /// 64-byte block. Each instruction is one value, a mask word, built only from bit operations;
@@ -12,18 +13,19 @@ pub struct BlockNative {
     /// The values written as masks. Output `k` is value `outputs[k]` at delay
     /// `output_delays[k]`: every backend writes the stream's mask, bit `p` the value's bit
     /// `p + d`, cut at the stream's end. No host step shifts it.
-    pub outputs: Vec<u16>,
+    pub outputs: Vector<u16>,
     /// The outputs (indexes into `outputs`) whose positions the extract pass writes: each set
     /// bit of the stream's mask as its byte position, in order, at the offset of the bits before
     /// it (a running count, carried from block to block).
-    pub extracts: Vec<usize>,
+    pub extracts: Vector<usize>,
     /// The outputs (indexes into `outputs`) tested: each file's flag, whether the stream's mask
     /// has a bit (`block::BlockProgram::totals`).
-    pub totals: Vec<usize>,
+    pub totals: Vector<usize>,
     /// The outputs (indexes into `outputs`) tier 2 reads as masks (`block::BlockProgram::masks`).
-    pub masks: Vec<usize>,
-    /// The output (an index into `outputs`) of the stream's newlines (`block::BlockProgram::newlines`).
-    pub newlines: Option<usize>,
+    pub masks: Vector<usize>,
+    /// The output (an index into `outputs`) of the stream's line ends, and their terminators
+    /// (`block::BlockProgram::newlines`).
+    pub newlines: Option<(usize, rerail_tape_format::newlines::Terminators)>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
@@ -117,13 +119,13 @@ impl BlockInst {
     }
 
     /// The values the instruction reads.
-    pub fn operands(&self) -> Vec<usize> {
+    pub fn operands(&self) -> Vector<usize> {
         match *self {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => rerail_blocks::vector![usize::from(a)],
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) | BlockInst::Args(a, b) => {
-                vec![usize::from(a), usize::from(b)]
+                rerail_blocks::vector![usize::from(a), usize::from(b)]
             }
-            _ => vec![],
+            _ => rerail_blocks::vector![],
         }
     }
 }
@@ -247,9 +249,9 @@ impl BlockNative {
         // A `Walk` now reads a later `Args`: the program is put back in order with the `Args`
         // where its walk's first value was, then pruned to what the outputs read.
         let n = self.insts.len();
-        let mut order: Vec<usize> = Vec::with_capacity(insts.len());
+        let mut order: Vector<usize> = rerail_blocks::vector::Vector::with_capacity(insts.len());
         let mut placed = vec![false; insts.len()];
-        fn place(x: usize, insts: &[BlockInst], placed: &mut [bool], order: &mut Vec<usize>) {
+        fn place(x: usize, insts: &[BlockInst], placed: &mut [bool], order: &mut Vector<usize>) {
             if placed[x] {
                 return;
             }
@@ -260,7 +262,7 @@ impl BlockNative {
             order.push(x);
         }
         let mut keep = vec![false; insts.len()];
-        let mut todo: Vec<usize> = outputs.iter().map(|&v| usize::from(v)).collect();
+        let mut todo: Vector<usize> = outputs.iter().map(|&v| usize::from(v)).collect();
         for (_, group) in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]) {
             todo.extend(group.carries.iter().flat_map(|&(c, x)| [c, x]));
         }
@@ -299,7 +301,7 @@ impl BlockNative {
         let place_of = |x: usize| usize::from(number[x]);
         // The walks whose values are kept (none read: the CPU reads no region, decision 0177),
         // renumbered.
-        let kept_walks: Vec<usize> = (0..self.walks.len()).filter(|&w| keep[usize::from(self.walks[w].hidden)]).collect();
+        let kept_walks: Vector<usize> = (0..self.walks.len()).filter(|&w| keep[usize::from(self.walks[w].hidden)]).collect();
         let walk_at = |w: u16| kept_walks.iter().position(|&k| k == usize::from(w)).expect("a kept walk's call") as u16;
         BlockNative {
             tables: self.tables.clone(),
@@ -324,7 +326,7 @@ impl BlockNative {
                 .enumerate()
                 .filter(|(g, _)| !walked[*g])
                 .map(|(_, g)| {
-                    let mut members: Vec<usize> = g.members.iter().filter(|&&x| keep[x]).map(|&x| place_of(x)).collect();
+                    let mut members: rerail_blocks::vector::Vector<usize> = g.members.iter().filter(|&&x| keep[x]).map(|&x| place_of(x)).collect();
                     members.sort_unstable();
                     crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place_of(c), place_of(x))).collect() }
                 })
@@ -353,34 +355,40 @@ impl BlockNative {
 
     /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
     /// `walked_starts`).
-    pub fn records_made(&self) -> Vec<usize> {
+    pub fn records_made(&self) -> Vector<usize> {
         // The starts the loop walks stay made where a mark reads them from its row (one the loop
         // does not set itself): a token mark's mask is the starts (`tokens K …`).
         let stored = self.marks_stored();
         let walked = self.walked_starts().filter(|o| !stored.contains(o));
-        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).chain(self.blank_masks()).collect()
+        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).chain(self.blank_masks()).chain(self.loops_line_ends()).collect()
+    }
+
+    /// The line ends' output where the CPU's token loop runs (0177): it makes no mask of its own, as the lean lexer
+    /// makes none, and the tape's line index is the scan's (`newlines::index_into`), not a class its body makes.
+    fn loops_line_ends(&self) -> Option<usize> {
+        self.newlines.filter(|_| self.records.as_ref().is_some_and(|r| r.skip.is_some() || r.fetched_in_tier2())).map(|(o, _)| o)
     }
 
     /// The masks of the marks the CPU's token loop reads from the blanks (`blank_marks`,
     /// decision 0430), where no other mark reads them: the loop tests their classes, so the
     /// body makes none of them.
-    fn blank_masks(&self) -> Vec<usize> {
+    fn blank_masks(&self) -> Vector<usize> {
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         };
         let bytes = crate::byte_needs::MadeFromBytes::of(self);
         let blank = crate::records::blank_bits(r, &|o| bytes.can(o));
-        let kept: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| blank >> k & 1 == 0).map(|(_, m)| m.0).collect();
-        let mut v: Vec<usize> = r.marks.iter().enumerate().filter(|&(k, m)| blank >> k & 1 == 1 && !kept.contains(&m.0)).map(|(_, m)| usize::from(m.0)).collect();
+        let kept: Vector<u16> = r.marks.iter().enumerate().filter(|&(k, _)| blank >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        let mut v: Vector<usize> = r.marks.iter().enumerate().filter(|&(k, m)| blank >> k & 1 == 1 && !kept.contains(&m.0)).map(|(_, m)| usize::from(m.0)).collect();
         v.sort_unstable();
         v.dedup();
         v
     }
 
     /// The outputs the marks the token loop does not set read from their rows.
-    fn marks_stored(&self) -> Vec<usize> {
+    fn marks_stored(&self) -> Vector<usize> {
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         };
         let bytes = crate::byte_needs::MadeFromBytes::of(self);
         let (lift, at) = crate::records::loop_marks(r, &|o| bytes.can(o));
@@ -391,7 +399,7 @@ impl BlockNative {
     /// The outputs whose rows the CPU's tier 1 does not store: those the record pass makes
     /// (`records_made`), and the totals no one reads by their rows (`rowless_totals`), each its
     /// file's flag only. Its rows are compared to the interpreter's without them.
-    pub fn cpu_unstored(&self) -> Vec<usize> {
+    pub fn cpu_unstored(&self) -> Vector<usize> {
         let mut v = self.records_made();
         v.extend(self.rowless_totals());
         v.sort_unstable();
@@ -402,20 +410,20 @@ impl BlockNative {
     /// The outputs the CPU's token loop makes from the file's bytes where it reads them
     /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
     /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
-    pub fn read_at_tokens(&self) -> Vec<usize> {
+    pub fn read_at_tokens(&self) -> Vector<usize> {
         use crate::records::EndRule;
         // The token loop's (`skip`), or tier 2's where it makes the records (page 40).
         let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some() || r.fetched_in_tier2()) else {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         };
         let bytes = crate::byte_needs::MadeFromBytes::of(self);
-        let mut read: Vec<u16> = Vec::new();
+        let mut read: Vector<u16> = rerail_blocks::vector::Vector::new();
         read.extend(r.skip);
         read.extend(r.rules.iter().filter_map(|x| match *x {
             EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(o),
             EndRule::Read(_) | EndRule::Next(_) => None,
         }));
-        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last))));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template))));
         read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))));
         read.extend(r.checks.iter().map(|c| c.o));
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
@@ -427,14 +435,14 @@ impl BlockNative {
         // told by, `TokenElem::rows`) stays stored: tier 2 reads it from its row.
         let named = |o: u16| self.masks.iter().filter(|&&x| x == usize::from(o)).count() > 1;
         read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o).filter(|&o| !named(o)));
-        let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        let stored: Vector<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
         // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
-        let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
+        let others: Vector<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
         read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
         // A region tier 2 reads as `parse_string` (`native_cpu_stream::sequential`) reads its
         // part's start from no mask at all.
-        let unread: Vec<u16> = if r.fetched_in_tier2() {
+        let unread: Vector<u16> = if r.fetched_in_tier2() {
             r.readers
                 .iter()
                 .filter(|rd| rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1)
@@ -446,16 +454,16 @@ impl BlockNative {
                 .flat_map(|rd| rd.parts.iter().map(|p| p.start))
                 .collect()
         } else {
-            Vec::new()
+            rerail_blocks::vector::Vector::new()
         };
         // A region tier 2 splits otherwise (`Split::Tier2`): tier 2 reads its masks too, stored.
         let split_read: Vec<u16> = r
             .readers
             .iter()
             .filter(|rd| rd.split == crate::records::Split::Tier2 && !rd.parts.is_empty() && !rd.parts.iter().any(|p| unread.contains(&p.start)))
-            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
+            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
             .collect();
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
+        let mut v: Vector<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
@@ -466,9 +474,9 @@ impl BlockNative {
     /// tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end rules', the
     /// readers', the tests') read a row. With no token loop, only tier 2's masks and the marks.
     /// simdjson keeps its error flags so: one register, never stored a block.
-    pub fn rowless_totals(&self) -> Vec<usize> {
+    pub fn rowless_totals(&self) -> Vector<usize> {
         use crate::records::EndRule;
-        let mut read: Vec<usize> = self.masks.clone();
+        let mut read: Vector<usize> = self.masks.clone();
         let Some(r) = self.records.as_ref() else {
             return self.totals.iter().copied().filter(|t| !read.contains(t)).collect();
         };
@@ -487,14 +495,14 @@ impl BlockNative {
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
     /// its token loop runs, a reader gives its token's kind and marks, and the walk a part's, so it
     /// makes none of them. A token's own kind no reader gives (a `0x`, decision 0509) it reads.
-    pub fn readers_tags(&self) -> Vec<usize> {
-        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().filter(|t| !crate::records::own_retag(r, t)).map(|t| usize::from(t.o)).collect())
+    pub fn readers_tags(&self) -> Vector<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(rerail_blocks::vector::Vector::new(), |r| r.retags.iter().filter(|t| !crate::records::own_retag(r, t)).map(|t| usize::from(t.o)).collect())
     }
 
     /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
     /// the starts: the CPU makes none of them.
-    pub fn loops_errors(&self) -> Vec<usize> {
-        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.untaken.iter().map(|&o| usize::from(o)).collect())
+    pub fn loops_errors(&self) -> Vector<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(rerail_blocks::vector::Vector::new(), |r| r.untaken.iter().map(|&o| usize::from(o)).collect())
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes
@@ -504,7 +512,7 @@ impl BlockNative {
     /// CPU keeps `class`, which is two `tbl`s per 16 bytes there.
     pub fn planes_form(&self) -> BlockNative {
         let mut f = PlaneFormulas::default();
-        let mut at: Vec<u16> = Vec::with_capacity(self.insts.len());
+        let mut at: Vector<u16> = rerail_blocks::vector::Vector::with_capacity(self.insts.len());
         for inst in &self.insts {
             let m = |x: u16| at[usize::from(x)];
             let index = match *inst {
@@ -575,7 +583,7 @@ impl BlockNative {
                 .iter()
                 .map(|g| {
                     // Two members alike are one value now: listed once.
-                    let mut members: Vec<usize> = g.members.iter().map(|&x| place(x)).collect();
+                    let mut members: rerail_blocks::vector::Vector<usize> = g.members.iter().map(|&x| place(x)).collect();
                     members.sort_unstable();
                     members.dedup();
                     crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() }
@@ -593,7 +601,7 @@ pub enum Pass {
     /// slots of passes before it. Before the last pass, output `k` is stored to slot
     /// `stores[k]`, each block's word as the body made it (no cut, no delay); the last pass's
     /// outputs are the program's.
-    Forward { body: BlockNative, stores: Vec<u16> },
+    Forward { body: BlockNative, stores: Vector<u16> },
     /// Last block to first: each `back_fill` (`block::carry::back_fill`), its start's slot, its
     /// end's, and its own, the carry zero at the file's last block.
     Back(Vec<(u16, u16, u16)>),
@@ -607,7 +615,7 @@ pub struct Passes {
     /// Each pass's instructions' places in the whole program (a `Load`'s, the value it loads):
     /// for the profile's report of what is live where (`native_cpu_pressure`). Empty for a
     /// backward pass.
-    pub origins: Vec<Vec<u32>>,
+    pub origins: Vec<Vector<u32>>,
 }
 
 impl BlockNative {
@@ -676,7 +684,7 @@ impl BlockNative {
         }
         let top = level.iter().copied().max().unwrap_or(0);
         if top == 0 {
-            return Passes { passes: vec![Pass::Forward { body: self.clone(), stores: Vec::new() }], slots: 0, origins: vec![(0..n as u32).collect()] };
+            return Passes { passes: vec![Pass::Forward { body: self.clone(), stores: rerail_blocks::vector::Vector::new() }], slots: 0, origins: vec![(0..n as u32).collect()] };
         }
         // Each value's pass: level L's `back_fill`s in pass 2L - 1, its others in pass 2L. A
         // remade value's passes are its readers': `made[p][x]`.
@@ -727,7 +735,7 @@ impl BlockNative {
             }
         }
         let mut passes = Vec::new();
-        let mut origins = Vec::new();
+        let mut origins: Vec<Vector<u32>> = Vec::new();
         for p in 0..=last {
             if p % 2 == 1 {
                 let fills: Vec<(u16, u16, u16)> = (0..n)
@@ -738,12 +746,12 @@ impl BlockNative {
                     })
                     .collect();
                 passes.push(Pass::Back(fills));
-                origins.push(Vec::new());
+                origins.push(rerail_blocks::vector::Vector::new());
                 continue;
             }
-            let mine: Vec<usize> = (0..n).filter(|&x| in_pass(x, p)).collect();
+            let mine: Vector<usize> = (0..n).filter(|&x| in_pass(x, p)).collect();
             // The values of passes before read here, loaded first; then the pass's own, in order.
-            let mut loads: Vec<usize> = mine.iter().flat_map(|&x| self.insts[x].operands()).filter(|&o| !in_pass(o, p)).collect();
+            let mut loads: Vector<usize> = mine.iter().flat_map(|&x| self.insts[x].operands()).filter(|&o| !in_pass(o, p)).collect();
             if p == last {
                 loads.extend(self.outputs.iter().map(|&v| usize::from(v)).filter(|&v| !in_pass(v, p)));
             }
@@ -758,7 +766,7 @@ impl BlockNative {
                     first_member[m] = Some(first);
                 }
             }
-            let mut due: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+            let mut due: std::collections::BTreeMap<usize, Vector<usize>> = Default::default();
             let mut late = Vec::new();
             for &x in &loads {
                 match mine.iter().copied().filter(|&r| self.insts[r].operands().contains(&x)).map(|r| first_member[r].unwrap_or(r)).min() {
@@ -768,14 +776,14 @@ impl BlockNative {
             }
             let mut local: Vec<Option<u16>> = vec![None; n];
             let mut insts = Vec::with_capacity(loads.len() + mine.len());
-            let mut origin: Vec<u32> = Vec::with_capacity(loads.len() + mine.len());
-            let load = |x: usize, local: &mut Vec<Option<u16>>, insts: &mut Vec<BlockInst>, origin: &mut Vec<u32>| {
+            let mut origin: Vector<u32> = rerail_blocks::vector::Vector::with_capacity(loads.len() + mine.len());
+            let load = |x: usize, local: &mut Vec<Option<u16>>, insts: &mut Vec<BlockInst>, origin: &mut Vector<u32>| {
                 local[x] = Some(insts.len() as u16);
                 insts.push(BlockInst::Load(slot[x].expect("read later")));
                 origin.push(x as u32);
             };
             for &x in &mine {
-                for &l in due.get(&x).map(Vec::as_slice).unwrap_or(&[]) {
+                for &l in due.get(&x).map(|v| &v[..]).unwrap_or(&[]) {
                     load(l, &mut local, &mut insts, &mut origin);
                 }
                 local[x] = Some(insts.len() as u16);
@@ -813,16 +821,16 @@ impl BlockNative {
             // A walk is made in the pass of its values, all in one (its `Walk`s read one `Args`).
             // In another pass it is a walk of no kinds, of nothing (its `hidden` any value).
             let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new() } }).collect();
-            let body = |outputs: Vec<u16>, last: bool| BlockNative {
+            let body = |outputs: Vector<u16>, last: bool| BlockNative {
                 walks: walks.clone(),
                 pad: self.pad,
                 tables: self.tables.clone(),
                 insts: insts.clone(),
                 output_delays: if last { self.output_delays.clone() } else { vec![0; outputs.len()] },
                 outputs,
-                extracts: if last { self.extracts.clone() } else { Vec::new() },
-                totals: if last { self.totals.clone() } else { Vec::new() },
-                masks: if last { self.masks.clone() } else { Vec::new() },
+                extracts: if last { self.extracts.clone() } else { rerail_blocks::vector::Vector::new() },
+                totals: if last { self.totals.clone() } else { rerail_blocks::vector::Vector::new() },
+                masks: if last { self.masks.clone() } else { rerail_blocks::vector::Vector::new() },
                 newlines: if last { self.newlines } else { None },
                 delay: self.delay,
                 groups: groups.clone(),
@@ -830,10 +838,10 @@ impl BlockNative {
             };
             if p == last {
                 let outputs = self.outputs.iter().map(|&v| local[usize::from(v)].expect("loaded or made")).collect();
-                passes.push(Pass::Forward { body: body(outputs, true), stores: Vec::new() });
+                passes.push(Pass::Forward { body: body(outputs, true), stores: rerail_blocks::vector::Vector::new() });
                 origins.push(origin);
             } else {
-                let stored: Vec<usize> = mine.iter().copied().filter(|&x| slot[x].is_some() && first(x) == Some(p)).collect();
+                let stored: Vector<usize> = mine.iter().copied().filter(|&x| slot[x].is_some() && first(x) == Some(p)).collect();
                 if stored.is_empty() {
                     continue;
                 }
@@ -964,7 +972,7 @@ impl PlaneFormulas {
 /// The running counts, as output indexes: each extract's, then one for all the totals (the first
 /// total's index stands for them: `BlockProgram::totals`, one flag). A file's counts are laid out
 /// in this order, so tier 2 reads its totals' flag from the count after the extracts'.
-pub fn counted(native: &BlockNative) -> Vec<usize> {
+pub fn counted(native: &BlockNative) -> Vector<usize> {
     native.extracts.iter().chain(native.totals.first()).copied().collect()
 }
 

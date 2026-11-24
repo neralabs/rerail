@@ -5,7 +5,7 @@
 //! plan) and its base (`rerail-plan-base`), whose `plan` it re-exports; under the corpus runner and the language's
 //! root, which are `rerail-logic`'s.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items under the same names:
 // the glob's name and the private one are one item. The mounts also widen what the crates above read (the split's
 // facades, not a design).
@@ -21,7 +21,7 @@ pub use rerail_plan_search::content_store;
 pub use rerail_plan_search::git_access;
 pub use rerail_plan_search::git_workspace;
 extern crate self as rerail_planner;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_plan_search::code_rule_dsl::*;
     #[path = "logic"]
@@ -53,3 +53,9 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

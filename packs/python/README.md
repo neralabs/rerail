@@ -471,7 +471,7 @@ As in Bandit, the callee is a bare name whose qualified name through the file's 
 
 ### `bandit-b113-request-without-timeout`
 
-Port of Bandit 1.9.4's B113 request_without_timeout: a `requests.get/options/head/post/put/patch/delete` call without `timeout`, or a `requests`/`httpx` call (httpx also covers `request`, `stream`, `Client`, `AsyncClient`) whose `timeout` keyword is `None`. Bandit reads `timeout` as a keyword only. httpx calls without `timeout` are not flagged (httpx has a default). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/src/code_rule_dsl/value/rules.rs).
+Port of Bandit 1.9.4's B113 request_without_timeout: a `requests.get/options/head/post/put/patch/delete` call without `timeout`, or a `requests`/`httpx` call (httpx also covers `request`, `stream`, `Client`, `AsyncClient`) whose `timeout` keyword is `None`. Bandit reads `timeout` as a keyword only. httpx calls without `timeout` are not flagged (httpx has a default). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/crates/tests_value/src/code_rule_dsl/value/rules.rs).
 
 ### `bandit-b303-md5`
 

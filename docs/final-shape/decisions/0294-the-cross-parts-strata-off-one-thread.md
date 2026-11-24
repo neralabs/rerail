@@ -1,7 +1,8 @@
 # 0294. The cross-file part's strata off one thread: the work around a walk's morsels runs on the pool, a cut walk counts as one walk, and a walk going on from a cut reads its rows left in their order
 
-Status: decided (2026-11-16). Builds on 0278 §4 and 0279 §7 (morsels), 0292 §1, 0206 (cuts and handoffs), 0203
-(slow joins, exact statistics), 0187 (rows known sorted), 0112 (statistics). Measured in notes/t40's follow-up.
+Status: built (audited 2026-11-23). Decided (2026-11-16). Builds on 0278 §4 and 0279 §7 (morsels), 0292 §1, 0206 (cuts
+and handoffs), 0203 (slow joins, exact statistics), 0187 (rows known sorted), 0112 (statistics). Measured in
+notes/t40's follow-up.
 
 ## Intro
 

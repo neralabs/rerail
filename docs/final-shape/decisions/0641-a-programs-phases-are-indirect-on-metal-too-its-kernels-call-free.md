@@ -1,15 +1,15 @@
 # 0641. A program's phases are indirect on Metal too: its kernels call-free
 
-Status: accepted (2026-11-23). Amends 0638 (a program's levels are stacked dispatches): its Metal exception, a
+Status: accepted (2026-11-23). Amends 0648 (a program's levels are stacked dispatches): its Metal exception, a
 phase dispatched directly with its bound's groups, is removed.
 
 ## Intro
 
-0638 dispatched each phase of a program indirectly, its grid written by the device (`join_grid`), except on Metal: on
+0648 dispatched each phase of a program indirectly, its grid written by the device (`join_grid`), except on Metal: on
 the M3 the indirect dispatch hung the GPU, so Metal started each phase's bound (4,096 groups for a phase of segments),
 and those past the grid returned. Its recursive strata took 11 to 47 times the GPU time of a launch a level.
 
-The user, 2026-11-23, on 0638's next step: "find why Metal's indirect dispatch hangs, so Metal gets exact grids as the
+The user, 2026-11-23, on 0648's next step: "find why Metal's indirect dispatch hangs, so Metal gets exact grids as the
 other backends do, then stop stacks once a component ends".
 
 ## Why the M3 hung
@@ -62,7 +62,7 @@ The mini did not hang at 106 groups with the calls left in. Not the cause, each 
 
 On the M3: decision 0603's measure (`measure_one_program_against_a_launch_a_level`, seven warm runs, medians).
 
-| Stratum | Launch a level: GPU | 0638: GPU | Now: GPU | 0638: wall | Now: wall | Launches |
+| Stratum | Launch a level: GPU | 0648: GPU | Now: GPU | 0648: wall | Now: wall | Launches |
 |---|---|---|---|---|---|---|
 | seeds | 11.3 ms | 10.8 ms | 6.2 ms | n/a | 77 ms | 1 |
 | seeds ×10 | 47.0 ms | 56.8 ms | 50.9 ms | n/a | 688 ms | 1 |

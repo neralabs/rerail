@@ -37,7 +37,43 @@ mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
 pub use lex::{NO_NL, Refusal, T, Tok, number_end, refused, word};
-pub use rerail_tape_format::Columns as Tape;
+/// A tape this crate writes (`tape`): format 16 in its language's table, numbered by names (`sink`; decision 0631).
+pub type Tape = rerail_tape_format::f16::Finished;
+
+/// Each dialect's tape tag.
+pub const fn tape_tag(dialect: Dialect) -> u8 {
+    match dialect {
+        Dialect::C => 28, Dialect::Cpp => 29,
+    }
+}
+
+/// The line terminators of the language's ecosystem (decision 0612).
+pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
+
+/// Key `key`'s names, as the grammar names them: what its number in its language's table is found by (decision
+/// 0631; `sink`, and the engine's `formats::lean_named`). `None` for a key the parser does not write.
+pub fn names(key: u32) -> Option<rerail_tape_format::KeyNames> {
+    let (kind, field, class, extra) = unkey(key);
+    let (kind, named) = *KINDS.get(usize::from(kind))?;
+    Some(rerail_tape_format::KeyNames {
+        kind,
+        named,
+        field: FIELDS.get(usize::from(field)).copied()?,
+        flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 },
+        classes: if extra { &[] } else { CLASSES.get(usize::from(class)).copied()? },
+    })
+}
+
+/// The crate's own sink (decision 0631): format 16, each key numbered in the language's table by its names (`names`),
+/// as the engine numbers the parser's keys (its `formats::lean_named`): one numbering, so the tapes are the same.
+pub fn sink(dialect: Dialect) -> rerail_tape_format::Named {
+    rerail_tape_format::Named::new(tape_tag(dialect), TERMINATORS, names)
+}
+
+/// `sink`'s tape: its tree is the language's (a code its table lacks is the parser's bug).
+pub(crate) fn written(t: Result<Tape, String>) -> Tape {
+    t.unwrap_or_else(|e| panic!("the parser's tree is no format 16 tape of its language's table: {e}"))
+}
 
 /// The language read: C (tree-sitter-c) or C++ (tree-sitter-cpp).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +122,15 @@ pub fn tape(src: &[u8], dialect: Dialect) -> Result<Tape, Refusal> {
     parse::parse(src, dialect)
 }
 
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 16 or 16z, written by its ops
+/// as the parse goes (`Writer::finish_16`, decision 0434).
+pub fn tape_into<T>(src: &[u8], dialect: Dialect, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_into(src, dialect, finish)
+}
+
 /// The tape of `src` read from `toks` (ending in `Eof`), which are `src`'s tokens as the lexer
 /// would make them: a preprocessor's tokens over its expanded text (decision 0327), parsed with no
 /// lexing of the text.
@@ -123,41 +168,7 @@ pub fn lex_only(src: &[u8], dialect: Dialect) -> Option<(usize, usize)> {
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
 /// a line, indented by depth, its kind, field, flags, supertypes and span.
 pub fn tape_text(tape: &Tape) -> String {
-    use rerail_tape_format::TAIL_FROM_START;
-    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
-        let w = usize::from(width & 0x7f);
-        let b = &column[i * w..i * w + w];
-        if w == 2 { u32::from(u16::from_le_bytes([b[0], b[1]])) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
-    };
-    let n = tape.code.len() / 2;
-    let start = |i: usize| {
-        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
-        u32::from_le_bytes(tape.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&tape.off, tape.widths[1], i)
-    };
-    let mut out = String::new();
-    let mut open: Vec<usize> = Vec::new();
-    for i in 0..n {
-        while open.last().is_some_and(|&end| end <= i) {
-            open.pop();
-        }
-        let code = u16::from_le_bytes([tape.code[2 * i], tape.code[2 * i + 1]]);
-        let (kind, field, class, extra) = unkey(tape.keys[usize::from(code)]);
-        let size = cell(&tape.size, tape.widths[0], i) as usize;
-        let s = start(i);
-        let from = if tape.widths[2] & TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
-        let end = from + cell(&tape.tail, tape.widths[2], i);
-        let classes = CLASSES[usize::from(class)];
-        out.push_str(&format!(
-            "{}{}{}{}{} [{s}..{end}]\n",
-            "  ".repeat(open.len()),
-            KINDS[usize::from(kind)].0,
-            if field == 0 { String::new() } else { format!(" {}:", FIELDS[usize::from(field)]) },
-            if extra { " flags=1".to_owned() } else { String::new() },
-            if classes.is_empty() { String::new() } else { format!(" {{{}}}", classes.join(",")) },
-        ));
-        open.push(i + size);
-    }
-    out
+    tape.tape.text().unwrap_or_else(|e| panic!("a tape this crate wrote: {e}"))
 }
 
 #[cfg(test)]

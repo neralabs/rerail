@@ -160,14 +160,14 @@ fn simdjson_forms_trees_are_14_jsons() {
 }
 
 /// The JIT's format 16 run of the simdjson form passes each node to the writer's ops at its word (`direct`,
-/// `stream_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds no format 15
-/// buffer. (Kept from the Rust trees' test, which 0555 removed.)
+/// `stream_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds none.
+/// (Kept from the Rust trees' test, which 0555 removed.)
 #[test]
 fn simdjson_forms_sixteen_run_is_direct() {
     let jit = simdjson_form();
-    let s16 = jit.parser.sixteen().expect("a format 16 tier 2");
+    let s16 = &jit.parser.tier2;
     assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
-    assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
+    assert_eq!(s16.tape(1000).held(), 0, "the direct run's tape: no working row");
 }
 
 /// Values nested `n` deep for each `n`: arrays, objects, and an object's value an array's by turns.
@@ -283,10 +283,10 @@ fn simdjson_form_against_simdjson() {
         .collect();
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
     let jit = simdjson_form();
-    let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let (_, tag) = jit.parser.tier2.widths_tag();
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
-    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let numbers = jit.parser.tier2.numbers(&lang);
     // The process's instructions retired (`native_cpu_codegen::retired`: macOS's count, zero elsewhere).
     let retired = || rerail_compiler::native_cpu_codegen::retired().0 as f64;
     // The median of each run's instructions and time.
@@ -306,17 +306,17 @@ fn simdjson_form_against_simdjson() {
     for (name, f) in &files {
         let nodes = f.len() / 2 + 16;
         // Ours writes the JIT's tape.
-        let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e:?}"));
+        let want = jit.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, false).map(|w| w.extent().to_vec()).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e:?}"));
         // The file padded once, as simdjson's caller pads it (`padded_string`).
         let fp = rerail_json_aot::padded(f);
-        let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, false, true, nodes);
+        let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
         rerail_json_aot::parse(&fp, f.len(), &mut w).unwrap_or_else(|b| panic!("{name}: the Rust refuses it at byte {b}"));
         assert!(w.finish().expect("finishes").tape.extent() == &want[..], "{name}: the Rust's tape is the JIT's");
         // Ours as simdjson's caller runs simdjson: one writer, kept from one document to the next (simdjson's parser is
         // kept by `structurals`), each tape given back as the next one's room.
         let mut w = rerail_tape_format::f16::Writer::empty();
         let mut ours = || {
-            w.begin(&lang, f, tag, false, true, nodes);
+            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
             rerail_json_aot::parse(&fp, f.len(), &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -340,7 +340,7 @@ fn simdjson_form_against_simdjson() {
         });
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let (t2i, t2n) = measure(&mut || {
-            w.begin(&lang, f, tag, false, true, nodes);
+            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -373,7 +373,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         .collect();
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
     let jit = simdjson_form();
-    let t2 = jit.parser.sixteen().expect("a format 16 tier 2");
+    let t2 = &jit.parser.tier2;
     let (_, tag) = t2.widths_tag();
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
@@ -397,8 +397,8 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         let fp = rerail_json_aot::padded(f);
         let (mut wj, mut wa) = (Writer::empty(), Writer::empty());
         for z in [false, true] {
-            let want = jit.parser.image16_in(&mut wj, f, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e}"));
-            wa.begin(&lang, f, tag, z, true, nodes);
+            let want = jit.parser.image16_in(&mut wj, f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e}"));
+            wa.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, nodes);
             rerail_json_aot::parse(&fp, f.len(), &mut wa).unwrap_or_else(|e| panic!("{name}: the Rust refuses it at byte {e}"));
             let got = wa.finish().expect("finishes").tape;
             assert!(got.extent() == want.extent(), "{name}: the Rust's tape is the JIT's (z {z})");
@@ -406,7 +406,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
             wj.recycle(want);
         }
         let jit_whole = |w: &mut Writer, z: bool| {
-            let t = jit.parser.image16_in(w, f, &lang, &numbers, z).expect("parses");
+            let t = jit.parser.image16_in(w, f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).expect("parses");
             w.recycle(std::hint::black_box(t));
         };
         let j16 = least(&mut || jit_whole(&mut wj, false));
@@ -417,7 +417,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
             std::hint::black_box(&batch);
         });
         let aot_whole = |w: &mut Writer, z: bool| {
-            w.begin(&lang, f, tag, z, true, nodes);
+            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, nodes);
             rerail_json_aot::parse(&fp, f.len(), w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -427,7 +427,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         let a1 = least(&mut || _ = std::hint::black_box(rerail_json_aot::lex(&fp, f.len())));
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let a2 = least(&mut || {
-            wa.begin(&lang, f, tag, false, true, nodes);
+            wa.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut wa).expect("parses");
             let t = wa.finish().expect("finishes").tape;
             wa.recycle(std::hint::black_box(t));
@@ -445,8 +445,10 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
     println!("* the JIT's whole path to 16 less its tier 1");
 }
 
+/// Cranelift's nodes of `bytes`: the interpreter's, where Cranelift's tape is the one they make
+/// (`ladder::compiled_nodes`); `None` where it refuses.
 fn ours(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
-    c.parser.parse(bytes).ok().map(as_ids)
+    rerail_cpu_stream::ladder::compiled_nodes(c, bytes).ok().map(as_ids)
 }
 
 /// simdjson's verdict on each file (`RERAIL_SIMDJSON`, the checker), or none without it.
@@ -674,21 +676,17 @@ fn json_bench() {
     if let Ok(run) = std::env::var("RERAIL_BENCH_RUN") {
         let c = &forms[usize::from(std::env::var("RERAIL_FORM").is_ok_and(|f| f == "15"))].1;
         let mut prepared: Vec<_> = files.iter().map(|f| native_cpu_block::Batch::new(&c.parser.tier1, &[f])).collect();
-        let mut tapes: Vec<_> = prepared
-            .iter_mut()
-            .map(|b| {
-                b.call(&c.parser.tier1);
-                c.parser.tape(b)
-            })
-            .collect();
+        let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+        let lang = rerail_cpu_stream::ladder::lang_over(&c.program, &refs);
+        let mut writing = rerail_cpu_stream::ladder::Writing::new(&c.parser, &lang, rerail_tape_format::newlines::Terminators::Newlines);
         let mut ok = 0usize;
         for _ in 0..iters {
-            for ((b, t), f) in prepared.iter_mut().zip(&mut tapes).zip(&files) {
+            for (b, f) in prepared.iter_mut().zip(&files) {
                 match run.as_str() {
                     "tier1" => b.call(&c.parser.tier1),
                     "both" => {
                         b.call(&c.parser.tier1);
-                        ok += usize::from(c.parser.words(b, t).is_ok());
+                        ok += usize::from(writing.words(&c.parser, b, f).is_some());
                     }
                     "tree-sitter" => ok += usize::from(ts.parse(f, None).is_some()),
                     _ => {}
@@ -712,16 +710,17 @@ fn json_bench() {
         for (name, c) in &forms {
             let mut batch = native_cpu_block::Batch::new(&c.parser.tier1, &[f]);
             batch.call(&c.parser.tier1);
-            let mut tape = c.parser.tape(&batch);
+            let lang = rerail_cpu_stream::ladder::lang_over(&c.program, &[f]);
+            let mut writing = rerail_cpu_stream::ladder::Writing::new(&c.parser, &lang, rerail_tape_format::newlines::Terminators::Newlines);
             let (mut one, mut two) = (Vec::new(), Vec::new());
             for _ in 0..iters {
                 let t = thread_ns();
                 batch.call(&c.parser.tier1);
                 one.push(thread_ns() - t);
                 let t = thread_ns();
-                let r = c.parser.words(&batch, &mut tape);
+                let r = writing.words(&c.parser, &batch, f);
                 two.push(thread_ns() - t);
-                assert!(r.is_ok(), "{}: {name} refuses", base(path));
+                assert!(r.is_some(), "{}: {name} refuses", base(path));
             }
             println!("{}\t{}\t{name}\t{:.0}\t{:.0}\t{t_ts:.0}", base(path), f.len(), median(one), median(two));
         }
@@ -804,19 +803,22 @@ fn json_optimizer_bench() {
         .collect();
     options.optimize_tier1.store(false, Relaxed);
     options.optimize_tier2.store(false, Relaxed);
-    // Each form's batches and tapes, made once.
-    let mut state: Vec<Vec<_>> = forms
+    // Each form's batches and writer, made once.
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let langs: Vec<_> = forms.iter().map(|(_, c)| rerail_cpu_stream::ladder::lang_over(&c.program, &refs)).collect();
+    let mut state: Vec<(Vec<_>, rerail_cpu_stream::ladder::Writing)> = forms
         .iter()
-        .map(|(_, c)| {
-            files
+        .zip(&langs)
+        .map(|((_, c), lang)| {
+            let batches = files
                 .iter()
                 .map(|f| {
                     let mut b = native_cpu_block::Batch::new(&c.parser.tier1, &[f]);
                     b.call(&c.parser.tier1);
-                    let t = c.parser.tape(&b);
-                    (b, t)
+                    b
                 })
-                .collect()
+                .collect();
+            (batches, rerail_cpu_stream::ladder::Writing::new(&c.parser, lang, rerail_tape_format::newlines::Terminators::Newlines))
         })
         .collect();
     // Each tier's CPU time, instructions retired and cycles, each its least over the rounds.
@@ -825,11 +827,12 @@ fn json_optimizer_bench() {
     for _ in 0..rounds {
         for (k, (_, c)) in forms.iter().enumerate() {
             let mut sum = [(0.0, 0u64, 0u64); 2];
-            for (b, t) in &mut state[k] {
+            let (batches, writing) = &mut state[k];
+            for (b, f) in batches.iter_mut().zip(&files) {
                 let (i0, c0, s) = (retired().0, retired().1, thread_ns());
                 b.call(&c.parser.tier1);
                 let (s1, (i1, c1)) = (thread_ns(), retired());
-                assert!(c.parser.words(b, t).is_ok());
+                assert!(writing.words(&c.parser, b, f).is_some());
                 let (s2, (i2, c2)) = (thread_ns(), retired());
                 sum[0] = (sum[0].0 + s1 - s, sum[0].1 + i1 - i0, sum[0].2 + c1 - c0);
                 sum[1] = (sum[1].0 + s2 - s1, sum[1].1 + i2 - i1, sum[1].2 + c2 - c1);
@@ -1190,9 +1193,12 @@ fn jsonc_refusals_by_reason() {
     let c = form("jsonc");
     let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).expect("reads");
     let mut reasons: std::collections::BTreeMap<String, (usize, String)> = Default::default();
+    let t2 = &c.parser.tier2;
+    let lang = rerail_tape_format::f16::lang(t2.widths_tag().1).expect("JSON's format 16 table");
+    let numbers = t2.numbers(lang);
     for path in list.lines().filter(|l| !l.is_empty()) {
         let Ok(bytes) = std::fs::read(path) else { continue };
-        if let Err(e) = c.parser.image(&bytes) {
+        if let Err(e) = c.parser.image16(&bytes, rerail_tape_format::newlines::Terminators::Newlines, lang, &numbers, false) {
             let r = reasons.entry(format!("{e:?}")).or_insert((0, path.to_owned()));
             r.0 += 1;
         }
@@ -1214,7 +1220,7 @@ fn json_rust() -> (String, String) {
     let ids = rerail_cpu_stream::ladder::Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let c = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto).expect("compiles");
     let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
     let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
@@ -1254,10 +1260,10 @@ fn json_rust_is_current() {
 #[test]
 fn json_rusts_tapes_are_the_jits() {
     let jit = simdjson_form();
-    let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let (_, tag) = jit.parser.tier2.widths_tag();
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
-    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let numbers = jit.parser.tier2.numbers(&lang);
     let mut inputs = tree_inputs();
     inputs.extend(deep_nests(1023..1026));
     // Empty containers (one leaf each, decision 0553), and files whose last record is not the root's closer.
@@ -1303,8 +1309,8 @@ fn json_rusts_tapes_are_the_jits() {
     for (k, f) in inputs.iter().enumerate() {
         let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
         for z in [false, true] {
-            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| w.extent().to_vec());
-            let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, z, true, f.len() / 2 + 16);
+            let want = jit.parser.image16(f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).map(|w| w.extent().to_vec());
+            let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, f.len() / 2 + 16);
             let got = rerail_json_aot::parse(&rerail_json_aot::padded(f), f.len(), &mut w).map_err(|b| format!("refused at byte {b}")).and_then(|()| w.finish().map(|d| d.tape.extent().to_vec()));
             match (&want, &got) {
                 (Ok(a), Ok(b)) => {

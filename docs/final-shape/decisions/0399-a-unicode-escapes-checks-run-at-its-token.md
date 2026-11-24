@@ -1,9 +1,9 @@
 # 0399: A `\u` escape's checks run at its token, in tier 2
 
-Status: decided (the user, 2026-11-18: "Check numbers and \u escapes once per token in tier 2",
-page 39's item 1, its second half). Kept by shape (the user, 2026-11-18: "this decision
-needs to be made based on one criteria: what brings us closer to the desired shape"): per-token
-checks are simdjson's stage 2; the cost on dense files does not decide it. Follows 0398.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "Check numbers and \u escapes once per token in
+tier 2", page 39's item 1, its second half). Kept by shape (the user, 2026-11-18: "this decision needs to be made
+based on one criteria: what brings us closer to the desired shape"): per-token checks are simdjson's stage 2; the cost
+on dense files does not decide it. Follows 0398.
 
 ## Intro
 

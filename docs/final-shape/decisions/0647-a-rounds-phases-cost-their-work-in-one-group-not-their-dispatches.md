@@ -142,7 +142,7 @@ stack's.
 
 ## A real run's recursive strata
 
-The user, 2026-11-23, on the next step: "batch the axis lookups into stacked launches, the way 0638 did for joins,
+The user, 2026-11-23, on the next step: "batch the axis lookups into stacked launches, the way 0648 did for joins,
 so a real run stays within the budget. Then rerun this test to see real recursive strata on the device, rounds
 included."
 
@@ -151,7 +151,7 @@ django corpus, with every stratum the device can run sent to it (`RERAIL_DEVICE=
 
 - **The kind-set axis solve was over the budget.** A tape-value layer's solve (`axis_in_chunk`, 0289) went out as a
   submission a chunk for its count and scan, then one a chunk for its writes. With about 99 layers, the run's first
-  evaluation hard-failed the 200-launch budget. Its chunks now go out stacked (`Pass::stack`, 0638): every chunk's
+  evaluation hard-failed the 200-launch budget. Its chunks now go out stacked (`Pass::stack`, 0648): every chunk's
   count and scan in one submission, then every chunk's writes in another. A stacked pass's library kernels are
   charged as stacked (`launch::charge_made_stacked`), not as launches each.
 - **The profile has each stratum's GPU time and rounds.** `placement.tsv` has `gpu_s` (its command buffers' time)

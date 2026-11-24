@@ -1,6 +1,8 @@
 # 0053: The store collects in the background, keeping recent runs and a bounded history
 
-Status: accepted (2026-11-06; bounded by size, not by age; built and measured, apart from the atom epoch in §7)
+Status: partly built (audited 2026-11-23). Left: §7: the atom epoch (empty the arena and clear atom-keyed tables past
+64 MB) is not built. Accepted (2026-11-06; bounded by size, not by age; built and measured, apart from the atom epoch
+in §7)
 
 ## Intro
 

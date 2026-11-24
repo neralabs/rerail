@@ -57,3 +57,12 @@ and not done, or ran out of slots, fails, rather than return rows short of their
   `gpu::tests`, `concurrent_submissions_are_exact` and the mixed batch's one command buffer included.
 - The engine's closure tests (`rerail-tests-logic`, the 14 named for closure, reach and walk along) pass on Metal
   (M1 Max).
+
+## At the hub merge (2026-11-24)
+
+Three other branches fixed the same budget failure: `e792e86561` (`cl_run`), `f7ba74d29f` (`cl_dag`, which the hub
+kept: three launches a closure, on the same work queue) and `7b007b2306` (bounded level launches). `cl_walk` keeps
+`cl_dag`'s scheme and supersedes it: one launch for every closure of a submission, the init and gather folded into
+the walk. From the hub it takes the queue check as `Job::queue` (an item not done, or a push past its room, is an
+error) and the coherent loads of `ukl/memory.h` (`ukl_ldc_u32`) for the rows other groups wrote: on OpenCL a
+`volatile` load may be answered by a cache their writes have not reached.

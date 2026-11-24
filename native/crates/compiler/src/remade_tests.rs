@@ -123,7 +123,7 @@ fn a_word_made_value_reads_made_operands() {
     for len in [64usize, 65, 128, 181, 200, 300] {
         let file: Vec<u8> = unit.iter().copied().cycle().take(len).collect();
         let (got, want) = (compiled.extract(&file), p.run_files(&[&file]).remove(0));
-        let tier1 = |o: &Vec<Vec<u64>>| {
+        let tier1 = |o: &[rerail_blocks::vector::Vector<u64>]| {
             o.iter()
                 .enumerate()
                 .filter(|(k, _)| !made.contains(k))

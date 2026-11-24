@@ -1,10 +1,12 @@
 # 0113: Strata issued from a scoreboard: merged into components first, then run in parallel on the one executor
 
-Status: draft (2026-11-11); steps 1–5 built in a first form (2026-11-11, `logic::plan::issue`, `accel::stream`),
-step 6 in part. What is built, measured, and where it departs from the text below is in **Built so far** at the
-end. It builds on 0100 (one executor, levels as
-batches, claims, one pool) and takes up two items 0100 and 0101 left open: 0100 step 6's queued shape for parallel
-strata, and 0101 §3's merged component.
+Status: partly built (audited 2026-11-23, corrected the same day). Left: shared plan/open per component, sessions and
+answered requests issued (`Board` is not made where strata are kept or maintained), wall measured at 10-300 files.
+§4's interner overlay is answered by 0114 §5 (atoms reserved by component, built; `held_only` is gone). Draft (2026-11-11); steps 1–5 built in a first form
+(2026-11-11, `logic::plan::issue`, `accel::stream`), step 6 in part. What is built, measured, and where it departs
+from the text below is in **Built so far** at the end. It builds on 0100 (one executor, levels as batches, claims, one
+pool) and takes up two items 0100 and 0101 left open: 0100 step 6's queued shape for parallel strata, and 0101 §3's
+merged component.
 
 ## Intro
 
@@ -336,3 +338,16 @@ is shared yet beyond the fork and the scope's prime.
 - **Not yet measured:** wall time at 10, 50, 100 and 300 files on a quiet machine, and the 1-file and 10-file
   findings.
 
+## A stratum issued ahead binds the inputs the loop would have (2026-11-20)
+
+The loop binds each input before its first reader (`loads`, by the stratum that first reads it). A cross-file run
+binds each export to an empty placeholder until then, so that its readers can be planned. A stratum issued ahead
+bound only the inputs it was itself the first reader of. When it also read an input whose first reader the loop had
+not reached, and that reader was not issued with it, its strand counted the placeholder as bound in place, and its
+job read no rows from it whenever the job ran before the loop reached that reader. Rows were lost, or added under a
+negation, from run to run: the 27 Django rules on edx-platform gave 271, 366 or 508 findings.
+
+Now a stratum issued ahead has the inputs bound that the loop binds at every stratum up to it (`Board::load_through`,
+once each: a cursor past the strata done). Nothing is serialized: inputs are bound earlier, not more often.
+`RERAIL_STREAM_AT_SUBMIT` (a test aid) runs each job as it is submitted, the schedule that read a placeholder every
+time (`plan::tests::a_stratum_issued_ahead_reads_an_input_the_loop_binds_later`).

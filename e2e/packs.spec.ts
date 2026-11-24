@@ -19,6 +19,13 @@ async function installedPacks(rerail: RerailScenarios, url: string): Promise<Pac
   return (await response.json() as { packs: Pack[] }).packs;
 }
 
+/** The packs Rerail suggests for the repository `url` is scoped to, which Add rule packs lists first. */
+async function suggestedPackIds(rerail: RerailScenarios, url: string): Promise<Set<string>> {
+  const response = await rerail.get(new URL(`/api/rule-packs/recommendations${new URL(url).search}`, url).href);
+  expect(response.ok()).toBe(true);
+  return new Set((await response.json() as { recommendations: Array<{ packId: string }> }).recommendations.map(pick => pick.packId));
+}
+
 const onCount = (rules: readonly EffectiveRule[]): number => rules.filter(entry => entry.on).length;
 /**
  * The page's whole-pack switch for `name`: a switch, announced as a checkbox while it is halfway (some rules on).
@@ -110,18 +117,20 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect(page.locator("#content").getByRole("button", { name: "Add pack" })).toBeVisible();
   });
 
-  test("the catalog filters by kind, alphabetical; adds Python whole with its opt-in rules off; its sheet removes it", async ({ page, rerail }) => {
+  test("the catalog filters by kind, suggested packs first, each group alphabetical; adds Python whole with its opt-in rules off; its sheet removes it", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "packs" });
     const packs = (await installedPacks(rerail, url)).filter(pack => pack.rules.length > 0);
     const python = packs.find(pack => pack.id === "python")!;
+    const suggested = await suggestedPackIds(rerail, url);
     expect(await packRulesAt(rerail, url, "python")).toHaveLength(0);
     await page.goto(url);
     const rowNames = () => page.locator("#content [data-act=viewpack]").evaluateAll(rows => rows.map(row => row.querySelector("b")?.textContent ?? ""));
-    const alphabetical = (names: string[]) => [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    const alphabetical = (some: Pack[]) => some.map(pack => pack.name).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    const inOrder = (some: Pack[]) => [...alphabetical(some.filter(pack => suggested.has(pack.id))), ...alphabetical(some.filter(pack => !suggested.has(pack.id)))];
 
-    await expect.poll(rowNames).toEqual(alphabetical(packs.map(pack => pack.name)));
+    await expect.poll(rowNames).toEqual(inOrder(packs));
     await page.getByRole("button", { name: "Framework", exact: true }).click();
-    await expect.poll(rowNames).toEqual(alphabetical(packs.filter(pack => pack.category === "framework").map(pack => pack.name)));
+    await expect.poll(rowNames).toEqual(inOrder(packs.filter(pack => pack.category === "framework")));
     await page.getByRole("button", { name: "All", exact: true }).click();
 
     const row = page.locator("#content [data-act=viewpack]").filter({ has: page.locator("b", { hasText: /^Python$/u }) });
@@ -161,11 +170,12 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect.poll(async () => (await packRulesAt(rerail, url, "python")).length).toBeGreaterThan(0);
 
     await row.getByRole("button", { name: "Remove pack" }).click();
-    // The question replaces the row's state and action, under the pack's text.
+    // The question replaces the row's action and its Added, under the pack's text.
     await expect(row.locator(".pend")).toHaveCount(0);
     await row.locator(".rmline").getByRole("button", { name: "Remove", exact: true }).click();
     await expect.poll(async () => (await packRulesAt(rerail, url, "python")).length).toBe(0);
-    await expect(row.locator(".pend")).toHaveText(/Removed\s*Undo/u);
+    await expect(row.locator(".pstate")).toContainText("Removed");
+    await expect(row.locator(".pend")).toHaveText("Undo");
 
     await row.getByRole("button", { name: "Undo" }).click();
     await expect.poll(async () => (await packRulesAt(rerail, url, "python")).length).toBeGreaterThan(0);

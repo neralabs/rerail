@@ -11,7 +11,7 @@ import { IGNORED_DIRECTORIES } from "../../../src/engine/index.js";
  */
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
-export const IGNORED_DIRECTORIES_DATA_PATH = resolve(ROOT, "native", "src", "ignored_directories.generated.json");
+export const IGNORED_DIRECTORIES_DATA_PATH = resolve(ROOT, "native", "crates", "observe", "src", "ignored_directories.generated.json");
 
 export function renderIgnoredDirectoriesData(names: Iterable<string> = IGNORED_DIRECTORIES): string {
   return `${JSON.stringify([...names], null, 2)}\n`;
