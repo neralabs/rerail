@@ -30,7 +30,9 @@ export interface HistorySyncOptions {
 /**
  * Whether any connection committed since the last call: `PRAGMA data_version` of a read-only connection of its own,
  * which moves with every commit another connection makes, read from SQLite's shared memory without touching the disk.
- * Undefined while the database does not exist; a read that fails counts as a commit, so the log is synced anyway.
+ * Undefined while the database does not exist; a read that fails counts as a commit, so the log is synced anyway. The
+ * first call counts as a commit: the daemon's start commits before the watch opens (the repair of a gone daemon's
+ * sessions), and `data_version` moves only with commits after a connection's first read.
  */
 class CommitWatch {
   readonly #path: string;
@@ -39,11 +41,6 @@ class CommitWatch {
 
   constructor(path: string) {
     this.#path = path;
-    try {
-      this.#seen = this.#version();
-    } catch {
-      // The first look then counts as a commit.
-    }
   }
 
   committed(): boolean | undefined {
@@ -82,8 +79,8 @@ function errorText(error: unknown): string {
 /**
  * Syncs the log of the database at `databasePath` every `periodMs` while commits wait, one sync at a time, off the
  * daemon's thread (`syncHistoryLog`): the next look is due `periodMs` after the last one ended, so a stalled disk
- * piles nothing up, and no hook or commit waits for a sync. A look that finds no commit since the last sync does
- * nothing, so an idle daemon does no disk work. A failed sync is said once in the daemon's log until one succeeds
+ * piles nothing up, and no hook or commit waits for a sync. The first look syncs what the daemon's start committed; a
+ * later look that finds no commit since the last one does nothing, so an idle daemon does no disk work. A failed sync is said once in the daemon's log until one succeeds
  * again, and the next look tries again, commits or not. It never throws and never holds the daemon open.
  */
 export function startHistorySync(databasePath: string, options: HistorySyncOptions = {}): HistorySync {
