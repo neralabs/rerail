@@ -1196,6 +1196,15 @@ impl Batch {
         self.ensure_group(want, whole)
     }
 
+    /// Every document's rows made, as one group where none is made yet (`ensure`): a chunk's batch, on the worker that
+    /// projects it ahead of its evaluation (as `Batch::build` made them before decision 0494), so its evaluation reads
+    /// them made and makes none inside its joins (30 s of PostHog's chunks' CPU, in groups a read asked for).
+    pub fn make_every(&self) {
+        let _made = profile::span(|| "a chunk's documents made ahead".to_owned());
+        let every: Vec<usize> = (0..self.docs.len()).collect();
+        self.ensure(&every);
+    }
+
     /// `ensure`'s documents not made yet, as one group (`whole`: a whole read asked for them).
     fn ensure_group(&self, want: &[usize], whole: bool) {
         let me = std::thread::current().id();

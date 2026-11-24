@@ -1042,39 +1042,100 @@ pub mod tests {
     }
 }
 
-/// A semi-join's base relation's statistics, counted of its rows at the nodes the exports hold, the chunks' and the
-/// hits' (read off the corpus batch by a walk of their documents, `Source::for_rows_keyed`). They are the rows the
-/// cross part looks up (decision 0458 binds the whole view, but the cross part reads it only at those nodes), so the
-/// cross part's statistics of the relation are theirs, and the view's other rows are never computed to measure it.
-/// A node's row is counted once, though it is read twice. Exact: each value's count, and its count in each document
-/// (the first column's high half, as `syntax::measured` reads it).
-#[derive(Default)]
+/// A semi-join's base relation's statistics, counted of its rows at the nodes the exports hold (decision 0458): the
+/// rows the cross part looks up, so its statistics of the relation are theirs, and the view's other rows are never
+/// computed to measure it. Counted by document, the node's: each document counted and its rows, and each column's
+/// count of each value in it. So counts of disjoint documents add (each chunk's, of the documents it claimed; a kept
+/// count's unchanged documents'; the documents walked in the stats phase), and a document's are dropped whole (an
+/// edit's changed documents). Kept as they are (`encode`): a derived fact, the counts, not the rows they were read of.
+/// Exact: each value's count, and its count in each document as `syntax::measured` reads it (the first column's high
+/// half, the node's document where the first column is the node, else one document for every row).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemijoinCounts {
-    nodes: rustc_hash::FxHashSet<i64>,
     /// The node's column: every counted row's own node, so a key with no counts.
-    node: Option<usize>,
-    all: Vec<rustc_hash::FxHashMap<i64, i64>>,
+    node: usize,
+    /// The columns' number.
+    width: usize,
+    /// Each document counted (a node's high half): its rows at the held nodes, the document `measured` reads its rows
+    /// of (the first column's high half), and its every row, held or not (the relation's whole count, which a plan's
+    /// estimate scales the held rows' statistics to). A document none of whose nodes is held is counted, with no row.
+    docs: rustc_hash::FxHashMap<i64, [i64; 3]>,
+    /// Each column's count of each value in each document: `(value, document)`.
     by_doc: Vec<rustc_hash::FxHashMap<(i64, i64), i64>>,
 }
 
 impl SemijoinCounts {
-    /// Node `node`'s row, its columns in `input_columns` order with the node at `at`: counted unless counted already.
-    /// Whether it was counted now.
-    pub fn row(&mut self, node: i64, at: usize, row: &[i64]) -> bool {
-        if !self.nodes.insert(node) {
-            return false;
-        }
-        self.node = Some(at);
-        if self.all.len() < row.len() {
-            self.all.resize_with(row.len(), Default::default);
-            self.by_doc.resize_with(row.len(), Default::default);
-        }
-        let d = row[0] >> 32;
-        for (c, &v) in row.iter().enumerate().filter(|&(c, _)| c != at) {
-            *self.all[c].entry(v).or_default() += 1;
+    /// No row counted, of rows `width` wide whose node is column `node`.
+    pub fn new(width: usize, node: usize) -> Self {
+        SemijoinCounts { node, width, docs: Default::default(), by_doc: vec![Default::default(); width] }
+    }
+
+    /// Document `d` counted, whether or not a row of it is.
+    pub fn document(&mut self, d: i64) {
+        self.docs.entry(d).or_insert([0, d, 0]);
+    }
+
+    /// Document `d`'s every row, held or not, counted: one more.
+    pub fn every_row(&mut self, d: i64) {
+        self.docs.entry(d).or_insert([0, d, 0])[2] += 1;
+    }
+
+    /// Every row of the documents counted, held or not.
+    pub fn every_rows(&self) -> i64 {
+        self.docs.values().map(|e| e[2]).sum()
+    }
+
+    /// A row, its columns in `input_columns` order: counted once for each time it is given (its node's document
+    /// counted). A node has one row in the relations walked so; a caller that may give one twice says so.
+    pub fn row(&mut self, row: &[i64]) {
+        let d = row[self.node] >> 32;
+        let e = self.docs.entry(d).or_insert([0, d, 0]);
+        e[0] += 1;
+        e[1] = row[0] >> 32;
+        for (c, &v) in row.iter().enumerate().take(self.width).filter(|&(c, _)| c != self.node) {
             *self.by_doc[c].entry((v, d)).or_default() += 1;
         }
+    }
+
+    /// The documents counted.
+    pub fn documents(&self) -> impl Iterator<Item = i64> + '_ {
+        self.docs.keys().copied()
+    }
+
+    /// Whether document `d` is counted.
+    pub fn counts(&self, d: i64) -> bool {
+        self.docs.contains_key(&d)
+    }
+
+    /// The rows counted.
+    pub fn rows(&self) -> i64 {
+        self.docs.values().map(|e| e[0]).sum()
+    }
+
+    /// `other`'s counts added, of documents these do not count (one counted by both is `other`'s ignored). `false`
+    /// where the two are of rows of another shape.
+    pub fn add(&mut self, other: &SemijoinCounts) -> bool {
+        if (other.width, other.node) != (self.width, self.node) {
+            return false;
+        }
+        let fresh: rustc_hash::FxHashSet<i64> = other.docs.keys().copied().filter(|d| !self.docs.contains_key(d)).collect();
+        for (&d, &e) in other.docs.iter().filter(|(d, _)| fresh.contains(d)) {
+            self.docs.insert(d, e);
+        }
+        for (mine, theirs) in self.by_doc.iter_mut().zip(&other.by_doc) {
+            for (&(v, d), &n) in theirs.iter().filter(|((_, d), _)| fresh.contains(d)) {
+                *mine.entry((v, d)).or_default() += n;
+            }
+        }
         true
+    }
+
+    /// The documents `drop` names, no longer counted.
+    pub fn without(&mut self, drop: &dyn Fn(i64) -> bool) {
+        self.docs.retain(|d, _| !drop(*d));
+        for by in &mut self.by_doc {
+            by.retain(|(_, d), _| !drop(*d));
+        }
     }
 
     /// The statistics (`syntax::statistics`' rows) of the columns `names`, each named in `input` (the rows' columns):
@@ -1083,20 +1144,143 @@ impl SemijoinCounts {
         if names.first().map(String::as_str) != input.first().copied() {
             return None;
         }
-        let rows = self.nodes.len() as i64;
+        let rows = self.rows();
         names
             .iter()
             .map(|name| {
                 let c = input.iter().position(|i| i == name)?;
-                Some(match (self.all.get(c).filter(|_| self.node != Some(c)), self.by_doc.get(c)) {
-                    (Some(all), Some(by_doc)) => {
-                        let (ndv, sq, sqd) = (all.len() as i64, all.values().map(|n| n * n).sum(), by_doc.values().map(|n| n * n).sum());
+                Some(match self.by_doc.get(c).filter(|_| c != self.node) {
+                    Some(by_doc) => {
+                        // Each value's count, and in each document `measured` reads (the first column's high half).
+                        let (mut all, mut by): (rustc_hash::FxHashMap<i64, i64>, rustc_hash::FxHashMap<(i64, i64), i64>) = Default::default();
+                        for (&(v, d), &n) in by_doc {
+                            *all.entry(v).or_default() += n;
+                            *by.entry((v, self.docs.get(&d).map_or(d, |e| e[1]))).or_default() += n;
+                        }
+                        let (ndv, sq, sqd) = (all.len() as i64, all.values().map(|n| n * n).sum(), by.values().map(|n| n * n).sum());
                         // A key column (every value once) reads as `measured`'s does.
                         if ndv == rows { (name.clone(), rows, rows, rows, rows) } else { (name.clone(), rows, ndv, sq, sqd) }
                     }
-                    _ => (name.clone(), rows, rows, rows, rows),
+                    None => (name.clone(), rows, rows, rows, rows),
                 })
             })
             .collect()
+    }
+
+    /// As words: the width, the node's column and the documents' number, each document (its key, rows, `measured`'s
+    /// document and every row), then each column's counts' number and each count (value, document, count).
+    pub fn encode(&self, out: &mut Vec<i64>) {
+        out.extend([self.width as i64, self.node as i64, self.docs.len() as i64]);
+        let mut docs: Vec<(&i64, &[i64; 3])> = self.docs.iter().collect();
+        docs.sort_unstable();
+        for (&d, e) in docs {
+            out.extend([d, e[0], e[1], e[2]]);
+        }
+        for by in &self.by_doc {
+            out.push(by.len() as i64);
+            let mut counts: Vec<(&(i64, i64), &i64)> = by.iter().collect();
+            counts.sort_unstable();
+            for (&(v, d), &n) in counts {
+                out.extend([v, d, n]);
+            }
+        }
+    }
+
+    /// The counts `encode` wrote at `at..end` of words `get` reads where they lie, of the documents `keep` takes, added
+    /// to these (as `add`: a document these count is not taken). `None` where the words are not counts of this shape.
+    pub fn add_encoded(&mut self, get: &dyn Fn(usize) -> i64, at: usize, end: usize, keep: &dyn Fn(i64) -> bool) -> Option<()> {
+        let word = |i: usize| (i < end).then(|| get(i));
+        let (width, node, n) = (usize::try_from(word(at)?).ok()?, usize::try_from(word(at + 1)?).ok()?, usize::try_from(word(at + 2)?).ok()?);
+        if (width, node) != (self.width, self.node) {
+            return None;
+        }
+        let mut i = at + 3;
+        let mut fresh: rustc_hash::FxHashSet<i64> = Default::default();
+        for _ in 0..n {
+            let (d, rows, of, every) = (word(i)?, word(i + 1)?, word(i + 2)?, word(i + 3)?);
+            i += 4;
+            if keep(d) && !self.docs.contains_key(&d) {
+                fresh.insert(d);
+                self.docs.insert(d, [rows, of, every]);
+            }
+        }
+        for c in 0..width {
+            let k = usize::try_from(word(i)?).ok()?;
+            i += 1;
+            for _ in 0..k {
+                let (v, d, count) = (word(i)?, word(i + 1)?, word(i + 2)?);
+                i += 3;
+                if fresh.contains(&d) {
+                    *self.by_doc[c].entry((v, d)).or_default() += count;
+                }
+            }
+        }
+        (i == end).then_some(())
+    }
+}
+
+#[cfg(test)]
+mod semijoin_tests {
+    use super::SemijoinCounts;
+
+    /// `line(n, l)`-like rows over documents 1-3: node `d << 32 | i` on line `i / 3`.
+    fn rows(docs: std::ops::Range<i64>) -> Vec<[i64; 2]> {
+        docs.flat_map(|d| (0..9i64).map(move |i| [d << 32 | i, i / 3 + d % 2])).collect()
+    }
+
+    fn counted(rows: &[[i64; 2]]) -> SemijoinCounts {
+        let mut k = SemijoinCounts::new(2, 0);
+        for r in rows {
+            k.row(r);
+        }
+        k
+    }
+
+    /// Counts of disjoint documents add to the counts of all their rows, kept and read back as they are, and an
+    /// edit's documents dropped are as though never counted: the chunks', the kept and the walked counts are one count.
+    #[test]
+    fn a_semijoins_counts_by_document_add_keep_and_drop() {
+        let names: Vec<String> = ["n", "l"].iter().map(|s| (*s).to_owned()).collect();
+        let input = ["n", "l"];
+        let whole = counted(&rows(1..4));
+        let mut parts = counted(&rows(1..2));
+        assert!(parts.add(&counted(&rows(2..4))));
+        assert_eq!(parts.statistics(&input, &names), whole.statistics(&input, &names));
+        // Every row, held or not, adds as the held rows do, and is kept with them.
+        let mut every = whole.clone();
+        for d in 1..4 {
+            for _ in 0..d {
+                every.every_row(d);
+            }
+        }
+        assert_eq!(every.every_rows(), 6);
+        // Every count of every column: distinct lines, sums of squares in all and by document.
+        let st = whole.statistics(&input, &names).unwrap();
+        assert_eq!(st[0], ("n".to_owned(), 27, 27, 27, 27));
+        assert_eq!(st[1].1, 27);
+        assert_eq!(st[1].2, 4, "lines 0-3");
+        // Kept and read back, a document dropped.
+        let mut words = vec![-1];
+        every.encode(&mut words);
+        let mut back = counted(&rows(2..3));
+        back.add_encoded(&|i| words[i], 1, words.len(), &|d| d != 2).unwrap();
+        assert_eq!(back.statistics(&input, &names), whole.statistics(&input, &names), "document 2 counted now, not taken");
+        assert_eq!(back.every_rows(), 4, "documents 1 and 3's every rows, kept");
+        let mut dropped = every.clone();
+        dropped.without(&|d| d == 3);
+        let mut no3 = SemijoinCounts::new(2, 0);
+        no3.add_encoded(&|i| words[i], 1, words.len(), &|d| d != 3).unwrap();
+        assert_eq!(no3, dropped);
+        assert_eq!(no3.statistics(&input, &names), counted(&rows(1..3)).statistics(&input, &names));
+        // A document counted with no row is kept counted.
+        let mut empty = SemijoinCounts::new(2, 0);
+        empty.document(9);
+        let mut w = Vec::new();
+        empty.encode(&mut w);
+        let mut read = SemijoinCounts::new(2, 0);
+        read.add_encoded(&|i| w[i], 0, w.len(), &|_| true).unwrap();
+        assert!(read.counts(9) && read.rows() == 0);
+        // Words of another shape are refused.
+        assert!(SemijoinCounts::new(3, 0).add_encoded(&|i| words[i], 1, words.len(), &|_| true).is_none());
     }
 }
