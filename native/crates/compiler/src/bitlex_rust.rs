@@ -1085,7 +1085,21 @@ impl<'a> G<'a> {
                 if self.refusing.is_empty() || !refuses { call } else { format!("{pad}let refusing = self.refusing;\n{pad}self.refusing = {:#x};\n{call}{pad}self.refusing = refusing;\n", self.refusing.get(n.as_str()).copied().unwrap_or(0)) }
             }
             // A choice of tokens, each its own word's leaf: one take where it is used, as the lean parser's `anon()`.
-            Gram::Sym(n) if let Some(ws) = self.anon_choice(n) => match ws.as_slice() {
+            Gram::Sym(n) if let Some((ws, Some((k, x)))) = self.anon_choice(n) => {
+                let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
+                let (test, kind) = if let [(w, t)] = ws.as_slice() {
+                    (format!("self.word() == w::{}", self.word_const(*w)), self.kind_const(t)?)
+                } else {
+                    for (w, t) in &ws {
+                        let k = self.kind_const(t)?;
+                        self.anon.borrow_mut().insert(*w, k);
+                    }
+                    (format!("matches!(self.word(), {})", words.join(" | ")), "ANON[self.word() as usize]".to_owned())
+                };
+                let other = self.kind_test(&k, "self.kind()", "self.word()");
+                format!("{pad}if {test} {{\n{pad}    self.tk({test}, {kind}, 0)?;\n{pad}}} else {{\n{pad}    self.tk({other}, {}, 0)?;\n{pad}}}\n", self.kind_const(&x)?)
+            }
+            Gram::Sym(n) if let Some((ws, None)) = self.anon_choice(n) => match ws.as_slice() {
                 [(w, t)] => self.take_token(&Test::Word(*w), Some(t), pad)?,
                 _ => {
                     for (w, t) in &ws {
@@ -1294,19 +1308,27 @@ impl<'a> G<'a> {
     /// A choice of tokens alone, no level, each a word whose leaf is its own kind (`additive = '+' | '-'`): its words and
     /// their tokens. Taken where it is used, by one take whose leaf's kind is the word's (`ANON`), as the lean parser's
     /// `anon()`.
-    fn anon_choice(&self, n: &str) -> Option<Vec<(u8, String)>> {
+    fn anon_choice(&self, n: &str) -> Option<(Vec<(u8, String)>, Option<(String, String)>)> {
         if self.remember.iter().any(|r| r == n) || self.order.first() == Some(&n) {
             return None;
         }
         let Some(Stmt::Choice { body, nested: false, .. }) = self.rules.get(n) else { return None };
         let mut alts = Vec::new();
         Self::alts(body, &mut alts);
-        alts.iter()
-            .map(|a| match a {
-                Gram::Lit(t) if (self.x.kind)(t).is_some() => Some((self.word_of(t)?, t.clone())),
-                _ => None,
-            })
-            .collect()
+        // Its words, each its own leaf; and at most one token of a kind, a leaf of the kind it is taken as (`K as X`), as
+        // the lean parser's `anon()` takes any other token as an identifier.
+        let (mut words, mut other) = (Vec::new(), None);
+        for a in alts {
+            match a {
+                Gram::Lit(t) if (self.x.kind)(t).is_some() => words.push((self.word_of(t)?, t.clone())),
+                Gram::As(x, k) if other.is_none() && matches!(self.token_of(k), Some((Test::Kind(_), _))) => {
+                    let Some((Test::Kind(k), _)) = self.token_of(k) else { return None };
+                    other = Some((k, x.clone()));
+                }
+                _ => return None,
+            }
+        }
+        (!words.is_empty()).then_some((words, other))
     }
 
     /// A token element: its test and its leaf's kind.
@@ -2440,6 +2462,8 @@ impl<'a> G<'a> {
         }
         out = no_empty_elses(&out);
         out = no_code_after_return(&out);
+        out = no_taken_retests(&out);
+        out = loops_as_whiles(&out);
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
@@ -2793,6 +2817,74 @@ fn ifs_and_whiles(code: &str) -> String {
         out.push_str(l);
         out.push('\n');
         i += 1;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// `code` with each `loop { if C { … } else { break; } }` a `while C { … }`, as the lean parser writes a repetition
+/// (decision 0673 step 9).
+fn loops_as_whiles(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        let p = &l[..l.len() - l.trim_start().len()];
+        let q = format!("{p}    ");
+        let cond = (l.trim_start() == "loop {").then(|| lines.get(i + 1)).flatten().and_then(|n| n.strip_prefix(q.as_str())?.strip_prefix("if ")?.strip_suffix(" {"));
+        // The `if`'s body to its `} else {`, then `break;` and the ends.
+        let found = cond.and_then(|c| {
+            let close = (i + 2..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() <= q.len())?;
+            (lines[close] == format!("{q}}} else {{") && lines.get(close + 1)?.trim() == "break;" && *lines.get(close + 2)? == format!("{q}}}") && *lines.get(close + 3)? == format!("{p}}}")).then_some((c, close))
+        });
+        if let Some((c, close)) = found {
+            let _ = writeln!(out, "{p}while {c} {{");
+            for b in &lines[i + 2..close] {
+                out.push_str(b.strip_prefix("    ").unwrap_or(b));
+                out.push('\n');
+            }
+            let _ = writeln!(out, "{p}}}");
+            i = close + 4;
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
+        i += 1;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// `code` with no take testing again what the test right before it tested: where an `if`, `else if`, `while` or arm's
+/// guard tests `C` and the line after takes the token if `C`, the take passes `true`, as the lean parser takes a token
+/// it has tested with no test (decision 0673 step 9).
+fn no_taken_retests(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    for (i, l) in lines.iter().enumerate() {
+        let prev = if i > 0 { lines[i - 1].trim() } else { "" };
+        let cond = prev
+            .strip_suffix(" {")
+            .and_then(|p| p.strip_prefix("if ").or_else(|| p.strip_prefix("} else if ")).or_else(|| p.strip_prefix("while ")))
+            .or_else(|| prev.strip_prefix("_ if ").and_then(|p| p.strip_suffix(" => {")));
+        let t = l.trim_start();
+        let taken = cond.and_then(|c| {
+            // The take's first argument: past `_as(`, or `_as::<M, F>(` before `one_take`.
+            let at = t.find('(')? + 1;
+            if !t[..at].contains("_as") {
+                return None;
+            }
+            let rest = &t[at..];
+            let tail = rest.strip_prefix(c)?;
+            (t.starts_with("self.") && (tail.starts_with(", ") || tail.starts_with(")?;"))).then(|| format!("{}{}true{tail}", &l[..l.len() - t.len()], &t[..at]))
+        });
+        out.push_str(taken.as_deref().unwrap_or(l));
+        out.push('\n');
     }
     if !code.ends_with('\n') {
         out.pop();

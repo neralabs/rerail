@@ -244,7 +244,7 @@ pub mod w {
 }
 
 /// A word's leaf's kind where a choice of tokens takes it (the lean parser's `anon()`); 0: none.
-const ANON: [u16; 72] = [0, 0, 0, 0, 0, k::BANG_EQ, k::LT_EQ, k::GT_EQ, 0, 0, 0, 0, 0, 0, 0, 0, k::EQ, k::LT, k::GT, 0, 0, 0, 0, 0, k::STAR, 0, 0, k::MINUS, k::PLUS, k::SLASH, k::PERCENT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+const ANON: [u16; 72] = [0, 0, 0, k::COLON_MINUS, k::EQ_GT, k::BANG_EQ, k::LT_EQ, k::GT_EQ, k::LT_COLON, k::MINUS_GT, k::LPAREN, k::RPAREN, k::COMMA, k::DOT, k::SEMI, k::COLON, k::EQ, k::LT, k::GT, k::BANG, 0, k::RBRACE, k::BAR, k::AT, k::STAR, k::LBRACK, k::RBRACK, k::MINUS, k::PLUS, k::SLASH, k::PERCENT, k::TILDE, k::CARET, k::AMP, k::HASH_INCLUDE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 const FLAG_NO_NAMED: u32 = 1 << 0;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
@@ -903,30 +903,25 @@ impl<L: Layout> P<'_, L> {
             self.mark_line()?;
             self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
         } else if self.kind() == t::IDENTIFIER {
-            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+            self.tk_as(true, k::IDENTIFIER, f::NAME)?;
             loop {
                 if self.m_newline() {
                     break;
+                } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+                    if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) {
+                        self.tk_as(true, ANON[self.word() as usize], 0)?;
+                    } else {
+                        self.tk_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::IDENTIFIER, 0)?;
+                    }
                 } else if self.m_json_flat() {
                     self.mark_json_flat()?;
                     self.json()?;
                     self.field_made(f::ARGUMENT);
+                } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
+                    self.r_word()?;
+                    self.field_made(f::ARGUMENT);
                 } else {
-                    match self.word() {
-                        w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                            self.punctuation()?;
-                        }
-                        _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
-                            self.r_word()?;
-                            self.field_made(f::ARGUMENT);
-                        }
-                        _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                            self.punctuation()?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                    break;
                 }
             }
             if self.m_newline() {
@@ -1035,7 +1030,7 @@ impl<L: Layout> P<'_, L> {
         if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING {
             self.value()?;
         } else if self.kind() == t::CODE_LITERAL {
-            self.tk_as(self.kind() == t::CODE_LITERAL, k::CODE_LITERAL, 0)?;
+            self.tk_as(true, k::CODE_LITERAL, 0)?;
         } else {
             return self.refuse();
         }
@@ -1068,25 +1063,19 @@ impl<L: Layout> P<'_, L> {
         loop {
             if self.m_line() {
                 break;
-            } else {
-                match self.word() {
-                    w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                        self.punctuation()?;
-                    }
-                    w::LBRACE_20 => {
-                        self.tk_as(true, k::LBRACE, 0)?;
-                    }
-                    _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
-                        self.r_word()?;
-                        self.field_made(f::MODIFIER);
-                    }
-                    _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                        self.punctuation()?;
-                    }
-                    _ => {
-                        break;
-                    }
+            } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+                if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) {
+                    self.tk_as(true, ANON[self.word() as usize], 0)?;
+                } else {
+                    self.tk_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::IDENTIFIER, 0)?;
                 }
+            } else if self.word() == w::LBRACE_20 {
+                self.word_leaf_as(w::LBRACE_20, k::LBRACE)?;
+            } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
+                self.r_word()?;
+                self.field_made(f::MODIFIER);
+            } else {
+                break;
             }
         }
         self.mark_line()?;
@@ -1105,25 +1094,19 @@ impl<L: Layout> P<'_, L> {
         loop {
             if self.m_line() {
                 break;
-            } else {
-                match self.word() {
-                    w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                        self.punctuation()?;
-                    }
-                    w::LBRACE_20 => {
-                        self.tk_as(true, k::LBRACE, 0)?;
-                    }
-                    _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
-                        self.r_word()?;
-                        self.field_made(f::MODIFIER);
-                    }
-                    _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                        self.punctuation()?;
-                    }
-                    _ => {
-                        break;
-                    }
+            } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+                if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) {
+                    self.tk_as(true, ANON[self.word() as usize], 0)?;
+                } else {
+                    self.tk_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::IDENTIFIER, 0)?;
                 }
+            } else if self.word() == w::LBRACE_20 {
+                self.word_leaf_as(w::LBRACE_20, k::LBRACE)?;
+            } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
+                self.r_word()?;
+                self.field_made(f::MODIFIER);
+            } else {
+                break;
             }
         }
         self.mark_line()?;
@@ -1186,12 +1169,8 @@ impl<L: Layout> P<'_, L> {
         self.open(k::PRAGMA);
         self.word_skip_as(w::DOT_13)?;
         self.word_skip_as(w::PRAGMA_1)?;
-        loop {
-            if self.kind() == t::STRING {
-                self.tk_as(self.kind() == t::STRING, k::STRING, f::ARGUMENT)?;
-            } else {
-                break;
-            }
+        while self.kind() == t::STRING {
+            self.tk_as(true, k::STRING, f::ARGUMENT)?;
         }
         self.close()?;
         Ok(())
@@ -1205,7 +1184,7 @@ impl<L: Layout> P<'_, L> {
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
         self.word_skip_as(w::LT_17)?;
         if self.kind() == t::IDENTIFIER {
-            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::BASE)?;
+            self.tk_as(true, k::IDENTIFIER, f::BASE)?;
         }
         self.word_skip_as(w::GT_18)?;
         self.word_skip_as(w::LBRACE_20)?;
@@ -1312,7 +1291,7 @@ impl<L: Layout> P<'_, L> {
                 self.tk_as(true, k::RAW_TEXT, 0)?;
             }
             _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                self.tk_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::RAW_TEXT, 0)?;
+                self.tk_as(true, k::RAW_TEXT, 0)?;
             }
             _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                 self.tk_as(true, k::RAW_TEXT, 0)?;
@@ -1333,7 +1312,7 @@ impl<L: Layout> P<'_, L> {
                         self.merge_as(true, k::RAW_TEXT)?;
                     }
                     _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                        self.merge_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::RAW_TEXT)?;
+                        self.merge_as(true, k::RAW_TEXT)?;
                     }
                     _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                         self.merge_as(true, k::RAW_TEXT)?;
@@ -1384,7 +1363,7 @@ impl<L: Layout> P<'_, L> {
                 self.tk_as(true, k::RAW_TEXT, 0)?;
             }
             _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                self.tk_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::RAW_TEXT, 0)?;
+                self.tk_as(true, k::RAW_TEXT, 0)?;
             }
             _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                 self.tk_as(true, k::RAW_TEXT, 0)?;
@@ -1406,7 +1385,7 @@ impl<L: Layout> P<'_, L> {
                     self.merge_as(true, k::RAW_TEXT)?;
                 }
                 _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                    self.merge_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::RAW_TEXT)?;
+                    self.merge_as(true, k::RAW_TEXT)?;
                 }
                 _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                     self.merge_as(true, k::RAW_TEXT)?;
@@ -1435,7 +1414,7 @@ impl<L: Layout> P<'_, L> {
                     self.merge_as(true, k::RAW_TEXT)?;
                 }
                 _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                    self.merge_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::RAW_TEXT)?;
+                    self.merge_as(true, k::RAW_TEXT)?;
                 }
                 _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                     self.merge_as(true, k::RAW_TEXT)?;
@@ -1613,7 +1592,7 @@ impl<L: Layout> P<'_, L> {
             w::SAFE_41 => {
                 self.tk_as(true, k::SAFE, 0)?;
                 if self.kind() == t::IDENTIFIER {
-                    self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::RELATION)?;
+                    self.tk_as(true, k::IDENTIFIER, f::RELATION)?;
                     self.tk_as(self.kind() == t::STRING, k::STRING, f::DESCRIPTION)?;
                 } else if self.kind() == t::STRING {
                     self.relabel_field(f::RELATION)?;
@@ -1641,13 +1620,9 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as(w::SUPPRESS_42)?;
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::TOOL)?;
         self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
-        loop {
-            if self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
-                self.word_skip_as(w::COMMA_12)?;
-                self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
-            } else {
-                break;
-            }
+        while self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
+            self.word_skip_as(w::COMMA_12)?;
+            self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
         }
         if self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 {
             self.word_skip_as(w::OVER_43)?;
@@ -1734,11 +1709,11 @@ impl<L: Layout> P<'_, L> {
     /// `value`.
     fn value(&mut self) -> R {
         if self.kind() == t::IDENTIFIER {
-            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, 0)?;
+            self.tk_as(true, k::IDENTIFIER, 0)?;
         } else if self.kind() == t::NUMBER {
             self.numeric()?;
         } else if self.kind() == t::STRING {
-            self.tk_as(self.kind() == t::STRING, k::STRING, 0)?;
+            self.tk_as(true, k::STRING, 0)?;
         } else {
             return self.refuse();
         }
@@ -1793,7 +1768,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 self.field_made(f::MODAL);
                 if self.kind() == t::IDENTIFIER {
-                    self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::RELATION)?;
+                    self.tk_as(true, k::IDENTIFIER, f::RELATION)?;
                     self.argument_list()?;
                     self.field_made(f::ARGUMENTS);
                 } else {
@@ -2068,7 +2043,7 @@ impl<L: Layout> P<'_, L> {
             self.mark_float_at()?;
             self.tk_as(self.kind() == t::NUMBER, k::FLOAT, 0)?;
         } else if self.kind() == t::NUMBER {
-            self.tk_as(self.kind() == t::NUMBER, k::NUMBER, 0)?;
+            self.tk_as(true, k::NUMBER, 0)?;
         } else {
             return self.refuse();
         }
@@ -2157,7 +2132,7 @@ impl<L: Layout> P<'_, L> {
             self.mark_float_at()?;
             self.merge_as(self.kind() == t::NUMBER, k::FLOAT)?;
         } else if self.kind() == t::NUMBER {
-            self.merge_as(self.kind() == t::NUMBER, k::NUMBER)?;
+            self.merge_as(true, k::NUMBER)?;
         } else if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || self.m_agg_call() || matches!(self.word(), w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10) || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER {
             self.wrap(k::UNARY_EXPRESSION, 0)?;
             self.drop_made()?;
@@ -2319,112 +2294,6 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// `punctuation`.
-    fn punctuation(&mut self) -> R {
-        match self.word() {
-            w::LPAREN_10 => {
-                self.tk_as(true, k::LPAREN, 0)?;
-            }
-            w::RPAREN_11 => {
-                self.tk_as(true, k::RPAREN, 0)?;
-            }
-            w::COMMA_12 => {
-                self.tk_as(true, k::COMMA, 0)?;
-            }
-            w::DOT_13 => {
-                self.tk_as(true, k::DOT, 0)?;
-            }
-            w::SEMI_14 => {
-                self.tk_as(true, k::SEMI, 0)?;
-            }
-            w::COLON_15 => {
-                self.tk_as(true, k::COLON, 0)?;
-            }
-            w::EQ_16 => {
-                self.tk_as(true, k::EQ, 0)?;
-            }
-            w::LT_17 => {
-                self.tk_as(true, k::LT, 0)?;
-            }
-            w::GT_18 => {
-                self.tk_as(true, k::GT, 0)?;
-            }
-            w::BANG_19 => {
-                self.tk_as(true, k::BANG, 0)?;
-            }
-            w::BAR_22 => {
-                self.tk_as(true, k::BAR, 0)?;
-            }
-            w::AT_23 => {
-                self.tk_as(true, k::AT, 0)?;
-            }
-            w::STAR_24 => {
-                self.tk_as(true, k::STAR, 0)?;
-            }
-            w::LBRACK_25 => {
-                self.tk_as(true, k::LBRACK, 0)?;
-            }
-            w::RBRACK_26 => {
-                self.tk_as(true, k::RBRACK, 0)?;
-            }
-            w::MINUS_27 => {
-                self.tk_as(true, k::MINUS, 0)?;
-            }
-            w::PLUS_28 => {
-                self.tk_as(true, k::PLUS, 0)?;
-            }
-            w::SLASH_29 => {
-                self.tk_as(true, k::SLASH, 0)?;
-            }
-            w::PERCENT_30 => {
-                self.tk_as(true, k::PERCENT, 0)?;
-            }
-            w::TILDE_31 => {
-                self.tk_as(true, k::TILDE, 0)?;
-            }
-            w::CARET_32 => {
-                self.tk_as(true, k::CARET, 0)?;
-            }
-            w::AMP_33 => {
-                self.tk_as(true, k::AMP, 0)?;
-            }
-            w::RBRACE_21 => {
-                self.tk_as(true, k::RBRACE, 0)?;
-            }
-            w::COLON_MINUS_3 => {
-                self.tk_as(true, k::COLON_MINUS, 0)?;
-            }
-            w::EQ_GT_4 => {
-                self.tk_as(true, k::EQ_GT, 0)?;
-            }
-            w::BANG_EQ_5 => {
-                self.tk_as(true, k::BANG_EQ, 0)?;
-            }
-            w::LT_EQ_6 => {
-                self.tk_as(true, k::LT_EQ, 0)?;
-            }
-            w::GT_EQ_7 => {
-                self.tk_as(true, k::GT_EQ, 0)?;
-            }
-            w::LT_COLON_8 => {
-                self.tk_as(true, k::LT_COLON, 0)?;
-            }
-            w::MINUS_GT_9 => {
-                self.tk_as(true, k::MINUS_GT, 0)?;
-            }
-            w::HASH_INCLUDE_34 => {
-                self.tk_as(true, k::HASH_INCLUDE, 0)?;
-            }
-            _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                self.tk_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::IDENTIFIER, 0)?;
-            }
-            _ => {
-                return self.refuse();
-            }
-        }
-        Ok(())
-    }
-
     /// `raw_text 0`.
     fn raw_text_x_0(&mut self) -> R {
         self.deeper()?;
@@ -2441,7 +2310,7 @@ impl<L: Layout> P<'_, L> {
                     self.merge_as(true, k::RAW_TEXT)?;
                 }
                 _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                    self.merge_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::RAW_TEXT)?;
+                    self.merge_as(true, k::RAW_TEXT)?;
                 }
                 _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                     self.merge_as(true, k::RAW_TEXT)?;
@@ -2472,7 +2341,7 @@ impl<L: Layout> P<'_, L> {
                     self.merge_as(true, k::JSON_OBJECT)?;
                 }
                 _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                    self.merge_as(self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34, k::JSON_OBJECT)?;
+                    self.merge_as(true, k::JSON_OBJECT)?;
                 }
                 _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                     self.merge_as(true, k::JSON_OBJECT)?;

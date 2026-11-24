@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 8 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: in progress, steps 1 to 9 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -292,3 +292,24 @@ it stays.
 
 rr's `tier2.rs` is 3,210 lines, from 3,237, and `tier2_loop.rs` is 3,716, from 3,968. Kotlin's `tier2.rs` is 8,317,
 from 8,394. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
+## Step 9: a token tested is taken with no test; `punctuation` is lean's `anon()`; a repetition is a `while` (done)
+
+What gap 7 left:
+
+- **A token tested is taken with no test.** A take after an `if`, `else if`, `while` or guard that tested the same
+  condition tested it again, as in `if self.kind() == t::STRING { self.tk_as(self.kind() == t::STRING, …) }`. There
+  were 13 in rr's `tier2.rs`, 12 in its loop form, and 15 in Kotlin's. `no_taken_retests` passes `true` there, as
+  `one_arm_a_take` does for a word's arm. None remain.
+- **`punctuation` is the lean parser's `anon()`.** A choice of tokens, each its own leaf, was taken where it is used
+  (step 2) only if every alternative was a word. `punctuation` has one more alternative, `hash_word as identifier`,
+  so it was a function of 32 arms. `anon_choice` now also takes one alternative that is a kind of token taken as
+  another kind. Its take is the lean parser's `anon()`: a listed word is its own leaf (`ANON`), and any other token
+  of the kind is an `identifier`. The function is gone.
+- **A repetition is a `while`.** `loop { if C { … } else { break; } }` is now `while C { … }` (`loops_as_whiles`), as
+  lean's `pragma` reads its strings. The `loop`s that remain end at a mark (`m_line`, `m_newline`) before testing
+  their tokens. The lean parser writes those as `while` with the line's test in the condition, and here the mark's
+  test is the first arm of the decision inside the loop.
+
+rr's `tier2.rs` is 3,079 lines, from 3,210, and `tier2_loop.rs` is 3,614, from 3,716. Kotlin's `tier2.rs` is 8,305, from
+8,317. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
