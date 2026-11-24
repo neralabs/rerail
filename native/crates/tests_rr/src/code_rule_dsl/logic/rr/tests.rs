@@ -4644,6 +4644,29 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Every pack's `.rerail` programs, by the pack's name, each sorted: `docs/rule-syntax/packs/<pack>`'s, and those of a
+/// pack whose rules are its published package's (`packs/<pack>/rules`, the Django pack's since #930), less the
+/// library its programs include (`rules/lib`). With `phases`, the engine's phase programs as a pack.
+fn rule_packs(phases: bool) -> Vec<(String, Vec<PathBuf>)> {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut packs: Vec<(String, Vec<PathBuf>)> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| (e.file_name().to_string_lossy().into_owned(), walk_rr(&e.path()))).collect();
+    for e in std::fs::read_dir(crate::source_tree::native().join("../packs")).unwrap().flatten() {
+        let (name, rules) = (e.file_name().to_string_lossy().into_owned(), e.path().join("rules"));
+        if rules.is_dir() && !packs.iter().any(|(n, _)| *n == name) {
+            let own_lib = rules.join("lib");
+            packs.push((name, walk_rr(&rules).into_iter().filter(|p| !p.starts_with(&own_lib)).collect()));
+        }
+    }
+    if phases {
+        packs.push(("phases".into(), walk_rr(&crate::source_tree::native().join("src/code_rule_dsl/typing/programs"))));
+    }
+    packs.sort();
+    for (_, programs) in &mut packs {
+        programs.sort();
+    }
+    packs
+}
+
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
 /// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rerail`).
 #[test]
@@ -5808,10 +5831,7 @@ fn spike_0639_programs_linked_from_modules() {
     let per: usize = std::env::var("RERAIL_SPIKE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
     let lib = crate::code_rule_dsl::logic::rr::library();
     let mut programs: Vec<(String, PathBuf)> = Vec::new();
-    for name in &only {
-        let dir = if name == "phases" { lib.join("../../../native/src/code_rule_dsl/typing/programs") } else { lib.join("../packs").join(name) };
-        let mut files = walk_rr(&dir);
-        files.sort();
+    for (name, files) in rule_packs(true).into_iter().filter(|(n, _)| only.contains(n)) {
         programs.extend(files.into_iter().take(per).map(|p| (name.clone(), p)));
     }
     let srcs: Vec<String> = programs.iter().map(|(_, p)| std::fs::read_to_string(p).unwrap()).collect();
@@ -6527,16 +6547,10 @@ fn rule_lines_names_aside(printed: &str) -> BTreeSet<String> {
 /// programs; the spike (`spike_0639_programs_linked_from_modules`) runs them all.
 #[test]
 fn a_program_linked_from_its_modules_is_its_whole_lowering() {
-    let lib = crate::code_rule_dsl::logic::rr::library();
     let per: usize = std::env::var("RERAIL_T1_N").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
     let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-    dirs.sort();
-    dirs.push(crate::source_tree::native().join("src/code_rule_dsl/typing/programs"));
     let mut compared = 0;
-    for dir in dirs {
-        let mut programs = walk_rr(&dir);
-        programs.sort();
+    for (_, programs) in rule_packs(true) {
         let mut taken = 0;
         for path in programs {
             if taken == per {
@@ -6594,15 +6608,11 @@ fn programs_of_one_library_share_its_union() {
 /// their rules (their headers), is its image: the declarations its clauses' lowering makes it keeps as its own.
 #[test]
 fn every_module_lowers_alike_against_its_scopes_headers() {
-    let lib = crate::code_rule_dsl::logic::rr::library();
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-    dirs.sort();
-    dirs.push(crate::source_tree::native().join("src/code_rule_dsl/typing/programs"));
     let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     // The library files every pack's programs include, planned once: a module shared by packs is lowered once.
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-    for dir in dirs {
-        for path in walk_rr(&dir) {
+    for (_, programs) in rule_packs(true) {
+        for path in programs {
             let Ok(src) = std::fs::read_to_string(&path) else { continue };
             if let Ok(Some(m)) = super::modules(&src) {
                 paths.extend(m.files.into_iter().map(|(p, _, _)| p));
@@ -6750,14 +6760,8 @@ fn a_templates_bytes_read_back_as_its_rule() {
 /// program with its text and its library files.
 #[allow(clippy::type_complexity)]
 fn tail_libraries() -> Vec<(String, Vec<super::PlannedModule>, Vec<(PathBuf, String, Vec<PathBuf>)>)> {
-    let lib = crate::code_rule_dsl::logic::rr::library();
-    let mut packs: Vec<(String, PathBuf)> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path())).collect();
-    packs.push(("phases".into(), crate::source_tree::native().join("src/code_rule_dsl/typing/programs")));
-    packs.sort();
     let mut out = Vec::new();
-    for (pack, dir) in packs {
-        let mut programs = walk_rr(&dir);
-        programs.sort();
+    for (pack, programs) in rule_packs(true) {
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
         let mut texts = Vec::new();
         for path in programs {
@@ -7239,15 +7243,9 @@ fn spike_0639_tail_by_module() {
     let down = super::downward_steps();
     use std::collections::{BTreeMap, HashMap};
     use std::time::Instant;
-    let lib = crate::code_rule_dsl::logic::rr::library();
     let per: usize = std::env::var("RERAIL_SPIKE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
     let asked = std::env::var("RERAIL_SPIKE_PACKS").unwrap_or_else(|_| "python".into());
-    let mut packs: Vec<(String, PathBuf)> = Vec::new();
-    for e in std::fs::read_dir(lib.join("../packs")).unwrap().flatten().filter(|e| e.path().is_dir()) {
-        packs.push((e.file_name().to_string_lossy().into_owned(), e.path()));
-    }
-    packs.push(("phases".into(), crate::source_tree::native().join("src/code_rule_dsl/typing/programs")));
-    packs.sort();
+    let mut packs = rule_packs(true);
     packs.retain(|(n, _)| asked == "all" || asked.split(',').any(|a| a == n));
     let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     let module_steps: Vec<TailStep> = TAIL.iter().copied().filter(|s| !down.contains(s)).collect();
@@ -7269,12 +7267,10 @@ fn spike_0639_tail_by_module() {
             .collect()
     };
     let sample = |a: &BTreeSet<String>, b: &BTreeSet<String>| a.difference(b).take(5).map(|l| l.chars().take(240).collect::<String>()).collect::<Vec<_>>();
-    for (pack, dir) in &packs {
-        let mut programs = walk_rr(dir);
-        programs.sort();
+    for (pack, programs) in &packs {
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
         let mut texts = Vec::new();
-        for path in &programs {
+        for path in programs {
             let Ok(src) = std::fs::read_to_string(path) else { continue };
             if let Ok(Some(m)) = super::modules(&src) {
                 let files: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
