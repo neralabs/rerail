@@ -592,10 +592,14 @@ impl Drop for MemoryArena {
 }
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
-/// run's main thread). A path that does not resolve yet is not remembered.
+/// run's main thread). A path that does not resolve yet is not remembered. Outside any run (an arena's last flush as
+/// its run's shared object drops, on whichever thread drops it last), it is resolved without the run's cache.
 pub(super) fn key(path: &Path) -> PathBuf {
     #[derive(Default)]
     struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
+    if rerail_prof::code_rule_dsl::logic::profile::shared_object().is_none() {
+        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    }
     let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
     if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
