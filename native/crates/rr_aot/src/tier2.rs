@@ -1492,35 +1492,13 @@ impl<L: Layout> P<'_, L> {
         self.open(k::LATTICE_OPERATION);
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.word_skip_as::<false, false>(w::MINUS_GT_9)?;
-        let arm: usize;
         if self.m_bare_functor() {
-            arm = 0;
+            self.mark_bare_functor()?;
+            self.lattice_functor()?;
+            self.field_made(f::VALUE);
         } else {
-            match self.word() {
-                w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                    arm = 1;
-                }
-                _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                    arm = 1;
-                }
-                _ => {
-                    arm = usize::MAX;
-                }
-            }
-        }
-        match arm {
-            0 => {
-                self.mark_bare_functor()?;
-                self.lattice_functor()?;
-                self.field_made(f::VALUE);
-            }
-            1 => {
-                self.term()?;
-                self.field_made(f::VALUE);
-            }
-            _ => {
-                return self.refuse();
-            }
+            self.term()?;
+            self.field_made(f::VALUE);
         }
         self.close()?;
         Ok(())
@@ -1591,17 +1569,14 @@ impl<L: Layout> P<'_, L> {
                 self.json_inner_object()?;
                 self.refusing = refusing;
             }
-            w::LBRACK_25 => {
-                let refusing = self.refusing;
-                self.refusing = 0x2000;
-                self.json_inner_array()?;
-                self.refusing = refusing;
-            }
             _ if self.at_string() || self.at_number() => {
                 self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
             }
             _ => {
-                return self.refuse();
+                let refusing = self.refusing;
+                self.refusing = 0x2000;
+                self.json_inner_array()?;
+                self.refusing = refusing;
             }
         }
         Ok(())
@@ -1628,27 +1603,11 @@ impl<L: Layout> P<'_, L> {
     fn json_inner_array(&mut self) -> R {
         self.deeper()?;
         self.merge_as::<false, true>(self.word() == w::LBRACK_25, k::JSON_OBJECT)?;
-        let arm: usize;
-        match self.word() {
-            w::MINUS_27 | w::TRUE_56 | w::FALSE_57 | w::NULL_58 | w::LBRACE_20 | w::LBRACK_25 => {
-                arm = 0;
-            }
-            _ if self.at_string() || self.at_number() => {
-                arm = 0;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
+        if matches!(self.word(), w::MINUS_27 | w::TRUE_56 | w::FALSE_57 | w::NULL_58 | w::LBRACE_20 | w::LBRACK_25) || self.at_string() || self.at_number() {
+            self.json_value()?;
+            while self.word() == w::COMMA_12 {
+                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
                 self.json_value()?;
-                while self.word() == w::COMMA_12 {
-                    self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
-                    self.json_value()?;
-                }
-            }
-            _ => {
             }
         }
         self.merge_as::<false, true>(self.word() == w::RBRACK_26, k::JSON_OBJECT)?;
@@ -2009,21 +1968,15 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 self.field_made(f::MODAL);
-                match self.word() {
-                    w::LPAREN_10 => {
-                        self.relabel_field(f::RELATION)?;
-                        self.relabel_kind(k::IDENTIFIER)?;
-                        self.argument_list()?;
-                        self.field_made(f::ARGUMENTS);
-                    }
-                    _ if self.at_identifier() => {
-                        self.tk_as::<false, false>(true, k::IDENTIFIER, f::RELATION)?;
-                        self.argument_list()?;
-                        self.field_made(f::ARGUMENTS);
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+                if self.at_identifier() {
+                    self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
+                    self.argument_list()?;
+                    self.field_made(f::ARGUMENTS);
+                } else {
+                    self.relabel_field(f::RELATION)?;
+                    self.relabel_kind(k::IDENTIFIER)?;
+                    self.argument_list()?;
+                    self.field_made(f::ARGUMENTS);
                 }
             }
             _ if self.at_identifier() => {
@@ -2044,29 +1997,13 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.open(k::ARGUMENT_LIST);
         self.word_skip_as::<true, false>(w::LPAREN_10)?;
-        let arm: usize;
-        match self.word() {
-            w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                arm = 0;
-            }
-            _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                arm = 0;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
+        if matches!(self.word(), w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10) || self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() {
+            self.term()?;
+            self.field_made(f::ARGUMENT);
+            while self.word() == w::COMMA_12 {
+                self.skip_as::<false, false>(true)?;
                 self.term()?;
                 self.field_made(f::ARGUMENT);
-                while self.word() == w::COMMA_12 {
-                    self.skip_as::<false, false>(true)?;
-                    self.term()?;
-                    self.field_made(f::ARGUMENT);
-                }
-            }
-            _ => {
             }
         }
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
@@ -2081,30 +2018,14 @@ impl<L: Layout> P<'_, L> {
         self.open(UNSET);
         self.retag(k::ARGUMENT_LIST);
         self.word_skip_as::<true, false>(w::LPAREN_10)?;
-        let arm: usize;
-        match self.word() {
-            w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                arm = 0;
-            }
-            _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                arm = 0;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
+        if matches!(self.word(), w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10) || self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() {
+            self.term()?;
+            self.field_made(f::ARGUMENT);
+            while self.word() == w::COMMA_12 {
+                self.tk_as::<false, false>(true, k::COMMA, 0)?;
+                self.drop_made()?;
                 self.term()?;
                 self.field_made(f::ARGUMENT);
-                while self.word() == w::COMMA_12 {
-                    self.tk_as::<false, false>(true, k::COMMA, 0)?;
-                    self.drop_made()?;
-                    self.term()?;
-                    self.field_made(f::ARGUMENT);
-                }
-            }
-            _ => {
             }
         }
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
@@ -2217,43 +2138,22 @@ impl<L: Layout> P<'_, L> {
     /// `literal`.
     fn literal(&mut self) -> R {
         self.deeper()?;
-        let arm: usize;
         match self.word() {
             w::BANG_19 => {
-                arm = 0;
-            }
-            w::LPAREN_10 => {
-                arm = 1;
-            }
-            w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 => {
-                arm = 2;
-            }
-            _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                arm = 2;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
                 self.negation()?;
             }
-            1 => {
+            w::LPAREN_10 => {
                 self.group()?;
                 if matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31) {
                     self.group_term()?;
                 }
             }
-            2 => {
+            _ => {
                 self.term()?;
                 self.field_made(f::BARE);
                 if matches!(self.word(), w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31) {
                     self.literal_tail()?;
                 }
-            }
-            _ => {
-                return self.refuse();
             }
         }
         if self.made_is(k::CALL) {
@@ -2521,19 +2421,10 @@ impl<L: Layout> P<'_, L> {
 
     /// `primary`.
     fn primary(&mut self) -> R {
-        match self.word() {
-            w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                self.unsigned()?;
-            }
-            _ if self.at_number() => {
-                self.numeric()?;
-            }
-            _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                self.unsigned()?;
-            }
-            _ => {
-                return self.refuse();
-            }
+        if self.at_number() {
+            self.numeric()?;
+        } else {
+            self.unsigned()?;
         }
         Ok(())
     }
@@ -2544,12 +2435,10 @@ impl<L: Layout> P<'_, L> {
         if self.m_float_at() {
             self.mark_float_at()?;
             self.tk_as::<false, false>(self.at_number(), k::FLOAT, 0)?;
+        } else if self.at_number() {
+            self.tk_as::<false, false>(self.at_number(), k::NUMBER, 0)?;
         } else {
-            if self.at_number() {
-                self.tk_as::<false, false>(self.at_number(), k::NUMBER, 0)?;
-            } else {
-                return self.refuse();
-            }
+            return self.refuse();
         }
         self.depth -= 1;
         Ok(())
@@ -2698,43 +2587,17 @@ impl<L: Layout> P<'_, L> {
     /// `minus`.
     fn minus(&mut self) -> R {
         self.word_leaf_as::<false, false>(w::MINUS_27, k::MINUS)?;
-        let arm: usize;
         if self.m_float_at() {
-            arm = 0;
+            self.mark_float_at()?;
+            self.merge_as::<false, false>(self.at_number(), k::FLOAT)?;
+        } else if self.at_number() {
+            self.merge_as::<false, false>(self.at_number(), k::NUMBER)?;
         } else {
-            match self.word() {
-                w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                    arm = 2;
-                }
-                _ if self.at_number() => {
-                    arm = 1;
-                }
-                _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                    arm = 2;
-                }
-                _ => {
-                    arm = usize::MAX;
-                }
-            }
-        }
-        match arm {
-            0 => {
-                self.mark_float_at()?;
-                self.merge_as::<false, false>(self.at_number(), k::FLOAT)?;
-            }
-            1 => {
-                self.merge_as::<false, false>(self.at_number(), k::NUMBER)?;
-            }
-            2 => {
-                self.wrap(k::UNARY_EXPRESSION, 0)?;
-                self.drop_made()?;
-                self.unsigned()?;
-                self.field_made(f::OPERAND);
-                self.close()?;
-            }
-            _ => {
-                return self.refuse();
-            }
+            self.wrap(k::UNARY_EXPRESSION, 0)?;
+            self.drop_made()?;
+            self.unsigned()?;
+            self.field_made(f::OPERAND);
+            self.close()?;
         }
         Ok(())
     }
@@ -2927,9 +2790,6 @@ impl<L: Layout> P<'_, L> {
             w::COUNT_47 => {
                 arm = 2;
             }
-            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 => {
-                arm = 3;
-            }
             _ if self.at_number() || self.at_string() || self.at_code_literal() => {
                 arm = 0;
             }
@@ -2981,11 +2841,8 @@ impl<L: Layout> P<'_, L> {
             2 => {
                 self.count_value()?;
             }
-            3 => {
-                self.word_in_value()?;
-            }
             _ => {
-                return self.refuse();
+                self.word_in_value()?;
             }
         }
         self.depth -= 1;

@@ -1813,12 +1813,10 @@ impl<L: Layout> P<'_, L> {
                     if self.m_float_at() {
                         self.mark_float_at()?;
                         self.tk_as::<false, false>(self.at_number(), k::FLOAT, 0)?;
+                    } else if self.at_number() {
+                        self.tk_as::<false, false>(self.at_number(), k::NUMBER, 0)?;
                     } else {
-                        if self.at_number() {
-                            self.tk_as::<false, false>(self.at_number(), k::NUMBER, 0)?;
-                        } else {
-                            return self.refuse();
-                        }
+                        return self.refuse();
                     }
                     self.depth -= 1;
                     self.marked = false;
@@ -2073,28 +2071,13 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(k::ARGUMENT_LIST);
                     self.word_skip_as::<true, false>(w::LPAREN_10)?;
-                    let arm: usize;
-                    match self.word() {
-                        w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                            arm = 0;
-                        }
-                        _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
-                            stack.push(35);
-                            st = 18;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 33;
-                            continue 'run;
-                        }
+                    if matches!(self.word(), w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10) || self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() {
+                        stack.push(35);
+                        st = 18;
+                        continue 'run;
+                    } else {
+                        st = 33;
+                        continue 'run;
                     }
                 }
                 33 => {
@@ -3040,28 +3023,13 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::ARGUMENT_LIST);
                     self.word_skip_as::<true, false>(w::LPAREN_10)?;
-                    let arm: usize;
-                    match self.word() {
-                        w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10 => {
-                            arm = 0;
-                        }
-                        _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
-                            stack.push(106);
-                            st = 18;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 33;
-                            continue 'run;
-                        }
+                    if matches!(self.word(), w::X_60 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_61 | w::LPAREN_10) || self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() {
+                        stack.push(106);
+                        st = 18;
+                        continue 'run;
+                    } else {
+                        st = 33;
+                        continue 'run;
                     }
                 }
                 105 => {
@@ -3415,28 +3383,13 @@ impl<L: Layout> P<'_, L> {
                 129 => {
                     self.deeper()?;
                     self.merge_as::<false, true>(self.word() == w::LBRACK_25, k::JSON_OBJECT)?;
-                    let arm: usize;
-                    match self.word() {
-                        w::MINUS_27 | w::TRUE_56 | w::FALSE_57 | w::NULL_58 | w::LBRACE_20 | w::LBRACK_25 => {
-                            arm = 0;
-                        }
-                        _ if self.at_string() || self.at_number() => {
-                            arm = 0;
-                        }
-                        _ => {
-                            arm = usize::MAX;
-                        }
-                    }
-                    match arm {
-                        0 => {
-                            stack.push(131);
-                            st = 126;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 130;
-                            continue 'run;
-                        }
+                    if matches!(self.word(), w::MINUS_27 | w::TRUE_56 | w::FALSE_57 | w::NULL_58 | w::LBRACE_20 | w::LBRACK_25) || self.at_string() || self.at_number() {
+                        stack.push(131);
+                        st = 126;
+                        continue 'run;
+                    } else {
+                        st = 130;
+                        continue 'run;
                     }
                 }
                 130 => {

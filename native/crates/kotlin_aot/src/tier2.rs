@@ -6667,18 +6667,16 @@ impl<L: Layout> P<'_, L> {
                     return self.refuse();
                 }
             }
+        } else if self.at_integer_literal() {
+            self.tk_as::<true, false>(self.at_integer_literal(), k::INTEGER_LITERAL, 0)?;
+        } else if self.at_hex_literal() {
+            self.tk_as::<true, false>(self.at_hex_literal(), k::HEX_LITERAL, 0)?;
+        } else if self.at_bin_literal() {
+            self.tk_as::<true, false>(self.at_bin_literal(), k::BIN_LITERAL, 0)?;
+        } else if self.at_real_literal() {
+            self.tk_as::<true, false>(self.at_real_literal(), k::REAL_LITERAL, 0)?;
         } else {
-            if self.at_integer_literal() {
-                self.tk_as::<true, false>(self.at_integer_literal(), k::INTEGER_LITERAL, 0)?;
-            } else if self.at_hex_literal() {
-                self.tk_as::<true, false>(self.at_hex_literal(), k::HEX_LITERAL, 0)?;
-            } else if self.at_bin_literal() {
-                self.tk_as::<true, false>(self.at_bin_literal(), k::BIN_LITERAL, 0)?;
-            } else if self.at_real_literal() {
-                self.tk_as::<true, false>(self.at_real_literal(), k::REAL_LITERAL, 0)?;
-            } else {
-                return self.refuse();
-            }
+            return self.refuse();
         }
         self.depth -= 1;
         self.marked = false;

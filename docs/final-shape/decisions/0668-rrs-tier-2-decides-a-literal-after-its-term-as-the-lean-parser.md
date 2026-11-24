@@ -1,6 +1,6 @@
 # 0668: `.rerail`'s tier 2 decides a literal after its term, as the lean parser
 
-Status: in progress (the user, 2026-11-24: "address these differences, with the success criteria being structural
+Status: done, steps 1 to 4 (the user, 2026-11-24: "address these differences, with the success criteria being structural
 similarity not execution speed or efficiency"). Follows 0655, which brought tier 1 into the lean lexer's shape.
 
 ## Intro
@@ -145,3 +145,32 @@ that reads a reading counted as one. Only `REMEMBER` sets the word in the machin
 
 rr's `tier2.rs` is 4,362 lines. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11,
 clippy.
+
+## Step 4: a token tested once: the default arm, one condition, the follow (done)
+
+A decision numbered its arms (`let arm`, then `match arm`) where one arm's body was reached by more than one test,
+such as a word test and a token kind test. Inside the arm the alternative's own decision then tested the token again.
+The writer (`bitlex_rust`) has three more forms, each lean's:
+
+- **The default arm.** In a choice that must take a token, a last alternative that begins with a call of a level
+  (through a field, a wrap or a relabel, which take no token), tested by words and kinds alone, is the `_` arm. No
+  test leads to it, and the callee refuses a token it does not begin with, as lean's `else { self.term()?; }`. A
+  mark that holds only at one kind's tokens, which the arm takes, needs no test of its own (`plain_tests`, as
+  `decide` already drops it).
+- **One condition.** A decision with one arm, reached by several tests and none a mark's or a flag's, is one `if`:
+  `if matches!(self.word(), …) || self.at_number() || … { … }`. With one arm there is no order among arms to keep.
+- **The follow.** An optional part that begins with a call, before a token of one word it cannot begin with, and
+  with no mark that may end the level there: `if self.word() != w::X { … }`, as lean's `if !self.is_p(RPAREN)`.
+
+A mark's test followed by the kinds' tests is one chain, `else if`.
+
+So `literal` is lean's: `!` a negation, `(` a group, anything else a term, then a call alone made an atom.
+`primary` is `if self.at_number() { numeric } else { unsigned }`. `minus` is `if` a float, `else if` a number,
+`else` a unary expression. The argument lists test the token once.
+
+rr's `tier2.rs` is 4,219 lines, from 4,893 before step 2. Seven decisions still number their arms, all in
+declarations and aggregates: `setting`, `block_body`, `type_tail`, `io_relation`, `code_part`, `aggregated`,
+`agg_value`. Each has a mark among its tests, or an arm `(A | B) rest` whose shared rest follows an inner choice.
+Kotlin's writer output takes the same forms where they apply.
+
+Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.

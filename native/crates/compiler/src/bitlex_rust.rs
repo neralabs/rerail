@@ -522,6 +522,21 @@ impl<'a> G<'a> {
             uses[t] += 1;
         }
         let numbered = (0..=n).any(|t| uses[t] > 1 && body_of(t).lines().count() > 1);
+        // One arm reached by every test, none a mark's or a flag's: one condition, as the lean parser's `if`. With one
+        // arm there is no order among arms to keep, so the tests need no numbering.
+        let targets: Vec<usize> = (0..n).filter(|&t| uses[t] > 0).collect();
+        if numbered && mg.is_empty() && uses[n] == 0 && targets.len() == 1 && words.iter().all(|w| w.1.is_none()) && kinds.iter().all(|k| k.1.is_none()) {
+            let q = format!("{pad}    ");
+            let all: Vec<String> = wg.iter().map(|g| g.0.clone()).collect();
+            let all = all.join(" | ");
+            let mut cs = Vec::new();
+            if !all.is_empty() {
+                cs.push(if all.contains(" | ") { format!("matches!(self.word(), {all})") } else { format!("self.word() == {all}") });
+            }
+            cs.extend(kg.iter().flat_map(|g| g.0.iter().cloned()));
+            let otherwise = if none.trim().is_empty() { "\n".to_owned() } else { format!(" else {{\n{}{pad}}}\n", indent(none, &q)) };
+            return format!("{pad}if {} {{\n{}{pad}}}{otherwise}", cs.join(" || "), indent(&body_of(targets[0]), &q));
+        }
         const NONE_ARM: usize = usize::MAX;
         let leaf = |t: usize, p: &str| if numbered { format!("{p}arm = {};\n", if t == NONE_ARM { "usize::MAX".to_owned() } else { t.to_string() }) } else { indent(&if t == NONE_ARM { none.to_owned() } else { body_of(t) }, p) };
         // The word's match and the kinds' tests, at `p`.
@@ -556,7 +571,12 @@ impl<'a> G<'a> {
             for (i, (cs, t)) in mg.iter().enumerate() {
                 let _ = write!(sel, "{}if {} {{\n{}{pad}}}", if i == 0 { pad.to_owned() } else { " else ".to_owned() }, cs.join(" || "), leaf(*t, &q));
             }
-            let _ = write!(sel, " else {{\n{}{pad}}}\n", rest(&q));
+            // The kinds' tests after the marks', one `if` chain: `else if`, as the lean parser writes it.
+            if wg.is_empty() && !kg.is_empty() {
+                let _ = write!(sel, " else {}", rest(pad).trim_start());
+            } else {
+                let _ = write!(sel, " else {{\n{}{pad}}}\n", rest(&q));
+            }
         }
         if !numbered {
             return sel;
@@ -568,6 +588,24 @@ impl<'a> G<'a> {
         }
         let _ = write!(out, "{q}_ => {{\n{}{q}}}\n{pad}}}\n", indent(none, &r));
         out
+    }
+
+    /// Whether an arm's tests are words and kinds alone, no flag's: a mark only where it holds at one kind's tokens
+    /// alone, which the arm takes (no test of its own, `decide`).
+    fn plain_tests(&self, fs: &[First]) -> bool {
+        let implied = |m: usize| self.implied_kind(m).is_some_and(|k| fs.iter().any(|x| matches!(&x.0, Test::Kind(j) if *j == k)));
+        fs.iter().all(|(t, f)| f.is_none() && (matches!(t, Test::Word(_) | Test::Kind(_)) || matches!(t, Test::Mark(m) if implied(*m))))
+    }
+
+    /// Whether `g` begins with a call of a level (a nested rule's method), which tests its own first token.
+    fn leads_with_call(&self, g: &Gram) -> bool {
+        match g {
+            Gram::Sym(n) => self.token_of(g).is_none() && self.mark_of(n).is_none() && !self.remember.contains(n) && self.rules.contains_key(n.as_str()) && self.nested(n),
+            // A wrap and a relabel take no token: the call after them tests it.
+            Gram::Field(_, a) | Gram::Wrap { body: a, .. } | Gram::Relabel { body: a, .. } => self.leads_with_call(a),
+            Gram::Seq(gs) => gs.first().is_some_and(|a| self.leads_with_call(a)),
+            _ => false,
+        }
     }
 
     /// The alternatives of `g`: an alternation's, flattened; else `g`.
@@ -813,6 +851,16 @@ impl<'a> G<'a> {
                 let arms = self.arms(a, rest, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
+                // An optional part that begins with a call of a level, before a token of one word it cannot begin
+                // with: the part, unless that token follows, as the lean parser's `if !self.is_p(RPAREN) { … }`.
+                // The call refuses a token it does not begin with.
+                let follow = match rest.first().and_then(|r| self.token_of(r)) {
+                    Some((Test::Word(w), _)) if ex.is_empty() && arms.len() == 1 && self.leads_with_call(a) && self.plain_tests(&arms[0].0) && !arms[0].0.iter().any(|(t, _)| matches!(t, Test::Word(x) if *x == w)) => Some(w),
+                    _ => None,
+                };
+                if let Some(w) = follow {
+                    return Ok(format!("{pad}if self.word() != w::{} {{\n{}{pad}}}\n", self.word_const(w), indent(&arms[0].1, &deeper)));
+                }
                 let unmarked = self.after_mark(rest, rule)?;
                 self.asking(&arms, &ex, pad) + &self.decide(&arms, &ex, &unmarked, "", "", pad)
             }
@@ -832,10 +880,23 @@ impl<'a> G<'a> {
                 out
             }
             Gram::Alt(_) => {
-                let arms = self.arms(g, rest, rule)?;
+                let mut arms = self.arms(g, rest, rule)?;
                 let empty = arms.iter().position(|a| a.2);
+                // A choice that must take a token, whose last alternative is a call of a level that tests its own
+                // first token, tested by words and kinds alone: that call is the default, as the lean parser's
+                // `else { self.term()?; }`, and it refuses a token it does not begin with. No test leads to it.
+                let mut alts = Vec::new();
+                Self::alts(g, &mut alts);
+                let default = empty.is_none()
+                    && alts.last().is_some_and(|a| self.leads_with_call(a))
+                    && arms.last().is_some_and(|a| self.plain_tests(&a.0));
                 let none = match empty {
                     Some(i) => arms[i].1.clone(),
+                    None if default => {
+                        let last = arms.last_mut().expect("an alternative");
+                        last.0.clear();
+                        last.1.clone()
+                    }
                     None => "return self.refuse();\n".to_owned(),
                 };
                 let ex = if empty.is_some() { self.exits_ending(rest, rule)? } else { Vec::new() };
