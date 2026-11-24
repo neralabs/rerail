@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
+import { catalogKinds, catalogPacks, packSwitch, pageRiskFilters, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
-import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
+import { isFromPack, publisherLabel, RISK_LABELS, worktreeLeftOut } from "../../ui/derive.js";
+import { RULE_RISKS } from "../../src/engine/index.js";
 import { packKind } from "../../ui/render/pack-panel.js";
 import { changeOwner } from "../../ui/shell.js";
 
@@ -264,6 +265,26 @@ describe("a pack page's rules", () => {
     expect(shown("fired")).toEqual(["ts:a", "ts:c"]);
     expect(shown("all", "ts:b")).toEqual(["ts:b"]);
     expect(shown("on", "ts:b")).toEqual([]);
+  });
+
+  it("offers the risks its rules have, in the risks' order with counts, and filters and searches by them", () => {
+    const [typescript] = data.packs as { rules: { id: string; dimensions?: unknown }[] }[];
+    typescript!.rules[0]!.dimensions = { risk: "performance", layer: "ui", severity: "low" };
+    typescript!.rules[2]!.dimensions = { risk: "security", layer: "server", severity: "high", hazard: "auth.mutation-without-auth" };
+    data.packs = [...data.packs];
+    const all = pageRules("pack:typescript")!;
+    const shown = (filter: string, query = "") => { Object.assign(ui2, { filter, query, sort: "az" }); return shownRules(all).map(r => r.rule.id); };
+
+    expect(pageRiskFilters(all)).toEqual([["risk:security", "Security (1)"], ["risk:performance", "Performance (1)"]]);
+    expect(pageRiskFilters(pageRules("pack:next")!)).toEqual([]);
+    expect(shown("risk:security")).toEqual(["ts:c"]);
+    expect(shown("risk:data-safety")).toEqual([]);
+    expect(shown("all", "performance")).toEqual(["ts:a"]);
+    expect(shown("all", "mutation-without-auth")).toEqual(["ts:c"]);
+  });
+
+  it("names every risk a pack may give", () => {
+    expect(RISK_LABELS.map(([risk]) => risk)).toEqual([...RULE_RISKS]);
   });
 });
 

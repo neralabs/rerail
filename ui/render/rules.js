@@ -4,8 +4,8 @@
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
-import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning, notRunningReason, violationOutcomes } from "../derive.js";
-import { data, isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId } from "../state.js";
+import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning, notRunningReason, riskLabel, violationOutcomes } from "../derive.js";
+import { data, isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId, dimensionsOf } from "../state.js";
 import { enforcementTag, ruleTableHead, updateEnforcementTag } from "./enforcement.js";
 
 export const CREATE_COMMAND = "/rerail-create";
@@ -21,11 +21,12 @@ function createRow(stored) {
   const stopped = h("span.badge", { hidden: true }, "Not running");
   const internal = h("span.badge", { hidden: true, title: "Not in this release." }, INTERNAL_TESTING);
   const folder = h("span.mono", { title: "Added at" });
+  const risk = h("span", { hidden: true });
   const last = h("span");
   const row = h("div.row", { "data-act": "detail", "data-i": id },
     h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, enforcement, count, sw),
-      h("div.rmeta", null, internal, stopped, h("span.mono", null, id), folder, last)));
-  row._r = { title, count, sw, enforcement, internal, stopped, folder, last };
+      h("div.rmeta", null, internal, stopped, h("span.mono", null, id), risk, folder, last)));
+  row._r = { title, count, sw, enforcement, internal, stopped, folder, risk, last };
   return row;
 }
 
@@ -79,6 +80,11 @@ function updateRow(row, stored) {
   // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
   setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));
+  // What the rule's pack says it guards against, how badly, where; the hazard id it shares with other packs on hover.
+  const dimensions = dimensionsOf(stored);
+  setText(r.risk, dimensions ? `${riskLabel(dimensions.risk)} · ${dimensions.severity}` : "");
+  setAttr(r.risk, "title", dimensions ? [`Layer: ${dimensions.layer}`, ...(dimensions.hazard ? [`Hazard: ${dimensions.hazard}`] : [])].join(" · ") : null);
+  setAttr(r.risk, "hidden", dimensions === undefined);
   const lastSeen = activityAllOf(id).lastSeenAt;
   const lastText = allFires(id) && lastSeen ? `last logged ${whenLabel(lastSeen)}` : "";
   setText(r.last, lastText);

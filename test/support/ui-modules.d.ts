@@ -122,6 +122,7 @@ declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
   export function isRunning(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): boolean;
   export function notRunningReason(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): string | null;
+  export const RISK_LABELS: ReadonlyArray<readonly [string, string]>;
   export function packSuppressions(rules: readonly object[]): string;
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
@@ -243,6 +244,7 @@ declare module "*/ui/pack-model.js" {
   type Pack = { id: string; name: string; category: string; covers?: string; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
   export const PAGE_FILTERS: ReadonlyArray<readonly [string, string]>;
   export const PAGE_SORTS: ReadonlyArray<readonly [string, string]>;
+  export function pageRiskFilters(rules: readonly Stored[]): Array<[string, string]>;
   export function pageKey(view: string, packId: string | null): string;
   export function pageRules(key: string): Stored[] | null;
   export function sortPageRules<R extends Stored>(rules: readonly R[], sort: string): R[];

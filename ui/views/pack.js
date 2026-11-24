@@ -8,9 +8,9 @@
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
 import { isWorktreePack } from "../derive.js";
-import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
+import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached, RISK_FILTER } from "../state.js";
 import { writes } from "../shell.js";
-import { enforcementCounts, pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
+import { enforcementCounts, pageKey, pageRiskFilters, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
 import { ruleControls, ruleControlActions, ruleControlInput, ruleControlChange } from "../render/rule-controls.js";
 import { removePackControl } from "../render/pack-panel.js";
@@ -85,9 +85,12 @@ export function render(root) {
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) { renderNotice(root); return; }
   if (page.root.parentNode !== root) root.replaceChildren(page.root);
+  // A risk chosen on another pack's page that no rule here has is let go, so this page lists its rules.
+  const riskFilters = pageRiskFilters(all);
+  if (ui.filter.startsWith(RISK_FILTER) && !riskFilters.some(([v]) => v === ui.filter)) ui.filter = "all";
   const pack = ui.view === "created" ? null : packById(ui.pack), shown = shownRules(all);
   renderHead(all, shown, pack);
-  const controls = ruleControls();
+  const controls = ruleControls(riskFilters);
   if (controls.root.parentNode !== page.controls) page.controls.replaceChildren(controls.root);
   if (page.packAll.parentNode !== controls.slot) controls.slot.replaceChildren(page.packAll);
   renderPackAll(all, pack?.name ?? CREATED);

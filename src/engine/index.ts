@@ -66,6 +66,7 @@ export {
   rulePackPackageName,
   rulePackPackageOf,
   rulePackPackageSchema,
+  RULE_RISKS,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
