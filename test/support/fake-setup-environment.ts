@@ -62,6 +62,7 @@ export function fakeSetupEnvironment(options: {
         ],
         codexTrust: changed.includes("codex"),
         ompPlugin: false,
+        nodeHookFallback: false,
       };
     },
     sessionsApproved: () => approved,

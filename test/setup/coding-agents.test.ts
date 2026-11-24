@@ -6,7 +6,7 @@ import {
   codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
 } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
-import { CODEX_HOOK_EVENTS, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { CODEX_HOOK_EVENTS, NODE_HOOK_FALLBACK_NOTE, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Each look for a program on PATH, passed through and watched: it checks a file in each PATH entry.
@@ -386,6 +386,34 @@ describe("whether a coding agent can read Rerail's data", () => {
     await unregisterHarnesses(windows);
     expect(await readFile(settings, "utf8")).not.toContain("hook-launcher");
     expect(looksOnPath).not.toHaveBeenCalled();
+  });
+
+  it("counts Claude Code on Windows as connected from the cmd.exe entry set-up wrote, and starts no cmd.exe to check", async () => {
+    // `rerail status` and the dashboard's Settings ask each time. A start of cmd.exe that fails once (an antivirus scan,
+    // a loaded computer) must not show hooks that run as not connected, nor a dashboard request wait on cmd.exe.
+    const { root, home } = await connected(["claude-code"], async () => {}, "win32");
+    const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", cmdRuns: path => path === cmd });
+    expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
+    const started: string[] = [];
+    const failsThisTime = (path: string) => {
+      started.push(path);
+      return false;
+    };
+
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, cmdRuns: failsThisTime })).toEqual({ connected: true, access: "file-tools" });
+    expect(started).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("tells set-up and the refresh when cmd.exe ran no command and Claude Code's hooks start with node", async () => {
+    const { root, home } = await connected(["claude-code"], async () => {}, "win32");
+    // A full path that names no folder on any computer that runs this test: the start of cmd.exe fails.
+    vi.stubEnv("SystemRoot", String.raw`Z:\rerail-test-no-windows`);
+
+    expect((await connectCodingAgents(root, home, ["claude-code"])).nodeHookFallback).toBe(true);
+    expect((await refreshCodingAgents(root, home)).notes).toContain(NODE_HOOK_FALLBACK_NOTE);
+    vi.unstubAllEnvs();
+    expect((await connectCodingAgents(root, home, ["claude-code"])).nodeHookFallback).toBe(false);
   });
 });
 

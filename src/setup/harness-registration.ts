@@ -62,14 +62,14 @@ export interface RegistrationOptions {
    * Keep a Claude Code hook entry on Windows that already runs the same launcher, recorded Node and hook, in either form
    * a registration writes or wrote: cmd.exe, or `node` from PATH (`hookExecEntry`). Versions 0.2.1 and earlier wrote
    * `node` where the PATH of the process that planned it found the recorded node, so a check of whether Rerail is
-   * connected would otherwise read such a registration as out of date. Set-up and `rerail update` leave it off and write
-   * the entry this version writes.
+   * connected would otherwise read such a registration as out of date. That check is a dry run and starts no cmd.exe
+   * (`hookExecEntry`). Set-up and `rerail update` leave it off and write the entry this version writes.
    */
   keepHookCommand?: boolean;
   /**
    * Test seam: whether cmd.exe at a path runs a command. Registration asks it of cmd.exe's System32 path before it writes
-   * or keeps a Windows hook entry that starts cmd.exe (`cmdHookEntry`). By default it starts that cmd.exe once
-   * (`cmdRunsCommands`), without holding the event loop.
+   * a Windows hook entry that starts cmd.exe (`hookExecEntry`); a check of whether Rerail is connected
+   * (`keepHookCommand`) never asks it. By default it starts that cmd.exe once (`cmdRunsCommands`).
    */
   cmdRuns?: ((path: string) => boolean | Promise<boolean>) | undefined;
   /**
@@ -109,6 +109,8 @@ interface Context {
   keepHookCommand: boolean;
   /** `RegistrationOptions.cmdRuns`. */
   cmdRuns: (path: string) => boolean | Promise<boolean>;
+  /** cmd.exe ran no command, so Claude Code's hooks start with `node` (`hookExecEntry`): the notes say so. */
+  nodeHookFallback: boolean;
 }
 
 interface TextFile {
@@ -580,14 +582,19 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
  * on the node the host's PATH finds first, and where that is another node than the recorded one the launcher starts the
  * recorded one as a second process on every hook event; the PATH set-up runs with tells nothing of the host's, which a
  * version manager's shell, an editor started from another shell or an installer run since can make differ. The `node`
- * entry stays only where cmd.exe cannot start the paths or runs no command (`cmdHookEntry`). Registration reads no
- * PATH. With `keepHookCommand`, an entry in either form that the settings already hold stays as it is
- * (`keptHookEntry`). A removal writes no entry (`updateGroupedHooks`), so it does not start cmd.exe.
+ * entry stays only where cmd.exe cannot start the paths (`cmdHookEntry`) or, started once (`RegistrationOptions.cmdRuns`),
+ * runs no command; the notes then say so (`NODE_HOOK_FALLBACK_NOTE`). Registration reads no PATH. With
+ * `keepHookCommand`, a check of whether Rerail is connected, an entry in either form that the settings already hold
+ * stays as it is (`keptHookEntry`), and nothing is started: the check runs each time `rerail status` runs and the
+ * dashboard's Settings opens. A removal writes no entry (`updateGroupedHooks`), so it does not start cmd.exe either.
  */
 async function hookExecEntry(context: Context, executable: string): Promise<JsonObject> {
   const launched: LauncherArgs = [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)];
-  const viaCmd = context.mode === "register" ? await cmdHookEntry(context, launched) : undefined;
-  return viaCmd ?? nodeHookEntry(launched);
+  const viaCmd = context.mode === "register" ? cmdHookEntry(launched) : undefined;
+  if (viaCmd === undefined) return nodeHookEntry(launched);
+  if (context.keepHookCommand || await context.cmdRuns(viaCmd.command)) return viaCmd;
+  context.nodeHookFallback = true;
+  return nodeHookEntry(launched);
 }
 
 /** The `node` exec-form entry: `node` from PATH starts the hook launcher with `launched`. */
@@ -597,18 +604,17 @@ function nodeHookEntry(launched: LauncherArgs): JsonObject {
 
 /**
  * The cmd.exe exec-form entry that runs the hook launcher with `launched` (`cmdHookArgs`), or undefined where cmd.exe
- * would not read each path back as one word (`cmdReadsAsOneWord`), where SystemRoot does not give cmd.exe a full path
- * (`isFullWindowsPath`), or where cmd.exe at that path runs no command (`cmdRunsCommands`): that hook starts with `node`,
- * in two processes when PATH finds another node. Windows completes any other path from a current folder or drive, and a
- * hook's current folder is the repository it runs in. A full path with nothing at it, from a SystemRoot that names no
- * Windows, or a cmd.exe that a policy keeps from running commands, would fail every hook event. The words and the
- * path's form are tested before cmd.exe is started, since a path that is not full would be started from this process's
- * current folder.
+ * would not read each path back as one word (`cmdReadsAsOneWord`) or where SystemRoot does not give cmd.exe a full path
+ * (`isFullWindowsPath`): that hook starts with `node`, in two processes when PATH finds another node. Windows completes
+ * any other path from a current folder or drive, and a hook's current folder is the repository it runs in. Set-up starts
+ * the cmd.exe this entry names once before it writes it (`hookExecEntry`), since a full path with nothing at it, from a
+ * SystemRoot that names no Windows, or a cmd.exe that a policy keeps from running commands, would fail every hook event;
+ * a path that is not full would be started from this process's current folder, so it is never started.
  */
-async function cmdHookEntry(context: Pick<Context, "cmdRuns">, launched: LauncherArgs): Promise<JsonObject | undefined> {
+function cmdHookEntry(launched: LauncherArgs): { type: "command"; command: string; args: string[] } | undefined {
   const cmd = windowsSystemProgram("cmd.exe");
   if (!isFullWindowsPath(cmd) || !launched.every(path => cmdReadsAsOneWord(path))) return undefined;
-  return await context.cmdRuns(cmd) ? { type: "command", command: cmd, args: cmdHookArgs(launched) } : undefined;
+  return { type: "command", command: cmd, args: cmdHookArgs(launched) };
 }
 
 /**
@@ -670,9 +676,9 @@ function cmdReadsAsOneWord(path: string): boolean {
 /**
  * `entry`, or with `keepHookCommand` the entry of either form for the same hook (`nodeHookEntry`, `cmdHookEntry`) that
  * `settings` already hold: versions 0.2.1 and earlier wrote the `node` form where their PATH found the recorded node,
- * and such a hook still runs, so a check of whether Rerail is connected reads it as current. `entry` is the cmd.exe form
- * only while cmd.exe at its path runs a command (`hookExecEntry`): one that runs none starts no hook, so it reads as out
- * of date.
+ * and such a hook still runs, so a check of whether Rerail is connected reads it as current. That check starts no cmd.exe
+ * (`hookExecEntry`), so it reads a cmd.exe entry as current even where a policy set since keeps cmd.exe from running
+ * commands: Claude Code then shows a hook error on each event, and set-up run again writes the `node` entry.
  */
 function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): JsonObject {
   const launched = context.keepHookCommand && typeof entry.command === "string" ? launcherArgs(entry.command, entry.args) : undefined;
@@ -2007,26 +2013,26 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
 }
 
 /**
- * How long registration waits for `cmd.exe /d /c exit 0` to end before it ends that cmd.exe, which then reads as one
- * that runs no command. It bounds a start that never ends: Windows runs the program an Image File Execution Options
+ * How long set-up waits for `cmd.exe /d /c exit 0` to end before it ends that cmd.exe, which then reads as one that
+ * runs no command. It bounds a start that never ends: Windows runs the program an Image File Execution Options
  * `Debugger` value names for cmd.exe in its place, with cmd's command line, and that program may never exit.
  */
 const CMD_RUN_LIMIT_MS = 10_000;
 
 /**
  * Whether cmd.exe at `path` runs a command: `cmd.exe /d /c exit 0`, started as Claude Code starts an exec-form hook,
- * ends with exit 0. A file there is not enough. The `DisableCMD` policy at 1 leaves it in place, and cmd then writes "The
- * command prompt has been disabled by your administrator." and ends with exit 255 for every command; an AppLocker or WDAC
- * rule refuses to start it. Started off the event loop: the daemon asks it in the check of whether Rerail is connected
- * (`cmdHookEntry`), and a synchronous start would hold every request it serves.
+ * ends with exit 0 within `limitMs`. A file there is not enough. The `DisableCMD` policy at 1 leaves it in place, and
+ * cmd then writes "The command prompt has been disabled by your administrator." and ends with exit 255 for every
+ * command; an AppLocker or WDAC rule refuses to start it. Only set-up asks it, before it writes a hook entry
+ * (`hookExecEntry`); started off the event loop, as set-up's other work is.
  */
-function cmdRunsCommands(path: string): Promise<boolean> {
+export function cmdRunsCommands(path: string, limitMs = CMD_RUN_LIMIT_MS): Promise<boolean> {
   return new Promise(resolve => {
     try {
       const cmd = spawn(path, ["/d", "/c", "exit", "0"], { stdio: "ignore" });
       // Not spawn's `timeout`, whose timer only 'exit' clears: a start that fails sends 'error' alone, and that timer
       // would hold the process open for its whole length. This one is cleared on both: it runs only while cmd.exe does.
-      const limit = setTimeout(() => cmd.kill(), CMD_RUN_LIMIT_MS);
+      const limit = setTimeout(() => cmd.kill(), limitMs);
       cmd.once("error", () => {
         clearTimeout(limit);
         resolve(false);
@@ -2055,6 +2061,7 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
     platform: options.platform ?? process.platform,
     keepHookCommand: options.keepHookCommand === true,
     cmdRuns: options.cmdRuns ?? cmdRunsCommands,
+    nodeHookFallback: false,
   };
 }
 
@@ -2125,6 +2132,7 @@ async function registrationNotes(changes: readonly RegistrationChange[], context
   if (context.mode === "register" && changes.some(change => change.path === codexHooks && wrote(change))) {
     notes.push(CODEX_TRUST_NOTE);
   }
+  if (context.nodeHookFallback) notes.push(NODE_HOOK_FALLBACK_NOTE);
   if (await ompPluginCopyMatters(context, selected)) notes.push(OMP_PLUGIN_NOTE);
   return notes;
 }
@@ -2152,6 +2160,16 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
 
 /** The note a registration that wrote Codex's hooks carries: Codex runs no hook the person has not trusted. */
 export const CODEX_TRUST_NOTE = "Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.";
+
+/**
+ * The note of a registration that started cmd.exe and saw it run no command, so it wrote Claude Code's hooks to start
+ * with `node` (`hookExecEntry`). A later set-up starts cmd.exe again; set-up run again in a set-up repository connects
+ * only coding agents found since, so the note names the refresh, which registers every connected one.
+ */
+export const NODE_HOOK_FALLBACK_NOTE =
+  "Claude Code: cmd.exe could not run a test command, so Rerail's hooks start with the node Claude Code's PATH finds. "
+  + "Where that is not the Node Rerail recorded, each hook event starts a second Node. "
+  + "Run rerail install --refresh to try cmd.exe again.";
 
 export function registerHarnesses(options: RegistrationOptions): Promise<RegistrationReport> {
   return run(options, "register");

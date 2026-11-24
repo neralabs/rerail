@@ -437,10 +437,14 @@ the policy then failed every hook event of a Claude Code 2.1.322 session that wa
 error that does not block, showed "Stop hook error occurred" in print mode, and ran every tool call; no hook reached
 Rerail. Set-up run under the policy wrote the `node` entry, and the same session ran every hook with no error. At 2,
 which leaves scripts on, `cmd.exe /c` runs commands as it does without the policy, and set-up keeps the `cmd.exe`
-entry. A policy set after set-up leaves the `cmd.exe` entry failing until set-up, `rerail install --refresh` or
-`rerail update` runs again; until then the check behind `rerail status` and the dashboard counts Claude Code as not
-connected, and `rerail status` prints no line for it. An AppLocker or WDAC rule that refuses `cmd.exe` was not tried;
-set-up reads a start that fails as it reads one that ends with another exit code.
+entry. Where set-up writes the `node` entry because that start failed or timed out (10 s), it says so in one line:
+hooks then start the `node` Claude Code's `PATH` finds, a second Node each event where that is not the recorded one,
+and `rerail install --refresh` starts `cmd.exe` again. The check behind `rerail status` and the dashboard's Settings
+starts no program: it counts Claude Code as connected while its settings hold either entry, so a start of `cmd.exe`
+that fails once never shows working hooks as not connected, and no dashboard request waits on `cmd.exe`. So a policy
+set after set-up shows only as Claude Code's own hook error on every event, not in `rerail status`, until set-up,
+`rerail install --refresh` or `rerail update` runs again and writes the `node` entry. An AppLocker or WDAC rule that
+refuses `cmd.exe` was not tried; set-up reads a start that fails as it reads one that ends with another exit code.
 
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's

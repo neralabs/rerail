@@ -410,14 +410,16 @@ Claude Code's hooks on Windows start through `cmd.exe`, which runs the recorded 
 Claude Code has. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, where
 that `cmd.exe` runs no command (`cmd.exe /d /c exit 0` does not end with exit 0, as under the `DisableCMD` policy at
 1: [what such a policy does to hooks](windows.md#each-coding-agents-shell)), or where `cmd.exe` would split a path of
-the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of `& ( ) ^ | < > , ; =`. Claude Code
+the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of `& ( ) ^ | < > , ; =`. Where the
+start of `cmd.exe` failed, set-up says so in one line, with what it costs and that `rerail install --refresh` tries
+again. Claude Code
 finds that `node` on its own `PATH`, and where that is another Node than the recorded one, the launcher starts the
 recorded one as a second process on each event. Set-up reads no `PATH` to choose the entry. Where the recorded Node is
 there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry exits 0 with no answer, as the
 launcher answers for a hook that fails, so Claude Code shows no hook error.
 Rerail 0.2.1 and earlier wrote the `node` entry wherever set-up's `PATH` found the recorded Node, though Claude Code's
 `PATH` may find another; `rerail update` writes the `cmd.exe` entry over it, and `rerail status` and the dashboard
-count Claude Code as connected with either.
+count Claude Code as connected with either, reading the settings alone: they start no `cmd.exe` to check.
 
 Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
 its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the

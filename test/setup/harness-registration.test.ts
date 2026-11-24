@@ -11,6 +11,8 @@ import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord, STATUS_LINES_
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
+  NODE_HOOK_FALLBACK_NOTE,
+  cmdRunsCommands,
   detectHarnesses,
   registerHarnesses,
   unregisterHarnesses,
@@ -513,10 +515,42 @@ describe("Claude Code settings.json", () => {
     // A full path that names no folder on any computer that runs this test.
     vi.stubEnv("SystemRoot", String.raw`Z:\rerail-test-no-windows`);
 
-    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    // The start fails, and set-up says what it wrote instead, what that costs and how to try again.
+    const report = await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
     const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
+    expect(report.notes).toContain(NODE_HOOK_FALLBACK_NOTE);
   });
+
+  it("ends a start of cmd.exe that never ends at the limit it is given, as one that runs no command, leaving nothing running", async () => {
+    const { home } = await fixture();
+    // A node standing in for a cmd.exe that never exits, as the program an Image File Execution Options `Debugger` value
+    // names may not: it waits 60 s before it loads anything, far past the limit, then exits. Started from a node of its
+    // own, which says what the start check answered, when, and what still holds its event loop.
+    const wait = join(dirname(home), "wait.cjs");
+    await writeFile(wait, "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);\n");
+    const script = join(dirname(home), "limit.mts");
+    const registration = new URL("../../src/setup/harness-registration.ts", import.meta.url).href;
+    await writeFile(script, [
+      `import { cmdRunsCommands } from ${JSON.stringify(registration)};`,
+      `process.env.NODE_OPTIONS = ${JSON.stringify(`--require ${JSON.stringify(wait)}`)};`,
+      "const started = performance.now();",
+      "const runs = await cmdRunsCommands(process.execPath, 1_000);",
+      "const ms = performance.now() - started;",
+      // A handle closes after the callback that ended it: one turn of the event loop later.
+      "await new Promise(resolve => setTimeout(resolve, 100));",
+      "console.log(JSON.stringify({ runs, ms, held: process.getActiveResourcesInfo() }));",
+    ].join("\n"));
+    const run = spawnSync(process.execPath, ["--import", "tsx", script], { encoding: "utf8", timeout: 40_000 });
+    expect(run.status, run.stderr).toBe(0);
+    const { runs, ms, held } = JSON.parse(run.stdout) as { runs: boolean; ms: number; held: string[] };
+    expect(runs).toBe(false);
+    // Ended at the limit given, not at the 10 s set-up waits, nor by an exit of its own.
+    expect(ms).toBeGreaterThanOrEqual(900);
+    expect(ms).toBeLessThan(10_000);
+    expect(held).not.toContain("Timeout");
+    expect(held).not.toContain("ProcessWrap");
+  }, 60_000);
 
   /**
    * What holds the event loop of a node that ran `registerHarnesses(options)` with `SystemRoot` at `systemRoot`, once
@@ -570,16 +604,20 @@ describe("Claude Code settings.json", () => {
     await copyFile(process.execPath, join(systemRoot, "System32", "cmd.exe"));
     vi.stubEnv("SystemRoot", systemRoot);
 
-    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const report = await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
     const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
+    expect(report.notes).toContain(NODE_HOOK_FALLBACK_NOTE);
   }, 60_000);
 
   it.each([
+    // Set-up starts it once before it writes the cmd.exe entry.
+    ["set-up", 1, (options: RegistrationOptions) => registerHarnesses(options)],
     // A removal writes no hook entry, so it needs no cmd.exe.
     ["a removal", 0, (options: RegistrationOptions) => unregisterHarnesses(options)],
-    // A check of whether Rerail is connected compares the entry registration would write, asked once, with both forms.
-    ["a check of whether Rerail is connected", 1, (options: RegistrationOptions) => registerHarnesses({ ...options, dryRun: true, keepHookCommand: true })],
+    // A check of whether Rerail is connected reads the settings alone, whichever form they hold: `rerail status` and the
+    // dashboard's Settings run it each time, and neither waits on cmd.exe.
+    ["a check of whether Rerail is connected", 0, (options: RegistrationOptions) => registerHarnesses({ ...options, dryRun: true, keepHookCommand: true })],
   ])("%s starts cmd.exe %i times on Windows", async (_case, starts, run) => {
     const { home, root } = await fixture();
     const asked: string[] = [];
@@ -607,17 +645,18 @@ describe("Claude Code settings.json", () => {
     const sessionStart = async () => ((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart;
     const written = async () => {
       await seed(path, { hooks: { SessionStart: [{ hooks: [theirs] }] } });
-      await registerHarnesses({ ...windows, cmdRuns: cmdThere });
+      expect((await registerHarnesses({ ...windows, cmdRuns: cmdThere })).notes).not.toContain(NODE_HOOK_FALLBACK_NOTE);
       expect(await sessionStart()).toEqual([{ hooks: [theirs] }, { hooks: [ours] }]);
     };
-    // cmd.exe is gone, or a policy keeps it from running commands: the entry set-up wrote fails every hook event, a check
-    // of whether Rerail is connected reads it as out of date, and it is still Rerail's.
+    // cmd.exe is gone, or a policy set since keeps it from running commands: the entry set-up wrote fails every hook
+    // event, and it is still Rerail's. A check of whether Rerail is connected starts no cmd.exe, so it reads that entry
+    // as current; set-up run again starts cmd.exe, writes the `node` entry and says so.
     const gone = { ...windows, cmdRuns: () => false };
 
     await written();
     const plan = await registerHarnesses({ ...gone, dryRun: true, keepHookCommand: true });
-    expect(change(plan.changes, "claude-code", "settings.json").action).toBe("updated");
-    await registerHarnesses(gone);
+    expect(change(plan.changes, "claude-code", "settings.json").action).toBe("unchanged");
+    expect((await registerHarnesses(gone)).notes).toContain(NODE_HOOK_FALLBACK_NOTE);
     const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
     expect(await sessionStart()).toEqual([{ hooks: [theirs] }, { hooks: [viaPath] }]);
     expect(JSON.stringify(await readJson(path))).not.toContain(JSON.stringify(ours));
