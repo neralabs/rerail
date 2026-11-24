@@ -222,3 +222,28 @@ Tests: the rr suite and both corpus tests over the 1,949 files; JSON's and Kotli
 
 Tests: the rr suite and both corpus tests over the 1,949 files; JSON's and Kotlin's suites (Kotlin's tier 1 re-blessed:
 its `WORDS`); clippy.
+
+## Step 9: a float by its own token, and records without marks (done)
+
+- **A float is its number's own test**, as the lean lexer's number arm writes `FLOAT` where it read a `.`: `mark
+  float_at = empty, at number when count(dot) at least 1`, asked where tier 2 reads the number (`numeric`, `minus`).
+  It was `float_after`, a test carried to the token after the number, so a float the file ended with had no token to
+  hold it and refused the file (`else escape`). Tier 1 now asks nothing after its loop, and such a file is read whole,
+  as lean reads it. A kind of its own in tier 1's records would need the kind decided at the number's first byte from
+  the bytes after it, a pass backward (`back_fill`), which decision 0416 removed; the token's own test is what the
+  lean lexer reads, at the token. `numeric` is `nested`: the caller's field is set where it returns, not on the mark.
+- **A mark that holds only at one kind is no test of its own where that kind's arm is the same** (`implied_kind`, in
+  `decide`): `float_at` is asked only where a float is read otherwise than a number (`numeric`, `minus`), as lean's
+  one arm `NUM | FLOAT` elsewhere. Kotlin's `real` the same.
+- **A record is its kind and word, an extra a span in its list**, as lean's `Tok` and `comments`: where each rare
+  arm's marks are none or the extra's own bit (`no_record_marks`), the arms' tuple has no marks, the record is
+  `kind | word << 8`, and the token tests read `extra` for the extra's bit. The records test gives an extra its bit,
+  as the interpreter's record holds it.
+
+What tier 1 still refuses where lean writes `BAD` is what the bytes cannot say: a `\u` escape `unescape` reads by
+characters (a surrogate pair joined, `\u+abc` taken by `from_str_radix`, an escape cut short by the string's end), a
+number of 19 digits that may fit an `i64`, and a fence of four backticks or more (lean finds a fence of its own count;
+the grammar's regions are fixed openers). These stay limits (decision 0650), the engine's to read.
+
+Tests: the rr suite (the end-of-file floats now taken, the engine's tape), both corpus tests, the corpus tapes against
+the engine's and lean's (and lean's on edited files), the unpadded program's; JSON's and Kotlin's suites; clippy.

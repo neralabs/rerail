@@ -3036,13 +3036,18 @@ impl<L: Layout> P<'_, L> {
 
     /// `numeric`.
     fn numeric(&mut self) -> R {
-        self.tk_as::<false, false>(self.at_number(), k::NUMBER, 0)?;
-        if self.m_float_after() {
-            self.relabel_kind(k::FLOAT)?;
-            self.mark_float_after()?;
-        } else if self.m_line() || self.m_newline() {
+        self.deeper()?;
+        if self.m_float_at() {
+            self.mark_float_at()?;
+            self.tk_as::<false, false>(self.at_number(), k::FLOAT, 0)?;
         } else {
+            if self.at_number() {
+                self.tk_as::<false, false>(self.at_number(), k::NUMBER, 0)?;
+            } else {
+                return self.refuse();
+            }
         }
+        self.depth -= 1;
         self.marked = false;
         Ok(())
     }
@@ -3195,30 +3200,33 @@ impl<L: Layout> P<'_, L> {
     fn minus(&mut self) -> R {
         self.word_leaf_as::<false, false>(w::MINUS_27, k::MINUS)?;
         let arm: usize;
-        match self.word() {
-            w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
-                arm = 1;
-            }
-            _ if self.at_number() => {
-                arm = 0;
-            }
-            _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                arm = 1;
-            }
-            _ => {
-                arm = usize::MAX;
+        if self.m_float_at() {
+            arm = 0;
+        } else {
+            match self.word() {
+                w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
+                    arm = 2;
+                }
+                _ if self.at_number() => {
+                    arm = 1;
+                }
+                _ if self.at_string() || self.at_code_literal() || self.at_identifier() => {
+                    arm = 2;
+                }
+                _ => {
+                    arm = usize::MAX;
+                }
             }
         }
         match arm {
             0 => {
-                self.merge_as::<false, false>(self.at_number(), k::NUMBER)?;
-                if self.m_float_after() {
-                    self.relabel_kind(k::FLOAT)?;
-                    self.mark_float_after()?;
-                } else {
-                }
+                self.mark_float_at()?;
+                self.merge_as::<false, false>(self.at_number(), k::FLOAT)?;
             }
             1 => {
+                self.merge_as::<false, false>(self.at_number(), k::NUMBER)?;
+            }
+            2 => {
                 self.wrap(k::UNARY_EXPRESSION, 0)?;
                 self.drop_made()?;
                 let word = self.word;
@@ -4102,30 +4110,30 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// Mark `float_after` holds at the token, not taken there; once a token (`held`).
+    /// Mark `float_at` holds at the token, not taken there; once a token (`held`).
     #[inline]
-    fn m_float_after(&mut self) -> bool {
-        self.taken >> 0 & 1 == 0 && self.held(0, Self::h_float_after)
+    fn m_float_at(&mut self) -> bool {
+        self.taken >> 0 & 1 == 0 && self.held(0, Self::h_float_at)
     }
 
     #[inline]
-    fn h_float_after(&self) -> bool {
+    fn h_float_at(&self) -> bool {
         (self.bit_at(self.i, 0))
     }
 
-    /// Mark `float_after` taken: it and the marks before it passed at this token.
-    fn take_float_after(&mut self) -> R {
+    /// Mark `float_at` taken: it and the marks before it passed at this token.
+    fn take_float_at(&mut self) -> R {
         self.taken |= 0x1;
         Ok(())
     }
 
-    /// Mark `float_after` where the rule takes it: it must hold.
-    fn mark_float_after(&mut self) -> R {
-        if !self.m_float_after() {
+    /// Mark `float_at` where the rule takes it: it must hold.
+    fn mark_float_at(&mut self) -> R {
+        if !self.m_float_at() {
             return self.refuse();
         }
         self.marked = true;
-        self.take_float_after()
+        self.take_float_at()
     }
 
     /// Mark `line` holds at the token, not taken there; once a token (`held`).

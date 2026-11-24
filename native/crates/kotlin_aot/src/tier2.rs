@@ -1275,7 +1275,7 @@ impl<L: Layout> P<'_, L> {
         }
         loop {
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -1656,7 +1656,7 @@ impl<L: Layout> P<'_, L> {
     fn r_statement(&mut self) -> R {
         self.deeper()?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() {
+        if self.m_label_at() {
             arm = 6;
         } else if self.m_lab_loop() {
             arm = 1;
@@ -1785,7 +1785,7 @@ impl<L: Layout> P<'_, L> {
                         let arm: usize;
                         if self.m_semi() || self.m_semi_close() {
                             arm = 1;
-                        } else if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                        } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                             arm = 0;
                         } else {
                             match self.word() {
@@ -1835,7 +1835,7 @@ impl<L: Layout> P<'_, L> {
     fn r_block(&mut self) -> R {
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -1869,7 +1869,7 @@ impl<L: Layout> P<'_, L> {
     fn control_structure_body(&mut self) -> R {
         self.open(k::CONTROL_STRUCTURE_BODY);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() {
             arm = 1;
         } else if self.m_blk() {
             arm = 0;
@@ -1935,7 +1935,7 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<true, false>(w::RPAREN_21)?;
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-        } else if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_blk() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_blk() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             self.control_structure_body()?;
         } else {
             match self.word() {
@@ -3747,7 +3747,7 @@ impl<L: Layout> P<'_, L> {
             self.mark_blk()?;
             self.word_skip_as::<true, false>(w::LBRACE_17)?;
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -6063,9 +6063,7 @@ impl<L: Layout> P<'_, L> {
     fn unary_tight(&mut self) -> R {
         self.deeper()?;
         let arm: usize;
-        if self.m_real() {
-            arm = 1;
-        } else if self.m_label_at() || self.m_lab_lam() {
+        if self.m_label_at() || self.m_lab_lam() {
             arm = 0;
         } else if self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() {
             arm = 1;
@@ -6329,7 +6327,7 @@ impl<L: Layout> P<'_, L> {
             self.mark_lam_bare()?;
             self.lambda_bare_open()?;
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -6361,7 +6359,7 @@ impl<L: Layout> P<'_, L> {
             self.lambda_parameters()?;
             self.word_leaf_as::<true, false>(w::MINUS_GT_41, k::MINUS_GT)?;
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -6392,7 +6390,7 @@ impl<L: Layout> P<'_, L> {
                 w::LBRACE_17 => {
                     self.skip_as::<true, false>(true)?;
                     let arm: usize;
-                    if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                    if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                         arm = 0;
                     } else {
                         match self.word() {
@@ -6576,7 +6574,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::VALUE_ARGUMENTS);
         self.word_skip_as::<true, false>(w::LPAREN_19)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() {
+        if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() {
             arm = 0;
         } else if self.m_trail() {
             arm = 1;
@@ -6646,7 +6644,7 @@ impl<L: Layout> P<'_, L> {
     fn value_argument(&mut self) -> R {
         self.open(k::VALUE_ARGUMENT);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+        if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
             arm = 2;
         } else if self.m_named() {
             arm = 0;
@@ -6711,9 +6709,7 @@ impl<L: Layout> P<'_, L> {
     fn primary_tight(&mut self) -> R {
         self.deeper()?;
         let arm: usize;
-        if self.m_real() {
-            arm = 2;
-        } else if self.m_this_at() {
+        if self.m_this_at() {
             arm = 7;
         } else if self.m_jump_at() {
             arm = 9;
@@ -7393,7 +7389,7 @@ impl<L: Layout> P<'_, L> {
                     let arm: usize;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                         arm = 1;
-                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+                    } else if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
                         arm = 0;
                     } else {
                         match self.word() {
@@ -7443,7 +7439,7 @@ impl<L: Layout> P<'_, L> {
                     let arm: usize;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                         arm = 1;
-                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+                    } else if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
                         arm = 0;
                     } else {
                         match self.word() {
@@ -7501,7 +7497,7 @@ impl<L: Layout> P<'_, L> {
         self.mark_blk()?;
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -7574,7 +7570,7 @@ impl<L: Layout> P<'_, L> {
         self.mark_blk()?;
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -7612,7 +7608,7 @@ impl<L: Layout> P<'_, L> {
         self.mark_blk()?;
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -7658,7 +7654,7 @@ impl<L: Layout> P<'_, L> {
         }
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
         loop {
-            if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
+            if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
                 self.when_entry()?;
             } else {
                 match self.word() {
@@ -7711,7 +7707,7 @@ impl<L: Layout> P<'_, L> {
     fn when_entry(&mut self) -> R {
         self.open(k::WHEN_ENTRY);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
+        if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
             arm = 0;
         } else {
             match self.word() {
@@ -7778,7 +7774,7 @@ impl<L: Layout> P<'_, L> {
     fn when_condition(&mut self) -> R {
         self.open(k::WHEN_CONDITION);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+        if self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
             arm = 3;
         } else if self.m_named() {
             arm = 0;

@@ -98,13 +98,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             let s = base + rare.trailing_zeros() as usize;
             // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).
             let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
-            let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = match pick {
+            let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {
                 // `/`
                 12 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) => {
                     // `comment`: read line | block
                     let l = micro::find(&src[..n], s + 1, b'\n').unwrap_or(n) - 1;
                     let l = l.max(s);
-                    (l, 0, true, 0x8000, 0)
+                    (l, 0, true, 0)
                 },
                 12 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'*')))) => {
                     // `comment`: read line | block
@@ -117,7 +117,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         }
                     };
                     let l = l.max(s);
-                    (l, 0, !open_bad, if open_bad { 0 } else { 0x8000 }, 0)
+                    (l, 0, !open_bad, 0)
                 },
                 // ```
                 15 if (((src[s] == b'`') && !(s + 1 < n && (src[s + 1] == b'`')))) => {
@@ -131,7 +131,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         }
                     };
                     let l = l.max(s);
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
+                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                 },
                 15 if ((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && !(s + 2 < n && (src[s + 2] == b'`')))) => {
                     // `code_literal`: read t1 | t2 | t3
@@ -142,7 +142,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         }
                     };
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, 0)
+                    (l, u32::from(kind1), false, 0)
                 },
                 15 if (((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && (s + 2 < n && (src[s + 2] == b'`'))) && !(s + 3 < n && (src[s + 3] == b'`')))) => {
                     // `code_literal`: read t1 | t2 | t3
@@ -155,7 +155,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         }
                     };
                     let l = l.max(s);
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
+                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                 },
                 0 => {
                     // `string`: read str
@@ -175,13 +175,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                             break 'tokens;
                         }
                     }
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
+                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                 },
                 3 => {
                     // `hash_word`: run word
                     let l = { let mut l = s; while (l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) { l += 1; } l };
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                    (l, u32::from(kind1), false, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
                 },
                 5 => {
                     // `number`: run num_run once dot
@@ -192,19 +192,19 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(kind1), false, 0x0, 0)
+                    (l, u32::from(kind1), false, 0)
                 },
                 6 | 12 => {
                     // `punct`: pair
                     let l = s + (k_pair_6 >> (s - base) & 1) as usize;
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8 | ((l - s) & usize::from(src[s + 1] == b':')) << 9].2))
+                    (l, u32::from(kind1), false, u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8 | ((l - s) & usize::from(src[s + 1] == b':')) << 9].2))
                 },
                 7 => {
                     // `bad`: run other
                     let l = { let mut l = s; while (l + 1 < n && matches!(src[l + 1], 0x00..=0x08 | 0x0b | 0x0e..=0x1f | b'$' | b'\'' | b'?' | b'\\' | 0x7f..=0xff)) { l += 1; } l };
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, 0)
+                    (l, u32::from(kind1), false, 0)
                 },
                 _ => {
                     // A byte no token begins with.
@@ -212,7 +212,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     break 'tokens;
                 }
             };
-            let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
+            let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 };
             if extra {
                 extras.push(rec);
             } else {
@@ -232,10 +232,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
     }
     // SAFETY: `len` records written.
     unsafe { recs.set_len(len) };
-    // `float_after`, else escape: a float the file ends with
-    if tested(&src[..n], &recs, &extras, len, 0) {
-        refused = true;
-    }
     Lexed {
         recs,
         extras,
@@ -520,11 +516,11 @@ pub const TESTED: u32 = 0x2001;
 fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {
     let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);
     match b {
-        // `float_after`
-        0 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && { (s..=l).any(|i| (i < n && (src[i] == b'.'))) }),
+        // `float_at`
+        0 => (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && { (s..=l).any(|i| (i < n && (src[i] == b'.'))) }),
         // `json_bad`
         13 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && matches!(src[i], 0x00..=0x1f)) || (esc && (i < n && !(i < n && matches!(src[i], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u'))))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
-            || (after && extra && r.code >> 16 & 0x8000 == 0x8000 && (src[s] == b'/') && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })
+            || (after && extra && (src[s] == b'/') && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })
             || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && ((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))))
             || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'!' | b'%'..=b'&' | b'('..=b'/' | b':'..=b'>' | b'@' | b'[' | b']'..=b'^' | b'{'..=b'~') && ((src[s] == b'-') && !(s + 1 < n && matches!(src[s + 1], b'0'..=b'9')))),
         _ => false,

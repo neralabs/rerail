@@ -146,12 +146,15 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
     // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
     // by where they start.
-    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
-    recs.sort_by_key(|r| r.start);
+    // An extra's bit is the list it is in (0655 step 9), as the lean lexer's comments: the interpreter's record has it.
+    let extra_bit = c.native.records.as_ref().and_then(|r| r.extra).map_or(0, |e| 1u32 << (16 + u32::from(e)));
+    let extras = lx.extras.iter().map(|r| (r.start, r.last, r.code | extra_bit));
+    let mut recs: Vec<(u32, u32, u32)> = lx.recs.iter().map(|r| (r.start, r.last, r.code)).chain(extras).collect();
+    recs.sort_by_key(|r| r.0);
     for k in 0..starts.len().max(recs.len()) {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
         let rec = recs.get(k);
-        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
+        let ours = (rec.map(|r| &r.0), rec.map(|r| &r.1), rec.map(|r| &r.2));
         let kept = |c: Option<&u32>| c.map(|&c| c & !late & !asked);
         let late_ok = run.codes.get(k).zip(ours.2).is_none_or(|(&t, &o)| t & late & !o == 0);
         if (theirs.0, theirs.1, kept(theirs.2)) != (ours.0, ours.1, kept(ours.2)) || !late_ok {

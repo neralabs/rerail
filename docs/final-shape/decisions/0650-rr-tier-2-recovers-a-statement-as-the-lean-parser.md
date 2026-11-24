@@ -52,7 +52,7 @@ an ERROR leaf in lean's tape. Of the refusals:
 - **Tier 1's refusals.** These were "a byte no token takes" and a region open at the file's end. Lean's lexer makes
   each a `Bad` token, which fails its statement. Tier 1 refused the whole file instead. Tier 1 now writes such a
   token (step 5), and its statement recovers. Tier 1's escapes stay limits (a `\u` escape, a number of 19
-  digits, four backticks, a float the file ends with).
+  digits, four backticks; a float the file ends with was one until 0655 step 9, which reads it).
 
 ## The design
 

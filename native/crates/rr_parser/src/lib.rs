@@ -392,7 +392,8 @@ pub mod tests {
         // the token, 0133): 3,932 words, the states and arms the same. The token marks the grammar
         // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
         // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
-        // A float one token, made a float by the mark after it (`relabel _ as float`): 3,322.
+        // A float one token, made a float by the mark after it (`relabel _ as float`): 3,322; by its
+        // own token's test (0655 step 9).
         // What the engine reads and the grammar refused, read (0650: `#` words on a line, a named
         // argument at a literal's start, `product`, a pattern's selector): 406 states, 3,097 arms. A suppress line's `,`
         // before a string alone (`comma_rule`): 407 states, 3,098 arms.
@@ -1772,9 +1773,8 @@ pub mod tests {
             .replace("read t1 | t2 | t3", "last (prev(f_t1) & ~f_t1) | (prev(f_t2, 2) & ~prev(f_t2)) | (prev(f_t3, 3) & ~prev(f_t3, 2)) | prev(e_t2) | ((f_t1 | f_t3) & last_byte)")
             // The gap pass's clauses need the loop; this compares the starts and lasts alone.
             .replace("lf unless after \",\", end", "lf, end")
-            .replace(", else escape \"a float the file ends with\"", "")
             // The marks' token tests need the loop too: their masks alone.
-            .replace(", after number when count(dot) at least 1", "")
+            .replace(", at number when count(dot) at least 1", "")
             .replace("mark json_bad    = ff,", "mark json_bad    = ff")
             // A token mark past the code's bits needs the token step's extras; its `,` reads as before it.
             .replace("mark comma_rule  = tokens \",\" string", "")
@@ -2530,10 +2530,11 @@ pub mod tests {
         let any_mark = |l: &&str| l.contains(" TOKEN m=") && !l.contains(" TOKEN m=128 ");
         assert!(!c.words.lines().any(|l| any_mark(&l)), "tier 2 reads no mask of any mark");
         assert!(!r.unless.is_empty(), "a line break after a `,` is the gap pass's, not a mask's");
-        assert!(r.unplaced != 0, "a float the file ends with is the gap pass's, not a mask's");
+        // A float is its own token's test (0655 step 9): no mark's bit waits for a token after it.
+        assert!(r.unplaced == 0, "no mark the file's end leaves unplaced");
     }
 
-    /// The marks' token tests (decision 0177): `float_after` and `json_bad` from checks at their
+    /// The marks' token tests (decision 0177): `float_at` and `json_bad` from checks at their
     /// tokens, as a lexer marks what it reads, are the masks they replace. The old form (the
     /// masks, from the regions; a `-` a pair's second byte, as `:-`, none: the tests take a `-`
     /// token) and the new give the same tape or refusal through tier 2; the CPU's and Metal's
@@ -2621,10 +2622,10 @@ pub mod tests {
         inputs
     }
 
-    /// The grammar's old form: the marks from masks, not from token tests.
+    /// The grammar's old form: `json_bad` from masks, not from token tests. `float_at` keeps its test: a mask of it at
+    /// the number's first byte would be made from the bytes after it (0655 step 9).
     fn old_marks_grammar() -> String {
         crate::GRAMMAR
-            .replace("mark float_after = empty, after number when count(dot) at least 1,", "mask frac_last  = frac & ~next(frac)\nmark float_after = frac_last,")
             .lines()
             .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
             .map(|l| if l.starts_with("mark json_bad ") { "mask in_str      = f_str & ~o_str\nmark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (in_str & uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit) & ~second) | (int & zero & ~prev(int) & next(int))\n".to_string() } else { format!("{l}\n") })
@@ -2656,7 +2657,7 @@ pub mod tests {
             let r = new.program.block_programs[0].records.as_ref().expect("records");
             assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
             assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
-            assert!(r.tested_only != 0, "float_after reads no mask");
+            assert!(r.tested_only != 0, "float_at reads no mask");
             // No region on the CPU: its form calls no walk (the readers read them, decision 0177).
             assert!(new.native.cpu_form().walks.is_empty(), "the CPU walks the regions");
             let (lazy, coded) = (lazy_bits(&new.native), lazy_coded_bits(&new.native));
@@ -2838,9 +2839,9 @@ pub mod tests {
             cases.push((format!("{head}.options {{\"a\": 1.5, \"b\": -0.25, \"c\": 3}}\n"), true));
             cases.push((format!("{head}a(1.5, 1234.5, 2)."), true));
         }
-        // A float the file ends with: no token after it to mark.
-        cases.push((".decl a(x: number)\n.limit 1.5".to_string(), false));
-        cases.push((".decl a(x: number)\n.limit 1.5 // a comment".to_string(), false));
+        // A float the file ends with: its own token says it is one, as the lean lexer's number arm (0655 step 9).
+        cases.push((".decl a(x: number)\n.limit 1.5".to_string(), true));
+        cases.push((".decl a(x: number)\n.limit 1.5 // a comment".to_string(), true));
         for (src, taken) in &cases {
             let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
             reads_as_lean(src, *taken, &tapes);

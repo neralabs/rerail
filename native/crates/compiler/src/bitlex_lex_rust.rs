@@ -7683,6 +7683,9 @@ fn tidy_lean(out: &str) -> String {
     {
         out.replace_range(a..a + "    let _ = (l, kind);\n".len(), "");
     }
+    // A record's marks: none but an extra's own bit, which the extras' list says (decision 0655 step 9). The record is
+    // its kind and word, as the lean lexer's `Tok`, and an extra its span in the list, as its `comments`.
+    out = no_record_marks(&out);
     // The token tests read no vector: a plain function, as the lean parser's tests of a token.
     if let Some(a) = out.find("unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(")
         && let Some(d) = out[a..].find("\nrerail_simd8::dispatch! {\n    fn token_test(").map(|d| d + a)
@@ -7695,6 +7698,65 @@ fn tidy_lean(out: &str) -> String {
         out = out.replace("one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nfn token_test(", "one of its own. Its row by its first byte, its kind and whether it is an extra.\nfn token_test(");
     }
     out
+}
+
+/// `out` with no marks in the rare tokens' records, where each arm's are none (`0x0`) or, at an extra, the extra's
+/// bit alone (`true, B` or `!open_bad, if open_bad { 0 } else { B }`): the tuple's marks gone, the record its kind and
+/// word, and the token tests' `r.code >> 16 & B == B` (an extra's bit) the `extra` before it. Else `out`.
+fn no_record_marks(out: &str) -> String {
+    const HEAD: &str = "let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = match pick {";
+    let Some(h) = out.find(HEAD) else { return out.to_owned() };
+    let Some(e) = closing_brace(out, h + HEAD.len() - 1) else { return out.to_owned() };
+    let mut bit: Option<String> = None;
+    let mut arms: Vec<(usize, usize, String)> = Vec::new();
+    let from = h + HEAD.len();
+    for (at, _) in out[from..e].match_indices("(l, ") {
+        let at = from + at;
+        let Some(close) = closing_paren(out, at) else { return out.to_owned() };
+        // Its five parts, split at its own commas.
+        let inner = &out[at + 1..close];
+        let mut parts = Vec::new();
+        let (mut depth, mut from) = (0i32, 0usize);
+        for (i, ch) in inner.char_indices() {
+            match ch {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(inner[from..i].trim());
+                    from = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(inner[from..].trim());
+        if parts.len() != 5 {
+            return out.to_owned();
+        }
+        let (extra, marks) = (parts[2], parts[3]);
+        let own = match (extra, marks) {
+            (_, "0x0" | "0") => None,
+            ("true", b) if b.starts_with("0x") => Some(b.to_owned()),
+            ("!open_bad", m) => m.strip_prefix("if open_bad { 0 } else { ").and_then(|r| r.strip_suffix(" }")).map(str::to_owned),
+            _ => return out.to_owned(),
+        };
+        if let Some(b) = own {
+            if bit.as_ref().is_some_and(|x| *x != b) {
+                return out.to_owned();
+            }
+            bit = Some(b);
+        }
+        arms.push((at, close, format!("({}, {}, {}, {})", parts[0], parts[1], parts[2], parts[4])));
+    }
+    let mut s = out.to_owned();
+    for (at, close, t) in arms.into_iter().rev() {
+        s.replace_range(at..=close, &t);
+    }
+    s = s.replace(HEAD, "let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {");
+    s = s.replace("let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };", "let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 };");
+    if let Some(b) = bit {
+        s = s.replace(&format!("extra && r.code >> 16 & {b} == {b} && "), "extra && ");
+    }
+    s
 }
 
 /// The index of the `)` closing the `(` at `open`.

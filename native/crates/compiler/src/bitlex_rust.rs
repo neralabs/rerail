@@ -404,6 +404,20 @@ impl<'a> G<'a> {
         Ok((out, true))
     }
 
+    /// The kind mark `m` holds at alone: a mark of no gap, whose tests are all at that kind's tokens (`mark M = empty,
+    /// at K when …`).
+    fn implied_kind(&self, m: usize) -> Option<String> {
+        let name = &self.x.marks.get(m)?.name;
+        self.x.lexer.iter().find_map(|s| match s {
+            ::bitlex::syntax::Stmt::Mark { kind, at: ::bitlex::syntax::Expr::Empty, end: false, unless, unplaced: None, checks, next, drops, loses, refuses, refuses_taken, passes, .. }
+                if kind == name && unless.is_empty() && next.is_empty() && drops.is_empty() && loses.is_empty() && refuses.is_empty() && refuses_taken.is_empty() && passes.is_empty() && !checks.is_empty() && checks.iter().all(|c| !c.after && c.kind == checks[0].kind) =>
+            {
+                Some(checks[0].kind.clone())
+            }
+            _ => None,
+        })
+    }
+
     /// A test as a condition on the token.
     fn cond(&self, t: &First) -> String {
         let base = match &t.0 {
@@ -452,6 +466,9 @@ impl<'a> G<'a> {
                 }
             }
         }
+        // A mark that holds only at one kind's tokens, where the kind goes to the same arm: no test of its own, as the
+        // lean parser's one arm for a kind (`NUM | FLOAT`).
+        marks.retain(|(m, f, t)| !self.implied_kind(*m).is_some_and(|k| kinds.iter().any(|x| x.0 == k && x.1 == *f && x.2 == *t)));
         for &m in &exits {
             if !marks.iter().any(|x| x.0 == m) {
                 marks.push((m, None, n));

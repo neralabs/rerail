@@ -179,8 +179,9 @@ mask c_odd      = fill(chain & ~prev(chain) & c_par, ~chain)
 mask f_dot      = c_dot & (c_par ^ c_odd)
 mask frac       = fill(prev(f_dot), ~digit)
 mask int        = num & ~frac                   # an integer's digits
-# A float is one token, as simdjson's number is one scalar: a number with a `.`. It marks the
-# token after it (`float_after`, below), and tier 2 makes the number it took a float there.
+# A float is one token, as simdjson's number is one scalar: a number with a `.`. Its own token
+# says so (`float_at`, below), and tier 2 reads it a float there, as the lean lexer's number arm
+# writes a float where it read a `.`.
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
 # checked by it, so it goes to the engine, with its leading zeros (the engine's tape either
 # way). A float's digits are its text: no limit. Checked at the number's token (below): a token
@@ -257,10 +258,9 @@ skip ws
 
 # --- Line breaks -------------------------------------------------------------------------------
 
-# The token after a float: first of the marks, as tier 2 reads it right after the number. A
-# number with a `.` is a float, as a lexer knows the number it read; a float the file ends
-# with has no token after it, and goes to the engine.
-mark float_after = empty, after number when count(dot) at least 1, else escape "a float the file ends with"
+# A float: a number with a `.`, as a lexer knows the number it read. First of the marks, at the
+# number's own token, which tier 2 reads where it reads the number.
+mark float_at    = empty, at number when count(dot) at least 1
 # The file's end ends a line too: a setting ends there.
 mark line        = lf, end
 # The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
@@ -472,8 +472,8 @@ tree rr {
   # A word is a variable, unless a `(` or a `:` after it makes it a call's function or a named
   # argument's name.
   choice primary        = numeric | unsigned
-  # A number, a float where the mark after it says so: one leaf.
-  choice numeric        = number [relabel _ as float float_after]
+  # A number, a float where its token says so: one leaf.
+  choice numeric nested = float_at number as float | number
   choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
                         | identifier as variable [wrap call function as identifier arguments: argument_list
                                                  | unless no_named (wrap named_argument name as identifier ':' value: term)]
@@ -481,9 +481,9 @@ tree rr {
                         | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
                           | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]]
                         | parenthesized_expression
-  # `-` and a number: one number leaf (a float, where its mark says so). Else `-` and its operand,
-  # a primary that is no number.
-  choice minus          = '-' (merge number number [relabel _ as float float_after] | wrap unary_expression _ drop operand: unsigned)
+  # `-` and a number: one number leaf (a float, where its token says so). Else `-` and its
+  # operand, a primary that is no number.
+  choice minus          = '-' (float_at merge float number | merge number number | wrap unary_expression _ drop operand: unsigned)
   node parenthesized_expression = '(' expression: term ')'
   node functor_call     = '@' function: identifier arguments: argument_list
   # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
@@ -569,6 +569,6 @@ tree rr {
   implied aggregated ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
+  hidden float_at line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
   extra comment
 }
