@@ -3447,7 +3447,7 @@ impl Batch {
         let made = batch.make_rows(&(0..batch.docs.len()).collect::<Vec<_>>(), true, &[])?;
         let vocabulary = {
             let shared = batch.shared.lock();
-            texts_of(&batch.atoms, &shared.vocabulary)?
+            texts_of(&*batch.atoms, &shared.vocabulary)?
         };
         Ok((batch, made.relations, made.matched, vocabulary))
     }
@@ -5023,7 +5023,7 @@ impl Viewed {
             PREV => known.prev.unwrap_or_else(|| Self::prev_id(p, local)),
             UNIT => Self::unit_id(b, p, local),
             OP => b.op_atom(p.tag(), b.dialects[p.tag()].code(p.f(), x)),
-            TEXT => p.text_atom(&b.atoms, local, x),
+            TEXT => p.text_atom(&*b.atoms, local, x),
             ENDP => Self::end_id(p, local),
             _ => n,
         }
@@ -5162,7 +5162,7 @@ impl Viewed {
                     *o = match (c, column) {
                         (0, 0) | (1, 1) => value,
                         (0, _) => p.global(local),
-                        _ => p.text_atom(&b.atoms, local, x),
+                        _ => p.text_atom(&*b.atoms, local, x),
                     };
                 }
                 each(firsts.at(doc) + r as usize, &vals[..columns.len()]);
@@ -6056,7 +6056,7 @@ impl Grower {
         let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
         let (strings, symbols) = {
             let shared = self.growth.shared.lock();
-            texts_of(&batch.atoms, &shared.vocabulary[strings_from..])?
+            texts_of(&*batch.atoms, &shared.vocabulary[strings_from..])?
         };
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let tested: Vec<(String, Relation)> = tests

@@ -36,6 +36,7 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
+use rerail_blocks::bistate::{Bistate, Marked};
 use rerail_blocks::vector::Vector;
 use rerail_section::{Handle, Section};
 pub mod scalars;
@@ -6884,26 +6885,24 @@ impl InRel {
     }
     /// The ids of its version `ver` that are not the relation's own live rows (`Ver::Minus`: rows live at the
     /// start and dead now; `Ver::Plus`: rows added since, live), ascending. `None` without a version, or for `Old`.
+    /// Read through its version (`version`), the change as `blocks::bistate` reads every change (decision 0678).
     pub fn version_ids(&self, ver: Ver) -> Option<Vector<u32>> {
-        let (n0, dead0) = self.start()?;
+        let v = self.version()?;
         match ver {
             Ver::Old => None,
-            Ver::Minus => {
-                let mut out = rerail_blocks::vector::Vector::new();
-                for (w, &now) in self.dead.iter().enumerate().take(n0.div_ceil(64)) {
-                    let mut gone = now & !dead0.get(w).copied().unwrap_or(0);
-                    while gone != 0 {
-                        let id = w * 64 + gone.trailing_zeros() as usize;
-                        gone &= gone - 1;
-                        if id < n0 {
-                            out.push(id as u32);
-                        }
-                    }
-                }
-                Some(out)
-            }
-            Ver::Plus => Some((n0..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).map(|id| id as u32).collect()),
+            Ver::Minus => Some(v.gone().collect()),
+            Ver::Plus => Some(v.added().collect()),
         }
+    }
+    /// Its version as a bistate (decision 0678): before, its first rows less the dead bits they had at the start
+    /// (`start`); after, all its rows less its dead bits now. Both read its rows where they lie. `None` without a
+    /// version.
+    #[allow(clippy::type_complexity)]
+    pub fn version(&self) -> Option<Bistate<Marked<'_, impl Fn(u32, usize) -> i64 + '_>, Marked<'_, impl Fn(u32, usize) -> i64 + '_>>> {
+        let (n0, dead0) = self.start()?;
+        let get = move |id: u32, c: usize| self.value(id as usize, c);
+        let before = Marked { arity: self.k, rows: n0 as u32, dead: dead0, get };
+        Some(Bistate::new(before, Marked { arity: self.k, rows: self.n as u32, dead: &self.dead, get }))
     }
     /// Its version `ver` as a relation read in place, no row copied (decision 0364 stage 2): `Old`, its first rows
     /// with the start's dead rows (its rows shared); `Minus` and `Plus`, a view of their ids over it. `None` without
@@ -10099,6 +10098,8 @@ pub mod posted_tests {
         let plus = new.version_view(Ver::Plus).expect("a version");
         assert_eq!(rows_of(&plus), vec![vec![5, 2], vec![100, 1]]);
         assert_eq!(new.version_ids(Ver::Plus), Some(rerail_blocks::vector![40, 41]));
+        // The version is a bistate (decision 0678): [5, 2] killed and pushed again is gone and added.
+        rerail_blocks::bistate::check(&new.version().expect("a version"));
         // The delta is the versions' rows.
         let (mut added, mut removed) = new.delta_since(&kept).expect("started as kept");
         let flat = |f: &mut Vector<i64>| { let mut r: Vec<Vector<i64>> = f.as_chunks::<2>().0.iter().map(|r| rerail_blocks::vector::Vector::from(&r[..])).collect(); r.sort(); r };
@@ -10163,6 +10164,7 @@ pub mod posted_tests {
             assert_eq!(rows_at(&new, new.version_ids(Ver::Minus).expect("a version")), vec![vec![25, 1], vec![30, 0]], "dead {dead}: its rows gone");
             assert_eq!(rows_at(&new, new.version_ids(Ver::Plus).expect("a version")), vec![vec![100, 1], vec![101, 2]], "dead {dead}: its rows added");
             assert_eq!(new.delta_ids_since(&old).expect("started from old").counts(), (2, 2), "dead {dead}: the frames read the same change");
+            rerail_blocks::bistate::check(&new.version().expect("a version"));
             assert_eq!(new.rows(), now.rows());
         }
     }

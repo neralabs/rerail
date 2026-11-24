@@ -1540,7 +1540,7 @@ impl Batch {
             let had: HashSet<u32> = atoms.iter().copied().collect();
             atoms.extend(self.atoms.intern_all(&added).expect("the views' strings interned").iter().copied().filter(|a| !had.contains(a)));
         }
-        texts_of(&self.atoms, &atoms).expect("the atoms directory reads the batch's vocabulary")
+        texts_of(&*self.atoms, &atoms).expect("the atoms directory reads the batch's vocabulary")
     }
 }
 
@@ -2326,7 +2326,7 @@ impl Tested {
                 let (mut texts, mut syms) = (Vec::new(), Vec::new());
                 for i in 0..p.text_rows() {
                     let (local, x) = p.text_local(i);
-                    if let Ok(a) = u32::try_from(p.text_atom(&batch.atoms, local, x)) {
+                    if let Ok(a) = u32::try_from(p.text_atom(&*batch.atoms, local, x)) {
                         texts.push(p.with_text(local, x, str::to_owned));
                         syms.push(a);
                     }
