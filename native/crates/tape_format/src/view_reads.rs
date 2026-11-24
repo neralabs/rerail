@@ -91,6 +91,43 @@ impl<'a> Tape<'a> {
         let after = self.end_of(i);
         if after < end { after } else { NONE }
     }
+    /// Its auxiliary index in its home (decision 0656), after its presence: the presence's bytes from its header
+    /// rounded up to 16 (`f16::presence::aux_at`), as `tape_place` finds it. `None` without a presence, or where the
+    /// bytes there are no index.
+    fn aux(&self) -> Option<crate::aux_index::AuxIndex<'a>> {
+        let (t, v) = match *self {
+            Tape::F16(t, v) => (t, v),
+            Tape::F16Z(z) => (z.t, z.v),
+        };
+        if v.presence == 0 {
+            return None;
+        }
+        let at = v.presence as usize;
+        let head = t.get(at..at + crate::f16::presence::HEAD)?;
+        let w = |k: usize| u32::from_le_bytes([head[4 * k], head[4 * k + 1], head[4 * k + 2], head[4 * k + 3]]) as usize;
+        let len = crate::f16::presence::HEAD + 8 * (w(0) + w(1)) * w(2) + 4 * w(3);
+        crate::aux_index::AuxIndex::read(t.get(crate::f16::presence::aux_at(at, at + len)..)?).ok()
+    }
+    /// Named node `node`'s place among its parent's named children (`tape_place`, `aux_index::place`): 0 for the
+    /// first, and for the root; from the last every-K-th named sibling at or before it, the siblings stepped to it,
+    /// each named one counted. `NONE` where the home holds no index.
+    pub fn place(&self, node: u32) -> u32 {
+        use crate::aux_index::{K, NONE as NO_ENTRY};
+        let Some(aux) = self.aux() else { return NONE };
+        let p = self.parent(node);
+        if p == NONE {
+            return 0;
+        }
+        let (mut i, mut c) = match aux.eighth_at_or_before(p, node) {
+            (_, NO_ENTRY) => (0, p + 1),
+            (k, e) => (k * K, e),
+        };
+        while c < node {
+            i += u32::from(aux.named(self.number(c)));
+            c = self.end_of(c);
+        }
+        i
+    }
 }
 
 /// Which place a `Loc` view's second column holds (`view_loc_*`), and core.rerail's `rr_report_location`.
@@ -190,6 +227,8 @@ impl<'a> Doc<'a> {
         match col {
             0 => self.parent_id(l, self.tape_node(l)),
             1 => self.node_id(l),
+            // Read in the tape's auxiliary index where the entry says so (decision 0656 step 4), else its `places`.
+            _ if self.entry.places_by_index != 0 => i64::from(self.tape.place(self.tape_node(l))),
             _ => i64::from(self.items(&self.entry.places)[l as usize]),
         }
     }

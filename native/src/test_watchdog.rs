@@ -16,6 +16,10 @@
 //! of both writes the faulting thread's name and the tests running then, and hands the fault on to the handler it
 //! replaced (Rust's, which reports a stack overflow, or the default one).
 
+// The warning on a macOS whose allocator aborts the engine's work, given as every test binary loads.
+#[path = "os_warning.rs"]
+mod os_warning;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -102,6 +106,7 @@ fn tick(env: Option<Duration>) -> Duration {
 static START: extern "C" fn() = start;
 
 extern "C" fn start() {
+    os_warning::warn();
     // `--list` and the like start no test; a watchdog then is harmless, but `Some(None)` turns it off.
     if matches!(configured(), Some(None)) {
         return;

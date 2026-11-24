@@ -61,7 +61,7 @@ struct Ran {
     /// The files built in the waves with a kept tape, and those parsed.
     waves: (usize, usize),
     rows: BTreeSet<Vec<String>>,
-    /// Phase 1's frame (`phases::frame`): taken (`Some(true)`), made by its run (`Some(false)`), or none.
+    /// Phase 1's frame (`frame`): taken (`Some(true)`), made by its run (`Some(false)`), or none.
     frame: Option<bool>,
 }
 
@@ -200,7 +200,7 @@ fn a_warm_run_with_nothing_to_run_gives_the_per_file_outputs() {
     assert_eq!(warm, fresh, "the warm run's outputs are a cold run's");
 }
 
-/// Phase 1's run kept across processes (t33 K4, `phases::frame`): a warm run over unchanged files takes its frame,
+/// Phase 1's run kept across processes (t33 K4, `frame`): a warm run over unchanged files takes its frame,
 /// every read of its run as it was, and does not run the phase; an edit hands it another file, so the run makes a new
 /// frame. Each run's outputs are a cold run's.
 #[test]

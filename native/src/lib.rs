@@ -56,6 +56,8 @@ mod model;
 pub use rerail_workspace::panic_boundary;
 mod path_owner;
 pub mod process;
+/// The warning on a macOS whose allocator aborts the engine's work (`bin/rerail-engine.rs`).
+pub mod os_warning;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]

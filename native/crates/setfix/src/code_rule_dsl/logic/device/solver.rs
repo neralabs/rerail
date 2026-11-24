@@ -18,8 +18,11 @@ pub trait SolverDevice: Device {
     fn join_available(&self) -> bool;
     /// A seed join's plan on the device, or why it takes none (`spec`: the join's text, which keys its history).
     /// `own_texts`: the component's own (relation, column) pairs whose values are texts its rounds make into one arena
-    /// (decision 0307: a `shortlex_min` relation's value).
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String>;
+    /// (decision 0307: a `shortlex_min` relation's value; decision 0659: a recursive set head's column of made texts),
+    /// `head` the join's head relation among them.
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String>;
+    /// The head columns `plan` makes texts into (its arena's), for a component's `own_texts`.
+    fn made_columns(&self, plan: &JoinPlan) -> Vec<usize>;
     /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
     fn refuse(&self, why: String);
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows
@@ -34,7 +37,9 @@ pub trait SolverDevice: Device {
     /// Whether the plan reads its own component's relations (a delta join of a recursive component).
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no
-    /// head in `heads` grows, every row into `fresh`. Per rule (seeds, then deltas), the rows made.
+    /// head in `heads` grows, every row into `fresh`. Per rule (seeds, then deltas), the rows made, and whether the
+    /// device reached the fixpoint: where a round was too narrow for it, it hands the component back (decision 0657),
+    /// its rows so far in `fresh` for the CPU's waves to go on from.
     #[allow(clippy::too_many_arguments)]
     fn fixpoint(
         &self,
@@ -44,10 +49,15 @@ pub trait SolverDevice: Device {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<Vector<u64>, String>;
+    ) -> Result<(Vector<u64>, bool), String>;
     /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
     /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;
+    /// Whether its kernels run on the CPU (`RERAIL_GPU=cpu`): work a launch pays for on a GPU (`table::gpu_pays`) is
+    /// the CPU's own there, done faster by the CPU's path.
+    fn kernels_on_cpu(&self) -> bool {
+        false
+    }
 }
 
 /// A column for `SolverDevice::column_stats`: values on the host, or column `.1` of an engine relation.

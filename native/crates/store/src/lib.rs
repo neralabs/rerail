@@ -25,6 +25,8 @@ pub mod content_store;
 mod test_load {
     extern "C" fn load() {
         crate::content_store::observer_store::register();
+        // Blocks that start small, so that its stores grow chains and roll them up (`rerail_atoms::small_blocks`).
+        rerail_atoms::set_small_blocks();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]

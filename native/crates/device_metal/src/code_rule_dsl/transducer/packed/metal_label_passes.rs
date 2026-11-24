@@ -1443,11 +1443,11 @@ pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], fac
 
 /// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0395):
 /// otherwise the wave runs on the CPU, and the kernels are compiled as the mode says
-/// (`rerail_accel::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
+/// (`rerail_accel_gpu::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
 /// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
 pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
     // Each asked, so every one missing is recorded, not only the first.
-    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_none()).filter(|&missing| missing).count() == 0
+    sources.iter().map(|source| rerail_accel_gpu::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_none()).filter(|&missing| missing).count() == 0
 }
 
 /// One group's pattern kernel, compiled once per distinct source.

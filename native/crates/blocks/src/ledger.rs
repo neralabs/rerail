@@ -582,7 +582,7 @@ pub struct Fence {
     pinned: Mutex<Vec<(usize, bool)>>,
     /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
     /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
-    /// dispatches (decision 0639).
+    /// dispatches (decision 0641).
     bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
     signal: Condvar,
 }

@@ -30,8 +30,9 @@ pub fn register() {
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::facts::rows::install_run_room();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
-        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
         super::register();
         // The compiled CPU, which the device's tests compare it with, as boot registers it (`install_devices`).
@@ -83,8 +84,12 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
-        joins::compile(join, spec, own_texts).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String> {
+        joins::compile(join, spec, own_texts, head).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    }
+
+    fn made_columns(&self, plan: &JoinPlan) -> Vec<usize> {
+        plan.0.downcast_ref::<joins::Plan>().map(joins::Plan::made_columns).unwrap_or_default()
     }
 
     fn refuse(&self, why: String) {
@@ -115,12 +120,16 @@ impl SolverDevice for Metal {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<rerail_blocks::vector::Vector<u64>, String> {
+    ) -> Result<(rerail_blocks::vector::Vector<u64>, bool), String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
     }
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
         joins::column_stats(cols, k).map_err(Refused::Failed)
+    }
+
+    fn kernels_on_cpu(&self) -> bool {
+        rerail_device::device::cpu_chosen()
     }
 }
 

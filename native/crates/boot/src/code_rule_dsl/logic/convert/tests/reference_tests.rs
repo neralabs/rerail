@@ -150,6 +150,7 @@ fn compare(rule: &std::path::Path, adjust: &Adjust, files: &[(String, String)], 
 /// `reference_open` rows are W's graph's for the event's files and scope; the labelled rows' pairs are W's
 /// `reference_rows`, which its relational stages read.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
     // Every event of the two policies, each run and compared with W's graph: about 11 minutes on CI's 4-vCPU runner (2
     // cores, hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
@@ -242,6 +243,7 @@ def unused():
 /// W's calls oracle project (`fixtures/python/calls/project`) and `PACKAGE`, under each policy over every file: the
 /// corpus runner's rows are W's graph's, and between them every label but `late` and an open definition occur.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn reference_edge_is_ws_reference_graph_on_projects() {
     let project = std::path::PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
     let mut oracle = Vec::new();
@@ -275,6 +277,7 @@ fn reference_edge_is_ws_reference_graph_on_projects() {
 }
 
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
     use crate::code_rule_dsl::logic::plan::corpus::with_tape_cache_path;
     use crate::content_store::{ContentStore, analysis_scope::AnalysisRun};

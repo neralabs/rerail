@@ -428,7 +428,7 @@ pub fn whole(block: &Arc<Block>) -> Shared<u8> {
 /// own region, while a handle holds it, is pinned (once a fence and access). Whether a ledger knows the address.
 ///
 /// The ledger is found once a fence and address (`Fence::held_at`): a stack's thousands of dispatches each bind its
-/// buffers, and each bind was a search of the live blocks (decision 0639).
+/// buffers, and each bind was a search of the live blocks (decision 0641).
 pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static str) -> bool {
     let Some(l) = fence.held_at(addr) else { return false };
     let root = l.root.lock().unwrap_or_else(|e| e.into_inner()).upgrade();

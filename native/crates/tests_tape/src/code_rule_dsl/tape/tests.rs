@@ -330,10 +330,10 @@ fn persisted_image_round_trips_without_parsing() {
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`, Patch 30's `using`
     // declarations, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; so does the language's format 16
     // table (its codes, from the grammar, decision 0631, and their numbering, by two corpora's counts: revision 4), and a
-    // change of format 16's layout (decision 0434).
+    // change of format 16's layout (decision 0434) or of what its home holds (its auxiliary index, decision 0656).
     assert_eq!(
         digest,
-        "bd753d2a17873768297f78a49a2d63a15a1f2f13b84a7755700b5e56e9242aa6"
+        "020bbb8cb3ca945e463aa9ecb7945990094515c65513d7b5cef18c31b1409794"
     );
 }
 
@@ -1699,8 +1699,13 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
 
 /// The Bitlex parser's tape of a JSON file, as stored: `None` where it refuses the file.
 fn bitlex_bytes(source: &str) -> Option<Vec<u8>> {
+    Some(bitlex_image(source)?.to_bytes().unwrap())
+}
+
+/// A JSON file's image from the Bitlex parser, or `None` where it refuses the file.
+fn bitlex_image(source: &str) -> Option<TapeImage> {
     let written = crate::code_rule_dsl::transducer::packed::json_parser::image(source)?;
-    Some(TapeImage::written_16(written, GrammarDialect::Json, source, None, &|| false).ok()?.to_bytes().unwrap())
+    TapeImage::written_16(written, GrammarDialect::Json, source, None, &|| false).ok()
 }
 
 /// A JSON file's tape from the Bitlex parser, and from tree-sitter-json: `None` where the Bitlex
@@ -1805,7 +1810,8 @@ fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn rr_parse_costs() {
-    use crate::code_rule_dsl::transducer::packed::rr_parser;
+    // The `.rerail` parser (rerail-rr-parser): the Bitlex grammar compiled.
+    use rerail_rr_parser as rr_parser;
     let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
     let mut files: Vec<String> = rr_files().into_iter().map(|(_, t)| t).collect();
     let all = files.len();
@@ -1922,9 +1928,8 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
         &|| false,
     )
     .map_err(|why| why.to_string())?
-    .unwrap()
-    .to_bytes()
     .unwrap();
+    let ours = keyless(&ours);
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&GrammarDialect::Json.get_ts_language())
@@ -1934,12 +1939,20 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let text =
         crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(source);
     let tree = parser.parse(&text, None).unwrap();
-    let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false)
-        .unwrap()
-        .primary
-        .to_bytes()
-        .unwrap();
+    let theirs = keyless(&TapeImage::encode(tree.root_node(), &grammar, &text, &|| false).unwrap().primary);
     Ok((ours, theirs))
+}
+
+/// An image's bytes, its auxiliary index's key zeroed: the index is keyed by its source's digest (decision 0656
+/// step 3), and a JSONC file's tape is tree-sitter's of its text without its trailing commas, another source of
+/// the same tape.
+fn keyless(image: &TapeImage) -> Vec<u8> {
+    let mut b = image.to_bytes().unwrap();
+    if let Some(aux) = image.aux_bytes() {
+        let at = b.len() - aux.len();
+        b[at + 24..at + 32].fill(0);
+    }
+    b
 }
 
 /// The product reads JSON with simdjson: a JSON file's image through the engine's parse
@@ -2193,7 +2206,7 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
                     "the tapes of {} differ",
                     path.display()
                 );
-                let bitlex = bitlex_bytes(&source);
+                let bitlex = bitlex_image(&source).map(|i| keyless(&i));
                 assert!(
                     bitlex.is_none_or(|b| b == ours),
                     "{}: tree-sitter errs, and simdjson's tape is not the Bitlex parser's",

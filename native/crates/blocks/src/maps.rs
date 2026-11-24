@@ -64,57 +64,10 @@ impl Room for InBlock {
     }
 }
 
-/// A run's room for the structures no life places (`default_room`): blocks of its own, each with a free list, the
-/// next leased when one is full; a block goes when its last region does.
-#[derive(Default)]
-pub struct AnonRoom {
-    open: std::sync::Mutex<Option<Arc<Block>>>,
-}
-
-/// The bytes an anonymous room's block reserves (address space; pages are touched as used).
-const ANON_BLOCK: usize = 64 << 20;
-
-impl Room for AnonRoom {
-    fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region {
-        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(b) = &*open
-            && let Some(r) = Mutable::alloc_aligned(b, bytes, align, name)
-        {
-            return region_of(r, None);
-        }
-        // Room for the chunk the free list takes for `bytes` (its class, a power of two), aligned to its size up to
-        // `ALIGN_MAX` past the block's first byte, and a page.
-        let size = crate::free::class_of(bytes).1;
-        let need = size + align.max(size.min(crate::free::ALIGN_MAX)) + 4096;
-        let b = Arc::new(Block::anon(crate::block::kind::FACTS, ANON_BLOCK.max(need)).with_free_list());
-        let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
-        *open = Some(b);
-        region_of(r, None)
-    }
-}
-
-/// The run's own room (`rerail_context::local`): where a structure made with no room (`Default`) lives.
-#[derive(Default)]
-struct RunRoom(std::sync::OnceLock<Arc<dyn Room>>);
-
-/// The room of the run under way (its `AnonRoom`; outside a run, its shared object's: `run_room`).
-pub fn default_room() -> Arc<dyn Room> {
-    run_room()
-}
-
-/// Installs the run's room as every crate's (`rerail_vector::default_room`): the engine's, at load (boot's, once a
-/// process). A crate's own tests, run without it, make their vectors with no room on the heap.
-pub fn install() {
-    rerail_vector::install_default_room("rerail-blocks", run_room);
-}
-
-fn run_room() -> Arc<dyn Room> {
-    // Outside a run (a test's thread, which calls the engine's parts directly), the room of the shared object such a
-    // read takes (`rerail_context::shared`: the tests' one): a run's locals are made afresh at each read there, so a
-    // room of its own each time would reserve a block for each structure, and drop it with the structure.
-    let room = if rerail_context::run_own().is_some() { rerail_context::local::<RunRoom>() } else { rerail_context::shared::<RunRoom>() };
-    room.0.get_or_init(|| Arc::new(AnonRoom::default())).clone()
-}
+/// The run's room: where a structure made with no room (`Default`) lives. The engine installs the facts layer's
+/// (`rows::run_room`: the run's open relation block) at load (`rerail_vector::install_default_room`); a crate's own
+/// tests, below it, take the heap's.
+pub use rerail_vector::{default_room, install_default_room};
 
 /// One structure's region: its first byte, kept beside the handle so a read is one load.
 struct Mem {
@@ -1322,17 +1275,6 @@ mod tests {
 
     fn room() -> Arc<dyn Room> {
         Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
-    }
-
-    /// A region past half a new block's size, just over a power of two (the strings' table: 33,554,500 bytes), takes
-    /// a block of its own that holds the free list's chunk for it, aligned to its size.
-    #[test]
-    fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
-        let room = AnonRoom::default();
-        for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
-            let r = room.region(bytes, 8, "a test's region");
-            assert_eq!(r.len(), bytes);
-        }
     }
 
     #[test]

@@ -684,12 +684,12 @@ fn a_string_with_templates_is_one_record() {
         }
         // The records' masks, as a device without the token loop reads them (Metal): the loop's
         // records, a region tier 2 splits its opener alone, and none at a template's `}`.
-        let bits = |o: u16| -> Vec<u32> {
+        let bits = |o: u16| -> rerail_tape_format::Vector<u32> {
             let words = &run.outputs[program.extract_outputs()[usize::from(o)]];
             (0..words.len() * 64).filter(|&b| b < bytes.len() && words[b / 64] >> (b % 64) & 1 == 1).map(|b| b as u32).collect()
         };
-        let opened: Vec<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
-        assert_eq!((bits(r.starts), bits(r.lasts)), (starts.to_vec(), opened), "the records' masks, {text:?}");
+        let opened: rerail_tape_format::Vector<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
+        assert_eq!((bits(r.starts), bits(r.lasts)), (starts.clone(), opened), "the records' masks, {text:?}");
         // Tier 2 over them, coded by the record pass, as over a device's records.
         let table = rerail_compiler::records::WordTable::new(&r.words).expect("the words fit a table");
         let (ms, ml) = (bits(r.starts), bits(r.lasts));

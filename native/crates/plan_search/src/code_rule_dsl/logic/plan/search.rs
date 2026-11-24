@@ -359,6 +359,9 @@ pub struct Stats {
     pub obs: Obs,
     /// The recursive component being planned (`atom_rows`).
     pub solving: rerail_section::TextSet,
+    /// Its columns whose values all come from one column of a relation outside it (`column_sources`, decision 0658):
+    /// a probe bound by one is priced by that column's keys, as its own are not measured while it is solved.
+    pub sources: Sources,
     /// Members of `solving` that had rows when its component opened (a maintained stratum's survivors, rows SQL
     /// wrote): a first scan of one reads its live rows, which its card holds, not the corpus (`atom_rows`; `sized`).
     pub sized: rerail_section::TextSet,
@@ -407,7 +410,13 @@ impl Stats {
             scc.iter().for_each(|r| d.str(r));
         });
         self.solving = scc;
+        self.sources = Default::default();
         self.sized = Default::default();
+    }
+
+    /// The component's column sources (`column_sources`), set after `solve` where its rules are at hand.
+    pub fn sourced(&mut self, sources: Sources) {
+        self.sources = sources;
     }
 
     /// `rels` of `solving` had rows when its component opened, measured (`live_stats`): the plans made from here
@@ -496,6 +505,7 @@ impl Stats {
             heavy_shared: Default::default(),
             obs: Default::default(),
             solving: Default::default(),
+            sources: Default::default(),
             held: Default::default(),
             sized: Default::default(),
             solving_digest: 0,
@@ -680,6 +690,7 @@ impl Stats {
             heavy_shared: Default::default(),
             obs: Default::default(),
             solving: Default::default(),
+            sources: Default::default(),
             held: Default::default(),
             sized: Default::default(),
             solving_digest: 0,
@@ -911,6 +922,7 @@ impl Model {
             heavy_shared: std::sync::Arc::clone(&st.heavy_shared),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: Default::default(),
+            sources: Default::default(),
             held: st.held.clone(),
             sized: Default::default(),
             solving_digest: 0,
@@ -1569,7 +1581,20 @@ pub struct RunPlans {
     analyses_new: std::sync::atomic::AtomicBool,
     /// The lines this run found heavy while they ran their prepared plan: searched from then on (`prepared_heavy`).
     prepared_searched: parking_lot::Mutex<HashSet<u128>>,
+    /// The store's kept plans, prepared plans and analyses (and its join notes), not yet read (t33 K4): read where the
+    /// run first asks for one (`settle`), or before its first wave where a wave may plan (decision 0104). A run that
+    /// plans nothing (every file a memo hit, its cross part quiet) reads none of them.
+    pending: parking_lot::Mutex<Option<Box<dyn FnOnce() -> Stored + Send>>>,
+    pending_any: std::sync::atomic::AtomicBool,
+    /// The store's analyses, not yet read: apart from the plans, as a run that plans nothing asks for some.
+    pending_analyses: parking_lot::Mutex<Option<Box<dyn FnOnce() -> super::kept_analyses::ByVersion + Send>>>,
+    pending_analyses_any: std::sync::atomic::AtomicBool,
 }
+
+/// What the store kept for a run's planning (`RunPlans::defer`): its plans and the versions' prepared plans.
+pub type Stored = (StoredPlans, prepared::ByVersion);
+/// The read of the store's analyses (`RunPlans::defer`).
+pub type StoredAnalyses = Box<dyn FnOnce() -> super::kept_analyses::ByVersion + Send>;
 
 impl Default for RunPlans {
     fn default() -> Self {
@@ -1654,6 +1679,46 @@ impl RunPlans {
             analyses: Default::default(),
             analyses_new: Default::default(),
             prepared_searched: Default::default(),
+            pending: Default::default(),
+            pending_any: Default::default(),
+            pending_analyses: Default::default(),
+            pending_analyses_any: Default::default(),
+        }
+    }
+
+    /// The store's plans, read by `read` where the run first asks for them (`settle`), and its analyses by `analyses`
+    /// where it first asks for one (`settle_analyses`).
+    pub fn defer(&self, read: Box<dyn FnOnce() -> Stored + Send>, analyses: StoredAnalyses) {
+        *self.pending.lock() = Some(read);
+        self.pending_any.store(true, std::sync::atomic::Ordering::Release);
+        *self.pending_analyses.lock() = Some(analyses);
+        self.pending_analyses_any.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// The store's analyses, read now where they are not yet (`defer`).
+    pub fn settle_analyses(&self) {
+        if !self.pending_analyses_any.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut pending = self.pending_analyses.lock();
+        if let Some(read) = pending.take() {
+            self.analyses.store(Arc::new(read()));
+            self.pending_analyses_any.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// The store's plans, read now where they are not yet (`defer`): once, under the lock, so a thread that asks while
+    /// another reads them waits for them.
+    pub fn settle(&self) {
+        if !self.pending_any.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut pending = self.pending.lock();
+        if let Some(read) = pending.take() {
+            let (plans, ready) = read();
+            self.stored.store(Arc::new(plans));
+            self.prepared.store(Arc::new(ready));
+            self.pending_any.store(false, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -1689,6 +1754,7 @@ impl RunPlans {
     /// it is kept, so a plan from another scale is a better start than a search from nothing).
     fn stored_near(&self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
         let at = scale(nodes);
+        self.settle();
         let stored = self.stored.load();
         let found = (0..=12u8).find_map(|d| {
             [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| stored.get(&(*key, s)))
@@ -1851,7 +1917,10 @@ pub fn run_holds_plans() -> bool {
 /// The prepared plans the store kept of the version whose identity is `id` (Q228).
 #[doc(hidden)]
 pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
-    with_plans(|p| p.and_then(|p| p.prepared.load().get(id).cloned()))
+    with_plans(|p| p.and_then(|p| {
+        p.settle();
+        p.prepared.load().get(id).cloned()
+    }))
 }
 
 /// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store. A version
@@ -1863,6 +1932,7 @@ pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
     let new = !made.0.is_empty();
     with_plans(|p| {
         if let Some(p) = p.as_ref() {
+            p.settle();
             p.prepared.rcu(|m| {
                 let mut m = prepared::ByVersion::clone(m);
                 m.insert(id, Arc::clone(&made));
@@ -1871,6 +1941,37 @@ pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
             if new {
                 p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+        }
+    });
+}
+
+/// This thread's run reads the store's plans with `read` where it first asks for them (`RunPlans::defer`).
+pub fn defer_stored(read: Box<dyn FnOnce() -> Stored + Send>, analyses: StoredAnalyses) {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.defer(read, analyses);
+        }
+    });
+}
+
+/// This thread's run's store plans, read now where they are not yet: before a wave that may plan (decision 0104).
+pub fn settle_stored() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.settle();
+            p.settle_analyses();
+        }
+    });
+}
+
+/// This thread's run's store plans, read now where they are not yet and the run kept a plan: what it writes (its plans,
+/// the join notes its lines made) is merged with them.
+pub fn settle_if_planned() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref()
+            && p.kept.load().iter().next().is_some()
+        {
+            p.settle();
         }
     });
 }
@@ -1892,7 +1993,10 @@ pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
 /// The rows the store kept of the analysis `key` names (`kept_analyses`).
 #[doc(hidden)]
 pub fn analysis_stored(key: &super::kept_analyses::Key) -> Option<Arc<Vec<super::super::program_image::manager::Row>>> {
-    with_plans(|p| p.and_then(|p| p.analyses.load().get(key).cloned()))
+    with_plans(|p| p.and_then(|p| {
+        p.settle_analyses();
+        p.analyses.load().get(key).cloned()
+    }))
 }
 
 /// Keeps `rows`, the analysis `key` names as this run made it, for the store.
@@ -1900,6 +2004,7 @@ pub fn analysis_stored(key: &super::kept_analyses::Key) -> Option<Arc<Vec<super:
 pub fn analysis_made(key: super::kept_analyses::Key, rows: Arc<Vec<super::super::program_image::manager::Row>>) {
     with_plans(|p| {
         if let Some(p) = p.as_ref() {
+            p.settle_analyses();
             p.analyses.rcu(|m| {
                 let mut m = super::kept_analyses::ByVersion::clone(m);
                 m.insert(key.clone(), Arc::clone(&rows));
@@ -1926,18 +2031,29 @@ pub fn analyses_to_store() -> Option<Arc<super::kept_analyses::ByVersion>> {
 
 /// The kept analyses held for this thread's run, as read and made.
 pub fn analyses_held() -> Arc<super::kept_analyses::ByVersion> {
-    with_plans(|p| p.map(|p| p.analyses.load_full()).unwrap_or_default())
+    with_plans(|p| p.map(|p| {
+        p.settle_analyses();
+        p.analyses.load_full()
+    }).unwrap_or_default())
 }
 
 /// The prepared plans held for this thread's run, as read and made.
 pub fn prepared_held() -> Arc<prepared::ByVersion> {
-    with_plans(|p| p.map(|p| p.prepared.load_full()).unwrap_or_default())
+    with_plans(|p| p.map(|p| {
+        p.settle();
+        p.prepared.load_full()
+    }).unwrap_or_default())
 }
 
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = with_plans(|p| p.cloned())?;
+    // A run that kept no plan changes none: the store's are not read for it.
+    if plans.kept.load().iter().next().is_none() {
+        return None;
+    }
+    plans.settle();
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
     for (key, e) in kept.iter() {
@@ -1986,7 +2102,10 @@ pub fn lines_take() -> Vec<joins::LineRun> {
 
 /// The plans the store kept for this thread's run, as read (the join memo's write, where no plan changed).
 pub fn stored_plans() -> Option<StoredPlans> {
-    with_plans(|p| p.map(|p| StoredPlans::clone(&p.stored.load())))
+    with_plans(|p| p.map(|p| {
+        p.settle();
+        StoredPlans::clone(&p.stored.load())
+    }))
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
@@ -2241,6 +2360,21 @@ impl Model {
         (0..b.args(i).len()).map(|c| self.ndv.at(rel, c).map(|n| n.min(cap))).collect()
     }
 
+    /// The column outside the component being solved that column `c` of `rel`, a relation of it, takes all its values
+    /// from (`Stats::sources`).
+    fn source_of(&self, rel: &str, c: usize) -> Option<(&str, usize)> {
+        self.stats.sources.get(&(rel.to_owned(), c)).map(|(r, c)| (r.as_str(), *c))
+    }
+
+    /// Column `c` of `rel`'s kept keys (decision 0488); for a column of the component being solved, its source's
+    /// (decision 0658): its values are among them.
+    fn keys_or_source(&self, rel: &str, c: usize) -> Option<&super::super::bloom::Keys> {
+        self.stats.keys.at(rel, c).or_else(|| {
+            let (r, c) = self.stats.solving.contains(rel).then(|| self.source_of(rel, c)).flatten()?;
+            self.stats.keys.at(r, c)
+        })
+    }
+
     /// Complete small value sets already in statistics. SQL can load only the constants requested by a rule,
     /// so an absent memo entry proves nothing unless both its distinct count and total cover the column.
     fn small_values(&self, rel: &str, c: usize) -> Option<Vec<Constant>> {
@@ -2458,6 +2592,7 @@ impl Model {
                 rec.into_iter().map(|(ai, _)| (b, Some(ai))).chain(seed.then_some((b, None))).collect::<Vec<_>>()
             }).collect();
             self.stats.solve(solving_of(vs, scc, &rules).unwrap_or_default());
+            self.stats.sourced(column_sources(vs, scc, &rules));
             self.wants(lines, into);
         }
         self.stats.solve(was);
@@ -4036,14 +4171,22 @@ impl Model {
                         .iter()
                         .filter_map(|(d, vars, domains)| {
                             if *d == i || !vars.is_subset(bound) { return None; }
-                            b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| Some((domains[c2]?, (*d, c2))))
+                            let c2 = b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v))?;
+                            // A column of the component being solved, unmeasured, whose values are all its source's
+                            // (decision 0658): a sample of that column's, which hits where the source's values do.
+                            let sourced = || {
+                                let r = b.rel(b.atom(*d)?);
+                                let (sr, sc) = stats.solving.contains(r).then(|| self.source_of(r, c2)).flatten()?;
+                                self.ndv.at(sr, sc).copied()
+                            };
+                            Some((domains[c2].or_else(sourced)?, (*d, c2)))
                         })
                         .fold((f64::INFINITY, None), |m, (n, at)| if n < m.0 { (n, Some(at)) } else { m });
                     // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
                     let kept = at.and_then(|(d, c2)| {
-                        let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.stats.keys.at(b.rel(b.atom(d)?), c2)?);
+                        let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.keys_or_source(b.rel(b.atom(d)?), c2)?);
                         let of = theirs.distinct();
                         (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
                     });
@@ -5714,6 +5857,69 @@ pub fn solving_of(vs: &body::Versions, scc: &super::super::front::Comp, rules: &
         let (v, rule) = vs.rule_at(r);
         rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && scc.contains(v.rel_name(a.rel()))))
     }).then(|| rerail_section::TextSet::of(scc.iter()))
+}
+
+/// A component's columns and the one column of a relation outside it that each takes all its values from.
+pub type Sources = BTreeMap<(String, usize), (String, usize)>;
+
+/// Decision 0658: the columns of `scc`'s relations whose values all come from one column of a relation outside it.
+/// Each of their rules binds the head's column by a positive atom outside the component (at that column: its values
+/// are among that column's), or by the component's own columns that do. `runs_at_import(n)` is made by
+/// `run_scope(n, _, "module")` and by `run_scope(n, s, k), runs_at_import(s)`: its values are `run_scope`'s first
+/// column's, and a probe of `run_scope`'s second by them hits where that column's keys meet the first's. Priced as
+/// every binding hitting, its delta rule was 7.8 M rows a round for a few hundred, and its device tables sized so.
+pub fn column_sources(vs: &body::Versions, scc: &super::super::front::Comp, rules: &[RuleKey]) -> Sources {
+    type Col = (String, usize);
+    // Each column's sources outside the component, and its own columns it takes values from; `None`, a rule that
+    // binds it by no positive atom (a computed or constant term).
+    let mut from: BTreeMap<Col, Option<(BTreeSet<Col>, BTreeSet<Col>)>> = BTreeMap::new();
+    for &r in rules {
+        let b = vs.at(r);
+        let head = b.rel(b.head());
+        if !scc.contains(head) {
+            continue;
+        }
+        for (c, t) in b.head().args().enumerate() {
+            let entry = from.entry((head.to_owned(), c)).or_insert_with(|| Some(Default::default()));
+            let Some((outside, inside)) = entry else { continue };
+            let Some(v) = t.var() else {
+                *entry = None;
+                continue;
+            };
+            let (mut out, mut ins) = (None, None);
+            for i in 0..b.len() {
+                let Some(a) = b.plain_atom(i).filter(|a| !a.neg()) else { continue };
+                let Some(c2) = b.args(i).iter().position(|x| x.var() == Some(v)) else { continue };
+                let rel = b.rel(a);
+                if scc.contains(rel) { ins.get_or_insert((rel.to_owned(), c2)); } else { out.get_or_insert((rel.to_owned(), c2)); }
+            }
+            match (out, ins) {
+                (Some(o), _) => { outside.insert(o); }
+                (None, Some(l)) => { inside.insert(l); }
+                (None, None) => *entry = None,
+            }
+        }
+    }
+    // A column's sources: its own and those of the columns it takes values from, unless any of them is unknown.
+    let mut out = Sources::new();
+    for col in from.keys() {
+        let (mut seen, mut todo, mut srcs) = (BTreeSet::new(), vec![col.clone()], BTreeSet::new());
+        let mut known = true;
+        while let Some(x) = todo.pop() {
+            if !seen.insert(x.clone()) { continue; }
+            match from.get(&x) {
+                Some(Some((o, i))) => {
+                    srcs.extend(o.iter().cloned());
+                    todo.extend(i.iter().cloned());
+                }
+                _ => { known = false; break; }
+            }
+        }
+        if known && srcs.len() == 1 {
+            out.insert(col.clone(), srcs.into_iter().next().expect("one source"));
+        }
+    }
+    out
 }
 
 /// The positive atoms of `scc` in `b` (its recursive atoms): each one's place in the body and its relation.

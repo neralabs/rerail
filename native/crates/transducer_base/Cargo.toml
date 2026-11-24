@@ -39,7 +39,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests"]
-test-hooks = ["rerail-clif/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-store/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-cpu-block/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks", "rerail-blocks/test-hooks", "rerail-node-space/test-hooks"]
+test-hooks = ["rerail-clif/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-observe/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-cpu-block/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks", "rerail-node-space/test-hooks"]
 
 [dependencies]
 # The compiled CPU executor's slot (`packed::CPU`).
@@ -96,14 +96,14 @@ rerail-prof = { path = "../prof" }
 rerail-blocks = { path = "../blocks" }
 rerail-section = { path = "../section" }
 rerail-rr-syntax = { path = "../rr_syntax" }
-rerail-store = { path = "../store" }
+# The store's records and interface (rerail-store-base, re-exported), and git.
+rerail-observe = { path = "../observe" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
 rerail-rir = { path = "../rir" }
 rerail-cpu-block = { path = "../cpu_block" }
 # The tape's reads written once, which the CPU JIT calls (decision 0310).
 rerail-clif = { path = "../clif" }
-rerail-rr-parser = { path = "../rr_parser" }
 rerail-node-space = { path = "../node_space" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

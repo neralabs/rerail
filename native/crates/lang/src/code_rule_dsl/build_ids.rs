@@ -17,10 +17,8 @@ pub fn set(engine: &'static str, grammar: &'static str) {
 pub fn engine() -> &'static str {
     #[cfg(any(test, feature = "test-hooks"))]
     {
-        let rebuilt = REBUILT.load(std::sync::atomic::Ordering::Acquire);
-        if !rebuilt.is_null() {
-            // SAFETY: set only by `rebuild_for_tests`, from a leaked box that is never freed.
-            return unsafe { *rebuilt };
+        if let Some(rebuilt) = crate::code_rule_dsl::logic::profile::bound::<Rebuilt>().0 {
+            return rebuilt;
         }
         if ENGINE.get().is_none() {
             set_for_tests();
@@ -38,17 +36,22 @@ pub fn grammar() -> &'static str {
     GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
 }
 
+/// The engine's identity a test's runs take as another build's (`rebuild_for_tests`), in the run's context.
 #[cfg(any(test, feature = "test-hooks"))]
-static REBUILT: std::sync::atomic::AtomicPtr<&'static str> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+#[derive(Clone, Copy, Default)]
+struct Rebuilt(Option<&'static str>);
 
-/// A test's next runs as another build of the engine's (the next of this process's), over the stores the earlier
-/// runs left: what a rebuild of the engine gives a store's next run. The grammar's identity stays. The whole
-/// process's: a test calling it runs in a process of its own (nextest's).
+/// A test's next runs as another build of the engine's (the next of the one they ran as), over the stores the earlier
+/// runs left: what a rebuild of the engine gives a store's next run, until the guard drops. The grammar's identity
+/// stays. Bound in the test's context, so its runs and their jobs take it and no other test's do: set for the process,
+/// it made the runs of the tests beside it in one process (`cargo test`'s threads) find their own entries an older
+/// build's (`partial_tests`, four red at 20 threads).
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn rebuild_for_tests() {
+#[must_use = "the runs are another build's only while the guard is held"]
+pub fn rebuild_for_tests() -> crate::code_rule_dsl::logic::profile::Bound {
     let now = engine();
     let next: &'static str = Box::leak(format!("{now}+rebuilt").into_boxed_str());
-    REBUILT.store(Box::into_raw(Box::new(next)), std::sync::atomic::Ordering::Release);
+    crate::code_rule_dsl::logic::profile::bind(Rebuilt(Some(next)))
 }
 
 /// A crate's own test binary, which the engine does not load: identities of that binary (its path and when it was
@@ -58,7 +61,7 @@ fn set_for_tests() {
     use std::hash::{Hash, Hasher};
     let exe = std::env::current_exe().unwrap_or_default();
     let built = std::fs::metadata(&exe).and_then(|m| m.modified()).ok();
-    let sources = sources_stamp();
+    let sources = run_sources_stamp();
     let id = |salt: &str| {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (salt, &exe, built, sources).hash(&mut h);
@@ -66,6 +69,44 @@ fn set_for_tests() {
     };
     let hex = |salt: &str| format!("{:016x}{:016x}", id(salt), id(&format!("{salt}+")));
     set(Box::leak(hex("engine").into_boxed_str()), Box::leak(hex("grammar").into_boxed_str()));
+}
+
+/// `sources_stamp`, walked once per nextest run (`NEXTEST_RUN_ID`) and read by the run's other test processes of the
+/// same binary from a file in the temporary directory: each process walked the sources (6,017 files on spark2, 0.018 s
+/// of kernel time each, 4 s of the corpus suite's 35). One run's processes see one checkout; an edit while it runs
+/// races its tests either way. Outside nextest, or where the file cannot be read or written, a process walks them.
+#[cfg(any(test, feature = "test-hooks"))]
+fn run_sources_stamp() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Some(run) = std::env::var("NEXTEST_RUN_ID").ok().filter(|r| !r.is_empty()) else {
+        return sources_stamp();
+    };
+    let dir = std::env::temp_dir().join("rerail-source-stamps");
+    let name = {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&run, std::env::current_exe().unwrap_or_default()).hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+    let path = dir.join(&name);
+    if let Some(stamp) = std::fs::read_to_string(&path).ok().and_then(|s| u64::from_str_radix(s.trim(), 16).ok()) {
+        return stamp;
+    }
+    let stamp = sources_stamp();
+    if std::fs::create_dir_all(&dir).is_ok() {
+        // Written whole (a rename), so no process reads half of one. Other runs' stamps a day old are swept.
+        let staged = dir.join(format!("{name}.{}", std::process::id()));
+        if std::fs::write(&staged, format!("{stamp:016x}")).is_ok() && std::fs::rename(&staged, &path).is_err() {
+            let _ = std::fs::remove_file(&staged);
+        }
+        let now = std::time::SystemTime::now();
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let age = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok());
+            if age.is_some_and(|a| a.as_secs() > 86_400) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    stamp
 }
 
 /// The engine's sources as a test build reads them: each file's path, size and modification time under what
@@ -110,4 +151,20 @@ fn sources_stamp() -> u64 {
 /// The grammars' build identity as a number: its first 15 hex digits.
 pub fn grammar_version() -> i64 {
     i64::from_str_radix(&grammar()[..15], 16).expect("grammar build identity is hex")
+}
+
+#[cfg(test)]
+mod tests {
+    /// Under nextest, a run's sources are walked once (`run_sources_stamp`): the stamp its processes read is the walk's,
+    /// kept for the run's other processes.
+    #[test]
+    fn a_nextest_runs_processes_share_one_walk_of_the_sources() {
+        if std::env::var_os("NEXTEST_RUN_ID").is_none() {
+            return;
+        }
+        let shared = super::run_sources_stamp();
+        assert_eq!(shared, super::sources_stamp(), "the run's stamp is its sources' walk");
+        let kept = std::fs::read_dir(std::env::temp_dir().join("rerail-source-stamps")).unwrap().flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|s| s.trim() == format!("{shared:016x}")));
+        assert!(kept, "the stamp is kept for the run's other processes");
+    }
 }

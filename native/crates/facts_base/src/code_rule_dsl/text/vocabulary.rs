@@ -17,7 +17,7 @@
 
 use super::plan::{Anchor, Compiled, Plan, literal_searcher};
 use super::{Key, Lowered};
-use crate::content_store::{ContentStore, StoreResult};
+use crate::content_store::{FactStore, StoreResult};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -438,8 +438,8 @@ pub(in crate::code_rule_dsl) fn evaluate(plans: &[&Plan], terms: &[&[u8]]) -> (V
 /// `ContentStore::vocabulary_terms`): a key seen for the first time is evaluated over the whole vocabulary, and a
 /// known key over the terms the counts' publications added since it was. Exact sets are looked up by value, never
 /// evaluated.
-pub fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
-    use crate::content_store::prefilter::vocabulary::TEXT;
+pub fn fill(store: &dyn FactStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
+    use crate::content_store::VOCABULARY_TEXT as TEXT;
     let _stage = crate::code_rule_dsl::prof::Stage::start("text.vocabulary");
     let mut out = HashMap::new();
     let mut kept: Vec<&Arc<Lowered>> = Vec::new();

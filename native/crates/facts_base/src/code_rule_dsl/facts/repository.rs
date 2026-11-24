@@ -15,7 +15,7 @@
 
 use rerail_blocks::vector::Vector;
 use super::vtab::Relation;
-use crate::content_store::{ContentStore, StoreResult};
+use crate::content_store::{FactStore, StoreResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -195,7 +195,7 @@ fn package_for_rows(docs: &[String], packages: &BTreeMap<String, Option<Value>>,
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);

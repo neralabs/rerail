@@ -8,7 +8,7 @@ use rerail_tape_format::home::{Home, Room};
 /// A slab's room, held: the slab lives as long as a tape placed in it.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct SlabRoom {
-    slab: std::sync::Arc<rerail_metal::slabs::Slab>,
+    slab: std::sync::Arc<rerail_slabs::Slab>,
     at: usize,
     len: usize,
 }
@@ -35,8 +35,8 @@ impl Room for SlabRoom {
 
 /// The device the slabs are on, if there is one: the process's, whatever its backend (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn device() -> Option<&'static rerail_metal::lane::Device> {
-    rerail_metal::lane::device().ok()
+pub fn device() -> Option<&'static rerail_device::device::Device> {
+    rerail_slabs::device().ok()
 }
 
 /// The home `bytes` lie in, as a views' directory names it (`view_reads::ViewHome`, decision 0353 step 3 on the CPU):
@@ -49,7 +49,7 @@ pub struct HomeOf {
     pub host: u64,
     pub at: u64,
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub device: Option<(u64, rerail_metal::lane::Buffer)>,
+    pub device: Option<(u64, rerail_device::device::Buffer)>,
 }
 
 pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf {
@@ -84,7 +84,7 @@ pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) ->
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some()
         // A word of room past the tape: the device's reads load a whole word where a value ends (`clif_word`).
-        && let Ok((slab, at)) = rerail_metal::slabs::tape_room(len + 16)
+        && let Ok((slab, at)) = rerail_slabs::tape_room(len + 16)
     {
         // SAFETY: `at..at + len` is this room's alone, inside the slab's mapping; nothing reads it before `fill`
         // returns.
@@ -112,14 +112,14 @@ pub fn placer(len: usize, fill: &mut dyn FnMut(&mut [u8]) -> std::io::Result<()>
 
 /// The slab, offset and length of `room`, where it is a slab's (`place`'s): where the device reads its bytes.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn slab_room(room: &std::sync::Arc<dyn Room>) -> Option<(std::sync::Arc<rerail_metal::slabs::Slab>, usize, usize)> {
+pub fn slab_room(room: &std::sync::Arc<dyn Room>) -> Option<(std::sync::Arc<rerail_slabs::Slab>, usize, usize)> {
     room.as_any().downcast_ref::<SlabRoom>().map(|r| (std::sync::Arc::clone(&r.slab), r.at, r.len))
 }
 
 /// A document's source read from `path` straight into its home (decision 0353 step 7, row 13): a slab's room where
 /// the device's pool gives one, which every reader then reads where it lies, the device too. Nothing is read twice.
 pub fn read_text(path: &std::path::Path) -> std::io::Result<crate::code_rule_dsl::tape::Text> {
-    let home = crate::git_workspace::snapshot::read_placed(path, &placer)?;
+    let home = rerail_observe::git_workspace::snapshot::read_placed(path, &placer)?;
     crate::code_rule_dsl::tape::Text::new(home).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 

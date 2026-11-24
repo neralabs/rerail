@@ -9,7 +9,7 @@ use crate::code_rule_dsl::logic::program_image::{AggRef, Lit};
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db
@@ -44,7 +44,7 @@ fn aggregates(src: &str) -> (Vec<AggOp>, usize) {
             }
         }
     }
-    (ops, p.rules().filter(|&r| head(r).starts_with("rr_ctx")).count())
+    (ops, p.rules().filter(|&r| crate::code_rule_dsl::logic::rr::lower::helper_stem(&head(r)) == Some("ctx")).count())
 }
 
 /// Each side of a bound is recognized, either way round, and none needs a context of the probes.

@@ -381,8 +381,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_rules::code_rule_dsl::soundness;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     #[path = "suppress"]
     pub mod suppress {
         pub use rerail_rules::code_rule_dsl::suppress::*;
@@ -514,3 +512,19 @@ pub mod code_rule_dsl {
 #[cfg(test)]
 #[path = "../../../src/test_private_folders.rs"]
 mod test_private_folders;
+
+/// This crate's own test binary, which the engine does not load: SQL's language pack is registered as the binary
+/// loads, as the engine registers it (`boot::install_languages`), so its tests parse SQL here (as
+/// rerail-lang-python's do Python).
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{pack::{Pack, register}, sql::Sql}};
+        register(Family::Sql, &Pack::<Sql>::NEW);
+        language::register_base(Family::Sql, &Pack::<Sql>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

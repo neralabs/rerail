@@ -23,7 +23,7 @@
 //! binding's slots or constants.
 //!
 //! **Keys.** A relation read by keys is sorted on the device by a hash of its key columns (`rel_hash`, then
-//! the GPU lane's radix sort (`rerail_accel::gpu::join`) of 16, 24 or 32 bits, as its rows need), and a binding finds its run of equal hashes by a
+//! the GPU lane's radix sort (`rerail_accel_gpu::gpu::join`) of 16, 24 or 32 bits, as its rows need), and a binding finds its run of equal hashes by a
 //! bounded binary search; every candidate's keys are compared whole, so a collision costs a comparison, never a row.
 //! A relation (`DevRel`, read where it lies: nothing is uploaded, decision 0353 step 6) and each of its sorts
 //! (`DevIndex`) stay on the device while the engine holds them.
@@ -45,7 +45,7 @@
 
 use rerail_blocks::vector::Vector;
 use super::Error;
-use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
+use rerail_accel_gpu::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
 use std::sync::Arc;
 
@@ -127,6 +127,9 @@ pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
 /// A text test of a symbol (key 0) by its table, its verdict read from and kept in the one rolling cache (decision
 /// 0478 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
 pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
+/// A string join (decision 0661): each binding's matching rows of the stage's relation, their names (column
+/// `col_idx[0]`) ordered by a number (`col_idx[1]`) and joined by the separator `par_const[0]` into the arena.
+pub(in crate::code_rule_dsl) const ROW_STRJOIN: u32 = 6;
 /// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
 /// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
@@ -145,6 +148,10 @@ pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
 pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
 /// `zero_pad(n, w)`: key 5's digits zero-padded to key 6's width (0 to 64), the sign first, never truncated.
 pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
+/// `str_between(x, y, z)`: X less prefix Y (key 2) and suffix Z (key 4); no row where X has not both.
+pub(in crate::code_rule_dsl) const TEXTFN_STR_BETWEEN: u32 = 12;
+/// `pkg_up(x, k)`: X less its last key 5 dotted parts; empty past its first.
+pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
@@ -309,7 +316,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
     let mut v: Vec<super::device::KernelAhead> = vec![{
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = program_pipes(run_view_format()).map(drop)))?;
+            rerail_accel::gpu::released(|| rerail_accel_gpu::gpu::caught(|| made = program_pipes(run_view_format()).map(drop)))?;
             made
         };
         ("join join_phase".to_owned(), Box::new(make))
@@ -318,7 +325,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
     v.extend(AXIS_KERNELS.map(|name| -> super::device::KernelAhead {
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = view_pipe(name, format).map(drop)))?;
+            rerail_accel::gpu::released(|| rerail_accel_gpu::gpu::caught(|| made = view_pipe(name, format).map(drop)))?;
             made
         };
         (format!("join{format} {name}"), Box::new(make))
@@ -333,7 +340,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
 static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}{}{}{}{}{}",
-        rerail_accel::gpu::join::COMMON,
+        rerail_accel_gpu::gpu::join::COMMON,
         rerail_blocks::RELATION_READS,
         // The reads that read a 16z tape too, through its batch's cache (decision 0353 step 4b).
         "#include <ukl/reads/tape_z.h>\n",
@@ -348,7 +355,7 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 const AXIS_KERNELS: [&str; 2] = ["axis_count", "axis_write"];
 
 /// A kernel of the views' reads (`AXIS_KERNELS`) for views of `format` (0: several).
-fn view_pipe(name: &str, format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
+fn view_pipe(name: &str, format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, String> {
     pipeline(&format!("join{format}"), name, || view_source(format))
 }
 
@@ -378,7 +385,7 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// On Metal both are call-free: their rare and once-only bodies (`UKL_COLD`, `UKL_ONCE`) inlined, not called. On the
 /// M3, an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
 /// every thread returned first (decision 0641). Inlined, the phase runs indirectly, as on every backend.
-fn program_pipes(format: u32) -> Result<[Arc<rerail_accel::gpu::join::Pipe>; 3], String> {
+fn program_pipes(format: u32) -> Result<[Arc<rerail_accel_gpu::gpu::join::Pipe>; 3], String> {
     let inline = if rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
     let source = || format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format));
     let name = format!("joinprog{format}");
@@ -406,7 +413,7 @@ fn probed<'r>(rel: &'r DevRel, index: Option<&'r DevIndex>) -> &'r DevRel {
 
 /// Whether the process has the device the stages run on.
 pub fn available() -> bool {
-    rerail_accel::gpu::join::device().is_ok()
+    rerail_accel_gpu::gpu::join::device().is_ok()
 }
 
 /// The in-place axis solve's parameters (`axis_count`'s `AxisP`): the views' directory's GPU address, the `node`
@@ -447,7 +454,7 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     const PAGE: usize = 16384;
     // A kind atom's bit: 256 tags of 1,024 slots (`facts::core::KIND_STRIDE`), the kernels' `[8192]`.
     const BIT_WORDS: usize = 8192;
-    let device = rerail_accel::gpu::join::device()?;
+    let device = rerail_accel_gpu::gpu::join::device()?;
     // An evaluation of the launch budget, or the caller's when it is in one: the count and the write.
     let _evaluation = super::metal_backend::launch::LaunchScope::enter();
     let format = views.format;
@@ -612,7 +619,7 @@ impl DevRel {
 
     /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
     fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
@@ -668,7 +675,7 @@ impl DevRel {
     fn wrap(&self) -> Result<Buffer, Error> {
         match &self.home {
             Some(home) => {
-                let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+                let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
                 Ok(home.block.device_buffer(device)?)
             }
             None => Ok(self.buffer.buffer.clone()),
@@ -729,7 +736,7 @@ impl DevRel {
     /// device buffer (which it keeps). Nothing is copied.
     pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {
         assert!(b.at > 0, "a descriptor past the block's header");
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         let far = b.far().map(|f| held_block(device, &f, Box::new(f.clone()))).transpose()?;
@@ -846,7 +853,7 @@ pub(in crate::code_rule_dsl) struct DevAtoms {
 impl DevAtoms {
     /// The directory of `runs` (`Atoms::runs`), for the device's addresses.
     pub(in crate::code_rule_dsl) fn new(runs: Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)>) -> Result<DevAtoms, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let mut blocks: Vec<std::sync::Arc<rerail_blocks::block::Block>> = Vec::new();
         for (_, b) in &runs {
             if !blocks.iter().any(|k| std::sync::Arc::ptr_eq(k, b)) {
@@ -899,7 +906,7 @@ pub(in crate::code_rule_dsl) struct DevKept {
 impl DevKept {
     /// `kept` (a store's atoms' `Kept`) for the device.
     pub(in crate::code_rule_dsl) fn new(kept: &crate::content_store::atoms::Kept) -> Result<DevKept, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         Ok(DevKept { cache: (kept.block().device_buffer(device).map_err(|_| Error::BackendCapacity)?, kept.at() as u64) })
     }
 }
@@ -1017,7 +1024,7 @@ impl DevIndex {
 
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
-    let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+    let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))
 }
 
@@ -1073,6 +1080,10 @@ struct Building {
     queued: bool,
     /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
     gated: bool,
+    /// Queued after its program's round ends (`Batch::round_end`): its program's round count, and how many ends lie
+    /// before it. It is built only where the program passed them: one stopped at an earlier end (no new rows, or handed
+    /// back to the CPU, decision 0657) never ran its phase, and its room goes back.
+    behind: Option<Behind>,
     /// A live relation's (`DevRel::live`): of its rows as a round claimed them, never marked built (a reader of the
     /// relation as it lies finds none of its rows' count).
     live: bool,
@@ -1080,6 +1091,10 @@ struct Building {
     /// by the buffers both bind, and a wrap of the block made after it (the block grown, `Block::device_buffer`) is
     /// another buffer, which the build's writes are not ordered before.
     buffer: Option<Buffer>,
+    /// The view its builder reads its keys through, when the relation is a view's home (decision 0478 step 3): a 16z
+    /// view's reads go through its batch's cache, and one that found no room there read the dead entry, so the index
+    /// holds wrong keys (`misread`).
+    view: Option<crate::code_rule_dsl::facts::vtab::ViewInPlace>,
     /// The program its builder's last job launched in (`Ran::ctl`), once launched: whether it built the index whole.
     whole: Option<Built>,
 }
@@ -1102,7 +1117,28 @@ impl Built {
     }
 }
 
+/// A program's round count (its word, read once its work is done) and the round ends an index's build lies behind.
+#[derive(Clone)]
+struct Behind(std::rc::Rc<dyn Fn() -> u32>, u32);
+
 impl Building {
+    /// Whether its builder ran: no round end it lies behind stopped its program. The device counts the end that stops
+    /// it too (`round_one`), so the count is past the index's ends only where the program went on past them. Where a gate
+    /// stopped it just after the end before the index, it counts as not built: given back, and built again by a later
+    /// batch.
+    fn ran(&self) -> bool {
+        self.behind.as_ref().is_none_or(|Behind(round, ends)| round() > *ends)
+    }
+
+    /// Whether its builder's reads of its view found no room in their batch's cache (read once its work is done): its
+    /// buckets then hold the dead entry's keys, and the index is never marked built, nor read by a taker
+    /// (`InFlight::whole`). Marked, it stayed in the view's home, which every stratum's batch shares, and their probes
+    /// by its key found nothing (t50 step 9, Metal at 512 MB: `param`'s probe of a `child` view lost half a chunk's
+    /// rows, every run).
+    fn misread(&self) -> bool {
+        self.view.as_ref().is_some_and(|v| v.cache_failed() > v.failed)
+    }
+
     /// Its relation's descriptor's offset in its block: what its `InFlight` is found by.
     fn at(&self) -> usize {
         self.home.block.offset_of(self.rel)
@@ -1346,7 +1382,7 @@ pub(in crate::code_rule_dsl) struct DevBytes {
 
 impl DevBytes {
     pub(in crate::code_rule_dsl) fn of(a: &crate::code_rule_dsl::text::automata::Automaton) -> Result<DevBytes, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let of = crate::code_rule_dsl::text::automata::automata();
         let buffer = of.block().device_buffer(device).map_err(|_| Error::BackendCapacity)?;
         Ok(DevBytes { buffer, at: a.at as u64, _of: of })
@@ -1363,6 +1399,53 @@ impl DevBytes {
 pub(in crate::code_rule_dsl) struct Arena {
     reserved: Arc<rerail_device::device::Reserved>,
     cap: std::cell::Cell<usize>,
+    /// Its texts kept one value a content (`Arena::canonical`, decision 0659), or none.
+    canon: Option<Canon>,
+}
+
+/// A recursive component's made texts, one arena value a text (decision 0659): an open-addressed table of its texts'
+/// offsets, by a hash of their bytes. A text is written with its length before it (four bytes, little-endian), and
+/// the table holds its bytes' offset plus one (a word: the device has no 64-bit compare-and-swap). A kernel that made
+/// a text looks it up there (`canon_text`): one found, its value is that one's; else its own is put there. So two
+/// rounds' equal texts are one value, and a set head's dedup, its indexes and its anti-joins, which compare words,
+/// compare texts. Its header: [places - 1, texts, full, 0]; its places after. Address space mapped as it fills, as the
+/// arena's is, and grown between launches by the host (`Arena::grow`), its texts placed again.
+struct Canon {
+    reserved: Arc<rerail_device::device::Reserved>,
+}
+
+/// A canonical table's places to start with, and its header's bytes.
+const CANON_START: usize = 1 << 12;
+const CANON_HEADER: usize = 16;
+
+/// A canonical text's hash (`canon_text`'s): FNV-1a of its bytes, 32 bits.
+fn canon_hash(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811c_9dc5u32, |h, &b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193))
+}
+
+impl Canon {
+    fn words(&self) -> *mut u32 {
+        self.reserved.buffer().contents().cast::<u32>()
+    }
+
+    fn header(&self, k: usize) -> u32 {
+        // SAFETY: the header's words, mapped from the start; read between launches.
+        unsafe { *self.words().add(k) }
+    }
+
+    fn set_header(&self, k: usize, v: u32) {
+        // SAFETY: as `header`'s; no command buffer is using the table.
+        unsafe { *self.words().add(k) = v };
+    }
+
+    fn places(&self) -> usize {
+        self.header(0) as usize + 1
+    }
+
+    fn place(&self, i: usize) -> *mut u32 {
+        // SAFETY: place `i` below `places()`, mapped.
+        unsafe { self.words().add(CANON_HEADER / 4 + i) }
+    }
 }
 
 /// A batch's arena, to start with: most strata make few texts.
@@ -1377,12 +1460,84 @@ fn text_arena_max() -> usize {
 impl Arena {
     pub(in crate::code_rule_dsl) fn new(cap: usize) -> Result<Arena, Error> {
         let cap = cap.clamp(16, u32::MAX as usize / 2);
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let reserved = rerail_device::device::reserve(device, 16 + cap.max(text_arena_max()), 16 + cap, true).map_err(|_| Error::BackendCapacity)?;
-        let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap) };
+        let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap), canon: None };
         arena.header(0, 0);
         arena.header(1, cap as u32);
         Ok(arena)
+    }
+
+    /// An arena whose texts are kept one value a content (`Canon`, decision 0659): a recursive component's, whose set
+    /// heads keep made texts.
+    pub(in crate::code_rule_dsl) fn canonical(cap: usize) -> Result<Arena, Error> {
+        let mut arena = Arena::new(cap)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        // At most a place a text of four bytes or more (its length is four), twice over.
+        let most = (text_arena_max() / 2).next_power_of_two().max(CANON_START);
+        let reserved = rerail_device::device::reserve(device, CANON_HEADER + 4 * most, CANON_HEADER + 4 * CANON_START, true).map_err(|_| Error::BackendCapacity)?;
+        let canon = Canon { reserved: Arc::new(reserved) };
+        // SAFETY: its first places' bytes, mapped; nothing uses the table yet.
+        unsafe { std::ptr::write_bytes(canon.words(), 0, CANON_HEADER / 4 + CANON_START) };
+        canon.set_header(0, (CANON_START - 1) as u32);
+        arena.canon = Some(canon);
+        Ok(arena)
+    }
+
+    /// Its canonical table's buffer, where its texts are kept one value a content.
+    pub(in crate::code_rule_dsl) fn canon_buffer(&self) -> Option<Buffer> {
+        self.canon.as_ref().map(|c| c.reserved.buffer())
+    }
+
+    /// The canonical text at `at` (its bytes' offset) of `len` bytes, found in the table or put there: the value of
+    /// the one there. None when the table has no place left.
+    fn canon_insert(&self, c: &Canon, at: usize, len: usize) -> Option<i64> {
+        let bytes = self.text(ARENA_TEXT | ((at as i64) << 24) | len as i64)?;
+        let mask = c.places() - 1;
+        let h = canon_hash(bytes) as usize;
+        for probe in 0..=mask {
+            let i = (h + probe) & mask;
+            // SAFETY: place `i`, below the table's places; no command buffer is using it.
+            let e = unsafe { *c.place(i) } as usize;
+            if e == 0 {
+                unsafe { *c.place(i) = at as u32 + 1 };
+                c.set_header(1, c.header(1) + 1);
+                return Some(ARENA_TEXT | ((at as i64) << 24) | len as i64);
+            }
+            let (eat, elen) = (e - 1, self.len_at(e - 1));
+            if elen == len && self.text(ARENA_TEXT | ((eat as i64) << 24) | elen as i64) == Some(bytes) {
+                return Some(ARENA_TEXT | ((eat as i64) << 24) | elen as i64);
+            }
+        }
+        None
+    }
+
+    /// The length written before a canonical text whose bytes are at `at`.
+    fn len_at(&self, at: usize) -> usize {
+        let mut w = [0u8; 4];
+        // SAFETY: the four bytes before a canonical text's, within the arena; read between launches.
+        unsafe { std::ptr::copy_nonoverlapping(self.base().add(16 + at - 4), w.as_mut_ptr(), 4) };
+        u32::from_le_bytes(w) as usize
+    }
+
+    /// Its canonical table placed again in `places` places (mapped further), every text in it. Between launches.
+    fn canon_regrow(&self, c: &Canon, places: usize) -> Result<bool, Error> {
+        if !c.reserved.map(CANON_HEADER + 4 * places).map_err(|_| Error::BackendCapacity)? {
+            return Ok(false);
+        }
+        let old = c.places();
+        // copy: not block data: the table's offsets, placed again at once.
+        let texts: Vec<usize> = (0..old).map(|i| unsafe { *c.place(i) } as usize).filter(|&e| e != 0).collect();
+        // SAFETY: the places mapped now; no command buffer is using the table.
+        unsafe { std::ptr::write_bytes(c.place(0), 0, places) };
+        c.set_header(0, (places - 1) as u32);
+        c.set_header(1, 0);
+        c.set_header(2, 0);
+        for e in texts {
+            let len = self.len_at(e - 1);
+            self.canon_insert(c, e - 1, len).ok_or(Error::BackendCapacity)?;
+        }
+        Ok(true)
     }
 
     /// Its header's word `k` set to `v` (no command buffer that uses the arena pending).
@@ -1409,6 +1564,13 @@ impl Arena {
     /// the batch's may have grown it already): false where it cannot be (past its address space, or an allocation
     /// that cannot grow).
     pub(in crate::code_rule_dsl) fn grow(&self) -> Result<bool, Error> {
+        // Its canonical table full, or half full: four times the places, its texts placed again (decision 0659).
+        if let Some(c) = &self.canon
+            && (c.header(2) != 0 || 2 * c.header(1) as usize > c.places())
+            && !self.canon_regrow(c, 4 * c.places())?
+        {
+            return Ok(false);
+        }
         let wanted = self.wanted();
         let room = (2 * wanted).min(u32::MAX as usize / 2);
         if wanted > room {
@@ -1436,6 +1598,19 @@ impl Arena {
     /// value, or none when it has no room.
     pub(in crate::code_rule_dsl) fn put(&self, bytes: &[u8]) -> Option<i64> {
         let off = self.wanted();
+        if let Some(c) = &self.canon {
+            // Its length first, then its bytes; the one there already where it is (decision 0659).
+            if off + 4 + bytes.len() > self.cap() || bytes.len() > 0xff_ffff {
+                return None;
+            }
+            // SAFETY: as below, four bytes more.
+            unsafe {
+                std::ptr::copy_nonoverlapping((bytes.len() as u32).to_le_bytes().as_ptr(), self.base().add(16 + off), 4);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.base().add(16 + off + 4), bytes.len());
+            }
+            self.header(0, (off + 4 + bytes.len()) as u32);
+            return self.canon_insert(c, off + 4, bytes.len());
+        }
         if off + bytes.len() > self.cap() || bytes.len() > 0xff_ffff {
             return None;
         }
@@ -1476,6 +1651,9 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) ended: bool,
     /// Whether a round's end stopped it past its rounds.
     pub(in crate::code_rule_dsl) past_rounds: bool,
+    /// Whether a round's end handed its component back to the CPU (`round_end`'s `narrow`, decision 0657): a round
+    /// that did less work than a round on the device costs.
+    pub(in crate::code_rule_dsl) narrow: bool,
     /// Whether a size script parked past its program's arena (decision 0603 step 5), an arena whose pages could not
     /// be mapped further, with `stopped`; the bytes its claims wanted. The batch's next programs' arenas are twice
     /// that at least (`Batch::arena_floor`).
@@ -1529,6 +1707,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Whether its caller encodes a program again that reached a block through two wraps (`Done::rewrapped`);
     /// else such a program fails the batch.
     again_on_rewrap: bool,
+    /// The round ends queued in the open program (`Building::behind`).
+    ends: Option<Behind>,
     /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
@@ -1586,13 +1766,13 @@ impl Batch {
     }
 
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
-        rerail_accel::gpu::join::device()?;
+        rerail_accel_gpu::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
     }
 
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
-        rerail_accel::gpu::join::device()?;
+        rerail_accel_gpu::gpu::join::device()?;
         Ok(Batch {
             pass: None,
             queued: Vec::new(),
@@ -1601,6 +1781,7 @@ impl Batch {
             programs: Vec::new(),
             gated: false,
             again_on_rewrap: false,
+            ends: None,
             committed: Vec::new(),
             done: Done::default(),
             dummy: Held::new(64)?,
@@ -1736,15 +1917,28 @@ impl Batch {
         // Its launches in the ledger: a stack's dispatches one (decision 0648).
         self.done.dispatches += pass.launches() as u32;
         rerail_accel::exec::command_committed();
-        let s = pass.commit().map_err(Error::from)?;
+        // A submission whose launches failed to encode (a lease past the device's budget, say) is dropped uncommitted
+        // with every stage encoded in it, not only the one whose launch failed: the batch is spoiled, so all its strata
+        // run on the CPU (t50 step 9, Metal at 512 MB: the others in that submission finished with the counts of work
+        // never run, and `param`'s probe after an index built in it found no rows).
+        let s = match pass.commit() {
+            Ok(s) => s,
+            Err(e) => {
+                crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch that lost a submission its launches failed to encode (its strata on the CPU)", 1);
+                self.spoil();
+                return Err(e.into());
+            }
+        };
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
-        // be built (`finish`): none is told. Nor is any of a spoiled batch's (`flush`): its builders may never launch.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && !self.spoiled) {
+        // be built (`finish`), as may one queued after a round end (decision 0657): none is told. Nor is any of a spoiled
+        // batch's (`flush`): its builders may never launch.
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && b.behind.is_none() && !self.spoiled) {
             // Launched, or not told: its program is what says whether it was built.
             let Some(whole) = b.whole.clone() else { continue };
+            let view = b.view.clone();
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), lent: false, whole: std::sync::Arc::new(move || whole.whole()) });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.flushed(), lent: false, whole: std::sync::Arc::new(move || whole.whole() && view.as_ref().is_none_or(|v| v.cache_failed() <= v.failed)) });
             b.queued = true;
         }
         self.committed.push(s);
@@ -1874,15 +2068,24 @@ impl Batch {
             if (stopped && b.gated) || b.live {
                 continue;
             }
-            // Its program stopped before its last phase (an arena passed, decision 0603 step 5): never written whole.
-            if !b.whole.as_ref().is_some_and(Built::whole) {
-                crate::code_rule_dsl::prof::count_named("device.index its program stopped before, given back".into(), 4 * b.room.rows_n as usize);
-                // SAFETY: the batch's work has completed; nothing reads the room as an index.
-                unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
+            let (r, room) = (unsafe { &*b.rel }, &b.room);
+            // Its program stopped before the build's phase: at a round end before it (no new rows, or handed back to
+            // the CPU, decision 0657: a stratum handed back after its seed round left its delta rules' index of an input
+            // marked built and empty, and the CPU's readers by it found no rows), or before its last phase (an arena
+            // passed, decision 0603 step 5). Never built whole: its room the block's again.
+            if !b.ran() || !b.whole.as_ref().is_some_and(Built::whole) {
+                crate::code_rule_dsl::prof::count_named("device.index its program stopped before, given back".into(), 4 * room.rows_n as usize);
+                // SAFETY: the batch's work has completed; nothing built or read the index.
+                unsafe { r.give_back_index(&b.home.block, room) };
+                continue;
+            }
+            if b.misread() {
+                crate::code_rule_dsl::prof::count_named("device.index whose view's reads found no room in the cache, not marked built".into(), 4 * room.rows_n as usize);
+                // SAFETY: the batch's work has completed; a taker read none of it (`InFlight::whole`).
+                unsafe { r.give_back_index(&b.home.block, room) };
                 continue;
             }
             b.check("its batch done");
-            let (r, room) = (unsafe { &*b.rel }, &b.room);
             // Another batch built the same index meanwhile (each found none, and built its own, on another thread),
             // or this batch's builder was not all encoded: it goes back, its room the block's again, and a later
             // probe finds the one built.
@@ -1907,6 +2110,10 @@ impl Batch {
             }
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
             unsafe { r.index_built(room) };
+            // A test build checks what it marked: its first, middle and last rows found by their own keys (decision
+            // 0657: an index whose build never ran was marked built, and every probe of it found nothing).
+            #[cfg(any(test, feature = "test-hooks"))]
+            check_built(r, room);
         }
         Ok(std::mem::take(&mut self.done))
     }
@@ -2009,7 +2216,7 @@ impl Batch {
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
-                    taken = Some((room.index as u32, f.done.watch(), f.whole.clone()));
+                    taken = Some((room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done), f.whole.clone()));
                     break 'room None;
                 }
                 // Bound by the builder's buffer: its launches, before this batch's probes in the open submission,
@@ -2031,7 +2238,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 f.lent = true;
-                taken = Some((f.room.index as u32, f.done.watch(), f.whole.clone()));
+                taken = Some((f.room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
@@ -2100,7 +2307,7 @@ impl Batch {
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live, buffer: None, whole: None });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, view: rel.view.clone(), buffer: None, whole: None });
         let buffer = bound(&home)?;
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;
@@ -2328,8 +2535,21 @@ impl Batch {
     /// in the automata block), and `id`: a test's (its verdicts) or the functions' (their texts, `ROW_KEPT`) in the
     /// batch's rolling cache; then its rows scattered.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32,
-                                              in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+    /// `right`: the relation a string join (`ROW_STRJOIN`) reads by its keys, as a stage's (`stage`), with its screen.
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32, right: Option<(&DevRel, Option<&DevIndex>)>,
+                                              screen: Option<&Screen>, in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+        // A view's format only where it reads a relation: a made text per row reads none.
+        let format = right.map_or(0, |(rel, index)| views_format(Some(probed(rel, index))));
+        let rbuf: Buffer = match right {
+            Some((rel, index)) => {
+                let rel = index.map_or(rel, |ix| ix.of(rel));
+                bind_right(&mut stage, rel, index);
+                rel.resident_in(self.open()?);
+                rel.wrap()?
+            }
+            None => self.dummy.buffer.clone(),
+        };
+        let fbuf = self.screen(&mut stage, screen);
         stage.cap_in = left.room() as u32;
         stage.cap_out = out.room() as u32;
         stage.in_slot = in_slot as u32;
@@ -2349,11 +2569,12 @@ impl Batch {
         let atoms = self.atoms.clone().ok_or(Error::BackendCapacity)?;
         let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
         atoms.resident_in(self.open()?);
-        let mut job = Job::new(JobKind::Row, 0, stage);
+        let mut job = Job::new(JobKind::Row, format, stage);
         job.reads_placed(left, &[(0, CAP_IN)]);
         job.makes_placed(out, &[(0, CAP_OUT)]);
         job.v_place = left.placed();
-        job.p = Some([ngroups as u32, kept, states, classes, start, id, 0, 0].iter().flat_map(|w| w.to_ne_bytes()).collect());
+        let canonical = u32::from(self.arena()?.canon.is_some());
+        job.p = Some([ngroups as u32, kept, states, classes, start, id, canonical, 0].iter().flat_map(|w| w.to_ne_bytes()).collect());
         job.desc.l = left.reach_by(&mut job, false)?;
         job.desc.a = job.reach(&arena, 0, true)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
@@ -2363,13 +2584,18 @@ impl Batch {
         job.desc.s = job.reach(&work.buffer, 0, true)?;
         job.desc.d = job.reach(&atoms.dir.0, atoms.dir.1, false)?;
         job.desc.vc = job.reach(&cache.cache.0, cache.cache.1, true)?;
+        job.desc.r = job.reach(&rbuf, 0, false)?;
+        job.desc.f = job.reach(&fbuf, 0, false)?;
+        // Its arena's canonical table, where its texts are kept one value a content (decision 0661): P[6] says so.
+        let canon = self.arena()?.canon_buffer();
+        job.desc.h = job.reach(canon.as_ref().unwrap_or(&self.dummy.buffer), 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
         // A SIMD group a row, a threadgroup each: its count's grid is its groups.
         (job.n, job.count, job.scatter) = (n, ngroups, n);
         job.m = (Some(job.desc.totals + 4 * in_slot as u64), left.room());
         job.own.extend([work, values]);
         let (l, o) = (left.key(job.desc.l), out.key(job.desc.o));
-        job.order(&[l, job.desc.totals], &[o, job.desc.totals]);
+        job.order(&[l, job.desc.r, job.desc.totals], &[o, job.desc.totals]);
         self.queue(job)
     }
 
@@ -2676,16 +2902,17 @@ impl Batch {
     /// its next deltas' lengths set, its words emptied for the next round, its counts summed and logged), the round
     /// counted in slot 0 of `round`; then the round after, from phase `next` (`next_phase`; none: the phase after its
     /// own). The program ends when no `RoundOp::Any` word is non-zero (`Done::ended`) and fails past round `max`
-    /// (`Done::past_rounds`). Its rounds go on across its launches: a launch's GPU time is its workers' budgets'
-    /// (decision 0603 point 5).
-    pub(in crate::code_rule_dsl) fn round_end(&mut self, ops: &[RoundOp<'_>], round: &Words, max: u32, next: Option<u32>) -> Result<(), Error> {
+    /// (`Done::past_rounds`). A round that made rows and whose `RoundOp::Work` words sum under `narrow` (0: never)
+    /// stops it, handed back to the CPU (`Done::narrow`, decision 0657). Its rounds go on across its launches: a
+    /// launch's GPU time is its workers' budgets' (decision 0603 point 5).
+    pub(in crate::code_rule_dsl) fn round_end(&mut self, ops: &[RoundOp<'_>], round: &Words, max: u32, narrow: u32, next: Option<u32>) -> Result<(), Error> {
         // Alone in its level: the round's work all before it, the next round's after. Its phase is the next one
         // (`next_phase`); none given, the round after goes on from the phase after it.
         self.flush()?;
         let next = next.unwrap_or(self.program.phases.len() as u32 + 1);
         let mut job = Job::new(JobKind::Round, 0, Stage::default());
         let ra = job.reach(&round.buffer.buffer, 0, true)?;
-        let mut p: Vec<u64> = vec![ra, u64::from(ops.len() as u32) | u64::from(max) << 32, u64::from(next)];
+        let mut p: Vec<u64> = vec![ra, u64::from(ops.len() as u32) | u64::from(max) << 32, u64::from(next) | u64::from(narrow) << 32];
         let (mut reads, mut writes) = (Vec::new(), vec![ra]);
         let word = |job: &mut Job, at: &At<'_>, write: bool| at.reach(job, write);
         for op in ops {
@@ -2698,6 +2925,7 @@ impl Batch {
                 }
                 RoundOp::Log(w, from) => (job.reach(&w.buffer.buffer, 0, true)?, word(&mut job, from, false)?, 3, w.len),
                 RoundOp::Any(from) => (0, word(&mut job, from, false)?, 4, 1),
+                RoundOp::Work(from) => (0, word(&mut job, from, false)?, 6, 1),
                 RoundOp::Sum(to, from) => {
                     assert!(from.len <= to.len, "counts summed into fewer words");
                     (job.reach(&to.buffer.buffer, 0, true)?, job.reach(&from.buffer.buffer, 0, false)?, 5, from.len)
@@ -2724,6 +2952,10 @@ impl Batch {
         // Its phase, the one just flushed, and its next round's first: the walk's jump (decision 0648).
         let at = self.program.phases.len() as u32 - 1;
         self.program.jumps.push((at, next));
+        // The indexes queued after it are built only where the program passes it (`Building::behind`): its count
+        // past it, from where the host set it before the program runs (a stratum's rounds go on across programs).
+        let ends = self.ends.as_ref().map_or_else(|| round.get(0), |b| b.1) + 1;
+        self.ends = Some(Behind(std::rc::Rc::new(round.reader(0)), ends));
         Ok(())
     }
 
@@ -2938,7 +3170,7 @@ impl Batch {
         let rows_now = fixed + level_live.iter().map(|l| prog.rooms.live_ix[l.0].rows.get() as usize).sum::<usize>();
         let mut sort_room = (!level_live.is_empty()).then(|| SortRoom { reserved: Vec::new(), hist: None, fixed, live: level_live.iter().map(|l| l.0).collect() });
         let sort = if ix_rows > 0 {
-            let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+            let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
             let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
                 let Some(room) = &mut sort_room else { return Held::new(bytes).map_err(|_| Error::BackendCapacity) };
@@ -2995,9 +3227,9 @@ impl Batch {
             return Err(Error::BackendCapacity);
         }
         prog.levels += 1;
-        let groups = |threads: usize| threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1);
+        let groups = |threads: usize| threads.div_ceil(rerail_accel_gpu::gpu::join::GROUP as usize).max(1);
         // A row stage's SIMD groups, a worker's group of them an item.
-        let rows_a_group = rerail_accel::gpu::join::GROUP as usize / simd_group();
+        let rows_a_group = rerail_accel_gpu::gpu::join::GROUP as usize / simd_group();
         // A dedup's places placed with its input: its clear's count its places' word (its size script's).
         // A fold's, its clear's and its merge's count its mask's word and one.
         let clears: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.h_place.map(|h| match h.places {
@@ -3016,7 +3248,7 @@ impl Batch {
                         // else all of them (`per` 0).
                         let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE)));
                         let (count, per, plus) = match word {
-                            Some((count, plus)) => (count, rerail_accel::gpu::join::GROUP as u32, plus),
+                            Some((count, plus)) => (count, rerail_accel_gpu::gpu::join::GROUP as u32, plus),
                             None => (0, 0, 0),
                         };
                         segs.push(SegAt { first: items.len() as u32, items: n as u32, count, per, plus });
@@ -3070,7 +3302,8 @@ impl Batch {
             }
             debug_assert!(std::ptr::eq(from, f), "the sort ends where `sorted` says");
             prog.rooms.sorts.extend(sort_room.take());
-            job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count)]);
+            // Its rows placed, and beside them its buckets' offsets, a thread a bucket (decision 0647).
+            job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count), (JobKind::Index, PK_IX_OFFS, |j| j.buckets + 1)]);
         }
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
@@ -3139,6 +3372,8 @@ impl Batch {
         }
         self.done.programs += 1;
         let mut prog = std::mem::take(&mut self.program);
+        // The next program's round ends are its own.
+        self.ends = None;
         // The next program's claims go on past this one's, in the same arena: a table one places, a later one reads.
         self.program.top = prog.top.clone();
         // The arena, the batch's programs' one: each level's counts and placed tables at the offsets its size scripts
@@ -3148,7 +3383,7 @@ impl Batch {
         let counts = match &self.pool {
             Some(a) => a.clone(),
             None => {
-                let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+                let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
                 // Its first pages: its claims' guess, and the floor (a round's reach, `arena_floor`) where mapping
                 // commits no memory (the CPU backend's pages are committed as touched) or the arena cannot grow. On
                 // Metal a mapped page is real memory, so a reserved arena maps its guess and its claims map the rest
@@ -3200,7 +3435,7 @@ impl Batch {
                     ScanData::At(a) => a,
                 };
                 let data = at(l.data);
-                ScanLevel { data, sums: l.sums.map_or(data, at), w: ScanWords { n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets) | if l.small { 2 } else { 0 }, at: 0, sums_at: 0 } }
+                ScanLevel { data, sums: l.sums.map_or(data, at), w: ScanWords { n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets) | if l.sized { 2 } else { 0 }, at: 0, sums_at: 0, summed: l.n.div_ceil(SCAN_TILE as u32), pad: 0 } }
             })
             .collect();
         // Each in a buffer of its own (an empty one of a few bytes: a buffer is never empty).
@@ -3234,7 +3469,7 @@ impl Batch {
         // reached by address), which every stack's own submission makes resident again.
         let resident = self.pass.as_ref().map(|p| p.residents()).unwrap_or_default();
         let kit = Kit { resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
-                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? },
+                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
                         item_kinds: prog.items.iter().map(|i| i[0] >> 24).collect(), jumps: prog.jumps, last };
         let rounds = ProgramSizes::now().rounds.unwrap_or(STACK_ROUNDS_FIRST).max(1);
         let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
@@ -3286,6 +3521,15 @@ impl Batch {
             if kit.rebase.ta != 0 && now != kit.rebase.ta {
                 kit.retext(now);
             }
+            // Its canonical table grown since (decision 0659), likewise.
+            if let Some(t) = a.canon_buffer() {
+                let now = address(&t)?;
+                if kit.rebase.tt != 0 && now != kit.rebase.tt {
+                    let old = kit.rebase.tt;
+                    kit.readdress(old, now);
+                    kit.rebase.tt = now;
+                }
+            }
         }
         let [grid, phase, chain] = program_pipes(kit.format)?;
         if let Some(t) = &kit.top {
@@ -3293,6 +3537,7 @@ impl Batch {
             t.set(1, u32::try_from(room / 16).map_err(|_| Error::BackendCapacity)?);
         }
         let text = self.arena.as_ref().filter(|_| kit.rebase.ta != 0).map(|a| a.buffer());
+        let table = self.arena.as_ref().filter(|_| kit.rebase.tt != 0).and_then(|a| a.canon_buffer());
         // Its own submission: what is open committed first, so the stack is one launch alone.
         self.submit_open()?;
         let kit = &r.kit;
@@ -3314,6 +3559,9 @@ impl Batch {
         }
         if let Some(a) = &text {
             pass.use_read_write(a);
+        }
+        if let Some(t) = &table {
+            pass.use_read_write(t);
         }
         pass.use_read_write(&kit.counts.buffer);
         if let Some(t) = &kit.top {
@@ -3478,10 +3726,11 @@ impl Batch {
                 self.done.stopped = true;
                 continue;
             }
-            // A round's end ended it (no new rows) or stopped it past its rounds (`round_end`).
-            if flags & (4 | 16) != 0 {
+            // A round's end ended it (no new rows), stopped it past its rounds, or handed it back (`round_end`).
+            if flags & (4 | 8 | 16) != 0 {
                 self.done.ended |= flags & 16 != 0;
                 self.done.past_rounds |= flags & 4 != 0;
+                self.done.narrow |= flags & 8 != 0;
                 continue;
             }
             // Its stack ended with its walk not done (its rounds' share, or `STACK_PHASES`): launched again, where it
@@ -3492,6 +3741,21 @@ impl Batch {
             }
         }
         Ok((whole, again))
+    }
+}
+
+/// A test build's check of an index just marked built (`Batch::finish`): a relation's own rows (none read through a
+/// view or a base, none dead), its first, middle and last rows each found by its own key.
+#[cfg(any(test, feature = "test-hooks"))]
+fn check_built(r: &rerail_blocks::relation::Relation, room: &rerail_blocks::relation::IndexRoom) {
+    let cols: Vec<usize> = room.key[..room.ncols].iter().map(|&c| c as usize).collect();
+    if room.rows_n == 0 || room.from != 0 || r.base_rows != 0 || !r.own_dead().is_empty() || cols.iter().any(|&c| c >= r.arity as usize) {
+        return;
+    }
+    let v = rerail_blocks::relation::View::full(r);
+    for row in [0, room.rows_n / 2, room.rows_n - 1] {
+        let key: Vec<i64> = cols.iter().map(|&c| r.rows.get(row, c)).collect();
+        assert!(v.probe(room.index, &key).contains(&row), "an index marked built ({} rows keyed by {cols:?}) does not find its row {row}: its build did not run", room.rows_n);
     }
 }
 
@@ -3651,8 +3915,17 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
 /// `guess` values guessed), its tiles' sums claimed in the arena, level by level, and the next level's values and
 /// count with them. `level`: a level's word's place (`Late::Scan`, or `Late::Pending` before the scan is made).
 fn size_scan(prog: &mut Program, top: u64, n0: u32, guess: usize, level: impl Fn(usize, WordAt) -> Late) {
-    let (s0, t0, w) = (9u32, 10u32, 6u32);
-    let (lat, ln, lsums) = (word_at!(ScanLevel, w.at), word_at!(ScanLevel, w.n), word_at!(ScanLevel, w.sums_at));
+    // Its registers: `x` a scratch, `big` 2^32 where the first level's tiles are past 1,024 (its sums scanned as a
+    // level of their own), else none: `min(t, big)` is then `t` or none, as `min(t, many)` with `many` 2^32 where
+    // `t` is past `at_most`, else none (the script multiplies by constants alone).
+    let (s0, t0, w, x, big) = (9u32, 10u32, 6u32, 7u32, 12u32);
+    let past = |prog: &mut Program, into: u32, t: u32, at_most: u64| {
+        prog.op(OpAt::of(SZ_CONST, into, 0, 0).c(Late::Abs(at_most)));
+        prog.op(OpAt::of(SZ_SUB, into, t, into));
+        prog.op(OpAt::of(SZ_MIN, into, into, R_ONE));
+        prog.op(OpAt::of(SZ_MUL, into, into, 0).c(Late::Abs(1 << 32)));
+    };
+    let (lat, ln, lsums, lsummed) = (word_at!(ScanLevel, w.at), word_at!(ScanLevel, w.n), word_at!(ScanLevel, w.sums_at), word_at!(ScanLevel, w.summed));
     prog.op(OpAt::of(SZ_PUT32, n0, 0, 0).w(level(0, ln)));
     let mut guess = guess;
     for l in 0..2 {
@@ -3662,7 +3935,16 @@ fn size_scan(prog: &mut Program, top: u64, n0: u32, guess: usize, level: impl Fn
         claim(prog, top, s0, w, 4, false);
         prog.op(OpAt::of(SZ_PUT32, s0, 0, 0).w(level(l, lsums)));
         prog.op(OpAt::of(SZ_PUT32, s0, 0, 0).w(level(l + 1, lat)));
-        prog.op(OpAt::of(SZ_PUT32, t0, 0, 0).w(level(l + 1, ln)));
+        if l == 0 {
+            // The first level's tiles whose sums its pass writes: none for one tile, whose offset is none.
+            past(prog, x, t0, 1);
+            prog.op(OpAt::of(SZ_MIN, x, t0, x));
+            prog.op(OpAt::of(SZ_PUT32, x, 0, 0).w(level(0, lsummed)));
+            past(prog, big, t0, ProgramSizes::now().own_tiles.unwrap_or(SCAN_TILE as u64).clamp(1, SCAN_TILE as u64));
+        }
+        // The next level's count: its values (this level's tiles' sums) a level only where they are past one tile.
+        prog.op(OpAt::of(SZ_MIN, x, t0, big));
+        prog.op(OpAt::of(SZ_PUT32, x, 0, 0).w(level(l + 1, ln)));
         prog.op(OpAt::of(SZ_ADD, n0, t0, ZERO));
         guess = guess.div_ceil(SCAN_TILE).max(1);
         prog.arena += units(4 * (guess + 1));
@@ -3788,6 +4070,8 @@ pub(in crate::code_rule_dsl) enum RoundOp<'a> {
     Any(At<'a>),
     /// Each of `from`'s words added to `to`'s: a round's counts summed over the rounds.
     Sum(&'a Words, &'a Words),
+    /// Rows a stage made this round: the round's work, against `round_end`'s `narrow`.
+    Work(At<'a>),
 }
 
 /// `Rows::len`'s offset in its descriptor: a relation's rows as claimed, which the device reads (`clif_rows_len`) and
@@ -3805,6 +4089,8 @@ struct Rebase {
     at: (u64, u64, u64),
     /// The batch's text arena's address its descriptors name (0: none), for one mapped further (`Kit::retext`).
     ta: u64,
+    /// Its canonical table's (decision 0659), likewise.
+    tt: u64,
 }
 
 impl Kit {
@@ -3836,6 +4122,13 @@ impl Kit {
     /// descriptor's buffer address that named the old one written again in place. Between launches: no work of it
     /// runs.
     fn retext(&mut self, ta: u64) {
+        let old = self.rebase.ta;
+        self.readdress(old, ta);
+        self.rebase.ta = ta;
+    }
+
+    /// Each descriptor's buffer address that named `old` written again as `now`. Between launches.
+    fn readdress(&mut self, old: u64, now: u64) {
         const WORDS: usize = std::mem::offset_of!(JobDesc, at) / 8;
         let n = self.descs.buffer.length() as usize / std::mem::size_of::<JobDesc>();
         let descs = self.descs.buffer.contents().cast::<[u64; WORDS]>();
@@ -3843,11 +4136,10 @@ impl Kit {
             // SAFETY: descriptor `i` of those this buffer was made of (`JobDesc`, its addresses its first `WORDS`
             // words); no work of the program runs between launches.
             let words = unsafe { &mut *descs.cast::<u8>().add(i * std::mem::size_of::<JobDesc>()).cast::<[u64; WORDS]>() };
-            for w in words.iter_mut().filter(|w| **w == self.rebase.ta) {
-                *w = ta;
+            for w in words.iter_mut().filter(|w| **w == old) {
+                *w = now;
             }
         }
-        self.rebase.ta = ta;
     }
 }
 
@@ -4024,7 +4316,7 @@ impl Kit {
             moved.push((ix.home.clone(), old, new));
         }
         // Each block grown wrapped again where it outgrew its wrap: what the program reaches of it re-pointed.
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let mut blocks: Vec<std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>> = Vec::new();
         for (f, _, _) in &grew {
             if !blocks.iter().any(|b| std::sync::Arc::ptr_eq(b, f)) {
@@ -4229,6 +4521,7 @@ const PK_SUM: u32 = 26;
 const PK_GATE: u32 = 27;
 const PK_ROUND: u32 = 28;
 const PK_SIZE: u32 = 29;
+const PK_IX_OFFS: u32 = 30;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
@@ -4247,6 +4540,9 @@ struct SegAt {
 }
 
 const _: () = assert!(std::mem::size_of::<SegAt>() == 24);
+
+/// A segment whose count of none starts no group (`join_stages`' `SEG_EMPTY`, decision 0647): its `per`'s top bit.
+const SEG_EMPTY: u32 = 1 << 31;
 
 /// A batch's program (decision 0603): the levels flushed since its last launch, as phases of items (`Item`: a group
 /// of a job's, a scan level's or a sort pass's work), each phase a dispatch of `join_phase`, its groups as the counts
@@ -4337,34 +4633,31 @@ impl Program {
         let t0 = n.div_ceil(SCAN_TILE).max(1);
         let t1 = t0.div_ceil(SCAN_TILE).max(1);
         for (k, m) in [(0, n), (1, t0), (2, t1)] {
-            self.scans.push(ScanAt { data: if k == 0 { data } else { ScanData::Script }, sums: (k < 2).then_some(ScanData::Script), n: m as u32, offsets: k < 2, small: k == 0 && small_scans() });
+            self.scans.push(ScanAt { data: if k == 0 { data } else { ScanData::Script }, sums: (k < 2).then_some(ScanData::Script), n: m as u32, offsets: k < 2, sized: k == 0 });
         }
         first
     }
 
-    /// The phases of a scan whose levels are `scan_levels_sized`'s from `first`, `n` values guessed: as many tiles'
-    /// items as each level's count, set by its size script, needs.
+    /// The phases of a scan whose levels are `scan_levels_sized`'s from `first`, `n` values guessed (decision 0647):
+    /// its first level's tiles' sums, its second level's tiles' sums, its third level scanned, its second's tiles,
+    /// its first's. Each pass's groups are a count its size script set. Where the first level's tiles are 1,024 at
+    /// most (`size_scan`), the second and third levels' counts are none and their three passes start no group, its
+    /// first level's tiles adding the sums before them themselves; where it is one tile, its sums' pass starts none.
     fn scan_sized_phases(&mut self, first: usize, n: usize) {
         let t0 = n.div_ceil(SCAN_TILE).max(1);
         let t1 = t0.div_ceil(SCAN_TILE).max(1);
-        let n_word = word_at!(ScanLevel, w.n);
-        let tiles = |p: &mut Program, kind: u32, level: usize, items: usize| {
-            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per: SCAN_TILE as u32, plus: 0 }]);
-            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + level, n_word)));
+        let (n_word, summed) = (word_at!(ScanLevel, w.n), word_at!(ScanLevel, w.summed));
+        let pass = |p: &mut Program, kind: u32, level: usize, items: usize, word: WordAt, per: u32| {
+            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per, plus: 0 }]);
+            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + level, word)));
         };
-        // Each pass's groups from a level's count, so that where the first level's values fit one tile, its sums'
-        // pass scanning them whole and emptying the levels after it (decision 0647), the four passes after it start
-        // none: the top level's one tile as its values' (one, or none), the first level's tiles as the second
-        // level's values (its tiles' sums, one a tile).
-        let level_items = |p: &mut Program, kind: u32, level: usize, items: usize, by: usize, per: usize| {
-            p.phase_of((0..items).map(|g| (kind, (first + level) as u32, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: items as u32, per: per as u32, plus: 0 }]);
-            p.seg_late.push((p.segs.len() - 1, Late::Scan(first + by, n_word)));
-        };
-        tiles(self, PK_SCAN_SUMS, 0, t0);
-        tiles(self, PK_SCAN_SUMS, 1, t1);
-        level_items(self, PK_SCAN_TILES, 2, 1, 2, SCAN_TILE);
-        tiles(self, PK_SCAN_TILES, 1, t1);
-        level_items(self, PK_SCAN_TILES, 0, t0, 1, 1);
+        let tile = SCAN_TILE as u32;
+        pass(self, PK_SCAN_SUMS, 0, t0, summed, 1 | SEG_EMPTY);
+        pass(self, PK_SCAN_SUMS, 1, t1, n_word, tile | SEG_EMPTY);
+        pass(self, PK_SCAN_TILES, 2, 1, n_word, tile | SEG_EMPTY);
+        pass(self, PK_SCAN_TILES, 1, t1, n_word, tile | SEG_EMPTY);
+        // Its first level's tiles at least one: the total, after its values, of none.
+        pass(self, PK_SCAN_TILES, 0, t0, n_word, tile);
     }
 
     /// An exclusive scan of the `n` values at `data` in place, with their total after them, as phases: each level's
@@ -4388,7 +4681,7 @@ impl Program {
         let mut at = Vec::with_capacity(levels.len());
         for &(d, m, sums) in &levels {
             at.push(self.scans.len() as u32);
-            self.scans.push(ScanAt { data: d, sums: sums.map(|s| ScanData::At(s.0)), n: m as u32, offsets: sums.is_some(), small: false });
+            self.scans.push(ScanAt { data: d, sums: sums.map(|s| ScanData::At(s.0)), n: m as u32, offsets: sums.is_some(), sized: false });
         }
         for (k, &(_, _, sums)) in levels.iter().enumerate() {
             if let Some((_, tiles)) = sums {
@@ -4504,9 +4797,9 @@ struct ScanAt {
     sums: Option<ScanData>,
     n: u32,
     offsets: bool,
-    /// The first of a sized scan's three levels (`scan_levels_sized`): where its values fit one tile, its sums' pass
-    /// scans them whole and empties the levels after it (`ScanWords::offsets` bit 2, decision 0647).
-    small: bool,
+    /// The first of a sized scan's three levels (`scan_levels_sized`): where the level after it is empty, each of its
+    /// tiles adds the tiles' sums before it itself (`ScanWords::offsets` bit 2, decision 0647).
+    sized: bool,
 }
 
 /// `join_stages.uglykl`'s `ScanLevel`, byte for byte.
@@ -4527,9 +4820,12 @@ struct ScanWords {
     /// Its values' and its sums' first words past `data` and `sums` (a size script's).
     at: u32,
     sums_at: u32,
+    /// A sized scan's first level's tiles whose sums its sums' pass writes: none for one tile (decision 0647).
+    summed: u32,
+    pad: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<ScanLevel>() == 32);
+const _: () = assert!(std::mem::size_of::<ScanLevel>() == 40);
 
 /// `join_stages.uglykl`'s `SortPass`, byte for byte.
 #[repr(C)]
@@ -4576,12 +4872,6 @@ struct Ran {
 /// A stack's phases at most (decision 0648): its grids' room.
 const STACK_PHASES: usize = 1024;
 
-/// Whether a sized scan's first level that fits one tile is scanned whole by its sums' pass (decision 0647);
-/// `RERAIL_SMALL_SCANS=0` turns it off for a measure.
-fn small_scans() -> bool {
-    std::env::var("RERAIL_SMALL_SCANS").map_or(true, |v| v != "0")
-}
-
 /// A chain's phases at most (`join_chain`, decision 0647); `RERAIL_CHAIN_PHASES` sets it for a measure, 0 none.
 fn chain_phases() -> u32 {
     std::env::var("RERAIL_CHAIN_PHASES").ok().and_then(|v| v.parse().ok()).unwrap_or(16)
@@ -4606,14 +4896,14 @@ pub(in crate::code_rule_dsl) fn rooms_mapped() -> Option<usize> {
     if let Some(n) = crate::code_rule_dsl::logic::profile::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
         return Some(n);
     }
-    rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
+    rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
 }
 
 /// Whether mapping a reserved arena's pages commits real memory on this run's device (Metal's do;
 /// `rerail_device::device::map_commits`).
 #[cfg(test)]
 pub(in crate::code_rule_dsl) fn map_commits() -> bool {
-    rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits)
+    rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::map_commits)
 }
 
 /// A program's sizes where a test sets them: its rounds a stack (`STACK_ROUNDS_FIRST`, doubling, else), and its first
@@ -4625,6 +4915,9 @@ struct ProgramSizes {
     rounds: Option<u32>,
     phases: Option<usize>,
     arena: Option<usize>,
+    /// A sized scan's first level's tiles at most that add the sums before them themselves (`SCAN_TILE`, decision
+    /// 0647): 1, and every scan of two tiles or more scans its sums as levels of their own.
+    own_tiles: Option<u64>,
 }
 
 impl ProgramSizes {
@@ -4634,7 +4927,7 @@ impl ProgramSizes {
             fn var<T: std::str::FromStr>(name: &str) -> Option<T> {
                 crate::code_rule_dsl::logic::profile::var(name).ok().and_then(|v| v.parse().ok())
             }
-            ProgramSizes { rounds: var("RERAIL_STACK_ROUNDS"), phases: var("RERAIL_STACK_PHASES"), arena: var("RERAIL_PROGRAM_ARENA") }
+            ProgramSizes { rounds: var("RERAIL_STACK_ROUNDS"), phases: var("RERAIL_STACK_PHASES"), arena: var("RERAIL_PROGRAM_ARENA"), own_tiles: var("RERAIL_SCAN_OWN_TILES") }
         }
         #[cfg(not(any(test, feature = "test-hooks")))]
         ProgramSizes::default()
@@ -5019,7 +5312,7 @@ pub mod tests {
     /// relation's kept index instead (`Batch::again`), and builds none.
     #[test]
     fn an_index_built_twice_is_found_again_where_it_is_kept() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         // Its batches' launches are an evaluation's (decision 0601).
@@ -5055,9 +5348,11 @@ pub mod tests {
     /// `b` reads it.
     #[test]
     fn an_index_built_twice_that_a_batch_took_is_kept() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
+        // The batches' launches are an evaluation's (decision 0601).
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
         let n = 300;
         let keys = rows(n, 13, 40);
         let rel = DevRel::empty_indexed(1, n, 3).unwrap();
@@ -5087,7 +5382,7 @@ pub mod tests {
     /// and the block it reads from, bound read-only, keeps its version.
     #[test]
     fn a_kernels_write_moves_its_blocks_version_and_a_read_does_not() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 300;
@@ -5111,7 +5406,7 @@ pub mod tests {
     /// relation's own, built by the batch, which finishes.
     #[test]
     fn a_key_past_a_relations_room_goes_beside_not_copied() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 1000;
@@ -5132,7 +5427,7 @@ pub mod tests {
     /// column and the binding's slot); then an anti-join with `c` on slot 2, and a semi-join with `b` on slot 0.
     #[test]
     fn stages_on_the_device_are_the_nested_loops_rows() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let (na, nb, nc) = (3000, 5000, 700);
@@ -5227,7 +5522,7 @@ pub mod tests {
     /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
     #[test]
     fn a_screened_stage_makes_the_unscreened_rows() {
-        let Ok(device) = rerail_accel::gpu::join::device() else { return };
+        let Ok(device) = rerail_accel_gpu::gpu::join::device() else { return };
         let (na, nb, nc) = (3000, 5000, 700);
         let (a0, a1) = (rows(na, 1, 4000), rows(na, 2, 3000));
         let (b0, b1) = (rows(nb, 3, 300), rows(nb, 4, 4000));
@@ -5310,7 +5605,7 @@ pub mod tests {
     /// keys. Built once: the next request, in the same batch or a later one, finds it the relation's own.
     #[test]
     fn the_devices_index_of_a_relation_is_the_hosts() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         // Its index (some 1.8 MB) past the megabyte a host block's wrap rounds its used extent up to.
@@ -5372,7 +5667,7 @@ pub mod tests {
     /// first rows' of its count.
     #[test]
     fn a_batch_takes_an_index_another_batch_has_committed() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
@@ -5442,7 +5737,7 @@ pub mod tests {
     /// findings (C409, F823, PYI047 by turns) were CPU probes of such an index, its buckets never written.
     #[test]
     fn an_index_whose_program_stopped_at_its_arena_is_not_built() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
@@ -5479,7 +5774,7 @@ pub mod tests {
     #[test]
     fn the_device_reads_a_fork_through_its_base() {
         use crate::code_rule_dsl::facts::rows::Rows as FactRows;
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 5_000;
@@ -5542,7 +5837,7 @@ pub mod tests {
     #[test]
     fn the_device_reads_a_chain_through_its_far_base() {
         use crate::code_rule_dsl::facts::rows::{Life, Rows as FactRows};
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         // An evaluation of the launch budget: every launch counts in one (the ledger refuses a launch outside one).
@@ -5601,7 +5896,7 @@ pub mod tests {
     #[test]
     fn an_index_past_a_full_directory_goes_in_a_block_beside() {
         use crate::code_rule_dsl::facts::rows::Rows as FactRows;
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         // An evaluation of the launch budget: every launch counts in one (the ledger refuses a launch outside one).
@@ -5656,7 +5951,7 @@ pub mod tests {
     #[test]
     fn stages_skip_the_dead_rows_of_relations_in_their_blocks() {
         use crate::code_rule_dsl::facts::rows::Rows;
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let (na, nb, nc) = (2000, 3000, 500);
@@ -5734,7 +6029,7 @@ pub mod tests {
     /// A table's rows over two of its three slots made distinct on the device: the first of equal rows, in order.
     #[test]
     fn head_rows_made_distinct_keep_the_first_of_each_in_order() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let (cap, n) = (5000, 4321);

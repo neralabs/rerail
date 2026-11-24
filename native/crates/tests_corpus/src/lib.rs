@@ -69,6 +69,9 @@ pub mod code_rule_dsl {
                 pub mod warm_tests;
                 #[cfg(test)]
                 pub mod cache_tests;
+                // Which states of an edited corpus are checked against a fresh run (`RERAIL_TEST_FRESH`).
+                #[cfg(test)]
+                pub mod fresh_tier;
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
                 pub mod phase0 {
                     pub use rerail_boot::code_rule_dsl::logic::plan::corpus::phase0::*;

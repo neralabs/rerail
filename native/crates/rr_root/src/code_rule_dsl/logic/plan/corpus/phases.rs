@@ -416,95 +416,7 @@ pub struct PhaseRun {
     pub exports: Vec<(String, usize)>,
     /// The phase's frame (`frame`): its key, and its facts where this run made them (the reader's run keeps them, and
     /// names the frame either way, so collection keeps it while it keeps the run).
-    pub frame: Option<([u8; 32], Option<crate::code_rule_dsl::logic::program_facts::Facts>)>,
-}
-
-/// Phase 1's runs kept across processes (t33 K4): a frame a run of the phase, its exports' rows and what the run
-/// consulted with each one's digest (`Report::consulted`), under the phase's identity (its program, the files handed
-/// down, the run's settings, the engine). A later process whose run of the same identity finds every read as it was
-/// (`changes_of`, the observer's answers: the documents its imports loaded, the directories they listed, the files they
-/// found missing) takes the exports as kept and does not run the phase.
-///
-/// Kept facts of the store (`plan::kept_entry`), a partition a frame, held by a small source and the frames' plan,
-/// which the reader's run names in its manifest (`named`).
-pub mod frame {
-    use super::{Report, Value, Vector};
-    use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
-    use crate::code_rule_dsl::logic::program_facts::Facts;
-    use crate::content_store::{ContentStore, HashKey};
-    use sha2::{Digest as _, Sha256};
-    use std::collections::BTreeMap;
-
-    const ENTRIES: Entries = Entries::new("rerail.phase-frame");
-    /// `(kind, path, digest)`: a read of the run's (`Report::consulted`).
-    const READ: &str = "phase_read";
-    /// The run's plans, in hex: the reader's run names them as the run's (`Report::plans`).
-    const PLAN: &str = "phase_plan";
-    /// The program's parts `changes_of` reads (`Summary`), as their bytes.
-    const SUMMARY: &str = "phase_summary";
-    /// An export's rows are the relation of its name after this.
-    const EXPORT: &str = "phase_export.";
-
-    fn source_text(key: &[u8; 32]) -> String {
-        format!("rerail/phase-frame\0{}", crate::content_store::observe::hex(key))
-    }
-
-    /// The frames' plan: the build and the schema.
-    fn plan() -> [u8; 32] {
-        let mut hash = Sha256::new();
-        hash.update(b"rerail.phase-frame/v1\0");
-        hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
-        hash.finalize().into()
-    }
-
-    /// The small source and the plan the frame `key` is held by: the reader's run names both.
-    pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
-        (source_text(key), plan())
-    }
-
-    /// A run's frame, as kept: its exports' rows, what it consulted, its plans and its program's summary.
-    pub struct Kept {
-        pub rows: BTreeMap<String, Vec<Vec<Value>>>,
-        pub consulted: Vec<(String, String, String)>,
-        pub plans: Vector<[u8; 32]>,
-        pub summary: Vec<u8>,
-    }
-
-    /// The facts of a run's frame.
-    pub fn facts(rows: &BTreeMap<String, Vec<Vec<Value>>>, report: &Report, summary: &[u8]) -> Facts {
-        let s = |x: &str| Value::Str(x.to_owned().into());
-        let mut facts = Facts::new();
-        facts.insert(READ.to_owned(), report.consulted.iter().map(|(k, p, d)| vec![s(k), s(p), s(d)].into()).collect());
-        facts.insert(PLAN.to_owned(), report.plans.iter().map(|p| vec![s(&crate::content_store::observe::hex(p))].into()).collect());
-        facts.insert(SUMMARY.to_owned(), vec![vec![s(&String::from_utf8_lossy(summary))].into()]);
-        for (rel, rows) in rows {
-            facts.insert(format!("{EXPORT}{rel}"), rows.iter().map(|r| r.clone().into()).collect());
-        }
-        facts
-    }
-
-    /// Keeps the frame `key`'s `facts`, behind the run.
-    pub fn put(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
-        let holder = HashKey::sha256(source_text(key).as_bytes()).sha256_bytes().expect("a sha256 key");
-        ENTRIES.put(store, Entries::part(key), holder, Some(plan()), facts);
-    }
-
-    /// The frame `key`, as kept; `None` where the store keeps none, or one that does not read.
-    pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Kept> {
-        let facts = ENTRIES.get(store, Entries::part(key))?;
-        let text = |v: &Value| match v {
-            Value::Str(x) => Some(x.to_string()),
-            _ => None,
-        };
-        let consulted = facts.get(READ)?.iter().map(|r| match &r[..] {
-            [k, p, d] => Some((text(k)?, text(p)?, text(d)?)),
-            _ => None,
-        }).collect::<Option<Vec<_>>>()?;
-        let plans = facts.get(PLAN).into_iter().flatten().map(|r| r.first().and_then(text).and_then(|h| crate::content_store::observe::unhex(&h))).collect::<Option<Vector<_>>>()?;
-        let summary = text(facts.get(SUMMARY)?.first()?.first()?)?.into_bytes();
-        let rows = facts.iter().filter_map(|(rel, rows)| Some((rel.strip_prefix(EXPORT)?.to_owned(), rows.iter().map(|r| r.to_vec()).collect()))).collect();
-        Some(Kept { rows, consulted, plans, summary })
-    }
+    pub frame: Option<([u8; 32], Option<super::frame::Frame>)>,
 }
 
 pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
@@ -749,18 +661,20 @@ pub fn sources(
     }
     // Kept by an earlier process, and every read of its run as it was: its exports, the phase not run.
     let store = if super::keeps_store() { reading_store() } else { None };
-    if let Some(kept) = store.as_deref().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, read".into()); frame::get(store, &identity) }) {
+    if let Some(kept) = store.as_deref().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, read".into()); super::frame::get(store, &identity) }) {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, its reads checked".into());
         let summary = super::Summary::decode(&kept.summary);
         let changes = match summary {
-            Some(summary) => super::changes_of(&[], &[], Some(&handed), root, typing, &options, &kept.consulted, Some(summary))?,
+            Some(summary) => super::changes_of(&[], &[], Some(&handed), root, typing, &options, &kept.reads, Some(summary))?,
             None => None,
         };
         match changes {
             Some(changed) if changed.is_empty() => {
-                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("kept: every one of its run's {} reads as it was, its exports taken, not run (t33 K4)", kept.consulted.len()));
-                let (one, exports) = one_of_rows(root, label, files, &declared, kept.rows);
-                let report = Report { consulted: kept.consulted, plans: kept.plans, ..Report::default() };
+                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("kept: every one of its run's {} reads as it was, its exports taken, not run (t33 K4)", kept.reads.len()));
+                // Its exports, read off the image its run wrote, as that run read them.
+                let rows = read_exports(NAME, &*program, &declared, &kept.image)?;
+                let (one, exports) = one_of_rows(root, label, files, &declared, rows);
+                let report = Report { consulted: kept.reads, plans: kept.plans, ..Report::default() };
                 return Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame: Some((identity, None)) }));
             }
             Some(changed) => crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("its frame not taken: {} documents it read changed", changed.len())),
@@ -793,7 +707,7 @@ pub fn sources(
     let frame = (store.is_some() && !report.consulted.is_empty())
         .then(|| super::Summary::of(&[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
         .flatten()
-        .map(|summary| (identity, Some(frame::facts(&rows, &report, &summary))));
+        .map(|summary| (identity, Some(super::frame::Frame { reads: report.consulted.clone(), plans: report.plans.clone(), summary, image: image.clone(), then: None })));
     let (one, exports) = one_of_rows(root, label, files, &declared, rows);
     if let Some(k) = key {
         Batch::put(k, (one.clone(), exports.clone()));

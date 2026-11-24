@@ -1445,7 +1445,7 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
         ran.unwrap();
         declined
     };
-    assert!(!declined.keys().any(|k| ["rr_dfs", "rr_mall", "hit", "hm", "found"].iter().any(|r| k.contains(r))), "{declined:?}");
+    assert!(!declined.keys().any(|k| ["rr_dfs", "hit", "hm", "found"].iter().any(|r| k.contains(r)) || crate::code_rule_dsl::logic::rr::lower::holds_helper(k, &["mall"])), "{declined:?}");
     assert_eq!(got["hit"], [["10", "30", "1"], ["20", "30", "5"], ["40", "30", "2"]]);
     assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
     let found = |row: [&str; 5]| got["found"].contains(&row.map(str::to_owned).to_vec());
@@ -1559,6 +1559,60 @@ PIN(s) :- spot(_, s).
 }
 
 // ---- tree axes and node sets ----
+
+/// t50 step 7: a walk up a dotted name's prefixes until one is bound (`references.rerail`'s `rf_walk`), its step a
+/// `split_dot` that keeps only the prefix, takes the split at the last "." alone. Its rows are the walk's at every ".":
+/// names with a leading ".", a doubled ".", a trailing ".", none, and several levels; and `split_dot`'s other uses
+/// split as before.
+#[test]
+fn a_prefix_walk_splits_at_the_last_dot() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prefix-walk");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl want(q: symbol)
+want("a.b.c.d"). want("a.x"). want("p.q.r"). want(".lead.z"). want("a..b"). want("tail."). want("solo"). want("m.n.o.p.q").
+.decl binder(p: symbol)
+binder("a.b"). binder("a"). binder("p.q.r"). binder("a."). binder("tail"). binder("m").
+.decl walk(q: symbol, p: symbol)
+walk(q, p) :- want(q), split_dot(q, p, _).
+walk(q, p2) :- walk(q, p), !binder(p), split_dot(p, p2, _).
+.decl hit(q: symbol, p: symbol)
+hit(q, p) :- walk(q, p), binder(p).
+.decl parts(m: symbol, x: symbol)
+parts(m, x) :- want(q), split_dot(q, m, x).
+.output walk, hit, parts
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    let rows = |r: &[[&str; 2]]| -> Vec<Vec<String>> {
+        let mut v: Vec<Vec<String>> = r.iter().map(|x| x.iter().map(|s| (*s).to_owned()).collect()).collect();
+        v.sort();
+        v
+    };
+    let sorted = |mut v: Vec<Vec<String>>| {
+        v.sort();
+        v
+    };
+    // A name's parent is its text before its last "." (none before a leading one); a name with no "." has "" as its.
+    assert_eq!(sorted(read("walk")), rows(&[
+        ["a.b.c.d", "a.b.c"], ["a.b.c.d", "a.b"],
+        ["a.x", "a"],
+        ["p.q.r", "p.q"], ["p.q.r", "p"], ["p.q.r", ""],
+        [".lead.z", ".lead"],
+        ["a..b", "a."],
+        ["tail.", "tail"],
+        ["solo", ""],
+        ["m.n.o.p.q", "m.n.o.p"], ["m.n.o.p.q", "m.n.o"], ["m.n.o.p.q", "m.n"], ["m.n.o.p.q", "m"],
+    ]));
+    assert_eq!(sorted(read("hit")), rows(&[["a.b.c.d", "a.b"], ["a.x", "a"], ["a..b", "a."], ["tail.", "tail"], ["m.n.o.p.q", "m"]]));
+    assert_eq!(sorted(read("parts")), rows(&[
+        ["a.b.c", "d"], ["a", "x"], ["p.q", "r"], [".lead", "z"], ["a.", "b"], ["tail", ""], ["", "solo"], ["m.n.o.p", "q"],
+    ]));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 
 /// The axes over a set of nodes (`fnode`) or of kinds rules derive (`fk`), read as rules; `!nearest` with the
 /// ancestor named, `!within_stop`, `!earlier` and `!split_dot`; `precedes_stop` and `next_sibling` over `child`.
@@ -2212,6 +2266,56 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     let ((order, _, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(2)).unwrap();
     let order: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
+}
+
+/// Decision 0658: a relation being solved whose values all come from one column outside it is a sample of that
+/// column's values, and a probe by them hits where that column's do. `runs_at_import`'s shape: its values are
+/// `run_scope`'s first column's (every node with a scope), and its delta rule probes `run_scope` by its second (the
+/// scopes). Priced as every binding hitting, the delta rule was 7.8 M rows for a few hundred, and the device's tables
+/// were sized for them.
+#[test]
+fn a_solved_relations_column_is_priced_by_the_column_its_values_come_from() {
+    let p = parse_version(
+        ".decl rs(n:number, s:number, k:number)\n.decl late(n:number)\n.decl ri(n:number)\n\
+         ri(n) :- rs(n, _, 1), !late(n).\n\
+         ri(n) :- rs(n, s, k), k != 1, ri(s), !late(n).\n.output ri\n",
+    )
+    .unwrap();
+    let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
+    let keys: Vec<body::RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
+    let comps = crate::code_rule_dsl::logic::front::Components::of_names([["ri"]]);
+    let scc = comps.get(0).expect("the component");
+    let sources = column_sources(&vs, scc, &keys);
+    assert_eq!(sources.get(&("ri".to_owned(), 0)), Some(&("rs".to_owned(), 0)), "ri's values are rs's first column's: {sources:?}");
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
+    model.stats.nodes = 450_000.0;
+    // Every node with a scope, 4,000 scopes of 5 kinds; 2,000 nodes run at import so far.
+    for (rel, rows, ndv) in [("rs", 400_000.0, vec![400_000.0, 4_000.0, 5.0]), ("late", 10.0, vec![10.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.card.insert("ri", 2_000.0);
+    model.stats.delta_rows.insert("ri", 2_000.0);
+    let r = 1usize;
+    // The delta rule, led by `ri(s)`: the third literal.
+    let mut plan = |sources: Sources| {
+        model.stats.solve(rerail_section::TextSet::of(scc.iter()));
+        model.stats.sourced(sources);
+        let ((_, work, rows), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(2)).unwrap();
+        (work, rows)
+    };
+    let (work, rows) = plan(Sources::new());
+    let (sourced_work, sourced_rows) = plan(sources);
+    // Each of the 2,000 bindings hits a scope's 100 nodes: 200,000 rows priced. Drawn from all 400,000 nodes, one in a
+    // hundred is a scope: 2,000.
+    assert!(rows > 100_000.0, "unsourced, every binding hits: {rows} rows, {work} work");
+    assert!(sourced_rows < rows / 50.0, "sourced, a binding hits as rs's first column's values do: {sourced_rows} rows against {rows}");
+    assert!(sourced_work < work / 10.0, "{sourced_work} work against {work}");
 }
 
 /// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than

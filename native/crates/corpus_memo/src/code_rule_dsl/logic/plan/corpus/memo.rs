@@ -139,16 +139,17 @@ pub fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32
 /// stratum's rules and of what they read down to the inputs, with the inputs whose rows are not in the program's
 /// text digested with their values where a relation's rules reach them: the run's options (`option_input`) and the
 /// earlier phases' exports (`phased`), and the projection the base rows are made under (`base`,
-/// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
-/// documents' rows are made of, and only then.
+/// `Projection::rows_digest`), and the text tests' patterns (`patterns`, `Vocabulary::pattern_of`). So an export's
+/// identity changes when a rule it is derived from does, or what the documents' rows are made of, and only then.
 pub(in crate::code_rule_dsl) fn identities(
     local: &crate::code_rule_dsl::logic::plan::body::Placed,
     rels: &BTreeSet<String>,
     options: &serde_json::Value,
     phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
     base: &[u8; 32],
+    patterns: &dyn Fn(&str) -> Option<String>,
 ) -> Result<BTreeMap<String, [u8; 32]>, String> {
-    Ok(strata(local, rels)?.identities(options, phased, base))
+    Ok(strata(local, rels)?.identities(options, phased, base, patterns))
 }
 
 /// What a relation's memo identity is made of in a file-local program (`identities`): its strata's identity (a
@@ -209,7 +210,10 @@ impl Strata {
     /// phases' exports (`phased`), and the projection the base rows are made under (`base`,
     /// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
     /// documents' rows are made of, and only then.
-    pub fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32]) -> BTreeMap<String, [u8; 32]> {
+    /// `patterns`: what a text test's input relation tests (`Vocabulary::pattern_of`). Its rows are the batch's, made
+    /// from the run's tests, so its relation's name says nothing of them: `strtest_0` is `contains("o")` in one program
+    /// and `contains("a")` in its edit, whose rules are otherwise the same.
+    pub fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32], patterns: &dyn Fn(&str) -> Option<String>) -> BTreeMap<String, [u8; 32]> {
         let mut out = BTreeMap::new();
         for (rel, (id, reached)) in &self.by_rel {
             let mut hash = Sha256::new();
@@ -218,6 +222,13 @@ impl Strata {
             hash.update(base);
             if reached.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r)) {
                 hash.update(options.to_string().as_bytes());
+            }
+            for (r, pattern) in reached.iter().filter_map(|r| Some((r, patterns(r)?))) {
+                hash.update(b"pattern\0");
+                hash.update(r.as_bytes());
+                hash.update([0]);
+                hash.update(pattern.as_bytes());
+                hash.update([0]);
             }
             let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r)).collect();
             out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
@@ -415,6 +426,20 @@ pub fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
 }
 
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
+/// `digest` with the text tests a part reads folded in, each relation with what it tests (`Vocabulary::pattern_of`).
+pub fn with_patterns<'a>(digest: [u8; 32], patterns: impl Iterator<Item = (&'a str, &'a str)>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-patterns/v1\0");
+    hash.update(digest);
+    for (rel, pattern) in patterns {
+        hash.update(rel.as_bytes());
+        hash.update([0]);
+        hash.update(pattern.as_bytes());
+        hash.update([0]);
+    }
+    hash.finalize().into()
+}
+
 pub fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-options/v1\0");

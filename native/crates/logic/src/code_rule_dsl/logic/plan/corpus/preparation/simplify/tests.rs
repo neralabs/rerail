@@ -672,7 +672,7 @@ fn a_zero_counts_helper_keeps_only_the_columns_read() {
         "#,
     );
     let text = rules(&v);
-    let helper = text.iter().find(|r| r.starts_with("rr_agg")).unwrap_or_else(|| panic!("{text:?}"));
+    let helper = text.iter().find(|r| r.split('(').next().and_then(crate::code_rule_dsl::logic::rr::lower::helper_stem) == Some("agg")).unwrap_or_else(|| panic!("{text:?}"));
     let head = &helper[..helper.find(" :-").unwrap()];
     assert_eq!(head.matches('$').count(), 3, "{head}: {:?} {text:?}", report.projected);
 }

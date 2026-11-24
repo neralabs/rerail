@@ -48,12 +48,25 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
 }
 
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
+/// The cone's is every root's (`cone_space_shared`).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
-    let root = super::named_root(root);
     let mut h = Sha256::new();
     h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
-    h.update(root.to_string_lossy().as_bytes());
+    if !(part == "cone" && cone_space_shared()) {
+        h.update(super::named_root(root).to_string_lossy().as_bytes());
+    }
     h.finalize().into()
+}
+
+/// Whether the cone's strata are kept in one space for every root (`RERAIL_CONE_SPACE=shared`, the default), not one
+/// a root (`root`). A kept relation is clean while its identity and the digests of what it read are as they were, so
+/// a stratum over the libraries alone (`builtins`, `os`) is clean for a corpus that has not run, where another run over
+/// the same libraries kept it: a cold run from the test store's template evaluated 15 of the cone's 65 strata, not
+/// all 65, its sources phase 55-63 ms of CPU against 69-76 ms (spark2). Two roots over other libraries take turns
+/// with a stratum's entry, each deriving it again where it differs; neither reads the other's rows. The cone's
+/// rounds (decision 0145) stay a root's: their record is the root's journal.
+pub(in crate::code_rule_dsl) fn cone_space_shared() -> bool {
+    std::env::var("RERAIL_CONE_SPACE").map_or(true, |v| v != "root")
 }
 
 /// `root`'s cross part's space (`part_space(root, "cross")`).

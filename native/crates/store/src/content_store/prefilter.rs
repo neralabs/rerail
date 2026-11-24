@@ -29,11 +29,6 @@ use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId
 use rusqlite::{Connection, types::Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-/// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
-/// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
-/// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
-/// (`postings::segment_positions`, decision 0045). 9: kept facts (`kept`), with no edges.
-pub const PREFILTER_VERSION: i64 = 9;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -43,7 +38,7 @@ pub const UNCLEAN: u8 = 2;
 /// The kind's unclean leaves exceed the residue bounds.
 pub const TOO_BIG: u8 = 4;
 
-pub use rerail_store_base::content_store::prefilter::TapePrefilter;
+pub use rerail_store_base::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
 
 /// Terms whose publication fails in a store (`ContentStore::reject_prefilter_term_for_test`): a failed publication's
 /// rollback, tested.

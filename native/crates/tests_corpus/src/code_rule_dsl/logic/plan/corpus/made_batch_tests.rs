@@ -102,8 +102,10 @@ fn r4_a_text_test_has_no_version_after_an_edit() {
         profile::set(false);
         let versioned: BTreeSet<String> = made.keys().filter(|(t, _)| t == "the base relations' versions (decision 0458)").map(|(_, x)| x.clone()).collect();
         unversioned.extend(versioned.into_iter().filter(|x| x.ends_with("a text test, no version (decision 0494)")));
-        let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
+        if super::fresh_tier::compared(i, edits.len()) {
+            let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
+        }
     }
     assert!(!unversioned.is_empty(), "the cross part reads the text test, given no version");
 }
@@ -221,8 +223,10 @@ fn r6_an_edit_counts_no_kept_statistic_again() {
         assert!(!stats.is_empty(), "edit {i}: the cross part reads base relations");
         let old = said("the base relations' old documents (decision 0458)");
         assert!(!stats.iter().any(|x| x.ends_with(": counted")), "edit {i}: a kept statistic counted again: {stats:?}; old documents: {old:?}");
-        let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
+        if super::fresh_tier::compared(i, edits.len()) {
+            let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
+        }
     }
 }
 

@@ -17,6 +17,10 @@ pub mod reads;
 pub mod view_reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
+/// A tape's auxiliary index (decision 0656): the names stream, the vocabulary, sibling places, code counts and rare
+/// codes, made once from a tape and read in place, in Rust and in UKL.
+pub mod aux_index;
+pub mod doc_index;
 
 pub use rerail_vector::{Pod, vector::Vector};
 

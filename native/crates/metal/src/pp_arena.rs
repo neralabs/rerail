@@ -116,6 +116,15 @@ impl Arena {
         Ok(())
     }
 
+    /// The byte at offset `at` of the arena's layout in the host's mapping (after it is leased): a slot's store,
+    /// by the offset a `Lay` holds.
+    pub fn host_at(&self, at: usize) -> *mut u8 {
+        let l = self.leased();
+        assert!(at < self.bytes(), "an offset past the arena's stores");
+        // SAFETY: inside the block's allocation.
+        unsafe { l.host.add(l.base + at) }
+    }
+
     fn leased(&self) -> &Leased {
         self.0.leased.get().expect("an arena's store read before its arena was leased")
     }
@@ -165,15 +174,15 @@ impl Bound for Buffer {
 }
 
 /// The evaluator's one source, UKL (decision 0468 §5): the tape's view and its reads written once
-/// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's
-/// barrier and primitives (`<ukl/grid.h>`), the arena's slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
-/// (`pp_search.uglykl`), the expansion's passes (`pp_expand.uglykl`), the kernels that run them
-/// all (`pp_grid.uglykl`) and the tests' probes (`pp_probes.uglykl`). The kernel store
+/// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the scans', segmented
+/// scans' and sorts' stages (`<ukl/stages.h>`), the arena's slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
+/// (`pp_search.uglykl`), the expansion's passes (`pp_expand.uglykl`), the program that runs them
+/// all (`pp_grid.uglykl`, decision 0653) and the tests' probes (`pp_probes.uglykl`). The kernel store
 /// preprocesses it for the device's backend.
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/stages.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
@@ -189,9 +198,9 @@ pub fn source() -> &'static str {
     &SOURCE
 }
 
-/// The passes' space for the stores they write (`PP_GLOBAL`): a phase reads what other groups wrote before the grid's
-/// barrier, so on a GPU it is coherent memory (`UKL_COHERENT`, `ukl/grid.h`'s rule). On an M1 Max a plain device read
-/// of another group's write came back stale every time once the grid spanned more than 8 groups, and a coherent one
+/// The passes' space for the stores they write (`PP_GLOBAL`): a phase reads what other groups wrote in the phases
+/// before, so on a GPU it is coherent memory (`UKL_COHERENT`). On an M1 Max a plain device read
+/// of another group's write came back stale every time once a phase spanned more than 8 groups, and a coherent one
 /// never did (Q367). The CPU's caches are coherent, so there it is a plain pointer. CUDA's
 /// `UKL_COHERENT` is `volatile`, from which C++ copies no struct, and the passes copy theirs: a plain pointer there
 /// too (not run on CUDA yet).
@@ -275,8 +284,8 @@ impl<'a> Enc<'a> {
     }
 }
 
-/// A scan's total: the grid's scans (`ukl_grid_scan_n`) need no other store of their own (their
-/// groups' sums are the arena's one `SUMS`).
+/// A scan's total: the scans (`ukl/stages.h`) need no other store of their own (their tiles' sums are
+/// the arena's one `SUMS`).
 pub struct Scan {
     pub total: Buf,
 }
@@ -288,7 +297,7 @@ impl Scan {
 }
 
 /// A stable LSD radix sort of up to `capacity` u64 keys, each with a u32 payload (its index
-/// before the sort): the grid's (`ukl_grid_sort_u64`), its other buffers and its histograms.
+/// before the sort): the stages' (`ukl/stages.h`), its other buffers and its histograms.
 pub struct Sort {
     pub keys_b: Buf,
     pub vals_a: Buf,
@@ -314,56 +323,52 @@ impl Sort {
     }
 }
 
-/// The persistent grid's groups with no core count (decision 0468 §4).
-pub const GROUPS_UNKNOWN: u64 = 8;
+/// The groups `pp_run` dispatches on a GPU (decision 0653): its workers, each a group that takes a unit's tile at a
+/// time. Since the loop (0588) a phase's work is latency's, and more threads hide it: the corpus batch on the GB10
+/// (2026-11-22) took 5.95 ms at 16 groups, 4.78 at 32, 4.23 at 64 and 4.19 at 96.
+pub const WORKERS: u64 = 64;
 
-/// The persistent grid's groups at most: a barrier costs more with every group (decision 0468: 80
-/// groups took 168 ms of GPU time over the corpus, 32 took 147 ms). Since the loop (0588) a phase's
-/// work is latency's, and more threads hide it: the corpus batch on the GB10 (2026-11-22) took
-/// 5.95 ms at 16 groups, 4.78 at 32, 4.23 at 64 and 4.19 at 96.
-pub const GROUPS_MOST: u64 = 64;
+/// The groups `pp_run` dispatches on the process's device: `WORKERS` on a GPU (`RERAIL_PP_GROUPS`: that many, a
+/// measurement aid); 1 on the CPU, which runs a launch's groups as coroutines on one host thread, where a group past
+/// one adds work to no core, only its threads' switches at every barrier.
+pub fn workers() -> u64 {
+    match lane::device() {
+        Ok(lane::Device::Cpu(_)) => 1,
+        _ => std::env::var("RERAIL_PP_GROUPS").ok().and_then(|g| g.parse().ok()).unwrap_or(WORKERS).max(1),
+    }
+}
 
-/// The persistent grid's groups dispatched (decision 0468 §4, 0568): its kernel's resident groups (`residency`), at
-/// most `GROUPS_MOST`; 1 on the CPU.
-pub fn groups() -> u64 {
-    let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
-    // The CPU runs a launch's groups as coroutines on one host thread: past one group, a group adds work to no core,
-    // only its threads' switches at every barrier.
-    if matches!(device, lane::Device::Cpu(_)) {
+/// A phase's tiles at most (`pp_grid.uglykl`'s `TMAX`, a unit's): its items over a group's threads, past which a
+/// tile loops over more of them. 1 on the CPU (one worker); on a GPU, `items` (a unit's nodes, or its expansion's
+/// tokens) over `TILE_ITEMS` a tile, at most `TILES_MOST`.
+pub fn tiles_for(items: usize) -> u32 {
+    if matches!(lane::device(), Ok(lane::Device::Cpu(_))) {
         return 1;
     }
-    // `RERAIL_PP_GROUPS`: that many at most in place of `GROUPS_MOST`, a measurement aid.
-    let most = std::env::var("RERAIL_PP_GROUPS").ok().and_then(|g| g.parse().ok()).unwrap_or(GROUPS_MOST);
-    residency().groups.min(most)
+    items.div_ceil(TILE_ITEMS).clamp(1, TILES_MOST as usize) as u32
 }
 
-/// `ukl/grid.h`'s `UKL_GRID_SMALL`: at most this many values, a grid primitive is group 0's alone.
-pub const GRID_SMALL: usize = 4096;
+/// A tile's items before a phase takes another (`tiles_for`): `ukl/stages.h`'s `UKL_STAGE_SMALL`, the most a
+/// library stage runs on one tile.
+pub const TILE_ITEMS: usize = 4096;
 
-/// The groups for `nodes` items of work (a unit's nodes, or its expansion's tokens): one a `GRID_SMALL` of them, at
-/// least one, at most `groups()`. Past
-/// its work a group only waits at the grid's barriers, and a barrier costs more with every group: on a GB10 under
-/// CUDA, an evaluation test's 18 runs took 58 ms of GPU time at 1 group, 173 ms at 8 and 640 ms at 32 (2026-11-21).
-pub fn groups_for(nodes: usize) -> u64 {
-    (nodes.div_ceil(GRID_SMALL).max(1) as u64).min(groups())
-}
+/// A phase's tiles at most (`tiles_for`): `pp_grid.uglykl`'s `PP_TLIB`, the most a library stage's sums hold.
+pub const TILES_MOST: u32 = 256;
 
-/// The grid kernel's resident groups on this machine (decision 0568, `rerail_device::grid`): the backend's answer
-/// (CUDA's occupancy, the CPU's rule), else the measure kept for the machine, else the device's bound until a
-/// failed barrier measures it. Found once a process, a machine object (decision 0442), and lowered by `halved`.
-pub fn residency() -> rerail_device::grid::Residency {
-    let held = rerail_context::machine::<Groups>();
-    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    *held.get_or_insert_with(|| {
-        let Ok(device) = lane::device() else { return rerail_device::grid::Residency { groups: GROUPS_UNKNOWN, known: rerail_device::grid::Known::Bound } };
-        let k = kernel("pp_setup");
-        rerail_device::grid::residency(device, &k, &grid_key(), tg(), k.threadgroup_bytes())
-    })
-}
+/// `pp_run`'s launches a command (`pp_eval::on_program`), a `pp_rebase` after each: a command is `2 * PP_LAUNCHES`
+/// launches, within `KERNEL_LAUNCH_LIMIT`.
+pub const PP_LAUNCHES: usize = 8;
 
-/// The grid kernel's key in the machine's measures: its source and name.
-fn grid_key() -> String {
-    rerail_device::store::key(&[source().as_bytes(), b"pp_setup"])
+/// A `pp_run` launch's budget: the tiles its finishers push before its groups stop taking (decision 0653 point 4).
+/// A launch's tiles are at most it, a phase's tiles a worker past it, and the tiles queued before it.
+pub const BUDGET: u32 = 4096;
+
+/// The ring's slots of a batch's queue (`pp_grid.uglykl`'s `pp_run`): a launch's pushes (`BUDGET`, and a phase's
+/// tiles a worker past it), and the tiles queued before it (a phase's of each unit), the ring's base moving at each
+/// pause (`pp_rebase`).
+pub fn queue_slots(tiles: &[u32]) -> usize {
+    let most = tiles.iter().copied().max().unwrap_or(1) as usize;
+    BUDGET as usize + workers() as usize * most + tiles.iter().map(|&t| t as usize).sum::<usize>() + 64
 }
 
 /// `BackendCapacity`, refused at `at` (`file:line`), which `RERAIL_PP_WHY` prints: a refusal for room or a budget is
@@ -375,13 +380,6 @@ pub fn capacity(at: &str) -> Error {
     Error::BackendCapacity
 }
 
-/// A dispatch of `groups` groups past the grid kernel's resident groups is refused (`BackendCapacity`, decision
-/// 0568): its groups past them would wait at a barrier for groups that do not run. The join (`ukl_grid_join`) is the
-/// floor below this, should a device run fewer than it holds.
-pub fn refuse_past(groups: u64) -> Result<(), Error> {
-    if groups > residency().groups { Err(capacity(concat!(file!(), ":", line!()))) } else { Ok(()) }
-}
-
 /// `BackendFailure`, at `at` (`file:line`), which `RERAIL_PP_WHY` prints: a device run whose answer does not add up
 /// (or a barrier that failed), and the log says which check found it.
 pub fn failure(at: &str) -> Error {
@@ -391,32 +389,10 @@ pub fn failure(at: &str) -> Error {
     Error::BackendFailure
 }
 
-/// A grid of `groups` groups failed a barrier: the grid kernel's resident groups are half of it from now on, kept
-/// for the machine (`rerail_device::grid::halved`), and the run is the caller's to run again at them. `None` at
-/// one group, which no halving helps, and where the backend answered (`Known::Api`): its count is resident, so its
-/// failed barrier is the kernel's failure, not a residency to measure.
-pub fn halved(groups: u64) -> Option<u64> {
-    if groups <= 1 || residency().known == rerail_device::grid::Known::Api {
-        return None;
-    }
-    let held = rerail_context::machine::<Groups>();
-    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let half = match lane::device() {
-        Ok(device) => rerail_device::grid::halved(device, &grid_key(), tg(), groups),
-        Err(_) => groups / 2,
-    };
-    *held = Some(rerail_device::grid::Residency { groups: half, known: rerail_device::grid::Known::Measured });
-    Some(half)
-}
-
-/// The machine's grid residency (`residency`), found once: a machine object (decision 0442), as its device is.
-#[derive(Default)]
-struct Groups(std::sync::Mutex<Option<rerail_device::grid::Residency>>);
-
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.uglykl`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.
 pub const SLOTS: &[&str] = &[
-    "GRID", "SUMS", "LAST", "STOP", "N_FILES", "NODES_FLAG", "FILES", "BASES", "TOTAL", "DIR_BASES", "DIR_TOTAL", "DFLAG", "GFLAG", "AFLAG", "DEV", "DRANK", "GRANK", "ARANK", "NDEPTH", "DEV_TOTAL", "N_GROUPS", "N_ARMS",
+    "PROG", "SUMS", "LAST", "STOP", "TMAX", "N_FILES", "NODES_FLAG", "FILES", "BASES", "TOTAL", "DIR_BASES", "DIR_TOTAL", "DFLAG", "GFLAG", "AFLAG", "DEV", "DRANK", "GRANK", "ARANK", "NDEPTH", "DEV_TOTAL", "N_GROUPS", "N_ARMS",
     "ARM_KEYS", "ASORT_KB", "ASORT_VA", "ASORT_VB", "ASORT_HIST", "GRP_KEYS", "PSORT_KB", "PSORT_VA", "PSORT_VB", "PSORT_HIST", "G_OUT", "G_ARMS",
     "DIR_GROUPS", "GUARDED", "GUARDS", "BAD", "KEYS", "NODES_OUT", "ROWS", "DIR_KEYS",
     "DEFS", "PCOUNT", "BCOUNT", "PFIRST", "IFIRST", "PTOTAL", "ITOTAL", "PKEYS", "ITEMS", "IROWS", "VAI", "ROOM", "CAP", "VA_LO", "VA_HI", "VO_LO", "VO_HI",
@@ -434,7 +410,7 @@ pub const SLOTS: &[&str] = &[
     "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "TR_SK", "TR_NK", "TR_TY", "TO_F", "TO_S", "CU_SLOT", "CU_SUB", "CU_UNIT", "TRN", "LREAD", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "RQC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "STATE", "OFLAG", "CTL", "XFLAG", "XAT", "XTOTAL", "XPOS", "V", "OBASE", "LOB", "PLAST", "VTOTAL", "OPV", "OPBASE",
     "OPTOTAL", "OUT", "SC_DEPTH", "SC_CLOSE", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CKEYS", "SC_KB", "SC_VA", "SC_VB", "SC_HIST",
-    "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP",
+    "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP", "LPQ", "LPQ_TOP", "XROWS", "XROWS_CAP",
 ];
 
 fn slot(name: &str) -> usize {

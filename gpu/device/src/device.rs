@@ -226,17 +226,6 @@ impl Device {
         matches!(self, Device::Cpu(_))
     }
 
-    /// The device's GPU cores, when it says: on a Mac, IORegistry's `gpu-core-count` of the device's entry
-    /// (the `MTLDevice`'s registry ID). A persistent grid's resident groups are these times the groups a core
-    /// holds (decision 0468 §4).
-    pub fn gpu_cores(&self) -> Option<u32> {
-        match self {
-            #[cfg(target_os = "macos")]
-            Device::Native(d) => ioreg::gpu_core_count(d.registry_id()),
-            _ => None,
-        }
-    }
-
     /// The most threadgroup memory a group may have: Metal's `maxThreadgroupMemoryLength`; 32 KB elsewhere.
     pub fn max_threadgroup_memory(&self) -> u64 {
         match self {
@@ -246,30 +235,25 @@ impl Device {
         }
     }
 
-    /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
-    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
-    /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
-    /// have (`max_threadgroup_memory`). The CPU's is exact: the groups its launches run at once
-    /// (`compute_kernel_cpu::resident_groups`, the launch's `resident`), its memory a host's.
-    pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
-        if let Device::Cpu(_) = self {
-            return Some(cpu::resident_groups(threads as usize) as u64);
+    /// The name of the target a kernel's text is prepared for on this device (decision 0645, `rerail_ukl::Target`,
+    /// which `rerail_gpu::Preprocessing` makes of it): Metal's tier, CUDA's `sm_<N>`, HIP's `gfx` target. None on
+    /// OpenCL and the CPU, whose text is prepared from what the device reports (`local_defines`).
+    pub fn target_name(&self) -> Option<String> {
+        match self {
+            Device::Cpu(_) | Device::OpenCl(_) => None,
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => Some(d.target_name()),
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => Some(crate::compute_kernel_metal::target_name(d).to_string()),
         }
-        let cores = self.gpu_cores()? as u64;
-        let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
-        let by_memory = self.max_threadgroup_memory().checked_div(local).map_or(by_threads, |n| n.max(1));
-        Some(cores * by_threads.min(by_memory))
     }
 
-    /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
-    /// OpenCL's width and largest threadgroup; HIP's instructions by architecture): `rerail_gpu::Preprocessing`.
-    pub fn compile_defines(&self) -> Vec<(&'static str, String)> {
+    /// The defines of a device without a target's name (`target_name`): the CPU's knobs
+    /// (`compute_kernel_cpu::defines`), OpenCL's width and largest threadgroup and its units.
+    pub fn local_defines(&self) -> Vec<(&'static str, String)> {
         match self {
             Device::Cpu(_) => cpu::defines(),
             Device::OpenCl(d) => d.defines(),
-            #[cfg(not(target_os = "macos"))]
-            Device::Native(d) => d.defines(),
-            #[cfg(target_os = "macos")]
             Device::Native(_) => Vec::new(),
         }
     }
@@ -562,6 +546,22 @@ pub enum ComputeFunctionLibrary {
     OpenCl(cl::ClComputeFunctionLibrary),
 }
 
+/// Compiles `source`, prepared for the shippable target `target`, ahead of time and without a GPU (decision 0645
+/// step 3): Metal's tiers (their `__METAL_VERSION__` `metal_version`) on macOS by Xcode's compiler; CUDA's and AMD's
+/// targets elsewhere, by NVRTC and hiprtc.
+pub fn compile_offline(target: &str, metal_version: Option<u32>, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    if let Some(version) = metal_version {
+        #[cfg(target_os = "macos")]
+        return crate::compute_kernel_metal::compile_offline(version, source, name);
+        #[cfg(not(target_os = "macos"))]
+        return Err(format!("{target} (Metal {version}): Metal's kernels ship from macOS"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    return crate::compute_kernel_cuda::compile_offline(target, source, name);
+    #[cfg(target_os = "macos")]
+    return Err(format!("{target}: CUDA's and AMD's kernels ship from Linux or Windows ({name})"));
+}
+
 impl ComputeFunctionLibrary {
     /// `preprocessed_source`, UKL preprocessed for `device` (`Device::ukl_backend`), compiled.
     pub fn compile_from_source(device: &Device, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
@@ -570,6 +570,15 @@ impl ComputeFunctionLibrary {
             Device::Cpu(d) => ComputeFunctionLibrary::Cpu(cpu::CpuComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
             Device::OpenCl(d) => ComputeFunctionLibrary::OpenCl(cl::ClComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
         })
+    }
+
+    /// A library of code compiled ahead of time for a target the device runs (decision 0645: a shipped kernel). Only
+    /// a GPU's: OpenCL's and the CPU's targets are local.
+    pub fn from_compiled(device: &Device, code: &[u8]) -> Result<Self, String> {
+        match device {
+            Device::Native(d) => Ok(ComputeFunctionLibrary::Native(native::Library::from_compiled(d, code)?)),
+            Device::Cpu(_) | Device::OpenCl(_) => Err("no compiled code ships for a local target".to_owned()),
+        }
     }
 
     /// `preprocessed_source` compiled to the backend's text of its instructions (CUDA's PTX), for a test to read which
@@ -607,17 +616,6 @@ impl ComputeFunction {
             #[cfg(target_os = "macos")]
             ComputeFunction::Native(f) => f.compute_pipeline_state.static_threadgroup_memory_length(),
             _ => 0,
-        }
-    }
-
-    /// The groups of `threads` threads, each with `local` bytes of threadgroup memory beyond what the kernel declares,
-    /// that `device` holds at once: CUDA's and HIP's driver's occupancy of this kernel; Metal's from its cores
-    /// (`Device::resident_groups`, with the kernel's own threadgroup memory); `None` where the backend does not say.
-    pub fn resident_groups(&self, device: &Device, threads: u32, local: u64) -> Option<u64> {
-        match self {
-            #[cfg(not(target_os = "macos"))]
-            ComputeFunction::Native(f) => f.resident_groups(threads, local),
-            _ => device.resident_groups(threads, self.threadgroup_bytes() + local),
         }
     }
 
@@ -1013,52 +1011,4 @@ pub fn transfer_to_host_sync<T: crate::Pod + Clone>(buffer: &Buffer, length: usi
 /// The device seconds of every event awaited so far in this process.
 pub fn gpu_seconds_awaited() -> f64 {
     native::gpu_seconds_awaited() + cpu::gpu_seconds_awaited() + cl::gpu_seconds_awaited()
-}
-
-/// IORegistry's description of a Mac's GPU: its `gpu-core-count`.
-#[cfg(target_os = "macos")]
-mod ioreg {
-    use std::ffi::c_void;
-
-    type CfRef = *const c_void;
-    const UTF8: u32 = 0x0800_0100;
-    const SINT32: isize = 3;
-
-    #[link(name = "IOKit", kind = "framework")]
-    unsafe extern "C" {
-        fn IORegistryEntryIDMatching(id: u64) -> CfRef;
-        fn IOServiceGetMatchingService(main_port: u32, matching: CfRef) -> u32;
-        fn IORegistryEntryCreateCFProperty(entry: u32, key: CfRef, allocator: CfRef, options: u32) -> CfRef;
-        fn IOObjectRelease(object: u32) -> i32;
-    }
-    #[link(name = "CoreFoundation", kind = "framework")]
-    unsafe extern "C" {
-        fn CFStringCreateWithCString(allocator: CfRef, s: *const u8, encoding: u32) -> CfRef;
-        fn CFGetTypeID(v: CfRef) -> usize;
-        fn CFNumberGetTypeID() -> usize;
-        fn CFNumberGetValue(n: CfRef, kind: isize, out: *mut c_void) -> bool;
-        fn CFRelease(v: CfRef);
-    }
-
-    /// `gpu-core-count` of the IORegistry entry `id`, when it has one.
-    pub fn gpu_core_count(id: u64) -> Option<u32> {
-        // SAFETY: each object made here is released here; the matching dictionary is consumed by the lookup.
-        unsafe {
-            let entry = IOServiceGetMatchingService(0, IORegistryEntryIDMatching(id));
-            if entry == 0 {
-                return None;
-            }
-            let key = CFStringCreateWithCString(std::ptr::null(), c"gpu-core-count".as_ptr().cast(), UTF8);
-            let v = IORegistryEntryCreateCFProperty(entry, key, std::ptr::null(), 0);
-            CFRelease(key);
-            IOObjectRelease(entry);
-            if v.is_null() {
-                return None;
-            }
-            let mut n = 0i32;
-            let ok = CFGetTypeID(v) == CFNumberGetTypeID() && CFNumberGetValue(v, SINT32, (&raw mut n).cast());
-            CFRelease(v);
-            (ok && n > 0).then_some(n as u32)
-        }
-    }
 }

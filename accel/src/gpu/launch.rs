@@ -95,7 +95,8 @@ pub fn record_buffer_allocation(bytes: usize) {
 /// Nested commands, ranges, replay, and pages share the outer evaluation budget.
 pub struct LaunchScope {
     owner: bool,
-    _budget: Rc<RefCell<Evaluation>>,
+    /// The evaluation, held while the scope is; taken only by `carry`.
+    _budget: Option<Rc<RefCell<Evaluation>>>,
 }
 
 impl LaunchScope {
@@ -108,14 +109,50 @@ impl LaunchScope {
                 reruns.grant();
                 Rc::new(RefCell::new(Evaluation { reruns, ..Evaluation::default() }))
             });
-            Self { owner, _budget: Rc::clone(budget) }
+            Self { owner, _budget: Some(Rc::clone(budget)) }
         })
     }
 
     pub fn snapshot(&self) -> Vec<DispatchRecord> {
-        self._budget.borrow().records.clone()
+        self._budget.as_ref().expect("the scope's evaluation").borrow().records.clone()
+    }
+
+    /// The evaluation, to go on on another thread (`resume`): a submission begun on one of the lanes' threads and
+    /// finished on any (`space::Started`) is one evaluation, its ledger moved with it. None where this scope is not
+    /// the evaluation's own: the caller's goes on where the caller is.
+    pub fn carry(mut self) -> Option<Carried> {
+        if !self.owner {
+            return None;
+        }
+        // The slot's reference goes (as this scope's drop would take it), and this scope's: the ledger's only holder
+        // is `budget`, unless a `Rerun` is still held, which is the caller's error.
+        EVALUATION.with_borrow_mut(|slot| *slot = None);
+        self.owner = false;
+        let budget = self._budget.take().expect("the scope's evaluation");
+        let evaluation = Rc::try_unwrap(budget).ok().expect("no rerun held across a carried evaluation").into_inner();
+        Some(Carried(evaluation))
+    }
+
+    /// The evaluation `carried` goes on here (`carry`), or, without one, an evaluation as `enter` makes it.
+    pub fn resume(carried: Option<Carried>) -> Self {
+        let Some(Carried(evaluation)) = carried else { return Self::enter() };
+        EVALUATION.with_borrow_mut(|slot| match slot {
+            // This thread is in an evaluation already: the carried one's launches are its.
+            Some(budget) => {
+                budget.borrow_mut().used += evaluation.used;
+                Self { owner: false, _budget: Some(Rc::clone(budget)) }
+            }
+            None => {
+                let budget = Rc::new(RefCell::new(evaluation));
+                *slot = Some(Rc::clone(&budget));
+                Self { owner: true, _budget: Some(budget) }
+            }
+        })
     }
 }
+
+/// An evaluation moved from one thread to another (`LaunchScope::carry`).
+pub struct Carried(Evaluation);
 
 impl Drop for LaunchScope {
     fn drop(&mut self) {
@@ -280,6 +317,13 @@ pub fn charge_made(pointer: usize, kernel: &str, made: usize) {
     }
 }
 
+/// `charge_made` for a stack's library launches (decision 0648): recorded, the stack charged once.
+pub fn charge_made_stacked(pointer: usize, kernel: &str, made: usize) {
+    for _ in 0..made {
+        attempt_stacked(pointer, kernel, [0; 3], [0; 3], false, Vec::new());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +410,30 @@ mod tests {
         }
         assert!(!reruns.take());
         assert_eq!(reruns.available(), 0);
+    }
+
+    /// A submission begun on one thread and finished on another (`space::Started`) is one evaluation: its ledger,
+    /// carried, goes on with the launches spent; a thread with no evaluation of its own then has none left over.
+    #[test]
+    fn a_carried_evaluation_goes_on_on_another_thread() {
+        let scope = LaunchScope::enter();
+        for _ in 0..7 {
+            launch();
+        }
+        let carried = scope.carry().expect("the scope's own evaluation");
+        assert!(over(launch).is_some(), "no evaluation here once carried");
+        std::thread::spawn(move || {
+            let _resumed = LaunchScope::resume(Some(carried));
+            assert_eq!(available(), KERNEL_LAUNCH_LIMIT - 7, "the launches spent before go on");
+            launch();
+            assert_eq!(available(), KERNEL_LAUNCH_LIMIT - 8);
+        })
+        .join()
+        .unwrap();
+        let inner = LaunchScope::enter();
+        let _outer = LaunchScope::enter();
+        assert!(_outer.carry().is_none(), "a scope inside another's evaluation carries none");
+        drop(inner);
     }
 
     #[test]

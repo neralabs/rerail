@@ -1,16 +1,20 @@
 # Decision 0442: every non-constant static in the engine, by where it goes (check_no_global_state.py).
 # path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, machine, review. Only shrinks.
+accel/gpu/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
+accel/gpu/src/lib.rs::ONCE	stays	registers the GPU lane and the learned models once (code registered at load)
 accel/src/ane/mod.rs::INSTANCE	stays	an id counter: append-only, the same meaning in every run
 accel/src/cost_model.rs::NEXT	stays	an id counter: append-only (model versions no two machines share)
 accel/src/exec.rs::JOB_SCOPE	stays	the job scope a crate above registers once (code registered at load)
 accel/src/exec.rs::MADE	stays	the one block policy registered once, before the first block (decision 0342): code registered at load
-accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
+accel/src/gpu/mod.rs::BACKEND	stays	code registered at load (the GPU lane's backend, rerail-accel-gpu's, which boot registers)
+accel/src/gpu/mod.rs::MAINTENANCE	stays	code registered at load (the GPU kernels' upkeep, rerail-accel-gpu's)
 accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::SHARED	stays	the device and its one queue: the forest's, one per process (code registered at load)
+accel/src/models.rs::MODELS	stays	code registered at load (the learned models, rerail-accel-gpu's)
 accel/src/price.rs::FIRST_PRICE	stays	code registered at load (a hook)
 accel/src/price.rs::VERSIONS	stays	an id counter: append-only (rate versions no two machines share)
 accel/src/score.rs::EPOCH	stays	the process's start: a clock origin, the same for every run
@@ -29,6 +33,8 @@ native/crates/adapters/src/code_rule_dsl/scope/mod.rs::PROGRAM_SCOPES	stays	code
 native/crates/adapters/src/code_rule_dsl/scope/options.rs::INTERNED	stays	an append-only interner of immutable typing settings (`&'static`, leaked once each): a `Reading` compares them by value, so no id of it can differ between callers
 native/crates/adapters/src/code_rule_dsl/scope/options.rs::TABLE	stays	computed once from the engine's own files
 native/crates/adapters/src/code_rule_dsl/value/names.rs::TABLE	stays	computed once from the engine's own files
+native/crates/atoms/src/lib.rs::GIVEN	stays	a test's counter
+native/crates/atoms/src/lib.rs::SMALL_BLOCKS	stays	a test hook (`test-hooks`): the store's test binary sets it as it loads
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
 native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
@@ -57,6 +63,8 @@ native/crates/corpus_memo/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	s
 native/crates/corpus_memo/src/code_rule_dsl/logic/plan/corpus/owner.rs::WAITING	stays	a lock, not a result
 native/crates/corpus_memo/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/corpus_prep/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/costs/src/code_rule_dsl/logic/costs/join_steps.rs::INSTALL	stays	code a crate above registers at load (the planner's batch pricer over a trained join model)
+native/crates/costs/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers what boot does)
 native/crates/cpython/src/code_rule_dsl/cpython/syntax.rs::NOT	stays	a regex of a literal
 native/crates/d_anchors/src/code_rule_dsl/matcher/d_anchors/sql/capture.rs::NEXT	stays	an id counter: append-only
 native/crates/d_anchors/src/code_rule_dsl/matcher/d_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
@@ -69,6 +77,7 @@ native/crates/d_relational/src/code_rule_dsl/waves/relational/pipeline.rs::PURE	
 native/crates/d_relational/src/code_rule_dsl/waves/relational/pipeline/readers.rs::IDENTIFIER	stays	a regex of a literal
 native/crates/d_relational/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	stays	an id counter: append-only
 native/crates/d_relational/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers what boot does)
+native/crates/demand_catalog/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the crate's own test binary
 native/crates/demand_catalog/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::LOAD	stays	code registered at load
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::METAL	stays	code registered at load
@@ -98,8 +107,8 @@ native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::AXIS_SOLVE	stays	co
 native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::ON	stays	whether a relation's chunks are sealed (RERAIL_SEAL_CHUNKS, decision 0622): the process's environment, read once
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
+native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::ON	stays	whether a relation's chunks are sealed (RERAIL_SEAL_CHUNKS, decision 0622): the process's environment, read once
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code registered at load (a hook: the batches' relations held, from the crate above)
 native/crates/facts_base/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
@@ -109,11 +118,6 @@ native/crates/facts_base/src/code_rule_dsl/facts/vtab/demand.rs::NEXT	stays	an i
 native/crates/facts_base/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/logic/strings/functions.rs::PY_REPR	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/logic/strings/functions.rs::TO_PRECISION	stays	code a crate above registers at load
-native/crates/facts_base/src/code_rule_dsl/profile/sql.rs::CTAS	stays	a regex of a literal
-native/crates/facts_base/src/code_rule_dsl/profile/sql.rs::ORIGIN	stays	the process's start, for timestamps
-native/crates/facts_base/src/code_rule_dsl/profile/sql.rs::SERIAL	stays	an id counter: append-only
-native/crates/facts_base/src/code_rule_dsl/profile/sql/coverage.rs::WRITE	stays	a lock on a file the profile writes, holding nothing
-native/crates/facts_base/src/code_rule_dsl/profile/sql/snapshot.rs::NEXT	stays	an id counter: append-only
 native/crates/facts_base/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
 native/crates/forte/src/code_rule_dsl/blade/forte/directives/mod.rs::DEFAULTS	stays	computed once from the engine's constants
 native/crates/json_rules/src/code_rule_dsl/logic/json_rules/translate.rs::E	stays	a constant
@@ -124,7 +128,6 @@ native/crates/kotlin_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/kotlin_parser/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
 native/crates/lang/src/code_rule_dsl/build_ids.rs::ENGINE	stays	computed once from the engine's own build
 native/crates/lang/src/code_rule_dsl/build_ids.rs::GRAMMAR	stays	computed once from the engine's own build
-native/crates/lang/src/code_rule_dsl/build_ids.rs::REBUILT	stays	computed once from the engine's own grammar
 native/crates/lang/src/code_rule_dsl/embed.rs::EMBEDDERS	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/fixtures.rs::DIR	stays	the conformance fixtures' directory, cargo's RERAIL_FIXTURES_DIR for the process: one value for every caller
 native/crates/lang/src/code_rule_dsl/fixtures.rs::NEXT	stays	an id counter: append-only
@@ -141,9 +144,6 @@ native/crates/lang/src/code_rule_dsl/semver/mod.rs::REGEXES	stays	computed once 
 native/crates/lang/src/code_rule_dsl/suppress/kinds.rs::KINDS	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape.rs::GRAMMARS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape.rs::ROUTER	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
@@ -173,7 +173,7 @@ native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::UNESCAPE_METACHARAC
 native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::WILDCARDS	stays	a regex of a literal
 native/crates/lang_ecma/src/code_rule_dsl/package_manifest.rs::DEFAULT_NODE_RANGE	stays	computed once from the engine's constants
 native/crates/lang_ecma/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	stays	computed once from the engine's own files
-native/crates/lang_ecma/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers its packs)
+native/crates/lang_ecma/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers what boot does)
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	computed once from the engine's own files
@@ -185,8 +185,11 @@ native/crates/lang_python/src/code_rule_dsl/scope/python.rs::PYTHON	stays	comput
 native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT	stays	a regex of a literal
 native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT_TESTS	stays	a regex of a literal
 native/crates/lang_python/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
+native/crates/lang_sql/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
+native/crates/lean_tapes/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
+native/crates/lean_tapes/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
+native/crates/lean_tapes/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
 native/crates/logic/src/code_rule_dsl/logic.rs::LOAD	stays	code registered at load
-native/crates/logic_core/src/code_rule_dsl/logic/costs/join_steps.rs::INSTALL	stays	code a crate above registers at load (the planner's batch pricer over a trained join model)
 native/crates/matcher/src/code_rule_dsl/matcher/format_args.rs::PREPARERS	stays	code registered at load
 native/crates/matcher/src/code_rule_dsl/matcher/gap.rs::GAPS_MADE	stays	a test's counter (test-hooks)
 native/crates/matcher/src/code_rule_dsl/matcher/term.rs::TERMS	stays	code registered at load
@@ -196,7 +199,6 @@ native/crates/metal/src/lib.rs::METAL_DEVICE	stays	the device (code registered a
 native/crates/metal/src/pp_arena.rs::SOURCE	stays	the engine's own UKL, put together once
 native/crates/metal/src/pp_arena.rs::T	stays	computed once from the process's device (a group's threads: the GPU's, or the CPU's 32)
 native/crates/metal/src/pp_expand.rs::RUNS	stays	an id counter: append-only, a command's number (`Expanded::run`: a batch's units ran in one)
-native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/observe/src/content_store/observe.rs::JOURNAL	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build (a test process's choice of the journal; a run's is its setting)
 native/crates/observe/src/git_access/opener.rs::ASSUME_ANOTHER_OWNER	stays	a test hook (test-hooks), set in a test's own child process
 native/crates/observe/src/git_access/pool.rs::ROOTS	stays	this process's threads stuck opening a root, by path: a thread blocked in the OS cannot be ended, so a later open of the root fails at once rather than strand another; no caller's data, and the threads are the process's whoever asked
@@ -208,6 +210,7 @@ native/crates/observe/src/git_snapshot_message_pattern.rs::SYNTAX	stays	a value 
 native/crates/observe/src/git_workspace.rs::NAMES	stays	the host's ignored directories, data parsed once: a constant
 native/crates/observe/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/crates/observe/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store its tests keep the observer's answers in)
+native/crates/overlay/src/code_rule_dsl/facts/overlay/recovery.rs::NEXT	stays	an id counter: append-only (a test's directory names)
 native/crates/p_anchors/src/code_rule_dsl/matcher/p_anchors/sql/capture.rs::NEXT	stays	an id counter: append-only
 native/crates/p_anchors/src/code_rule_dsl/matcher/p_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
 native/crates/p_anchors/src/code_rule_dsl/matcher/p_anchors/sql/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
@@ -306,11 +309,17 @@ native/crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	
 native/crates/setfix/src/code_rule_dsl/waves/owner/database.rs::SETUP	stays	code registered at load
 native/crates/setfix/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/simd8/src/lib.rs::BEST	stays	the CPU's features, detected once
-native/crates/store/src/content_store/atoms.rs::GIVEN	stays	a test's counter
+native/crates/slabs/src/lib.rs::EVICTOR	stays	registers the residency's evictor in the pool's order once (code registered at load, a hook)
+native/crates/slabs/src/lib.rs::ONE	stays	a test lock
+native/crates/sql_profile/src/code_rule_dsl/sql_profile.rs::CTAS	stays	a regex of a literal
+native/crates/sql_profile/src/code_rule_dsl/sql_profile.rs::ORIGIN	stays	the process's start, for timestamps
+native/crates/sql_profile/src/code_rule_dsl/sql_profile.rs::SERIAL	stays	an id counter: append-only
+native/crates/sql_profile/src/code_rule_dsl/sql_profile/coverage.rs::WRITE	stays	a lock on a file the profile writes, holding nothing
+native/crates/sql_profile/src/code_rule_dsl/sql_profile/snapshot.rs::NEXT	stays	an id counter: append-only
 native/crates/store/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
 native/crates/store/src/content_store/connection.rs::MADE	stays	process-unique numbers of the connection registries (a thread's connections are kept by them)
 native/crates/store/src/content_store/connection.rs::ONCE	stays	a hook registered once
-native/crates/store/src/content_store/prefilter.rs::REJECT_TERM	stays	test hooks only: the terms a test makes a publication fail on
+native/crates/store/src/content_store/prefilter.rs::REJECT_TERM	stays	a test hook (`test-hooks`): a term the next write refuses, so a test sees the rollback
 native/crates/store/src/content_store/record.rs::KINDS	stays	code a crate above registers at load
 native/crates/store/src/content_store/record.rs::LOG	stays	a test's log
 native/crates/store/src/content_store/schema.rs::SCHEMA_OBJECTS	stays	computed once from the engine's own files
@@ -394,4 +403,5 @@ native/crates/workspace/src/code_rule_dsl/workspace/storage.rs::NEXT	stays	an id
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)
 native/src/lib.rs::ONCE	stays	a hook registered once
 native/src/lib.rs::SQLITE_ALLOCATOR	stays	code registered at load
+native/src/os_warning.rs::ONCE	stays	the warning written once a process
 native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows): an OS object of the process

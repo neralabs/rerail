@@ -270,6 +270,14 @@ impl World {
         Some(bytes)
     }
 
+    /// A rule file's interface digest (`rr::interface_digest`, decision 0639 §4), none when it is refused or missing,
+    /// recorded for the reuse check.
+    pub fn interface(&mut self, asked: &str) -> Option<String> {
+        let d = self.allowed(asked).and_then(|p| crate::code_rule_dsl::logic::rr::interface_digest(&p))?;
+        self.consulted_lookup(crate::code_rule_dsl::logic::rr::INTERFACE_REQUEST, asked, "", d.clone());
+        Some(d)
+    }
+
     /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
     /// for the file.
     pub fn digest(&mut self, asked: &str) -> Option<String> {
@@ -450,15 +458,6 @@ impl World {
         out
     }
 
-    /// The first of `consulted` that would be answered otherwise now, with its answer now (`None` for a kind of
-    /// request no longer asked).
-    pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {
-        consulted.iter().find_map(|c| {
-            let now = self.observation(&c.0, &c.1);
-            (now.as_ref() != Some(&c.2)).then_some((c, now))
-        })
-    }
-
     pub(super) fn observation(&mut self, what: &str, path: &str) -> Option<String> {
         Some(match what {
             "dir" => listing_digest(&self.dir(path)),
@@ -466,6 +465,14 @@ impl World {
             "git_file_storage" => crate::git_workspace::snapshot::file_stamp(&self.allowed(path)?)?,
             "load" => bytes_digest(&self.root.join(path)),
             "refused" => self.probe(path),
+            crate::code_rule_dsl::logic::rr::INTERFACE_REQUEST => {
+                let (asked, _) = serde_json::from_str::<(String, String)>(path).ok()?;
+                self.allowed(&asked).and_then(|p| crate::code_rule_dsl::logic::rr::interface_digest(&p)).unwrap_or_default()
+            }
+            crate::code_rule_dsl::logic::rr::LOWER_REQUEST => {
+                let (key, _) = serde_json::from_str::<(String, String)>(path).ok()?;
+                (if crate::code_rule_dsl::logic::rr::planned_module_held(&key) { "held" } else { "gone" }).to_owned()
+            }
             super::analysis_history::REQUEST => {
                 let (kind, key) = serde_json::from_str::<(String, String)>(path).ok()?;
                 super::analysis_history::requested(&kind, &key).ok()?.1

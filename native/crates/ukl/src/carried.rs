@@ -39,7 +39,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
-    ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
+    ("ukl/stages.h", include_str!("../lib/ukl/stages.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
     // The tape's reads for the kernels, written by hand (decisions 0524, 0576): each format's reads, the reads made of
     // them (included once a format) and the public reads, which `tape.h` (format 16) and `tape_z.h` (16z too)
@@ -49,6 +49,9 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/reads/tape_f16z.h", include_str!("../lib/ukl/reads/tape_f16z.h")),
     ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
     ("ukl/reads/tape_z.h", include_str!("../lib/ukl/reads/tape_z.h")),
+    // A tape's auxiliary index (decision 0656), written by hand: its reads, and those of the tape and the auxiliary index together.
+    ("ukl/reads/aux_index.h", include_str!("../lib/ukl/reads/aux_index.h")),
+    ("ukl/reads/aux_index_tape.h", include_str!("../lib/ukl/reads/aux_index_tape.h")),
     // The other reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here
     // so that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
