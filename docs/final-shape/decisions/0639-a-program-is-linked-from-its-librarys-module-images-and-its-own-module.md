@@ -164,6 +164,13 @@ and key (`rr::planned_module`). A library file or a phase program as a seed is a
 so its graph holds its own module and the template plans and lowers every one; a program file of the run's own is
 no module.
 
+**The answer sends no statement (decision 0104), 2026-11-24.** The requests are answered inside the run's waves. Before
+phase 0's first wave, one statement reads which module images the store holds and where (`rr::read_held_modules`:
+the sources pinned by the module images' own owner, `rr module images (decision 0639)`, by alias). Inside the waves, the
+answer takes the module its process holds, else the image the store held, read in its segment, mapped, else it
+lowers the module. An answer that read no store lowered again every module only the store held (aec6f2539e), which
+`phase_0_lowers_each_module_its_store_does_not_hold` refuses: the user chose this read over lowering again.
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.
