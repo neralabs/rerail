@@ -153,6 +153,8 @@ impl Outcome {
 struct Fx<'a> {
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,
     direct: bool,
+    /// The run's room (`Run::room`), where the statistics the run keeps in its model are made.
+    room: &'a Arc<dyn rerail_blocks::maps::Room>,
 }
 impl Fx<'_> {
     /// The planner's spec goes to the engine as values in process. Over text symbols the SQL functions are T's
@@ -199,10 +201,8 @@ impl Fx<'_> {
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
         if self.direct {
-            return Ok(super::native::component::live(self.db, name)?
-                .into_iter()
-                .map(LiveRel::of_native)
-                .collect());
+            // Made in the run's room: the model keeps them for the run (decision 0342 amended).
+            return rerail_blocks::maps::within(self.room, || Ok(super::native::component::live(self.db, name)?.into_iter().map(LiveRel::of_native).collect()));
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
@@ -218,10 +218,7 @@ impl Fx<'_> {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on"))) {
             seen.clear();
         }
-        Ok(super::native::component::live_changed(self.db, name, seen)?
-            .into_iter()
-            .map(|l| l.map(LiveRel::of_native))
-            .collect())
+        rerail_blocks::maps::within(self.room, || Ok(super::native::component::live_changed(self.db, name, seen)?.into_iter().map(|l| l.map(LiveRel::of_native)).collect()))
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
@@ -387,6 +384,9 @@ pub struct Run<'a, 'b> {
     /// The static check of the program the run's part is of (decision 0364 §5): given by the caller
     /// (`Maintain::proofs`), else made of the run's own version when first asked.
     proofs: std::sync::OnceLock<Arc<wellfounded::Proofs>>,
+    /// The run's room (decision 0342 amended): its free-listed blocks, where what its model keeps from the native
+    /// engine is made (`Fx::stats`), shared with its strands, whose forks the run takes back into its model.
+    room: Arc<dyn rerail_blocks::maps::Room>,
 }
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
@@ -1928,6 +1928,7 @@ impl<'a> Run<'a, '_> {
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
             proofs: self.proofs.clone(),
+            room: Arc::clone(&self.room),
         }, arena, (0, 0), keep))
     }
 
@@ -2380,7 +2381,7 @@ impl<'a> Run<'a, '_> {
     }
 
     fn fx(&self) -> Fx<'_> {
-        Fx { db: self.db, direct: self.model.inputs.atoms.is_some() }
+        Fx { db: self.db, direct: self.model.inputs.atoms.is_some(), room: &self.room }
     }
 
     /// Makes the tables of `rels` not yet made (`pending`).
@@ -3029,7 +3030,7 @@ impl<'a> Run<'a, '_> {
         }
         let name = format!("mm_{h}");
         let spec = ComponentSpec { name: name.clone(), lines }.encode();
-        let fx = Fx { db: self.db, direct: true };
+        let fx = Fx { db: self.db, direct: true, room: &self.room };
         for r in scc {
             super::native::component::hold_maintained(self.db, r, Arc::clone(&olds[r]));
         }
@@ -6772,7 +6773,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default(), room: rerail_blocks::maps::FreeRoom::owner() };
     if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
         let _ = run.proofs.set(p);
     }

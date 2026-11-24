@@ -11505,3 +11505,11 @@ refusal, which Go-C found left end words unread: CUDA error 700).
 
 Checked under Relax (RERAIL_GPU=cpu): rerail-metal 22/22 (the bound test
 asks for the new check), c-directives eval::tests 50.
+
+### Q552. Roll-up 124 (Typing-support-final-shape 060e5b9a76 onto Pulling-it-all-together): what the merge chose
+
+- The run's default room: the hub's 0628 one run room (`rows::install_run_room`, the run's open relation block) met the feeder's 0342 amendment (the calling thread's stack, a large room a thread, owners' rooms). The user chose the stack for now and asked for both to be measured on the 15-file edit sequence. Boot, logic's and device_metal's test binaries install `rerail_blocks::maps::install`; `rows::install_run_room` is gone; 0628 records the change; the vector crate's docs name the blocks crate as installer.
+- phase0: one `p0g_module` writer (the hub's). Both read-back tests are kept; `through_kept_forms` reads its facts through the feeder's `Graph::kept_and_read`.
+- blocks maps.rs: the feeder's (FreeRoom, OwnerRoom, within, default_room, install).
+- A leftover of roll-up 122: transducer_base no longer digests `Readings::provisional` (removed by 0673 step 5).
+- Relax: blocks 101, vector 1, tape-format 51, facts-base 84, the text readers' guard, tests-corpus's phase0, template, cold-run and warm tests (31), all green; checks 0 errors on every touched crate.

@@ -724,12 +724,6 @@ pub fn run_room() -> Arc<dyn rerail_blocks::maps::Room> {
     Arc::new(LifeRoom(Life::Run))
 }
 
-/// Installs the run's room as every crate's default (`rerail_vector::default_room`): what a vector or map made with
-/// no room takes. The engine's, at load (boot), and a test binary's that stands in for it.
-pub fn install_run_room() {
-    rerail_blocks::maps::install_default_room("rerail-facts-base", run_room);
-}
-
 /// A source's room (`LifeRoom(Life::Source)`): a batch's structures, dropped with the batch.
 pub fn source_room() -> Arc<dyn rerail_blocks::maps::Room> {
     Arc::new(LifeRoom(Life::Source))

@@ -1,9 +1,8 @@
 //! Plain values, the rooms structures take their regions from, and the growable array over them (decision 0628 §3).
 //!
 //! Below the tape format, so that its writer's columns, like every crate's arrays, lie in the blocks the run's room
-//! gives (`rerail_blocks` implements `Room` over its blocks; the facts layer installs the run's, `rows::run_room`, the
-//! run's open relation block, with `install_default_room`). A crate's own tests, run without it, take their regions
-//! from the heap.
+//! gives (`rerail_blocks` implements `Room` over its blocks and installs the run's, `install_default_room`: the calling
+//! thread's stack, decision 0342). A crate's own tests, run without it, take their regions from the heap.
 
 pub mod vector;
 
@@ -111,7 +110,9 @@ impl Region {
 }
 
 /// Where a structure lives: a region of `bytes` bytes in a block of the right life, its first byte at a multiple of
-/// `align` (at least 8).
+/// `align` (at least 8). A thread's rooms and the heap's read zero (the stack's region and a large room's chunk
+/// zeroed, the heap's `alloc_zeroed`); a relation block's (`facts::rows`' `LifeRoom`, a home's room) is a chunk taken
+/// unzeroed (`try_alloc_chunk_fit`), so a structure writes each byte before it reads it.
 pub trait Room: Send + Sync {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region;
 }
@@ -146,7 +147,7 @@ impl Room for HeapRoom {
     }
 }
 
-/// The run's room, as the facts layer gives it (`rows::run_room`, `install_default_room`): registered once, at load.
+/// The run's room, as the blocks crate gives it (`install_default_room`): registered once, at load.
 static DEFAULT_ROOM: rerail_registry::Slot<fn() -> Arc<dyn Room>> = rerail_registry::Slot::new("the run's room every structure made with no room takes (rerail_vector::DEFAULT_ROOM)");
 
 /// Installs the run's room: what a structure made with no room (`Vector::new`) takes its regions from. Once, at load
@@ -155,7 +156,7 @@ pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>)
     DEFAULT_ROOM.register(provider, room);
 }
 
-/// The room of the run under way (the facts layer's, once installed), else the heap's.
+/// The room of the run under way (the blocks crate's, once installed), else the heap's.
 pub fn default_room() -> Arc<dyn Room> {
     match DEFAULT_ROOM.try_get() {
         Some(room) => room(),

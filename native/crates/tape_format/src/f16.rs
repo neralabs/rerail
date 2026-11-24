@@ -41,6 +41,9 @@ pub struct Lang {
     words: (usize, usize),
     /// The grammar's names of its ids (`Names`): what a parser without the grammar numbers its nodes by.
     names: Names,
+    /// Its kinds' part, each code's presence word by number (`presence::kind_word`), made once from the table: every
+    /// tape of the language starts with it (`ops::Writer::begin_with`).
+    kinds: Box<[u8]>,
 }
 
 /// A language's names, as its grammar has them (decision 0631): each kind id a node can have (a public symbol) with
@@ -153,7 +156,8 @@ impl Lang {
         let kinds = table.entries().map(|e| usize::from(e.kind) + 1).max().unwrap_or(0);
         let fields = table.entries().map(|e| usize::from(e.field) + 1).max().unwrap_or(0);
         let words = (kinds.div_ceil(64), fields.div_ceil(64));
-        Ok(Lang { table, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, words, names: Names::default() })
+        let kinds: Box<[u8]> = table.entries().flat_map(|e| presence::kind_word(e.kind, e.field, e.flags).to_le_bytes()).collect();
+        Ok(Lang { table, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, words, names: Names::default(), kinds })
     }
 
     /// The language with its grammar's names (`Names`).
@@ -182,6 +186,10 @@ impl Lang {
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
         self.words
+    }
+    /// Its kinds' part (`kinds`): each code's presence word, by number.
+    pub fn kinds_part(&self) -> &[u8] {
+        &self.kinds
     }
     pub fn table(&self) -> &CodeTable {
         &self.table

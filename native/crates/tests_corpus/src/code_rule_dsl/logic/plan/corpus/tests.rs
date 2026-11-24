@@ -3046,6 +3046,41 @@ holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
     assert_eq!(holes, [row(&["{col}", "name", "3"]), row(&["{table}", "table", "3"]), row(&["{uid}", "value", "2"]), row(&["{uid}", "value", "3"])]);
 }
 
+/// Decision 0597 rule 8: a pass's kept rows are an input of every chunk, bound empty where the chunk admits no tape
+/// value. PYI050 as it was written before d6fec0755c (its `parsed` in a branch of its own body), beside ASYNC100,
+/// makes the annotation context's pass read `def_outside`, whose kept rows (`…_rr_kept`) the program declares; over a
+/// file with no string to parse, the chunk answers no request in its fixpoint, and they were left unbound: its plan
+/// failed ("no statistics for rr_pass_annotation_def_outside_rr_kept.c0") where the engine before the hub's merge ran.
+#[test]
+fn a_pass_kept_rows_are_bound_in_a_chunk_that_admits_no_value() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("pass-kept-empty");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/rule-syntax/packs/python");
+    let async100 = std::fs::read_to_string(pack.join("ruff-async100-cancel-scope-no-checkpoint.rerail")).unwrap();
+    let pyi050 = "\
+.policy \"t:pyi050-before\" revision 1
+.language python
+#include \"python/typing.rerail\"
+#include \"python/version.rerail\"
+.violation PYI050(at: node) code \"PYI050\" \"NoReturn as a parameter's annotation\"
+PYI050(t) :- kind(f, \"function_definition\"), applies(f), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t),
+    (typing_sym(t, \"NoReturn\") ; parsed(t, \"annotation\", r), type_bare(r, n), typing_sym(n, \"NoReturn\")).
+.decl applies(f: node)
+applies(f) :- in_stub(f).
+applies(f) :- kind(f, \"function_definition\"), targets(11).
+";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // As the `logic` command runs a folder of rule files: one run of them all, the memo on.
+    let options = serde_json::json!({ "reuse": true });
+    let ran = super::run_with_parsed(&[async100.as_str(), pyi050], &[None, None], &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let found = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("the run fails: {e}"));
+    assert!(found.is_empty(), "no finding over a file of no def or with: {found:?}");
+}
+
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
 /// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
 #[test]

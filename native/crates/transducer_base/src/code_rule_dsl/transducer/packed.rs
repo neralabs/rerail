@@ -2325,10 +2325,6 @@ impl Program {
                     digest.update(w.to_le_bytes());
                 }
             }
-            digest.update((self.readings.provisional.len() as u64).to_le_bytes());
-            for f in &self.readings.provisional {
-                digest.update(f.to_le_bytes());
-            }
             if !self.readings.extras.is_empty() {
                 digest.update(b"extras");
                 digest.update((self.readings.extras.len() as u64).to_le_bytes());

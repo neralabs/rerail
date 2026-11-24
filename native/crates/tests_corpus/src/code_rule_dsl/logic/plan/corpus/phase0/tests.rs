@@ -414,6 +414,22 @@
         }
     }
 
+    /// A graph read back from the facts a store keeps it as (t33 step 2) holds its module plan and its modules' images
+    /// (decision 0639): kept without them, a later process's run found every library file in no module of its plan,
+    /// and refused to link.
+    #[test]
+    fn a_kept_graph_reads_back_with_its_module_plan() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
+        let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
+        let graph = super::graph(&seed).unwrap();
+        assert!(!graph.plan.is_empty(), "{}", graph.describe());
+        let read = graph.kept_and_read().expect("the kept graph reads");
+        assert_eq!(read.plan, graph.plan, "the module plan, as made");
+        assert_eq!(read.lowered, graph.lowered, "the modules' images, as made");
+        assert!(super::same_graph(&read, &graph), "{}", graph.differences(&read));
+    }
+
     /// T5 (decision 0639 §3): a graph whose module's image the store does not hold does not hold (`Graph::holds`), so
     /// `graphs` derives it again in that store, which asks for the lowering; a reused run of phase 0 checks its answer
     /// by the same look (`rr::planned_module_held`, the record's `p0_lower_req` entry).
