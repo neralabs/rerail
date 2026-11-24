@@ -1,0 +1,209 @@
+.policy "pytest-practice-scoped-fixture-mutated" revision 1
+.description "Do not change a class-, module-, package- or session-scoped fixture's value in a test; use monkeypatch or a function-scoped copy."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. pytest makes a fixture with scope="class", "module", "package" or "session" once and
+// hands the same object to every test of that scope (pytest docs, "Scope: sharing fixtures across classes, modules,
+// packages or session"). A test that writes into that object leaks the change into the tests after it, so results
+// depend on order (pytest docs, "Flaky tests"; flakytest.dev, "Keep tests independent of each other").
+//
+// It matches, in a test or a function-scoped fixture, a change made through a parameter whose fixture resolves (by
+// name, through the test's class, module and conftest.py chain: pt_resolves) to a fixture of a broader scope: an
+// attribute or item store or `del`, an augmented assignment, or a call of a list/dict/set mutator (pt_mutator) on the
+// value or on a chain over it.
+//   # conftest.py: @pytest.fixture(scope="module") def app(): return create_app()
+//   def test_x(app): app.config["RETRY"] = 4          reported
+//   def test_x(app): app.appbuilder = MagicMock()      reported
+//   def test_x(items): items.append(1)                 reported (items session-scoped)
+//   @pytest.fixture def flag(app): app.debug = True    reported: a function-scoped fixture runs once per test
+// Left alone:
+//   monkeypatch.setitem(app.config, "RETRY", 4)       the fix: undone after the test
+//   app.config["X"] = 1 ... finally: app.config["X"] = old
+//                                                      undone by the same test: in a finally, after a fixture's
+//                                                      yield, or in an addCleanup/addfinalizer callback (setattr and
+//                                                      delattr count), when the undo writes the same target or a
+//                                                      chain the target runs through
+//   old = app.x; app.x = 1; ...; app.x = old          a restore by hand: the same target stored twice in one test
+//   monkeypatch.setitem(app.ext, "k", None); del app.ext["k"]
+//                                                      the target is patched in the same test (monkeypatch.setitem/
+//                                                      delitem/setattr, patch.object, patch.dict over the container):
+//                                                      the patch's teardown restores it
+//   app.config.pop("DEV_USER", None)                   a defensive removal (pop with a default)
+//   api_client.delete("/items/1")                      not a mutator method (HTTP clients, ORM sessions' save/delete)
+//   app.db.add(row); db_session.add(row)               a mutator on a database session (db, session, *_db, *session):
+//                                                      rows, not the fixture's object; also `x.update(key, obj)`
+//                                                      (two positional arguments), `x.add(name=n)` (a keyword
+//                                                      argument), `a = x.update(...)` (the result used: a list, dict
+//                                                      or set method returns None), and any method call through a
+//                                                      fixture named client/*client/api/*_api/sdk (an API client:
+//                                                      `client.agents.update(agent_id=a)` writes to a server)
+//   cfg = dict(app.config); cfg["X"] = 1               a local copy
+//   def test_x(fresh): fresh["a"] = 1                  fresh is function-scoped (also: a nearer conftest.py overrides
+//                                                      a broad fixture with a function-scoped one)
+//   def test_x(plugin_fixture): ...                    no fixture def of the run: a plugin's, scope unknown
+//   def test_x(make_user): make_user("a")              a session-scoped factory: calling it builds a fresh object; a
+//                                                      fixture that returns a def or lambda of its own is skipped
+//   @pytest.fixture(scope="module") def seeded(rows): rows.append(1)
+//                                                      a broader-scoped fixture changing its dependency: set-up, run
+//                                                      once for its scope
+//   @pytest.fixture(scope="module") def refs(): r = []; yield r; assert all(...r...)
+//                                                      a collector: the fixture asserts on what tests added to it
+//   @pytest.fixture(autouse=True) def defaults(app): app.x = 1
+//                                                      an autouse fixture changing a class- or module-scoped value:
+//                                                      every test sharing the value runs it, the same change for all
+//   def test_x(app): app = create_app(); app.x = 1     the parameter is rebound before the write
+//   @pytest.mark.parametrize("items", ...)             parametrize hides the fixture of that name (not indirect=)
+// Gaps: an alias (`cfg = app.config; cfg["X"] = 1`) and a change made by a helper the test calls with the fixture are
+// not followed; mutating methods outside pt_mutator's list (a model's own setters) are not seen; a scope given by a
+// callable ("dynamic") is skipped; a restore by hand without finally is taken as a restore (the test still leaks when
+// it fails half-way), and so are two plain changes of the same target in one test.
+
+#include "lib/pytest.rerail"
+
+.violation ScopedFixtureMutated(at: node, name: symbol, scope: symbol) "This test changes `{name}`, a {scope}-scoped fixture: the same object is shared by every test of its {scope}, so the change leaks into the tests after it. Use `monkeypatch.setitem`/`monkeypatch.setattr` (undone after the test) or a function-scoped fixture that copies the value; leave it if the fixture is meant to accumulate state across tests."
+ScopedFixtureMutated(n, x, s) :- sfm_change(n, t, x, g), pt_fixture_scope(g, s), sfm_broad(s), !sfm_undone(n, t, g).
+
+.decl sfm_broad(s: symbol)
+sfm_broad("class"). sfm_broad("module"). sfm_broad("package"). sfm_broad("session").
+
+// sfm_runner(t): t runs once per test: a test, or a function-scoped fixture.
+.decl sfm_runner(t: node)
+sfm_runner(t) :- pt_test(t).
+sfm_runner(t) :- pt_fixture(t), pt_fixture_scope(t, "function").
+
+// sfm_change(n, t, x, g): n, in t, changes the value of parameter x, whose fixture resolves to g.
+.decl sfm_change(n: node, t: node, x: symbol, g: node)
+sfm_change(n, t, x, g) :- sfm_runner(t), pt_resolves(t, x, g), !sfm_factory(g), !sfm_collector(g),
+    !sfm_parametrized(t, x), !sfm_uniform(t, g), pt_mutates(n, o), kind(o, "identifier"), text(o, x), look(o, x, t),
+    !bind_only(o), !latest_assign(o, x, _), !sfm_not_collection(n), !sfm_client_call(n, x).
+
+// sfm_collector(g): yield fixture g asserts on the value it yielded after the yield: a collector the tests fill on
+// purpose and its teardown checks (`refs = []; yield refs; assert all(r() is None for r in refs)`). A teardown that
+// only closes the value (`yield app; app.stop()`) does not make it one.
+.decl sfm_collector(g: node)
+sfm_collector(g) :- pt_yield(g, y), child(y, v0, 0), unparen(v0, v), kind(v, "identifier"), text(v, xv),
+    kind(r, "identifier"), text(r, xv), pt_own(r, g), earlier(y, r), kind(a, "assert_statement"), within(r, a).
+
+// sfm_not_collection(n): mutator call n is not a list/dict/set method by its shape: a database session's method
+// (`app.db.add(row)`, `db.session.remove()`: rows, which the database fixtures reset), an `update` with two
+// positional arguments (`user.repos.recipes.update(slug, recipe)`), a keyword argument to a method other than
+// update/sort (`client.tools.add(func=f)`), or a result that is used where the collection method returns None
+// (`agent = client.agents.update(...)`).
+.decl sfm_not_collection(n: node)
+sfm_not_collection(n) :- kind(n, "call"), field(n, "function", f), attr_of(f, r, _), sfm_last_name(r, y),
+    z = @lower(y), (z = "db" ; z = "session" ; z = "dbsession" ; suffix("_db", z) ; suffix("session", z)).
+sfm_not_collection(n) :- kind(n, "call"), field(n, "function", f), attr_of(f, _, "update"), posarg(n, 1, _).
+sfm_not_collection(n) :- kind(n, "call"), field(n, "function", f), attr_of(f, _, m), pt_mutator(m), m != "update",
+    m != "sort", call_arg(n, -1, k, _), k != "".
+sfm_not_collection(n) :- kind(n, "call"), field(n, "function", f), attr_of(f, _, m), pt_mutator(m), m != "pop",
+    m != "popitem", m != "setdefault", child(p, n, _), !kind(p, "expression_statement"), !kind(p, "lambda").
+// `cfg.pop("X", None)`: a defensive removal that makes sure a key some other test may have set is gone.
+sfm_not_collection(n) :- kind(n, "call"), field(n, "function", f), attr_of(f, _, "pop"), posarg(n, 1, _).
+.decl sfm_last_name(r: node, y: symbol)
+sfm_last_name(r, y) :- attr_of(r, _, y).
+sfm_last_name(r, y) :- kind(r, "identifier"), text(r, y).
+// sfm_client_call(n, x): a method call through a fixture named as an API or HTTP client (`client`, `api_client`,
+// `sdk`): `client.agents.update(agent_id=a, tags=[])` writes to a server, not to the client object.
+.decl sfm_client_call(n: node, x: symbol)
+sfm_client_call(n, x) :- sfm_client_name(x), kind(n, "call"), pt_mutates(n, _).
+.decl sfm_client_name(x: symbol)
+sfm_client_name(x) :- pt_requests(_, x, _), z = @lower(x),
+    (z = "client" ; suffix("_client", z) ; suffix("client", z) ; z = "api" ; suffix("_api", z) ; z = "sdk").
+
+// sfm_uniform(t, g): t is an autouse fixture and g is class- or module-scoped: every test sharing g's value runs t,
+// so the change is the same for all of them (module-wide set-up).
+.decl sfm_uniform(t: node, g: node)
+sfm_uniform(t, g) :- pt_autouse(t), pt_fixture(g), (pt_fixture_scope(g, "module") ; pt_fixture_scope(g, "class")).
+
+// sfm_factory(g): fixture g returns (or yields) a def or lambda of its own body: each call makes a fresh object.
+.decl sfm_factory(g: node)
+sfm_factory(g) :- pt_fixture(g), (kind(r, "return_statement") ; kind(r, "yield")), pt_own(r, g), child(r, v0, 0),
+    unparen(v0, v), sfm_fn_value(v, g).
+.decl sfm_fn_value(v: node, g: node)
+sfm_fn_value(v, g) :- kind(v, "lambda"), pt_fixture(g).
+sfm_fn_value(v, g) :- kind(v, "identifier"), text(v, x), defn(g, x, f), kind(f, "function_definition").
+
+// sfm_parametrized(t, x): a parametrize mark on t or its class supplies x directly, hiding the fixture. With
+// `indirect=` the value goes through the fixture (request.param), which stays shared by its scope.
+.decl sfm_parametrized(t: node, x: symbol)
+sfm_parametrized(t, x) :- sfm_runner(t), (decorator(t, e0) ; pt_class_of(t, c), decorator(c, e0)), unparen(e0, e),
+    kind(e, "call"), field(e, "function", f), attr_of(f, _, "parametrize"), call_arg(e, 0, "", a),
+    str(a, s), match_all("\\s*(?<x>[^,\\s]+)\\s*", s), !sfm_indirect(e).
+.decl sfm_indirect(e: node)
+sfm_indirect(e) :- kind(e, "call"), call_arg(e, -1, "indirect", v), !kind(v, "false").
+
+// sfm_key(n, k): the text of what change n writes: the store target, or the mutator call's receiver.
+.decl sfm_key(n: node, k: symbol)
+sfm_key(n, k) :- sfm_change(n, _, _, _), !kind(n, "call"), text(n, k).
+sfm_key(n, k) :- sfm_change(n, _, _, _), kind(n, "call"), field(n, "function", f), attr_of(f, r, _), text(r, k).
+
+// sfm_setattr(m, t, j): `setattr(o, "a", v)` / `delattr(o, "a")` in t's code (lambdas and nested defs included),
+// writing j "o.a", as in `request.addfinalizer(lambda: setattr(app, "debug", old))`.
+.decl sfm_setattr(m: node, t: node, j: symbol)
+sfm_setattr(m, t, @dot(o, a)) :- sfm_runner(t), kind(m, "call"), within(m, t), field(m, "function", f),
+    (sym_of(f, "builtins.setattr") ; sym_of(f, "builtins.delattr")), posarg(m, 0, e), text(e, o),
+    posarg(m, 1, s), str(s, a).
+
+// The changes and setattr calls this rule asks pt_undo about: does t run them after its test, to undo it (after a
+// fixture's yield, in a finally, or in an addCleanup/addfinalizer callback)?
+pt_undo_ask(n) :- sfm_change(n, _, _, _).
+pt_undo_ask(n) :- sfm_setattr(n, _, _).
+
+// sfm_undo_key(t, j): t's undo code writes j: a change of the fixture's value, or a setattr / delattr.
+.decl sfm_undo_key(t: node, j: symbol)
+sfm_undo_key(t, j) :- sfm_change(m, t, _, _), pt_undo(m, t), sfm_key(m, j).
+sfm_undo_key(t, j) :- sfm_setattr(m, t, j), pt_undo(m, t).
+
+// sfm_undone(n, t, g): n is itself undo code of t; or t's undo code writes n's target, a chain n's target runs
+// through, or one running through it; or n is a store whose target t writes again in its body (a restore by hand,
+// `old = app.x; app.x = 1; ...; app.x = old`: both stores are left alone); or t patches n's target.
+.decl sfm_undone(n: node, t: node, g: node)
+sfm_undone(n, t, g) :- sfm_change(n, t, _, g), pt_undo(n, t).
+sfm_undone(n, t, g) :- sfm_change(n, t, _, g), sfm_key(n, k), sfm_undo_key(t, j), (prefix(j, k) ; prefix(k, j)).
+sfm_undone(n, t, g) :- sfm_change(n, t, _, g), !kind(n, "call"), sfm_key(n, k), sfm_change(m, t, _, g), m != n,
+    !kind(m, "call"), sfm_key(m, k).
+sfm_undone(n, t, g) :- sfm_change(n, t, _, g), sfm_patched(n, t).
+
+// sfm_patched(n, t): t patches n's target, so the patch's own teardown restores it whatever n does:
+// `monkeypatch.setitem(d, k, v)` / `delitem(d, k)` before `del d[k]`, `monkeypatch.setattr(o, "a", v)` or
+// `patch.object(o, "a")` for `o.a`, and `patch.dict(d, ...)` (as a call or a decorator of t) for anything in d.
+.decl sfm_patched(n: node, t: node)
+sfm_patched(n, t) :- sfm_change(n, t, _, _), kind(n, "subscript"), field(n, "value", d2), text(d2, j),
+    field(n, "subscript", k2), text(k2, kt), pt_mp_call(c, m), (m = "setitem" ; m = "delitem"), within(c, t),
+    posarg(c, 0, d), text(d, j), posarg(c, 1, k), text(k, kt).
+sfm_patched(n, t) :- sfm_change(n, t, _, _), attr_of(n, o2, a), text(o2, j), pt_patch_attr(c, o, a), within(c, t),
+    text(o, j).
+sfm_patched(n, t) :- sfm_change(n, t, _, _), sfm_key(n, k), pt_patch(c, "dict"),
+    (within(c, t) ; pt_patch_deco(t, c, _)), posarg(c, 0, d), text(d, j), prefix(j, k).
+
+// The cases, `cases/pytest-practice-scoped-fixture-mutated/`, read as one repository: each line ending in `# caught`
+// is reported, and no other line.
+.test cases exactly
+    .fixture "conftest.py" from "../cases/pytest-practice-scoped-fixture-mutated/conftest.py"
+    .fixture "shop/__init__.py" from "../cases/pytest-practice-scoped-fixture-mutated/shop/__init__.py"
+    .fixture "shop/app.py" from "../cases/pytest-practice-scoped-fixture-mutated/shop/app.py"
+    .fixture "tests/test_app.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/test_app.py"
+    .fixture "tests/test_class_scope.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/test_class_scope.py"
+    .fixture "tests/test_autouse.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/test_autouse.py"
+    .fixture "tests/sub/conftest.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/sub/conftest.py"
+    .fixture "tests/sub/test_override.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/sub/test_override.py"
+    .expect _ at "conftest.py":47
+    .expect _ at "conftest.py":61
+    .expect _ at "tests/test_app.py":9
+    .expect _ at "tests/test_app.py":14
+    .expect _ at "tests/test_app.py":18
+    .expect _ at "tests/test_app.py":22
+    .expect _ at "tests/test_app.py":26
+    .expect _ at "tests/test_app.py":30
+    .expect _ at "tests/test_app.py":34
+    .expect _ at "tests/test_app.py":38
+    .expect _ at "tests/test_app.py":43
+    .expect _ at "tests/test_app.py":50
+    .expect _ at "tests/test_app.py":55
+    .expect _ at "tests/test_app.py":176
+    .expect _ at "tests/test_autouse.py":11
+    .expect _ at "tests/test_class_scope.py":21
+    .expect _ at "tests/test_class_scope.py":24
+    .expect _ at "tests/sub/test_override.py":7
+.end

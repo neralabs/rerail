@@ -58,6 +58,28 @@
 //                  dj_django_doc(d)            document d imports from django or rest_framework (`import django…`,
 //                                              `from django… import …`, `from rest_framework… import …`)
 //   Settings:      dj_settings(e)              e is django.conf.settings
+//   Migrations:    dj_mig_class(c, d)          class c is migration document d's `Migration` class
+//                  dj_mig_attr(d, x, v)        d's Migration class body assigns `x = v` (operations, dependencies, ...)
+//                  dj_mig_nonatomic(d)         d sets `atomic = False`
+//                  dj_mig_op_call(o, k)        call o constructs migration operation class k ("AddField", ...)
+//                  dj_mig_op(o, k, d, i)       operation o of class k is item i of d's `operations`
+//                  dj_mig_db_op(o, k, d, i)    as dj_mig_op, for the operations that change the database: not a
+//                                              SeparateDatabaseAndState itself, but its database_operations (at
+//                                              its position i); its state_operations are not
+//                  dj_mig_arg(o, x, v)         operation o gets v for parameter x, by keyword or by position
+//                  dj_mig_model(o, m)          operation o acts on model m, lowercased ("orderposition")
+//                  dj_mig_field(o, x, f, t)    operation o defines field x as field call f of class t (AddField,
+//                                              AlterField, or a CreateModel `fields` item)
+//                  dj_mig_field_class(f, t)    call f constructs a field of class t, by its callee's last name
+//                  dj_mig_creates(d, m)        migration d creates model m (its table is new in d)
+//                  dj_runpython(o, d, i, g)    RunPython o, item i of d, runs function g of the run (same file or
+//                                              imported)
+//                  dj_mig_depends(d, e)        d lists migration e of its own package in `dependencies`
+//                  dj_mig_before(e, d)         e is applied before d (dj_mig_depends, transitively)
+//                  dj_live_doc(d)              d is application code: not a migration, no `test` in its path
+//                  dj_one_row(m)               live code reads model m (lowercased) as its one row: `M.objects.get()`
+//                                              with no arguments, `M.get_solo()` (a settings table)
+//                  dj_one_row_qs(q, r)         q is `r.objects` or `r.objects.all()`
 //   Python tests:  py_truth(e)                 e is read only for its truth: an if/elif/while/assert test, a
 //                                              conditional or comprehension `if`, `not e`, `bool(e)`, an and/or
 //                                              operand of one of these
@@ -459,6 +481,135 @@ dj_import_module(i, m) :- import_alias(i, _, m, _, _).
 dj_import_module(i, m) :- kind(i, "import_from_statement"), module_text(i, m).
 .decl dj_settings(e: node)
 dj_settings(e) :- sym_of(e, "django.conf.settings").
+
+// ---- migrations --------------------------------------------------------------------------------------------------
+// A migration file's `Migration` class, its operations in order, the arguments of each by name, the model and field
+// each one touches, the RunPython functions it runs, and the order of the migrations of one app. Operation classes
+// resolve through imports: `migrations.AddField`, `from django.db.migrations import AddField`,
+// `django.contrib.postgres.operations.AddIndexConcurrently`. A project's own operation classes are not operations
+// here.
+// dj_mig_class(c, d): class c is the `Migration` class (with a django.db.migrations.Migration base) of document d.
+.decl dj_mig_class(c: node, d: number)
+dj_mig_class(c, d) :- class_def(c, _), def_name(c, "Migration"), class_base(c, "django.db.migrations.Migration"),
+    docof(c, d).
+// dj_mig_attr(d, x, v): migration d's class body assigns `x = v` (`operations`, `dependencies`, `atomic`, ...).
+.decl dj_mig_attr(d: number, x: symbol, v: node)
+dj_mig_attr(d, x, v) :- dj_mig_class(c, d), field(c, "body", b), body_stmt(b, s, _), kind(s, "expression_statement"),
+    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", v).
+// dj_mig_nonatomic(d): migration d sets `atomic = False`, so its operations do not share one transaction.
+.decl dj_mig_nonatomic(d: number)
+dj_mig_nonatomic(d) :- dj_mig_attr(d, "atomic", v), kind(v, "false").
+.decl dj_mig_op_module(m: symbol)
+dj_mig_op_module("django.db.migrations"). dj_mig_op_module("django.db.migrations.operations").
+dj_mig_op_module("django.db.migrations.operations.fields"). dj_mig_op_module("django.db.migrations.operations.models").
+dj_mig_op_module("django.db.migrations.operations.special"). dj_mig_op_module("django.contrib.postgres.operations").
+// dj_mig_op_call(o, k): call o constructs migration operation class k (its last name: "AddField", "RunPython").
+.decl dj_mig_op_call(o: node, k: symbol)
+dj_mig_op_call(o, k) :- kind(o, "call"), field(o, "function", f), sym_of(f, q), split_dot(q, m, k), dj_mig_op_module(m).
+// dj_mig_op(o, k, d, i): operation o, of class k, is item i of migration d's `operations` list (or tuple).
+.decl dj_mig_op(o: node, k: symbol, d: number, i: number)
+dj_mig_op(o, k, d, i) :- dj_mig_attr(d, "operations", l), (kind(l, "list") ; kind(l, "tuple")), child(l, o, i),
+    dj_mig_op_call(o, k).
+// dj_mig_db_op(o, k, d, i): operation o changes the database: an item of the list other than
+// SeparateDatabaseAndState, or one of a SeparateDatabaseAndState's database_operations (i is the
+// SeparateDatabaseAndState's position). A state_operations item changes only Django's model state.
+.decl dj_mig_db_op(o: node, k: symbol, d: number, i: number)
+dj_mig_db_op(o, k, d, i) :- dj_mig_op(o, k, d, i), k != "SeparateDatabaseAndState".
+dj_mig_db_op(o, k, d, i) :- dj_mig_op(s, "SeparateDatabaseAndState", d, i),
+    (call_arg(s, -1, "database_operations", l) ; call_arg(s, 0, "", l)), (kind(l, "list") ; kind(l, "tuple")),
+    child(l, o, _), dj_mig_op_call(o, k).
+// dj_mig_param(k, i, x): positional parameter i of operation class k is named x (Django's signatures), so
+// dj_mig_arg reads `AddField("book", "title", field)` and `AddField(model_name="book", ...)` alike.
+.decl dj_mig_param(k: symbol, i: number, x: symbol)
+dj_mig_param("AddField", 0, "model_name"). dj_mig_param("AddField", 1, "name"). dj_mig_param("AddField", 2, "field").
+dj_mig_param("AddField", 3, "preserve_default").
+dj_mig_param("AlterField", 0, "model_name"). dj_mig_param("AlterField", 1, "name"). dj_mig_param("AlterField", 2, "field").
+dj_mig_param("AlterField", 3, "preserve_default").
+dj_mig_param("RemoveField", 0, "model_name"). dj_mig_param("RemoveField", 1, "name").
+dj_mig_param("RenameField", 0, "model_name"). dj_mig_param("RenameField", 1, "old_name").
+dj_mig_param("RenameField", 2, "new_name").
+dj_mig_param("CreateModel", 0, "name"). dj_mig_param("CreateModel", 1, "fields"). dj_mig_param("CreateModel", 2, "options").
+dj_mig_param("CreateModel", 3, "bases"). dj_mig_param("CreateModel", 4, "managers").
+dj_mig_param("DeleteModel", 0, "name").
+dj_mig_param("RenameModel", 0, "old_name"). dj_mig_param("RenameModel", 1, "new_name").
+dj_mig_param("AlterModelTable", 0, "name"). dj_mig_param("AlterModelTable", 1, "table").
+dj_mig_param("AlterModelOptions", 0, "name"). dj_mig_param("AlterModelOptions", 1, "options").
+dj_mig_param("AlterUniqueTogether", 0, "name"). dj_mig_param("AlterUniqueTogether", 1, "unique_together").
+dj_mig_param("AlterIndexTogether", 0, "name"). dj_mig_param("AlterIndexTogether", 1, "index_together").
+dj_mig_param("AddIndex", 0, "model_name"). dj_mig_param("AddIndex", 1, "index").
+dj_mig_param("AddIndexConcurrently", 0, "model_name"). dj_mig_param("AddIndexConcurrently", 1, "index").
+dj_mig_param("RemoveIndex", 0, "model_name"). dj_mig_param("RemoveIndex", 1, "name").
+dj_mig_param("RenameIndex", 0, "model_name"). dj_mig_param("RenameIndex", 1, "new_name").
+dj_mig_param("AddConstraint", 0, "model_name"). dj_mig_param("AddConstraint", 1, "constraint").
+dj_mig_param("RemoveConstraint", 0, "model_name"). dj_mig_param("RemoveConstraint", 1, "name").
+dj_mig_param("RunPython", 0, "code"). dj_mig_param("RunPython", 1, "reverse_code"). dj_mig_param("RunPython", 2, "atomic").
+dj_mig_param("RunPython", 3, "hints"). dj_mig_param("RunPython", 4, "elidable").
+dj_mig_param("RunSQL", 0, "sql"). dj_mig_param("RunSQL", 1, "reverse_sql"). dj_mig_param("RunSQL", 2, "state_operations").
+// dj_mig_arg(o, x, v): operation o is given v for its parameter x, by keyword or by position.
+.decl dj_mig_arg(o: node, x: symbol, v: node)
+dj_mig_arg(o, x, v) :- dj_mig_op_call(o, _), call_arg(o, -1, x, v).
+dj_mig_arg(o, x, v) :- dj_mig_op_call(o, k), dj_mig_param(k, i, x), posarg(o, i, v).
+// dj_mig_model_op(k): operation classes whose `name` (not `model_name`) names the model.
+.decl dj_mig_model_op(k: symbol)
+dj_mig_model_op("CreateModel"). dj_mig_model_op("DeleteModel"). dj_mig_model_op("AlterModelTable").
+dj_mig_model_op("AlterModelOptions"). dj_mig_model_op("AlterUniqueTogether"). dj_mig_model_op("AlterIndexTogether").
+// dj_mig_model(o, m): operation o acts on the model named m, lowercased as Django keys model state
+// ("orderposition" for both `CreateModel(name="OrderPosition")` and `AddField(model_name="orderposition")`); for
+// RenameModel, the old name.
+.decl dj_mig_model(o: node, m: symbol)
+dj_mig_model(o, @lower(s)) :- dj_mig_arg(o, "model_name", v), str(v, s).
+dj_mig_model(o, @lower(s)) :- dj_mig_op_call(o, k), dj_mig_model_op(k), dj_mig_arg(o, "name", v), str(v, s).
+dj_mig_model(o, @lower(s)) :- dj_mig_op_call(o, "RenameModel"), dj_mig_arg(o, "old_name", v), str(v, s).
+// dj_mig_field(o, x, f, t): operation o defines field x as the field call f of class t (its last name): an
+// AddField or AlterField's `field`, or an item `("x", f)` of a CreateModel's `fields`.
+//   migrations.AddField(model_name="book", name="isbn", field=models.CharField(max_length=13))
+//                                                   dj_mig_field(<op>, "isbn", <the CharField call>, "CharField")
+.decl dj_mig_field(o: node, x: symbol, f: node, t: symbol)
+dj_mig_field(o, x, f, t) :- (dj_mig_op_call(o, "AddField") ; dj_mig_op_call(o, "AlterField")), dj_mig_arg(o, "name", n),
+    str(n, x), dj_mig_arg(o, "field", f), dj_mig_field_class(f, t).
+dj_mig_field(o, x, f, t) :- dj_mig_op_call(o, "CreateModel"), dj_mig_arg(o, "fields", l), child(l, p, _),
+    kind(p, "tuple"), child(p, n, 0), str(n, x), child(p, f, 1), dj_mig_field_class(f, t).
+// dj_mig_field_class(f, t): call f constructs a field of class t, by the last name of its callee (migrations
+// write `models.CharField(...)` and a project's own field classes by their module path).
+.decl dj_mig_field_class(f: node, t: symbol)
+dj_mig_field_class(f, t) :- kind(f, "call"), field(f, "function", e), sym_of(e, q), split_dot(q, _, t).
+// dj_mig_creates(d, m): migration d creates model m (lowercased), so its table is new and empty in d.
+.decl dj_mig_creates(d: number, m: symbol)
+dj_mig_creates(d, m) :- dj_mig_db_op(o, "CreateModel", d, _), dj_mig_model(o, m).
+// dj_runpython(o, d, i, g): operation o, item i of migration d, is a RunPython whose forward code is function g:
+// a def of the run its `code` names, in the migration or imported from another module.
+//   migrations.RunPython(fill_slugs, migrations.RunPython.noop)   dj_runpython(<op>, d, i, <def fill_slugs>)
+.decl dj_runpython(o: node, d: number, i: number, g: node)
+dj_runpython(o, d, i, g) :- dj_mig_db_op(o, "RunPython", d, i), dj_mig_arg(o, "code", e), sym_of(e, q),
+    kind(g, "function_definition"), qualname(g, q).
+// dj_mig_depends(d, e): migration d lists migration e of its own package among its dependencies
+// (`("shop", "0003_book_isbn")` names `shop/migrations/0003_book_isbn.py`, by file name within d's package).
+// dj_mig_before(e, d): e is applied before d: dj_mig_depends, transitively.
+.decl dj_mig_depends(d: number, e: number)
+dj_mig_depends(d, e) :- dj_mig_attr(d, "dependencies", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x),
+    pkg(d, k), pkg(e, k), file_name(e, cat(x, ".py")), dj_mig_class(_, e).
+.decl dj_mig_before(e: number, d: number)
+dj_mig_before(e, d) :- dj_mig_depends(d, e).
+dj_mig_before(e, d) :- dj_mig_depends(d, m), dj_mig_before(e, m).
+// dj_live_doc(d): document d is application code: not a migration, and no part of its path names tests
+// (`tests_e2e/`, `e2e_test_form.py` included, which dj_test_doc does not cover).
+.decl dj_live_doc(d: number)
+dj_live_doc(d) :- doc(d, p, _), !dj_test_doc(d), !dj_migration_doc(d), !contains("test", p).
+// dj_one_row(m): application code reads model M (lowercased m) as its single row: `M.objects.get()` or
+// `M.objects.all().get()` with no arguments (two rows would raise MultipleObjectsReturned), or django-solo's
+// `M.get_solo()`. M's table is a settings table of one row, so a value shared by its rows or a lock held over them
+// costs nothing.
+//   if System_Settings.objects.get().enable_jira:      dj_one_row("system_settings")
+.decl dj_one_row(m: symbol)
+dj_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, q, "get"), py_no_args(c),
+    dj_one_row_qs(q, r), kind(r, "identifier"), text(r, n), docof(c, d), dj_live_doc(d).
+dj_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, r, "get_solo"), kind(r, "identifier"),
+    text(r, n), docof(c, d), dj_live_doc(d).
+// dj_one_row_qs(q, r): q is `r.objects` or `r.objects.all()`.
+.decl dj_one_row_qs(q: node, r: node)
+dj_one_row_qs(q, r) :- dj_manager(q), attr_of(q, r, _).
+dj_one_row_qs(q, r) :- kind(q, "call"), py_no_args(q), field(q, "function", f), attr_of(f, m, "all"), dj_manager(m),
+    attr_of(m, r, _).
 
 // ---- python tests ------------------------------------------------------------------------------------------------
 // Not Django's, but read the same way by several django-practice rules (python/ruff's bool_test, without

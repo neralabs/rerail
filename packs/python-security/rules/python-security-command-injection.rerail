@@ -1,0 +1,275 @@
+.policy "python-security-command-injection" revision 1
+.description "Keep request data out of shell commands and out of the program a subprocess runs; a client could run any command."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Client request data (lib/security's sources: Django/DRF `request.GET`/`.POST`/
+// `.data`/`.FILES`/…, Flask `request.args`/`.form`/…, Starlette `request.query_params`/`.json()`/…, FastAPI and
+// Flask route parameters) that reaches an OS command, in the same function or through the project's functions
+// across files, reported at the call that runs the command:
+//   - shell commands: the command of `subprocess.run/call/check_call/check_output/Popen` (first positional or
+//     `args=`) when the call turns the shell on: `shell=True`, a `shell=` name that is True (a local, a parameter
+//     defaulting to True, or a parameter some call of the run passes True: motionEye's `call_subprocess(cmd,
+//     shell=True)`), or a `**kw` dict that holds `"shell": True` (a dict literal, `dict(shell=True)`,
+//     `kw["shell"] = True` as in Modoboa's `exec_cmd`, `kw.setdefault("shell", True)`, `kw.update(shell=True)`, or
+//     the function's own `**kw` when a call of the run passes `shell=True`); and the command of `os.system`,
+//     `os.popen`, `subprocess.getoutput/getstatusoutput`, `commands.getoutput/getstatusoutput`,
+//     `asyncio.create_subprocess_shell`; and the item after `-c` of an argument list that starts a shell by name
+//     (`["sh", "-c", cmd]`, a literal or a name assigned one; `create_subprocess_exec("bash", "-c", cmd)`). A list
+//     command under `shell=True` counts by its first item only (the rest are the shell's own `$0…`).
+//   - the program: the first item of the argument list of `subprocess.*` without a shell (a list or tuple literal,
+//     `[*argv]`, `prefix + args`, a name assigned one, a parameter given one, a function of the run returning
+//     one, `shlex.split(…)`), `executable=`, the first argument of `os.exec*`, `os.posix_spawn*`, `os.startfile`
+//     and `asyncio.create_subprocess_exec`, the second of `os.spawn*`, and the argv of `pty.spawn` (pyLoad's
+//     client-set executable).
+// A wrapper (`net.ping(host)` running `subprocess.run(f"ping -c1 {host}", shell=True)`) counts by itself: its
+// parameter is client data when a call of the run passes it some, and the message names the source.
+//   os.system(f"ping -c1 {request.GET['host']}")                       reported
+//   subprocess.run(f"v4l2-ctl -d '{device}'", shell=True)              reported: hand-written quotes are no quoting
+//   subprocess.Popen([request.POST["scanner"], "--scan", path])        reported: the client picks the program
+//   subprocess.run(["git", "log", request.GET["ref"]])                 not reported: fixed program, no shell
+//   subprocess.run(f"ls {shlex.quote(p)}", shell=True)                 not reported: quoted
+// Sanitisers it trusts: shlex.quote() and shlex.join() (POSIX shells only; Windows `cmd.exe` quoting differs), int()
+// and every other library call (lib/security stops at them), a dict lookup by the value (`TOOLS[op]`,
+// `TOOLS.get(op)`: the value is the key, not the result), and a name its function checks: passes to a call named
+// like a validator (`is_valid_host(host)`) or tests with `in`/`not in` (`if zone not in ALLOWED_ZONES`), or a
+// function named like a validator returning it. Unlike lib/security's sec_checked, `subprocess.check_output` and
+// `check_call` are not validators here. It leaves alone request data only in `env=`, `cwd=` or `input=`, fully
+// literal commands, test files, and code with no request source (management commands, `sys.argv`).
+// Gaps: argument injection into a fixed program (`["git", "fetch", ref]` with `ref = "--upload-pack=…"`, GitPython's
+// GHSA-rpm5-65cw-6hj4) is out of scope. A check is flow-insensitive: a name checked anywhere in its function is
+// trusted everywhere in it, and a blocklist test (`if host in BLOCKED: raise`) counts as a check. Values stored on
+// objects or in the database (second-order: OctoPrint's stored filename) are not followed; nor are calls the call
+// graph cannot resolve, `**kw` dicts built or passed further than one step, `loop.subprocess_shell`, or a
+// parameter's shell flag per call site (one caller passing `shell=True` turns the shell on for every call).
+
+#include "lib/security.rerail"
+
+.violation ShellCommand(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) reaches this shell command: a client can run any command. Pass an argument list without a shell, or shlex.quote() the value, unless a check elsewhere fixes it."
+.violation ClientProgram(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) picks the program this call runs: a client can run any executable. Look the program up in a fixed mapping, unless a check elsewhere fixes the value."
+
+// ---- checks ------------------------------------------------------------------------------------------------------
+// ci_check_arg(h, a): a is what scope h checks: an argument of a validator-named call that does not run a command
+// (`check_output` and `check_call` run one), or the left of `in` / `not in`.
+.decl ci_runner_name(n: symbol)
+ci_runner_name("check_output"). ci_runner_name("check_call"). ci_runner_name("check_returncode").
+.decl ci_check_arg(h: node, a: node)
+ci_check_arg(h, a) :- kind(c, "call"), call_name(c, n), sec_validator_name(n), !ci_runner_name(n),
+    call_arg(c, _, _, a), nearest(c, h, fscope).
+ci_check_arg(h, a) :- kind(c, "comparison_operator"), op(c, o), (o = "in" ; o = "not in"), child(c, a, 0),
+    nearest(c, h, fscope).
+// ci_quoted(c): c quotes for a POSIX shell. lib/security's `.join()` step would read `shlex.join(…)` as `str.join`.
+.decl ci_quoted(c: node)
+ci_quoted(c) :- sec_call_q(c, "shlex.join"). ci_quoted(c) :- sec_call_q(c, "shlex.quote").
+ci_quoted(c) :- sec_call_q(c, "pipes.quote").
+.decl ci_checked(h: node, x: symbol)
+ci_checked(h, x) :- ci_check_arg(h, a), sec_reads(a, x), x != "self", x != "cls", x != "request".
+.decl ci_checked_expr(e: node)
+ci_checked_expr(e) :- sec_value_site(e), sec_reads(e, x), nearest(e, h, fscope), ci_checked(h, x).
+ci_checked_expr(e) :- sec_value_site(e), text(e, t), nearest(e, h, fscope), ci_check_arg(h, a), text(a, t).
+
+// ---- client text, check-aware ------------------------------------------------------------------------------------
+// ci_val(e, s): e's value holds client text from source s: lib/security's propagation (sec_step), with a name its
+// function checks (ci_checked) cut, across files through ci_param and ci_returns.
+.decl ci_val(e: node, s: node)
+ci_val(e, e) :- sec_source(e, _).
+ci_val(e, s) :- sec_step(e, a), !ci_quoted(e), ci_val(a, s).
+ci_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ci_checked(h, x), sec_bind(h, x, v), ci_val(v, s),
+    r != v.
+ci_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !ci_checked(g, x), ci_param(g, x, s).
+ci_val(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), ci_val(v, s).
+ci_val(c, s) :- sec_call_q(c, "shlex.split"), sec_arg(c, 0, _, a), ci_val(a, s).
+ci_val(c, s) :- call_target(c, g), ci_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), ci_val(a, s).
+ci_val(c, s) :- call_target(c, g), ci_returns(g, s), !sec_validator_def(g), ci_own_source(g, s).
+// ci_param(g, x, s): parameter x of g holds client text: a route parameter, or what a call of the run passes it.
+.decl ci_param(g: node, x: symbol, s: node)
+ci_param(g, x, p) :- sec_route_param(g, x, p).
+ci_param(g, x, s) :- sec_param_at(_, g, a, x), ci_val(a, s).
+.decl ci_returns(g: node, s: node)
+ci_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), ci_val(v, s),
+    !ci_checked_expr(v).
+.decl ci_own_source(g: node, s: node)
+ci_own_source(g, s) :- ci_returns(g, s), within(s, g).
+ci_own_source(g, s) :- ci_returns(g, s), ci_reach(g, h), within(s, h).
+.decl ci_reach(g: node, h: node)
+ci_reach(g, h) :- ci_returns(g, _), calls(g, h).
+ci_reach(g, k) :- ci_reach(g, h), calls(h, k).
+
+// ---- argument lists ------------------------------------------------------------------------------------------------
+// ci_listy(e): e is an argument list: a list, tuple or list comprehension, `a + b` with a list on the left, a name
+// assigned one, or a call of a function of the run that returns one.
+.decl ci_listy(e: node)
+ci_listy(e) :- kind(e, "list"). ci_listy(e) :- kind(e, "tuple"). ci_listy(e) :- kind(e, "list_comprehension").
+ci_listy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_listy(a).
+ci_listy(b) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), ci_listy(a).
+ci_listy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_listy(v).
+ci_listy(c) :- call_target(c, g), kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef), ci_listy(v).
+// ci_shaped(e): ci_prog reads e by its shape, not as one value.
+.decl ci_shaped(e: node)
+ci_shaped(e) :- kind(e, "list"). ci_shaped(e) :- kind(e, "tuple"). ci_shaped(e) :- kind(e, "list_comprehension").
+ci_shaped(e) :- kind(e, "parenthesized_expression"). ci_shaped(e) :- kind(e, "identifier").
+ci_shaped(e) :- kind(e, "binary_operator"), op(e, "+").
+ci_shaped(c) :- call_target(c, _).
+// ci_aug_value(v): v is the right side of an augmented assignment (`cmd += […]` extends a list).
+.decl ci_aug_value(v: node)
+ci_aug_value(v) :- kind(a, "augmented_assignment"), field(a, "right", v).
+// ci_prog(e, s): the program of argument list e (its first item), or e itself when it is one value, is client
+// text from s.
+.decl ci_prog(e: node, s: node)
+ci_prog(t, s) :- (kind(t, "list") ; kind(t, "tuple")), child(t, a, 0), !kind(a, "list_splat"), ci_val(a, s).
+ci_prog(t, s) :- (kind(t, "list") ; kind(t, "tuple")), child(t, sp, 0), kind(sp, "list_splat"), child(sp, a, 0),
+    ci_prog(a, s).
+ci_prog(t, s) :- kind(t, "list_comprehension"), field(t, "body", a), ci_val(a, s).
+ci_prog(p, s) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_prog(a, s).
+ci_prog(b, s) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), field(b, "right", r),
+    (ci_listy(a) ; ci_listy(r)), ci_prog(a, s).
+ci_prog(b, s) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), field(b, "right", r), !ci_listy(a),
+    !ci_listy(r), ci_val(b, s).
+ci_prog(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ci_checked(h, x), asg(h, x, v, _), ci_prog(v, s).
+ci_prog(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ci_checked(h, x), sec_bind(h, x, v),
+    !asg(h, x, v, _), !ci_listy(v), !ci_aug_value(v), ci_val(v, s).
+ci_prog(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !ci_checked(g, x), sec_param_at(_, g, a, x),
+    ci_prog(a, s).
+ci_prog(r, p) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_route_param(g, x, p).
+ci_prog(c, s) :- call_target(c, g), !sec_validator_def(g), kind(rs, "return_statement"), child(rs, v, 0),
+    nearest(rs, g, fdef), !ci_checked_expr(v), ci_prog(v, s).
+ci_prog(e, s) :- ci_val(e, s), !ci_shaped(e).
+// ci_shellcmd(e, s): command e of a shell holds client text: the string, or a list's first item.
+.decl ci_shellcmd(e: node, s: node)
+ci_shellcmd(e, s) :- ci_val(e, s), !ci_listy(e).
+ci_shellcmd(e, s) :- ci_listy(e), ci_prog(e, s).
+
+// ---- the shell flag ------------------------------------------------------------------------------------------------
+// ci_truthy(v): v is True: the literal, a name assigned it, a parameter defaulting to it, or a parameter some call
+// of the run passes it.
+.decl ci_truthy(v: node)
+ci_truthy(v) :- kind(v, "true").
+ci_truthy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_truthy(a).
+ci_truthy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_truthy(v).
+ci_truthy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, _, d), text(nm, x),
+    ci_truthy(d).
+ci_truthy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_param_at(_, g, a, x), ci_truthy(a).
+// ci_kw_shell(k): name k, splatted as `**k`, holds `"shell": True`.
+.decl ci_kw_shell(k: node)
+ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), asg(h, x, v, _), unparen(v, d),
+    kind(d, "dictionary"), child(d, pr, _), kind(pr, "pair"), field(pr, "key", kk), str(kk, "shell"),
+    field(pr, "value", vv), ci_truthy(vv).
+ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), asg(h, x, v, _), unparen(v, c),
+    sec_call_q(c, "builtins.dict"), sec_arg(c, -1, "shell", vv), ci_truthy(vv).
+ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "subscript"), field(l, "value", o), kind(o, "identifier"), text(o, x), field(l, "subscript", kk),
+    str(kk, "shell"), field(a, "right", vv), ci_truthy(vv), nearest(a, h, scope).
+ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(c, "call"), field(c, "function", f),
+    attr_of(f, o, "setdefault"), kind(o, "identifier"), text(o, x), posarg(c, 0, kk), str(kk, "shell"),
+    posarg(c, 1, vv), ci_truthy(vv), nearest(c, h, scope).
+ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(c, "call"), field(c, "function", f),
+    attr_of(f, o, "update"), kind(o, "identifier"), text(o, x), sec_arg(c, -1, "shell", vv), ci_truthy(vv),
+    nearest(c, h, scope).
+ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, g), sig_param(g, _, nm, _, "kwarg", _, _),
+    text(nm, x), call_target(c, g), sec_arg(c, -1, "shell", vv), ci_truthy(vv).
+.decl ci_shell_on(c: node)
+ci_shell_on(c) :- sec_arg(c, -1, "shell", v), ci_truthy(v).
+ci_shell_on(c) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _), kind(sp, "dictionary_splat"),
+    child(sp, k, 0), ci_kw_shell(k).
+
+// ---- sinks -------------------------------------------------------------------------------------------------------
+.decl ci_popen_q(q: symbol)
+ci_popen_q("subprocess.run"). ci_popen_q("subprocess.call"). ci_popen_q("subprocess.check_call").
+ci_popen_q("subprocess.check_output"). ci_popen_q("subprocess.Popen").
+.decl ci_shell_q(q: symbol)
+ci_shell_q("os.system"). ci_shell_q("os.popen"). ci_shell_q("subprocess.getoutput").
+ci_shell_q("subprocess.getstatusoutput"). ci_shell_q("commands.getoutput"). ci_shell_q("commands.getstatusoutput").
+ci_shell_q("asyncio.create_subprocess_shell").
+// ci_exe_q(q, i): the program is argument i.
+.decl ci_exe_q(q: symbol, i: number)
+ci_exe_q("os.execl", 0). ci_exe_q("os.execle", 0). ci_exe_q("os.execlp", 0). ci_exe_q("os.execlpe", 0).
+ci_exe_q("os.execv", 0). ci_exe_q("os.execve", 0). ci_exe_q("os.execvp", 0). ci_exe_q("os.execvpe", 0).
+ci_exe_q("os.spawnl", 1). ci_exe_q("os.spawnle", 1). ci_exe_q("os.spawnlp", 1). ci_exe_q("os.spawnlpe", 1).
+ci_exe_q("os.spawnv", 1). ci_exe_q("os.spawnve", 1). ci_exe_q("os.spawnvp", 1). ci_exe_q("os.spawnvpe", 1).
+ci_exe_q("os.posix_spawn", 0). ci_exe_q("os.posix_spawnp", 0). ci_exe_q("os.startfile", 0).
+ci_exe_q("asyncio.create_subprocess_exec", 0).
+// ci_sink(c, how, e): call c runs e as a shell command (how "shell"), as an argument list or program (how
+// "argv"), or as the program itself (how "exe").
+.decl ci_sink(c: node, how: symbol, e: node)
+ci_sink(c, "shell", e) :- sec_call_q(c, q), ci_popen_q(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "args", e)),
+    ci_shell_on(c).
+ci_sink(c, "argv", e) :- sec_call_q(c, q), ci_popen_q(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "args", e)),
+    !ci_shell_on(c).
+ci_sink(c, "exe", e) :- sec_call_q(c, q), ci_popen_q(q), sec_arg(c, -1, "executable", e).
+ci_sink(c, "shell", e) :- sec_call_q(c, q), ci_shell_q(q),
+    (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "cmd", e) ; sec_arg(c, -1, "command", e)).
+ci_sink(c, "exe", e) :- sec_call_q(c, q), ci_exe_q(q, i), sec_arg(c, i, _, e).
+ci_sink(c, "argv", e) :- sec_call_q(c, "asyncio.create_subprocess_exec"), field(c, "arguments", al),
+    child(al, sp, 0), kind(sp, "list_splat"), child(sp, e, 0).
+ci_sink(c, "argv", e) :- sec_call_q(c, "pty.spawn"), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "argv", e)).
+// A shell started by name, `["sh", "-c", cmd]` or `create_subprocess_exec("bash", "-c", cmd)`: cmd is a shell command.
+ci_sink(c, "shell", e) :- ci_sink(c, "argv", a), ci_argv_lit(a, t), child(t, a0, 0), ci_shell_word(a0),
+    child(t, a1, 1), ci_dash_c(a1), child(t, e, 2).
+ci_sink(c, "shell", e) :- sec_call_q(c, "asyncio.create_subprocess_exec"), posarg(c, 0, a0), ci_shell_word(a0),
+    posarg(c, 1, a1), ci_dash_c(a1), posarg(c, 2, e).
+// ci_argv_lit(a, t): argument list a is the list or tuple literal t, written there or assigned to the name a.
+.decl ci_argv_lit(a: node, t: node)
+ci_argv_lit(a, t) :- unparen(a, t), (kind(t, "list") ; kind(t, "tuple")).
+ci_argv_lit(r, t) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), unparen(v, t),
+    (kind(t, "list") ; kind(t, "tuple")).
+.decl ci_shell_word(a: node)
+ci_shell_word(a) :- str(a, v), match("(/usr)?(/bin/)?(sh|bash|zsh|dash|ksh|ash)", v).
+.decl ci_dash_c(a: node)
+ci_dash_c(a) :- str(a, v), match("-[a-z]*c", v).
+// ci_hit(c, how, s): sink c runs client text from s.
+.decl ci_hit(c: node, how: symbol, s: node)
+ci_hit(c, "shell", s) :- ci_sink(c, "shell", e), ci_shellcmd(e, s).
+ci_hit(c, "program", s) :- ci_sink(c, "argv", e), ci_prog(e, s).
+ci_hit(c, "program", s) :- ci_sink(c, "exe", e), ci_val(e, s).
+.decl ci_live(c: node, how: symbol)
+ci_live(c, how) :- ci_hit(c, how, _), docof(c, d), !sec_test_doc(d).
+
+ShellCommand(c, what, p, l) :- ci_live(c, "shell"), s = min s2 : { ci_hit(c, "shell", s2) }, sec_origin(s, what, p, l).
+ClientProgram(c, what, p, l) :- ci_live(c, "program"), s = min s2 : { ci_hit(c, "program", s2) },
+    sec_origin(s, what, p, l).
+
+// The cases, `cases/python-security-command-injection/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "api/__init__.py" from "../cases/python-security-command-injection/api/__init__.py"
+    .fixture "api/routes.py" from "../cases/python-security-command-injection/api/routes.py"
+    .fixture "netops/__init__.py" from "../cases/python-security-command-injection/netops/__init__.py"
+    .fixture "netops/management/__init__.py" from "../cases/python-security-command-injection/netops/management/__init__.py"
+    .fixture "netops/management/commands/__init__.py" from "../cases/python-security-command-injection/netops/management/commands/__init__.py"
+    .fixture "netops/management/commands/runcmd.py" from "../cases/python-security-command-injection/netops/management/commands/runcmd.py"
+    .fixture "netops/net.py" from "../cases/python-security-command-injection/netops/net.py"
+    .fixture "netops/sysutils.py" from "../cases/python-security-command-injection/netops/sysutils.py"
+    .fixture "netops/tests/__init__.py" from "../cases/python-security-command-injection/netops/tests/__init__.py"
+    .fixture "netops/tests/test_views.py" from "../cases/python-security-command-injection/netops/tests/test_views.py"
+    .fixture "netops/utils.py" from "../cases/python-security-command-injection/netops/utils.py"
+    .fixture "netops/views.py" from "../cases/python-security-command-injection/netops/views.py"
+    .fixture "webapp/__init__.py" from "../cases/python-security-command-injection/webapp/__init__.py"
+    .fixture "webapp/app.py" from "../cases/python-security-command-injection/webapp/app.py"
+    .expect _ at "api/routes.py":24
+    .expect _ at "api/routes.py":32
+    .expect _ at "api/routes.py":38
+    .expect _ at "api/routes.py":43
+    .expect _ at "api/routes.py":48
+    .expect _ at "api/routes.py":54
+    .expect _ at "netops/net.py":5
+    .expect _ at "netops/sysutils.py":9
+    .expect _ at "netops/sysutils.py":15
+    .expect _ at "netops/utils.py":5
+    .expect _ at "netops/utils.py":9
+    .expect _ at "netops/views.py":18
+    .expect _ at "netops/views.py":23
+    .expect _ at "netops/views.py":30
+    .expect _ at "netops/views.py":34
+    .expect _ at "netops/views.py":40
+    .expect _ at "netops/views.py":76
+    .expect _ at "netops/views.py":81
+    .expect _ at "netops/views.py":87
+    .expect _ at "netops/views.py":94
+    .expect _ at "netops/views.py":100
+    .expect _ at "netops/views.py":106
+    .expect _ at "netops/views.py":108
+    .expect _ at "webapp/app.py":10
+    .expect _ at "webapp/app.py":15
+    .expect _ at "webapp/app.py":20
+.end

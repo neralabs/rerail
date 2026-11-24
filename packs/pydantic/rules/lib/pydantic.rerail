@@ -1,0 +1,363 @@
+// lib/pydantic: Pydantic v2 models, fields, config, validators, instances and the project's pinned major version, as
+// the pydantic-practice rules read them. Names resolve through imports (python/names' sym_of), so `import pydantic`
+// with `pydantic.BaseModel`, `from pydantic import BaseModel` and `from pydantic.main import BaseModel` all reach a
+// model base; class bases resolve across the files of the run (class_base), so a model whose base sits in another
+// module is still a model. A class deriving from `pydantic.v1.BaseModel` is a v1 model (pd_v1_model), never a
+// pd_model: v1 code is right to use v1 APIs.
+//
+// Interface
+//   Models:      pd_model(c)                  class c is a Pydantic v2 model: it derives from pydantic.BaseModel,
+//                                             RootModel, pydantic_settings.BaseSettings or sqlmodel.SQLModel,
+//                                             directly or through the run's classes (a generic base `RootModel[T]`
+//                                             included)
+//                pd_model_q(q)                q is the qualified name of such a class (a known base, or a run class)
+//                pd_v1_model(c)               class c derives from pydantic.v1.BaseModel (the v1 compatibility layer)
+//                pd_settings(c)               model c derives from pydantic_settings.BaseSettings (or the v1
+//                                             `pydantic.BaseSettings`)
+//                pd_sqlmodel(c)               model c derives from sqlmodel.SQLModel (a table model or not)
+//                pd_model_super(c, b)         class b of the run is among model c's bases, directly or not
+//                pd_class_ref(e, c)           expression e names model class c (`User`, `schemas.User`)
+//   Fields:      pd_field(c, x, a, t)         model c's own body declares field x by annotated assignment a with
+//                                             annotation t (`x: T` or `x: T = v`); ClassVar, `_private` and
+//                                             `model_config` are not fields
+//                pd_has_field(c, x, a, t)     as pd_field, for a field model c declares or inherits from a run class
+//                pd_field_value(a, v)         field a is assigned v (`x: T = v`); none for `x: T`
+//                pd_field_call(e)             e is a call of pydantic.Field (or sqlmodel.Field)
+//                pd_field_default(a, d)       field a's default expression d: v of `x: T = v`, or the default of
+//                                             `x: T = Field(d)` / `Field(default=d)`; none for a default_factory
+//                pd_ann_model(t, c)           annotation t mentions model class c as a value of the field: `M`,
+//                                             `M | None`, `Optional[M]`, `Annotated[M, ...]`, not `list[M]`
+//   Config:      pd_config(c, k, v)           model c sets config key k to v in its own definition: `model_config =
+//                                             ConfigDict(k=v)` (or SettingsConfigDict, or a dict literal), a v1
+//                                             `class Config: k = v`, or a class keyword `class M(BaseModel, k=v)`
+//                pd_config_of(c, k, v)        as pd_config, set by c or by a run class among its bases
+//                pd_config_class(c, k)        model c's body holds a v1-style nested `class Config:` k
+//   Validators:  pd_validator(f, c, api, mode)
+//                                             method f of class c is decorated with Pydantic's validator api
+//                                             ("field_validator", "model_validator", "validator", "root_validator")
+//                                             running in mode "before", "after", "wrap" or "plain" (v1's `pre=True`
+//                                             is "before"; a model_validator with no mode has none)
+//                pd_validator_deco(f, api, e) f carries decorator expression e for api (bare or called)
+//                pd_value_param(f, nm, x)     the parameter nm (named x) of validator f that receives the value: the
+//                                             first after cls/self (the first of a staticmethod); for an "after"
+//                                             model_validator, `self`
+//   Instances:   pd_instance(e, c)            e holds an instance of model c: `M(...)`, `M.model_validate(...)`
+//                                             (and the other constructors, v1's included), awaited or not; a name
+//                                             the same scope binds to one; `self` in a method of c; a parameter
+//                                             annotated with c (pd_ann_model)
+//                pd_typed_instance(e, c)      e holds an instance of model c by python/types' inference (type_of),
+//                                             with no other class possible; reading it runs the typing program
+//                pd_model_call(k, o, m, c)    call k is `o.m(...)` with o an instance of model c (pd_instance) or
+//                                             the class itself (pd_class_ref)
+//                pd_constructor(m)            classmethod m builds an instance: model_validate, model_construct, ...
+//   Project:     pd_v2_doc(d)                 document d belongs to a project on Pydantic 2: a manifest in its
+//                                             directory or one above it (pyproject.toml, requirements*.txt,
+//                                             setup.cfg, uv.lock, poetry.lock, Pipfile) requires pydantic >= 2 or
+//                                             any pydantic-settings, and none there pins pydantic 1; or, when no
+//                                             manifest of the run names pydantic, the run imports a name only
+//                                             Pydantic 2 has (field_validator, ConfigDict, pydantic_settings, ...)
+//                pd_manifest_pin(f, i, major) line i of manifest f requires pydantic major version major (1 or 2)
+//                pd_test_doc(d)               document d is test code: a tests/test/testing directory, test_*.py,
+//                                             *_test.py, *_tests.py, tests.py, conftest.py
+//
+// Pydantic background
+//   - A field is a class-body annotation. `x: T` is required; `x: T = v` and `x: T = Field(v)` default to v;
+//     `Field(default_factory=f)` calls f per instance. `Optional[T]` with no default is required in v2 (v1 gave it
+//     None). ClassVar annotations and `_underscore` names are not fields.
+//   - Config is `model_config = ConfigDict(...)` in v2, inherited and merged from bases; v1's nested `class
+//     Config:` still works in v2 (deprecated) but some keys are renamed or gone.
+//   - Validators: `@field_validator("x", mode=...)` (default "after") and `@model_validator(mode=...)`, v1's
+//     `@validator("x", pre=...)` and `@root_validator(pre=...)` (deprecated in v2). A field validator's return value
+//     becomes the field's value; an "after" model validator gets and returns `self`.
+//   e.g.  from pydantic import BaseModel, ConfigDict, Field, field_validator
+//         class User(BaseModel):                         pd_model
+//             model_config = ConfigDict(frozen=True)     pd_config(<User>, "frozen", <True>)
+//             id: int                                    pd_field(<User>, "id", <id: int>, <int>)
+//             name: str = Field("anon", max_length=9)    pd_field_default(<name: ...>, <"anon">)
+//             @field_validator("name")                   pd_validator(<check>, <User>, "field_validator", "after")
+//             @classmethod
+//             def check(cls, v): return v                pd_value_param(<check>, <v>, "v")
+//         u = User.model_validate(data)                  pd_instance(<User.model_validate(data)>, <User>)
+//         u.model_dump()                                 pd_model_call(<the call>, <u>, "model_dump", <User>)
+#include "python/ast.rerail"
+#include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
+#include "python/types.rerail"   // type_of, type_open: only pd_typed_instance reads them
+
+// ---- models ------------------------------------------------------------------------------------------------------
+// pd_model_base(q): Pydantic 2's model bases outside the run, and the libraries whose models are Pydantic models.
+.decl pd_model_base(q: symbol)
+pd_model_base("pydantic.BaseModel"). pd_model_base("pydantic.main.BaseModel").
+pd_model_base("pydantic.RootModel"). pd_model_base("pydantic.root_model.RootModel").
+pd_model_base("pydantic_settings.BaseSettings"). pd_model_base("pydantic_settings.main.BaseSettings").
+pd_model_base("sqlmodel.SQLModel"). pd_model_base("sqlmodel.main.SQLModel").
+// pydantic.BaseSettings is v1's (an import error under v2), still a settings model to a rule reading v1 code in v2.
+pd_model_base("pydantic.BaseSettings"). pd_model_base("pydantic.env_settings.BaseSettings").
+.decl pd_v1_base(q: symbol)
+pd_v1_base("pydantic.v1.BaseModel"). pd_v1_base("pydantic.v1.main.BaseModel").
+pd_v1_base("pydantic.v1.BaseSettings"). pd_v1_base("pydantic.v1.env_settings.BaseSettings").
+.decl pd_settings_base(q: symbol)
+pd_settings_base("pydantic_settings.BaseSettings"). pd_settings_base("pydantic_settings.main.BaseSettings").
+pd_settings_base("pydantic.BaseSettings"). pd_settings_base("pydantic.env_settings.BaseSettings").
+// pd_base(c, q): class c lists base q, a generic base by its origin: `RootModel[list[int]]` gives pydantic.RootModel.
+.decl pd_base(c: node, q: symbol)
+pd_base(c, q) :- class_base(c, q).
+pd_base(c, q) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), kind(e, "subscript"),
+    field(e, "value", v), sym_of(v, q).
+// pd_model_q(q): a linear closure from the bases, as lib/django's dj_model_q (python/names' subclass is quadratic).
+.decl pd_model_q(q: symbol)
+pd_model_q(q) :- pd_model_base(q).
+pd_model_q(q) :- class_def(c, q), pd_base(c, b), pd_model_q(b).
+.decl pd_model(c: node)
+pd_model(c) :- class_def(c, q), pd_model_q(q).
+.decl pd_v1_q(q: symbol)
+pd_v1_q(q) :- pd_v1_base(q).
+pd_v1_q(q) :- class_def(c, q), pd_base(c, b), pd_v1_q(b).
+.decl pd_v1_model(c: node)
+pd_v1_model(c) :- class_def(c, q), pd_v1_q(q).
+.decl pd_settings_q(q: symbol)
+pd_settings_q(q) :- pd_settings_base(q).
+pd_settings_q(q) :- class_def(c, q), pd_base(c, b), pd_settings_q(b).
+.decl pd_settings(c: node)
+pd_settings(c) :- class_def(c, q), pd_settings_q(q).
+.decl pd_sqlmodel_q(q: symbol)
+pd_sqlmodel_q("sqlmodel.SQLModel"). pd_sqlmodel_q("sqlmodel.main.SQLModel").
+pd_sqlmodel_q(q) :- class_def(c, q), pd_base(c, b), pd_sqlmodel_q(b).
+.decl pd_sqlmodel(c: node)
+pd_sqlmodel(c) :- class_def(c, q), pd_sqlmodel_q(q).
+// pd_model_super(c, b): class b of the run is among model c's bases, directly or through other run classes.
+.decl pd_model_super(c: node, b: node)
+pd_model_super(c, b) :- pd_model(c), pd_base(c, q), class_def(b, q).
+pd_model_super(c, b) :- pd_model_super(c, m), pd_base(m, q), class_def(b, q).
+.decl pd_class_ref(e: node, c: node)
+pd_class_ref(e, c) :- sym_of(e, q), class_def(c, q), pd_model(c).
+
+// ---- fields ------------------------------------------------------------------------------------------------------
+// pd_class_ann(c, x, a, t): class c's body has annotated assignment a, `x: t` or `x: t = v`.
+.decl pd_class_ann(c: node, x: symbol, a: node, t: node)
+pd_class_ann(c, x, a, t) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, x), field(a, "type", t).
+// pd_classvar(t): annotation t is `ClassVar` or `ClassVar[...]` (typing's, by its last name).
+.decl pd_classvar(t: node)
+pd_classvar(t) :- child(t, e, 0), unparen(e, m), leaf_name(m, "ClassVar").
+pd_classvar(t) :- child(t, g, 0), kind(g, "generic_type"), child(g, e, 0), text(e, "ClassVar").
+.decl pd_field(c: node, x: symbol, a: node, t: node)
+pd_field(c, x, a, t) :- pd_model(c), pd_class_ann(c, x, a, t), !prefix("_", x), x != "model_config", !pd_classvar(t).
+.decl pd_has_field(c: node, x: symbol, a: node, t: node)
+pd_has_field(c, x, a, t) :- pd_field(c, x, a, t).
+pd_has_field(c, x, a, t) :- pd_model_super(c, b), pd_field(b, x, a, t).
+.decl pd_field_value(a: node, v: node)
+pd_field_value(a, v) :- pd_field(_, _, a, _), field(a, "right", v).
+.decl pd_field_fn(q: symbol)
+pd_field_fn("pydantic.Field"). pd_field_fn("pydantic.fields.Field"). pd_field_fn("sqlmodel.Field").
+pd_field_fn("sqlmodel.main.Field").
+.decl pd_field_call(e: node)
+pd_field_call(e) :- kind(e, "call"), field(e, "function", f), sym_of(f, q), pd_field_fn(q).
+// pd_field_default(a, d): the default a field gets when it is not passed. `Field(...)` (Ellipsis) means required,
+// and is no default.
+//   created: datetime = datetime.now()                pd_field_default(<...>, <datetime.now()>)
+//   created: datetime = Field(default=datetime.now()) pd_field_default(<...>, <datetime.now()>)
+//   created: datetime = Field(default_factory=datetime.now)   no pd_field_default
+.decl pd_field_default(a: node, d: node)
+pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, d), !pd_field_call(d).
+pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, k), pd_field_call(k), posarg(k, 0, d), !kind(d, "ellipsis").
+pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, k), pd_field_call(k), call_arg(k, -1, "default", d),
+    !kind(d, "ellipsis").
+// pd_ann_model(t, c): annotation t holds model class c as the field's value, alone or in a union, Optional or
+// Annotated, but not as an item of a container (list[M], dict[str, M]): a name in t resolves to model c, and no
+// container name appears in t.
+.decl pd_ann_model(t: node, c: node)
+pd_ann_model(t, c) :- pd_ann_root(t), (n = t ; within(n, t)), (kind(n, "identifier") ; kind(n, "attribute")),
+    pd_class_ref(n, c), !pd_ann_container(t).
+.decl pd_ann_root(t: node)
+pd_ann_root(t) :- ann_root(t).
+.decl pd_ann_container(t: node)
+pd_ann_container(t) :- pd_ann_root(t), within(n, t), kind(n, "identifier"), text(n, x), pd_container_name(x).
+.decl pd_container_name(x: symbol)
+pd_container_name("list"). pd_container_name("List"). pd_container_name("dict"). pd_container_name("Dict").
+pd_container_name("set"). pd_container_name("Set"). pd_container_name("frozenset"). pd_container_name("FrozenSet").
+pd_container_name("tuple"). pd_container_name("Tuple"). pd_container_name("Sequence").
+pd_container_name("Iterable"). pd_container_name("Iterator"). pd_container_name("Mapping").
+pd_container_name("AsyncIterator"). pd_container_name("Generator"). pd_container_name("AsyncGenerator").
+pd_container_name("Awaitable"). pd_container_name("Coroutine"). pd_container_name("Callable").
+pd_container_name("Type"). pd_container_name("type"). pd_container_name("Page").
+
+// ---- config ------------------------------------------------------------------------------------------------------
+.decl pd_config_fn(q: symbol)
+pd_config_fn("pydantic.ConfigDict"). pd_config_fn("pydantic.config.ConfigDict").
+pd_config_fn("pydantic_settings.SettingsConfigDict"). pd_config_fn("pydantic_settings.main.SettingsConfigDict").
+pd_config_fn("builtins.dict").
+// pd_config_value(c, v): class c's body assigns `model_config = v` (annotated or not).
+.decl pd_config_value(c: node, v: node)
+pd_config_value(c, v) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "model_config"),
+    field(a, "right", r), unparen(r, v).
+.decl pd_config(c: node, k: symbol, v: node)
+pd_config(c, k, v) :- pd_model(c), pd_config_value(c, e), kind(e, "call"), field(e, "function", f), sym_of(f, q),
+    pd_config_fn(q), call_arg(e, -1, k, v).
+pd_config(c, k, v) :- pd_model(c), pd_config_value(c, e), kind(e, "dictionary"), child(e, p, _), kind(p, "pair"),
+    field(p, "key", kk), str(kk, k), field(p, "value", v).
+pd_config(c, k, v) :- pd_config_class(c, k0), field(k0, "body", b), body_stmt(b, s, _), kind(s, "expression_statement"),
+    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, k), field(a, "right", v).
+pd_config(c, k, v) :- pd_model(c), field(c, "superclasses", al), child(al, ka, _), kind(ka, "keyword_argument"),
+    field(ka, "name", n), text(n, k), k != "metaclass", field(ka, "value", v).
+.decl pd_config_of(c: node, k: symbol, v: node)
+pd_config_of(c, k, v) :- pd_config(c, k, v).
+pd_config_of(c, k, v) :- pd_model_super(c, b), pd_config(b, k, v).
+.decl pd_config_class(c: node, k: node)
+pd_config_class(c, k) :- pd_model(c), field(c, "body", b), body_stmt(b, k, _), kind(k, "class_definition"),
+    def_name(k, "Config").
+
+// ---- validators --------------------------------------------------------------------------------------------------
+.decl pd_validator_fn(q: symbol, api: symbol)
+pd_validator_fn("pydantic.field_validator", "field_validator").
+pd_validator_fn("pydantic.functional_validators.field_validator", "field_validator").
+pd_validator_fn("pydantic.model_validator", "model_validator").
+pd_validator_fn("pydantic.functional_validators.model_validator", "model_validator").
+pd_validator_fn("pydantic.validator", "validator").
+pd_validator_fn("pydantic.class_validators.validator", "validator").
+pd_validator_fn("pydantic.deprecated.class_validators.validator", "validator").
+pd_validator_fn("pydantic.root_validator", "root_validator").
+pd_validator_fn("pydantic.class_validators.root_validator", "root_validator").
+pd_validator_fn("pydantic.deprecated.class_validators.root_validator", "root_validator").
+// pd_validator_deco(f, api, e): def f's decorator e is validator api, bare (`@root_validator`) or called.
+.decl pd_validator_deco(f: node, api: symbol, e: node)
+pd_validator_deco(f, api, e) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), kind(e, "call"),
+    field(e, "function", fn), sym_of(fn, q), pd_validator_fn(q, api).
+pd_validator_deco(f, api, e) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), !kind(e, "call"),
+    sym_of(e, q), pd_validator_fn(q, api).
+// pd_mode(e, api, m): the mode decorator e gives its validator.
+.decl pd_mode(e: node, api: symbol, m: symbol)
+pd_mode(e, api, m) :- pd_validator_deco(_, api, e), (api = "field_validator" ; api = "model_validator"),
+    call_arg(e, -1, "mode", v), str(v, m).
+pd_mode(e, "field_validator", "after") :- pd_validator_deco(_, "field_validator", e), !call_arg(e, -1, "mode", _).
+pd_mode(e, api, "before") :- pd_validator_deco(_, api, e), (api = "validator" ; api = "root_validator"),
+    call_arg(e, -1, "pre", v), kind(v, "true").
+pd_mode(e, api, "after") :- pd_validator_deco(_, api, e), (api = "validator" ; api = "root_validator"),
+    !pd_pre_true(e).
+.decl pd_pre_true(e: node)
+pd_pre_true(e) :- call_arg(e, -1, "pre", v), kind(v, "true").
+// pd_validator(f, c, api, mode): f is directly in class c's body (any class: validators live in mixins too).
+.decl pd_validator(f: node, c: node, api: symbol, mode: symbol)
+pd_validator(f, c, api, m) :- pd_validator_deco(f, api, e), pd_mode(e, api, m), nearest(f, c, scope),
+    kind(c, "class_definition").
+// pd_value_param(f, nm, x): the parameter that receives the value. Pydantic calls a field validator as
+// `f(cls, value[, info])` and a before/wrap/plain model validator as `f(cls, data[, info])`; a staticmethod has no cls.
+.decl pd_value_param(f: node, nm: node, x: symbol)
+pd_value_param(f, nm, x) :- pd_takes_value(f), !pd_static(f), sig_param(f, _, nm, 1, _, _, _), text(nm, x).
+pd_value_param(f, nm, x) :- pd_takes_value(f), pd_static(f), sig_param(f, _, nm, 0, _, _, _), text(nm, x).
+pd_value_param(f, nm, x) :- pd_validator(f, _, "model_validator", "after"), sig_param(f, _, nm, 0, _, _, _),
+    text(nm, x).
+// pd_takes_value(f): validator f receives the value (or the raw data) as an argument: all but an "after" model
+// validator, which gets the instance as self.
+.decl pd_takes_value(f: node)
+pd_takes_value(f) :- pd_validator(f, _, api, _), api != "model_validator".
+pd_takes_value(f) :- pd_validator(f, _, "model_validator", m), m != "after".
+.decl pd_static(f: node)
+pd_static(f) :- decorator(f, e), sym_of(e, "builtins.staticmethod").
+
+// ---- instances ---------------------------------------------------------------------------------------------------
+// pd_constructor(m): the classmethods that return an instance of their class (v1's deprecated names included).
+.decl pd_constructor(m: symbol)
+pd_constructor("model_validate"). pd_constructor("model_validate_json"). pd_constructor("model_validate_strings").
+pd_constructor("model_construct"). pd_constructor("parse_obj"). pd_constructor("parse_raw").
+pd_constructor("parse_file"). pd_constructor("from_orm"). pd_constructor("construct"). pd_constructor("validate").
+// pd_new(v, c): expression v makes an instance of model c: `M(...)` or `M.<constructor>(...)`, awaited or not.
+.decl pd_new(v: node, c: node)
+pd_new(v, c) :- unparen(v, k), kind(k, "call"), field(k, "function", f), pd_class_ref(f, c).
+pd_new(v, c) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, m), pd_constructor(m),
+    pd_class_ref(o, c).
+// An instance's model_copy() is one of the same model.
+pd_new(v, c) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, "model_copy"),
+    unparen(o, u), pd_instance(u, c).
+.decl pd_instance(e: node, c: node)
+pd_instance(e, c) :- pd_new(e, c).
+// a name its scope binds to a new instance: `u = User(...)`, `u = User.model_validate(data)`
+pd_instance(r, c) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pd_new(v, c).
+// `self` in a method of the model
+pd_instance(r, c) :- kind(r, "identifier"), text(r, "self"), kind(f, "function_definition"), nearest(f, c, scope),
+    pd_model(c), look(r, "self", f), param(f, "self", 0).
+// a parameter annotated with the model: `def create(body: UserCreate)`
+pd_instance(r, c) :- kind(r, "identifier"), text(r, x), look(r, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
+    pd_ann_model(t, c), !asg(f, x, _, _).
+.decl pd_typed_instance(e: node, c: node)
+pd_typed_instance(e, c) :- type_of(e, q), class_def(c, q), pd_model(c), !type_open(e), !pd_other_type(e, q).
+.decl pd_other_type(e: node, q: symbol)
+pd_other_type(e, q) :- type_of(e, q), type_of(e, q2), q2 != q.
+// pd_model_call(k, o, m, c): call k is `o.m(...)`, o an instance or the class of model c.
+.decl pd_model_call(k: node, o: node, m: symbol, c: node)
+pd_model_call(k, u, m, c) :- kind(k, "call"), field(k, "function", f), attr_of(f, o, m), unparen(o, u), pd_instance(u, c).
+pd_model_call(k, u, m, c) :- kind(k, "call"), field(k, "function", f), attr_of(f, o, m), unparen(o, u), pd_class_ref(u, c).
+
+// ---- project -----------------------------------------------------------------------------------------------------
+// The engine reads a file only at a path built from constants, settings and directory listings (dir_entry), never
+// from a document's path, so manifests are found by listing the run's root and the directories up to 3 levels below
+// it (hidden ones and node_modules aside): `api/pyproject.toml`, `server/pyproject.toml`, `src/backend/requirements.txt`.
+// pd_walk(x, k): directory x is k levels below the root, k from 1 to 3.
+.decl pd_walk(x: symbol, k: number)
+pd_walk(x, k) :- dir_entry(".", x, 1), !prefix(".", x), x != "node_modules", k = 1.
+pd_walk(y, j) :- pd_walk(x, k), k < 3, dir_entry(x, n, 1), !prefix(".", n), n != "node_modules",
+    y = cat(x, "/", n), j = k + 1.
+.decl pd_manifest_name(n: symbol)
+pd_manifest_name("pyproject.toml"). pd_manifest_name("setup.cfg"). pd_manifest_name("setup.py").
+pd_manifest_name("uv.lock"). pd_manifest_name("poetry.lock"). pd_manifest_name("Pipfile").
+pd_manifest_name("Pipfile.lock").
+.decl pd_is_manifest(n: symbol)
+pd_is_manifest(n) :- pd_manifest_name(n).
+pd_is_manifest(n) :- dir_entry(_, n, 0), (glob("requirements*.txt", n) ; glob("requirements*.in", n)).
+// pd_manifest(x, f): f is a manifest file in directory x ("" for the root).
+.decl pd_manifest(x: symbol, f: symbol)
+pd_manifest(x, f) :- dir_entry(".", f, 0), pd_is_manifest(f), x = "".
+pd_manifest(x, f) :- pd_walk(x, _), dir_entry(x, n, 0), pd_is_manifest(n), f = cat(x, "/", n).
+// pd_doc_dir(d, x): x is a manifest directory at or above document d ("" for the root of the run).
+.decl pd_doc_dir(d: number, x: symbol)
+pd_doc_dir(d, x) :- doc(d, _, _), pd_manifest(x, _), x = "".
+pd_doc_dir(d, x) :- doc(d, p, _), pd_manifest(x, _), x != "", prefix(cat(x, "/"), p).
+// pd_manifest_pin(f, i, major): line i of manifest f pins pydantic to major version 1 or 2. A requirement whose
+// lower bound is 2 or more (`pydantic>=2.5`, `pydantic==2.11.4`, `pydantic[email]~=2.0`, Poetry's `pydantic =
+// "^2.5"`), any pydantic-settings requirement (it exists for Pydantic 2 only), or a lock entry `name = "pydantic"`
+// followed by `version = "2.…"` is 2; `pydantic<2`, `==1.…`, `^1.…`, `~=1.…` or a lock entry at 1.x is 1. A range
+// such as `>=1.10,<3` pins neither.
+.decl pd_manifest_pin(f: symbol, i: number, major: number)
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic(\\[[^\\]]*\\])?\\s*(==|>=|~=|===|>)\\s*v?[2-9]([^0-9].*)?", l).
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic[-_]settings\\b.*", l).
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*pydantic\\s*=\\s*[\\{\"'].*[\"'][\\^~>=]*\\s*[2-9]\\..*", l).
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l), match("^name = \"pydantic\"\\s*$", l),
+    j = i + 1, file_line(f, j, l2), match("^version = \"[2-9]\\..*", l2).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic(\\[[^\\]]*\\])?\\s*(==|~=|\\^|<=)\\s*1\\..*", l).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic(\\[[^\\]]*\\])?\\s*[^#]*<\\s*2(\\.0)*\\s*([\"',;].*)?$", l).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*pydantic\\s*=\\s*[\\{\"'].*[\"'][\\^~=]*\\s*1\\..*", l).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l), match("^name = \"pydantic\"\\s*$", l),
+    j = i + 1, file_line(f, j, l2), match("^version = \"1\\..*", l2).
+.decl pd_dir_pin(x: symbol, major: number)
+pd_dir_pin(x, k) :- pd_manifest(x, f), pd_manifest_pin(f, _, k).
+.decl pd_any_pin()
+pd_any_pin() :- pd_dir_pin(_, _).
+// pd_v2_name(x): names only Pydantic 2 exports from the `pydantic` package.
+.decl pd_v2_name(x: symbol)
+pd_v2_name("field_validator"). pd_v2_name("model_validator"). pd_v2_name("ConfigDict"). pd_v2_name("RootModel").
+pd_v2_name("field_serializer"). pd_v2_name("model_serializer"). pd_v2_name("computed_field").
+pd_v2_name("TypeAdapter"). pd_v2_name("AliasChoices"). pd_v2_name("AliasPath"). pd_v2_name("ValidationInfo").
+.decl pd_v2_code()
+pd_v2_code() :- import_alias(i, _, m, _, _), (m = "pydantic_settings" ; prefix("pydantic_settings.", m)), docof(i, _).
+pd_v2_code() :- kind(i, "import_from_statement"), module_text(i, m), (m = "pydantic_settings" ;
+    prefix("pydantic_settings.", m)).
+pd_v2_code() :- kind(n, "identifier"), sym_of(n, q), split_dot(q, "pydantic", x), pd_v2_name(x).
+.decl pd_v2_doc(d: number)
+pd_v2_doc(d) :- pd_doc_dir(d, x), pd_dir_pin(x, 2), !pd_v1_doc(d).
+pd_v2_doc(d) :- doc(d, _, _), !pd_any_pin(), pd_v2_code().
+.decl pd_v1_doc(d: number)
+pd_v1_doc(d) :- pd_doc_dir(d, x), pd_dir_pin(x, 1).
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl pd_test_doc(d: number)
+pd_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
+    path_part(d, "unittests")).
+pd_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ;
+    s = "tests.py" ; s = "test.py" ; s = "conftest.py").

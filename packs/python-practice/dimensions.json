@@ -1,0 +1,38 @@
+{
+  "python-practice-blocking-call-reached-from-async": {
+    "risk": "availability",
+    "layer": "code",
+    "severity": "critical",
+    "hazard": "async.blocking-call-in-async"
+  },
+  "python-practice-cancellation-swallowed": {
+    "risk": "availability",
+    "layer": "code",
+    "severity": "high",
+    "hazard": "async.cancellation-swallowed"
+  },
+  "python-practice-contextmanager-cleanup-skipped": {
+    "risk": "availability",
+    "layer": "code",
+    "severity": "medium",
+    "hazard": "resource.release-skipped-on-error"
+  },
+  "python-practice-coroutine-never-awaited": {
+    "risk": "correctness",
+    "layer": "code",
+    "severity": "high",
+    "hazard": "async.coroutine-never-awaited"
+  },
+  "python-practice-requests-session-without-timeout": {
+    "risk": "availability",
+    "layer": "code",
+    "severity": "high",
+    "hazard": "http.call-without-timeout"
+  },
+  "python-practice-retry-without-limit": {
+    "risk": "availability",
+    "layer": "code",
+    "severity": "high",
+    "hazard": "retry.unbounded"
+  }
+}

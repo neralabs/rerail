@@ -1,0 +1,188 @@
+.policy "django-practice-bulk-ignore-conflicts-used" revision 1
+.description "Re-fetch the rows after bulk_create with ignore_conflicts before reading their keys, linking, mailing or counting them; the objects it returns are not the stored rows."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. `bulk_create(objs, ignore_conflicts=True)` (or `abulk_create`) does not set the
+// primary key on the objects and skips the ones that conflict without saying which: with a serial key the objects keep
+// `pk=None`, with a UUID default key they carry a key that may name no row, and a skipped object's values may differ
+// from the stored row's. The rule reports a read of those objects after the call, in the same def, that uses them as
+// the inserted rows:
+//   - a primary key read: `o.pk`, `o.id`, `objs[0].id`, for `o` an element (a `for` or comprehension variable over
+//     the objects, `enumerate(objs)` included);
+//   - an element passed as a value to a model constructor (`IssueSequence(issue=issue)`), to a queryset's create,
+//     get_or_create or update_or_create, or to a related manager's add (`article.tags.add(tag)`), or the objects to
+//     `add(*objs)` / `set(objs)`;
+//   - an element read in the arguments of a task dispatch (`.delay()`, `.apply_async()`, ...) or of a mail call
+//     (`send_mail`, `EmailMessage.send()`): an invitation mailed with a token the database does not hold;
+//   - the objects handed to a serializer (`XSerializer(objs, many=True)`, `django.core.serializers.serialize`);
+//   - `len(created)` of the call's result read as a number (not only tested for being 0): it counts the objects, not
+//     the rows inserted. `len(objs)` of the input list is left alone: it usually counts objects processed.
+// The objects are the call's result (`created = M.objects.bulk_create(objs, ignore_conflicts=True)`, awaited or not),
+// its input list name (`objs`), or the call itself (`for o in M.objects.bulk_create(...)`), read after the call with
+// no rebinding of the name in between. A def that returns them (`return M.objects.bulk_create(...)`, or `return objs`
+// after the call) hands them to its callers (python/calls): a caller's `x = f(...)` holds them too.
+// The receiver is a Django queryset or manager (`M.objects`, `M.tags.through.objects`), or the file imports Django.
+//   for invite in Invite.objects.bulk_create(invites, ignore_conflicts=True): send_invite.delay(invite.token)
+//                                                                         reported
+//   created = Label.objects.bulk_create(labels, ignore_conflicts=True); return [l.pk for l in created]
+//                                                                         reported
+//   Label.objects.bulk_create(labels, ignore_conflicts=True)
+//   labels = Label.objects.filter(name__in=[l.name for l in labels])      not reported: re-fetched by a field
+//   created = Label.objects.bulk_create(labels, update_conflicts=True, ...) not reported: keys are set
+//   if created: logger.info("stored")                                     not reported: a truth test only
+// Left alone: reads before the call; reads after the name is rebound (`batch = []`); reads of values the code set
+// itself (`{ref.location_id for ref in refs}`); reads in an except handler of a try around the call (the insert
+// failed); test code.
+// Gaps: objects passed to a helper of the run (`update_cache(lines, objs)`) are not followed into it; a loop over a
+// derived list (`objs + others`, `zip(objs, rows)`) is not an element; a read in a branch the call's branch excludes
+// is still a read after it.
+
+#include "lib/django.rerail"
+
+.violation IgnoredConflictRowsUsed(at: node, what: symbol) "{what} holds the objects given to bulk_create(ignore_conflicts=True), which sets no primary keys and silently skips the objects that conflicted, so these are not the stored rows. Re-fetch the rows after the call (filter on the fields that conflict) and use those here; or, if no object can conflict, drop ignore_conflicts so that keys are set."
+IgnoredConflictRowsUsed(r, what) :- bic_read(r, _, what), bic_use(r), docof(r, d), !dj_test_doc(d).
+.violation IgnoredConflictRowsCounted(at: node, what: symbol) "len() of {what} counts the objects given to bulk_create(ignore_conflicts=True), not the rows it inserted: conflicting objects are skipped silently. Count the stored rows with a query (before and after, or filtered on the new rows' fields) where the number must be rows inserted; leave it where it means objects processed."
+IgnoredConflictRowsCounted(c, what) :- bic_read(r, _, what), bic_result(r), kind(c, "call"), field(c, "function", fn),
+    sym_of(fn, "builtins.len"), posarg(c, 0, a), unparen(a, r), !posarg(c, 1, _), !py_empty_test(c), docof(c, d),
+    !dj_test_doc(d).
+// bic_result(r): read r is of the call's result (the call, or a name assigned from it), not of the input list only:
+// `len(objs)` after `bulk_create(objs, ...)` counts the objects processed as often as it claims rows inserted.
+.decl bic_result(r: node)
+bic_result(w) :- bic_value0(w, _, _).
+bic_result(w) :- bic_value1(w, _, _).
+bic_result(i) :- bic_read(i, f, _), kind(i, "identifier"), text(i, x), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, x), field(a, "right", v), unparen(v, w), (bic_value0(w, f, _) ; bic_value1(w, f, _)).
+
+// ---- the call --------------------------------------------------------------------------------------------------
+// bic_call(c): c is `<receiver>.bulk_create(..., ignore_conflicts=True)` or abulk_create, the receiver a Django
+// queryset or manager, or c in a file that imports Django.
+.decl bic_call(c: node)
+bic_call(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), (m = "bulk_create" ; m = "abulk_create"),
+    call_arg(c, -1, "ignore_conflicts", t), kind(t, "true"), bic_django(c, o).
+.decl bic_django(c: node, o: node)
+bic_django(c, o) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, _), dj_qs(o).
+bic_django(c, o) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, _), docof(c, d), dj_django_doc(d).
+// Two levels, so that no relation is recursive through the rebinding test: level 0 is the call's own def, level 1
+// a caller of a def that returns the objects (a caller's caller is not followed).
+// bic_value0(w, f, what) / bic_value1: expression w, in def f, evaluates to the objects: the call (awaited or not), or
+// a call of a def of the run that returns them (bic_returns). what names it for the message.
+.decl bic_value0(w: node, f: node, what: symbol)
+bic_value0(c, f, "the result of this bulk_create()") :- bic_call(c), def_frame(c, f).
+bic_value0(w, f, what) :- kind(w, "await"), child(w, c, 0), bic_value0(c, f, what).
+.decl bic_value1(w: node, f: node, what: symbol)
+bic_value1(c, f, cat(cat("the result of ", x), "()")) :- kind(c, "call"), call_target(c, g), bic_returns(g),
+    def_frame(c, f), call_name(c, x).
+bic_value1(w, f, what) :- kind(w, "await"), child(w, c, 0), bic_value1(c, f, what).
+// bic_returns(g): def g returns the objects: `return <the call>` or `return x` for x a name holding them.
+.decl bic_returns(g: node)
+bic_returns(g) :- kind(s, "return_statement"), def_frame(s, g), child(s, e, 0), unparen(e, r), bic_read0(r, g, _).
+
+// ---- names that hold the objects ---------------------------------------------------------------------------------
+// bic_holder0(f, x, w, what) / bic_holder1: in def f, name x holds the objects from expression w on: `x = w` for a
+// bic_value w, or x is the input list of the bulk_create call w (`M.objects.bulk_create(x, ...)`, or `objs=x`).
+.decl bic_holder0(f: node, x: symbol, w: node, what: symbol)
+bic_holder0(f, x, w, cat(cat("`", x), "`")) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, x), field(a, "right", v), unparen(v, w), bic_value0(w, f, _).
+bic_holder0(f, x, c, cat(cat("`", x), "`")) :- bic_call(c), def_frame(c, f), (posarg(c, 0, a) ; call_arg(c, -1, "objs", a)),
+    unparen(a, n), kind(n, "identifier"), text(n, x).
+.decl bic_holder1(f: node, x: symbol, w: node, what: symbol)
+bic_holder1(f, x, w, cat(cat("`", x), "`")) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, x), field(a, "right", v), unparen(v, w), bic_value1(w, f, _).
+// bic_read0(r, f, what) / bic_read1: r, in def f, reads the objects: a bic_value itself, or a read of a holder after
+// its expression, with no rebinding of the name in between and not in an except handler of a try around it.
+// bic_read: either level.
+.decl bic_read0(r: node, f: node, what: symbol)
+bic_read0(w, f, what) :- bic_value0(w, f, what), !bic_awaited(w).
+bic_read0(i, f, what) :- bic_holder0(f, x, w, what), kind(i, "identifier"), text(i, x), def_frame(i, f), nameref(i, x),
+    !bind_only(i), earlier(w, i), !within(i, w), !bic_failed(w, i),
+    count : { bic_store(f, x, s), earlier(w, s), !within(s, w), earlier(s, i) } = 0.
+.decl bic_read1(r: node, f: node, what: symbol)
+bic_read1(w, f, what) :- bic_value1(w, f, what), !bic_awaited(w).
+bic_read1(i, f, what) :- bic_holder1(f, x, w, what), kind(i, "identifier"), text(i, x), def_frame(i, f), nameref(i, x),
+    !bind_only(i), earlier(w, i), !within(i, w), !bic_failed(w, i),
+    count : { bic_store(f, x, s), earlier(w, s), !within(s, w), earlier(s, i) } = 0.
+.decl bic_read(r: node, f: node, what: symbol)
+bic_read(r, f, what) :- bic_read0(r, f, what).
+bic_read(r, f, what) :- bic_read1(r, f, what).
+// bic_awaited(c): the call is awaited; the await expression is the read.
+.decl bic_awaited(c: node)
+bic_awaited(c) :- kind(w, "await"), child(w, c, 0).
+// bic_store(f, x, s): identifier s binds x in def f (`x = ...`, `for x in`, `x += ...`, ...).
+.decl bic_store(f: node, x: symbol, s: node)
+bic_store(f, x, s) :- kind(s, "identifier"), text(s, x), (bind_only(s) ; aug_target(s)), def_frame(s, f).
+// bic_failed(w, i): i is in an except handler of a try whose body holds w: it runs when the insert failed.
+.decl bic_failed(w: node, i: node)
+bic_failed(w, i) :- kind(t, "try_statement"), field(t, "body", b), within(w, b), child(t, x, _), kind(x, "except_clause"),
+    within(i, x), kind(i, "identifier").
+
+// ---- uses of the objects as stored rows --------------------------------------------------------------------------
+// bic_elem(r, e): e reads one of the objects r reads: `r[k]`, or a `for` / comprehension variable over r (or over
+// `enumerate(r)`, its second target), read in the loop.
+.decl bic_elem(r: node, e: node)
+bic_elem(r, s) :- bic_read(r, _, _), kind(s, "subscript"), field(s, "value", v), unparen(v, r).
+bic_elem(r, e) :- bic_loop(r, l, x), kind(l, "for_statement"), field(l, "body", b), kind(e, "identifier"), text(e, x),
+    within(e, b), nameref(e, x), !bind_only(e).
+bic_elem(r, e) :- bic_loop(r, fc, x), kind(fc, "for_in_clause"), child(c, fc, _), kind(e, "identifier"), text(e, x),
+    within(e, c), nameref(e, x), !bind_only(e), field(fc, "right", it), !within(e, it).
+// bic_loop(r, l, x): loop l (a for statement or comprehension clause) binds x to each object r reads.
+.decl bic_loop(r: node, l: node, x: symbol)
+bic_loop(r, l, x) :- bic_read(r, _, _), (kind(l, "for_statement") ; kind(l, "for_in_clause")), field(l, "right", it),
+    unparen(it, r), field(l, "left", t), kind(t, "identifier"), text(t, x).
+bic_loop(r, l, x) :- bic_read(r, _, _), (kind(l, "for_statement") ; kind(l, "for_in_clause")), field(l, "right", it),
+    unparen(it, ec), kind(ec, "call"), field(ec, "function", en), sym_of(en, "builtins.enumerate"), posarg(ec, 0, a),
+    unparen(a, r), field(l, "left", t), (kind(t, "pattern_list") ; kind(t, "tuple_pattern")), child(t, n, k),
+    kind(n, "identifier"), text(n, x), count : { child(t, p, j), j < k, kind(p, "identifier") } = 1.
+// bic_use(r): r's objects are used as the inserted rows.
+.decl bic_use(r: node)
+bic_use(r) :- bic_elem(r, e), attr_of(a, e, k), (k = "pk" ; k = "id"), expr_ctx(a, "load").
+bic_use(r) :- bic_elem(r, e), call_arg(c, _, _, v), unparen(v, e), bic_row_call(c).
+bic_use(r) :- bic_elem(r, e), within(e, c), bic_dispatch(c).
+bic_use(r) :- bic_read(r, _, _), kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "add"), kind(o, "attribute"),
+    field(c, "arguments", al), child(al, s, _), kind(s, "list_splat"), child(s, v, 0), unparen(v, r).
+bic_use(r) :- bic_read(r, _, _), kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "set"), kind(o, "attribute"),
+    posarg(c, 0, v), unparen(v, r).
+bic_use(r) :- bic_read(r, _, _), kind(c, "call"), call_name(c, x), suffix("Serializer", x), posarg(c, 0, v),
+    unparen(v, r).
+bic_use(r) :- bic_read(r, _, _), kind(c, "call"), field(c, "function", fn), sym_of(fn, "django.core.serializers.serialize"),
+    posarg(c, 1, v), unparen(v, r).
+// bic_row_call(c): call c stores its arguments as a row's values: a model class of the run called, a queryset's
+// create / get_or_create / update_or_create, or a related manager's add (`article.tags.add(tag)`).
+.decl bic_row_call(c: node)
+bic_row_call(c) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), class_def(k, q), dj_model(k).
+bic_row_call(c) :- dj_qs_call(c, m), (m = "create" ; m = "get_or_create" ; m = "update_or_create" ; m = "acreate").
+bic_row_call(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "add"), kind(o, "attribute").
+// bic_dispatch(c): call c enqueues a task or sends mail (lib/django's dj_side_effect), or calls a task method on any
+// receiver (`invites.delay(...)`).
+.decl bic_dispatch(c: node)
+bic_dispatch(c) :- dj_side_effect(c, _).
+bic_dispatch(c) :- kind(c, "call"), call_name(c, m), dj_task_method(m).
+
+// The cases, `cases/django-practice-bulk-ignore-conflicts-used/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/__init__.py"
+    .fixture "shop/commands.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/commands.py"
+    .fixture "shop/models.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/models.py"
+    .fixture "shop/seed.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/seed.py"
+    .fixture "shop/serializers.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/serializers.py"
+    .fixture "shop/services.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/services.py"
+    .fixture "shop/tasks.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/tasks.py"
+    .fixture "shop/tests/test_views.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/views.py"
+    .fixture "vendor/store.py" from "../cases/django-practice-bulk-ignore-conflicts-used/vendor/store.py"
+    .expect _ at "shop/commands.py":7
+    .expect _ at "shop/commands.py":10
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":28
+    .expect _ at "shop/views.py":36
+    .expect _ at "shop/views.py":43
+    .expect _ at "shop/views.py":49
+    .expect _ at "shop/views.py":55
+    .expect _ at "shop/views.py":60
+    .expect _ at "shop/views.py":65
+    .expect _ at "shop/views.py":71
+    .expect _ at "shop/views.py":75
+    .expect _ at "shop/views.py":82
+.end

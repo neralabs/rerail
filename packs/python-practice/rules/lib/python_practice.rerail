@@ -1,0 +1,171 @@
+// lib/python_practice: core Python as the python-practice rules read it: which code runs in a coroutine, which calls
+// block the event loop or start a second one, which calls make a coroutine or a task, and what a contextmanager
+// generator runs after its yield. Names resolve through imports (python/names' sym_of), so `import time;
+// time.sleep(1)` and `from time import sleep; sleep(1)` both give "time.sleep"; calls resolve across the files of the
+// run through the call graph of python/calls, so a helper in another module is followed into its body.
+//
+// Interface
+//   Files:      pp_test_doc(d)            document d is test code: a tests/test/testing/unittests directory,
+//                                         test_*.py, *_test.py, *_tests.py, tests.py, test.py or conftest.py
+//               pp_live(n)                node n is outside test code
+//   Frames:     pp_stop(k)                the node kinds whose body runs later than the code around them: def,
+//                                         lambda, class (use with nearest/within_stop)
+//               pp_frame(n, f)            f is the def, lambda or class n runs in (its own frame)
+//               pp_async_def(f)           f is an `async def`
+//               pp_sync_def(f)            f is a plain `def`, not offloaded to a thread by its decorator
+//               pp_offloaded(g)           def g is decorated so that calling it runs it in a worker thread
+//                                         (asgiref sync_to_async, channels database_sync_to_async)
+//   Calls:      pp_awaited(c)             call c is the operand of `await`, through parentheses
+//               pp_discarded(c)           call c is a statement of its own: its value is thrown away
+//               pp_sure_target(c, g)      call c surely calls def g: the call program's answer, and c is not open
+//               pp_kwarg(c, k, v)         call c passes keyword argument k with value v (parentheses taken off)
+//               pp_splat(c)               call c passes `*args` or `**kwargs`, which may hold any keyword
+//               pp_coroutine_call(c, g)   call c calls async def g of the run, and only async defs, so it returns
+//                                         a coroutine (or an async generator) and runs none of g's body
+//               pp_async_fn_ref(e, g)     expression e (a name or attribute, not a call) names async def g of the
+//                                         run, through imports: `worker`, `tasks.worker`
+//   Blocking:   pp_blocking(c, h, what)   call c, in h's own frame, blocks its thread on the network, a child
+//                                         process or a timer: time.sleep, requests/httpx module calls, urlopen,
+//                                         subprocess.run and its siblings, os.system, socket connects and lookups;
+//                                         what names it for a message ("time.sleep()")
+//               pp_loop_entry(c, h, what) call c, in h's own frame, starts an event loop in its thread and waits
+//                                         for it: asyncio.run(), <loop>.run_until_complete(), async_to_sync(f)(...)
+//   Reach:      pp_async_start(c, f, g)   call c, in async def f's own frame outside test code, surely calls the
+//                                         sync def g, which runs in the event loop's thread
+//               pp_sync_reach(g, h)       from sync def g, sync def h runs in the same thread: g itself, or a
+//                                         chain of sure calls through sync defs, none offloaded; a call in a
+//                                         nested def or lambda runs later and is not followed
+//   Tasks:      pp_spawn_call(c, what)    call c schedules a coroutine as a task: asyncio.create_task,
+//                                         asyncio.ensure_future, <loop>.create_task; what names it
+//   Generators: pp_cm_def(f)              def f is decorated with contextlib.contextmanager or
+//                                         asynccontextmanager
+//               pp_cm_yield(y, f)         y is a `yield` in contextmanager f's own frame
+//   Logging:    pp_log_call(c)            call c is a logging or print call: `logger.info(...)`, `print(...)`
+//
+// Python background
+//   - A coroutine runs until its next await. A blocking call anywhere below it, also in a plain helper in another
+//     module, stops every other task on the loop until it returns. A def, lambda or class nested in the async def
+//     is its own frame: a call there runs when that code is called, not here.
+//   - Calling an `async def` runs nothing: it returns a coroutine, which runs only when awaited or wrapped in a
+//     task. Calling an `async def` that yields returns an async generator, which runs only when iterated.
+//   - asyncio.run() and run_until_complete() refuse to start while a loop runs in the same thread; asgiref's
+//     async_to_sync refuses too. Reached from a coroutine, they raise RuntimeError.
+//   e.g.  helpers.py:  def fetch(url): return requests.get(url, timeout=5)     pp_blocking(<requests.get(...)>, <fetch>, "requests.get()")
+//         views.py:    async def show(): data = fetch(URL)                    pp_async_start(<fetch(URL)>, <show>, <fetch>)
+//                      async def show(): await asyncio.to_thread(fetch, URL)  no start: fetch is passed, not called
+//                      async def ping(): ...
+//                      def kick(): ping()                                      pp_coroutine_call(<ping()>, <ping>), pp_discarded
+#include "python/ast.rerail"
+#include "python/calls.rerail"
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl pp_test_doc(d: number)
+pp_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
+    path_part(d, "unittests")).
+pp_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ; s = "tests.py" ;
+    s = "test.py" ; s = "conftest.py").
+.decl pp_live(n: node)
+pp_live(n) :- docof(n, d), !pp_test_doc(d).
+
+// ---- frames ------------------------------------------------------------------------------------------------------
+.decl pp_stop(k: symbol)
+pp_stop("function_definition"). pp_stop("lambda"). pp_stop("class_definition").
+.decl pp_frame(n: node, f: node)
+pp_frame(n, f) :- nearest(n, f, pp_stop).
+.decl pp_async_def(f: node)
+pp_async_def(f) :- kind(f, "function_definition"), is_async(f).
+.decl pp_offloaded(g: node)
+pp_offloaded(g) :- decorator(g, e), (unparen(e, m) ; (kind(e, "call"), field(e, "function", m))), sym_of(m, q),
+    pp_offload_decorator(q).
+.decl pp_offload_decorator(q: symbol)
+pp_offload_decorator("asgiref.sync.sync_to_async"). pp_offload_decorator("channels.db.database_sync_to_async").
+.decl pp_sync_def(f: node)
+pp_sync_def(f) :- kind(f, "function_definition"), !is_async(f), !pp_offloaded(f).
+
+// ---- calls -------------------------------------------------------------------------------------------------------
+.decl pp_awaited(c: node)
+pp_awaited(c) :- kind(c, "call"), kind(w, "await"), child(w, e, 0), unparen(e, c).
+// pp_discarded(c): `c` alone on its line (or `(c)`): an expression statement whose expression is the call.
+.decl pp_discarded(c: node)
+pp_discarded(c) :- kind(c, "call"), kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), unparen(e, c).
+// pp_kwarg(c, k, v): call c passes keyword k with value v (parentheses taken off v).
+.decl pp_kwarg(c: node, k: symbol, v: node)
+pp_kwarg(c, k, v) :- kind(c, "call"), field(c, "arguments", l), child(l, ka, _), kind(ka, "keyword_argument"),
+    field(ka, "name", n), text(n, k), field(ka, "value", v0), unparen(v0, v).
+// pp_splat(c): call c passes `*args` or `**kwargs`, which may hold any keyword.
+.decl pp_splat(c: node)
+pp_splat(c) :- kind(c, "call"), field(c, "arguments", l), child(l, a, _),
+    (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
+.decl pp_sure_target(c: node, g: node)
+pp_sure_target(c, g) :- kind(c, "call"), call_target(c, g), !call_open(c).
+.decl pp_sync_target(c: node)
+pp_sync_target(c) :- call_target(c, g), !is_async(g).
+.decl pp_coroutine_call(c: node, g: node)
+pp_coroutine_call(c, g) :- pp_sure_target(c, g), is_async(g), !pp_sync_target(c).
+// pp_async_fn_ref(e, g): a reference, not a call, that names an async def of the run by its qualified name.
+.decl pp_async_fn_ref(e: node, g: node)
+pp_async_fn_ref(e, g) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_of(e, q), qualname(g, q),
+    kind(g, "function_definition"), is_async(g), !field(_, "function", e).
+
+// ---- blocking calls ----------------------------------------------------------------------------------------------
+// pp_blocking_q(q, what): functions that block their thread on the network, a child process or a timer. Module-level
+// `requests` and `httpx` calls are the sync clients (httpx's async client is a class, `httpx.AsyncClient`). Builtin
+// open() and file reads are left out: short local reads are common in async code and rarely what stalls a loop.
+.decl pp_blocking_q(q: symbol, what: symbol)
+pp_blocking_q("time.sleep", "time.sleep()").
+pp_blocking_q(cat("requests.", v), cat(cat("requests.", v), "()")) :- pp_http_verb(v).
+pp_blocking_q(cat("httpx.", v), cat(cat("httpx.", v), "()")) :- pp_http_verb(v).
+pp_blocking_q("urllib.request.urlopen", "urlopen()").
+pp_blocking_q(cat("subprocess.", v), cat(cat("subprocess.", v), "()")) :-
+    (v = "run" ; v = "call" ; v = "check_call" ; v = "check_output" ; v = "getoutput" ; v = "getstatusoutput").
+pp_blocking_q("os.system", "os.system()"). pp_blocking_q("os.popen", "os.popen()").
+pp_blocking_q(cat("os.", v), cat(cat("os.", v), "()")) :- (v = "wait" ; v = "waitpid" ; v = "wait3" ; v = "wait4").
+pp_blocking_q("socket.create_connection", "socket.create_connection()").
+pp_blocking_q("socket.getaddrinfo", "socket.getaddrinfo()").
+pp_blocking_q("socket.gethostbyname", "socket.gethostbyname()").
+pp_blocking_q("smtplib.SMTP", "smtplib.SMTP()"). pp_blocking_q("smtplib.SMTP_SSL", "smtplib.SMTP_SSL()").
+.decl pp_http_verb(v: symbol)
+pp_http_verb("get"). pp_http_verb("post"). pp_http_verb("put"). pp_http_verb("patch"). pp_http_verb("delete").
+pp_http_verb("head"). pp_http_verb("options"). pp_http_verb("request").
+.decl pp_blocking(c: node, h: node, what: symbol)
+pp_blocking(c, h, what) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), pp_blocking_q(q, what),
+    pp_frame(c, h).
+// pp_loop_entry(c, h, what): asyncio.run(...), <x>.run_until_complete(...), async_to_sync(f)(...) and
+// `async_to_sync(f)` applied as a decorator target are what start a loop in the calling thread.
+.decl pp_loop_entry(c: node, h: node, what: symbol)
+pp_loop_entry(c, h, "asyncio.run()") :- kind(c, "call"), field(c, "function", f), sym_of(f, "asyncio.run"), pp_frame(c, h).
+pp_loop_entry(c, h, "run_until_complete()") :- kind(c, "call"), field(c, "function", f),
+    attr_of(f, _, "run_until_complete"), pp_frame(c, h).
+pp_loop_entry(c, h, "async_to_sync(...)()") :- kind(c, "call"), field(c, "function", k), kind(k, "call"),
+    field(k, "function", f), sym_of(f, "asgiref.sync.async_to_sync"), pp_frame(c, h).
+
+// ---- reach -------------------------------------------------------------------------------------------------------
+.decl pp_async_start(c: node, f: node, g: node)
+pp_async_start(c, f, g) :- pp_sure_target(c, g), pp_sync_def(g), pp_frame(c, f), pp_async_def(f), pp_live(c).
+.decl pp_sync_reach(g: node, h: node)
+pp_sync_reach(g, g) :- pp_async_start(_, _, g).
+pp_sync_reach(g, h) :- pp_sync_reach(g, x), pp_frame(c, x), pp_sure_target(c, h), pp_sync_def(h).
+
+// ---- tasks -------------------------------------------------------------------------------------------------------
+.decl pp_spawn_call(c: node, what: symbol)
+pp_spawn_call(c, "asyncio.create_task()") :- kind(c, "call"), field(c, "function", f), sym_of(f, "asyncio.create_task").
+pp_spawn_call(c, "asyncio.ensure_future()") :- kind(c, "call"), field(c, "function", f),
+    sym_of(f, "asyncio.ensure_future").
+pp_spawn_call(c, "loop.create_task()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "create_task"),
+    !sym_of(f, "asyncio.create_task"), kind(o, k), k != "identifier".
+pp_spawn_call(c, "loop.create_task()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "create_task"),
+    kind(o, "identifier"), text(o, x), contains("loop", x).
+
+// ---- generators --------------------------------------------------------------------------------------------------
+.decl pp_cm_def(f: node)
+pp_cm_def(f) :- decorator(f, e), unparen(e, m), sym_of(m, q),
+    (q = "contextlib.contextmanager" ; q = "contextlib.asynccontextmanager").
+.decl pp_cm_yield(y: node, f: node)
+pp_cm_yield(y, f) :- pp_cm_def(f), kind(y, "yield"), pp_frame(y, f).
+
+// ---- logging -----------------------------------------------------------------------------------------------------
+.decl pp_log_name(x: symbol)
+pp_log_name("debug"). pp_log_name("info"). pp_log_name("warning"). pp_log_name("warn"). pp_log_name("error").
+pp_log_name("exception"). pp_log_name("critical"). pp_log_name("log"). pp_log_name("print").
+.decl pp_log_call(c: node)
+pp_log_call(c) :- kind(c, "call"), call_name(c, x), pp_log_name(x).

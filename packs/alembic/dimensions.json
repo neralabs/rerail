@@ -1,0 +1,74 @@
+{
+  "alembic-practice-index-not-concurrent": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "critical",
+    "hazard": "pg.index-blocks-writes"
+  },
+  "alembic-practice-concurrent-index-outside-autocommit": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.concurrently-in-transaction"
+  },
+  "alembic-practice-not-null-without-server-default": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.not-null-without-default"
+  },
+  "alembic-practice-drop-mapped-column": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "critical",
+    "hazard": "pg.column-dropped-while-used"
+  },
+  "alembic-practice-constraint-without-not-valid": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.constraint-without-not-valid"
+  },
+  "alembic-practice-column-type-rewrite": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.type-change-rewrites"
+  },
+  "alembic-practice-set-not-null-scan": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.set-not-null-scans"
+  },
+  "alembic-practice-missing-lock-timeout": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.no-lock-timeout"
+  },
+  "alembic-practice-multiple-heads": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "migrations.multiple-heads"
+  },
+  "alembic-practice-rename-as-drop-add": {
+    "risk": "data-safety",
+    "layer": "migrations",
+    "severity": "critical",
+    "hazard": "pg.rename-as-drop-add"
+  },
+  "alembic-practice-model-import-in-migration": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "orm.model-in-migration"
+  },
+  "alembic-practice-empty-downgrade": {
+    "risk": "correctness",
+    "layer": "migrations",
+    "severity": "medium",
+    "hazard": "pg.irreversible-migration"
+  }
+}

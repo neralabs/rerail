@@ -1,0 +1,187 @@
+.policy "pydantic-practice-default-factory" revision 1
+.description "Give a Pydantic field whose default must differ per instance (a timestamp, a UUID, a token) a default factory, not a default computed once by a call."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A class body runs once, at import, so `created_at: datetime = datetime.now()` on a
+// Pydantic model computes one value and every instance built without that field gets it: timestamps that are stale
+// by the process's age, and for ids the same UUID on every row (primary-key collisions, records overwriting each
+// other). Pydantic copies a default per instance but never re-evaluates it; `Field(default_factory=...)` calls a
+// callable per instance (Pydantic docs, Fields, "Default values"). Ruff's RUF009 catches the call in a standard
+// library or attrs dataclass only, and B008 catches it in a function's parameter defaults.
+//   class Order(BaseModel):
+//       id: UUID = uuid4()                                          reported
+//       code: str = uuid4().hex                                     reported: the call inside counts
+//       placed_at: datetime = Field(default=datetime.now(UTC))      reported
+//       _opened: datetime = PrivateAttr(default=datetime.now())     reported: a private attribute's default too
+//       seen_at: datetime = utcnow()                                reported: app.timeutil's utcnow returns a now()
+//       id: UUID = Field(default_factory=uuid4)                     not reported
+//       launch: datetime = datetime(2020, 1, 1)                     not reported: a fixed value
+// What it reads: a field of a Pydantic model (lib/pydantic's pd_field: BaseModel, RootModel, sqlmodel.SQLModel, a
+// table model or not, through the run's classes in any file), a private attribute of one (`_x: T = v`, or
+// `PrivateAttr(v)` / `PrivateAttr(default=v)`, annotated or not: Pydantic copies that default per instance too, the
+// same value), and a field of a `pydantic.dataclasses.dataclass` (`x: T = v`, `Field(v)`, `dataclasses.field(default=
+// v)`), which RUF009 does not treat as a dataclass. The default is `v` of `x: T = v` or the default of `Field(v)` /
+// `Field(default=v)` (pd_field_default). It is reported when the default is, or contains outside a lambda, a call
+// whose result differs per call, resolved through imports (`from datetime import datetime as dt; dt.now()`, `import
+// uuid; uuid.uuid4()`): datetime's now/utcnow/today and date.today, time.time/time_ns, uuid1/4/6/7, os.urandom, the
+// secrets and random functions, Django's timezone.now/localtime/localdate, pendulum's and arrow's now, shortuuid,
+// nanoid, uuid6/uuid_utils, ulid.new, and bson's ObjectId() with no argument. A function of the run (any file) is
+// followed one level: `utcnow()` is reported when one of utcnow's own `return` values contains such a call.
+// Left alone:
+//   - `default_factory=` of any form (`datetime.now`, `uuid4`, `lambda: ...`), and an uncalled function as a value;
+//   - a call meant to give a fixed value: `datetime(2020, 1, 1)`, `timedelta(days=1)`, `UUID("...")`, `uuid5(...)`,
+//     `Decimal("0")`, `frozenset(...)`, `Path(...)`, `os.getenv(...)`, `Field(...)`, `Enum.X`, a project helper that
+//     returns no such call (or returns a function that makes one);
+//   - mutable literals (`tags: list[str] = []`): Pydantic copies a mutable default for each instance, so they are
+//     safe on a model (unlike a plain class or a dataclass);
+//   - `ClassVar` annotations (class attributes, not fields), and unannotated `_x = datetime.now()` (Pydantic makes it a
+//     private attribute too, but the unannotated form reads as a class constant and its intent is unclear);
+//   - settings models (`pydantic_settings.BaseSettings` and their subclasses): a settings object is the process's
+//     configuration, read once by design, and a factory would make two `Settings()` instances disagree, e.g.
+//     with `SECRET_KEY: str = secrets.token_urlsafe(32)` one Settings() would sign a token with one key and another
+//     check it with a different one; following the message there could break working code;
+//   - non-Pydantic classes: plain classes, stdlib and attrs dataclasses (Ruff RUF009), SQLAlchemy `mapped_column(
+//     default=...)` (the sqlalchemy pack), `pydantic.v1` models (pd_model leaves them out), and function parameter
+//     defaults (Ruff B008);
+//   - test code (lib/pydantic's pd_test_doc): a model defined in a test is a fixture of that test.
+// Gaps: a default inside `Annotated[T, Field(default=...)]`; a field of a model whose Pydantic base is outside the run
+// and not a known base (a library's model subclass); a project helper followed more than one level, or a method
+// (`self.clock.now()`); a volatile call of a library not listed; `pydantic.v1` models, which have the same bug.
+
+#include "lib/pydantic.rerail"
+
+.violation DefaultEvaluatedOnce(at: node, fn: symbol, maker: symbol) "{fn} runs once, when the class body runs at import, so every instance gets that one value (a stale timestamp, the same id on every row). Pass a callable so Pydantic calls it per instance: `{maker}(default_factory=...)`, e.g. `default_factory=uuid4` or `default_factory=lambda: datetime.now(timezone.utc)`. Keep the call only if every instance must share the import-time value."
+DefaultEvaluatedOnce(k, x, m) :- dfo_default(d, m), (k = d ; within_stop(k, d, dfo_stop)), dfo_called(k, x),
+    docof(k, doc), !pd_test_doc(doc).
+
+// dfo_stop: code in a lambda or def runs when it is called, not when the class body runs.
+.decl dfo_stop(k: symbol)
+dfo_stop("lambda"). dfo_stop("function_definition").
+
+// ---- the defaults ------------------------------------------------------------------------------------------------
+// dfo_default(d, maker): d is the default expression of a model field, a model's private attribute, or a Pydantic
+// dataclass field; maker is the call the message proposes for its default_factory.
+.decl dfo_default(d: node, maker: symbol)
+dfo_default(d, "Field") :- pd_field(c, _, a, _), !pd_settings(c), pd_field_default(a, d).
+dfo_default(d, "PrivateAttr") :- dfo_private(c, d), !pd_settings(c).
+dfo_default(d, m) :- dfo_pdc_default(d, m).
+
+// dfo_private(c, d): model c's private attribute gets default d: `_x: T = d`, or `PrivateAttr(d)` /
+// `PrivateAttr(default=d)` assigned to `_x`, annotated or not.
+.decl dfo_private(c: node, d: node)
+dfo_private(c, d) :- pd_model(c), pd_class_ann(c, x, a, t), prefix("_", x), !prefix("__", x), !pd_classvar(t),
+    field(a, "right", v), unparen(v, d), !dfo_privateattr_call(d).
+dfo_private(c, d) :- pd_model(c), dfo_class_asg(c, x, k), prefix("_", x), !prefix("__", x), dfo_privateattr_call(k),
+    dfo_default_arg(k, d).
+// dfo_class_asg(c, x, k): class c's body assigns `x = k` or `x: T = k` (k unparenthesized).
+.decl dfo_class_asg(c: node, x: symbol, k: node)
+dfo_class_asg(c, x, k) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, x), field(a, "right", v), unparen(v, k).
+.decl dfo_privateattr_call(k: node)
+dfo_privateattr_call(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, q),
+    (q = "pydantic.PrivateAttr" ; q = "pydantic.fields.PrivateAttr").
+// dfo_default_arg(k, d): d is the default call k passes, positionally first or as `default=`; Ellipsis is none.
+.decl dfo_default_arg(k: node, d: node)
+dfo_default_arg(k, d) :- kind(k, "call"), posarg(k, 0, d), !kind(d, "ellipsis").
+dfo_default_arg(k, d) :- kind(k, "call"), call_arg(k, -1, "default", d), !kind(d, "ellipsis").
+
+// dfo_pdc(c): class c is decorated with `pydantic.dataclasses.dataclass`, bare or called.
+.decl dfo_pdc(c: node)
+dfo_pdc(c) :- kind(c, "class_definition"), decorator(c, e), unparen(e, m), sym_of(m, q), dfo_pdc_maker(q).
+dfo_pdc(c) :- kind(c, "class_definition"), decorator(c, e), unparen(e, m), kind(m, "call"), field(m, "function", f),
+    sym_of(f, q), dfo_pdc_maker(q).
+.decl dfo_pdc_maker(q: symbol)
+dfo_pdc_maker("pydantic.dataclasses.dataclass").
+.decl dfo_dc_field_call(k: node)
+dfo_dc_field_call(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, "dataclasses.field").
+// dfo_pdc_default(d, maker): a Pydantic dataclass field's default: `x: T = d`, `Field(d)`, `Field(default=d)`, or
+// `dataclasses.field(default=d)`.
+.decl dfo_pdc_default(d: node, maker: symbol)
+dfo_pdc_default(d, "Field") :- dfo_pdc(c), pd_class_ann(c, _, a, t), !pd_classvar(t), field(a, "right", v),
+    unparen(v, d), !pd_field_call(d), !dfo_dc_field_call(d).
+dfo_pdc_default(d, "Field") :- dfo_pdc(c), pd_class_ann(c, _, a, t), !pd_classvar(t), field(a, "right", v),
+    unparen(v, k), pd_field_call(k), dfo_default_arg(k, d).
+dfo_pdc_default(d, "dataclasses.field") :- dfo_pdc(c), pd_class_ann(c, _, a, t), !pd_classvar(t),
+    field(a, "right", v), unparen(v, k), dfo_dc_field_call(k), call_arg(k, -1, "default", d).
+
+// ---- calls whose result differs per call -------------------------------------------------------------------------
+// dfo_called(k, x): call k gives a new value each time; x names it for the message.
+.decl dfo_called(k: node, x: symbol)
+dfo_called(k, x) :- dfo_volatile_call(k, q), x = cat("`", q, "()`").
+dfo_called(k, x) :- dfo_callee(k, q), dfo_helper(q, q2), x = cat("`", q, "()` (it returns `", q2, "()`)").
+// dfo_callee(k, q): call k's function resolves to q.
+.decl dfo_callee(k: node, q: symbol)
+dfo_callee(k, q) :- kind(k, "call"), field(k, "function", f), sym_of(f, q).
+// dfo_volatile_call(k, q): call k of q returns a per-call value. bson's ObjectId does only with no argument.
+.decl dfo_volatile_call(k: node, q: symbol)
+dfo_volatile_call(k, q) :- dfo_callee(k, q), dfo_once(q).
+dfo_volatile_call(k, q) :- dfo_callee(k, q), (prefix("secrets.", q) ; prefix("random.", q)), !dfo_not_volatile(q).
+dfo_volatile_call(k, q) :- dfo_callee(k, q), (q = "bson.ObjectId" ; q = "bson.objectid.ObjectId"),
+    !call_arg(k, _, _, _).
+// The same list as the django pack's django-practice-default-called-once, plus the libraries Pydantic code uses.
+.decl dfo_once(q: symbol)
+dfo_once("uuid.uuid1"). dfo_once("uuid.uuid4"). dfo_once("uuid.uuid6"). dfo_once("uuid.uuid7").
+dfo_once("os.urandom"). dfo_once("time.time"). dfo_once("time.time_ns").
+dfo_once("datetime.datetime.now"). dfo_once("datetime.datetime.utcnow"). dfo_once("datetime.datetime.today").
+dfo_once("datetime.date.today").
+dfo_once("django.utils.timezone.now"). dfo_once("django.utils.timezone.localtime").
+dfo_once("django.utils.timezone.localdate"). dfo_once("django.utils.crypto.get_random_string").
+dfo_once("pendulum.now"). dfo_once("pendulum.today"). dfo_once("arrow.now"). dfo_once("arrow.utcnow").
+dfo_once("shortuuid.uuid"). dfo_once("nanoid.generate"). dfo_once("ulid.new").
+dfo_once("uuid6.uuid6"). dfo_once("uuid6.uuid7"). dfo_once("uuid_utils.uuid4"). dfo_once("uuid_utils.uuid7").
+// dfo_not_volatile(q): names in secrets and random that are classes, comparisons or state, not a fresh value.
+.decl dfo_not_volatile(q: symbol)
+dfo_not_volatile("secrets.SystemRandom"). dfo_not_volatile("secrets.compare_digest").
+dfo_not_volatile("random.Random"). dfo_not_volatile("random.SystemRandom"). dfo_not_volatile("random.seed").
+dfo_not_volatile("random.getstate"). dfo_not_volatile("random.setstate"). dfo_not_volatile("random.shuffle").
+
+// dfo_helper(q, q2): q is a def of the run with a `return` of its own whose value contains a call of q2, a per-call
+// value (not inside a lambda or a nested def): `def utcnow(): return datetime.now(timezone.utc)`.
+.decl dfo_helper(q: symbol, q2: symbol)
+dfo_helper(q, q2) :- kind(g, "function_definition"), qualname(g, q), kind(r, "return_statement"), nearest(r, g, fdef),
+    within_stop(k, r, dfo_stop), dfo_volatile_call(k, q2).
+
+// The cases, `cases/pydantic-practice-default-factory/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/pydantic-practice-default-factory/app/__init__.py"
+    .fixture "app/base.py" from "../cases/pydantic-practice-default-factory/app/base.py"
+    .fixture "app/dataclass_models.py" from "../cases/pydantic-practice-default-factory/app/dataclass_models.py"
+    .fixture "app/events.py" from "../cases/pydantic-practice-default-factory/app/events.py"
+    .fixture "app/models.py" from "../cases/pydantic-practice-default-factory/app/models.py"
+    .fixture "app/near_misses.py" from "../cases/pydantic-practice-default-factory/app/near_misses.py"
+    .fixture "app/settings.py" from "../cases/pydantic-practice-default-factory/app/settings.py"
+    .fixture "app/timeutil.py" from "../cases/pydantic-practice-default-factory/app/timeutil.py"
+    .fixture "pyproject.toml" from "../cases/pydantic-practice-default-factory/pyproject.toml"
+    .fixture "tests/__init__.py" from "../cases/pydantic-practice-default-factory/tests/__init__.py"
+    .fixture "tests/test_models.py" from "../cases/pydantic-practice-default-factory/tests/test_models.py"
+    .expect _ at "app/dataclass_models.py":12
+    .expect _ at "app/dataclass_models.py":13
+    .expect _ at "app/dataclass_models.py":14
+    .expect _ at "app/dataclass_models.py":20
+    .expect _ at "app/events.py":11
+    .expect _ at "app/events.py":12
+    .expect _ at "app/events.py":13
+    .expect _ at "app/events.py":14
+    .expect _ at "app/models.py":15
+    .expect _ at "app/models.py":16
+    .expect _ at "app/models.py":17
+    .expect _ at "app/models.py":18
+    .expect _ at "app/models.py":19
+    .expect _ at "app/models.py":20
+    .expect _ at "app/models.py":21
+    .expect _ at "app/models.py":22
+    .expect _ at "app/models.py":23
+    .expect _ at "app/models.py":24
+    .expect _ at "app/models.py":25
+    .expect _ at "app/models.py":26
+    .expect _ at "app/models.py":28
+    .expect _ at "app/models.py":31
+    .expect _ at "app/models.py":32
+    .expect _ at "app/models.py":33
+    .expect _ at "app/models.py":37
+    .expect _ at "app/models.py":41
+    .expect _ at "app/models.py":46
+.end

@@ -1,0 +1,271 @@
+.policy "drf-practice-object-permission-skipped" revision 1
+.description "Load the row a DRF handler acts on through get_object, or check it with check_object_permissions, when the view's permission classes check objects."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Django REST framework runs a permission class's has_object_permission only inside
+// get_object() and check_object_permissions(request, obj); a handler that fetches the row itself and never calls
+// either lets any user who passes has_permission act on any row by its id (OWASP API1, broken object level
+// authorization). It reports the fetch call:
+//   - in a view whose permission classes check objects (a class whose has_object_permission, its own or a base's,
+//     reads its obj argument, or DjangoObjectPermissions): its own or a base view's permission_classes (also
+//     `api_settings.DEFAULT_PERMISSION_CLASSES + [...]`), else the REST_FRAMEWORK default, which may name the class
+//     by a dotted string; an `@action(permission_classes=[...])` replaces them for its handler;
+//   - in a handler of that view that acts on one row (get, put, patch, delete, retrieve, update, partial_update,
+//     destroy, an `@action(detail=True)`), or in an `@api_view` function with `@permission_classes([...])`, or with
+//     none while the default checks objects;
+//   - a single-row fetch, `get_object_or_404(M, …)`, `get_object_or_404(<queryset>, …)`, `<queryset>.get(…)` or
+//     `<queryset>.filter(…).first()`, whose rows are the view's model (its queryset's or its serializer's
+//     Meta.model) or come from `self.get_queryset()`/`self.queryset`; in a view without a model and in a function
+//     view, a fetch of any model whose arguments read a URL kwarg (a handler parameter other than self, request and
+//     format, or self.kwargs);
+//   - when neither the handler nor a method of the view it calls through `self.<name>(…)` checks the row: calls
+//     get_object(), check_object_permissions() or has_object_permission(), a DRF detail handler of the view
+//     (`super().update()`, `self.retrieve()` of a mixin, which call get_object()), or a permission function given
+//     the requester (`project.has_permission(request.user)`, `request.user.has_perm(...)`), or refuses requests
+//     itself (raises PermissionDenied, answers 403 or HttpResponseForbidden).
+//   class BookDetail(OwnerAPIView):                    permission_classes = [IsAuthenticated, IsOwner] in base.py
+//       def get(self, request, pk):
+//           book = get_object_or_404(Book, pk=pk)      reported: IsOwner.has_object_permission never runs
+//       def patch(self, request, pk):
+//           book = get_object_or_404(Book, pk=pk)      not reported: the next line checks it
+//           self.check_object_permissions(request, book)
+// Left alone: fetches that pass request.user (or an attribute of it, or a name bound to one) in the lookup, a
+// get_queryset() that reads request.user, list and create handlers, views whose permission classes check no
+// objects (or whose has_object_permission never reads the object), plain Django views, and test files.
+// Model and serializer names resolve by suffix when the import root differs from the run's module names
+// (label-studio imports `from tasks.models import Task` for label_studio/tasks/models.py).
+// Gaps: a fetch of another model than the view's in a view with a model (a project row fetched to authorise a task
+// row) is not reported, though the object check skipped would be the view's own; a fetch in a helper the handler
+// calls is not reported (only the handler's own body is read); a check in a module-level helper the handler calls
+// is seen only when its name says permission and it is given the requester; get_permissions() overrides and a
+// `permission_classes` property are not read; a queryset scoped by tenant (`space=request.space`) counts as
+// unscoped.
+
+#include "lib/drf.rerail"
+
+.violation ObjectPermissionSkipped(at: node) "DRF runs the object permission only in get_object(), so this fetch skips it. Use self.get_object(), or call self.check_object_permissions(request, obj); not if the lookup limits rows to the user."
+ObjectPermissionSkipped(c) :- ops_view_hit(c).
+
+.violation FunctionViewObjectPermissionSkipped(at: node) "This fetch skips the object permission: a function view never runs has_object_permission. Check the row (`Perm().has_object_permission(request, None, obj)`) or limit the lookup to request.user."
+FunctionViewObjectPermissionSkipped(c) :- ops_fn_hit(c).
+
+// ---- permissions -------------------------------------------------------------------------------------------------
+// ops_obj(q): permission class q checks objects: a name lib/drf resolves to an object permission (drf_object_perm,
+// or drf_obj_q for a class named through the `+` form below) whose check reads the object (ops_obj_cls).
+.decl ops_obj(q: symbol)
+ops_obj(q) :- ops_obj_named(q), ops_obj_cls(q).
+ops_obj(q) :- ops_obj_named(q), drf_ref_class(q, c), class_def(c, cq), ops_obj_cls(cq).
+.decl ops_obj_named(q: symbol)
+ops_obj_named(q) :- drf_object_perm(q).
+ops_obj_named(q) :- ops_view_perm(_, q), drf_obj_q(q).
+// ops_obj_cls(cq): class cq's has_object_permission reads its obj argument (its own, else a base's), or cq is
+// DjangoObjectPermissions. One that never reads obj (Tandoor's CustomIsGuest: `return has_group_permission(request,
+// ["guest"])`) checks nothing about the row, so a handler skipping it skips nothing.
+.decl ops_obj_cls(cq: symbol)
+ops_obj_cls("rest_framework.permissions.DjangoObjectPermissions").
+ops_obj_cls(cq) :- method(cq, "has_object_permission", f), param(f, x, 3), field(f, "body", b), within(r, b),
+    kind(r, "identifier"), text(r, x), look(r, x, f).
+ops_obj_cls(cq) :- class_def(c, cq), !method(cq, "has_object_permission", _), drf_base(c, b), ops_obj_cls(b).
+// ops_perm_value(v, q): the permission_classes value v names class q: a list or tuple (drf_perm_elem), an operand of
+// `+`, or `api_settings.DEFAULT_PERMISSION_CLASSES`, which is the settings default.
+.decl ops_perm_value(v: node, q: symbol)
+ops_perm_value(v, q) :- drf_perm_elem(v, e), sym_of(e, q).
+ops_perm_value(v, q) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), (field(u, "left", x) ; field(u, "right", x)),
+    ops_perm_value(x, q).
+ops_perm_value(v, q) :- unparen(v, u), attr_of(u, _, "DEFAULT_PERMISSION_CLASSES"), drf_default_perm(q).
+// ops_view_perm(v, q): view v runs permission class q.
+.decl ops_view_perm(v: node, q: symbol)
+ops_view_perm(v, q) :- drf_effective_perm(v, q).
+ops_view_perm(v, q) :- drf_view(v), drf_attr(v, "permission_classes", val), ops_perm_value(val, q).
+.decl ops_view_obj(v: node)
+ops_view_obj(v) :- ops_view_perm(v, q), ops_obj(q).
+
+// ---- handlers ----------------------------------------------------------------------------------------------------
+// ops_detail(x): the handlers that act on one row.
+.decl ops_detail(x: symbol)
+ops_detail("get"). ops_detail("put"). ops_detail("patch"). ops_detail("delete"). ops_detail("retrieve").
+ops_detail("update"). ops_detail("partial_update"). ops_detail("destroy").
+.decl ops_handler(v: node, f: node)
+ops_handler(v, f) :- drf_handler(v, f, x), ops_detail(x), !drf_action_def(f, _).
+ops_handler(v, f) :- drf_handler(v, f, _), drf_action_detail(f).
+// ops_action_sets(f): `@action(permission_classes=...)` on f, which replaces the view's classes for it.
+.decl ops_action_sets(f: node)
+ops_action_sets(f) :- drf_action_def(f, e), drf_kw(e, "permission_classes", _).
+// ops_handler_obj(v, f): handler f of view v runs a permission class that checks objects.
+.decl ops_handler_obj(v: node, f: node)
+ops_handler_obj(v, f) :- ops_handler(v, f), drf_action_perm(f, q), ops_obj(q).
+ops_handler_obj(v, f) :- ops_handler(v, f), !ops_action_sets(f), ops_view_obj(v).
+// ops_fn_obj(f): `@api_view` function f runs a permission class that checks objects: its @permission_classes, else
+// the settings default.
+.decl ops_fn_sets(f: node)
+ops_fn_sets(f) :- kind(f, "function_definition"), decorator(f, d), unparen(d, e), kind(e, "call"),
+    field(e, "function", fn), sym_of(fn, "rest_framework.decorators.permission_classes").
+.decl ops_fn_obj(f: node)
+ops_fn_obj(f) :- drf_api_view_fn(f), drf_fn_perm(f, q), ops_obj(q).
+ops_fn_obj(f) :- drf_api_view_fn(f), !ops_fn_sets(f), drf_default_perm(q), ops_obj(q).
+
+// ---- fetches -----------------------------------------------------------------------------------------------------
+// ops_fetch(c, o): call c fetches one row from o: `o.get(…)` with arguments, `o.filter(…).first()` (o the whole
+// `….filter(…)` chain), or `get_object_or_404(o, …)` (o a model class or a queryset).
+.decl ops_fetch(c: node, o: node)
+ops_fetch(c, o) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "get"), !py_no_args(c), ops_qs(o).
+ops_fetch(c, o) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "first"), unparen(o, oc), kind(oc, "call"),
+    field(oc, "function", ofn), attr_of(ofn, _, "filter"), ops_qs(o).
+ops_fetch(c, o) :- kind(c, "call"), field(c, "function", fn),
+    (sym_of(fn, "django.shortcuts.get_object_or_404") ; sym_of(fn, "rest_framework.generics.get_object_or_404")),
+    call_arg(c, 0, "", o).
+// ops_qs(o): o is a queryset chain from `M.objects` or from the view's own queryset.
+.decl ops_qs(o: node)
+ops_qs(o) :- dj_qs(o).
+ops_qs(o) :- ops_self_qs(o).
+// ops_self_qs(o): o is a chain from `self.get_queryset()`, `self.filter_queryset(…)` or `self.queryset`.
+.decl ops_self_qs(o: node)
+ops_self_qs(o) :- unparen(o, u), attr_of(u, s, "queryset"), kind(s, "identifier"), text(s, "self").
+ops_self_qs(o) :- unparen(o, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, s, m),
+    (m = "get_queryset" ; m = "filter_queryset"), kind(s, "identifier"), text(s, "self").
+ops_self_qs(o) :- unparen(o, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, p, m), dj_qs_method(m),
+    ops_self_qs(p).
+// ops_model(o, mc): the rows o fetches from are model mc's: a chain from `M.objects`, or the model class itself.
+.decl ops_model(o: node, mc: node)
+ops_model(o, mc) :- ops_fetch(_, o), unparen(o, u), dj_qs_root(u, r), sym_of(r, q), ops_mq(q, mc).
+ops_model(o, mc) :- ops_fetch(_, o), unparen(o, u), sym_of(u, q), ops_mq(q, mc).
+// ops_view_model(v, mc): view v's rows are model mc's: its queryset's (`queryset = M.objects…`), or its serializer's
+// Meta.model (drf_view_model, with names resolved by ops_mq and ops_ser).
+.decl ops_view_model(v: node, mc: node)
+ops_view_model(v, mc) :- drf_view_model(v, mc).
+ops_view_model(v, mc) :- drf_view_queryset(v, e), unparen(e, u), dj_qs_root(u, r), sym_of(r, q), ops_mq(q, mc).
+ops_view_model(v, mc) :- ops_ser(v, sc), drf_meta_model_q(sc, q), ops_mq(q, mc).
+.decl ops_has_model(v: node)
+ops_has_model(v) :- ops_view_model(v, _).
+// Name resolution by suffix. A project imports `from tasks.models import Task` with label_studio/ as its source
+// root, while the run names that module label_studio.tasks.models: sym_of gives "tasks.models.Task", which no
+// class_def has. ops_mq(q, mc) and ops_ser(v, sc) take the class whose qualified name is q or ends in ".q", as
+// drf_ref_class does for settings strings.
+.decl ops_mref(q: symbol)
+ops_mref(q) :- ops_fetch(_, o), unparen(o, u), dj_qs_root(u, r), sym_of(r, q).
+ops_mref(q) :- ops_fetch(_, o), unparen(o, u), sym_of(u, q).
+ops_mref(q) :- drf_view_queryset(_, e), unparen(e, u), dj_qs_root(u, r), sym_of(r, q).
+ops_mref(q) :- ops_ser(_, sc), drf_meta_model_q(sc, q).
+.decl ops_mq(q: symbol, mc: node)
+ops_mq(q, mc) :- ops_mref(q), class_def(mc, q), dj_model(mc).
+ops_mq(q, mc) :- ops_mref(q), !ops_defined(q), p = cat(".", q), class_def(mc, cq), suffix(p, cq), dj_model(mc).
+.decl ops_defined(q: symbol)
+ops_defined(q) :- ops_mref(q), class_def(_, q).
+.decl ops_sdefined(q: symbol)
+ops_sdefined(q) :- ops_sref(q), class_def(_, q).
+.decl ops_sref(q: symbol)
+ops_sref(q) :- drf_view(v), drf_attr(v, "serializer_class", e), unparen(e, u), sym_of(u, q).
+.decl ops_ser(v: node, sc: node)
+ops_ser(v, sc) :- drf_view_serializer(v, sc).
+ops_ser(v, sc) :- drf_view(v), drf_attr(v, "serializer_class", e), unparen(e, u), sym_of(u, q), !ops_sdefined(q),
+    p = cat(".", q), class_def(sc, cq), suffix(p, cq), drf_serializer(sc).
+
+// ops_url_arg(c, f): an argument of call c (its queryset chain included) reads a URL kwarg of handler f: one of
+// f's parameters other than self, request and format, or `self.kwargs`.
+.decl ops_url_arg(c: node, f: node)
+ops_url_arg(c, f) :- def_frame(c, f), within(r, c), kind(r, "identifier"), text(r, x), look(r, x, f), param(f, x, _),
+    x != "self", x != "request", x != "format".
+ops_url_arg(c, f) :- def_frame(c, f), within(e, c), attr_of(e, s, "kwargs"), kind(s, "identifier"), text(s, "self").
+
+// ops_scoped(c, f): fetch c in f passes the requester: `request.user`, an attribute of it, or a name f binds to an
+// expression holding one.
+.decl ops_scoped(c: node)
+ops_scoped(c) :- ops_fetch(c, _), def_frame(c, f), ops_reads_user(c, f).
+// ops_qs_user(v): view v's get_queryset() reads request.user: its rows are already the requester's.
+.decl ops_qs_user(v: node)
+ops_qs_user(v) :- drf_method(v, "get_queryset", g), within(u, g), drf_request_user(u).
+// A method of the view (NetBox's initial()) that sets `self.queryset = <…request.user…>` restricts it per request.
+ops_qs_user(v) :- drf_method(v, _, g), kind(a, "assignment"), def_frame(a, g), field(a, "left", l),
+    attr_of(l, s, "queryset"), kind(s, "identifier"), text(s, "self"), field(a, "right", r), within(u, r),
+    drf_request_user(u).
+
+// ---- checks ------------------------------------------------------------------------------------------------------
+// ops_check_call(f): f calls get_object(), check_object_permissions() or has_object_permission() itself.
+.decl ops_check_name(x: symbol)
+ops_check_name("get_object"). ops_check_name("check_object_permissions"). ops_check_name("has_object_permission").
+.decl ops_check_call(f: node)
+ops_check_call(f) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, _, x), ops_check_name(x).
+ops_check_call(f) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, o, x), ops_detail(x),
+    kind(o, "call"), field(o, "function", sf), text(sf, "super").
+// A permission call that reads the requester: `project.has_permission(request.user)` (label-studio's
+// HasObjectPermission does exactly this), `request.user.has_perm("change_book", book)`,
+// `has_perms_owner_aware(user, "change_document", doc)` with `user = request.user`.
+ops_check_call(f) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), ops_callee_name(fn, x),
+    match("(?i).*(perm|access|allow|authori).*", x), ops_reads_user(k, f).
+// The handler refuses some requests itself: it raises PermissionDenied or answers 403.
+ops_check_call(f) :- kind(r, "raise_statement"), def_frame(r, f), within(e, r), sym_of(e, q),
+    (q = "rest_framework.exceptions.PermissionDenied" ; q = "django.core.exceptions.PermissionDenied").
+ops_check_call(f) :- kind(e, "integer"), def_frame(e, f), text(e, "403").
+ops_check_call(f) :- attr_of(e, _, "HTTP_403_FORBIDDEN"), def_frame(e, f).
+ops_check_call(f) :- kind(e, "identifier"), def_frame(e, f), sym_of(e, "django.http.HttpResponseForbidden").
+.decl ops_callee_name(fn: node, x: symbol)
+ops_callee_name(fn, x) :- attr_of(fn, _, x).
+ops_callee_name(fn, x) :- kind(fn, "identifier"), text(fn, x).
+// ops_reads_user(k, f): node k in function f holds the requester: `request.user` (or an attribute of it), or a name
+// f binds to an expression holding one.
+.decl ops_reads_user(k: node, f: node)
+ops_reads_user(k, f) :- def_frame(k, f), within(u, k), drf_request_user(u).
+ops_reads_user(k, f) :- def_frame(k, f), within(r, k), kind(r, "identifier"), text(r, x), look(r, x, f),
+    asg(f, x, val, _), ops_user_value(val).
+.decl ops_user_value(v: node)
+ops_user_value(v) :- drf_request_user(v).
+ops_user_value(v) :- within(u, v), drf_request_user(u).
+// ops_self_call(f, x): f calls `self.x(…)`.
+.decl ops_self_call(f: node, x: symbol)
+ops_self_call(f, x) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, s, x),
+    kind(s, "identifier"), text(s, "self").
+// ops_checks(v, f): method f of view v checks the row: itself, through a method of v it calls, or by calling a
+// detail handler v inherits from DRF's mixins (`self.update()` in partial_update), which calls get_object().
+.decl ops_checks(v: node, f: node)
+ops_checks(v, f) :- drf_method(v, _, f), ops_check_call(f).
+ops_checks(v, f) :- drf_method(v, _, f), ops_self_call(f, x), ops_detail(x), !drf_method(v, x, _).
+ops_checks(v, f) :- drf_method(v, _, f), ops_self_call(f, x), drf_method(v, x, g), ops_checks(v, g).
+
+// ---- the findings ------------------------------------------------------------------------------------------------
+.decl ops_view_hit(c: node)
+ops_view_hit(c) :- ops_handler_obj(v, f), def_frame(c, f), ops_fetch(c, o), ops_view_rows(v, f, c, o),
+    !ops_scoped(c), !ops_checks(v, f), docof(c, d), !dj_test_doc(d).
+// ops_view_rows(v, f, c, o): fetch c from o in handler f reads view v's rows.
+.decl ops_view_rows(v: node, f: node, c: node, o: node)
+ops_view_rows(v, f, c, o) :- ops_handler(v, f), ops_fetch(c, o), ops_model(o, mc), ops_view_model(v, mc).
+ops_view_rows(v, f, c, o) :- ops_handler(v, f), ops_fetch(c, o), ops_self_qs(o), !ops_qs_user(v).
+ops_view_rows(v, f, c, o) :- ops_handler(v, f), ops_fetch(c, o), ops_model(o, _), !ops_has_model(v), ops_url_arg(c, f).
+.decl ops_fn_hit(c: node)
+ops_fn_hit(c) :- ops_fn_obj(f), def_frame(c, f), ops_fetch(c, o), ops_model(o, _), ops_url_arg(c, f),
+    !ops_scoped(c), !ops_check_call(f), docof(c, d), !dj_test_doc(d).
+
+// The cases, `cases/drf-practice-object-permission-skipped/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "config/__init__.py" from "../cases/drf-practice-object-permission-skipped/config/__init__.py"
+    .fixture "config/settings.py" from "../cases/drf-practice-object-permission-skipped/config/settings.py"
+    .fixture "library/__init__.py" from "../cases/drf-practice-object-permission-skipped/library/__init__.py"
+    .fixture "library/api/__init__.py" from "../cases/drf-practice-object-permission-skipped/library/api/__init__.py"
+    .fixture "library/api/access.py" from "../cases/drf-practice-object-permission-skipped/library/api/access.py"
+    .fixture "library/api/base.py" from "../cases/drf-practice-object-permission-skipped/library/api/base.py"
+    .fixture "library/api/fn_views.py" from "../cases/drf-practice-object-permission-skipped/library/api/fn_views.py"
+    .fixture "library/api/permissions.py" from "../cases/drf-practice-object-permission-skipped/library/api/permissions.py"
+    .fixture "library/api/serializers.py" from "../cases/drf-practice-object-permission-skipped/library/api/serializers.py"
+    .fixture "library/api/views.py" from "../cases/drf-practice-object-permission-skipped/library/api/views.py"
+    .fixture "library/models.py" from "../cases/drf-practice-object-permission-skipped/library/models.py"
+    .fixture "library/tests/__init__.py" from "../cases/drf-practice-object-permission-skipped/library/tests/__init__.py"
+    .fixture "library/tests/test_views.py" from "../cases/drf-practice-object-permission-skipped/library/tests/test_views.py"
+    .fixture "studio/projects/__init__.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/__init__.py"
+    .fixture "studio/projects/api.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/api.py"
+    .fixture "studio/projects/models.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/models.py"
+    .fixture "studio/projects/serializers.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/serializers.py"
+    .expect _ at "library/api/fn_views.py":14
+    .expect _ at "library/api/fn_views.py":23
+    .expect _ at "library/api/views.py":22
+    .expect _ at "library/api/views.py":26
+    .expect _ at "library/api/views.py":48
+    .expect _ at "library/api/views.py":52
+    .expect _ at "library/api/views.py":57
+    .expect _ at "library/api/views.py":63
+    .expect _ at "library/api/views.py":138
+    .expect _ at "library/api/views.py":160
+    .expect _ at "library/api/views.py":172
+    .expect _ at "studio/projects/api.py":15
+    .expect _ at "studio/projects/api.py":36
+.end

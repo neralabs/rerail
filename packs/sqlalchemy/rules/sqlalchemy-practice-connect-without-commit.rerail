@@ -1,0 +1,255 @@
+.policy "sqlalchemy-practice-connect-without-commit" revision 1
+.description "Commit writes made on a connection from engine.connect(), or open it with engine.begin(); SQLAlchemy 2.0 rolls back an uncommitted connection when it closes."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. SQLAlchemy 2.0 has no library-level autocommit: a Core connection from
+// `engine.connect()` begins a transaction on its first statement ("autobegin") and rolls it back when it is closed
+// unless the code calls `conn.commit()`. A write on such a connection that is never committed is lost without an error.
+// It matches a connection the function opens itself, `with E.connect() as conn:`, `async with E.connect() as conn:`,
+// `conn = E.connect()` or `conn = await E.connect()` (connect() with no arguments, maybe chained with
+// `.execution_options(...)`, in a file importing SQLAlchemy), and reports each write on it:
+//   - `conn.execute(s)` with s an insert/update/delete statement: `insert(t)…`, `update(M)…`, `delete(t)…` (sqlalchemy,
+//     sqlmodel and dialect inserts, resolved through imports), Core's `t.insert()`/`t.update()`/`t.delete()` chains, DDL
+//     elements (`CreateTable(...)`, `DropIndex(...)`, `CreateSchema(...)`), or `text(sql)`;
+//   - `conn.exec_driver_sql(sql)`;
+//   where sql is a string literal (an f-string, `"…" % x`, `"…".format(...)`, or a name the scope binds to one) whose
+//   statement starts with INSERT, UPDATE, DELETE, MERGE, UPSERT, REPLACE, CREATE, ALTER, DROP, TRUNCATE, GRANT or
+//   REVOKE;
+//   - `metadata.create_all(conn)` / `metadata.drop_all(bind=conn)`;
+//   - a call that hands the connection to a function of the run (resolved through the call graph, across files) that
+//     makes such a write on that parameter and neither commits nor begins on it: reported at the call.
+//   with engine.connect() as conn:
+//       conn.execute(insert(users).values(name=name))            reported: rolled back when the with block closes it
+//   with engine.connect() as conn:
+//       store_users(conn, names)                                  reported when store_users writes on conn and never commits
+//   with engine.connect() as conn:
+//       conn.execute(insert(users).values(name=name))
+//       conn.commit()                                             not reported
+// It leaves alone a write followed, anywhere later in the with block or function (any branch: precision first), by
+// `conn.commit()` (or `conn.connection.commit()`); a connection on which the block or function opens a transaction
+// (`conn.begin()`, `with conn.begin():`, `with E.connect() as conn, conn.begin():`, `begin_nested()`, `trans =
+// conn.begin()`); autocommit isolation, on the connection (`conn.execution_options(isolation_level="AUTOCOMMIT")`,
+// `E.connect().execution_options(...)`, a DBAPI `.autocommit = True`) or on the engine (a name, module variable,
+// imported module variable or `self.<attr>` the run assigns a `create_engine(...)`/`.execution_options(...)` with
+// `isolation_level="AUTOCOMMIT"`, or an isolation level that is not a literal, or `connect_args={"isolation_level":
+// None}`); DDL text on an engine whose URL literal is SQLite (pysqlite runs DDL outside a transaction); a connection
+// passed to a function of the run that commits or begins on one of its parameters; a statement name whose last
+// assignment before the call is a read (`query = insert(...)` run elsewhere, then `query = select(...)`);
+// `engine.begin()`; reads (`select`, `text("SELECT …")`); connections the function receives (a parameter: the caller
+// owns the transaction); sessions; `sqlite3.connect(path)`; test files and Alembic revisions (`op.get_bind()` runs in
+// the migration's transaction).
+// Gaps: the rule assumes SQLAlchemy 2.0 (or 1.4 with `future=True`): a 1.x engine autocommitted DML, so in a project
+// pinned below 2.0 the premise fails, which the rule cannot see. SQL it cannot read (a string built elsewhere, a file's
+// contents, `str(ddl_object)`) is not a write; the connection stored on `self` or returned is not followed; an engine
+// made autocommit by settings it cannot read (Flask-SQLAlchemy's SQLALCHEMY_ENGINE_OPTIONS, an event listener) is
+// treated as transactional; a helper is followed one call deep.
+
+#include "lib/sqlalchemy.rerail"
+
+.violation ConnectWithoutCommit(at: node, c: symbol, e: symbol, what: symbol) "{what} on `{c}`, a connection from `{e}.connect()` that is never committed: SQLAlchemy 2.0 rolls it back when the connection closes, so the write is lost. Call `{c}.commit()` after the writes, or open it with `{e}.begin()`; leave it only if the engine or connection already autocommits in a way this code does not show."
+ConnectWithoutCommit(w, x, et, "This write") :- cwc_report(w, x, e, "direct"), text(e, et).
+ConnectWithoutCommit(w, x, et, "This call writes through its connection argument") :- cwc_report(w, x, e, "helper"),
+    text(e, et).
+
+// cwc_report(w, x, e, how): write or helper call w on connection x, opened from engine expression e, is never
+// committed; not in tests or migrations.
+.decl cwc_report(w: node, x: symbol, e: node, how: symbol)
+cwc_report(w, x, e, how) :- cwc_open(o, x, r, b, e), cwc_write_in(w, x, b, how), !cwc_committed_after(r, x, w),
+    !cwc_tx(r, x), !cwc_autocommit_region(r), !cwc_autocommit_engine(e), !cwc_sqlite_ddl(e, w), !cwc_helper_commits(r, x),
+    docof(o, d), sa_doc(d), !sa_test_doc(d), !sa_migration_doc(d).
+
+// ---- opening a connection ------------------------------------------------------------------------------------------
+// cwc_connect(v, e): v is `e.connect()` (no arguments), awaited, or chained with `.execution_options(...)`.
+.decl cwc_connect(v: node, e: node)
+cwc_connect(v, e) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, e, "connect"),
+    py_no_call_args(k).
+cwc_connect(v, e) :- unparen(v, w), kind(w, "await"), child(w, c, 0), cwc_connect(c, e).
+cwc_connect(v, e) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, "execution_options"),
+    cwc_connect(o, e).
+// cwc_open(o, x, r, b, e): o opens a connection from engine expression e and binds it to x. b is where its writes
+// are looked for (the with body, or the function or module for an assignment); r is where commits, begins and
+// autocommit settings are looked for (the whole with statement, items included, or the same function or module).
+.decl cwc_open(o: node, x: symbol, r: node, b: node, e: node)
+cwc_open(ap, x, w, b, e) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0), cwc_connect(v, e),
+    sa_as_name(ap, x), field(w, "body", b).
+cwc_open(a, x, s, s, e) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x),
+    field(a, "right", v), cwc_connect(v, e), nearest(a, s, scope).
+
+// ---- writes ----------------------------------------------------------------------------------------------------------
+// cwc_write_in(w, x, b, how): call w in b (not in a def nested in it) writes on x directly, or hands x to a helper.
+.decl cwc_write_in(w: node, x: symbol, b: node, how: symbol)
+cwc_write_in(w, x, b, "direct") :- cwc_open(_, x, _, b, _), cwc_write(w, x), within_stop(w, b, sa_region_stop).
+cwc_write_in(w, x, b, "helper") :- cwc_open(_, x, _, b, _), cwc_helper_write(w, x), within_stop(w, b, sa_region_stop).
+// cwc_write(w, x): call w is `x.execute(<write statement>, ...)`, `x.exec_driver_sql(<write SQL>, ...)`, or
+// `<metadata>.create_all(x)` / `drop_all(bind=x)`.
+.decl cwc_write(w: node, x: symbol)
+cwc_write(w, x) :- kind(w, "call"), field(w, "function", f), attr_of(f, o, "execute"), kind(o, "identifier"),
+    text(o, x), posarg(w, 0, s), cwc_write_stmt(s).
+cwc_write(w, x) :- kind(w, "call"), field(w, "function", f), attr_of(f, o, "exec_driver_sql"), kind(o, "identifier"),
+    text(o, x), posarg(w, 0, s), cwc_sql(s, _).
+cwc_write(w, x) :- cwc_schema_write(w, x).
+.decl cwc_schema_write(w: node, x: symbol)
+cwc_schema_write(w, x) :- kind(w, "call"), field(w, "function", f), attr_of(f, _, m), (m = "create_all" ; m = "drop_all"),
+    call_arg(w, i, k, a), (i = 0 ; k = "bind"), kind(a, "identifier"), text(a, x).
+// cwc_write_stmt(s): s is a write statement, or a name its scope binds to one.
+.decl cwc_write_stmt(s: node)
+cwc_write_stmt(s) :- unparen(s, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), sa_dml_fn(q, _).
+cwc_write_stmt(s) :- unparen(s, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), cwc_ddl_class(q).
+cwc_write_stmt(s) :- unparen(s, k), kind(k, "call"), field(k, "function", f), attr_of(f, _, m),
+    (m = "insert" ; m = "update" ; m = "delete").
+cwc_write_stmt(s) :- unparen(s, k), kind(k, "call"), sa_text_call(k), posarg(k, 0, a), cwc_sql(a, _).
+// a chain from one: `.values(...)`, `.where(...)`, `.on_conflict_do_update(...)`, `.bindparams(...)`
+cwc_write_stmt(s) :- unparen(s, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, _), cwc_write_stmt(o).
+cwc_write_stmt(s) :- unparen(s, n), cwc_name_value(n, v), cwc_write_stmt(v).
+// cwc_ddl_class(q): SQLAlchemy's DDL elements: CreateTable, DropTable, CreateIndex, CreateSchema, ...
+.decl cwc_ddl_class(q: symbol)
+cwc_ddl_class(q) :- sym_of(_, q), match("sqlalchemy(?:\\.schema|\\.sql\\.ddl)?\\.(?:Create|Drop)[A-Z]\\w*", q).
+// cwc_sql(a, verb): a is a SQL string literal (or a name its scope binds to one, a `%` or `.format()` on one)
+// whose first statement word is the write verb.
+.decl cwc_sql(a: node, verb: symbol)
+cwc_sql(a, verb) :- unparen(a, s), (kind(s, "string") ; kind(s, "concatenated_string")), text(s, t),
+    match("(?is)[rbuf]*(?:\"\"\"|'''|\"|')\\s*(?:--[^\\n]*\\n\\s*)*(?:INSERT|UPDATE|DELETE|MERGE|UPSERT|REPLACE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\\b.*", t),
+    verb = @lower(@replace_all(t, "(?is)^[rbuf]*(?:\"\"\"|'''|\"|')\\s*(?:--[^\\n]*\\n\\s*)*(\\w+)\\b.*$", "$1")).
+cwc_sql(a, verb) :- unparen(a, b), kind(b, "binary_operator"), field(b, "left", l), cwc_sql(l, verb).
+cwc_sql(a, verb) :- unparen(a, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, "format"), cwc_sql(o, verb).
+cwc_sql(a, verb) :- unparen(a, n), cwc_name_value(n, v), cwc_sql(v, verb).
+// cwc_name_value(n, v): name n reads value v: the last assignment to it before n in n's own scope (a name rebound
+// from a write to a read, `query = insert(...)` then `query = select(...)`, reads the select), or, when n's scope does
+// not bind it, any assignment in the outer scope it resolves to (a module-level SQL constant).
+.decl cwc_name_value(n: node, v: node)
+cwc_name_value(n, v) :- kind(n, "identifier"), text(n, x), latest_assign(n, x, a), rasg(_, x, v, a).
+cwc_name_value(n, v) :- kind(n, "identifier"), text(n, x), look(n, x, sc), !scope_node(n, sc), asg(sc, x, v, _).
+// cwc_ddl_write(w): write w is DDL: CREATE, ALTER or DROP text, a DDL element, `create_all`/`drop_all`.
+.decl cwc_ddl_write(w: node)
+cwc_ddl_write(w) :- cwc_write(w, _), posarg(w, 0, s), cwc_ddl_text(s).
+cwc_ddl_write(w) :- cwc_schema_write(w, _).
+.decl cwc_ddl_text(s: node)
+cwc_ddl_text(s) :- cwc_sql(s, v), (v = "create" ; v = "alter" ; v = "drop").
+cwc_ddl_text(s) :- unparen(s, k), kind(k, "call"), sa_text_call(k), posarg(k, 0, a), cwc_ddl_text(a).
+cwc_ddl_text(s) :- unparen(s, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), cwc_ddl_class(q).
+
+// ---- writes through a helper -------------------------------------------------------------------------------------------
+// cwc_helper_write(c, x): call c passes name x to a function g of the run, as the argument for g's parameter p, and g
+// writes on p (cwc_write) and neither commits nor begins on any parameter.
+.decl cwc_helper_write(c: node, x: symbol)
+cwc_helper_write(c, x) :- cwc_passes(c, x, g, p), cwc_write(w, p), within_stop(w, g, sa_region_stop),
+    !cwc_fn_commits(g).
+// cwc_passes(c, x, g, p): call c passes identifier x as g's parameter p.
+.decl cwc_passes(c: node, x: symbol, g: node, p: symbol)
+cwc_passes(c, x, g, p) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop),
+    posarg(c, j, a), kind(a, "identifier"), text(a, x), call_target(c, g), sig_param(g, _, nm, i, _, _, _), text(nm, p),
+    cwc_arg_index(c, g, j, i).
+cwc_passes(c, x, g, p) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop),
+    call_arg(c, -1, p, a), kind(a, "identifier"), text(a, x), call_target(c, g), sig_param(g, _, nm, _, _, _, _),
+    text(nm, p).
+// cwc_arg_index(c, g, j, i): positional argument j of call c fills g's parameter i: i = j + 1 when c is `obj.m(...)`
+// and g's first parameter is self or cls (a bound method), i = j otherwise.
+.decl cwc_arg_index(c: node, g: node, j: number, i: number)
+cwc_arg_index(c, g, j, i) :- cwc_call_pos(c, g, j), cwc_bound_method(c, g), i = j + 1.
+cwc_arg_index(c, g, j, j) :- cwc_call_pos(c, g, j), !cwc_bound_method(c, g).
+.decl cwc_call_pos(c: node, g: node, j: number)
+cwc_call_pos(c, g, j) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop), posarg(c, j, a),
+    kind(a, "identifier"), text(a, x), call_target(c, g).
+.decl cwc_bound_method(c: node, g: node)
+cwc_bound_method(c, g) :- cwc_call_pos(c, g, _), field(c, "function", f), kind(f, "attribute"),
+    sig_param(g, _, nm, 0, _, _, _), (text(nm, "self") ; text(nm, "cls")).
+// cwc_fn_commits(g): def g calls `.commit()`, `.begin()` or `.begin_nested()` on one of its parameters.
+.decl cwc_fn_commits(g: node)
+cwc_fn_commits(g) :- kind(g, "function_definition"), sig_param(g, _, nm, _, _, _, _), text(nm, p), kind(c, "call"),
+    within_stop(c, g, sa_region_stop), field(c, "function", f), attr_of(f, o, m), cwc_tx_method(m), cwc_root(o, p).
+.decl cwc_helper_commits(r: node, x: symbol)
+cwc_helper_commits(r, x) :- cwc_open(_, x, r, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop),
+    call_arg(c, _, _, a), kind(a, "identifier"), text(a, x), call_target(c, g), cwc_fn_commits(g).
+
+// ---- commits, transactions, autocommit -----------------------------------------------------------------------------
+.decl cwc_tx_method(m: symbol)
+cwc_tx_method("commit"). cwc_tx_method("begin"). cwc_tx_method("begin_nested").
+// cwc_root(o, x): expression o is the name x, or an attribute chain on it (`conn.connection`).
+.decl cwc_root(o: node, x: symbol)
+cwc_root(o, x) :- unparen(o, n), kind(n, "identifier"), text(n, x).
+cwc_root(o, x) :- unparen(o, a), attr_of(a, p, _), cwc_root(p, x).
+// cwc_committed_after(r, x, w): `x.commit()` (or `x.connection.commit()`) is called in r after write w starts.
+.decl cwc_committed_after(r: node, x: symbol, w: node)
+cwc_committed_after(r, x, w) :- cwc_open(_, x, r, b, _), cwc_write_in(w, x, b, _), kind(c, "call"),
+    within_stop(c, r, sa_region_stop), field(c, "function", f), attr_of(f, o, "commit"), cwc_root(o, x),
+    node(d, w, _, ws, _), node(d, c, _, cs, _), cs > ws.
+// cwc_tx(r, x): r opens a transaction on x: `x.begin()`, `x.begin_nested()`, as a with item or not.
+.decl cwc_tx(r: node, x: symbol)
+cwc_tx(r, x) :- cwc_open(_, x, r, _, _), kind(c, "call"), within_stop(c, r, sa_region_stop), field(c, "function", f),
+    attr_of(f, o, m), (m = "begin" ; m = "begin_nested"), cwc_root(o, x).
+// cwc_autocommit_region(r): r sets autocommit on a connection: `….execution_options(isolation_level=...)` with an
+// AUTOCOMMIT or non-literal level, `….autocommit = True`, `set_isolation_level(...)`, `set_session(autocommit=True)`.
+.decl cwc_autocommit_region(r: node)
+cwc_autocommit_region(r) :- cwc_open(_, _, r, _, _), kind(c, "call"), within_stop(c, r, sa_region_stop),
+    cwc_autocommit_call(c).
+cwc_autocommit_region(r) :- cwc_open(_, _, r, _, _), kind(a, "assignment"), within_stop(a, r, sa_region_stop),
+    field(a, "left", l), attr_of(l, _, "autocommit"), field(a, "right", v), kind(v, "true").
+.decl cwc_autocommit_call(c: node)
+cwc_autocommit_call(c) :- kind(c, "call"), call_arg(c, -1, "isolation_level", v), cwc_autocommit_level(v).
+cwc_autocommit_call(c) :- kind(c, "call"), call_arg(c, -1, "autocommit", v), kind(v, "true").
+cwc_autocommit_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "set_isolation_level").
+// `create_engine(url, execution_options={"isolation_level": "AUTOCOMMIT"})`,
+// `connect_args={"isolation_level": None}` (pysqlite's own autocommit)
+cwc_autocommit_call(c) :- kind(c, "call"), call_arg(c, -1, _, dd), unparen(dd, d), kind(d, "dictionary"),
+    child(d, p, _), kind(p, "pair"), field(p, "key", k), str(k, "isolation_level"), field(p, "value", v),
+    cwc_autocommit_level(v).
+// cwc_autocommit_level(v): an isolation level that is AUTOCOMMIT, or that the rule cannot read (precision first).
+.decl cwc_autocommit_level(v: node)
+cwc_autocommit_level(v) :- unparen(v, s), str(s, l), match("(?i)\\s*autocommit\\s*", l).
+cwc_autocommit_level(v) :- unparen(v, s), !str(s, _).
+// cwc_engine_value(e, v): engine expression e is bound to value v: a name its scope binds, an imported module
+// variable, `self.<attr>`/`cls.<attr>` that the same class assigns, or `<obj>.<attr>` that the same file assigns.
+.decl cwc_engine_value(e: node, v: node)
+cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
+    asg(sc, x, v, _).
+cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), sym_of(n, q), sa_module_var(q, v).
+cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), attr_of(n, o, y), cwc_self(o), nearest(n, k, cwc_class),
+    kind(a, "assignment"), nearest(a, k, cwc_class), field(a, "left", l), attr_of(l, lo, y), cwc_self(lo),
+    field(a, "right", v).
+cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), attr_of(n, o, y), !cwc_self(o), docof(n, d),
+    kind(a, "assignment"), docof(a, d), field(a, "left", l), attr_of(l, _, y), field(a, "right", v).
+.decl cwc_self(o: node)
+cwc_self(o) :- kind(o, "identifier"), (text(o, "self") ; text(o, "cls")).
+.decl cwc_class(k: symbol)
+cwc_class("class_definition").
+.decl cwc_autocommit_engine(e: node)
+cwc_autocommit_engine(e) :- cwc_engine_value(e, v), kind(c, "call"), (c = v ; within(c, v)), cwc_autocommit_call(c).
+// cwc_sqlite_ddl(e, w): w is DDL text and e's engine was made from a `sqlite…` URL literal.
+.decl cwc_sqlite_ddl(e: node, w: node)
+cwc_sqlite_ddl(e, w) :- cwc_ddl_write(w), cwc_engine_value(e, v), kind(c, "call"), (c = v ; within(c, v)),
+    call_arg(c, i, k, u), (i = 0 ; k = "url"), str(u, url), match("(?i)sqlite.*", url).
+
+// The cases, `cases/sqlalchemy-practice-connect-without-commit/`, read as one repository: each line ending in `# caught`
+// is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/__init__.py"
+    .fixture "app/async_jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/async_jobs.py"
+    .fixture "app/db.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/db.py"
+    .fixture "app/jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/jobs.py"
+    .fixture "app/migrations/versions/0002_backfill.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/migrations/versions/0002_backfill.py"
+    .fixture "app/models.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/models.py"
+    .fixture "app/repo.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/repo.py"
+    .fixture "app/safe.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/safe.py"
+    .fixture "app/tests/__init__.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/tests/__init__.py"
+    .fixture "app/tests/test_jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/tests/test_jobs.py"
+    .expect _ at "app/async_jobs.py":9
+    .expect _ at "app/async_jobs.py":14
+    .expect _ at "app/jobs.py":13
+    .expect _ at "app/jobs.py":18
+    .expect _ at "app/jobs.py":23
+    .expect _ at "app/jobs.py":28
+    .expect _ at "app/jobs.py":35
+    .expect _ at "app/jobs.py":40
+    .expect _ at "app/jobs.py":45
+    .expect _ at "app/jobs.py":50
+    .expect _ at "app/jobs.py":62
+    .expect _ at "app/jobs.py":69
+    .expect _ at "app/jobs.py":77
+    .expect _ at "app/jobs.py":83
+    .expect _ at "app/jobs.py":89
+    .expect _ at "app/jobs.py":99
+    .expect _ at "app/jobs.py":115
+    .expect _ at "app/safe.py":150
+.end

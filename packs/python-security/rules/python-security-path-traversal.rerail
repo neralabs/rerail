@@ -1,0 +1,281 @@
+.policy "python-security-path-traversal" revision 1
+.description "Keep request data, an upload's filename included, out of file paths unless it is reduced to a bare name or the resolved path is checked to stay under its base."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Client request data (lib/security's sources: Django/DRF `request.GET`/`.POST`/
+// `.data`/`.FILES`/…, Flask `request.args`/`.form`/`.files`/…, Starlette `request.query_params`/`.json()`/…, FastAPI
+// and Flask route parameters, FastAPI `UploadFile` parameters) that reaches a filesystem path, in the same function
+// or through the project's functions across files, reported at the call that uses the path. An upload's client
+// filename is client data: `request.FILES["f"].name`, Flask `request.files["f"].filename`, `UploadFile.filename`
+// (lib/security taints the attributes of a tainted value). The sinks:
+//   - `open`, `io.open`, `codecs.open`, `os.open`, `aiofiles.open` (the file); `os.remove`, `unlink`, `rmdir`,
+//     `removedirs`, `mkdir`, `makedirs`, `listdir`, `scandir`, `shutil.rmtree` (the path); `os.rename`, `replace`,
+//     `shutil.copy`, `copy2`, `copyfile`, `copytree`, `move` (source and destination);
+//   - a pathlib path's `.read_text()`, `.read_bytes()`, `.write_text()`, `.write_bytes()`, `.unlink()`, `.rmdir()`,
+//     `.mkdir()`, `.touch()` on any client-derived receiver, and `.open()`, `.rename()`, `.replace()` on one known to
+//     be a path (`Path(…)`, `a / b`, `.resolve()`, `.parent`, a name assigned one, a parameter annotated `Path`), so
+//     an upload's own `.open()` and `str.replace()` stay apart;
+//   - Flask/Werkzeug `send_file(path)` and the directory (never the `path`) of `send_from_directory(directory,
+//     path)`; Starlette/FastAPI `FileResponse(path)`; Django `FileSystemStorage(location)` (Django's `FileResponse`
+//     takes an open file: its `open()` is the sink);
+//   - Werkzeug `FileStorage.save(dst)` on an upload from `request.files`, and Flask-Uploads' `UploadSet.save(upload,
+//     name=…, folder=…)`.
+//   open(os.path.join(MEDIA, request.GET["name"]))                         reported
+//   f = request.files["file"]; f.save(os.path.join(UPLOADS, f.filename))   reported
+//   send_from_directory(f"static/{group}", path=filename)                  reported: the client picks the directory
+//   send_from_directory(STATIC, filename)                                  not reported: safe_join contains it
+//   open(os.path.join(MEDIA, os.path.basename(request.GET["name"])))       not reported
+// Sanitisers it trusts: every library call lib/security stops at (`os.path.basename`, `secure_filename`,
+// `get_valid_filename`, `safe_join`, a storage's `get_valid_name`/`generate_filename`, `int()`, `uuid4()`…);
+// `Path(x).name`/`.stem`/`.suffix`; a name reassigned from one of those (`name = secure_filename(name)`); an
+// upload's `.temporary_file_path()` and `.file` (a server temp file); a pydantic model field the model validates
+// (`@field_validator("locale")`, `@validator`, `Field(pattern=…)`) read off a parameter annotated with the model; a
+// function of the run named like a validator (`resolve_safe`); and a name its function checks: lib/security's
+// sec_checked (a validator-named call, `x in …`), a character-class test (`x.isalnum()`, `x.isdigit()`, …),
+// or a containment test on a resolved path that reads the name: `.is_relative_to(base)` / `.relative_to(base)` /
+// `os.path.commonpath([...])` / `.startswith(base + os.sep)` (or a base ending in `/`) where the tested path comes
+// from `.resolve()`, `os.path.realpath`, `abspath` or `normpath`; `x.parent.samefile(base)` / `os.path.samefile`;
+// or a call passing it to a function of the run that tests its parameter so (freqtrade's `is_file_in_dir(fn,
+// base)`). Not sanitisers (they still report): `normpath` alone, `.replace("../", "")`, `os.path.commonprefix`,
+// `startswith(base)` without a separator, and `is_relative_to` on a path never resolved.
+// Left alone: `send_from_directory(CONST, user_path)`; `default_storage.save(name, f)` and `FileField` uploads
+// (Django storages refuse `..`); an upload's content (`Image.open(BytesIO(f.read()))`); server-generated names;
+// paths read back from the database; `int()`-cast ids and `<int:…>` / `int` route parameters; test files.
+// Overlap: none in Ruff or Bandit; Semgrep's Django/Flask path-traversal rules are search-mode `request.$W.get(...)`
+// patterns in one function. This rule follows FastAPI parameters, upload filenames and the project's helpers.
+// Gaps: lib/security's (Django URL kwargs and `self.kwargs` are not sources; values stored on objects or in the
+// database; calls the call graph cannot resolve). A check is flow-insensitive: a name checked or reassigned to a
+// sanitised value anywhere in its function is trusted everywhere in it, and a blocklist (`if name in BLOCKED`)
+// counts as a check. A check in a caller does not clear a helper's parameter. A path parameter without a `Path`
+// annotation is not known to be a path, so its `.open()` is not read. Symlinks under the base are not considered.
+// A FastAPI `{name}` / Flask `<name>` path parameter cannot hold `/` (it climbs one level at most) and is reported
+// like any client text. An API meant to expose the whole filesystem (an agent sandbox) cannot be told apart.
+
+#include "lib/security.rerail"
+
+.violation PathTraversal(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) reaches this file path; `../` or an absolute path escapes the base. Keep its basename, or resolve it and check it stays in the base, unless a check elsewhere does."
+
+// ---- paths -------------------------------------------------------------------------------------------------------
+.decl pt_path_q(q: symbol)
+pt_path_q("pathlib.Path"). pt_path_q("pathlib.PurePath"). pt_path_q("pathlib.PosixPath").
+pt_path_q("pathlib.PurePosixPath"). pt_path_q("pathlib.WindowsPath"). pt_path_q("anyio.Path").
+// pt_path_method(m): pathlib methods that answer another path.
+.decl pt_path_method(m: symbol)
+pt_path_method("resolve"). pt_path_method("absolute"). pt_path_method("joinpath"). pt_path_method("with_name").
+pt_path_method("with_suffix"). pt_path_method("with_stem"). pt_path_method("expanduser").
+pt_path_method("relative_to").
+// pt_pathy(e): e's value is a pathlib path.
+.decl pt_pathy(e: node)
+pt_pathy(c) :- sec_call_q(c, q), pt_path_q(q).
+pt_pathy(b) :- kind(b, "binary_operator"), op(b, "/").
+pt_pathy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, pt_pathy(a).
+pt_pathy(w) :- kind(w, "await"), child(w, a, 0), pt_pathy(a).
+pt_pathy(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_path_method(m), pt_pathy(o).
+pt_pathy(e) :- attr_of(e, o, "parent"), pt_pathy(o).
+pt_pathy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pt_pathy(v).
+pt_pathy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
+    text(a, t), match("(Optional\\[)?(pathlib\\.|anyio\\.)?(Pure)?Path\\b.*", t).
+
+// ---- sanitisers and checks ---------------------------------------------------------------------------------------
+// pt_clean_q(q): library calls that reduce a value to a bare, safe name or a contained path.
+.decl pt_clean_q(q: symbol)
+pt_clean_q("os.path.basename"). pt_clean_q("posixpath.basename"). pt_clean_q("ntpath.basename").
+pt_clean_q("werkzeug.utils.secure_filename"). pt_clean_q("werkzeug.secure_filename").
+pt_clean_q("django.utils.text.get_valid_filename"). pt_clean_q("django.utils.text.slugify").
+pt_clean_q("werkzeug.security.safe_join"). pt_clean_q("werkzeug.utils.safe_join"). pt_clean_q("flask.safe_join").
+pt_clean_q("flask.helpers.safe_join"). pt_clean_q("builtins.int"). pt_clean_q("uuid.UUID").
+.decl pt_clean_method(m: symbol)
+pt_clean_method("get_valid_name"). pt_clean_method("generate_filename"). pt_clean_method("get_available_name").
+pt_clean_method("temporary_file_path").
+// pt_name_attr(m): a pathlib path's attributes that hold its last component only.
+.decl pt_name_attr(m: symbol)
+pt_name_attr("name"). pt_name_attr("stem"). pt_name_attr("suffix"). pt_name_attr("suffixes").
+// pt_cut(e): e holds no client path even when what it is built from does.
+.decl pt_cut(e: node)
+pt_cut(e) :- attr_of(e, o, m), pt_name_attr(m), pt_pathy(o).
+pt_cut(e) :- attr_of(e, _, "file").
+pt_cut(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), pt_clean_method(m).
+// A field of a pydantic model of the run that the model validates (`@field_validator("locale")`, `@validator(…)`,
+// `Field(pattern=…)`), read off a parameter annotated with the model (mealie's `registration.locale`).
+pt_cut(e) :- attr_of(e, o, fld), kind(o, "identifier"), text(o, x), look(o, x, g), sig_param(g, _, nm, _, _, a, _),
+    text(nm, x), sec_ann(a, t), sym_of(t, q), pt_model_checked(q, fld).
+.decl pt_model_checked(q: symbol, fld: symbol)
+pt_model_checked(q, fld) :- class_def(c, q), sec_model_q(q), kind(g, "function_definition"), nearest(g, c, scope),
+    dexpr(g, e), unparen(e, dc), kind(dc, "call"), call_name(dc, n), (n = "field_validator" ; n = "validator"),
+    posarg(dc, _, s), str(s, fld).
+pt_model_checked(q, fld) :- class_def(c, q), sec_model_q(q), asg(c, fld, v, _), unparen(v, fc), kind(fc, "call"),
+    call_name(fc, "Field"), (sec_arg(fc, -1, "pattern", _) ; sec_arg(fc, -1, "regex", _)).
+// pt_clean(v): v is a sanitised value (pt_cut, or a sanitising library or validator-named call).
+.decl pt_clean(v: node)
+pt_clean(v) :- unparen(v, e), pt_cut(e).
+pt_clean(v) :- unparen(v, c), sec_call_q(c, q), pt_clean_q(q).
+pt_clean(v) :- unparen(v, c), kind(c, "call"), call_name(c, n), sec_validator_name(n).
+
+// pt_resolved(e): e is a canonical path: `.resolve()`, os.path.realpath/abspath/normpath, `str()`/`Path()` of one,
+// or a name assigned one.
+.decl pt_resolved(e: node)
+pt_resolved(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "resolve").
+pt_resolved(c) :- sec_call_q(c, q), (q = "os.path.realpath" ; q = "os.path.abspath" ; q = "os.path.normpath" ;
+    q = "posixpath.realpath" ; q = "posixpath.abspath" ; q = "posixpath.normpath").
+pt_resolved(c) :- sec_call_q(c, q), (q = "builtins.str" ; q = "os.fspath" ; pt_path_q(q)), sec_arg(c, 0, _, a),
+    pt_resolved(a).
+pt_resolved(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, pt_resolved(a).
+pt_resolved(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pt_resolved(v).
+// pt_sep_arg(a): the prefix a `startswith` tests ends in a path separator (`base + os.sep`, `f"{base}/"`,
+// `str(base) + "/"`, a name assigned one).
+.decl pt_sw_arg(a: node)
+pt_sw_arg(a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "startswith"), sec_arg(c, 0, _, a).
+pt_sw_arg(v) :- pt_sw_arg(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _).
+.decl pt_sep_arg(a: node)
+pt_sep_arg(a) :- pt_sw_arg(a), text(a, t), contains("sep", t).
+pt_sep_arg(a) :- pt_sw_arg(a), text(a, t), match("(?s).*/[\"']\\)*", t).
+pt_sep_arg(r) :- pt_sw_arg(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pt_sep_arg(v).
+// pt_contain(h, a): scope h tests that the resolved path a stays under a base.
+.decl pt_contain(h: node, a: node)
+pt_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    (m = "is_relative_to" ; m = "relative_to"), pt_resolved(o), nearest(c, h, fscope).
+pt_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "startswith"), pt_resolved(o),
+    sec_arg(c, 0, _, a), pt_sep_arg(a), nearest(c, h, fscope).
+pt_contain(h, it) :- sec_call_q(c, q), (q = "os.path.commonpath" ; q = "posixpath.commonpath"), sec_arg(c, 0, _, l),
+    (kind(l, "list") ; kind(l, "tuple")), child(l, it, _), pt_resolved(it), nearest(c, h, fscope).
+// `x.parent.samefile(base)`, `os.path.samefile(os.path.dirname(x), base)`: the file system compares the real paths.
+pt_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "samefile"), nearest(c, h, fscope).
+pt_contain(h, a) :- sec_call_q(c, "os.path.samefile"), sec_arg(c, _, _, a), nearest(c, h, fscope).
+// A function of the run that tests its parameter so (`is_path_in_dir(path, base)`) checks the argument a call
+// passes it.
+pt_contain(h, a) :- call_target(c, g), sec_param_at(c, g, a, x), pt_checked_param(g, x), nearest(c, h, fscope).
+.decl pt_checked_param(g: node, x: symbol)
+pt_checked_param(g, x) :- param(g, x, _), pt_contain(g, a), pt_reads(a, x).
+// pt_reads(a, x): expression a reads name x.
+.decl pt_reads(a: node, x: symbol)
+pt_reads(a, x) :- unparen(a, i), kind(i, "identifier"), text(i, x).
+pt_reads(a, x) :- within(i, a), kind(i, "identifier"), text(i, x), !field(_, "attribute", i).
+// pt_checked(h, x): scope h checks or sanitises name x.
+.decl pt_checked(h: node, x: symbol)
+pt_checked(h, x) :- sec_checked(h, x).
+pt_checked(h, x) :- pt_contain(h, a), pt_reads(a, x), x != "self", x != "cls", x != "request".
+pt_checked(h, x) :- asg(h, x, v, _), pt_clean(v), pt_reads(v, x).
+// `x.isalnum()`, `x.isdigit()`, …: a name of letters or digits only holds no separator or dot.
+pt_checked(h, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_charclass_method(m),
+    unparen(o, i), kind(i, "identifier"), text(i, x), nearest(c, h, fscope).
+.decl pt_charclass_method(m: symbol)
+pt_charclass_method("isalnum"). pt_charclass_method("isalpha"). pt_charclass_method("isdigit").
+pt_charclass_method("isdecimal"). pt_charclass_method("isnumeric"). pt_charclass_method("isidentifier").
+.decl pt_checked_expr(e: node)
+pt_checked_expr(e) :- sec_value_site(e), pt_reads(e, x), nearest(e, h, fscope), pt_checked(h, x).
+
+// ---- client text, check-aware ------------------------------------------------------------------------------------
+// pt_val(e, s): e's value holds client text from source s: lib/security's propagation (sec_step) with the
+// sanitisers above cut, across files through pt_param and pt_returns.
+.decl pt_val(e: node, s: node)
+pt_val(e, e) :- sec_source(e, _).
+pt_val(e, s) :- sec_step(e, a), !pt_cut(e), pt_val(a, s).
+pt_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !pt_checked(h, x), sec_bind(h, x, v), pt_val(v, s),
+    r != v.
+pt_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !pt_checked(g, x), pt_param(g, x, s).
+pt_val(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), pt_val(v, s).
+pt_val(c, s) :- call_target(c, g), pt_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), pt_val(a, s).
+pt_val(c, s) :- call_target(c, g), pt_returns(g, s), !sec_validator_def(g), pt_own_source(g, s).
+.decl pt_param(g: node, x: symbol, s: node)
+pt_param(g, x, p) :- sec_route_param(g, x, p).
+pt_param(g, x, s) :- sec_param_at(_, g, a, x), pt_val(a, s).
+.decl pt_returns(g: node, s: node)
+pt_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), pt_val(v, s),
+    !pt_checked_expr(v).
+.decl pt_own_source(g: node, s: node)
+pt_own_source(g, s) :- pt_returns(g, s), within(s, g).
+pt_own_source(g, s) :- pt_returns(g, s), pt_reach(g, h), within(s, h).
+.decl pt_reach(g: node, h: node)
+pt_reach(g, h) :- pt_returns(g, _), calls(g, h).
+pt_reach(g, k) :- pt_reach(g, h), calls(h, k).
+
+// ---- sinks -------------------------------------------------------------------------------------------------------
+// pt_path_q1(q, k): the path is the first argument, or keyword k.
+.decl pt_path_q1(q: symbol, k: symbol)
+pt_path_q1("builtins.open", "file"). pt_path_q1("io.open", "file"). pt_path_q1("codecs.open", "filename").
+pt_path_q1("os.open", "path"). pt_path_q1("aiofiles.open", "file"). pt_path_q1("os.remove", "path").
+pt_path_q1("os.unlink", "path"). pt_path_q1("os.rmdir", "path"). pt_path_q1("os.removedirs", "name").
+pt_path_q1("os.mkdir", "path"). pt_path_q1("os.makedirs", "name"). pt_path_q1("os.listdir", "path").
+pt_path_q1("os.scandir", "path"). pt_path_q1("shutil.rmtree", "path").
+pt_path_q1("flask.send_file", "path_or_file"). pt_path_q1("flask.helpers.send_file", "path_or_file").
+pt_path_q1("werkzeug.utils.send_file", "path_or_file").
+pt_path_q1("flask.send_from_directory", "directory"). pt_path_q1("flask.helpers.send_from_directory", "directory").
+pt_path_q1("werkzeug.utils.send_from_directory", "directory").
+pt_path_q1("starlette.responses.FileResponse", "path"). pt_path_q1("fastapi.responses.FileResponse", "path").
+pt_path_q1("django.core.files.storage.FileSystemStorage", "location").
+pt_path_q1("django.core.files.storage.filesystem.FileSystemStorage", "location").
+// pt_path_q2(q): the path is the source (first) or the destination (second) argument.
+.decl pt_path_q2(q: symbol)
+pt_path_q2("os.rename"). pt_path_q2("os.replace"). pt_path_q2("shutil.copy"). pt_path_q2("shutil.copy2").
+pt_path_q2("shutil.copyfile"). pt_path_q2("shutil.copytree"). pt_path_q2("shutil.move").
+// pt_fs_method(m): pathlib methods no other client-derived value has (a string, an upload).
+.decl pt_fs_method(m: symbol)
+pt_fs_method("read_text"). pt_fs_method("read_bytes"). pt_fs_method("write_text"). pt_fs_method("write_bytes").
+pt_fs_method("unlink"). pt_fs_method("rmdir"). pt_fs_method("mkdir"). pt_fs_method("touch").
+// pt_upload(e): e is a Werkzeug upload (`request.files[…]`).
+.decl pt_upload(e: node)
+pt_upload(e) :- pt_val(e, s), sec_source(s, "request.files").
+// pt_sink(c, e): call c uses e as a filesystem path.
+.decl pt_sink(c: node, e: node)
+pt_sink(c, e) :- sec_call_q(c, q), pt_path_q1(q, k), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, k, e)).
+pt_sink(c, e) :- sec_call_q(c, q), pt_path_q2(q), (sec_arg(c, 0, _, e) ; sec_arg(c, 1, _, e) ;
+    sec_arg(c, -1, "src", e) ; sec_arg(c, -1, "dst", e)).
+pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_fs_method(m), unparen(o, e).
+pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "open" ; m = "rename" ;
+    m = "replace"), pt_pathy(o), unparen(o, e).
+pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "save"), pt_upload(o),
+    (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "dst", e)).
+pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "save"), sec_arg(c, 0, _, u), pt_upload(u),
+    (sec_arg(c, -1, "name", e) ; sec_arg(c, -1, "folder", e)).
+.decl pt_hit(c: node, s: node)
+pt_hit(c, s) :- pt_sink(c, e), pt_val(e, s).
+.decl pt_live(c: node)
+pt_live(c) :- pt_hit(c, _), docof(c, d), !sec_test_doc(d).
+
+PathTraversal(c, what, p, l) :- pt_live(c), s = min s2 : { pt_hit(c, s2) }, sec_origin(s, what, p, l).
+
+// The cases, `cases/python-security-path-traversal/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "api/__init__.py" from "../cases/python-security-path-traversal/api/__init__.py"
+    .fixture "api/paths.py" from "../cases/python-security-path-traversal/api/paths.py"
+    .fixture "api/routes.py" from "../cases/python-security-path-traversal/api/routes.py"
+    .fixture "api/schemas.py" from "../cases/python-security-path-traversal/api/schemas.py"
+    .fixture "api/seeding.py" from "../cases/python-security-path-traversal/api/seeding.py"
+    .fixture "api/uploads.py" from "../cases/python-security-path-traversal/api/uploads.py"
+    .fixture "docs/__init__.py" from "../cases/python-security-path-traversal/docs/__init__.py"
+    .fixture "docs/storage.py" from "../cases/python-security-path-traversal/docs/storage.py"
+    .fixture "docs/tests/__init__.py" from "../cases/python-security-path-traversal/docs/tests/__init__.py"
+    .fixture "docs/tests/test_views.py" from "../cases/python-security-path-traversal/docs/tests/test_views.py"
+    .fixture "docs/views.py" from "../cases/python-security-path-traversal/docs/views.py"
+    .fixture "webapp/__init__.py" from "../cases/python-security-path-traversal/webapp/__init__.py"
+    .fixture "webapp/app.py" from "../cases/python-security-path-traversal/webapp/app.py"
+    .fixture "webapp/files.py" from "../cases/python-security-path-traversal/webapp/files.py"
+    .expect _ at "api/routes.py":17
+    .expect _ at "api/routes.py":22
+    .expect _ at "api/routes.py":27
+    .expect _ at "api/routes.py":32
+    .expect _ at "api/routes.py":61
+    .expect _ at "api/routes.py":95
+    .expect _ at "api/seeding.py":11
+    .expect _ at "api/uploads.py":9
+    .expect _ at "docs/storage.py":7
+    .expect _ at "docs/views.py":24
+    .expect _ at "docs/views.py":28
+    .expect _ at "docs/views.py":33
+    .expect _ at "docs/views.py":37
+    .expect _ at "docs/views.py":44
+    .expect _ at "docs/views.py":52
+    .expect _ at "docs/views.py":57
+    .expect _ at "docs/views.py":64
+    .expect _ at "docs/views.py":71
+    .expect _ at "docs/views.py":78
+    .expect _ at "docs/views.py":82
+    .expect _ at "webapp/app.py":18
+    .expect _ at "webapp/app.py":23
+    .expect _ at "webapp/app.py":29
+    .expect _ at "webapp/app.py":35
+    .expect _ at "webapp/files.py":7
+.end

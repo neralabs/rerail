@@ -1,0 +1,162 @@
+.policy "python-security-sql-injection" revision 1
+.description "Pass request data to SQL as query parameters, never spliced into the SQL text with an f-string, %, +, format() or join()."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Client request data (lib/security's sec_source, or a FastAPI/Flask route parameter)
+// that reaches the SQL text of a query through an f-string, `%`, `+`, `.format()` or `.join()` (sec_built), in the
+// same function or through the project's helpers in other files, lets the client write SQL. The SQL-text argument
+// of these calls is the sink, never the params argument:
+//   - Django: `<qs/manager>.raw(sql, …)`, the string items of `.extra(select=…, where=[…], tables=[…],
+//     order_by=[…])`, `django.db.models.expressions.RawSQL(sql, …)`;
+//   - SQLAlchemy: `text(sql)` (`sqlalchemy.text`, `sqlalchemy.sql.text`, `sqlmodel.text`), `exec_driver_sql(sql)`,
+//     `<conn|session|engine>.execute(<str>)`;
+//   - DB-API: `.execute(sql)`, `.executemany(sql)`, `.executescript(sql)` on a database handle: a receiver that is
+//     a `….cursor()` call or a name bound to one (`cursor = connection.cursor()`, `with connections[…].cursor() as
+//     c`) or to a `….connect(…)` call (sqlite3, psycopg), or a receiver named like one (`cursor`, `cur`, `conn`,
+//     `connection`, `session`, `engine`, `db`, `database`, `self.session`, `db.session`).
+//   def search(request):
+//       q = request.GET.get("q", "")
+//       Product.objects.raw(f"SELECT * FROM p WHERE name LIKE '%{q}%'")        reported
+//       Product.objects.raw("SELECT * FROM p WHERE name LIKE %s", [f"%{q}%"])  not reported: q is a parameter
+//   (views.py) reports.run(request.GET["q"])
+//   (reports.py) def run(term): cursor.execute(f"… WHERE a = '{term}'")      reported, naming views.py's line
+// Left alone: parameterised calls (`execute("… %s", [x])`, `text("… :n").bindparams(n=x)`, `execute(text("…"),
+// {"n": x})`); the placeholder list `f"… IN ({','.join(['%s'] * len(ids))})"` (only `%s` markers are spliced; Ruff
+// S608 and Bandit B608 flag it); values cast by int(), float() or UUID() (lib/security stops the taint there); an
+// identifier picked through a mapping (`SORTS[request.GET["sort"]]`) or a name the function checks (`if col not in
+// ALLOWED: raise`, a validator-named call: sec_checked, trusted as lib/security defines it); a client query run as
+// written (`cursor.execute(request.POST["sql"])`, an "SQL lab" feature: nothing is spliced, so it is by design);
+// a built string that never reaches a query (a log line); ORM lookups; test files.
+// Overlap: Ruff S608 / Bandit B608 flag every SQL-looking string built by formatting, whatever the source (and the
+// safe placeholder list); S610/S611/B610/B611 flag every non-literal `extra()`/`RawSQL`. This rule reports only SQL
+// built from request data, and follows it across files into the project's query helpers.
+// Gaps: lib/security's (Django URL kwargs, values stored on objects or read back from the database, calls the call
+// graph cannot resolve); a check done in the caller does not clear a helper's parameter; SQL built by appending to a
+// list (`parts.append(…)`) and joined later; `map(str, ids)`; pandas `read_sql`, `Func(template=…)`; a client query
+// wrapped in fixed SQL (`f"SELECT * FROM ({sql}) LIMIT 10"`) is reported although it is by design.
+
+#include "lib/security.rerail"
+
+.violation SqlInjection(at: node, what: symbol, p: symbol, l: number) "SQL text built from {what} ({p}:{l}): pass the value as a query parameter (`%s` or `:name` with params), or map identifiers through an allow-list. Not needed for a value cast to int."
+SqlInjection(c, what, p, l) :- sqli_sql_arg(c, v), s = min s2 : { sqli_built(v, s2) }, sec_origin(s, what, p, l),
+    docof(c, d), !sec_test_doc(d).
+
+// ---- sinks: the SQL-text argument of a query call ---------------------------------------------------------------
+// sqli_sql_arg(c, v): v is (an item of) the SQL text call c runs.
+.decl sqli_sql_arg(c: node, v: node)
+sqli_sql_arg(c, v) :- call_name(c, "raw"), field(c, "function", f), attr_of(f, _, _), sqli_text_arg(c, k, v),
+    (k = "" ; k = "raw_query").
+sqli_sql_arg(c, v) :- sqli_rawsql(c), sqli_text_arg(c, k, v), (k = "" ; k = "sql").
+sqli_sql_arg(c, v) :- sqli_text_q(c), sqli_text_arg(c, k, v), (k = "" ; k = "text").
+sqli_sql_arg(c, v) :- call_name(c, "exec_driver_sql"), sqli_text_arg(c, k, v), (k = "" ; k = "statement").
+sqli_sql_arg(c, v) :- sqli_db_execute(c), sqli_text_arg(c, k, v), (k = "" ; sqli_exec_kw(k)).
+sqli_sql_arg(c, v) :- call_name(c, "extra"), field(c, "function", f), attr_of(f, _, _), sqli_extra_arg(c, a),
+    sqli_item(a, v).
+.decl sqli_exec_kw(k: symbol)
+sqli_exec_kw("sql"). sqli_exec_kw("operation"). sqli_exec_kw("statement"). sqli_exec_kw("query").
+sqli_exec_kw("sql_script").
+// sqli_text_arg(c, k, v): v is call c's first positional argument (k "") or its keyword argument k.
+.decl sqli_text_arg(c: node, k: symbol, v: node)
+sqli_text_arg(c, "", v) :- sec_arg(c, 0, "", v).
+sqli_text_arg(c, k, v) :- sec_arg(c, -1, k, v).
+.decl sqli_rawsql(c: node)
+sqli_rawsql(c) :- sec_call_q(c, q), (q = "django.db.models.expressions.RawSQL" ; q = "django.db.models.RawSQL").
+.decl sqli_text_q(c: node)
+sqli_text_q(c) :- sec_call_q(c, q), (q = "sqlalchemy.text" ; q = "sqlalchemy.sql.text" ;
+    q = "sqlalchemy.sql.expression.text" ; q = "sqlmodel.text").
+// The SQL-bearing arguments of `extra(select, where, params, tables, order_by, select_params)`.
+.decl sqli_extra_arg(c: node, a: node)
+sqli_extra_arg(c, a) :- sec_arg(c, i, "", a), (i = 0 ; i = 1 ; i = 3 ; i = 4).
+sqli_extra_arg(c, a) :- sec_arg(c, -1, k, a), (k = "select" ; k = "where" ; k = "tables" ; k = "order_by").
+// sqli_item(a, v): v is argument a, or an item of a list/tuple, or a value of a dict, a holds.
+.decl sqli_item(a: node, v: node)
+sqli_item(a, a) :- sqli_extra_arg(_, a).
+sqli_item(a, v) :- sqli_extra_arg(_, a), (kind(a, "list") ; kind(a, "tuple")), child(a, v0, _), unparen(v0, v),
+    !kind(v0, "comment").
+sqli_item(a, v) :- sqli_extra_arg(_, a), kind(a, "dictionary"), child(a, pr, _), kind(pr, "pair"),
+    field(pr, "value", v0), unparen(v0, v).
+
+// sqli_db_execute(c): c is `.execute()`, `.executemany()` or `.executescript()` on a database handle.
+.decl sqli_db_execute(c: node)
+sqli_db_execute(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, m),
+    (m = "execute" ; m = "executemany" ; m = "executescript"), unparen(r0, r), sqli_db_handle(r).
+.decl sqli_db_handle(r: node)
+sqli_db_handle(r) :- sqli_handle_call(r).
+sqli_db_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, c),
+    sqli_handle_call(c).
+sqli_db_handle(r) :- leaf_name(r, x), match("(?i)(.*_)?(cursor|cur|conn|connection|con|session|engine|db|database)", x).
+// sqli_handle_call(c): `….cursor()`, `….connect(…)`, `….begin()`: calls that hand out a database handle.
+.decl sqli_handle_call(c: node)
+sqli_handle_call(c) :- kind(c, "call"), call_name(c, m), (m = "cursor" ; m = "connect" ; m = "begin" ;
+    m = "raw_connection").
+
+// ---- strings built from client data, minus the pieces the rule trusts -------------------------------------------
+// lib/security's sec_built, with each spliced piece dropped when its function checks it (sec_checked: a
+// validator-named call or an `in` test), and the parts of a `%` tuple or `.format()` call judged one by one.
+.decl sqli_safe_piece(a: node)
+sqli_safe_piece(a) :- unparen(a, i), kind(i, "identifier"), text(i, x), nearest(a, h, fscope), sec_checked(h, x).
+// sqli_piece(a, s): spliced value a carries client data from s through a piece the rule does not trust.
+.decl sqli_piece(a: node, s: node)
+sqli_piece(a, s) :- sec_build(_, a), unparen(a, t), !sec_container(t), !sqli_safe_piece(a), sqli_carries(a, s).
+sqli_piece(a, s) :- sec_build(_, a), unparen(a, t), sec_container(t), child(t, i, _), !kind(i, "comment"),
+    !sqli_safe_piece(i), sqli_carries(i, s).
+// sqli_carries(a, s): a holds client data from s, as itself or as a string already built around it (`clause` in
+// `clause = " OR ".join(f"t = '{t}'" for t in tags)`, which sec_tainted does not reach).
+.decl sqli_carries(a: node, s: node)
+sqli_carries(a, s) :- sec_tainted(a, s).
+sqli_carries(a, s) :- sqli_built(a, s).
+.decl sqli_build(e: node, s: node)
+sqli_build(e, s) :- sec_build(e, a), sqli_piece(a, s).
+// `sep.join(<generator>)`: a lone generator argument is the call's whole argument list, which sec_build misses.
+sqli_build(e, s) :- kind(e, "call"), call_name(e, "join"), field(e, "arguments", g), kind(g, "generator_expression"),
+    field(g, "body", b), sqli_carries(b, s).
+.decl sqli_built(e: node, s: node)
+sqli_built(e, s) :- sqli_build(e, s).
+sqli_built(p, s) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, sqli_built(a, s).
+sqli_built(b, s) :- kind(b, "binary_operator"), op(b, "+"), (field(b, "left", a) ; field(b, "right", a)),
+    sqli_built(a, s).
+sqli_built(t, x) :- kind(t, "string"), child(t, i, _), kind(i, "interpolation"), field(i, "expression", a),
+    sqli_built(a, x).
+sqli_built(c, x) :- kind(c, "conditional_expression"), (child(c, a, 0) ; child(c, a, 2)), sqli_built(a, x).
+sqli_built(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), sqli_built(v, s), r != v.
+sqli_built(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), sqli_param_built(g, x, s).
+sqli_built(c, s) :- call_target(c, g), sqli_returns_built(g, s), !sec_validator_def(g), call_arg(c, _, _, a),
+    sec_tainted(a, s).
+sqli_built(c, s) :- call_target(c, g), sqli_returns_built(g, s), !sec_validator_def(g), sec_own_source(g, s).
+.decl sqli_param_built(g: node, x: symbol, s: node)
+sqli_param_built(g, x, s) :- sec_param_at(_, g, a, x), sqli_built(a, s).
+.decl sqli_returns_built(g: node, s: node)
+sqli_returns_built(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sqli_built(v, s).
+
+// The cases, `cases/python-security-sql-injection/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "api/__init__.py" from "../cases/python-security-sql-injection/api/__init__.py"
+    .fixture "api/db.py" from "../cases/python-security-sql-injection/api/db.py"
+    .fixture "api/routes.py" from "../cases/python-security-sql-injection/api/routes.py"
+    .fixture "legacy/__init__.py" from "../cases/python-security-sql-injection/legacy/__init__.py"
+    .fixture "legacy/app.py" from "../cases/python-security-sql-injection/legacy/app.py"
+    .fixture "shop/__init__.py" from "../cases/python-security-sql-injection/shop/__init__.py"
+    .fixture "shop/models.py" from "../cases/python-security-sql-injection/shop/models.py"
+    .fixture "shop/reports.py" from "../cases/python-security-sql-injection/shop/reports.py"
+    .fixture "shop/sqlbuild.py" from "../cases/python-security-sql-injection/shop/sqlbuild.py"
+    .fixture "shop/tests/__init__.py" from "../cases/python-security-sql-injection/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../cases/python-security-sql-injection/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../cases/python-security-sql-injection/shop/views.py"
+    .expect _ at "api/routes.py":12
+    .expect _ at "api/routes.py":20
+    .expect _ at "api/routes.py":22
+    .expect _ at "legacy/app.py":12
+    .expect _ at "legacy/app.py":21
+    .expect _ at "shop/reports.py":9
+    .expect _ at "shop/reports.py":16
+    .expect _ at "shop/views.py":18
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":30
+    .expect _ at "shop/views.py":31
+    .expect _ at "shop/views.py":37
+    .expect _ at "shop/views.py":38
+    .expect _ at "shop/views.py":39
+.end

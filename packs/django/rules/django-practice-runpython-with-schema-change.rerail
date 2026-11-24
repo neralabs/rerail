@@ -1,0 +1,308 @@
+.policy "django-practice-runpython-with-schema-change" revision 1
+.description "Give a data migration that writes rows its own migration, apart from schema changes to the same table; on PostgreSQL one shared transaction can fail or lock the table."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. On PostgreSQL a migration runs in one transaction unless it sets `atomic = False`,
+// RunPython included (RunPython's own `atomic=False` takes effect only in a non-atomic migration: Migration.apply).
+// Django's RunPython docs: "avoid combining schema changes and RunPython operations in the same migration or you may
+// hit errors like OperationalError: cannot ALTER TABLE "mytable" because it has pending trigger events". Reported, at
+// the RunPython, when its function (in the migration or imported, and the functions of the run it calls) binds
+// `apps.get_model("app", "M")` (or "app.M") to a name and writes M's rows through it: `.objects…update/create/
+// bulk_create/bulk_update/delete/get_or_create/update_or_create`, `M(...).save()`, or `save()`/`delete()` on rows
+// fetched from it; and an operation of the same migration that changes the database alters M's table (AddField,
+// AlterField, RemoveField, RenameField, Add/Remove/RenameIndex, Add/RemoveConstraint, AlterUniqueTogether,
+// AlterIndexTogether, AlterModelTable, RenameModel, DeleteModel; a SeparateDatabaseAndState's database_operations):
+//   - PendingTriggerEvents, the alteration after the RunPython: the writes queue deferred foreign-key checks on M's
+//     table (Django creates foreign keys DEFERRABLE INITIALLY DEFERRED), and PostgreSQL refuses to alter a table with
+//     checks pending. Only writes that queue a check count (PostgreSQL skips the check when a key is unchanged):
+//     inserting rows into a model with a foreign key (create, bulk_create, get_or_create, update_or_create,
+//     `M(...).save()`), setting a foreign key (`update(customer=…)`, `bulk_update(…, ["customer"])`,
+//     `obj.customer_id = …` then save), or deleting rows a foreign key or many-to-many field points at. A foreign key
+//     an AddField earlier in the same migration added does not count: Django adds it `SET CONSTRAINTS … IMMEDIATE`;
+//     nor does one the later operation alters or removes itself: Django first runs `SET CONSTRAINTS <it> IMMEDIATE`.
+//       RunPython(merge_duplicate_customers)   # deletes customers orders point at
+//       AlterField("customer", "email", models.EmailField(unique=True))          reported
+//   - LockedBackfill, the alteration before the RunPython: its ACCESS EXCLUSIVE (or SHARE, for an index) lock lasts
+//     until the migration commits, so the table stays locked for the whole backfill.
+//       AddField("order", "number", models.CharField(null=True)); RunPython(fill_order_numbers)    reported
+// Left alone: migrations with `atomic = False`; squashed migrations (`replaces`), which run on new databases; a run
+// that configures MySQL and names no PostgreSQL database (MySQL commits each DDL statement); a model the same
+// migration creates (its table is new, and its foreign keys are added at the end); before the RunPython, a model the
+// project's code reads as one row (`M.objects.get()`, `M.objects.first()`, `M.get_solo()`), a settings table;
+// RunPython code that only reads M, or writes another model than the one altered; an AlterField that changes only
+// attributes Django keeps out of the database (choices, help_text, verbose_name, blank, default, validators, ...),
+// judged against the field's nearest earlier definition in the app's migrations; after the RunPython, writes that
+// queue no check (an update of other columns, an insert into a model without foreign keys, a delete of rows nothing
+// points at); RunPython.noop and reverse code; RunSQL; state_operations; migrations in test directories.
+//       RunPython(clear_notes)   # Order.objects.update(note="")
+//       AlterField("order", "note", ...)                                         not reported
+// Gaps: a model is matched by its lowercased name, not its app label; a model name held in a variable
+// (`apps.get_model("app", name)`) or a model passed to a helper is not followed, nor writes through related managers
+// (`order.tags.add()`), raw SQL or a helper more than one call deep. Foreign keys are read from the run's migrations
+// and models by name, so one of another app's same-named model counts. Whether a backfill is long depends on the
+// table's size, which the rule cannot see (hence log mode).
+
+
+#include "lib/django.rerail"
+
+.violation PendingTriggerEvents(at: node, m: symbol) "This RunPython writes `{m}` rows whose deferred foreign-key checks stay queued until the migration commits, and a later operation alters that table: PostgreSQL then fails with \"cannot ALTER TABLE … because it has pending trigger events\" on real data. Move the RunPython into a migration of its own, or set `atomic = False` on this Migration; leave a migration that has already been applied."
+PendingTriggerEvents(o, m) :- rps_after(o, m).
+
+.violation LockedBackfill(at: node, m: symbol) "An earlier operation of this migration alters the `{m}` table, and PostgreSQL holds its lock until the migration commits, so the table stays locked while this RunPython writes its rows. Move the RunPython into a migration of its own after this one; keep it for a small table or a migration already applied."
+LockedBackfill(o, m) :- rps_before(o, m), !rps_after(o, m).
+
+// ---- the RunPython and the rows it writes --------------------------------------------------------------------------
+// rps_rp(o, d, i, g): RunPython o, item i of migration d, runs function g in d's one transaction: d is atomic, not a
+// squash, not test code, and the project may run on PostgreSQL.
+.decl rps_rp(o: node, d: number, i: number, g: node)
+rps_rp(o, d, i, g) :- dj_runpython(o, d, i, g), !dj_mig_nonatomic(d), !dj_test_doc(d), !dj_mig_attr(d, "replaces", _),
+    !rps_mysql_only().
+// rps_mysql_only(): the run configures MySQL (an ENGINE "django.db.backends.mysql" or a "mysql://" URL) and names no
+// PostgreSQL database. MySQL commits each DDL statement at once, so Django runs no migration in one transaction there.
+.decl rps_mysql_only()
+rps_mysql_only() :- kind(n, "string"), str(n, s), (s = "django.db.backends.mysql" ; prefix("mysql://", s)), !rps_pg_named().
+.decl rps_pg_named()
+rps_pg_named() :- kind(n, "string"), str(n, s), (prefix("django.db.backends.postgresql", s) ;
+    prefix("django.contrib.gis.db.backends.postgis", s) ; prefix("postgres://", s) ; prefix("postgresql://", s) ;
+    prefix("postgis://", s)).
+
+// rps_def(o, h): def h runs as RunPython o's code: its function, or a def of the run that function calls.
+.decl rps_def(o: node, h: node)
+rps_def(o, g) :- rps_rp(o, _, _, g).
+rps_def(o, h) :- rps_rp(o, _, _, g), kind(c, "call"), within(c, g), field(c, "function", e), sym_of(e, q),
+    kind(h, "function_definition"), qualname(h, q).
+.decl rps_body(h: node)
+rps_body(h) :- rps_def(_, h).
+
+// rps_get_model(c, s): call c is `apps.get_model("app", "S")`, `get_model(model_name="S")` or `get_model("app.S")`.
+.decl rps_get_model(c: node, s: symbol)
+rps_get_model(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "get_model"), posarg(c, 1, n), str(n, s).
+rps_get_model(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "get_model"),
+    call_arg(c, -1, "model_name", n), str(n, s).
+rps_get_model(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "get_model"), posarg(c, 0, n),
+    !posarg(c, 1, _), !call_arg(c, -1, "model_name", _), str(n, q), split_dot(q, _, s).
+
+// rps_model(h, x, m): def h binds name x to the historical model m (lowercased).
+.decl rps_model(h: node, x: symbol, m: symbol)
+rps_model(h, x, @lower(s)) :- rps_body(h), asg(h, x, v, _), unparen(v, c), rps_get_model(c, s).
+
+// rps_chain_method(a): querysets methods whose result still holds model rows (values() and values_list() hold dicts
+// and tuples, whose `update()` is no write).
+.decl rps_chain_method(a: symbol)
+rps_chain_method(a) :- dj_qs_method(a), a != "values", a != "values_list".
+rps_chain_method(a) :- dj_row_method(a).
+rps_chain_method("iterator").
+
+// rps_from(e, h, m, how): in def h, e is model m (how "model"), one of its querysets or fetched rows ("rows"), or an
+// instance built in h ("new").
+.decl rps_from(e: node, h: node, m: symbol, how: symbol)
+rps_from(e, h, m, "model") :- rps_model(h, x, m), kind(e, "identifier"), text(e, x), look(e, x, h).
+rps_from(e, h, m, how) :- rps_name(h, y, m, how), kind(e, "identifier"), text(e, y), look(e, y, h).
+rps_from(e, h, m, "rows") :- attr_of(e, o, a), dj_manager_name(a), rps_from(o, h, m, "model").
+rps_from(e, h, m, "rows") :- kind(e, "call"), field(e, "function", f), attr_of(f, o, a), rps_chain_method(a),
+    rps_from(o, h, m, "rows").
+rps_from(e, h, m, "new") :- kind(e, "call"), field(e, "function", f), rps_from(f, h, m, "model").
+rps_from(e, h, m, how) :- kind(e, "parenthesized_expression"), unparen(e, u), rps_from(u, h, m, how).
+
+// rps_name(h, y, m, how): def h binds y to such a value: `y = <rps_from>`, or `for y in <rps_from>:`.
+.decl rps_name(h: node, y: symbol, m: symbol, how: symbol)
+rps_name(h, y, m, how) :- asg(h, y, v, _), unparen(v, e), rps_from(e, h, m, how).
+rps_name(h, y, m, how) :- kind(s, "for_statement"), field(s, "left", l), kind(l, "identifier"), text(l, y),
+    field(s, "right", r), unparen(r, e), rps_from(e, h, m, how), how != "model", nearest(s, h, scope).
+
+// rps_write(o, c, m, w, how): call c, in RunPython o's code, writes rows of model m through method w on a queryset or
+// fetched row (how "rows") or a built instance ("new").
+.decl rps_write(o: node, c: node, m: symbol, w: symbol, how: symbol)
+rps_write(o, c, m, w, how) :- rps_def(o, h), kind(c, "call"), within(c, h), field(c, "function", f), attr_of(f, u, w),
+    rps_write_method(w), unparen(u, e), rps_from(e, h, m, how), how != "model".
+.decl rps_write_method(w: symbol)
+rps_write_method("update"). rps_write_method("create"). rps_write_method("bulk_create").
+rps_write_method("bulk_update"). rps_write_method("delete"). rps_write_method("get_or_create").
+rps_write_method("update_or_create"). rps_write_method("save").
+// rps_insert_method(w): the write methods that can insert rows.
+.decl rps_insert_method(w: symbol)
+rps_insert_method("create"). rps_insert_method("bulk_create"). rps_insert_method("get_or_create").
+rps_insert_method("update_or_create").
+
+// ---- foreign keys --------------------------------------------------------------------------------------------------
+// rps_fk_field(m, x, f): model m (lowercased) has foreign key x, field call f, in the run's migrations or models.
+.decl rps_fk_field(m: symbol, x: symbol, f: node)
+rps_fk_field(m, x, f) :- dj_mig_field(op, x, f, t), dj_fk_class(t), dj_mig_model(op, m).
+rps_fk_field(@lower(n), x, f) :- dj_field(c, x, f, t), dj_fk_class(t), def_name(c, n).
+// rps_referenced(o, m): when RunPython o runs, a foreign key or many-to-many field points at model m, or m declares a
+// many-to-many field (its join table points back at m): a field an operation of an earlier migration of the app, or
+// an earlier operation of o's migration, adds.
+.decl rps_rel_field(f: node, m: symbol, e: number, j: number)
+rps_rel_field(f, m, e, j) :- dj_mig_db_op(op, _, e, j), dj_mig_field(op, _, f, t), (dj_fk_class(t) ; t = "ManyToManyField"),
+    dj_mig_model(op, m).
+.decl rps_target(f: node, m: symbol)
+rps_target(f, @lower(n)) :- rps_rel_field(f, _, _, _), (call_arg(f, -1, "to", v) ; posarg(f, 0, v)), str(v, s),
+    split_dot(s, _, n).
+rps_target(f, @lower(s)) :- rps_rel_field(f, _, _, _), (call_arg(f, -1, "to", v) ; posarg(f, 0, v)), str(v, s),
+    !contains(".", s).
+rps_target(f, "user") :- rps_rel_field(f, _, _, _), (call_arg(f, -1, "to", v) ; posarg(f, 0, v)), sym_of(v, q),
+    suffix("AUTH_USER_MODEL", q).
+.decl rps_referenced(o: node, m: symbol)
+rps_referenced(o, m) :- rps_write(o, _, m, "delete", _), rps_rp(o, d, i, _), rps_rel_field(f, _, e, j), rps_target(f, m),
+    (rps_mig_before(e, d) ; e = d, j < i).
+rps_referenced(o, m) :- rps_write(o, _, m, "delete", _), rps_rp(o, d, i, _), rps_rel_field(f, m, e, j),
+    dj_mig_field_class(f, "ManyToManyField"), (rps_mig_before(e, d) ; e = d, j < i).
+// rps_queues(o, m, x): RunPython o writes rows of m that queue deferred foreign-key checks on m's table: it inserts
+// rows into a model with a deferred foreign key, or deletes rows a foreign key can point at (x is "*": any
+// constraint), or sets deferred foreign key x. A foreign key an AddField earlier in the same migration added is not
+// deferred: Django's PostgreSQL backend adds it with `SET CONSTRAINTS … IMMEDIATE`.
+.decl rps_queues(o: node, m: symbol, x: symbol)
+rps_queues(o, m, "*") :- rps_write(o, _, m, w, _), rps_insert_method(w), rps_deferred_fk(o, m, _, _).
+rps_queues(o, m, "*") :- rps_write(o, _, m, "save", "new"), rps_deferred_fk(o, m, _, _).
+rps_queues(o, m, "*") :- rps_write(o, _, m, "delete", _), rps_referenced(o, m).
+rps_queues(o, m, x) :- rps_write(o, c, m, w, _), (w = "update" ; w = "update_or_create"), call_arg(c, -1, a, _),
+    rps_deferred_fk(o, m, x, a).
+rps_queues(o, m, x) :- rps_write(o, c, m, "bulk_update", _), call_arg(c, _, _, l), child(l, s, _), str(s, a),
+    rps_deferred_fk(o, m, x, a).
+rps_queues(o, m, x) :- rps_write(o, _, m, "save", _), rps_def(o, h), kind(a, "assignment"), within(a, h),
+    field(a, "left", l), attr_of(l, y, t), rps_deferred_fk(o, m, x, t), rps_from(y, h, m, how), how != "model".
+// rps_deferred_fk(o, m, x, a): model m, which RunPython o writes, holds deferred foreign key x in attribute a (`x`,
+// `x_id`) when o runs.
+.decl rps_deferred_fk(o: node, m: symbol, x: symbol, a: symbol)
+rps_deferred_fk(o, m, x, x) :- rps_write(o, _, m, _, _), rps_fk_field(m, x, _), !rps_added_before(o, m, x).
+rps_deferred_fk(o, m, x, cat(x, "_id")) :- rps_write(o, _, m, _, _), rps_fk_field(m, x, _), !rps_added_before(o, m, x).
+.decl rps_added_before(o: node, m: symbol, x: symbol)
+rps_added_before(o, m, x) :- rps_rp(o, d, i, _), dj_mig_db_op(p, "AddField", d, j), j < i, dj_mig_model(p, m),
+    dj_mig_arg(p, "name", n), str(n, x).
+// rps_flushes(s, x): AlterField or RemoveField s changes foreign key x itself: Django's PostgreSQL backend first runs
+// `SET CONSTRAINTS <its constraint> IMMEDIATE`, which runs that constraint's queued checks, and then drops it.
+.decl rps_flushes(s: node, x: symbol)
+rps_flushes(s, x) :- (dj_mig_db_op(s, "AlterField", _, _) ; dj_mig_db_op(s, "RemoveField", _, _)),
+    dj_mig_arg(s, "name", n), str(n, x).
+
+// ---- the schema changes ------------------------------------------------------------------------------------------
+// rps_alter_kind(k): the operations that alter an existing table (ALTER TABLE, or an index on it).
+.decl rps_alter_kind(k: symbol)
+rps_alter_kind("AddField"). rps_alter_kind("AlterField"). rps_alter_kind("RemoveField"). rps_alter_kind("RenameField").
+rps_alter_kind("AddIndex"). rps_alter_kind("RemoveIndex"). rps_alter_kind("RenameIndex").
+rps_alter_kind("AddConstraint"). rps_alter_kind("RemoveConstraint"). rps_alter_kind("AlterUniqueTogether").
+rps_alter_kind("AlterIndexTogether"). rps_alter_kind("AlterModelTable"). rps_alter_kind("RenameModel").
+rps_alter_kind("DeleteModel").
+
+// rps_alter(s, k, d, j, m): operation s of class k, item j of migration d, alters model m's table and runs SQL (a
+// RenameModel under its old and its new name).
+.decl rps_alter(s: node, k: symbol, d: number, j: number, m: symbol)
+rps_alter(s, k, d, j, m) :- dj_mig_db_op(s, k, d, j), rps_alter_kind(k), dj_mig_model(s, m), !rps_alter_noop(s).
+rps_alter(s, "RenameModel", d, j, @lower(t)) :- dj_mig_db_op(s, "RenameModel", d, j), dj_mig_arg(s, "new_name", n),
+    str(n, t).
+
+// rps_alter_noop(s): AlterField s changes only attributes Django keeps out of the database (choices, help_text,
+// verbose_name, blank, default, ...): its field call differs from the field's nearest earlier definition in no
+// other argument, so it runs no SQL.
+.decl rps_alter_noop(s: node)
+rps_alter_noop(s) :- rps_old(s, fo), dj_mig_arg(s, "field", fn), dj_mig_field_class(fo, t), dj_mig_field_class(fn, t),
+    !rps_db_diff(fo, fn).
+// rps_nondb(k): field arguments that change no column (Field.non_db_attrs, and `default`, which Django keeps out of
+// the database unless a null column becomes NOT NULL, a change of `null` that counts anyway).
+.decl rps_nondb(k: symbol)
+rps_nondb("blank"). rps_nondb("choices"). rps_nondb("editable"). rps_nondb("error_messages"). rps_nondb("help_text").
+rps_nondb("limit_choices_to"). rps_nondb("on_delete"). rps_nondb("related_name"). rps_nondb("related_query_name").
+rps_nondb("validators"). rps_nondb("verbose_name"). rps_nondb("default").
+.decl rps_pair(fo: node, fn: node)
+rps_pair(fo, fn) :- rps_old(s, fo), dj_mig_arg(s, "field", fn).
+.decl rps_kw_same(fo: node, fn: node, k: symbol)
+rps_kw_same(fo, fn, k) :- rps_pair(fo, fn), call_arg(fo, -1, k, a), call_arg(fn, -1, k, b), text(a, t), text(b, t).
+.decl rps_pos_same(fo: node, fn: node, i: number)
+rps_pos_same(fo, fn, i) :- rps_pair(fo, fn), posarg(fo, i, a), posarg(fn, i, b), text(a, t), text(b, t).
+.decl rps_db_diff(fo: node, fn: node)
+rps_db_diff(fo, fn) :- rps_pair(fo, fn), call_arg(fn, -1, k, _), k != "", !rps_nondb(k), !rps_kw_same(fo, fn, k).
+rps_db_diff(fo, fn) :- rps_pair(fo, fn), call_arg(fo, -1, k, _), k != "", !rps_nondb(k), !rps_kw_same(fo, fn, k).
+rps_db_diff(fo, fn) :- rps_pair(fo, fn), posarg(fn, i, _), !rps_pos_same(fo, fn, i).
+rps_db_diff(fo, fn) :- rps_pair(fo, fn), posarg(fo, i, _), !rps_pos_same(fo, fn, i).
+
+// The field's history, as django-practice-alterfield-rewrites-table reads it: rps_old(s, f): the nearest earlier
+// definition of AlterField s's field gives it as call f.
+.decl rps_alterfield(s: node, d: number, i: number, m: symbol, x: symbol)
+rps_alterfield(s, d, i, m, x) :- dj_mig_db_op(s, "AlterField", d, i), rps_rp(_, d, _, _), dj_mig_model(s, m),
+    dj_mig_arg(s, "name", n), str(n, x).
+.decl rps_op(o: node, k: symbol, d: number, i: number)
+rps_op(o, k, d, i) :- dj_mig_db_op(o, k, d, i).
+rps_op(o, k, d, i) :- dj_mig_op(s, "SeparateDatabaseAndState", d, i),
+    (call_arg(s, -1, "state_operations", l) ; call_arg(s, 1, "", l)), (kind(l, "list") ; kind(l, "tuple")),
+    child(l, o, _), dj_mig_op_call(o, k).
+.decl rps_fdef(p: node, d: number, i: number, m: symbol, x: symbol)
+rps_fdef(p, d, i, m, x) :- rps_op(p, k, d, i), (k = "AddField" ; k = "AlterField"), dj_mig_model(p, m),
+    dj_mig_arg(p, "name", n), str(n, x).
+rps_fdef(p, d, i, m, x) :- rps_op(p, "CreateModel", d, i), dj_mig_model(p, m), dj_mig_arg(p, "fields", l),
+    child(l, t, _), kind(t, "tuple"), child(t, n, 0), str(n, x).
+rps_fdef(p, d, i, m, x) :- rps_op(p, "RenameField", d, i), dj_mig_model(p, m), dj_mig_arg(p, "new_name", n), str(n, x).
+.decl rps_prev(s: node, p: node, e: number, j: number)
+rps_prev(s, p, e, j) :- rps_alterfield(s, d, _, m, x), rps_fdef(p, e, j, m, x), rps_mig_before(e, d).
+rps_prev(s, p, d, j) :- rps_alterfield(s, d, i, m, x), rps_fdef(p, d, j, m, x), j < i.
+.decl rps_shadowed(s: node, p: node)
+rps_shadowed(s, p) :- rps_prev(s, p, e, _), rps_prev(s, q, e2, _), q != p, rps_mig_before(e, e2).
+rps_shadowed(s, p) :- rps_prev(s, p, e, j), rps_prev(s, q, e, j2), q != p, j2 > j.
+// rps_mig_before(e, d): migration e is applied before d: dj_mig_before, and also through a dependency on a migration
+// a squashed migration of the same package replaces (`("users", "0015_x")`, listed in `0001_squashed_0015_x.py`'s
+// `replaces`), which dj_mig_depends, matching file names only, does not follow.
+.decl rps_mig_depends(d: number, e: number)
+rps_mig_depends(d, e) :- dj_mig_depends(d, e).
+rps_mig_depends(d, e) :- dj_mig_attr(d, "dependencies", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x),
+    pkg(d, k), pkg(e, k), dj_mig_attr(e, "replaces", r), child(r, t, _), kind(t, "tuple"), child(t, rn, 1), str(rn, x).
+.decl rps_mig_before(e: number, d: number)
+rps_mig_before(e, d) :- rps_mig_depends(d, e).
+rps_mig_before(e, d) :- rps_mig_depends(d, m), rps_mig_before(e, m).
+.decl rps_old(s: node, f: node)
+rps_old(s, f) :- rps_prev(s, p, _, _), !rps_shadowed(s, p), rps_alterfield(s, _, _, _, x), dj_mig_field(p, x, f, _).
+
+// ---- the two orders ----------------------------------------------------------------------------------------------
+// rps_after(o, m): RunPython o queues foreign-key checks on m's table, and a later operation alters that table (other
+// than one that runs those checks first, rps_flushes).
+.decl rps_after(o: node, m: symbol)
+rps_after(o, m) :- rps_rp(o, d, i, _), rps_queues(o, m, x), rps_alter(s, _, d, j, m), j > i, !dj_mig_creates(d, m),
+    !rps_flushes(s, x).
+// rps_before(o, m): an earlier operation altered m's table, and RunPython o then writes its rows.
+.decl rps_before(o: node, m: symbol)
+rps_before(o, m) :- rps_rp(o, d, i, _), rps_write(o, _, m, _, _), rps_alter(_, _, d, j, m), j < i,
+    !dj_mig_creates(d, m), !rps_one_row(m).
+// rps_one_row(m): application code reads model M (lowercased m) as a single row: the library's dj_one_row
+// (`M.objects.get()`, `M.get_solo()`), or `M.objects.first()` / `M.objects.all().first()` with no arguments. Its
+// table holds one row (a settings table), so a lock through its backfill costs nothing.
+//   if System_Settings.objects.get().enable_jira:       rps_one_row("system_settings")
+.decl rps_one_row(m: symbol)
+rps_one_row(m) :- dj_one_row(m).
+rps_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, q, "first"), py_no_args(c),
+    dj_one_row_qs(q, r), kind(r, "identifier"), text(r, n), docof(c, d), dj_live_doc(d).
+
+// The cases, `cases/django-practice-runpython-with-schema-change/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/backfills.py" from "../cases/django-practice-runpython-with-schema-change/shop/backfills.py"
+    .fixture "shop/migrations/0001_initial.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0001_squashed_0002_order_number.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0001_squashed_0002_order_number.py"
+    .fixture "shop/migrations/0002_order_number.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0002_order_number.py"
+    .fixture "shop/migrations/0003_merge_customers.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0003_merge_customers.py"
+    .fixture "shop/migrations/0004_product_price_cents.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0004_product_price_cents.py"
+    .fixture "shop/migrations/0005_customer_email_index.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0005_customer_email_index.py"
+    .fixture "shop/migrations/0006_walk_in_order.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0006_walk_in_order.py"
+    .fixture "shop/migrations/0007_tag_rename.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0007_tag_rename.py"
+    .fixture "shop/migrations/0008_nonatomic.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0008_nonatomic.py"
+    .fixture "shop/migrations/0009_read_and_other_model.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0009_read_and_other_model.py"
+    .fixture "shop/migrations/0010_coupon.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0010_coupon.py"
+    .fixture "shop/migrations/0011_sql_state_noop.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0011_sql_state_noop.py"
+    .fixture "shop/migrations/0012_dynamic_model.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0012_dynamic_model.py"
+    .fixture "shop/migrations/0013_no_pending_checks.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0013_no_pending_checks.py"
+    .fixture "shop/migrations/0014_order_coupon.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0014_order_coupon.py"
+    .fixture "shop/migrations/0015_customer_tier.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0015_customer_tier.py"
+    .fixture "shop/migrations/0016_sitesettings.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0016_sitesettings.py"
+    .fixture "shop/migrations/0017_tag_order_protect.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0017_tag_order_protect.py"
+    .fixture "shop/migrations/0018_tag_product.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0018_tag_product.py"
+    .fixture "shop/models.py" from "../cases/django-practice-runpython-with-schema-change/shop/models.py"
+    .fixture "shop/settings.py" from "../cases/django-practice-runpython-with-schema-change/shop/settings.py"
+    .fixture "shop/tests/migrations/0001_fixture.py" from "../cases/django-practice-runpython-with-schema-change/shop/tests/migrations/0001_fixture.py"
+    .fixture "shop/tests_e2e/e2e_test_checkout.py" from "../cases/django-practice-runpython-with-schema-change/shop/tests_e2e/e2e_test_checkout.py"
+    .fixture "shop/views.py" from "../cases/django-practice-runpython-with-schema-change/shop/views.py"
+    .expect _ at "shop/migrations/0002_order_number.py":21
+    .expect _ at "shop/migrations/0003_merge_customers.py":22
+    .expect _ at "shop/migrations/0004_product_price_cents.py":16
+    .expect _ at "shop/migrations/0005_customer_email_index.py":20
+    .expect _ at "shop/migrations/0006_walk_in_order.py":16
+    .expect _ at "shop/migrations/0007_tag_rename.py":20
+    .expect _ at "shop/migrations/0014_order_coupon.py":21
+.end

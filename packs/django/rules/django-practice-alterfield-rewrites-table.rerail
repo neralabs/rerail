@@ -1,0 +1,220 @@
+.policy "django-practice-alterfield-rewrites-table" revision 1
+.description "Avoid column type changes that make PostgreSQL rewrite an existing large table, such as integer to bigint or a shorter length limit; the rewrite blocks reads and writes."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. `ALTER TABLE … ALTER COLUMN … TYPE` takes an ACCESS EXCLUSIVE lock and rewrites the
+// table and its indexes unless the old type is binary coercible to the new one (PostgreSQL, ALTER TABLE notes;
+// Squawk "changing-column-type"). A migration's AlterField says only the new field; the old one comes from the app's
+// migration history: the nearest earlier definition of the same model and field (a CreateModel `fields` item, an
+// AddField or an AlterField) in a migration applied before this one (dj_mig_before, plus a dependency on a squashed-away
+// migration read as the squashed migration that replaces it) or earlier in this one, with no other definition of the
+// field between them.
+// Reported, when both field classes are Django's own (django.db.models, django.contrib.postgres.fields):
+//   - integers of another width: AutoField/IntegerField/PositiveIntegerField (integer), SmallAutoField/
+//     SmallIntegerField/PositiveSmallIntegerField (smallint), BigAutoField/BigIntegerField/PositiveBigIntegerField
+//     (bigint), either way; the DEFAULT_AUTO_FIELD switch to BigAutoField is one (pretix's `0246_bigint.py`). Django
+//     changes the ForeignKey columns that point at a widened primary key in the same statement, so the pk's
+//     AlterField stands for them;
+//   - a varchar (CharField, SlugField, EmailField, URLField, FileField, ImageField, FilePathField, by their
+//     max_length or Django's default for it) that gets shorter, or a text or unlimited varchar that gets a limit
+//     (TextField → CharField(max_length=n));
+//   - a DecimalField whose decimal_places change or whose max_digits shrink;
+//   - any other change of PostgreSQL type: CharField → IntegerField, IntegerField → CharField, FloatField →
+//     DecimalField, DateField → DateTimeField, TextField → JSONField, ...
+//     AlterField("order", "id", models.BigAutoField(...))  after  ("id", models.AutoField(...))             reported
+//     AlterField("order", "number", models.CharField(max_length=10))  after  CharField(max_length=20)        reported
+// Left alone, as PostgreSQL changes them in the catalog only, or as they are not type changes: a longer or unlimited
+// varchar, varchar → text, CharField ↔ SlugField/EmailField/URLField without a shorter limit, a DecimalField with
+// more max_digits and the same decimal_places, the same type with other null/blank/default/choices/db_index/unique
+// (other hazards); ForeignKey and OneToOneField changes (their column follows the target's key).
+//     AlterField("order", "note", models.CharField(max_length=200))  after  CharField(max_length=100)        not reported
+//     AlterField("order", "ref", models.TextField())  after  CharField(max_length=40)                        not reported
+// Also left alone: a model the same migration creates (dj_mig_creates), a field with no earlier definition in the
+// run (a squashed history, another app's migrations), a SeparateDatabaseAndState's state_operations (which still
+// count as definitions for later AlterFields), migrations in test directories, a field class from a third party or
+// the project (`django_countries.fields.CountryField`), a max_length or max_digits that is no integer literal, and
+// a field renamed onto the name (RenameField's new_name ends the history: its type is not followed).
+// Gaps: types are judged by Django's field classes, not db_type(), so a project's field class is never judged; a
+// RunSQL `ALTER COLUMN … TYPE` is not a definition; a renamed field or model loses its history (silent); a
+// ForeignKey retargeted to a model whose key has another type is not seen; the rule cannot see a table's size, so a
+// small table's rewrite is reported too (hence log mode); ArrayField, citext and hstore changes are not judged.
+
+#include "lib/django.rerail"
+
+.violation TypeChangeRewrites(at: node, m: symbol, x: symbol, old: symbol, new: symbol) "This AlterField changes `{m}.{x}` from {old} to {new}: PostgreSQL rewrites the table and its indexes under an ACCESS EXCLUSIVE lock that blocks reads and writes until it ends (MySQL copies the table, blocking writes). On a large table add a new column, backfill it in batches and swap; keep it for a small table or a maintenance window."
+
+TypeChangeRewrites(f, m, x, lo, ln) :- ar_old(o, fo), ar_alter(o, _, _, m, x, f), ar_rewrite(fo, f),
+    ar_label(fo, lo), ar_label(f, ln).
+
+// ---- the history -------------------------------------------------------------------------------------------------
+// ar_alter(o, d, i, m, x, f): AlterField o, item i of migration d (not test code, not a squashed migration), changes
+// field x of model m (not created in d) to field call f. A squashed migration (`replaces = [...]`) copies operations
+// that already ran on every database that applied the migrations it replaces; it runs them only on a database that
+// applied none of them, usually a new one, and its author did not choose them.
+.decl ar_alter(o: node, d: number, i: number, m: symbol, x: symbol, f: node)
+ar_alter(o, d, i, m, x, f) :- dj_mig_db_op(o, "AlterField", d, i), !dj_test_doc(d), !dj_mig_attr(d, "replaces", _),
+    dj_mig_model(o, m), !dj_mig_creates(d, m), dj_mig_arg(o, "name", n), str(n, x), dj_mig_arg(o, "field", f).
+// ar_op(o, k, d, i): the operations that define a field: dj_mig_db_op, and a SeparateDatabaseAndState's
+// state_operations (Django's model state, which the database usually matches through a RunSQL beside it).
+.decl ar_op(o: node, k: symbol, d: number, i: number)
+ar_op(o, k, d, i) :- dj_mig_db_op(o, k, d, i), !dj_test_doc(d).
+ar_op(o, k, d, i) :- dj_mig_op(s, "SeparateDatabaseAndState", d, i), !dj_test_doc(d),
+    (call_arg(s, -1, "state_operations", l) ; call_arg(s, 1, "", l)), (kind(l, "list") ; kind(l, "tuple")),
+    child(l, o, _), dj_mig_op_call(o, k).
+// ar_def(p, d, i, m, x): operation p, item i of migration d, defines field x of model m: an AddField, an AlterField, a
+// CreateModel `fields` item, or a RenameField onto x (whose type the rule does not follow, so it ends the history).
+.decl ar_def(p: node, d: number, i: number, m: symbol, x: symbol)
+ar_def(p, d, i, m, x) :- ar_op(p, k, d, i), (k = "AddField" ; k = "AlterField"), dj_mig_model(p, m),
+    dj_mig_arg(p, "name", n), str(n, x).
+ar_def(p, d, i, m, x) :- ar_op(p, "CreateModel", d, i), dj_mig_model(p, m), dj_mig_arg(p, "fields", l), child(l, t, _),
+    kind(t, "tuple"), child(t, n, 0), str(n, x).
+ar_def(p, d, i, m, x) :- ar_op(p, "RenameField", d, i), dj_mig_model(p, m), dj_mig_arg(p, "new_name", n), str(n, x).
+// ar_old(o, f): the nearest earlier definition of AlterField o's field gives it as call f (none for a RenameField).
+.decl ar_old(o: node, f: node)
+ar_old(o, f) :- ar_near(o, p), ar_alter(o, _, _, _, x, _), dj_mig_field(p, x, f, _).
+// ar_prev(o, p, e, j): definition p, item j of migration e, comes before AlterField o of the same app, model and field.
+.decl ar_prev(o: node, p: node, e: number, j: number)
+ar_prev(o, p, e, j) :- ar_alter(o, d, _, m, x, _), ar_def(p, e, j, m, x), ar_before(e, d).
+ar_prev(o, p, d, j) :- ar_alter(o, d, i, m, x, _), ar_def(p, d, j, m, x), j < i.
+// ar_shadowed(o, p): another earlier definition q of the field comes after p, so p is not the field's type at o.
+.decl ar_shadowed(o: node, p: node)
+ar_shadowed(o, p) :- ar_prev(o, p, e, _), ar_prev(o, q, e2, _), q != p, ar_before(e, e2).
+ar_shadowed(o, p) :- ar_prev(o, p, e, j), ar_prev(o, q, e, j2), q != p, j2 > j.
+// ar_before(e, d): migration e is applied before d: dj_mig_before, and also through a dependency on a migration whose
+// file is gone because a squashed migration of the package replaces it (Django reads the dependency as the squashed
+// one). pretix depends on `0050_orderposition_positionid`, which `0050_…_squashed_0061_event_location` replaces.
+.decl ar_dep(d: number, e: number)
+ar_dep(d, e) :- dj_mig_depends(d, e).
+ar_dep(d, s) :- dj_mig_attr(d, "dependencies", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x),
+    pkg(d, k), !ar_mig_file(k, x), ar_replaces(s, x), pkg(s, k).
+.decl ar_replaces(s: number, x: symbol)
+ar_replaces(s, x) :- dj_mig_attr(s, "replaces", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x).
+.decl ar_mig_file(k: symbol, x: symbol)
+ar_mig_file(k, x) :- dj_mig_class(_, e), pkg(e, k), file_name(e, f), match("(?<x>.*)\\.py", f).
+.decl ar_before(e: number, d: number)
+ar_before(e, d) :- ar_dep(d, e).
+ar_before(e, d) :- ar_dep(d, m), ar_before(e, m).
+// ar_near(o, p): p is the nearest earlier definition of AlterField o's field.
+.decl ar_near(o: node, p: node)
+ar_near(o, p) :- ar_prev(o, p, _, _), !ar_shadowed(o, p).
+
+// ---- types -------------------------------------------------------------------------------------------------------
+// ar_call(f): the field calls judged: an AlterField's, and its nearest earlier definition's.
+.decl ar_call(f: node)
+ar_call(f) :- ar_alter(o, _, _, _, _, f), ar_near(o, _).
+ar_call(f) :- ar_old(_, f).
+// ar_cls(f, t): call f constructs Django's own field class t.
+.decl ar_cls(f: node, t: symbol)
+ar_cls(f, t) :- ar_call(f), kind(f, "call"), field(f, "function", e), sym_of(e, q), split_dot(q, mo, t),
+    dj_field_module(mo).
+// ar_pg(t, y): Django field class t is PostgreSQL column type y.
+.decl ar_pg(t: symbol, y: symbol)
+ar_pg("AutoField", "integer"). ar_pg("IntegerField", "integer"). ar_pg("PositiveIntegerField", "integer").
+ar_pg("SmallAutoField", "smallint"). ar_pg("SmallIntegerField", "smallint").
+ar_pg("PositiveSmallIntegerField", "smallint").
+ar_pg("BigAutoField", "bigint"). ar_pg("BigIntegerField", "bigint"). ar_pg("PositiveBigIntegerField", "bigint").
+ar_pg("CharField", "varchar"). ar_pg("SlugField", "varchar"). ar_pg("EmailField", "varchar").
+ar_pg("URLField", "varchar"). ar_pg("FileField", "varchar"). ar_pg("ImageField", "varchar").
+ar_pg("FilePathField", "varchar"). ar_pg("TextField", "text").
+ar_pg("DecimalField", "numeric"). ar_pg("FloatField", "double precision").
+ar_pg("BooleanField", "boolean"). ar_pg("NullBooleanField", "boolean").
+ar_pg("DateField", "date"). ar_pg("DateTimeField", "timestamp with time zone"). ar_pg("TimeField", "time").
+ar_pg("DurationField", "interval"). ar_pg("UUIDField", "uuid"). ar_pg("JSONField", "jsonb").
+ar_pg("BinaryField", "bytea"). ar_pg("GenericIPAddressField", "inet"). ar_pg("IPAddressField", "inet").
+// ar_type(f, y): field call f makes a column of type y.
+.decl ar_type(f: node, y: symbol)
+ar_type(f, y) :- ar_cls(f, t), ar_pg(t, y).
+// ar_deflen(t, n, s): varchar field class t without max_length is n (text s) characters long.
+.decl ar_deflen(t: symbol, n: number, s: symbol)
+ar_deflen("SlugField", 50, "50"). ar_deflen("EmailField", 254, "254"). ar_deflen("URLField", 200, "200").
+ar_deflen("FileField", 100, "100"). ar_deflen("ImageField", 100, "100"). ar_deflen("FilePathField", 100, "100").
+// ar_len(f, n, s): varchar call f has a limit of n characters (text s); ar_unlimited(f): it has none (a CharField
+// without max_length, or max_length=None); ar_len_unknown(f): its max_length is no literal.
+.decl ar_len(f: node, n: number, s: symbol)
+ar_len(f, n, s) :- ar_type(f, "varchar"), call_arg(f, -1, "max_length", v), kind(v, "integer"), text(v, s),
+    n = to_number(s).
+ar_len(f, n, s) :- ar_cls(f, t), ar_deflen(t, n, s), !call_arg(f, -1, "max_length", _).
+.decl ar_unlimited(f: node)
+ar_unlimited(f) :- ar_cls(f, "CharField"), !call_arg(f, -1, "max_length", _).
+ar_unlimited(f) :- ar_type(f, "varchar"), call_arg(f, -1, "max_length", v), kind(v, "none").
+.decl ar_len_unknown(f: node)
+ar_len_unknown(f) :- ar_type(f, "varchar"), !ar_len(f, _, _), !ar_unlimited(f).
+// ar_dec(f, p, s, tp, ts): DecimalField call f has max_digits p and decimal_places s (texts tp, ts).
+.decl ar_dec(f: node, p: number, s: number, tp: symbol, ts: symbol)
+ar_dec(f, p, s, tp, ts) :- ar_type(f, "numeric"), call_arg(f, -1, "max_digits", a), kind(a, "integer"), text(a, tp),
+    call_arg(f, -1, "decimal_places", b), kind(b, "integer"), text(b, ts), p = to_number(tp), s = to_number(ts).
+// ar_known(f): the rule knows call f's column type with all its parameters.
+.decl ar_known(f: node)
+ar_known(f) :- ar_type(f, y), y != "varchar", y != "numeric".
+ar_known(f) :- ar_type(f, "varchar"), !ar_len_unknown(f).
+ar_known(f) :- ar_dec(f, _, _, _, _).
+
+// ar_rewrite(o, n): changing a column from field call o to field call n rewrites the table.
+.decl ar_rewrite(o: node, n: node)
+ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_type(fo, a), ar_type(fn, b), a != b, !ar_coercible(a, b).
+ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_type(fo, "text"), ar_len(fn, _, _).
+ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_len(fo, a, _), ar_len(fn, b, _), b < a.
+ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_unlimited(fo), ar_len(fn, _, _).
+ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_dec(fo, p, s, _, _), ar_dec(fn, p2, s2, _, _), (s2 != s ; p2 < p).
+// ar_pair(o, n): a judged change: an AlterField's call n and its nearest earlier definition's call o, both known.
+.decl ar_pair(o: node, n: node)
+ar_pair(fo, fn) :- ar_old(o, fo), ar_alter(o, _, _, _, _, fn), ar_known(fo), ar_known(fn).
+// ar_coercible(a, b): PostgreSQL changes type a to b in the catalog (varchar to text; text to an unlimited varchar,
+// which a limited one rewrites above).
+.decl ar_coercible(a: symbol, b: symbol)
+ar_coercible("varchar", "text"). ar_coercible("text", "varchar").
+
+// ar_label(f, l): how the message names field call f: its class, with its length or precision when they matter.
+.decl ar_label(f: node, l: symbol)
+ar_label(f, l) :- ar_cls(f, t), ar_type(f, y), y != "varchar", y != "numeric", l = t.
+ar_label(f, l) :- ar_cls(f, t), call_arg(f, -1, "max_length", _), ar_len(f, _, s),
+    l = cat(cat(cat(t, "(max_length="), s), ")").
+ar_label(f, l) :- ar_cls(f, t), !call_arg(f, -1, "max_length", _), ar_len(f, _, s),
+    l = cat(cat(cat(t, " ("), s), " characters)").
+ar_label(f, l) :- ar_cls(f, t), ar_unlimited(f), l = cat(t, " (unlimited)").
+ar_label(f, l) :- ar_cls(f, t), ar_dec(f, _, _, tp, ts),
+    l = cat(cat(cat(cat(cat(t, "(max_digits="), tp), ", decimal_places="), ts), ")").
+
+// The cases, `cases/django-practice-alterfield-rewrites-table/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "billing/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/billing/__init__.py"
+    .fixture "shop/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/__init__.py"
+    .fixture "shop/tests/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/__init__.py"
+    .fixture "billing/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0001_initial.py"
+    .fixture "billing/migrations/0002_order_amount.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0002_order_amount.py"
+    .fixture "billing/migrations/0002_squashed_0004.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0002_squashed_0004.py"
+    .fixture "billing/migrations/0005_after_squash.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0005_after_squash.py"
+    .fixture "billing/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/__init__.py"
+    .fixture "shop/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0002_order_legacy_id.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0002_order_legacy_id.py"
+    .fixture "shop/migrations/0003_alter_types.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0003_alter_types.py"
+    .fixture "shop/migrations/0004_state_only.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0004_state_only.py"
+    .fixture "shop/migrations/0005_rename_nickname.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0005_rename_nickname.py"
+    .fixture "shop/migrations/0006_widen.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0006_widen.py"
+    .fixture "shop/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/__init__.py"
+    .fixture "shop/tests/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/migrations/0001_initial.py"
+    .fixture "shop/tests/migrations/0002_widget_bigint.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/migrations/0002_widget_bigint.py"
+    .fixture "shop/tests/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/migrations/__init__.py"
+    .expect _ at "billing/migrations/0002_order_amount.py":17
+    .expect _ at "billing/migrations/0005_after_squash.py":12
+    .expect _ at "shop/migrations/0003_alter_types.py":12
+    .expect _ at "shop/migrations/0003_alter_types.py":17
+    .expect _ at "shop/migrations/0003_alter_types.py":22
+    .expect _ at "shop/migrations/0003_alter_types.py":24
+    .expect _ at "shop/migrations/0003_alter_types.py":28
+    .expect _ at "shop/migrations/0003_alter_types.py":33
+    .expect _ at "shop/migrations/0003_alter_types.py":38
+    .expect _ at "shop/migrations/0003_alter_types.py":44
+    .expect _ at "shop/migrations/0003_alter_types.py":49
+    .expect _ at "shop/migrations/0003_alter_types.py":54
+    .expect _ at "shop/migrations/0003_alter_types.py":59
+    .expect _ at "shop/migrations/0003_alter_types.py":64
+    .expect _ at "shop/migrations/0003_alter_types.py":69
+    .expect _ at "shop/migrations/0003_alter_types.py":74
+    .expect _ at "shop/migrations/0003_alter_types.py":79
+    .expect _ at "shop/migrations/0003_alter_types.py":84
+    .expect _ at "shop/migrations/0004_state_only.py":21
+    .expect _ at "shop/migrations/0006_widen.py":23
+.end

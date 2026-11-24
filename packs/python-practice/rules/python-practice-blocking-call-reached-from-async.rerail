@@ -1,0 +1,120 @@
+.policy "python-practice-blocking-call-reached-from-async" revision 1
+.description "Don't call a sync helper that sleeps, does network I/O or runs a subprocess from an async def; run it in a thread or make it async."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A coroutine runs on the event loop's thread until its next await: a blocking call
+// anywhere below it, also in a plain helper in another module, stalls every other task on the loop until it returns.
+// It reports, in an async def's own frame (not a nested def, lambda or class body) and outside test code:
+//   - a call (BlockingCallReached) whose target, by the call graph (python/calls, across files), is a sync def of the
+//     run that blocks its thread, itself or through a chain of sure calls through other sync defs: time.sleep, the
+//     sync requests/httpx module functions, urlopen, subprocess.run/call/check_call/check_output/getoutput/
+//     getstatusoutput, os.system, os.popen, os.wait*, socket.create_connection/getaddrinfo/gethostbyname,
+//     smtplib.SMTP (lib: pp_blocking);
+//   - a call (LoopStartReached) whose target reaches, the same way, a call that starts an event loop and waits for it:
+//     asyncio.run(), <loop>.run_until_complete(), async_to_sync(f)() (lib: pp_loop_entry). With a loop already running
+//     in the thread these raise RuntimeError: a crash, not a stall;
+//   - such a loop start written in the async def itself (LoopStartInAsync).
+// One call gives one finding, naming the nearest blocking site (the least node) of every target it may have.
+//   services/http.py: def fetch(url): return requests.get(url, timeout=5)
+//   routes.py:        async def page(url): r = fetch(url)                          reported at fetch(url)
+//   routes.py:        async def page(url): r = await asyncio.to_thread(fetch, url)  not reported: fetch runs in a thread
+//   services/loops.py: def refresh_now(): asyncio.run(refresh())
+//   routes.py:        async def reload(): refresh_now()                            reported (LoopStartReached)
+// Not reported: a blocking call written in the async def itself (the python pack's async rules report it); a helper
+// passed to a thread (asyncio.to_thread, run_in_executor, anyio.to_thread.run_sync, sync_to_async(f)()) or decorated
+// with sync_to_async/database_sync_to_async; a chain through an async def (calling one only makes a coroutine) or
+// through a call whose target the call program cannot settle (call_open); a call in a nested def, lambda or class
+// body; names that only look alike (`from svc import requests` with svc.requests a module of the run, trio.sleep,
+// asyncio.sleep, httpx.AsyncClient); test files.
+// Also not reported: a blocking call reached from a FastAPI/Starlette lifespan (an asynccontextmanager passed as
+// `lifespan=`) or an `on_event("startup"/"shutdown")` handler: it runs before the server takes requests or after it
+// stops, so no request waits on it. A loop start there is still reported: it raises all the same.
+// `self.m()` in a method of class K follows K's own m (or the one K inherits), not a subclass's override: a base's
+// `async def` that calls `self.m()` is judged with the base's m. And a blocking call that runs once per process, under
+// `if self._x is None:` (or a module global) whose body sets that same name: `git --version` probed once and cached.
+// Gaps: file I/O (open(), Path.read_text()) is left out on purpose: short local reads are common in async code and
+// rarely what stalls a loop. Sync clients reached through an object (requests.Session().get, smtplib.SMTP().sendmail,
+// a sync DB driver) are not followed: only the module functions and constructors above count. A class body nested in
+// the async def does run at once, but is skipped with defs and lambdas. A subclass that inherits a base's async def
+// and overrides only the sync m it calls is not reported. Other startup-only code (an `initialize()` or `start()`
+// that runs before the server listens) still blocks the loop and is reported; the message says when to leave it.
+
+#include "lib/python_practice.rerail"
+
+.violation BlockingCallReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
+    "`{g}()` blocks the event loop (`{what}` at {p}:{o.line}), stalling every task. Await `asyncio.to_thread({g}, ...)` or make it async; leave it if it runs only before serving."
+BlockingCallReached(c, x, what, p, o) :- pbr_start(c, _), !pbr_startup(c), field(c, "function", fn), text(fn, x),
+    o = min y : { pbr_start(c, g), pp_sync_reach(g, h), pbr_blocking(y, h) }, pp_blocking(o, _, what),
+    docof(o, d), doc(d, p, _).
+.violation LoopStartReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
+    "`{g}()` starts an event loop (`{what}` at {p}:{o.line}) while one runs in this thread: it raises RuntimeError. Await the coroutine instead, or give the helper an async twin."
+LoopStartReached(c, x, what, p, o) :- pbr_start(c, _), field(c, "function", fn), text(fn, x),
+    o = min y : { pbr_start(c, g), pp_sync_reach(g, h), pp_loop_entry(y, h, _) }, pp_loop_entry(o, _, what),
+    docof(o, d), doc(d, p, _).
+.violation LoopStartInAsync(at: node, what: symbol, fx: symbol)
+    "`{what}` in `async def {fx}` starts an event loop while one already runs in this thread: it raises RuntimeError. Await the coroutine directly."
+LoopStartInAsync(c, what, fx) :- pp_loop_entry(c, f, what), pp_async_def(f), pp_live(c), def_name(f, fx).
+
+// pbr_start(c, g): pp_async_start, with `self.m()` in a method of class K going only to what K resolves m to. The call
+// program also answers a subclass's override (a late-bound self), which runs only for that subclass; when the subclass
+// overrides the async def too, the base's async def never runs the override.
+.decl pbr_start(c: node, g: node)
+pbr_start(c, g) :- pp_async_start(c, _, g), !pbr_self_call(c, _, _).
+pbr_start(c, g) :- pp_async_start(c, _, g), pbr_self_call(c, kq, m), mro_method(kq, m, g).
+// pbr_self_call(c, kq, m): call c is `self.m(...)` in a method of class kq.
+.decl pbr_self_call(c: node, kq: symbol, m: symbol)
+pbr_self_call(c, kq, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), kind(r, "identifier"),
+    text(r, "self"), pp_frame(c, f), nearest(f, k, scope), class_def(k, kq).
+// pbr_startup(c): call c is in a lifespan or a startup/shutdown handler: it runs while no request is served.
+.decl pbr_startup(c: node)
+pbr_startup(c) :- pp_frame(c, f), pbr_lifespan(f).
+.decl pbr_lifespan(f: node)
+pbr_lifespan(f) :- pp_cm_def(f), kind(a, "keyword_argument"), field(a, "name", n), text(n, "lifespan"),
+    field(a, "value", v), sym_of(v, q), qualname(f, q).
+pbr_lifespan(f) :- pp_async_def(f), decorator(f, e), kind(e, "call"), field(e, "function", fn),
+    attr_of(fn, _, "on_event"), posarg(e, 0, s), text(s, t), (contains("startup", t) ; contains("shutdown", t)).
+// pbr_blocking(y, h): y is a blocking call in h's own frame that can run more than once: not under a once-guard.
+.decl pbr_blocking(y: node, h: node)
+pbr_blocking(y, h) :- pp_blocking(y, h, _), !pbr_once(y).
+// pbr_once(y): y sits in the body of `if <name> is None:` that assigns <name> (`self._git_available`, a module
+// global): a lazy one-time probe whose result is cached, so it blocks once per process, not per request.
+.decl pbr_once(y: node)
+pbr_once(y) :- pp_blocking(y, _, _), kind(i, "if_statement"), field(i, "consequence", b), within(y, b),
+    field(i, "condition", cnd), kind(cnd, "comparison_operator"), text(cnd, ct), contains(" is None", ct),
+    child(cnd, l, 0), (kind(l, "attribute") ; kind(l, "identifier")), text(l, lt), kind(s, "assignment"),
+    within(s, b), field(s, "left", t), text(t, lt).
+
+// The cases, `cases/python-practice-blocking-call-reached-from-async/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "svc/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/__init__.py"
+    .fixture "svc/lookalikes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/lookalikes.py"
+    .fixture "svc/main.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/main.py"
+    .fixture "svc/providers.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/providers.py"
+    .fixture "svc/requests.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/requests.py"
+    .fixture "svc/routes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/routes.py"
+    .fixture "svc/safe.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/safe.py"
+    .fixture "svc/services/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/__init__.py"
+    .fixture "svc/services/http.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/http.py"
+    .fixture "svc/services/loops.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/loops.py"
+    .fixture "svc/services/shell.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/shell.py"
+    .fixture "svc/tests/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/tests/__init__.py"
+    .fixture "svc/tests/test_routes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/tests/test_routes.py"
+    .expect _ at "svc/main.py":28
+    .expect _ at "svc/main.py":34
+    .expect _ at "svc/providers.py":18
+    .expect _ at "svc/routes.py":16
+    .expect _ at "svc/routes.py":17
+    .expect _ at "svc/routes.py":18
+    .expect _ at "svc/routes.py":19
+    .expect _ at "svc/routes.py":20
+    .expect _ at "svc/routes.py":26
+    .expect _ at "svc/routes.py":37
+    .expect _ at "svc/routes.py":41
+    .expect _ at "svc/routes.py":42
+    .expect _ at "svc/routes.py":43
+    .expect _ at "svc/routes.py":47
+    .expect _ at "svc/routes.py":48
+    .expect _ at "svc/services/shell.py":37
+.end

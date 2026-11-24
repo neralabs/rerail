@@ -638,6 +638,196 @@
           "text": "from asgiref.sync import sync_to_async\nfrom django.db import models\nfrom django.http import JsonResponse\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=80)\n\n\ndef total():\n    return Book.objects.count()\n\n\nasync def stats(request):\n    return JsonResponse({\"books\": await sync_to_async(total)()})\n"
         }
       }
+    },
+    {
+      "id": "django-practice-addfield-default-runs-once",
+      "document": "rules/django-practice-addfield-default-runs-once.rerail",
+      "title": "Django practice: an AddField on an existing table whose generated or unique default every existing row shares",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/migrations/0002_order_web_secret.py",
+          "text": "from django.db import migrations, models\n\nimport shop.models\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AddField(\n            model_name=\"order\",\n            name=\"web_secret\",\n            field=models.CharField(default=shop.models.generate_secret, max_length=32),\n        ),\n    ]\n",
+          "with": [
+            {
+              "path": "shop/models.py",
+              "text": "import string\n\nfrom django.utils.crypto import get_random_string\n\n\ndef generate_secret():\n    return get_random_string(length=32, allowed_chars=string.ascii_lowercase + string.digits)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/migrations/0002_order_web_secret.py",
+          "text": "from django.db import migrations, models\n\nimport shop.models\n\n\ndef fill_web_secrets(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.all():\n        order.web_secret = shop.models.generate_secret()\n        order.save(update_fields=[\"web_secret\"])\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AddField(\n            model_name=\"order\",\n            name=\"web_secret\",\n            field=models.CharField(default=shop.models.generate_secret, max_length=32),\n        ),\n        migrations.RunPython(fill_web_secrets, migrations.RunPython.noop),\n    ]\n",
+          "with": [
+            {
+              "path": "shop/models.py",
+              "text": "import string\n\nfrom django.utils.crypto import get_random_string\n\n\ndef generate_secret():\n    return get_random_string(length=32, allowed_chars=string.ascii_lowercase + string.digits)\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "django-practice-alterfield-rewrites-table",
+      "document": "rules/django-practice-alterfield-rewrites-table.rerail",
+      "title": "Django practice: an AlterField whose column type change makes PostgreSQL rewrite an existing table",
+      "group": "Django practice",
+      "mode": "log",
+      "examples": {
+        "caught": {
+          "path": "shop/migrations/0002_order_bigint.py",
+          "text": "from django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AlterField(\n            model_name=\"order\",\n            name=\"id\",\n            field=models.BigAutoField(auto_created=True, primary_key=True, serialize=False),\n        ),\n    ]\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/migrations/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/migrations/0001_initial.py",
+              "text": "from django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n    initial = True\n\n    dependencies = []\n\n    operations = [\n        migrations.CreateModel(\n            name=\"Order\",\n            fields=[\n                (\"id\", models.AutoField(auto_created=True, primary_key=True, serialize=False)),\n                (\"number\", models.CharField(max_length=20)),\n            ],\n        ),\n    ]\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/migrations/0002_order_bigint.py",
+          "text": "from django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AlterField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=64),\n        ),\n    ]\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/migrations/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/migrations/0001_initial.py",
+              "text": "from django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n    initial = True\n\n    dependencies = []\n\n    operations = [\n        migrations.CreateModel(\n            name=\"Order\",\n            fields=[\n                (\"id\", models.AutoField(auto_created=True, primary_key=True, serialize=False)),\n                (\"number\", models.CharField(max_length=20)),\n            ],\n        ),\n    ]\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "django-practice-bulk-ignore-conflicts-used",
+      "document": "rules/django-practice-bulk-ignore-conflicts-used.rerail",
+      "title": "Django practice: objects from bulk_create(ignore_conflicts=True) used as the inserted rows",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Label(models.Model):\n    name = models.CharField(max_length=64, unique=True)\n\n\ndef label_ids(names):\n    labels = [Label(name=n) for n in names]\n    Label.objects.bulk_create(labels, ignore_conflicts=True)\n    return [label.pk for label in labels]\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Label(models.Model):\n    name = models.CharField(max_length=64, unique=True)\n\n\ndef label_ids(names):\n    labels = [Label(name=n) for n in names]\n    Label.objects.bulk_create(labels, ignore_conflicts=True)\n    labels = Label.objects.filter(name__in=[label.name for label in labels])\n    return [label.pk for label in labels]\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-runpython-live-model",
+      "document": "rules/django-practice-runpython-live-model.rerail",
+      "title": "Django practice: RunPython code that reaches live model classes through a helper in another module",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/migrations/0002_recount.py",
+          "text": "from django.db import migrations\n\nfrom shop.helpers import recount_books\n\n\ndef forwards(apps, schema_editor):\n    recount_books()\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [migrations.RunPython(forwards, migrations.RunPython.noop)]\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/models.py",
+              "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=100)\n    book_count = models.IntegerField(default=0)\n\n\nclass Book(models.Model):\n    STATUS_DONE = \"done\"\n\n    title = models.CharField(max_length=200)\n    slug = models.SlugField(blank=True)\n    status = models.CharField(max_length=10, default=\"\")\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n\n\nclass Shelf(models.Model):\n    name = models.CharField(max_length=50)\n"
+            },
+            {
+              "path": "shop/helpers.py",
+              "text": "from shop.models import Author, Book\n\n\ndef recount_books():\n    for author in Author.objects.all():\n        author.book_count = Book.objects.filter(author=author).count()\n        author.save()\n\n\ndef recount_with(author_model, book_model):\n    for author in author_model.objects.all():\n        author.book_count = book_model.objects.filter(author=author).count()\n        author.save()\n"
+            },
+            {
+              "path": "shop/migrations/__init__.py",
+              "text": "# empty module\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/migrations/0002_recount.py",
+          "text": "from django.db import migrations\n\nfrom shop.helpers import recount_with\n\n\ndef forwards(apps, schema_editor):\n    recount_with(apps.get_model(\"shop\", \"Author\"), apps.get_model(\"shop\", \"Book\"))\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [migrations.RunPython(forwards, migrations.RunPython.noop)]\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/models.py",
+              "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=100)\n    book_count = models.IntegerField(default=0)\n\n\nclass Book(models.Model):\n    STATUS_DONE = \"done\"\n\n    title = models.CharField(max_length=200)\n    slug = models.SlugField(blank=True)\n    status = models.CharField(max_length=10, default=\"\")\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n\n\nclass Shelf(models.Model):\n    name = models.CharField(max_length=50)\n"
+            },
+            {
+              "path": "shop/helpers.py",
+              "text": "from shop.models import Author, Book\n\n\ndef recount_books():\n    for author in Author.objects.all():\n        author.book_count = Book.objects.filter(author=author).count()\n        author.save()\n\n\ndef recount_with(author_model, book_model):\n    for author in author_model.objects.all():\n        author.book_count = book_model.objects.filter(author=author).count()\n        author.save()\n"
+            },
+            {
+              "path": "shop/migrations/__init__.py",
+              "text": "# empty module\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "django-practice-runpython-with-schema-change",
+      "document": "rules/django-practice-runpython-with-schema-change.rerail",
+      "title": "Django practice: a RunPython that writes rows in the same migration transaction as a schema change to that table",
+      "group": "Django practice",
+      "mode": "log",
+      "examples": {
+        "caught": {
+          "path": "shop/migrations/0002_order_number.py",
+          "text": "from django.db import migrations, models\n\n\ndef fill_order_numbers(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.iterator():\n        order.number = f\"R{order.pk:08d}\"\n        order.save(update_fields=[\"number\"])\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AddField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=20, null=True),\n        ),\n        migrations.RunPython(fill_order_numbers, migrations.RunPython.noop),\n        migrations.AlterField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=20, unique=True),\n        ),\n    ]\n"
+        },
+        "passes": {
+          "path": "shop/migrations/0003_fill_order_numbers.py",
+          "text": "from django.db import migrations\n\n\ndef fill_order_numbers(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.iterator():\n        order.number = f\"R{order.pk:08d}\"\n        order.save(update_fields=[\"number\"])\n\n\nclass Migration(migrations.Migration):\n    # 0002 adds the nullable column and 0004 makes it unique: each commits on its own.\n    dependencies = [(\"shop\", \"0002_order_number\")]\n\n    operations = [\n        migrations.RunPython(fill_order_numbers, migrations.RunPython.noop),\n    ]\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-settings-env-fails-open",
+      "document": "rules/django-practice-settings-env-fails-open.rerail",
+      "title": "Django practice: DEBUG, ALLOWED_HOSTS or SECRET_KEY falls back to an insecure value when its environment variable is unset",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/settings.py",
+          "text": "from shop.env import envbool\n\nINSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = envbool(\"DEBUG\", \"True\")\n",
+          "with": [
+            {
+              "path": "shop/env.py",
+              "text": "import os\n\nfrom django.core.exceptions import ImproperlyConfigured\n\n\ndef envbool(name, default):\n    value = os.getenv(name, default)\n    if value not in (\"True\", \"False\"):\n        raise ImproperlyConfigured(f\"{name} must be True or False\")\n    return value == \"True\"\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/settings.py",
+          "text": "from shop.env import envbool\n\nINSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = envbool(\"DEBUG\", \"False\")\n",
+          "with": [
+            {
+              "path": "shop/env.py",
+              "text": "import os\n\nfrom django.core.exceptions import ImproperlyConfigured\n\n\ndef envbool(name, default):\n    value = os.getenv(name, default)\n    if value not in (\"True\", \"False\"):\n        raise ImproperlyConfigured(f\"{name} must be True or False\")\n    return value == \"True\"\n"
+            }
+          ]
+        }
+      }
     }
   ]
 }

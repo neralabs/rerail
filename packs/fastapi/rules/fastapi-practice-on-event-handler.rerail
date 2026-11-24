@@ -1,0 +1,148 @@
+.policy "fastapi-practice-on-event-handler" revision 1
+.description "Don't register FastAPI startup/shutdown handlers with on_event, add_event_handler or on_startup=/on_shutdown=; put that code in the app's lifespan."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule. FastAPI's startup/shutdown events are deprecated in favour of a lifespan context manager
+// (Starlette 0.26 deprecated them; Starlette 1.0 removed them, and FastAPI keeps a deprecated copy of its own). FastAPI's
+// docs: "If you provide a `lifespan` parameter, `startup` and `shutdown` event handlers will no longer be called. It's
+// all `lifespan` or all events, not both." So a handler registered on an app built with `lifespan=` is dead code that
+// looks alive, and every other one stops running the day someone adds a lifespan.
+// A registration is:
+//   - `o.on_event(E)` (as a decorator, or applied by hand: `app.on_event("startup")(fn)`),
+//   - `o.add_event_handler(E, fn)` (also `event_type=`),
+//   - `on_startup=` / `on_shutdown=` on an app or router constructor (FastAPI, Starlette, APIRouter, Router, a subclass
+//     of the run), unless the value is `None` or an empty list,
+// where o is an app or router (lib/fastapi's fa_router_ref, or `app.router` of an app), or any receiver when E is the
+// literal "startup" or "shutdown" (letta registers on an unannotated parameter `app`) and the call does not resolve to
+// an `on_event`/`add_event_handler` method the run defines itself (an event bus).
+// Two messages:
+//   OnEventNeverRuns    the registration is on an app (FastAPI/Starlette, not a router) built with `lifespan=`: the
+//                       receiver refers to that constructor, or it is a parameter of a def that some call of the run
+//                       (python/calls) passes such an app, positionally or by keyword. This is the call-graph choice
+//                       of the spec, not "the run has one app constructor": a helper nobody calls, or one called with
+//                       an app without lifespan, gets the deprecated message.
+//   OnEventDeprecated   every other registration.
+// A router's handlers are not dead under an including app's lifespan: FastAPI's include_router merges the router's own
+// default lifespan (`_DefaultLifespan(router)`, which runs router.on_startup) into the app's (fastapi/routing.py,
+// `_merge_lifespan_context`), so they only get the deprecated message.
+//   app = FastAPI(lifespan=lifespan)
+//   @app.on_event("startup")                       reported: never runs
+//   legacy = FastAPI(on_startup=[init_db])         reported: deprecated
+//   def setup(app):
+//       @app.on_event("shutdown")                  reported: never runs when a call passes `app` above, else deprecated
+//   bus.on_event("startup", fn)                    not reported when `bus` is a class of the run defining on_event
+//   events.on_event(handler)                       not reported: no app/router and no literal event
+// Also left alone: Slack bolt's `app.event(...)`, socketio's `sio.on(...)`, `lifespan=` itself, and test files.
+// Gaps: an app reached through a parameter passed down a second call (`setup(app)` calling `install(app)`), a
+// parameter filled after `/` or after a comment in the signature, `app.router.on_startup.append(fn)`, and a sub-app
+// mounted with `app.mount(...)` (Starlette runs no lifespan of a mounted app at all).
+
+#include "lib/fastapi.rerail"
+#include "python/calls.rerail"
+
+.violation OnEventNeverRuns(at: node, form: symbol) "This `{form}` startup/shutdown handler never runs: the app it is registered on is built with `lifespan=`, and FastAPI then runs only the lifespan, never the app's event handlers. Move the handler's body into that lifespan function (startup code before its `yield`, shutdown code after it), or delete it if the lifespan already does that work."
+.violation OnEventDeprecated(at: node, form: symbol) "`{form}` startup/shutdown handlers are deprecated (Starlette 0.26 deprecated them, Starlette 1.0 removed them), and FastAPI stops calling them as soon as the app gets a `lifespan=`. Move startup code before and shutdown code after the `yield` of an `@asynccontextmanager` lifespan function passed as `FastAPI(lifespan=...)`; move all of the app's handlers at once, since a lifespan silences the ones left behind."
+
+// ---- registrations -----------------------------------------------------------------------------------------------
+.decl oe_event(s: symbol)
+oe_event("startup"). oe_event("shutdown").
+// oe_reg(c, o, form): call c is `o.on_event(...)` or `o.add_event_handler(...)`.
+.decl oe_reg(c: node, o: node, form: symbol)
+oe_reg(c, o, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o0, m),
+    (m = "on_event" ; m = "add_event_handler"), unparen(o0, o).
+// oe_literal(c): its event is the literal "startup" or "shutdown".
+.decl oe_literal(c: node)
+oe_literal(c) :- oe_reg(c, _, _), (call_arg(c, 0, "", e0) ; call_arg(c, -1, "event_type", e0)), unparen(e0, e),
+    str(e, s), oe_event(s).
+// oe_own(c): c calls an on_event/add_event_handler method the run defines (an event bus of its own).
+.decl oe_own(c: node)
+oe_own(c) :- oe_reg(c, _, m), call_target(c, g), def_name(g, m).
+// oe_recv(o, r): receiver o stands for app or router r (a constructor, or an annotated parameter): directly, or as
+// `x.router` of an app x.
+.decl oe_recv(o: node, r: node)
+oe_recv(o, r) :- oe_reg(_, o, _), fa_router_ref(o, r).
+oe_recv(o, r) :- oe_reg(_, o, _), attr_of(o, x0, "router"), unparen(x0, x), fa_router_ref(x, r), fa_ctor(r, "app").
+.decl oe_site(c: node, form: symbol)
+oe_site(c, m) :- oe_reg(c, o, m), oe_recv(o, _), docof(c, d), !fa_test_doc(d).
+oe_site(c, m) :- oe_reg(c, o, m), !oe_recv(o, _), oe_literal(c), !oe_own(c), docof(c, d), !fa_test_doc(d).
+
+// ---- the app's lifespan ------------------------------------------------------------------------------------------
+// oe_lifespan_app(r): constructor r builds an app (not a router) with a lifespan.
+.decl oe_lifespan_app(r: node)
+oe_lifespan_app(r) :- fa_ctor(r, "app"), fa_router_kw(r, "lifespan", v), !kind(v, "none").
+// oe_param_site(c, f, x): registration c's receiver is parameter x of def f.
+.decl oe_param_site(c: node, f: node, x: symbol)
+oe_param_site(c, f, x) :- oe_site(c, _), oe_reg(c, o, _), kind(o, "identifier"), text(o, x), look(o, x, f),
+    kind(f, "function_definition"), param_named(f, x, _).
+.decl oe_param_def(f: node)
+oe_param_def(f) :- oe_param_site(_, f, _).
+// oe_passed(k, h, x, a): call k, whose target is h, passes argument a to h's parameter x.
+.decl oe_passed(k: node, h: node, x: symbol, a: node)
+oe_passed(k, h, x, a) :- oe_param_def(h), call_target(k, h), call_arg(k, j, "", a0), unparen(a0, a), oe_offset(h, n),
+    i = j + n, sig_param(h, _, nm, i, kd, _, _), (kd = "pos" ; kd = "posonly"), text(nm, x).
+oe_passed(k, h, x, a) :- oe_param_def(h), call_target(k, h), call_arg(k, -1, x, a0), unparen(a0, a),
+    param_named(h, x, _).
+// oe_offset(h, n): a call's first positional argument fills h's parameter n: 1 for a method's self or cls.
+.decl oe_offset(h: node, n: number)
+oe_offset(h, 1) :- oe_param_def(h), nearest(h, k, scope), kind(k, "class_definition"), !oe_static(h).
+oe_offset(h, 0) :- oe_param_def(h), nearest(h, k, scope), kind(k, "class_definition"), oe_static(h).
+oe_offset(h, 0) :- oe_param_def(h), nearest(h, k, scope), !kind(k, "class_definition").
+.decl oe_static(h: node)
+oe_static(h) :- decorator(h, e), unparen(e, m), sym_of(m, "staticmethod").
+oe_static(h) :- decorator(h, e), unparen(e, m), kind(m, "identifier"), text(m, "staticmethod").
+// oe_dead(c): registration c is on an app built with `lifespan=`.
+.decl oe_dead(c: node)
+oe_dead(c) :- oe_site(c, _), oe_reg(c, o, _), oe_recv(o, r), oe_lifespan_app(r).
+oe_dead(c) :- oe_param_site(c, f, x), oe_passed(_, f, x, a), fa_router_ref(a, r), oe_lifespan_app(r).
+
+// ---- constructor keywords ----------------------------------------------------------------------------------------
+// oe_kw(r, k, v): constructor r passes `on_startup=v` or `on_shutdown=v`, v neither None nor an empty list.
+.decl oe_kw(r: node, k: symbol, v: node)
+oe_kw(r, k, v) :- fa_ctor(r, _), (k = "on_startup" ; k = "on_shutdown"), fa_router_kw(r, k, v), !kind(v, "none"),
+    !oe_empty(v), docof(r, d), !fa_test_doc(d).
+.decl oe_empty(v: node)
+oe_empty(v) :- (kind(v, "list") ; kind(v, "tuple")), count : { fa_list_item(v, _) } = 0.
+
+// ---- the rule ----------------------------------------------------------------------------------------------------
+OnEventNeverRuns(c, m) :- oe_site(c, m), oe_dead(c).
+OnEventDeprecated(c, m) :- oe_site(c, m), !oe_dead(c).
+OnEventNeverRuns(v, k) :- oe_kw(r, k, v), oe_lifespan_app(r).
+OnEventDeprecated(v, k) :- oe_kw(r, k, v), !oe_lifespan_app(r).
+
+// The cases, `cases/fastapi-practice-on-event-handler/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/fastapi-practice-on-event-handler/app/__init__.py"
+    .fixture "app/lifespan.py" from "../cases/fastapi-practice-on-event-handler/app/lifespan.py"
+    .fixture "app/main.py" from "../cases/fastapi-practice-on-event-handler/app/main.py"
+    .fixture "app/plugins.py" from "../cases/fastapi-practice-on-event-handler/app/plugins.py"
+    .fixture "app/routers/__init__.py" from "../cases/fastapi-practice-on-event-handler/app/routers/__init__.py"
+    .fixture "app/routers/items.py" from "../cases/fastapi-practice-on-event-handler/app/routers/items.py"
+    .fixture "app/startup.py" from "../cases/fastapi-practice-on-event-handler/app/startup.py"
+    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-on-event-handler/app/tests/__init__.py"
+    .fixture "app/tests/test_app.py" from "../cases/fastapi-practice-on-event-handler/app/tests/test_app.py"
+    .fixture "events/__init__.py" from "../cases/fastapi-practice-on-event-handler/events/__init__.py"
+    .fixture "events/bus.py" from "../cases/fastapi-practice-on-event-handler/events/bus.py"
+    .fixture "svc/__init__.py" from "../cases/fastapi-practice-on-event-handler/svc/__init__.py"
+    .fixture "svc/legacy.py" from "../cases/fastapi-practice-on-event-handler/svc/legacy.py"
+    .fixture "svc/modern.py" from "../cases/fastapi-practice-on-event-handler/svc/modern.py"
+    .expect OnEventNeverRuns at "app/main.py":14
+    .expect OnEventNeverRuns at "app/main.py":21
+    .expect OnEventNeverRuns at "app/main.py":22
+    .expect OnEventNeverRuns at "app/main.py":23
+    .expect OnEventNeverRuns at "app/main.py":24
+    .expect OnEventNeverRuns at "app/main.py":29
+    .expect OnEventNeverRuns at "app/plugins.py":6
+    .expect OnEventNeverRuns at "app/plugins.py":9
+    .expect OnEventNeverRuns at "app/plugins.py":14
+    .expect OnEventDeprecated at "app/plugins.py":22
+    .expect OnEventDeprecated at "app/routers/items.py":5
+    .expect OnEventDeprecated at "app/routers/items.py":8
+    .expect OnEventNeverRuns at "app/startup.py":5
+    .expect OnEventDeprecated at "svc/legacy.py":12
+    .expect OnEventDeprecated at "svc/legacy.py":12
+    .expect OnEventDeprecated at "svc/legacy.py":15
+    .expect OnEventDeprecated at "svc/legacy.py":20
+    .expect OnEventDeprecated at "svc/legacy.py":25
+.end

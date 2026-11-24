@@ -1,0 +1,56 @@
+{
+  "fastapi-practice-cors-wildcard-with-credentials": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "web.cors-credentialed-wildcard"
+  },
+  "fastapi-practice-http-client-per-request": {
+    "risk": "performance",
+    "layer": "server",
+    "severity": "medium",
+    "hazard": "perf.client-per-request"
+  },
+  "fastapi-practice-on-event-handler": {
+    "risk": "correctness",
+    "layer": "server",
+    "severity": "medium",
+    "hazard": "web.lifecycle-handler-never-runs"
+  },
+  "fastapi-practice-request-session-in-background-task": {
+    "risk": "data-safety",
+    "layer": "server",
+    "severity": "high",
+    "hazard": "web.request-resource-in-background"
+  },
+  "fastapi-practice-response-exposes-secret-field": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "data.sensitive-fields-exposed"
+  },
+  "fastapi-practice-route-missing-sibling-auth": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "auth.mutation-without-auth"
+  },
+  "fastapi-practice-route-shadowed": {
+    "risk": "correctness",
+    "layer": "server",
+    "severity": "high",
+    "hazard": "web.unreachable-route"
+  },
+  "fastapi-practice-sync-session-in-async-route": {
+    "risk": "availability",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "async.blocking-call-in-async"
+  },
+  "fastapi-practice-yield-dependency-cleanup": {
+    "risk": "availability",
+    "layer": "server",
+    "severity": "high",
+    "hazard": "resource.cleanup-skipped-on-error"
+  }
+}

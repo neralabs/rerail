@@ -1178,3 +1178,484 @@ working tree; main runs the whole pack over netbox with it in 164 s.
 | `cases/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be (the rule file's `.test cases`). Not published |
 | [`NOTES-django.md`](NOTES-django.md) | The batch notes: dropped candidates, open library proposals, overlaps with other tools |
 | [`ENGINE-BUGS.md`](ENGINE-BUGS.md) | Engine and library bugs found while writing and measuring these rules |
+
+### `django-practice-addfield-default-runs-once`
+
+Rerail's own rule, not a port. A migration's `AddField` on a table that already exists fills every existing row with
+the field's default, and Django computes that default once: "the value used to populate existing rows is generated
+only once" (Django docs, "Migrations that add unique fields"; ticket #37031; the django.wiki guide to adding unique
+fields). The rule reads `AddField` operations that change the database (a `SeparateDatabaseAndState`'s
+`database_operations` included, its `state_operations` not) on a model the same migration does not create, and
+reports the field's `default=` value in two cases:
+
+- **A default that generates a fresh value per call**, on a field that is not unique and not `null=True`:
+  `uuid.uuid1/4/6/7`, `os.urandom`, any `secrets.*` or `random.*`, `django.utils.crypto.get_random_string`, a
+  `functools.partial` of one of these, or a function of the run (in the migration, or imported from the models module)
+  whose body calls one of these, directly or through one more function of the run (pretix's
+  `pretix.base.models.orders.generate_secret` calls `get_random_string`). Every existing row shares one token, secret
+  or UUID. The message names the default and the field, and says to add the field with `null=True`, fill each row in
+  `RunPython`, then `AlterField`, or to use a `db_default` the database evaluates per row (Django 5.0+); and to leave
+  it when rows may share one value.
+- **Any default other than `None` on a unique field** (`unique=True`, `primary_key=True`, a `OneToOneField`),
+  constant or callable: the migration fails with an `IntegrityError` on a table with two or more rows, and passes on
+  an empty test database.
+
+It leaves alone: a constant or time default (`timezone.now`, `date.today`, `dict`, a project function that calls no
+generator), and a default that is already a call (`default=uuid.uuid4()`: one value, as written); a field that is not
+unique and has `null=True`, the first step of the documented three-step pattern; a field with `db_default`; an
+`AddField` on a model created in the same migration; an `AddField` of a field that is not unique whose rows a
+`RunPython` fills afterwards, later in the same migration or in a later migration of the same app: the RunPython's
+function (or a function of the run it calls) assigns `obj.<field> = …`, calls `setattr(obj, "<field>", …)` or passes
+`<field>=` to a call (`update(<field>=…)`). The documented pattern (add without unique, backfill, `AlterField` to
+unique) stays silent end to end; a unique `AddField` fails before any backfill runs, so it is reported regardless. It
+also leaves alone a model the project's code (outside migrations and tests) reads with `<Model>.objects.get()` and no
+arguments, which raises `MultipleObjectsReturned` on two rows: such a table holds one row (DefectDojo's
+`System_Settings`), so one value is right for it. Migrations under test directories are skipped.
+
+`django-practice-default-called-once` reports `default=uuid.uuid4()` (called) in models and skips migrations; this
+rule reads migrations and callable defaults, so the two never report the same line. django-migration-linter has no
+such check.
+
+**A random default that is not security-relevant** (plane's `get_random_color`, one background colour for every
+existing profile and workspace) is reported: the function's randomness says the value was meant to differ per row,
+and the fix costs one RunPython. The message's "skip if rows may share one value" covers a project that accepts it.
+
+**Gaps:** a backfill is matched by the field's name, not its model; a backfill through a generic helper that takes
+the column as a variable (`setattr(obj, column, …)`) or through RunSQL is not seen; a one-row table read otherwise
+(`.first()`, `get(pk=1)`, a cache) is reported; the one-row check matches the model by class name, so a same-named
+model of another app read with `objects.get()` silences it; generators outside the list (`shortuuid`, `nanoid`) and
+functions more than two calls deep are not followed.
+
+**Corpus** (BRIEF corpus, commits from `MANIFEST.tsv`). Some runs predate the last change, the one-row exemption, which
+only removes matches: pretix and DefectDojo were rerun with the final rule; saleor was not, and no saleor code outside
+tests and migrations calls `User.objects.get()` without arguments, so the exemption cannot change its match:
+
+| Repository | Commit | Matches | Real |
+|---|---|--:|--:|
+| sissbruecker/linkding | `27b7303baf41` | 0 | 0 |
+| healthchecks/healthchecks | `c1039ad23395` | 0 | 0 |
+| paperless-ngx/paperless-ngx | `faa6f09f289b` | 0 | 0 |
+| HumanSignal/label-studio | `2f42caecbf6c` | 0 | 0 |
+| wger-project/wger | `f903c66d3c0c` | 0 | 0 |
+| makeplane/plane | `723bb178f97b` | 2 | 2 |
+| inventree/InvenTree | `939df605f43d` | 0 | 0 |
+| pretix/pretix | `40ea9097d0b2` | 5 | 5 |
+| mozilla/addons-server | `7e3374fe5383` | 0 | 0 |
+| DefectDojo/django-DefectDojo | `cd0a4483a224` | 0 | 0 |
+| saleor/saleor | `e1ccf4d58002` | 1 | 1 |
+
+8 matches, 8 real (100%). The matches:
+
+- pretix `src/pretix/base/migrations/0122_orderposition_web_secret.py` and its squash
+  `0108_auto_20190201_1527_squashed_0141_seat_sorting_rank.py`: `web_secret` (`generate_secret`, which calls
+  `get_random_string`) is one value for every order position that existed then; it is part of the ticket download URL.
+- pretix `0078_auto_20171206_1603.py` and its squash `0077_auto_20171124_1629_squashed_0088_auto_20180328_1217.py`:
+  `notifications_token` is one value for every existing user, and `control/views/user.py` looks a user up by
+  `notifications_token` and `pk` from the URL, so one user's unsubscribe link works for any existing user's id.
+- pretix `0147_user_session_token.py`: `session_token` is one value for every existing user.
+- saleor `saleor/account/migrations/0046_user_jwt_token_key.py`: `partial(get_random_string, length=12)`, one
+  `jwt_token_key` for every existing user.
+- plane `apps/api/plane/db/migrations/0099_profile_background_color_profile_goals_and_more.py` (2):
+  `get_random_color` (`random.choices`) gives every existing profile and workspace one colour; not a security issue,
+  reported as above.
+
+Silent as intended: saleor `account/migrations/0020_user_token.py` (backfilled by `0021_unique_token.py`'s RunPython,
+then made unique: the three-step pattern), wger's UUID fields backfilled by `exercises/migrations/0002`, `0012`,
+`0028` and `nutrition/migrations/0013`, wger's `null=True` UUID fields, and every `timezone.now`/`dict` default. Before
+the one-row exemption, DefectDojo `dojo/db_migrations/0303_system_settings_install_id.py` (one `install_id` for the
+single `System_Settings` row, which the code reads with `System_Settings.objects.get()`) was reported: the only false
+positive, now silent.
+
+### `django-practice-alterfield-rewrites-table`
+
+Rerail's own rule, not a port. `ALTER TABLE … ALTER COLUMN … TYPE` takes an ACCESS EXCLUSIVE lock and "will normally
+cause the entire table and its indexes to be rewritten", unless the old type is binary coercible to the new one
+(PostgreSQL, ALTER TABLE notes; Squawk "changing-column-type": int → bigint rewrites, varchar → text and a longer
+varchar do not). On a large table that blocks every read and write for minutes. A migration's `AlterField` names only
+the new field, so the rule reads the old one from the app's migration history: the nearest earlier definition of the
+same model and field (a `CreateModel` `fields` item, an `AddField` or an `AlterField`) in a migration applied before
+this one (by `dependencies`, transitively) or earlier in the same migration, with no other definition of that field
+between them. A `SeparateDatabaseAndState`'s `state_operations` count as definitions (saleor declares an M2M through
+table there before widening its key), but an `AlterField` among them changes no table and is not reported.
+
+It reports, when both field classes are Django's own (`django.db.models`, `django.contrib.postgres.fields`):
+
+- **Integers of another width**: `AutoField`/`IntegerField`/`PositiveIntegerField` (integer),
+  `SmallAutoField`/`SmallIntegerField`/`PositiveSmallIntegerField` (smallint),
+  `BigAutoField`/`BigIntegerField`/`PositiveBigIntegerField` (bigint), either way. The `DEFAULT_AUTO_FIELD` switch to
+  `BigAutoField` is one; Django changes the foreign key columns that point at a widened key in the same statement, so
+  the key's `AlterField` stands for them.
+- **A shorter varchar** (`CharField`, `SlugField`, `EmailField`, `URLField`, `FileField`, `ImageField`,
+  `FilePathField`, by `max_length` or Django's default for the class), or a text or unlimited varchar that gets a
+  limit (`TextField` → `CharField(max_length=n)`): PostgreSQL checks every row and rewrites.
+- **A `DecimalField`** whose `decimal_places` change or whose `max_digits` shrink.
+- **Any other change of PostgreSQL type**: `CharField` → `IntegerField`, `IntegerField` → `CharField`, `FloatField`
+  → `DecimalField`, `DateField` → `DateTimeField`, `TextField` → `JSONField`, `CharField` → `UUIDField`, ...
+
+The message names the model, the field and the old and new classes (with their length or precision), says PostgreSQL
+rewrites the table and its indexes under an ACCESS EXCLUSIVE lock, and advises a new column with a batched backfill
+and a swap on a large table, or keeping the change for a small table or a maintenance window.
+
+It leaves alone the changes PostgreSQL makes in the catalog only, and those that are no type change: a longer or
+unlimited varchar, varchar → text, `CharField` ↔ `SlugField`/`EmailField`/`URLField` without a shorter limit, a
+`DecimalField` with more `max_digits` and the same `decimal_places`, the same type with other
+`null`/`blank`/`default`/`choices`/`db_index`/`unique`/`help_text` (other hazards), and `ForeignKey`/`OneToOneField`
+changes (their column follows the target's key). It also leaves alone an `AlterField` on a model the same migration
+creates, a field with no earlier definition in the run (a squashed or third-party history, another app's model), a
+squashed migration (`replaces = [...]`: its operations already ran wherever the migrations it replaces did, and its
+author did not choose them), migrations in test directories, a field class from a third party or the project
+(`django_countries.fields.CountryField`), and a `max_length`, `max_digits` or `decimal_places` that is no integer
+literal. Model names are matched per app (the migrations package), so two apps' `Order` models never mix.
+
+django-migration-linter's `ALTER_COLUMN` check flags every `ALTER COLUMN … TYPE` it sees in the SQL, the safe ones
+included, with "Could be backward compatible. You may ignore this migration."; Squawk works on SQL, not on Django
+migrations. This rule's value is the classification from the history: widening a varchar, varchar → text and a
+`DecimalField` precision increase stay silent, so what it reports really rewrites the table.
+
+**Gaps:** types are judged by Django's field classes, not `db_type()`, so a project's own field class is never judged;
+a `RunSQL` `ALTER COLUMN … TYPE` is no definition; a renamed field or model loses its history (a `RenameField` onto
+the name ends it, silently); a `ForeignKey` retargeted to a model whose key has another type is not seen;
+`ArrayField`, citext and hstore changes are not judged. The rule cannot see a table's size, so a small table's rewrite
+(a settings or lookup table) is reported too: that is why it starts in `log`.
+
+**Corpus** (BRIEF corpus, commits from `MANIFEST.tsv`):
+
+CORPUS_TABLE
+
+### `django-practice-bulk-ignore-conflicts-used`
+
+Rerail's own rule, not a port. `bulk_create(objs, ignore_conflicts=True)` (and `abulk_create`) sets no primary key on
+the objects and skips the objects that conflict without saying which. With a serial key the objects keep `pk=None`.
+With a UUID default key (plane's models) they carry a key that may name no row. A skipped object's other values may
+differ from the stored row's (plane mails an invitation token the database never stored).
+
+It matches a `bulk_create`/`abulk_create` call passing `ignore_conflicts=True` on a Django queryset or manager
+(`M.objects`, `M.tags.through.objects`), or in a file that imports Django. It then follows the objects in the same def:
+the call itself (`for o in M.objects.bulk_create(...)`), a name assigned its result (awaited or not), and the name of
+its input list. A read of one of these names counts when it comes after the call, with no rebinding of the name in
+between and not in an except handler of a try around the call. A def that returns the objects (`return
+M.objects.bulk_create(...)`, or `return objs` after the call) hands them to its callers through the run's call graph
+(python/calls), one level deep: `issues = create_issues(...)` in a caller holds them too. It reports the read when the
+objects are used as the inserted rows:
+
+- a primary key read on an element, `o.pk` or `o.id`, where `o` is `objs[k]` or a `for` or comprehension variable
+  over the objects (`enumerate(objs)` included);
+- an element passed to a model class of the run (`IssueSequence(issue=issue)`), to a queryset's `create`,
+  `get_or_create` or `update_or_create`, or to a related manager's `add`; or the objects to `x.rel.add(*objs)` or
+  `x.rel.set(objs)`;
+- an element read in the arguments of a task dispatch (`.delay()`, `.apply_async()`, `.send_task()`, `.enqueue()`) or
+  of a mail call (`send_mail`, `EmailMessage.send()`, as lib/django's `dj_side_effect`);
+- the objects handed to a serializer (`XSerializer(objs, many=True)`, `django.core.serializers.serialize`);
+- `len()` of the call's result read as a number (not only tested for being 0), with its own message: it counts the
+  objects, not the rows inserted.
+
+It leaves alone: a re-fetch of the stored rows by the conflicting fields (label-studio's `filter(label_id__in=...)`
+after the call, plane `project/member.py`'s rebinding to a `filter()`); reads before the call; reads after the name is
+rebound (DefectDojo's `batch = []` loops); values the code set itself (`{ref.location_id for ref in refs}`);
+`len()` of the input list (`created += len(batch)` in DefectDojo `migrate_cwe.py` counts objects processed, and logs
+them as that); `update_conflicts=True`, which sets keys on PostgreSQL; `ignore_conflicts=False`; a truth test (`if
+created:`); a def returning the objects that no caller reads; reads in an except handler of a try around the call
+(DefectDojo's per-row fallback after an IntegrityError); test code; a `bulk_create` of a non-Django class in a file
+that does not import Django.
+
+**Gaps:** objects passed to a helper of the run are not followed into it (saleor's
+`update_line_info_cached_discounts(lines_info, new_line_discounts, ...)` and `update_unit_discount_data_on_order_line(line,
+line_discounts)` cache the discount objects on line infos); a loop over a derived list (`objs + others`,
+`zip(objs, rows)`) yields no element; a caller's caller is not followed; a read in a branch that excludes the call's
+branch still counts as after it; a primary key named other than `pk` or `id` is not recognised.
+
+**Sources:**
+- Django docs, [QuerySet API: `bulk_create`](https://docs.djangoproject.com/en/5.2/ref/models/querysets/#bulk-create):
+  "Enabling the ignore_conflicts parameter disables setting the primary key on each model instance (if the database
+  normally supports it)."
+- Django Forum, [Get count of rows actually inserted using bulk_create with ignore_conflicts](https://forum.djangoproject.com/t/get-count-of-rows-actually-inserted-using-bulk-create-with-ignore-conflicts/38435):
+  the returned list is the input list, not the inserted rows.
+- Django ticket [#34698](https://code.djangoproject.com/ticket/34698): primary keys are returned for
+  `update_conflicts`, not for `ignore_conflicts`.
+- Code comments that work around it: plane `apps/api/plane/api/views/issue.py:2762` ("bulk_create with
+  ignore_conflicts=True may not return PKs"), label-studio `label_studio/labels_manager/serializers.py:76` ("bulk_create
+  with ignore_conflicts doesn't return ids, reloading links"), DefectDojo `dojo/vulnerability/manager.py:50`.
+
+**Overlap:** none in Ruff, Bandit, pylint-django or django-upgrade. The rule follows the objects after the call, and
+across a returning def into its callers.
+
+**Corpus:** every match read.
+
+| Repository | Commit | Matches | Real |
+|---|---|--:|--:|
+| sissbruecker/linkding | `27b7303b` | 0 | |
+| paperless-ngx/paperless-ngx | `faa6f09f` | 0 | |
+| HumanSignal/label-studio | `2f42caec` | 0 | |
+| makeplane/plane | `723bb178` | 11 | 11 |
+| mozilla/addons-server | `7e3374fe` | 1 | 1 |
+| DefectDojo/django-DefectDojo | `cd0a4483` | 1 | 1 |
+| saleor/saleor | `e1ccf4d5` | 0 | |
+| TandoorRecipes/recipes | `22b5841a` | 2 | 2 |
+
+Real matches:
+- plane `apps/api/plane/app/views/workspace/invite.py:120` and `app/views/project/invite.py:120`: each returned
+  invitation is mailed with its token, though a conflicting invitation was not stored and the database keeps its old
+  token.
+- plane `apps/api/plane/app/views/issue/label.py:115`, `app/views/issue/relation.py:307,312`,
+  `api/views/cycle.py:1059`, `api/views/module.py:780`: the response serializes the objects, ids included, as the
+  created rows; a conflicting object's id names no row.
+- plane `apps/api/plane/bgtasks/dummy_data_task.py:244,334,351` (pages and issues used as foreign keys of
+  `ProjectPage`, `IssueSequence`, `IssueActivity`) and `:372` (`create_intake_issues` gets them from
+  `create_issues`, which returns them, and builds `IntakeIssue(issue=issue)`).
+- DefectDojo `dojo/tags/utils.py:161`: `len(actually_created)` is added to the tag's count as the rows created.
+- addons-server `src/olympia/users/tasks.py:274`: logs `len(created_objects)` "of" `len(batch)` as the domains
+  processed, always the same number.
+- Tandoor `cookbook/integration/mealie1.py:294`: links each returned `Property` to its recipe by `p.pk`, unset for a
+  serial key; `cookbook/helper/open_data_importer.py:523`: reports `len(objs_created)` to the user as rows created.
+
+Precision: 15 of 15 read matches are real (100%), so the rule starts in `steer`. The reads after a call that it leaves
+alone in these repositories are the gaps and leave-alone cases above (saleor's helpers, DefectDojo's processed counts
+and except-handler fallback, label-studio's re-fetch, rebound batch names).
+
+### `django-practice-runpython-live-model`
+
+Rerail's own rule, not a port. A `RunPython` function receives `apps`, whose `get_model()` returns each model as it
+stood at that migration. Django's migration docs ("Historical models"): "If you import models directly rather than
+using the historical models, your migrations may work initially but will fail in the future." The live class has
+today's fields: once a later migration adds a column, a fresh database (a new install, CI from an empty database, a
+teammate's database) runs this old migration with a model that selects or inserts a column that does not exist yet,
+and the migration fails. label-studio's `tasks/functions.py` says so in a comment on the helper its migrations call:
+"Don't load full Organization objects bc some columns ... aren't created until after a migration calls this code".
+
+The rule follows a migration's RunPython code (its `code` and its `reverse_code`, and the migration-file defs they
+call) out of the migration and through the cross-file call graph. It reports the call that leaves the migration's
+code for a def in another, non-migration module (or the `RunPython(helper)` argument itself, when the helper is the
+code), when that def or a def it reaches uses a model class of the run in its own frame:
+
+- its manager: `M.objects…`, `M._default_manager…`, `M._base_manager…`;
+- a saved instance: `M(...).save()`, or `m = M(...)` and `m.save()` in the same function.
+
+M must resolve to the class (an import, a local import inside the function, a module attribute such as
+`common.tasks.rebuild_attachment`), not to a parameter. A def of the run passed as an argument
+(`start_job_async_or_sync(fill_counts)`, a job runner that calls what it is given) counts as called, unless the call
+connects a signal receiver (`post_migrate.connect(fill)`, which saleor uses to run its search backfills once
+`migrate` has finished, on the full schema). Imports written relative to an import root inside the repository
+(`from tasks.functions import x` for `label_studio/tasks/functions.py`) resolve by the end of the qualified name
+when the call graph has no target. The message names the helper the migration calls, the model, and the file and
+line of the use.
+
+It leaves alone:
+
+- the live model written in the migration file itself (`from shop.models import Book` and `Book.objects` in the
+  RunPython function): django-migration-linter's `RUNPYTHON_MODEL_IMPORT` reports that shape from the function's own
+  source; this rule adds what it cannot see, the helper in another module;
+- helpers that use only their parameters (`normalize_url(url)` in linkding's
+  `bookmarks/migrations/0047_populate_url_normalized_field.py`), and helpers that receive the historical model
+  (`fill(apps.get_model("shop", "Book"))`, plane's `migrate_models_filters_to_rich_filters(models_to_migrate, ...)`,
+  DefectDojo's `clean_hosts_run(apps, ...)`);
+- a model class used only for `isinstance`, a constant or its exceptions (`Book.STATUS_DONE`, `Book.DoesNotExist`),
+  and an unsaved instance (DefectDojo's `Endpoint.from_uri()` builds an `Endpoint(...)` to parse a URL);
+- a query that runs only when the caller leaves a parameter out: a call or use in an `if p is None:` body, `p` a
+  parameter of its function, is not followed when the call into that function passes `p=` by keyword (addons-server's
+  `get_review_due_date` passes `target_per_day=1` so the staggering generator skips its `Config` lookup);
+- raw SQL (DefectDojo's `dojo.vulnerability.backfill.run_backfill`), a task dispatched with `.delay()` (it runs later,
+  in a worker, on the current schema), models outside the run (`django.contrib.auth`'s `User`), helpers in test code
+  and migrations under a test directory.
+
+**Gaps:** a call the call graph cannot resolve (`getattr`, a method on an instance, a callable from a registry), a
+management command run with `call_command`, operations a factory builds at import (label-studio's
+`make_sql_migration(...)`), the global `django.apps.apps.get_model`, and related managers or instance methods reached
+from a row are not followed. A None guard passed by position, or written other than `p is None`, is not read. The
+use the message names is the first one in the helper's chain; it can be a narrow one (label-studio's
+`Organization.objects…values_list("id")`) while a wider one sits further down the same chain.
+
+**Sources:** Django documentation, "Migrations" → "Historical models", and the `RunPython` operation reference (the
+function receives `apps` with historical models); django-migration-linter's `RUNPYTHON_MODEL_IMPORT` check (the
+single-file form).
+
+**Corpus** (10 Django repositories at the commits in `MANIFEST.tsv`):
+
+CORPUS_TABLE
+
+### `django-practice-runpython-with-schema-change`
+
+Rerail's own rule, not a port. On PostgreSQL, Django runs a migration in one transaction unless the migration sets
+`atomic = False`, and its RunPython operations run inside it: `RunPython(..., atomic=False)` takes effect only in a
+non-atomic migration (`Migration.apply` wraps an operation in its own transaction only when the migration is not
+atomic). The RunPython docs warn: "on PostgreSQL, for example, you should avoid combining schema changes and RunPython
+operations in the same migration or you may hit errors like OperationalError: cannot ALTER TABLE "mytable" because it
+has pending trigger events". Zulip's schema-migration guide explains why (Django creates foreign keys `DEFERRABLE
+INITIALLY DEFERRED`, so their checks queue until commit, and PostgreSQL refuses `ALTER TABLE` while they are queued)
+and recommends splitting the migration in two; Stack Overflow 12838111 collects teams that hit it on production data
+their tests did not have.
+
+The rule reads RunPython operations of atomic migrations whose function (in the migration or imported from another
+module, and the functions of the run it calls) binds `apps.get_model("app", "Model")` (or `"app.Model"`) to a name and
+writes that model's rows through it: `.objects…update/create/bulk_create/bulk_update/delete/get_or_create/
+update_or_create`, `Model(...).save()`, or `save()`/`delete()` on rows fetched from it. It pairs each with the
+operations of the same migration that alter the same model's table (`AddField`, `AlterField`, `RemoveField`,
+`RenameField`, `AddIndex`, `RemoveIndex`, `RenameIndex`, `AddConstraint`, `RemoveConstraint`, `AlterUniqueTogether`,
+`AlterIndexTogether`, `AlterModelTable`, `RenameModel`, `DeleteModel`, and these inside a `SeparateDatabaseAndState`'s
+`database_operations`) and reports the RunPython in two cases:
+
+- **The schema change comes after the RunPython, and the RunPython queues foreign-key checks on that table**
+  (`PendingTriggerEvents`): the migration fails with "cannot ALTER TABLE … because it has pending trigger events"
+  once the table has the right data, and passes on an empty test database. PostgreSQL queues a check only for some
+  writes (it skips one whose key is unchanged), so only these count: inserting rows into a model that has a foreign
+  key (`create`, `bulk_create`, `get_or_create`, `update_or_create`, `Model(...).save()`); setting a foreign key
+  (`update(customer=…)`, `bulk_update(rows, ["customer"])`, `obj.customer_id = …` then `save()`); deleting rows that a
+  foreign key or many-to-many field points at. Foreign keys are read from the run's migrations and models. One that an
+  `AddField` earlier in the same migration added does not count: Django's PostgreSQL backend adds it with
+  `SET CONSTRAINTS … IMMEDIATE` "to allow changing data in the same transaction".
+- **The schema change comes before the RunPython** (`LockedBackfill`): the `ALTER TABLE`'s ACCESS EXCLUSIVE lock (an
+  index's SHARE lock) is held until the migration commits, so the table stays locked, for reads too, through the whole
+  backfill. Split, the schema change commits at once and the backfill holds only row locks.
+
+The message says to move the RunPython into a migration of its own (or set `atomic = False` on the migration, for the
+first case), and to leave a migration that has already been applied, which must not be edited; the second message
+also says to keep it for a small table. `atomic = False` has a cost the message does not hide: a failing operation no
+longer rolls back the ones before it.
+
+**Which writes count after the schema change (the foreign-key question).** The rule restricts the first case to
+writes that queue a foreign-key check, which is narrower than "models with a foreign key": by PostgreSQL's
+`AfterTriggerSaveEvent` (`RI_FKey_fk_upd_check_required`, `RI_FKey_pk_upd_check_required`), an update that leaves the
+key columns as they are queues nothing, and that is what most backfills are (`Model.objects.update(flag=True)`,
+`bulk_update(rows, ["sort_order"])`). Without the restriction, the 6 smaller repositories and DefectDojo gave 12
+after-order RunPythons, and 11 of them queue no check that a later operation could trip on: updates of other columns
+(paperless `0007_optimize_integer_field_sizes.py`, plane `0035_auto_20230704_2225.py`, DefectDojo
+`0104_endpoint_userinfo_creation.py`), keys that the same migration's `AddField` had just added, which Django makes
+immediate (plane `0069_alter_account_provider_and_more.py`, InvenTree `part/0145_auto_20251203_1238.py`), a key the
+later `AlterField` changes itself (DefectDojo `0120_sonarqube_test_and_clean.py`: Django runs `SET CONSTRAINTS <it>
+IMMEDIATE` before dropping it, which also counts as not queued), or a squashed migration. The one left is real:
+DefectDojo `0263_language_type_unique_language.py` reassigns `Languages` to the kept `Language_Type` rows, deletes the
+duplicates (rows a foreign key points at, so PostgreSQL queues a check for each) and then makes
+`Language_Type.language` unique in the same transaction: on a database with duplicates it fails with the
+pending-trigger error; on a clean one, and in tests, it passes. Whether a deleted row can be pointed at is read from
+the foreign keys the app's migrations had added by then.
+
+**Left alone:** migrations with `atomic = False`; squashed migrations (`replaces`), which run only on databases that
+applied none of the migrations they replace; a run that configures MySQL (`django.db.backends.mysql`, a `mysql://`
+URL) and names no PostgreSQL database, since MySQL commits each DDL statement and Django runs no migration in one
+transaction there (addons-server); a model the same migration creates (its table is new, and Django adds its foreign
+keys at the end of the migration); before the RunPython, a model the project's code (outside migrations and tests)
+reads as one row, `Model.objects.get()`, `Model.objects.first()`, `Model.objects.all().first()` or django-solo's
+`Model.get_solo()`, a settings table whose lock costs nothing (DefectDojo's `System_Settings`, paperless's
+`ApplicationConfiguration`); RunPython code that only reads the model, or writes another model than
+the one altered; after the RunPython, writes that queue no check; an `AlterField` that changes only what Django keeps
+out of the database (`choices`, `help_text`, `verbose_name`, `blank`, `default`, `validators`, `related_name`,
+`on_delete`, ...), judged against the field's nearest earlier definition in the app's migrations (a dependency on a
+migration that a squashed migration replaces is followed into it); `RunPython.noop` and reverse code; `RunSQL`;
+`state_operations`; migrations in test directories. django-migration-linter has no such check; Squawk reads SQL,
+which a RunPython has none of.
+
+**Gaps:** a model is matched by its lowercased name, not its app label; a model name held in a variable
+(`apps.get_model("app", name)` in a loop), a model passed to a helper, writes through related managers
+(`order.tags.add()`) or raw SQL, and helpers more than one call deep are not followed. Foreign keys and their targets
+are matched by model name across the run, so another app's same-named model counts. An `AlterField` whose earlier
+definition is not in the run (another app's migrations, a deleted history) counts as a change. The rule cannot see a
+table's size, so a backfill of a small table under the lock is reported too (hence log mode).
+
+**Corpus** (BRIEF corpus, commits from `MANIFEST.tsv`; every match read). "Real" means the hazard holds and matters
+at production size: a lock held through a backfill of a table that grows with use (orders, issues, documents, log
+entries), or a pending-trigger failure. A backfill of a small admin table (teams, menus, plugin configurations,
+warehouses) is counted as not real, though the lock does happen. Large repositories were run on their migrations,
+models, settings, the modules the migrations import and the files that read a model as one row (full runs did not get
+a slot in time). pretix and DefectDojo also ran whole, on an earlier revision: the same RunPythons, apart from
+DefectDojo `0120_…`, which a later refinement drops.
+
+| Repository | Commit | Matches (RunPythons) | Real | Notes |
+|---|---|--:|--:|---|
+| sissbruecker/linkding | 27b7303 | 1 | 1 | `bookmarks/migrations/0044_bookmark_latest_snapshot.py`: every bookmark updated under the AddField's lock |
+| healthchecks/healthchecks | c1039ad | 0 | – | keeps every data migration in a file of its own (`hc/api/migrations/0117_fill_badge_key.py`), the fix this rule asks for |
+| paperless-ngx/paperless-ngx | faa6f09 | 1 | 1 | `documents/migrations/0016_sha256_checksums.py` reads every original file to recompute checksums with `documents_document` locked |
+| HumanSignal/label-studio | 2f42cae | 0 | – | its combined migration is a squash on new tables |
+| makeplane/plane | 723bb17 | 18 | 16 | `0045_…`: every `issueactivity` row rewritten after AddField; `0041_…`: all users, cycles, modules; not real: `0063_…` (a few `state` rows), `0067_…` `last_used_estimate` (estimates) |
+| inventree/InvenTree | 939df60 | 4 | 2 | `audit/0002_actor_username.py`, `part/0149_bomitem_raw_amount.py` real; `part/0145_…`, `users/0017_…` small tables |
+| pretix/pretix | 40ea909 | 23 (29 findings) | 16 | `0093_…` every order position, `0252_logentry_organizer.py` every log entry, `0285_voucher_created.py`; not real: 5 `team`, `eventmetaproperty`, pretixdroid and sendmail configuration tables |
+| mozilla/addons-server | 7e3374f | 0 | – | MySQL (`mysql://` in `settings_base.py`): 17 matches before the MySQL check, silent by design |
+| DefectDojo/django-DefectDojo | cd0a448 | 5 | 4 | `0263_language_type_unique_language.py` (pending-trigger failure); `0286_cicd_infrastructure.py`, `0291_dojometa_location_product.py`; not real: `0272_…` (tool configurations) |
+| saleor/saleor | e1ccf4d | 30 (32 findings) | 18 | order, order line, order event, product, variant and checkout backfills; not real: menus, pages, warehouses, plugin configurations, site settings, product types, attributes |
+| **Total** | | **82** | **58 (71%)** | after-order: 1 of 1 real; before-order: 57 of 81 |
+
+Precision is 71% of the read matches, all of them the hazard the rule names, and the misses are small tables the rule
+cannot tell apart; hence log mode.
+
+### `django-practice-settings-env-fails-open`
+
+Rerail's own rule, not a port. It reports a module-level assignment in a Django settings module that reads `DEBUG`,
+`ALLOWED_HOSTS` or `SECRET_KEY` from the environment with a fallback that is insecure when the variable is unset:
+`DEBUG` true, `"*"` in `ALLOWED_HOSTS`, or a literal (non-empty) `SECRET_KEY`. One deploy that forgets the variable
+then runs with debug pages that show settings and source code, accepts any Host header (password-reset links can be
+poisoned), or signs sessions, cookies and reset tokens with a key anyone can read in the repository (CWE-1188,
+initialization with an insecure default).
+
+An env read is a call of `os.environ.get` or `os.getenv`, of a django-environ `Env`/`FileAwareEnv` instance (`env(...)`,
+`env.bool`, `env.str`, `env.int`, `env.list`, `env.tuple`; the instance may be built in another module), of
+python-decouple's `config`, or of a def of the run whose body reads `os.environ`/`os.getenv`, directly or through the
+defs it calls (resolved by name across files: healthchecks' `envbool`/`envsecret`, saleor's `get_bool_from_env`,
+label-studio's `get_bool_env` → `get_env` and `get_env_list`, InvenTree's `get_setting`). Its fallback is the
+default argument (`default=`, the second positional of `os.environ.get`/`os.getenv`/`config`/`env.bool`, the third
+of `env(...)`/`env.list`); for a helper, the argument given for a parameter named like `default`/`fallback`, or one
+the helper returns or passes on as an env read's default, and the parameter's own default when the call passes
+none; for `env("X")` without a default, the `X=(type, default)` of the `Env(...)` schema; for
+`os.getenv("X") or "literal"`, the literal. DEBUG is true when the fallback is `True`, a nonzero integer or a
+true-looking string, also through `int()`, `bool()`, `strtobool`-style wrappers, `.lower()`, and comparisons that
+hold for the fallback's text (`os.environ.get("DEBUG", "True") == "True"`, `.lower() in ("true", "1")`,
+`int(os.environ.get("DEBUG", 1)) == 1`). ALLOWED_HOSTS is open when a read anywhere in its value falls back to `"*"`
+(alone or in a comma-separated string) or to a list holding `"*"`.
+
+Settings modules are files named `settings.py`, files under a `settings/` package, and modules that assign two or more
+of `DEBUG`, `ALLOWED_HOSTS`, `SECRET_KEY`, `DATABASES`, `INSTALLED_APPS`, `MIDDLEWARE` at module level, in a run that
+imports Django.
+
+It leaves alone: safe fallbacks (`False`, `"False"`, `"0"`, `"no"`, `[]`, `"localhost,127.0.0.1"`), reads without a
+fallback and `os.environ["SECRET_KEY"]`, an empty `SECRET_KEY` fallback (Django refuses an empty key), random fallbacks
+(`os.environ.get("SECRET_KEY") or get_random_secret_key()`, saleor's `if not SECRET_KEY and DEBUG: SECRET_KEY =
+get_random_secret_key()`); test code and development modules (`dev.py`, `local.py`, `test.py`, `ci.py`,
+`settings_test.py`, `unittests.py`, `dev/`, `local/`, `testutils/` packages); an assignment under an `if` that tests
+`DEBUG`; a setting the same module tests in a module-level `if` that raises (`if SECRET_KEY == "change-me": raise
+ImproperlyConfigured`); other settings (`TEMPLATE_DEBUG`, `SITE_DEBUG`, `CSRF_TRUSTED_ORIGINS`); config-file reads
+(pretix's `config.getboolean('django', 'debug', fallback=...)`); and a literal `SECRET_KEY = "..."`, which Bandit S105
+reports. It also leaves a base module's setting alone when every non-development module that star-imports the base
+(`from .base import *`, matched by path) assigns that setting again: the deployed settings module is the importing
+one, and its own read decides the value. label-studio's `core/settings/base.py` has `DEBUG = get_bool_env('DEBUG',
+True)`, and `core/settings/label_studio.py`, the module `manage.py` and `server.py` load, sets `DEBUG =
+get_bool_env('DEBUG', False)`, so a deploy without the variable runs with DEBUG off; reporting base.py's line would ask
+for a change that changes nothing a deploy runs. Its `ALLOWED_HOSTS` default `['*']` is not overridden and is
+reported.
+
+Existing checks do not cover it: `manage.py check --deploy` (security.W018, W009, W020) judges only the value in the
+environment where it runs, and never reports `'*'`; Ruff PLW1508 flags only a non-str `os.getenv` default; Bandit
+S105/B105 only a literal `SECRET_KEY = "..."`. The rule's value is the fallback the code would use, read through the
+project's own helpers in other modules.
+
+**Gaps:** a fallback chosen by a branch on the variable (linkding's `prod.py`: `if host_name: ALLOWED_HOSTS =
+[host_name] else: ALLOWED_HOSTS = ["*"]`); a fallback held in a variable or a constant of another module; an override
+in a module that imports the base by name or two star-imports deep; helpers reached only through a method or a call
+the name lookup cannot resolve; `DEBUG = os.getenv("DEBUG", "False")` used without conversion (the string is truthy,
+Ruff's PLW1508 family).
+
+**Sources:** Django settings docs ("Never deploy a site into production with DEBUG turned on"; ALLOWED_HOSTS and Host
+header validation; SECRET_KEY), Django deployment checklist, CWE-1188.
+
+**Corpus** (10 Django repositories at the commits in `MANIFEST.tsv`): 6 matches, 6 real (100%).
+
+| Repository (commit) | Matches | Real |
+|---|--:|--:|
+| sissbruecker/linkding (27b7303) | 0 | 0 |
+| healthchecks/healthchecks (c1039ad) | 2 | 2 |
+| paperless-ngx/paperless-ngx (faa6f09) | 0 | 0 |
+| HumanSignal/label-studio (2f42cae) | 1 | 1 |
+| makeplane/plane (723bb17) | 1 | 1 |
+| inventree/InvenTree (939df60) | 0 | 0 |
+| pretix/pretix (40ea909) | 0 | 0 |
+| mozilla/addons-server (7e3374f) | 1 | 1 |
+| DefectDojo/django-DefectDojo (cd0a448) | 0 | 0 |
+| saleor/saleor (e1ccf4d) | 1 | 1 |
+
+The matches: healthchecks `hc/settings.py` `SECRET_KEY = envsecret("SECRET_KEY", "---")` (the docker `.env.example`
+ships the same `---`) and `DEBUG = envbool("DEBUG", "True")`; label-studio `label_studio/core/settings/base.py`
+`ALLOWED_HOSTS = get_env_list('ALLOWED_HOSTS', default=['*'])`; plane `apps/api/plane/settings/common.py`
+`ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")` (its `production.py` star-imports it and does not
+set ALLOWED_HOSTS); addons-server `src/olympia/lib/settings_base.py` `SECRET_KEY = env('SECRET_KEY',
+default='this-is-a-dummy-key-and-its-overridden-for-prod-servers')` (no module overrides it or checks for it);
+saleor `saleor/settings.py` `DEBUG = get_bool_from_env("DEBUG", True)`. Silent, as intended: label-studio's base.py
+DEBUG (overridden), paperless (no SECRET_KEY default, a raising check, `PAPERLESS_DEBUG` falls back to `"NO"`),
+InvenTree (`get_boolean_setting('INVENTREE_DEBUG', 'debug', False)`, ALLOWED_HOSTS `default_value=[]`), DefectDojo
+(`Env` schema `DD_DEBUG=(bool, False)`, `DD_SECRET_KEY=(str, "")`, hosts `["localhost", "127.0.0.1"]`), pretix
+(config-file reads), plane's `local.py` (development) and its `DEBUG = int(os.environ.get("DEBUG", "0"))`.

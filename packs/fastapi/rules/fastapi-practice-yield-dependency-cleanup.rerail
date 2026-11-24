@@ -1,0 +1,146 @@
+.policy "fastapi-practice-yield-dependency-cleanup" revision 1
+.description "Release a FastAPI yield dependency's resources in a finally block around the yield, and re-raise in its except handlers, so a failing request neither leaks a connection nor loses its error."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. FastAPI (since 0.110, and as plain generator semantics have it) throws the route's
+// exception into a dependency that yields, at its `yield`. Code after the `yield` that no `finally` (or `with`)
+// covers then never runs, so every failing request leaks what that code would have released; repeated errors
+// exhaust the pool ("QueuePool limit of size 5 overflow 10 reached"). An `except` around the `yield` that does not
+// re-raise hides the error: the client gets a 500 and the server logs nothing. The rule reads generators that
+// lib/fastapi's fa_yield_dep calls dependencies (some `Depends(...)` of the run names them, in any module: the
+// generator in db.py, the `Depends` in deps.py or a route), outside test code, and reports in the generator's own
+// frame:
+//   - UnprotectedCleanup: a call to `close`, `aclose`, `release`, `remove`, `dispose`, `shutdown`, `disconnect`,
+//     `terminate`, `cleanup`, `unlink` or `rollback` (awaited or not) after the `yield`, unless the `yield` sits in a
+//     `with`/`async with` block, the call is in the `finally` of a `try` whose body holds the `yield`, the call is in
+//     an `except` handler (it runs on the error path; SwallowedError judges the handler), or the call is in the body
+//     of a `try` around the `yield` whose `finally` or `except` also releases something.
+//   - SwallowedError: an `except` clause of a `try` whose body holds the `yield`, catching `Exception`,
+//     `BaseException`, everything (bare `except:`), or a database or HTTP error class (`SQLAlchemyError`,
+//     `DBAPIError`, `DatabaseError`, `OperationalError`, `IntegrityError`, `HTTPException`, or anything from
+//     `sqlalchemy.exc`), alone or in a tuple, whose handler can finish without raising: its last statement is not a
+//     `raise`, or is an `if` without `else` or with a branch that can finish (lib/django's py_reraising_handler).
+//   db.py:    def get_db(): db = SessionLocal(); yield db; db.close()              reported at db.close()
+//   db.py:    try: yield db  except Exception: db.rollback()                      reported at the except
+//   deps.py:  SessionDep = Annotated[Session, Depends(get_db)]                     makes get_db a dependency
+// Left alone: `try: yield db finally: db.close()`; `with SessionLocal() as db: yield db` and `async with`; `try: yield
+// db; db.commit() except: db.rollback(); raise finally: db.close()`; `commit()` after the yield (an error skips it on
+// purpose; moving it into `finally` would commit failed requests); handlers that re-raise or raise a new exception on
+// every path; handlers for other classes (`except KeyboardInterrupt`); statements after the yield that release
+// nothing (logging, metrics); generators no `Depends` names (`@contextmanager` helpers, pytest fixtures); test files.
+// Gaps: cleanup in a helper the generator calls after the yield (`close_all(db)`) is not seen; a `with` around the
+// yield silences every call after it, even one on another resource; a handler that ends in a call which always
+// raises (`abort(500)`) counts as finishing; an `except ValueError:` that swallows around the yield is not reported.
+
+#include "lib/fastapi.rerail"
+
+.violation UnprotectedCleanup(at: node, what: symbol, fx: symbol)
+    "`{what}` after the `yield` in dependency `{fx}` is skipped when the route raises, leaking what it releases; move it into `finally:` around the `yield`, or use `with ... as x: yield x`."
+UnprotectedCleanup(c, what, fx) :- yd_cleanup(c, g, _), yd_yield(g, y), earlier(y, c), !yd_protected(c, y),
+    def_name(g, fx), field(c, "function", fn), text(fn, ft), what = cat(ft, "()").
+.violation SwallowedError(at: node, fx: symbol)
+    "This `except` around the `yield` in dependency `{fx}` can finish without raising, so the route's error is lost and the client gets a 500 with no log; end the handler with `raise`."
+SwallowedError(x, fx) :- yd_yield(g, y), yd_try_around(t, y), child(t, x, _), kind(x, "except_clause"), yd_catches(x),
+    !yd_reraising(x), def_name(g, fx).
+
+// ---- dependencies ------------------------------------------------------------------------------------------------
+// yd_dep(g): a generator FastAPI runs as a dependency, outside test code. yd_yield(g, y): a yield in its own frame.
+.decl yd_dep(g: node)
+yd_dep(g) :- fa_yield_dep(g), docof(g, d), !fa_test_doc(d).
+.decl yd_yield(g: node, y: node)
+yd_yield(g, y) :- yd_dep(g), kind(y, "yield"), def_frame(y, g).
+
+// ---- cleanup -----------------------------------------------------------------------------------------------------
+// yd_release(m): methods that release or reset a resource. `commit` is not one: skipping it on an error is right.
+.decl yd_release(m: symbol)
+yd_release("close"). yd_release("aclose"). yd_release("release"). yd_release("remove"). yd_release("dispose").
+yd_release("shutdown"). yd_release("disconnect"). yd_release("terminate"). yd_release("cleanup").
+yd_release("unlink"). yd_release("rollback").
+// yd_cleanup(c, g, m): call c of method or function m releases something, in dependency g's own frame.
+.decl yd_cleanup(c: node, g: node, m: symbol)
+yd_cleanup(c, g, m) :- yd_dep(g), kind(c, "call"), def_frame(c, g), call_name(c, m), yd_release(m).
+// yd_try_around(t, y): y is in the body of try statement t (not its handlers, else or finally).
+.decl yd_try_around(t: node, y: node)
+yd_try_around(t, y) :- yd_yield(_, y), kind(t, "try_statement"), field(t, "body", b), within(y, b).
+// yd_releases(k): clause k (a finally or an except) holds a release, or a commit.
+.decl yd_releases(k: node)
+yd_releases(k) :- (kind(k, "finally_clause") ; kind(k, "except_clause")), within(c, k), kind(c, "call"),
+    call_name(c, m), (yd_release(m) ; m = "commit").
+// yd_protected(c, y): the error thrown in at y still reaches cleanup c, or a context manager does the cleanup.
+.decl yd_protected(c: node, y: node)
+yd_protected(c, y) :- yd_cleanup(c, g, _), yd_yield(g, y), kind(w, "with_statement"), def_frame(w, g), within(y, w).
+yd_protected(c, y) :- yd_cleanup(c, g, _), yd_yield(g, y), kind(x, "except_clause"), def_frame(x, g), within(c, x).
+yd_protected(c, y) :- yd_cleanup(c, _, _), yd_try_around(t, y), child(t, k, _), kind(k, "finally_clause"),
+    within(c, k).
+yd_protected(c, y) :- yd_cleanup(c, _, _), yd_try_around(t, y), field(t, "body", b), within(c, b), child(t, k, _),
+    yd_releases(k).
+
+// ---- handlers ----------------------------------------------------------------------------------------------------
+// yd_exc_val(x, t): the class expression except clause x names, `as e` and parentheses off.
+.decl yd_exc_val(x: node, t: node)
+yd_exc_val(x, v) :- kind(x, "except_clause"), field(x, "value", v0), unparen(v0, v), !kind(v, "as_pattern").
+yd_exc_val(x, t) :- kind(x, "except_clause"), field(x, "value", v0), unparen(v0, v), kind(v, "as_pattern"),
+    child(v, t0, 0), unparen(t0, t).
+// yd_exc_type(x, e): x handles class expression e: `except (A, B)` gives A and B.
+.decl yd_exc_type(x: node, e: node)
+yd_exc_type(x, e) :- yd_exc_val(x, t), kind(t, "tuple"), child(t, e0, _), !kind(e0, "comment"), unparen(e0, e).
+yd_exc_type(x, t) :- yd_exc_val(x, t), !kind(t, "tuple").
+// yd_broad_name(x): classes whose handler around a dependency's yield catches the route's errors.
+.decl yd_broad_name(x: symbol)
+yd_broad_name("Exception"). yd_broad_name("BaseException"). yd_broad_name("SQLAlchemyError").
+yd_broad_name("DBAPIError"). yd_broad_name("DatabaseError"). yd_broad_name("OperationalError").
+yd_broad_name("IntegrityError"). yd_broad_name("HTTPException").
+// yd_catches(x): x is a bare `except:`, or names such a class (by its last name, or anything from sqlalchemy.exc).
+.decl yd_catches(x: node)
+yd_catches(x) :- kind(x, "except_clause"), !field(x, "value", _).
+yd_catches(x) :- yd_exc_type(x, e), leaf_name(e, n), yd_broad_name(n).
+yd_catches(x) :- yd_exc_type(x, e), sym_of(e, q), prefix("sqlalchemy.exc.", q).
+
+// yd_reraising(x): every path through except clause x's handler ends in `raise` (lib/django's py_reraising_handler,
+// copied). A path is followed through the handler's last statement: a `raise`, or an if/elif/else (with an else)
+// all of whose branches end so; a raise inside a nested try, with or match counts as not raising.
+.decl yd_reraising(x: node)
+yd_reraising(x) :- kind(x, "except_clause"), child(x, hb, _), kind(hb, "block"), !yd_may_end(hb).
+.decl yd_raise_block(b: node)
+yd_raise_block(b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
+yd_raise_block(b) :- yd_raise_block(p), body_len(p, k), j = k - 1, body_stmt(p, s, j), kind(s, "if_statement"),
+    yd_if_branch(s, b).
+.decl yd_if_branch(s: node, b: node)
+yd_if_branch(s, b) :- kind(s, "if_statement"), field(s, "consequence", b).
+yd_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "elif_clause"),
+    field(e, "consequence", b).
+yd_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause"), field(e, "body", b).
+.decl yd_has_else(s: node)
+yd_has_else(s) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause").
+.decl yd_may_end(b: node)
+yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), !kind(s, "raise_statement"),
+    !kind(s, "if_statement").
+yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), kind(s, "if_statement"),
+    !yd_has_else(s).
+yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), yd_if_branch(s, cb), yd_may_end(cb).
+
+// The cases, `cases/fastapi-practice-yield-dependency-cleanup/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/__init__.py"
+    .fixture "app/db.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/db.py"
+    .fixture "app/deps.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/deps.py"
+    .fixture "app/fixtures.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/fixtures.py"
+    .fixture "app/routes.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/routes.py"
+    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/tests/test_routes.py"
+    .expect _ at "app/db.py":29
+    .expect _ at "app/db.py":36
+    .expect _ at "app/db.py":44
+    .expect _ at "app/db.py":55
+    .expect _ at "app/db.py":63
+    .expect _ at "app/db.py":76
+    .expect _ at "app/db.py":86
+    .expect _ at "app/db.py":94
+    .expect _ at "app/db.py":105
+    .expect _ at "app/db.py":116
+    .expect _ at "app/db.py":125
+    .expect _ at "app/db.py":136
+    .expect _ at "app/routes.py":18
+.end

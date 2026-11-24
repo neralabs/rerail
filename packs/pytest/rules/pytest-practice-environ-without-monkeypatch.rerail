@@ -1,0 +1,184 @@
+.policy "pytest-practice-environ-without-monkeypatch" revision 1
+.description "Do not change os.environ directly in test code; use monkeypatch.setenv/delenv or mock.patch.dict(os.environ), which put it back."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. The process environment is global: a variable a test sets or removes on os.environ
+// stays changed for every test after it, and for the subprocesses they start, so results depend on test order
+// (pytest docs, "Flaky tests"). pytest's `monkeypatch.setenv`/`delenv` and unittest.mock's `patch.dict(os.environ)`
+// undo their changes when the test ends (pytest docs, "How to monkeypatch/mock modules and environments": "All
+// modifications will be undone after the requesting test function or fixture has finished").
+//
+// It matches, in test code (pt_test_doc: the defs of tests, fixtures, set-up hooks and helpers), a change to os.environ
+// (pt_environ, through imports): an assignment, augmented assignment or `del` of `os.environ[k]`, a call of its update,
+// pop, setdefault, clear, popitem, __setitem__ or __delitem__, and os.putenv / os.unsetenv. One function reports each
+// variable once, at its first change: a restore by hand at the end of the test is not reported again (the first change
+// is: a failing assert skips that restore).
+//   def test_x(): os.environ["K"] = "v"                       reported
+//   def test_x(): os.environ.pop("K", None)                   reported: the variable is gone for later tests too
+//   @pytest.fixture def keys(): os.environ.update({"A": "1"}) reported
+//   old = os.environ.get("K"); os.environ["K"] = "v"; ...; os.environ["K"] = old
+//                                                             reported at the first write
+// Left alone:
+//   test_mod.py, module level: os.environ["K"] = "v"          module-level code (of any module, conftest.py or not)
+//                                                             runs when pytest imports it, before the first test, so
+//                                                             every test of the run sees one value: the "configure
+//                                                             before importing the app" idiom, not a leak between tests
+//   def test_x(monkeypatch): monkeypatch.setenv("K", "v")     the fix
+//   with mock.patch.dict(os.environ, {...}): os.environ["X"] = "1"
+//                                                             patch.dict restores the whole mapping (also as a
+//                                                             decorator of the def or its class, mocker.patch.dict, a
+//                                                             patcher started in the class's set-up hook)
+//   os.environ["K"] = "v"; try: ... finally: del os.environ["K"]
+//                                                             undone for the same variable (pt_undo): in a finally,
+//                                                             after a fixture's yield, in a teardown
+//                                                             hook of the class or module, or by an addCleanup /
+//                                                             addfinalizer callback (`addCleanup(os.environ.pop, "K")`
+//                                                             included); a restore of the whole environment
+//                                                             (`os.environ.clear(); os.environ.update(saved)`) undoes
+//                                                             every variable
+//   def pytest_configure(): os.environ["K"] = "v"             session-wide set-up in a pytest hook, in a helper only
+//                                                             hooks call, and in a session-scoped autouse fixture
+//                                                             (`@pytest.fixture(autouse=True, scope="session")`)
+//   environ = {"PATH_INFO": "/"}; environ["X"] = "1"          a WSGI environ, request.environ, os.environ.copy()
+//   os.environ = {}                                           rebinding: Ruff's B003
+//   shop/wsgi.py: os.environ.setdefault(...)                  not test code
+// Gaps: a restore in a base class's tearDown, in a fixture the test requests, or in a helper the undo code calls is not
+// seen; an alias (`env = os.environ; env["K"] = "v"`) is not followed; a session-scoped autouse fixture in a
+// sub-directory's conftest.py is left alone, though tests outside that directory that run after it see its value. A
+// context manager helper that restores after its yield without a finally is reported (an exception in the with body
+// skips the restore).
+
+#include "lib/pytest.rerail"
+
+.violation EnvironWithoutMonkeypatch(at: node, name: symbol) "This test code changes the process environment (`{name}`) and nothing puts it back after the test: the change leaks into later tests and the subprocesses they start. Use `monkeypatch.setenv`/`monkeypatch.delenv` (`pytest.MonkeyPatch.context()` in a module- or session-scoped fixture) or `mock.patch.dict(os.environ, values)`. Leave it only if a finally, teardown or helper this rule cannot see restores it."
+EnvironWithoutMonkeypatch(n, x) :- env_hit(n, k, u), !env_later(n, k, u), env_label(n, x).
+
+// env_target(a): a names os.environ: the object itself, or the string "os.environ" a patch.dict target gives.
+.decl env_target(a: node)
+env_target(a) :- pt_environ(a).
+env_target(a) :- str(a, "os.environ").
+
+// env_write(n, k): n changes os.environ for variable k: the string's contents for a literal key, "expr:<text>" for a
+// computed one, "*" for a change to every variable or to keys it cannot read (clear, popitem, update from a mapping).
+.decl env_write(n: node, k: symbol)
+env_write(t, k) :- kind(t, "subscript"), field(t, "value", o), pt_environ(o), pt_store(t), field(t, "subscript", s),
+    env_key(s, k).
+env_write(c, k) :- env_method(c, m, _), (m = "pop" ; m = "setdefault" ; m = "__setitem__" ; m = "__delitem__"),
+    posarg(c, 0, a), env_key(a, k).
+env_write(c, "*") :- env_method(c, m, _), (m = "clear" ; m = "popitem").
+env_write(c, k) :- env_method(c, "update", _), posarg(c, 0, d0), unparen(d0, d), kind(d, "dictionary"), child(d, p, _),
+    kind(p, "pair"), field(p, "key", a), env_key(a, k).
+env_write(c, "*") :- env_method(c, "update", _), posarg(c, 0, d0), unparen(d0, d), !kind(d, "dictionary").
+env_write(c, "*") :- env_method(c, "update", _), posarg(c, 0, d0), unparen(d0, d), kind(d, "dictionary"), child(d, s, _),
+    kind(s, "dictionary_splat").
+env_write(c, "*") :- env_method(c, "update", al), child(al, s, _), kind(s, "dictionary_splat").
+env_write(c, k) :- env_method(c, "update", _), call_arg(c, -1, k, _).
+env_write(c, k) :- kind(c, "call"), field(c, "function", f), env_os_fn(f), posarg(c, 0, a), env_key(a, k).
+.decl env_os_fn(f: node)
+env_os_fn(f) :- sym_of(f, "os.putenv").
+env_os_fn(f) :- sym_of(f, "os.unsetenv").
+// env_method(c, m, al): c calls method m of os.environ, with argument list al.
+.decl env_method(c: node, m: symbol, al: node)
+env_method(c, m, al) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_environ(o),
+    field(c, "arguments", al).
+.decl env_key(a: node, k: symbol)
+env_key(a, k) :- str(a, k).
+env_key(a, k) :- !str(a, _), text(a, t), k = cat("expr:", t).
+// env_label(n, x): what the message names: `os.environ["K"]` for an item, `os.environ.pop` for a call.
+.decl env_label(n: node, x: symbol)
+env_label(n, x) :- env_write(n, _), kind(n, "subscript"), text(n, x).
+env_label(n, x) :- env_write(n, _), kind(n, "call"), field(n, "function", f), text(f, x).
+
+// env_session(n): n is session-wide set-up: the library's pt_session_code (inside a pytest hook, in a session-scoped
+// autouse fixture), or in a helper that only pytest hooks call (python/calls).
+pt_session_ask(n) :- env_write(n, _).
+.decl env_session(n: node)
+env_session(n) :- pt_session_code(n).
+env_session(n) :- env_write(n, _), def_frame(n, g), !pt_test_code(g, _), calls(h, g), pt_hook(h),
+    !env_other_caller(g).
+// env_other_caller(g): a def other than a pytest hook calls g, the def of a write.
+.decl env_other_caller(g: node)
+env_other_caller(g) :- env_write(n, _), def_frame(n, g), calls(h, g), !pt_hook(h).
+
+// env_unit(n, u): the def n runs in (lambdas transparent). Module-level code has none: it runs once at import, before
+// the first test, so every test of the run sees the same value.
+.decl env_unit(n: node, u: node)
+env_unit(n, f) :- env_write(n, _), def_frame(n, f).
+
+// env_cand(n, k, u): a change of k in a def of test code, outside session set-up and patch.dict.
+.decl env_cand(n: node, k: symbol, u: node)
+env_cand(n, k, u) :- env_write(n, k), docof(n, d), pt_test_doc(d), !env_session(n), !env_patched(n), env_unit(n, u).
+
+// env_patch_dict(e): e is `patch.dict(os.environ, ...)` (also `mocker.patch.dict`, a "os.environ" string target).
+.decl env_patch_dict(e: node)
+env_patch_dict(e) :- pt_patch(e, "dict"), posarg(e, 0, a), env_target(a).
+env_patch_dict(e) :- pt_patch(e, "dict"), call_arg(e, -1, "in_dict", a), env_target(a).
+// env_patched(n): a patch.dict of os.environ is active where n runs, and puts the mapping back when it ends: a
+// with-item around n, a decorator of a def or class around n, a call in n's own def (mocker.patch.dict, a started
+// patcher), or a call in a set-up hook of the class of n's def.
+.decl env_patched(n: node)
+env_patched(n) :- env_write(n, _), kind(wi, "with_item"), field(wi, "value", v),
+    (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)), env_patch_dict(e),
+    nearest(wi, ws, "with_statement"), field(ws, "body", b), within(n, b).
+env_patched(n) :- env_write(n, _), within(n, g), (kind(g, "function_definition") ; kind(g, "class_definition")),
+    decorator(g, e0), unparen(e0, e), env_patch_dict(e).
+env_patched(n) :- env_write(n, _), def_frame(n, u), env_patch_dict(e), def_frame(e, u).
+env_patched(n) :- env_write(n, _), def_frame(n, u), pt_class_of(u, c), pt_setup_hook(h), pt_class_of(h, c),
+    env_patch_dict(e), def_frame(e, h).
+
+// Undo code is the library's pt_undo, asked for every change: after a fixture's yield, in a finally, in a teardown
+// hook of the class or module, in an addCleanup / addfinalizer callback.
+pt_undo_ask(m) :- env_write(m, _).
+// env_restores(u, k): u's undo code changes k ("*": every variable), u registers a cleanup that does
+// (`addCleanup(os.environ.pop, "K")`, `addCleanup(os.environ.update, saved)`), or u hands k to monkeypatch, whose
+// undo puts back the value k had before the test.
+.decl env_restores(u: node, k: symbol)
+env_restores(u, k) :- env_write(m, k), pt_undo(m, u).
+env_restores(u, k) :- pt_cleanup_call(c, u), posarg(c, 0, f), attr_of(f, o, m), pt_environ(o),
+    (m = "pop" ; m = "__delitem__" ; m = "__setitem__" ; m = "setdefault"), posarg(c, 1, a), env_key(a, k).
+env_restores(u, "*") :- pt_cleanup_call(c, u), posarg(c, 0, f), attr_of(f, o, m), pt_environ(o),
+    (m = "update" ; m = "clear").
+env_restores(u, k) :- pt_cleanup_call(c, u), posarg(c, 0, f), env_os_fn(f), posarg(c, 1, a), env_key(a, k).
+env_restores(u, k) :- pt_mp_call(c, m), (m = "setenv" ; m = "delenv"), def_frame(c, u), posarg(c, 0, a), env_key(a, k).
+env_restores(u, k) :- pt_mp_call(c, m), (m = "setitem" ; m = "delitem"), def_frame(c, u), posarg(c, 0, o),
+    pt_environ(o), posarg(c, 1, a), env_key(a, k).
+
+// env_hit(n, k, u): a change of k in u that is not itself undo code and that nothing undoes; env_later(n, k, u):
+// another one of k comes before it.
+.decl env_hit(n: node, k: symbol, u: node)
+env_hit(n, k, u) :- env_cand(n, k, u), !pt_undo(n, _), !env_restores(u, k), !env_restores(u, "*").
+.decl env_later(n: node, k: symbol, u: node)
+env_later(n, k, u) :- env_hit(n, k, u), env_hit(m, k, u), earlier(m, n).
+
+// The cases, `cases/pytest-practice-environ-without-monkeypatch/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "conftest.py" from "../cases/pytest-practice-environ-without-monkeypatch/conftest.py"
+    .fixture "shop/__init__.py" from "../cases/pytest-practice-environ-without-monkeypatch/shop/__init__.py"
+    .fixture "shop/wsgi.py" from "../cases/pytest-practice-environ-without-monkeypatch/shop/wsgi.py"
+    .fixture "tests/__init__.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/__init__.py"
+    .fixture "tests/helpers.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/helpers.py"
+    .fixture "tests/test_env.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/test_env.py"
+    .fixture "tests/unit/__init__.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/unit/__init__.py"
+    .fixture "tests/unit/test_case.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/unit/test_case.py"
+    .expect _ at "conftest.py":22
+    .expect _ at "conftest.py":27
+    .expect _ at "conftest.py":54
+    .expect _ at "conftest.py":93
+    .expect _ at "tests/helpers.py":12
+    .expect _ at "tests/test_env.py":14
+    .expect _ at "tests/test_env.py":19
+    .expect _ at "tests/test_env.py":23
+    .expect _ at "tests/test_env.py":27
+    .expect _ at "tests/test_env.py":31
+    .expect _ at "tests/test_env.py":32
+    .expect _ at "tests/test_env.py":33
+    .expect _ at "tests/test_env.py":37
+    .expect _ at "tests/test_env.py":41
+    .expect _ at "tests/test_env.py":42
+    .expect _ at "tests/test_env.py":48
+    .expect _ at "tests/test_env.py":76
+    .expect _ at "tests/unit/test_case.py":20
+    .expect _ at "tests/unit/test_case.py":23
+.end

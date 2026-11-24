@@ -1,0 +1,235 @@
+.policy "python-security-code-injection" revision 1
+.description "Never let client request data reach eval/exec, import_module, pickle-style or unsafe YAML deserializers, or a template's source; parse it as data instead."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. It reports a call that turns client request data into code the server runs, when
+// the value comes from a request in the same function or through the project's helpers across files (lib/security's
+// sec_tainted: Django/DRF request attributes, uploaded file content, Flask's request, Starlette's request, FastAPI
+// and Flask route parameters). Three sink families, a message each:
+//   interpreters    builtins eval/exec/compile, importlib.import_module, __import__: their first argument;
+//   deserializers   pickle/_pickle/cPickle loads/load/Unpickler, cloudpickle and dill loads/load, joblib.load,
+//                   pandas.read_pickle, marshal loads/load, shelve.open's path, jsonpickle decode/loads,
+//                   yaml.unsafe_load(_all), yaml.full_load(_all), and yaml.load(_all) whose Loader is missing or is
+//                   not a safe one (SafeLoader, CSafeLoader, BaseLoader, CBaseLoader, a class of the run deriving
+//                   from one, or an expression whose text names one): their first argument;
+//   template source flask/quart render_template_string, jinja2.Template, django.template.Template,
+//                   mako.template.Template (first positional, or source=/template_string=/text=), and
+//                   `<env>.from_string(src)` on a jinja2 Environment (NativeEnvironment, a subclass of the run), a
+//                   Django Engine (`Engine(...)`, `Engine.get_default()`, `engines["django"]`), a name bound to one,
+//                   or a receiver named like a template environment (`app.jinja_env`, `self.env`, `templates.engine`).
+//   def restore(request):
+//       pickle.loads(request.body)                                   reported
+//       render_template_string("<p>" + request.args["n"] + "</p>")   reported: the value is template source
+//       render_template_string("<p>{{ n }}</p>", n=request.args["n"]) not reported: render context is data
+//       yaml.load(request.body, Loader=yaml.SafeLoader)              not reported
+// Left alone: json.loads, yaml.safe_load, ast.literal_eval, django.core.signing.loads and itsdangerous loads (library
+// calls stop the taint), eval of a constant, pickle of what the server wrote (cache, Redis, Celery results: no request
+// source), `SandboxedEnvironment`/`ImmutableSandboxedEnvironment` receivers (and an unresolved environment in a file
+// that builds a sandbox), test files. Sanitisers it trusts: lib/security's sec_checked_expr (the value passes through
+// a validator-named call or an `in` allow-list test in its function, so `if fmt in ALLOWED: import_module(...)` is
+// silent), and, for deserializers, a payload the same function also passes to an `hmac` call (verified before use).
+// Gaps: a jinja2 sandbox stays a mitigation (sandbox escapes exist), so a sandboxed environment is not reported even
+// though user templates there are still risky; values stored on objects or in the database and read back later (the
+// changedetection.io advisory's stored template) are not followed; an hmac check after the load is still trusted;
+// torch.load, numpy.load(allow_pickle=True), ruamel.yaml's unsafe typ and Flask-Session's pickle backends are not
+// matched; Django URL keyword arguments are not sources, nor are a DRF serializer's `validate(data)` or a form's own
+// `self.cleaned_data` in `clean()` (netbox's uploaded-script `exec` is reached that way).
+#include "lib/security.rerail"
+
+.violation Interpreter(at: node, callee: symbol, what: symbol, p: symbol, l: number) "`{callee}` runs {what} ({p}:{l}) as Python code. Parse it as data (json, ast.literal_eval) or map it through an allow-list; leave it only if the value is not client data."
+Interpreter(c, cn, what, p, l) :- ci_sink(c, "interp", a), ci_reported(c, a, s), sec_origin(s, what, p, l),
+    ci_callee_text(c, cn).
+
+.violation Deserializer(at: node, callee: symbol, what: symbol, p: symbol, l: number) "`{callee}` deserializes {what} ({p}:{l}), and a crafted payload runs code. Accept JSON (json.loads, yaml.safe_load) or verify an HMAC first; leave it if the bytes are server-written."
+Deserializer(c, cn, what, p, l) :- ci_sink(c, "deser", a), ci_reported(c, a, s), !ci_hmac_checked(a),
+    sec_origin(s, what, p, l), ci_callee_text(c, cn).
+
+.violation TemplateSource(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is template source for `{callee}`, so a client can run code. Use a fixed template and pass the value as render context; a jinja2 sandbox only mitigates."
+TemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", a), ci_reported(c, a, s), sec_origin(s, what, p, l),
+    ci_callee_text(c, cn).
+
+// ci_reported(c, a, s): sink call c, outside test code, takes argument a, which holds client data from source s (the
+// first source, so one sink is reported once), and a is not a value its function checked.
+.decl ci_reported(c: node, a: node, s: node)
+ci_reported(c, a, s) :- ci_sink(c, _, a), docof(c, d), !sec_test_doc(d), !ci_checked(a),
+    s = min s2 : { sec_tainted(a, s2) }.
+// ci_checked(a): sink argument a holds a checked value (sec_checked_expr), or reads, anywhere inside it (an f-string,
+// a concatenation), a name its function checks (`if fmt not in ALLOWED: …` then `import_module(f"pkg.{fmt}")`).
+.decl ci_checked(a: node)
+ci_checked(a) :- sec_checked_expr(a).
+ci_checked(a) :- has(a, i, "identifier"), text(i, x), !field(_, "attribute", i), nearest(a, h, fscope),
+    sec_checked(h, x).
+.decl ci_callee_text(c: node, t: symbol)
+ci_callee_text(c, t) :- kind(c, "call"), field(c, "function", f), text(f, t).
+
+// ---- sinks -------------------------------------------------------------------------------------------------------
+// ci_sink(c, family, a): call c runs argument a as code: family "interp", "deser" or "template".
+.decl ci_sink(c: node, family: symbol, a: node)
+ci_sink(c, fam, a) :- sec_call_q(c, q), ci_first_arg_q(q, fam), ci_first_arg(c, q, a), !ci_yaml_safe_call(c).
+ci_sink(c, "template", a) :- ci_from_string(c), sec_arg(c, 0, "", a).
+ci_sink(c, "template", a) :- ci_from_string(c), sec_arg(c, -1, "source", a).
+
+// ci_first_arg(c, q, a): a is the code argument of call c to q: the first positional one, or the keyword that names it.
+.decl ci_first_arg(c: node, q: symbol, a: node)
+ci_first_arg(c, q, a) :- sec_call_q(c, q), sec_arg(c, 0, "", a).
+ci_first_arg(c, q, a) :- sec_call_q(c, q), ci_code_kw(q, k), sec_arg(c, -1, k, a).
+.decl ci_code_kw(q: symbol, k: symbol)
+ci_code_kw(q, "source") :- ci_first_arg_q(q, _).
+ci_code_kw(q, "name") :- ci_first_arg_q(q, "interp").
+ci_code_kw(q, "data") :- ci_first_arg_q(q, "deser").
+ci_code_kw(q, "stream") :- ci_first_arg_q(q, "deser").
+ci_code_kw(q, "file") :- ci_first_arg_q(q, "deser").
+ci_code_kw(q, "filename") :- ci_first_arg_q(q, "deser").
+ci_code_kw(q, "filepath_or_buffer") :- ci_first_arg_q(q, "deser").
+ci_code_kw(q, "string") :- ci_first_arg_q(q, "deser").
+ci_code_kw(q, "template_string") :- ci_first_arg_q(q, "template").
+ci_code_kw(q, "text") :- ci_first_arg_q(q, "template").
+
+// ci_first_arg_q(q, family): the callables whose first argument is code.
+.decl ci_first_arg_q(q: symbol, family: symbol)
+ci_first_arg_q("builtins.eval", "interp"). ci_first_arg_q("builtins.exec", "interp").
+ci_first_arg_q("builtins.compile", "interp"). ci_first_arg_q("builtins.__import__", "interp").
+ci_first_arg_q("importlib.import_module", "interp"). ci_first_arg_q("importlib.__import__", "interp").
+ci_first_arg_q(cat(m, f), "deser") :- ci_pickle_module(m), (f = ".loads" ; f = ".load" ; f = ".Unpickler").
+ci_first_arg_q("joblib.load", "deser"). ci_first_arg_q("pandas.read_pickle", "deser").
+ci_first_arg_q("marshal.loads", "deser"). ci_first_arg_q("marshal.load", "deser").
+ci_first_arg_q("shelve.open", "deser"). ci_first_arg_q("shelve.DbfilenameShelf", "deser").
+ci_first_arg_q("jsonpickle.decode", "deser"). ci_first_arg_q("jsonpickle.loads", "deser").
+ci_first_arg_q("jsonpickle.unpickler.decode", "deser").
+ci_first_arg_q("yaml.load", "deser"). ci_first_arg_q("yaml.load_all", "deser").
+ci_first_arg_q("yaml.unsafe_load", "deser"). ci_first_arg_q("yaml.unsafe_load_all", "deser").
+ci_first_arg_q("yaml.full_load", "deser"). ci_first_arg_q("yaml.full_load_all", "deser").
+ci_first_arg_q("flask.render_template_string", "template").
+ci_first_arg_q("flask.templating.render_template_string", "template").
+ci_first_arg_q("quart.render_template_string", "template").
+ci_first_arg_q("jinja2.Template", "template"). ci_first_arg_q("jinja2.environment.Template", "template").
+ci_first_arg_q("django.template.Template", "template"). ci_first_arg_q("django.template.base.Template", "template").
+ci_first_arg_q("mako.template.Template", "template").
+.decl ci_pickle_module(m: symbol)
+ci_pickle_module("pickle"). ci_pickle_module("_pickle"). ci_pickle_module("cPickle"). ci_pickle_module("cloudpickle").
+ci_pickle_module("dill"). ci_pickle_module("pickle5").
+
+// ---- yaml.load's Loader ------------------------------------------------------------------------------------------
+// ci_yaml_safe_call(c): c is `yaml.load(…)`/`yaml.load_all(…)` with a safe Loader, keyword or second positional.
+.decl ci_yaml_safe_call(c: node)
+ci_yaml_safe_call(c) :- (sec_call_q(c, "yaml.load") ; sec_call_q(c, "yaml.load_all")), ci_yaml_loader(c, v),
+    ci_safe_loader(v).
+.decl ci_yaml_loader(c: node, v: node)
+ci_yaml_loader(c, v) :- sec_arg(c, -1, "Loader", v).
+ci_yaml_loader(c, v) :- sec_arg(c, 1, "", v).
+// ci_safe_loader(v): loader expression v builds only plain data: a safe PyYAML loader, a class of the run deriving
+// from one, or an expression naming one (`getattr(yaml, "CSafeLoader", yaml.SafeLoader)`).
+.decl ci_safe_loader(v: node)
+ci_safe_loader(v) :- sym_of(v, q), ci_safe_loader_q(q).
+ci_safe_loader(v) :- sym_of(v, q), subclass(q, b), ci_safe_loader_q(b).
+ci_safe_loader(v) :- text(v, t), (contains("SafeLoader", t) ; contains("BaseLoader", t)).
+.decl ci_safe_loader_q(q: symbol)
+ci_safe_loader_q(cat(m, l)) :- (m = "yaml." ; m = "yaml.loader." ; m = "yaml.cyaml."),
+    (l = "SafeLoader" ; l = "CSafeLoader" ; l = "BaseLoader" ; l = "CBaseLoader").
+
+// ---- template environments ---------------------------------------------------------------------------------------
+// ci_from_string(c): c is `<r>.from_string(…)` on a template environment that is not sandboxed.
+.decl ci_from_string(c: node)
+ci_from_string(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, "from_string"), unparen(r0, r),
+    ci_env(r), !ci_sandbox(r).
+ci_from_string(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, "from_string"), unparen(r0, r),
+    !ci_env(r), ci_env_named(r), !ci_sandbox(r), docof(c, d), !ci_sandbox_doc(d).
+
+// ci_env(r): expression r is a jinja2 Environment or Django template Engine: built here, or a name bound to one.
+.decl ci_env(r: node)
+ci_env(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q), ci_env_class(q).
+ci_env(r) :- kind(r, "call"), field(r, "function", f), attr_of(f, o, "get_default"), sym_of(o, q), ci_env_class(q).
+ci_env(r) :- kind(r, "subscript"), field(r, "value", o), sym_of(o, q),
+    (q = "django.template.engines" ; q = "django.template.utils.engines").
+ci_env(r) :- ci_bound_value(r, v), ci_env(v).
+// ci_bound_value(r, v): name r is bound to value v: in its own scope, or, imported, at the top level of the run's
+// module that defines it (`from app.templating import env`).
+.decl ci_bound_value(r: node, v: node)
+ci_bound_value(r, v) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v0, _), unparen(v0, v).
+ci_bound_value(r, v) :- kind(r, "identifier"), sym_of(r, q), match("(?<mq>.+)\\.(?<x>[^.]+)", q), modname(m, mq),
+    asg(m, x, v0, _), unparen(v0, v).
+.decl ci_env_class(q: symbol)
+ci_env_class("jinja2.Environment"). ci_env_class("jinja2.environment.Environment").
+ci_env_class("jinja2.nativetypes.NativeEnvironment"). ci_env_class("django.template.Engine").
+ci_env_class("django.template.engine.Engine").
+ci_env_class(q) :- class_def(_, q), subclass(q, b), ci_env_class0(b), !ci_sandbox_class(q).
+.decl ci_env_class0(q: symbol)
+ci_env_class0("jinja2.Environment"). ci_env_class0("jinja2.environment.Environment").
+ci_env_class0("jinja2.nativetypes.NativeEnvironment").
+// ci_env_named(r): receiver r is named like a template environment: its last name contains env, engine or jinja.
+.decl ci_env_named(r: node)
+ci_env_named(r) :- leaf_name(r, x), (icontains("env", x) ; icontains("engine", x) ; icontains("jinja", x)).
+
+// ci_sandbox(r): r is a jinja2 sandboxed environment, a name bound to one, or a receiver whose text says so.
+.decl ci_sandbox(r: node)
+ci_sandbox(r) :- ci_sandbox_call(r).
+ci_sandbox(r) :- ci_bound_value(r, v), ci_sandbox(v).
+ci_sandbox(r) :- text(r, t), icontains("sandbox", t).
+.decl ci_sandbox_call(r: node)
+ci_sandbox_call(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q), ci_sandbox_class(q).
+.decl ci_sandbox_class(q: symbol)
+ci_sandbox_class("jinja2.sandbox.SandboxedEnvironment"). ci_sandbox_class("jinja2.sandbox.ImmutableSandboxedEnvironment").
+ci_sandbox_class(q) :- class_def(_, q), subclass(q, b),
+    (b = "jinja2.sandbox.SandboxedEnvironment" ; b = "jinja2.sandbox.ImmutableSandboxedEnvironment").
+// ci_sandbox_doc(d): document d builds a sandboxed environment, so its unresolved environment receivers may be one.
+.decl ci_sandbox_doc(d: number)
+ci_sandbox_doc(d) :- ci_sandbox_call(c), docof(c, d).
+
+// ---- verified payloads -------------------------------------------------------------------------------------------
+// ci_hmac_checked(a): deserializer argument a reads a name that its function also passes to an hmac call
+// (`hmac.new(key, blob, …)`, `hmac.compare_digest(…)`): the payload is verified against a server key.
+.decl ci_hmac_checked(a: node)
+ci_hmac_checked(a) :- sec_reads(a, x), nearest(a, h, fscope), kind(c, "call"), sec_call_q(c, q), prefix("hmac.", q),
+    nearest(c, h, fscope), call_arg(c, _, _, b), sec_reads(b, x).
+
+// The cases, `cases/python-security-code-injection/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/python-security-code-injection/app/__init__.py"
+    .fixture "app/api.py" from "../cases/python-security-code-injection/app/api.py"
+    .fixture "app/api_views.py" from "../cases/python-security-code-injection/app/api_views.py"
+    .fixture "app/codec.py" from "../cases/python-security-code-injection/app/codec.py"
+    .fixture "app/flask_app.py" from "../cases/python-security-code-injection/app/flask_app.py"
+    .fixture "app/notify.py" from "../cases/python-security-code-injection/app/notify.py"
+    .fixture "app/services.py" from "../cases/python-security-code-injection/app/services.py"
+    .fixture "app/templating.py" from "../cases/python-security-code-injection/app/templating.py"
+    .fixture "app/titles.py" from "../cases/python-security-code-injection/app/titles.py"
+    .fixture "app/views.py" from "../cases/python-security-code-injection/app/views.py"
+    .fixture "tests/test_views.py" from "../cases/python-security-code-injection/tests/test_views.py"
+    .expect _ at "app/api.py":31
+    .expect _ at "app/api.py":38
+    .expect _ at "app/titles.py":5
+    .expect _ at "app/api_views.py":21
+    .expect _ at "app/api_views.py":22
+    .expect _ at "app/codec.py":16
+    .expect _ at "app/codec.py":21
+    .expect _ at "app/codec.py":25
+    .expect _ at "app/flask_app.py":15
+    .expect _ at "app/flask_app.py":22
+    .expect _ at "app/flask_app.py":30
+    .expect _ at "app/flask_app.py":31
+    .expect _ at "app/flask_app.py":32
+    .expect _ at "app/flask_app.py":33
+    .expect _ at "app/flask_app.py":34
+    .expect _ at "app/flask_app.py":42
+    .expect _ at "app/services.py":13
+    .expect _ at "app/views.py":20
+    .expect _ at "app/views.py":26
+    .expect _ at "app/views.py":32
+    .expect _ at "app/views.py":45
+    .expect _ at "app/views.py":50
+    .expect _ at "app/views.py":56
+    .expect _ at "app/views.py":58
+    .expect _ at "app/views.py":59
+    .expect _ at "app/views.py":64
+    .expect _ at "app/views.py":70
+    .expect _ at "app/views.py":71
+    .expect _ at "app/views.py":72
+    .expect _ at "app/views.py":73
+    .expect _ at "app/views.py":74
+    .expect _ at "app/views.py":75
+    .expect _ at "app/views.py":95
+    .expect _ at "app/views.py":96
+    .expect _ at "app/views.py":97
+.end

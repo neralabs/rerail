@@ -1,0 +1,34 @@
+{
+  "name": "@neralabs/rerail-pack-python-practice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rerail rule pack: Rerail's own Python rules, from the Python docs and core developers' review advice, for correct async code, exceptions, typing and packaging.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "python"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/python-practice"
+  },
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  }
+}

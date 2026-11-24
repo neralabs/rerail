@@ -1,0 +1,393 @@
+// lib/security: where untrusted HTTP request data enters Django, Django REST framework, Flask and FastAPI code, and
+// where it flows from there, as the python-security rules read them. Names resolve through imports (python/names'
+// sym_of), so `from flask import request` and `import flask; flask.request` both reach "flask.request"; calls to
+// the repository's own functions resolve across files through python/calls' call graph, so a value a view passes
+// to a helper in another module is followed into the helper's parameter and back out of its return.
+//
+// Interface
+//   Requests:   sec_request(e)              e is an incoming HTTP request object: a `request` parameter (Django and
+//                                           DRF views, middleware, any helper given the request), a parameter
+//                                           annotated with a request class (`req: Request`), `self.request` in a
+//                                           method, or Flask's / Quart's global `request`
+//               sec_source(e, what)         e reads client-controlled data off a request: `request.GET`, `.POST`,
+//                                           `.body`, `.data`, `.query_params`, `.COOKIES`, `.headers`, `.META`,
+//                                           `.FILES`, Flask's `.args`, `.form`, `.values`, `.json`, `.files`,
+//                                           `.cookies`, `.get_json()`, `.get_data()`, Starlette's `.path_params`,
+//                                           `.json()`, `.body()`, `.form()`; `what` names it ("request.GET")
+//   Routes:     sec_route(f, fw)            def f is a FastAPI/Starlette (fw "fastapi") or Flask/Quart (fw "flask")
+//                                           route: decorated `@<x>.get("/…")`, `.post`, …, `.route`, `.api_route`,
+//                                           `.websocket`, in a file that imports the framework
+//               sec_route_param(f, x, p)    parameter p, named x, of route f carries client data: a FastAPI query,
+//                                           path, header, cookie, form or body parameter whose type can hold text
+//                                           (no annotation, str, bytes, Optional/list/Annotated of one, Any, dict,
+//                                           UploadFile, a pydantic URL, a pydantic model of the run), not a
+//                                           `Depends`/`Security` one; a Flask view argument not converted to a
+//                                           number or UUID (`<int:x>`)
+//   Taint:      sec_tainted(e, s)           expression e may hold data that came from source s (a sec_source node,
+//                                           or a sec_route_param's parameter node), in this function or through
+//                                           the calls between them
+//               sec_built(e, s)             as sec_tainted, and e's value is a string built from s by an f-string,
+//                                           `%`, `+`, `.format()` or `.join()`, so a fixed string around it is
+//                                           code (SQL, a shell command, a URL) and s's text is spliced into it
+//               sec_param_tainted(g, x, s)  parameter x of function g receives data from source s: a route
+//                                           parameter, or an argument a call passes it
+//               sec_origin(s, what, p, l)   source s, as a message names it: its label, its file, its line
+//               sec_arg(c, i, k, v)         argument v of call c, positional index i or keyword k (python/calls'
+//                                           call_arg, through parentheses)
+//               sec_call_q(c, q)            call c's callee resolves to the qualified name q ("subprocess.run")
+//   Validation: sec_validator_name(x)       function or call name x says it checks or cleans its input (contains
+//                                           safe, valid, allow, sanitiz/sanitis, check, verif, whitelist, trusted,
+//                                           or starts with clean; not unsafe): such a function of the run passes
+//                                           no taint out through its return
+//               sec_checked(h, x)           scope h checks name x somewhere: passes it, or an attribute, subscript
+//                                           or call on it, to a call named like a validator, or tests `x in …` /
+//                                           `x not in …`
+//               sec_reads(a, x)             expression a (a call argument, a returned value, the left of a
+//                                           comparison) reads name x, itself or under an attribute, subscript,
+//                                           call, conditional or and/or
+//               sec_checked_expr(e)         call argument or returned value e reads a name its scope checks, or
+//                                           its scope checks an expression with e's exact text; a returned value
+//                                           that is checked passes no taint out of its function
+//   Files:      sec_test_doc(d)             document d is test code: a tests/test/testing directory, test_*.py,
+//                                           *_test(s).py, tests.py, conftest.py
+//
+// How the taint moves (flow-insensitive inside a function: a later sanitising assignment does not untaint a name;
+// a rule that knows a sanitiser checks for it itself):
+//   - through parentheses, `await`, subscripts, attributes and method calls on a tainted value (`.get("x")`,
+//     `.strip()`, `.decode()`), except methods that answer a bool or a number (`.isdigit()`, `.startswith()`, ...);
+//   - through f-strings, `+`, `%`, `.format()`, `.join()`, conditional expressions, `or`/`and`, and tuples, lists,
+//     sets and dicts holding a tainted item;
+//   - through str(), os.path.join/normpath/abspath/realpath, pathlib.Path, urllib.parse's unquote and urljoin,
+//     base64 decoding and json.loads; not through int(), float(), uuid.UUID(), len(), bool(), basename(),
+//     secure_filename(), get_valid_filename(), slugify() or shlex.quote(), and not through other library calls;
+//   - into a name assigned from it (`x = …`, `a, b = …`, `for x in …`, `with … as x`, `x := …`, `x += …`), read
+//     anywhere in that name's scope;
+//   - into `<f>.cleaned_data` / `<s>.validated_data` when f or s was built from a tainted argument (a Django form,
+//     a DRF serializer);
+//   - into the parameter of a function of the run that a call passes it to (python/calls' call_target: positional
+//     by index, `self`/`cls` skipped for a method called through an attribute or a constructor, keyword by name),
+//     and back out of that function's return, at the calls that passed it (or at every call, when the function
+//     reads the request itself).
+//   e.g.  def search(request):
+//             q = request.GET.get("q", "")              sec_source(<request.GET>, "request.GET"),
+//                                                       sec_tainted(<q>, <request.GET>) at every read of q
+//             rows = run_query(q)                       sec_param_tainted(<run_query>, "q", <request.GET>)
+//         def run_query(term):                          (in another module)
+//             sql = f"SELECT * FROM t WHERE a = '{term}'"
+//             cursor.execute(sql)                       sec_built(<sql>, <request.GET>)
+//
+// Gaps: Django URL keyword arguments (`def view(request, slug)`) and `self.kwargs` are not sources (most are
+// numbers); values stored on objects (`self.url = …`) or in containers and read back later are not followed;
+// `request.user`, `request.session` and `request.path` are not sources; calls the call graph cannot resolve
+// (call_open) pass nothing on.
+#include "python/ast.rerail"
+#include "python/calls.rerail"
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl sec_test_doc(d: number)
+sec_test_doc(d) :- path_part(d, p), (p = "tests" ; p = "test" ; p = "testing" ; p = "unittests").
+sec_test_doc(d) :- file_name(d, f), (glob("test_*.py", f) ; glob("*_tests.py", f) ; glob("*_test.py", f) ;
+    f = "tests.py" ; f = "test.py" ; f = "conftest.py").
+
+// ---- calls -------------------------------------------------------------------------------------------------------
+.decl sec_arg(c: node, i: number, k: symbol, v: node)
+sec_arg(c, i, k, v) :- call_arg(c, i, k, a), unparen(a, v).
+.decl sec_call_q(c: node, q: symbol)
+sec_call_q(c, q) :- kind(c, "call"), field(c, "function", f), sym_of(f, q).
+
+// ---- requests ----------------------------------------------------------------------------------------------------
+// sec_request_class(q): the classes of an incoming request, for a parameter annotated with one.
+.decl sec_request_class(q: symbol)
+sec_request_class("django.http.HttpRequest"). sec_request_class("django.http.request.HttpRequest").
+sec_request_class("django.core.handlers.wsgi.WSGIRequest"). sec_request_class("django.core.handlers.asgi.ASGIRequest").
+sec_request_class("rest_framework.request.Request"). sec_request_class("fastapi.Request").
+sec_request_class("fastapi.requests.Request"). sec_request_class("starlette.requests.Request").
+sec_request_class("flask.Request"). sec_request_class("flask.wrappers.Request"). sec_request_class("werkzeug.Request").
+sec_request_class("werkzeug.wrappers.Request"). sec_request_class("quart.Request").
+// sec_request_global(q): a framework's request proxy, imported as a module global.
+.decl sec_request_global(q: symbol)
+sec_request_global("flask.request"). sec_request_global("flask.globals.request"). sec_request_global("quart.request").
+sec_request_global("quart.globals.request").
+// sec_request_param(g, x): function g, outside test code, takes the request as parameter x.
+.decl sec_request_param(g: node, x: symbol)
+sec_request_param(g, "request") :- param(g, "request", _), kind(g, "function_definition"), docof(g, d), !sec_test_doc(d).
+sec_request_param(g, x) :- sig_param(g, _, nm, _, _, a, _), text(nm, x), sec_ann(a, t), sym_of(t, q),
+    sec_request_class(q), docof(g, d), !sec_test_doc(d).
+// sec_ann(a, t): t is annotation a without parentheses and tree-sitter's `type` wrapper.
+.decl sec_ann(a: node, t: node)
+sec_ann(a, t) :- unparen(a, t0), kind(t0, "type"), child(t0, t1, 0), unparen(t1, t).
+sec_ann(a, t) :- unparen(a, t), !kind(t, "type").
+.decl sec_request(e: node)
+sec_request(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_request_param(g, x).
+sec_request(e) :- attr_of(e, o, "request"), kind(o, "identifier"), text(o, "self"), docof(e, d), !sec_test_doc(d).
+sec_request(e) :- sym_of(e, q), sec_request_global(q), (kind(e, "identifier") ; kind(e, "attribute")), docof(e, d),
+    !sec_test_doc(d).
+
+// sec_request_attr(a): the attributes of a request that hold what the client sent.
+.decl sec_request_attr(a: symbol)
+sec_request_attr("GET"). sec_request_attr("POST"). sec_request_attr("body"). sec_request_attr("data").
+sec_request_attr("query_params"). sec_request_attr("COOKIES"). sec_request_attr("cookies").
+sec_request_attr("headers"). sec_request_attr("META"). sec_request_attr("FILES"). sec_request_attr("files").
+sec_request_attr("args"). sec_request_attr("form"). sec_request_attr("values"). sec_request_attr("json").
+sec_request_attr("path_params"). sec_request_attr("query_string"). sec_request_attr("stream").
+// sec_request_method(m): the request methods that return what the client sent (`await request.json()`).
+.decl sec_request_method(m: symbol)
+sec_request_method("get_json"). sec_request_method("get_data"). sec_request_method("json").
+sec_request_method("body"). sec_request_method("form"). sec_request_method("read").
+.decl sec_source(e: node, what: symbol)
+sec_source(e, cat("request.", a)) :- attr_of(e, r, a), sec_request_attr(a), sec_request(r), !sec_called(e).
+sec_source(c, cat("request.", cat(m, "()"))) :- kind(c, "call"), field(c, "function", f), attr_of(f, r, m),
+    sec_request_method(m), sec_request(r).
+// sec_called(e): e is the callee of a call (`request.json` in `request.json()`: the call is the source).
+.decl sec_called(e: node)
+sec_called(e) :- kind(c, "call"), field(c, "function", e).
+
+// ---- routes ------------------------------------------------------------------------------------------------------
+.decl sec_route_verb(m: symbol)
+sec_route_verb("get"). sec_route_verb("post"). sec_route_verb("put"). sec_route_verb("patch").
+sec_route_verb("delete"). sec_route_verb("head"). sec_route_verb("options"). sec_route_verb("route").
+sec_route_verb("api_route"). sec_route_verb("websocket").
+// sec_framework_doc(d, fw): document d imports FastAPI/Starlette ("fastapi") or Flask/Quart ("flask").
+.decl sec_framework_doc(d: number, fw: symbol)
+sec_framework_doc(d, "fastapi") :- ibind(s, _, q), (prefix("fastapi", q) ; prefix("starlette", q)), docof(s, d).
+sec_framework_doc(d, "flask") :- ibind(s, _, q), (prefix("flask", q) ; prefix("quart", q)), docof(s, d).
+// sec_route_decorator(f, dc, path): f is decorated `@<x>.<verb>(path, …)` with path a string literal.
+.decl sec_route_decorator(f: node, dc: node, path: symbol)
+sec_route_decorator(f, dc, path) :- dexpr(f, e), unparen(e, dc), kind(dc, "call"), field(dc, "function", fn),
+    attr_of(fn, _, m), sec_route_verb(m), posarg(dc, 0, a), str(a, path).
+sec_route_decorator(f, dc, path) :- dexpr(f, e), unparen(e, dc), kind(dc, "call"), field(dc, "function", fn),
+    attr_of(fn, _, m), sec_route_verb(m), call_arg(dc, -1, "path", a), str(a, path).
+.decl sec_route(f: node, fw: symbol)
+sec_route(f, fw) :- sec_route_decorator(f, _, _), docof(f, d), sec_framework_doc(d, fw), !sec_test_doc(d).
+
+// FastAPI parameters. sec_dep(e): e is a `Depends(…)`/`Security(…)` call (the server supplies the value).
+.decl sec_dep(e: node)
+sec_dep(e) :- kind(e, "call"), field(e, "function", f), sym_of(f, q),
+    (q = "fastapi.Depends" ; q = "fastapi.Security" ; q = "fastapi.params.Depends" ; q = "fastapi.params.Security").
+// sec_dep_ann(a): annotation a is `Annotated[T, Depends(…)]`, or names a type alias of the run assigned one.
+.decl sec_dep_ann(a: node)
+sec_dep_ann(a) :- sec_ann(a, t), has(t, e, "call"), sec_dep(e).
+sec_dep_ann(a) :- sec_ann(a, t), kind(t, "identifier"), text(t, x), look(t, x, s), asg(s, x, v, _), has(v, e, "call"),
+    sec_dep(e).
+// sec_text_ann(t): annotation text t is a type that can hold client text.
+.decl sec_text_ann(t: symbol)
+sec_text_ann(t) :- match("(typing\\.)?((Optional|Annotated|List|list|Sequence|Union)\\[)*\\s*(str|bytes|Any|dict|Dict|UploadFile|HttpUrl|AnyUrl|AnyHttpUrl|Json|Path|FilePath)\\b.*", t).
+sec_text_ann(t) :- match("(str|bytes|UploadFile|HttpUrl|AnyUrl|AnyHttpUrl)\\s*\\|.*", t).
+// sec_model_q(q): q is a pydantic (or SQLModel) model class: a known base, or a class of the run deriving from one.
+.decl sec_model_q(q: symbol)
+sec_model_q("pydantic.BaseModel"). sec_model_q("pydantic.main.BaseModel"). sec_model_q("sqlmodel.SQLModel").
+sec_model_q(q) :- class_def(c, q), class_base(c, b), sec_model_q(b).
+// sec_body_ann(a): annotation a names a pydantic model of the run (a request body), bare or Optional/list of one.
+.decl sec_body_ann(a: node)
+sec_body_ann(a) :- sec_ann(a, t), sym_of(t, q), class_def(_, q), sec_model_q(q).
+sec_body_ann(a) :- sec_ann(a, t), kind(t, "subscript"), field(t, "subscript", i), sym_of(i, q), class_def(_, q),
+    sec_model_q(q).
+.decl sec_route_param(f: node, x: symbol, p: node)
+sec_route_param(f, x, p) :- sec_route(f, "fastapi"), sig_param(f, p, nm, _, k, a, dv), (k = "pos" ; k = "kwonly"),
+    text(nm, x), x != "self", !sec_dep_ann(a), !sec_dep(dv), unset(a).
+sec_route_param(f, x, p) :- sec_route(f, "fastapi"), sig_param(f, p, nm, _, k, a, dv), (k = "pos" ; k = "kwonly"),
+    text(nm, x), !sec_dep_ann(a), !sec_dep(dv), text(a, t), sec_text_ann(t).
+sec_route_param(f, x, p) :- sec_route(f, "fastapi"), sig_param(f, p, nm, _, k, a, dv), (k = "pos" ; k = "kwonly"),
+    text(nm, x), !sec_dep(dv), sec_body_ann(a).
+// Flask: every view argument the route's path names, unless its converter makes it a number or a UUID.
+sec_route_param(f, x, p) :- sec_route(f, "flask"), sec_route_decorator(f, _, path), sig_param(f, p, nm, _, _, _, _),
+    text(nm, x), contains(cat(x, ">"), path), !contains(cat("int:", cat(x, ">")), path),
+    !contains(cat("float:", cat(x, ">")), path), !contains(cat("uuid:", cat(x, ">")), path).
+
+// ---- taint -------------------------------------------------------------------------------------------------------
+// sec_clean_method(m): methods that answer a bool or a number about their receiver, so their result carries no
+// client text.
+.decl sec_clean_method(m: symbol)
+sec_clean_method("isdigit"). sec_clean_method("isnumeric"). sec_clean_method("isdecimal"). sec_clean_method("isalpha").
+sec_clean_method("isalnum"). sec_clean_method("isidentifier"). sec_clean_method("startswith").
+sec_clean_method("endswith"). sec_clean_method("count"). sec_clean_method("find"). sec_clean_method("rfind").
+sec_clean_method("index"). sec_clean_method("rindex"). sec_clean_method("is_valid"). sec_clean_method("exists").
+sec_clean_method("__contains__"). sec_clean_method("__len__"). sec_clean_method("is_secure").
+sec_clean_method("has_key"). sec_clean_method("keys").
+// sec_pass_q(q): library functions whose result holds their argument's text.
+.decl sec_pass_q(q: symbol)
+sec_pass_q("builtins.str"). sec_pass_q("builtins.bytes"). sec_pass_q("builtins.dict"). sec_pass_q("builtins.list").
+sec_pass_q("builtins.tuple"). sec_pass_q("os.path.join"). sec_pass_q("os.path.normpath").
+sec_pass_q("os.path.abspath"). sec_pass_q("os.path.realpath"). sec_pass_q("os.path.expanduser").
+sec_pass_q("posixpath.join"). sec_pass_q("pathlib.Path"). sec_pass_q("pathlib.PurePath").
+sec_pass_q("pathlib.PosixPath"). sec_pass_q("urllib.parse.unquote"). sec_pass_q("urllib.parse.unquote_plus").
+sec_pass_q("urllib.parse.urljoin"). sec_pass_q("base64.b64decode"). sec_pass_q("base64.urlsafe_b64decode").
+sec_pass_q("json.loads"). sec_pass_q("builtins.format"). sec_pass_q("os.fspath"). sec_pass_q("os.path.expandvars").
+// sec_build_method(m): string methods that splice their arguments into the receiver's text.
+.decl sec_build_method(m: symbol)
+sec_build_method("format"). sec_build_method("format_map"). sec_build_method("join"). sec_build_method("replace").
+
+// sec_step(e, a): e's value holds a's (one propagation step inside an expression).
+.decl sec_step(e: node, a: node)
+sec_step(p, a) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a.
+sec_step(w, a) :- kind(w, "await"), child(w, a, 0).
+sec_step(x, o) :- kind(x, "subscript"), field(x, "value", o).
+sec_step(x, o) :- attr_of(x, o, m), !sec_clean_method(m).
+sec_step(c, f) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, _).
+sec_step(c, a) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), sec_pass_q(q), call_arg(c, _, _, a).
+sec_step(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), sec_build_method(m), call_arg(c, _, _, a).
+sec_step(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), sec_build_method(m),
+    field(c, "arguments", al), child(al, sp, _), (kind(sp, "list_splat") ; kind(sp, "dictionary_splat")), child(sp, a, 0).
+sec_step(s, a) :- kind(s, "string"), child(s, i, _), kind(i, "interpolation"), field(i, "expression", a).
+sec_step(s, a) :- kind(s, "concatenated_string"), child(s, a, _), kind(a, "string").
+sec_step(b, a) :- kind(b, "binary_operator"), (field(b, "left", a) ; field(b, "right", a)).
+sec_step(b, a) :- kind(b, "boolean_operator"), (field(b, "left", a) ; field(b, "right", a)).
+sec_step(c, a) :- kind(c, "conditional_expression"), (child(c, a, 0) ; child(c, a, 2)).
+sec_step(t, a) :- sec_container(t), child(t, a, _), !kind(a, "comment").
+sec_step(t, a) :- sec_container(t), child(t, sp, _), kind(sp, "list_splat"),
+    child(sp, a, 0).
+sec_step(t, a) :- kind(t, "dictionary"), child(t, p, _), kind(p, "pair"), field(p, "value", a).
+sec_step(t, a) :- kind(t, "dictionary"), child(t, sp, _), kind(sp, "dictionary_splat"), child(sp, a, 0).
+sec_step(t, a) :- (kind(t, "list_comprehension") ; kind(t, "generator_expression") ; kind(t, "set_comprehension")),
+    field(t, "body", a).
+.decl sec_container(t: node)
+sec_container(t) :- kind(t, "tuple"). sec_container(t) :- kind(t, "list"). sec_container(t) :- kind(t, "set").
+sec_container(t) :- kind(t, "expression_list").
+
+// sec_bind(h, x, v): scope h binds name x to a value that holds v's: `x = v`, `x: T = v`, `x += v`, `x := v`, an
+// unpacking `a, b = v`, `for x in v`, `with v as x`, a comprehension's `for x in v`.
+.decl sec_bind(h: node, x: symbol, v: node)
+sec_bind(h, x, v) :- asg(h, x, v, _).
+sec_bind(h, x, v) :- kind(a, "augmented_assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x),
+    field(a, "right", v), nearest(a, h, scope).
+sec_bind(h, x, v) :- kind(a, "named_expression"), field(a, "name", l), text(l, x), field(a, "value", v),
+    nearest(a, h, fscope).
+sec_bind(h, x, v) :- kind(a, "assignment"), field(a, "left", l), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")),
+    child(l, i, _), kind(i, "identifier"), text(i, x), field(a, "right", v), !sec_unpacked(v), nearest(a, h, scope).
+// `a, b = x, y` binds a to x and b to y.
+sec_bind(h, x, v) :- kind(a, "assignment"), field(a, "left", l), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")),
+    child(l, i, k), kind(i, "identifier"), text(i, x), field(a, "right", r), sec_unpacked(r), child(r, v, k),
+    nearest(a, h, scope).
+.decl sec_unpacked(r: node)
+sec_unpacked(r) :- (kind(r, "expression_list") ; kind(r, "tuple")), !has(r, _, "comment"),
+    count : { child(r, sp, _), kind(sp, "list_splat") } = 0.
+sec_bind(h, x, v) :- kind(s, "for_statement"), field(s, "left", l), sec_target_name(l, x), field(s, "right", v),
+    nearest(s, h, scope).
+sec_bind(h, x, v) :- kind(s, "for_in_clause"), field(s, "left", l), sec_target_name(l, x), field(s, "right", v),
+    nearest(s, h, comp_scope).
+sec_bind(h, x, v) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0),
+    field(ap, "alias", al), child(al, i, 0), kind(i, "identifier"), text(i, x), nearest(wi, h, scope).
+.decl sec_target_name(l: node, x: symbol)
+sec_target_name(l, x) :- kind(l, "identifier"), text(l, x).
+sec_target_name(l, x) :- (kind(l, "pattern_list") ; kind(l, "tuple_pattern")), child(l, i, _), kind(i, "identifier"),
+    text(i, x).
+// sec_holder_call(o, h, c): name o in scope h is bound to call c (`form = SearchForm(request.GET)`).
+.decl sec_holder_call(h: node, o: symbol, c: node)
+sec_holder_call(h, o, c) :- asg(h, o, v, _), unparen(v, c), kind(c, "call").
+.decl sec_validated_attr(a: symbol)
+sec_validated_attr("cleaned_data"). sec_validated_attr("validated_data"). sec_validated_attr("initial_data").
+
+// sec_bound_method(c, g): call c reaches method g through an attribute (`obj.m(…)`, `self.m(…)`, `cls.m(…)`) or a
+// constructor (`Cls(…)` targets `__init__`), so g's first parameter is the receiver and the arguments start at 1.
+.decl sec_bound_method(c: node, g: node)
+sec_bound_method(c, g) :- call_target(c, g), nearest(g, k, scope), kind(k, "class_definition"),
+    !sec_static(g), field(c, "function", f), attr_of(f, _, _).
+sec_bound_method(c, g) :- call_target(c, g), def_name(g, "__init__"), field(c, "function", f), !attr_of(f, _, _).
+.decl sec_static(g: node)
+sec_static(g) :- decorator(g, e), text(e, "staticmethod").
+// sec_param_at(c, g, a, x): call c passes argument a to g's parameter x.
+.decl sec_param_at(c: node, g: node, a: node, x: symbol)
+sec_param_at(c, g, a, x) :- call_target(c, g), posarg(c, i, a), !sec_bound_method(c, g), param(g, x, i).
+sec_param_at(c, g, a, x) :- sec_bound_method(c, g), posarg(c, i, a), j = i + 1, param(g, x, j).
+sec_param_at(c, g, a, x) :- call_target(c, g), call_arg(c, -1, x, a), param(g, x, _).
+
+.decl sec_tainted(e: node, s: node)
+sec_tainted(e, e) :- sec_source(e, _).
+sec_tainted(e, s) :- sec_step(e, a), sec_tainted(a, s).
+sec_tainted(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), sec_tainted(v, s), r != v.
+sec_tainted(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_param_tainted(g, x, s).
+sec_tainted(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), sec_tainted(v, s).
+// The return of a function of the run: at a call that passed the tainted value in, or at every call when the
+// function (or one it calls) took it from a request itself.
+sec_tainted(c, s) :- call_target(c, g), sec_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), sec_tainted(a, s).
+sec_tainted(c, s) :- call_target(c, g), sec_returns(g, s), !sec_validator_def(g), sec_own_source(g, s).
+
+.decl sec_param_tainted(g: node, x: symbol, s: node)
+sec_param_tainted(g, x, p) :- sec_route_param(g, x, p).
+sec_param_tainted(g, x, s) :- sec_param_at(_, g, a, x), sec_tainted(a, s).
+// sec_returns(g, s): function g returns a value tainted by s.
+.decl sec_returns(g: node, s: node)
+sec_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sec_tainted(v, s),
+    !sec_checked_expr(v).
+// sec_own_source(g, s): source s is read in function g or in a function g calls, not handed to g by a caller.
+.decl sec_own_source(g: node, s: node)
+sec_own_source(g, s) :- sec_returns(g, s), within(s, g).
+sec_own_source(g, s) :- sec_returns(g, s), sec_reach(g, h), within(s, h).
+// sec_reach(g, h): g, which returns a tainted value, may call h, directly or not.
+.decl sec_reach(g: node, h: node)
+sec_reach(g, h) :- sec_returns(g, _), calls(g, h).
+sec_reach(g, k) :- sec_reach(g, h), calls(h, k).
+
+// ---- validation --------------------------------------------------------------------------------------------------
+// sec_validator_name(x): a function name that says it checks or cleans its input: `get_safe_return_url`,
+// `validate_url`, `is_allowed_host`, `sanitize_path`, `check_redirect`, `clean_next`. A function of the run with
+// such a name passes no taint out through its return (its callers trust what it returns).
+.decl sec_validator_name(x: symbol)
+sec_validator_name(x) :- (def_name(_, x) ; call_name(_, x)), (icontains("safe", x) ; icontains("valid", x) ; icontains("allow", x) ;
+    icontains("sanitiz", x) ; icontains("sanitis", x) ; icontains("check", x) ; icontains("verif", x) ;
+    iprefix("clean", x) ; iprefix("_clean", x) ; icontains("whitelist", x) ; icontains("trusted", x)),
+    !icontains("unsafe", x), x != "check_output", x != "check_call", x != "check_returncode".
+.decl sec_validator_def(g: node)
+sec_validator_def(g) :- kind(g, "function_definition"), def_name(g, x), sec_validator_name(x).
+// sec_checked(h, x): scope h checks name x before trusting it: passes it to a call named like a validator
+// (`url_has_allowed_host_and_scheme(url, …)`, `validate_url(url)`, `is_safe_path(p)`), or tests its membership in a
+// set (`if host in ALLOWED_HOSTS`, `if url not in …`). Flow-insensitive: the check may sit anywhere in h.
+.decl sec_checked(h: node, x: symbol)
+sec_checked(h, x) :- sec_check_arg(h, a), sec_reads(a, x), x != "self", x != "cls", x != "request".
+// sec_check_arg(h, a): a is what scope h checks: an argument of a validator-named call, or the left of `in`.
+.decl sec_check_arg(h: node, a: node)
+sec_check_arg(h, a) :- kind(c, "call"), call_name(c, n), sec_validator_name(n), call_arg(c, _, _, a), nearest(c, h, fscope).
+sec_check_arg(h, a) :- kind(c, "comparison_operator"), op(c, o), (o = "in" ; o = "not in"), child(c, a, 0),
+    nearest(c, h, fscope).
+// sec_reads(a, x): expression a, a call argument, a returned value or the left of `in`, reads name x: the name
+// itself, or under an attribute, subscript, call, conditional or and/or (`url`, `urlparse(url).hostname`).
+.decl sec_reads(a: node, x: symbol)
+sec_reads(a, x) :- sec_reads_site(a), unparen(a, i), kind(i, "identifier"), text(i, x).
+sec_reads(a, x) :- sec_reads_site(a), unparen(a, e), (kind(e, "attribute") ; kind(e, "subscript") ; kind(e, "call") ;
+    kind(e, "conditional_expression") ; kind(e, "boolean_operator")), has(e, i, "identifier"), text(i, x),
+    !field(_, "attribute", i).
+.decl sec_reads_site(a: node)
+sec_reads_site(a) :- sec_value_site(a).
+sec_reads_site(a) :- kind(c, "comparison_operator"), child(c, a, 0).
+// sec_checked_expr(e): expression e, in scope h, holds a checked value: it reads a name h checks, or h checks an
+// expression with e's exact text (`url_has_allowed_host_and_scheme(self.request.GET.get("next"))` then
+// `redirect(self.request.GET.get("next"))`).
+.decl sec_checked_expr(e: node)
+sec_checked_expr(e) :- sec_value_site(e), sec_reads(e, x), nearest(e, h, fscope), sec_checked(h, x).
+sec_checked_expr(e) :- sec_value_site(e), text(e, t), nearest(e, h, fscope), sec_check_arg(h, a), text(a, t).
+// sec_value_site(e): the expressions sec_checked_expr answers for: returned values and call arguments.
+.decl sec_value_site(e: node)
+sec_value_site(v) :- kind(r, "return_statement"), child(r, v, 0).
+sec_value_site(v) :- call_arg(_, _, _, v).
+
+// ---- strings built from client data -----------------------------------------------------------------------------
+// sec_build(e, a): e is a string built with a's value spliced into it.
+.decl sec_build(e: node, a: node)
+sec_build(s, a) :- kind(s, "string"), child(s, i, _), kind(i, "interpolation"), field(i, "expression", a).
+sec_build(s, a) :- kind(s, "concatenated_string"), child(s, p, _), sec_build(p, a).
+sec_build(b, a) :- kind(b, "binary_operator"), op(b, o), (o = "+" ; o = "%"), (field(b, "left", a) ; field(b, "right", a)).
+sec_build(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), sec_build_method(m), call_arg(c, _, _, a).
+sec_build(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), sec_build_method(m),
+    field(c, "arguments", al), child(al, sp, _), (kind(sp, "list_splat") ; kind(sp, "dictionary_splat")), child(sp, a, 0).
+.decl sec_built(e: node, s: node)
+sec_built(e, s) :- sec_build(e, a), sec_tainted(a, s).
+sec_built(p, s) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, sec_built(a, s).
+sec_built(b, s) :- kind(b, "binary_operator"), op(b, "+"), (field(b, "left", a) ; field(b, "right", a)), sec_built(a, s).
+sec_built(s, x) :- kind(s, "string"), child(s, i, _), kind(i, "interpolation"), field(i, "expression", a), sec_built(a, x).
+sec_built(c, x) :- kind(c, "conditional_expression"), (child(c, a, 0) ; child(c, a, 2)), sec_built(a, x).
+sec_built(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), sec_built(v, s), r != v.
+sec_built(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_param_built(g, x, s).
+sec_built(c, s) :- call_target(c, g), sec_returns_built(g, s), !sec_validator_def(g), call_arg(c, _, _, a),
+    sec_tainted(a, s).
+sec_built(c, s) :- call_target(c, g), sec_returns_built(g, s), !sec_validator_def(g), sec_own_source(g, s).
+.decl sec_param_built(g: node, x: symbol, s: node)
+sec_param_built(g, x, s) :- sec_param_at(_, g, a, x), sec_built(a, s).
+.decl sec_returns_built(g: node, s: node)
+sec_returns_built(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sec_built(v, s).
+
+// ---- messages ----------------------------------------------------------------------------------------------------
+// sec_origin(s, what, p, l): source s is `what`, read at line l of file p; a route parameter is named for its route.
+.decl sec_origin(s: node, what: symbol, p: symbol, l: number)
+sec_origin(s, what, p, l) :- sec_source(s, what), docof(s, d), doc(d, p, _), line(s, l).
+sec_origin(s, cat("route parameter ", x), p, l) :- sec_route_param(_, x, s), docof(s, d), doc(d, p, _), line(s, l).

@@ -1,0 +1,158 @@
+.policy "alembic-practice-column-type-rewrite" revision 1
+.description "Move an existing column to a new type through a new column and a backfill, or add a CHECK constraint for a length limit, so PostgreSQL does not rewrite the table under an exclusive lock."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. `ALTER TABLE t ALTER COLUMN c TYPE new` takes an ACCESS EXCLUSIVE lock (no reads or
+// writes) and "will normally cause the entire table and its indexes to be rewritten", unless the old type is binary
+// coercible to the new one (PostgreSQL, ALTER TABLE notes). Shrinking or adding a length limit is no binary coercion
+// either: PostgreSQL re-reads every row against the limit under the same lock.
+// Reported: in `upgrade()` (or a module-level helper it calls), `op.alter_column(t, c, type_=NEW, ...)` or
+// `batch_op.alter_column(c, type_=NEW, ...)` on a table that upgrade() does not create, judged against
+// `existing_type=OLD`:
+//   op.alter_column("runs", "tokens", existing_type=sa.INTEGER(), type_=sa.BigInteger())          reported
+//   op.alter_column("docs", "meta", existing_type=postgresql.JSON(), type_=postgresql.JSONB())     reported
+//   op.alter_column("tools", "name", existing_type=sa.VARCHAR(256), type_=sa.String(255))        reported (limit)
+//   op.alter_column("user", "email", existing_type=sa.String(), type_=sa.String(255))            reported (limit)
+//   op.alter_column("tools", "name", existing_type=sa.VARCHAR(40), type_=sa.String(255))         not reported
+// Left alone, as PostgreSQL makes them without touching the rows: VARCHAR/String(n) to a length m >= n, to an
+// unlimited String() or to Text/UnicodeText; Text to String() without a length; Numeric(p, s) to Numeric(p2, s) with
+// p2 >= p, or to an unconstrained Numeric(); LargeBinary to LargeBinary (both BYTEA); the same type text on both sides.
+// `MediumText`/`LongText` (superset's `Text().with_variant(MEDIUMTEXT(), "mysql")`, dify's TypeDecorator that loads
+// TEXT on PostgreSQL) count as TEXT by name; a target from `sqlalchemy.dialects.mysql` (`mysql.LONGTEXT`) is
+// MySQL-only. Also left alone: a length that is no integer literal (`sa.String(current_length)`) where it decides; an
+// `existing_type` that is no type expression (a conditional); a call without `existing_type` whose target is a
+// string, text or numeric type (it may be a widening; the rule cannot tell); a table the same upgrade() creates; the
+// branch of a dialect test that runs only on another database; a call in an `except` handler (superset's non-Postgres
+// fallback after a `try:` that already made the change); downgrade(); tests; an `op` that is not `alembic.op`.
+// Gaps: types are judged by their names (the last part of the callee), not resolved; a table named by a variable is
+// not seen; `DateTime()` to `DateTime(timezone=True)` is reported although PostgreSQL 12+ skips the rewrite when the
+// session time zone is UTC; a `postgresql_using=` that is a plain relabel of a widening is left alone with it.
+
+#include "lib/alembic.rerail"
+
+.violation TypeChangeRewrites(at: node, col: symbol, table: symbol, change: symbol) "Changing column `{col}` of existing table `{table}` {change} makes PostgreSQL rewrite the table and its indexes under an ACCESS EXCLUSIVE lock, which blocks every read and write until it finishes. Add a new column of the new type, backfill it in batches, switch reads and writes to it, then drop the old column. Keep the change as written only for a table that stays small, or in a maintenance window."
+.violation LengthLimitScan(at: node, col: symbol, table: symbol, change: symbol, limit: number) "Changing column `{col}` of existing table `{table}` {change} adds or shrinks a length limit: PostgreSQL re-reads and rewrites every row against it under an ACCESS EXCLUSIVE lock, which blocks every read and write. Keep the column's type and add `CHECK (char_length({col}) <= {limit}) NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration, or go through a new column and a batched backfill. Keep it as written only for a table that stays small."
+
+// ---- type expressions --------------------------------------------------------------------------------------------
+// ct_last(x, n): the last name of identifier or attribute x, lowercased (`sa.VARCHAR` -> "varchar").
+.decl ct_last(x: node, n: symbol)
+ct_last(x, n) :- kind(x, "identifier"), text(x, s), n = @lower(s).
+ct_last(x, n) :- kind(x, "attribute"), field(x, "attribute", a), text(a, s), n = @lower(s).
+// ct_head(e, h): h is type expression e's callee (`sa.String(255)` -> `sa.String`), or e itself when it is a bare name.
+.decl ct_arg(e: node)
+ct_arg(e) :- al_kw(c, "type_", v), al_call(c, "alter_column", _), unparen(v, e).
+ct_arg(e) :- al_kw(c, "existing_type", v), al_call(c, "alter_column", _), unparen(v, e).
+.decl ct_head(e: node, h: node)
+ct_head(e, h) :- ct_arg(e), kind(e, "call"), field(e, "function", h).
+ct_head(e, e) :- ct_arg(e), (kind(e, "identifier") ; kind(e, "attribute")).
+.decl ct_name(e: node, n: symbol)
+ct_name(e, n) :- ct_head(e, h), ct_last(h, n).
+// ct_mysql(e): a type of `sqlalchemy.dialects.mysql`, which only MySQL runs.
+.decl ct_mysql(e: node)
+ct_mysql(e) :- ct_head(e, h), text(h, s), prefix("mysql.", s).
+ct_mysql(e) :- ct_head(e, h), sym_of(h, q), prefix("sqlalchemy.dialects.mysql", q).
+
+.decl ct_string(e: node)
+ct_string(e) :- ct_name(e, n), (n = "string" ; n = "varchar" ; n = "unicode" ; n = "nvarchar").
+.decl ct_text(e: node)
+ct_text(e) :- ct_name(e, n), (n = "text" ; n = "unicodetext" ; n = "mediumtext" ; n = "longtext").
+.decl ct_numeric(e: node)
+ct_numeric(e) :- ct_name(e, n), (n = "numeric" ; n = "decimal").
+.decl ct_binary(e: node)
+ct_binary(e) :- ct_name(e, n), (n = "largebinary" ; n = "bytea").
+
+// ct_int(e, i, k, v): call e passes the integer literal v positionally at i or as keyword k (the keyword of position i).
+.decl ct_int_slot(i: number, k: symbol)
+ct_int_slot(0, "length"). ct_int_slot(0, "precision"). ct_int_slot(1, "scale").
+.decl ct_int(e: node, i: number, k: symbol, v: number)
+ct_int(e, i, k, v) :- ct_arg(e), ct_int_slot(i, k), (call_arg(e, i, "", a) ; call_arg(e, -1, k, a)), unparen(a, u),
+    kind(u, "integer"), text(u, s), v = to_number(s).
+// String lengths: a literal, none (unlimited VARCHAR), or something else (unknown).
+.decl ct_len(e: node, n: number)
+ct_len(e, n) :- ct_string(e), ct_int(e, 0, "length", n).
+.decl ct_unlimited(e: node)
+ct_unlimited(e) :- ct_string(e), !kind(e, "call").
+ct_unlimited(e) :- ct_string(e), kind(e, "call"), !call_arg(e, 0, "", _), !call_arg(e, -1, "length", _).
+.decl ct_len_unknown(e: node)
+ct_len_unknown(e) :- ct_string(e), !ct_len(e, _), !ct_unlimited(e).
+// Numeric precision and scale (scale 0 when only a precision is given); unconstrained: no precision.
+.decl ct_num(e: node, p: number, s: number)
+ct_num(e, p, s) :- ct_numeric(e), ct_int(e, 0, "precision", p), ct_int(e, 1, "scale", s).
+ct_num(e, p, 0) :- ct_numeric(e), ct_int(e, 0, "precision", p), !call_arg(e, 1, "", _), !call_arg(e, -1, "scale", _).
+.decl ct_num_unconstrained(e: node)
+ct_num_unconstrained(e) :- ct_numeric(e), !kind(e, "call").
+ct_num_unconstrained(e) :- ct_numeric(e), kind(e, "call"), !call_arg(e, _, _, _).
+
+// ---- the change ----------------------------------------------------------------------------------------------------
+// ct_change(c, x, t, n): upgrade changes column x of existing table t to type n, outside a non-PostgreSQL branch, an
+// except handler and test code.
+.decl ct_change(c: node, x: symbol, t: symbol, n: node)
+ct_change(c, x, t, n) :- al_on_existing(c, "alter_column", t, _), al_kw(c, "type_", v), unparen(v, n),
+    al_role(c, "column_name", e), al_name_value(e, x), !al_non_pg(c), !ct_in_except(c), docof(c, d),
+    al_migration_doc(d), !al_test_doc(d).
+.decl ct_in_except(c: node)
+ct_in_except(c) :- al_call(c, "alter_column", _), kind(h, "except_clause"), within(c, h).
+.decl ct_old(c: node, o: node)
+ct_old(c, o) :- ct_change(c, _, _, _), al_kw(c, "existing_type", v), unparen(v, o).
+
+// ct_safe(o, n): PostgreSQL changes type o to n in the catalog only (binary coercible, or a widened limit).
+.decl ct_safe(o: node, n: node)
+ct_safe(o, n) :- ct_old(_, o), ct_change(_, _, _, n), text(o, s), text(n, s).
+ct_safe(o, n) :- ct_old(_, o), ct_len(o, a), ct_change(_, _, _, n), ct_len(n, b), b >= a.
+ct_safe(o, n) :- ct_old(_, o), ct_string(o), ct_change(_, _, _, n), ct_unlimited(n).
+ct_safe(o, n) :- ct_old(_, o), (ct_string(o) ; ct_text(o)), ct_change(_, _, _, n), ct_text(n).
+ct_safe(o, n) :- ct_old(_, o), ct_text(o), ct_change(_, _, _, n), ct_unlimited(n).
+ct_safe(o, n) :- ct_old(_, o), ct_num(o, p, s), ct_change(_, _, _, n), ct_num(n, p2, s), p2 >= p.
+ct_safe(o, n) :- ct_old(_, o), ct_numeric(o), ct_change(_, _, _, n), ct_num_unconstrained(n).
+ct_safe(o, n) :- ct_old(_, o), ct_binary(o), ct_change(_, _, _, n), ct_binary(n).
+
+// ct_unknown(c): the rule cannot judge the change: a MySQL-only target, a length that is no literal where it decides,
+// an existing_type that is no type expression, or no existing_type and a target that may widen.
+.decl ct_unknown(c: node)
+ct_unknown(c) :- ct_change(c, _, _, n), ct_mysql(n).
+ct_unknown(c) :- ct_change(c, _, _, n), ct_len_unknown(n).
+ct_unknown(c) :- ct_change(c, _, _, n), ct_len(n, _), ct_old(c, o), ct_len_unknown(o).
+ct_unknown(c) :- ct_old(c, o), !ct_name(o, _).
+ct_unknown(c) :- ct_change(c, _, _, n), !ct_old(c, _), (ct_string(n) ; ct_text(n) ; ct_numeric(n)).
+
+.decl ct_hit(c: node, x: symbol, t: symbol, n: node, change: symbol)
+ct_hit(c, x, t, n, ch) :- ct_change(c, x, t, n), ct_old(c, o), !ct_safe(o, n), !ct_unknown(c), text(o, so), text(n, sn),
+    ch = cat(cat(cat(cat("from `", so), "` to `"), sn), "`").
+ct_hit(c, x, t, n, ch) :- ct_change(c, x, t, n), !ct_old(c, _), !ct_unknown(c), text(n, sn),
+    ch = cat(cat("to `", sn), "`").
+
+// A length limit: a literal-length VARCHAR target from a string or text type.
+.decl ct_limit(c: node, m: number)
+ct_limit(c, m) :- ct_change(c, _, _, n), ct_len(n, m), ct_old(c, o), (ct_string(o) ; ct_text(o)).
+
+TypeChangeRewrites(c, x, t, ch) :- ct_hit(c, x, t, _, ch), !ct_limit(c, _).
+LengthLimitScan(c, x, t, ch, m) :- ct_hit(c, x, t, _, ch), ct_limit(c, m).
+
+// The cases, `cases/alembic-practice-column-type-rewrite/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "app/other_op.py" from "../cases/alembic-practice-column-type-rewrite/app/other_op.py"
+    .fixture "app/types.py" from "../cases/alembic-practice-column-type-rewrite/app/types.py"
+    .fixture "migrations/versions/b1_type_changes.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b1_type_changes.py"
+    .fixture "migrations/versions/b2_dialects.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b2_dialects.py"
+    .fixture "tests/test_migration_shapes.py" from "../cases/alembic-practice-column-type-rewrite/tests/test_migration_shapes.py"
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":20
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":21
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":22
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":23
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":24
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":25
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":26
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":27
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":35
+    .expect LengthLimitScan at "migrations/versions/b1_type_changes.py":43
+    .expect LengthLimitScan at "migrations/versions/b1_type_changes.py":44
+    .expect LengthLimitScan at "migrations/versions/b1_type_changes.py":45
+    .expect LengthLimitScan at "migrations/versions/b1_type_changes.py":46
+    .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":48
+    .expect TypeChangeRewrites at "migrations/versions/b2_dialects.py":22
+    .expect LengthLimitScan at "migrations/versions/b2_dialects.py":30
+    .expect TypeChangeRewrites at "migrations/versions/b2_dialects.py":32
+    .expect TypeChangeRewrites at "migrations/versions/b2_dialects.py":48
+.end

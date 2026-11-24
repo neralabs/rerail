@@ -1,0 +1,50 @@
+{
+  "drf-practice-declared-field-meta-ignored": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "high",
+    "hazard": "input.mass-assignment"
+  },
+  "drf-practice-list-without-pagination": {
+    "risk": "availability",
+    "layer": "server",
+    "severity": "medium",
+    "hazard": "api.unpaginated-list"
+  },
+  "drf-practice-object-permission-skipped": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "auth.object-permission-skipped"
+  },
+  "drf-practice-page-size-uncapped": {
+    "risk": "availability",
+    "layer": "server",
+    "severity": "medium",
+    "hazard": "api.unbounded-page-size"
+  },
+  "drf-practice-related-field-not-prefetched": {
+    "risk": "performance",
+    "layer": "data-access",
+    "severity": "medium",
+    "hazard": "orm.query-in-loop"
+  },
+  "drf-practice-serializer-exposes-secret-field": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "data.sensitive-fields-exposed"
+  },
+  "drf-practice-validate-returns-value": {
+    "risk": "correctness",
+    "layer": "server",
+    "severity": "high",
+    "hazard": "validation.hook-returns-none"
+  },
+  "drf-practice-view-without-permission": {
+    "risk": "security",
+    "layer": "server",
+    "severity": "critical",
+    "hazard": "auth.endpoint-without-auth"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "celery-practice-countdown-past-visibility-timeout": {
+    "risk": "data-safety",
+    "layer": "jobs",
+    "severity": "high",
+    "hazard": "queue.redelivered-after-visibility-timeout"
+  },
+  "celery-practice-dispatch-before-commit": {
+    "risk": "data-safety",
+    "layer": "jobs",
+    "severity": "critical",
+    "hazard": "tx.side-effect-before-commit"
+  },
+  "celery-practice-pickle-serializer": {
+    "risk": "security",
+    "layer": "config",
+    "severity": "critical",
+    "hazard": "deser.untrusted-pickle"
+  },
+  "celery-practice-result-get-in-task": {
+    "risk": "availability",
+    "layer": "jobs",
+    "severity": "high",
+    "hazard": "queue.task-waits-on-task"
+  },
+  "celery-practice-task-arg-not-serializable": {
+    "risk": "correctness",
+    "layer": "jobs",
+    "severity": "high",
+    "hazard": "queue.unserializable-task-arg"
+  },
+  "celery-practice-unknown-task-name": {
+    "risk": "correctness",
+    "layer": "jobs",
+    "severity": "high",
+    "hazard": "queue.unregistered-task-name"
+  }
+}

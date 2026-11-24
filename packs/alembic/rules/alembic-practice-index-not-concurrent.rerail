@@ -1,0 +1,88 @@
+.policy "alembic-practice-index-not-concurrent" revision 1
+.description "Build indexes and unique constraints on existing tables concurrently in Alembic migrations; a plain index build blocks every write to the table until it ends."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A plain CREATE INDEX "locks out writes (but not reads) on the table until it's done"
+// (PostgreSQL, CREATE INDEX), and ADD CONSTRAINT ... UNIQUE builds the same index under the same lock: on a live table,
+// every INSERT, UPDATE and DELETE waits for the whole build. Squawk (require-concurrent-index-creation,
+// disallowed-unique-constraint) and strong_migrations flag the same thing in SQL and Rails; this rule reads Alembic's
+// Python, knows which tables the same revision creates, and follows batch_alter_table.
+//
+// Reported, in a revision's `upgrade()` (or a module-level helper it calls), on a table that `upgrade()` does not
+// create:
+//   op.create_index("ix_users_email", "users", ["email"])                     reported
+//   op.create_index(op.f("ix_x"), table_name="users", columns=["x"], unique=True)  reported (a constant table too)
+//   op.create_index("ix", "users", ["x"], postgresql_concurrently=False)       reported
+//   with op.batch_alter_table("users") as batch_op:
+//       batch_op.create_index("ix", ["x"])                                     reported
+//   op.create_unique_constraint("uq_users_email", "users", ["email"])         reported, with the unique index fix
+//       (and batch_op.create_unique_constraint(...))
+// Left alone:
+//   op.create_table("tags", ...); op.create_index("ix_tags_name", "tags", ["name"])  a table this upgrade() creates,
+//                                                                                   also in a dialect branch, or
+//                                                                                   through a project's own
+//                                                                                   `create_table("tags", ...)`
+//                                                                                   wrapper (superset's)
+//   op.create_index("ix", "users", ["x"], postgresql_concurrently=True)        whether it sits in autocommit_block()
+//                                                                              is alembic-practice-concurrent-index-
+//                                                                              outside-autocommit's concern
+//   postgresql_concurrently=<any expression but False>                         not known to be off
+//   else: op.create_index(...)  after `if _is_pg(conn):`, `if dialect.name == "sqlite":`   another database's branch
+//   else: ...  after `if not isinstance(bind.dialect, SQLiteDialect):`        SQLite's branch (superset's)
+//   if not _is_mysql(): return                                                 the rest of the function runs only
+//   op.create_index(...)                                                       on MySQL (dify's)
+//   downgrade(), revisions under tests/, files without `revision`/`down_revision`, an `op` that is not alembic.op.
+// Gaps: downgrade() (rollbacks re-create indexes on the rare path); a table name the rule cannot resolve (a function
+// parameter, an f-string); a table created by an earlier revision of the same release, or by `op.execute("CREATE
+// TABLE ...")`, counts as existing; helpers in another module (superset's shared `create_index(table, name, cols)`); a
+// table known to stay small cannot be told apart, so the message says when to leave it.
+// Corpus (8 Alembic repositories): 296 matches, all real; see the README's rule details.
+
+#include "lib/alembic.rerail"
+
+.violation IndexNotConcurrent(at: node, table: symbol) "CREATE INDEX on existing `{table}` blocks its writes until the build ends. Pass `postgresql_concurrently=True` inside `with op.get_context().autocommit_block():`, which commits the steps before it (own revision, or last). On PostgreSQL, first `op.drop_index(..., if_exists=True, postgresql_concurrently=True)` to clear a failed build's INVALID index. Fine for a table that stays small."
+.violation UniqueNotConcurrent(at: node, table: symbol) "ADD UNIQUE on existing `{table}` builds its index under a write lock. Use `op.create_index(..., unique=True, postgresql_concurrently=True)` inside `autocommit_block()` (commits earlier steps: own revision or last; on PostgreSQL drop a failed INVALID index `if_exists=True` first). If a constraint is needed, then on PostgreSQL `op.execute(\"ALTER TABLE ... ADD CONSTRAINT ... UNIQUE USING INDEX ...\")`. Fine for a table that stays small."
+
+// inc_concurrent(c): operation c passes postgresql_concurrently= something other than a literal False.
+.decl inc_concurrent(c: node)
+inc_concurrent(c) :- al_kw(c, "postgresql_concurrently", v), unparen(v, u), !kind(u, "false").
+// inc_blocking(c, m, t): operation m (c) builds an index on existing table t without CONCURRENTLY, in a migration that
+// is not test code and outside a branch for another database. lib/alembic's al_on_existing counts a project's own
+// `create_table(...)` wrapper (superset's) as creating the table, and its al_non_pg reads dialect classes, negated
+// other-database tests and early-return guards (`if not _is_mysql(): return`).
+.decl inc_blocking(c: node, m: symbol, t: symbol)
+inc_blocking(c, m, t) :- al_on_existing(c, m, t, _), (m = "create_index" ; m = "create_unique_constraint"),
+    !inc_concurrent(c), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+
+IndexNotConcurrent(c, t) :- inc_blocking(c, "create_index", t).
+UniqueNotConcurrent(c, t) :- inc_blocking(c, "create_unique_constraint", t).
+
+// The cases, `cases/alembic-practice-index-not-concurrent/`, read as one repository: each line ending in `# caught`
+// is reported, and no other line.
+.test cases exactly
+    .fixture "app/search.py" from "../cases/alembic-practice-index-not-concurrent/app/search.py"
+    .fixture "migrations/scripts/backfill.py" from "../cases/alembic-practice-index-not-concurrent/migrations/scripts/backfill.py"
+    .fixture "migrations/shared/utils.py" from "../cases/alembic-practice-index-not-concurrent/migrations/shared/utils.py"
+    .fixture "migrations/versions/c1_user_indexes.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c1_user_indexes.py"
+    .fixture "migrations/versions/c2_batch_and_dialects.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c2_batch_and_dialects.py"
+    .fixture "migrations/versions/c3_unique.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c3_unique.py"
+    .fixture "migrations/versions/c4_search_index.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c4_search_index.py"
+    .fixture "migrations/versions/c5_reports_wrapper.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c5_reports_wrapper.py"
+    .fixture "migrations/versions/c6_guards.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c6_guards.py"
+    .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-index-not-concurrent/tests/migrations/versions/t1_fixture.py"
+    .expect _ at "migrations/versions/c1_user_indexes.py":14
+    .expect _ at "migrations/versions/c1_user_indexes.py":15
+    .expect _ at "migrations/versions/c1_user_indexes.py":16
+    .expect _ at "migrations/versions/c1_user_indexes.py":17
+    .expect _ at "migrations/versions/c1_user_indexes.py":23
+    .expect _ at "migrations/versions/c1_user_indexes.py":42
+    .expect _ at "migrations/versions/c2_batch_and_dialects.py":19
+    .expect _ at "migrations/versions/c2_batch_and_dialects.py":20
+    .expect _ at "migrations/versions/c2_batch_and_dialects.py":44
+    .expect _ at "migrations/versions/c3_unique.py":11
+    .expect _ at "migrations/versions/c3_unique.py":12
+    .expect _ at "migrations/versions/c3_unique.py":14
+    .expect _ at "migrations/versions/c5_reports_wrapper.py":20
+    .expect _ at "migrations/versions/c6_guards.py":31
+.end

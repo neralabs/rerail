@@ -1,0 +1,148 @@
+.policy "alembic-practice-rename-as-drop-add" revision 1
+.description "Rename a column with op.alter_column(new_column_name=...), or copy its data first, instead of dropping it and adding a new one of the same type in one upgrade."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Alembic's autogenerate cannot detect a rename: "Changes of column name ... are
+// detected as a column add/drop pair, which is not at all the same as a name change" (Alembic, What does Autogenerate
+// Detect). Run as generated, the migration drops the column and its data and adds an empty one.
+// Reported: in `upgrade()` (or a module-level helper it calls), `op.drop_column(t, "a")` or `batch_op.drop_column("a")`
+// on a table that upgrade() neither creates nor drops, paired with an `add_column(t, Column("b", T))` on the same table,
+// when upgrade() adds as many columns to t as it drops, the dropped column's type (from downgrade()'s re-add of "a") is
+// the added one's or unknown, the pair is unique (no other add or drop on t matches either side), and nothing in
+// upgrade() moves data:
+//   op.add_column("users", sa.Column("handle", sa.String(40)))
+//   op.drop_column("users", "nick")                                      reported (downgrade re-adds VARCHAR(40))
+// Left alone:
+//   op.add_column("users", sa.Column("handle", sa.String(40)))
+//   op.execute("UPDATE users SET handle = nick")                         a data statement: the copy pattern
+//   op.drop_column("users", "nick")                                      not reported
+// Data statements: any `.execute(...)`/`.exec_driver_sql(...)` (op, connection, bind, session), `op.bulk_insert`, an
+// `update(...)`/`insert(...)` call (`sa.update`, `table.update()`), a string holding `UPDATE `/`INSERT `, any use of
+// `Session`/`sessionmaker`. Also left alone: types that differ (family by the callee's last name, so VARCHAR matches
+// String and TIMESTAMP matches DateTime; two literal lengths that differ); a drop and an add of the same name; tables
+// with more drops than adds or the reverse (one column replaced by two, a table restructured); two adds and two drops
+// of one type (no pairing to name); tables created or dropped in the same upgrade(); the branch of a dialect test that
+// runs only on another database; downgrade(); tests; an `op` that is not `alembic.op`.
+// Gaps: a replacement whose new column means something else (dataset_id -> tenant_id, both UUID) is reported; the old
+// type is read only from downgrade()'s add_column; a data copy in another module's function is not seen (it is seen
+// only in upgrade() and the module-level helpers it calls by name); a table named by a variable is not seen.
+
+#include "lib/alembic.rerail"
+
+.violation RenameAsDropAdd(at: node, old: symbol, new: symbol, table: symbol) "This upgrade drops column `{old}` of existing table `{table}` and adds `{new}`, and nothing copies `{old}`'s data, so the deploy deletes it. If this is a rename, use `op.alter_column('{table}', '{old}', new_column_name='{new}')` (while running code still reads `{old}`, add `{new}`, copy, switch the code, then drop `{old}` in a later release); otherwise copy the data with an UPDATE before the drop. Keep it only if `{old}`'s data is meant to be discarded."
+
+// ---- operations on an existing table -----------------------------------------------------------------------------
+// rad_drop(d, t, a, f) / rad_add(c, t, b, col, f): upgrade f drops column a / adds Column col named b on table t, which
+// f does not create or drop, outside a non-PostgreSQL branch, in a migration that is no test code.
+.decl rad_live(c: node, m: symbol, t: symbol, f: node)
+rad_live(c, m, t, f) :- al_on_existing(c, m, t, f), (m = "add_column" ; m = "drop_column"), !al_non_pg(c),
+    !rad_drops_table(f, t), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+.decl rad_drops_table(f: node, t: symbol)
+rad_drops_table(f, t) :- al_call(c, "drop_table", _), al_in_step(c, f), al_step(f, "upgrade"), al_table(c, t).
+.decl rad_drop(d: node, t: symbol, a: symbol, f: node)
+rad_drop(d, t, a, f) :- rad_live(d, "drop_column", t, f), al_role(d, "column_name", e), al_name_value(e, a).
+.decl rad_add(c: node, t: symbol, b: symbol, col: node, f: node)
+rad_add(c, t, b, col, f) :- rad_live(c, "add_column", t, f), al_added_column(c, col), al_column_name(col, b).
+// rad_balanced(t, f): upgrade f adds as many columns to t as it drops.
+.decl rad_balanced(t: symbol, f: node)
+rad_balanced(t, f) :- rad_live(_, _, t, f), n1 = count : { rad_live(_, "add_column", t, f) },
+    n2 = count : { rad_live(_, "drop_column", t, f) }, n1 = n2.
+
+// ---- types -------------------------------------------------------------------------------------------------------
+// rad_coltype(col, e): Column col's type expression: its second positional argument or `type_=`.
+.decl rad_coltype(col: node, e: node)
+rad_coltype(col, e) :- al_column_call(col), call_arg(col, 1, "", v), unparen(v, e).
+rad_coltype(col, e) :- al_column_call(col), call_arg(col, -1, "type_", v), unparen(v, e).
+// rad_old_type(d, e): downgrade() of the same revision adds the column d drops back with type e.
+.decl rad_old_type(d: node, e: node)
+rad_old_type(d, e) :- rad_drop(d, t, a, _), docof(d, doc), al_step(g, "downgrade"), docof(g, doc),
+    al_call(c, "add_column", _), al_in_step(c, g), al_table(c, t), al_added_column(c, col), al_column_name(col, a),
+    rad_coltype(col, e).
+.decl rad_type_expr(e: node)
+rad_type_expr(e) :- rad_old_type(_, e).
+rad_type_expr(e) :- rad_add(_, _, _, col, _), rad_coltype(col, e).
+// rad_fam(e, f): the type's family, from the lowercased last name of its callee (`sa.VARCHAR(40)` -> "string").
+.decl rad_head(e: node, h: node)
+rad_head(e, h) :- rad_type_expr(e), kind(e, "call"), field(e, "function", h).
+rad_head(e, e) :- rad_type_expr(e), (kind(e, "identifier") ; kind(e, "attribute")).
+.decl rad_name(e: node, n: symbol)
+rad_name(e, n) :- rad_head(e, h), kind(h, "identifier"), text(h, s), n = @lower(s).
+rad_name(e, n) :- rad_head(e, h), kind(h, "attribute"), field(h, "attribute", a), text(a, s), n = @lower(s).
+.decl rad_alias(n: symbol, f: symbol)
+rad_alias("string", "string"). rad_alias("varchar", "string"). rad_alias("unicode", "string").
+rad_alias("nvarchar", "string"). rad_alias("text", "text"). rad_alias("unicodetext", "text").
+rad_alias("integer", "integer"). rad_alias("int", "integer"). rad_alias("biginteger", "bigint").
+rad_alias("bigint", "bigint"). rad_alias("smallinteger", "smallint"). rad_alias("smallint", "smallint").
+rad_alias("boolean", "boolean"). rad_alias("bool", "boolean"). rad_alias("datetime", "datetime").
+rad_alias("timestamp", "datetime"). rad_alias("float", "float"). rad_alias("double", "float").
+rad_alias("double_precision", "float"). rad_alias("real", "float"). rad_alias("numeric", "numeric").
+rad_alias("decimal", "numeric"). rad_alias("uuid", "uuid"). rad_alias("largebinary", "binary").
+rad_alias("bytea", "binary").
+.decl rad_fam(e: node, f: symbol)
+rad_fam(e, f) :- rad_name(e, n), rad_alias(n, f).
+rad_fam(e, n) :- rad_name(e, n), !rad_alias(n, _).
+// rad_len(e, n): a literal length (`String(40)`, `VARCHAR(length=40)`).
+.decl rad_len(e: node, n: number)
+rad_len(e, n) :- rad_type_expr(e), kind(e, "call"), (call_arg(e, 0, "", a) ; call_arg(e, -1, "length", a)),
+    unparen(a, u), kind(u, "integer"), text(u, s), n = to_number(s).
+.decl rad_same(o: node, n: node)
+rad_same(o, n) :- rad_old_type(_, o), rad_add(_, _, _, col, _), rad_coltype(col, n), rad_fam(o, f), rad_fam(n, f),
+    !rad_len_differs(o, n).
+.decl rad_len_differs(o: node, n: node)
+rad_len_differs(o, n) :- rad_old_type(_, o), rad_len(o, x), rad_add(_, _, _, col, _), rad_coltype(col, n),
+    rad_len(n, y), x != y.
+
+// ---- pairs -------------------------------------------------------------------------------------------------------
+// rad_match(d, c): drop d and add c on the same table in the same upgrade, of other names, whose types agree (or the
+// dropped type is unknown, or the added one has none).
+.decl rad_match(d: node, c: node)
+rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, col, f), a != b, rad_old_type(d, o), rad_coltype(col, n),
+    rad_same(o, n).
+rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), a != b, !rad_old_type(d, _).
+rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, col, f), a != b, !rad_coltype(col, _).
+
+// ---- data movement -----------------------------------------------------------------------------------------------
+.decl rad_data_method(m: symbol)
+rad_data_method("execute"). rad_data_method("exec_driver_sql"). rad_data_method("bulk_insert").
+rad_data_method("update"). rad_data_method("insert").
+.decl rad_moves_data(f: node)
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), field(k, "function", fn),
+    attr_of(fn, _, m), rad_data_method(m).
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), field(k, "function", fn),
+    kind(fn, "identifier"), text(fn, m), rad_data_method(m).
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(s, "string"), al_in_step(s, f), text(s, x), y = @lower(x),
+    (contains("update ", y) ; contains("insert ", y)).
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), text(n, x),
+    (x = "Session" ; x = "sessionmaker" ; x = "scoped_session").
+
+RenameAsDropAdd(d, a, b, t) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), rad_match(d, c), rad_balanced(t, f),
+    !rad_moves_data(f), count : { rad_match(d, _) } = 1, count : { rad_match(_, c) } = 1.
+
+// The cases, `cases/alembic-practice-rename-as-drop-add/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "app/other_op.py" from "../cases/alembic-practice-rename-as-drop-add/app/other_op.py"
+    .fixture "migrations/versions/a1_autogen_rename.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a1_autogen_rename.py"
+    .fixture "migrations/versions/a2_batch_rename.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a2_batch_rename.py"
+    .fixture "migrations/versions/a3_unknown_type.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a3_unknown_type.py"
+    .fixture "migrations/versions/a4_two_renames.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a4_two_renames.py"
+    .fixture "migrations/versions/b10_ambiguous.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b10_ambiguous.py"
+    .fixture "migrations/versions/b11_same_name_and_length.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b11_same_name_and_length.py"
+    .fixture "migrations/versions/b1_copy_op_execute.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b1_copy_op_execute.py"
+    .fixture "migrations/versions/b2_copy_connection.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b2_copy_connection.py"
+    .fixture "migrations/versions/b3_copy_sa_update.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b3_copy_sa_update.py"
+    .fixture "migrations/versions/b4_copy_session.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b4_copy_session.py"
+    .fixture "migrations/versions/b5_bulk_insert.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b5_bulk_insert.py"
+    .fixture "migrations/versions/b6_types_differ.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b6_types_differ.py"
+    .fixture "migrations/versions/b7_two_for_one.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b7_two_for_one.py"
+    .fixture "migrations/versions/b8_new_or_dropped_table.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b8_new_or_dropped_table.py"
+    .fixture "migrations/versions/b9_non_pg.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b9_non_pg.py"
+    .fixture "tests/migrations/t1_rename.py" from "../cases/alembic-practice-rename-as-drop-add/tests/migrations/t1_rename.py"
+    .expect RenameAsDropAdd at "migrations/versions/a1_autogen_rename.py":14
+    .expect RenameAsDropAdd at "migrations/versions/a2_batch_rename.py":13
+    .expect RenameAsDropAdd at "migrations/versions/a3_unknown_type.py":14
+    .expect RenameAsDropAdd at "migrations/versions/a4_two_renames.py":13
+    .expect RenameAsDropAdd at "migrations/versions/a4_two_renames.py":19
+    .expect RenameAsDropAdd at "migrations/versions/a4_two_renames.py":20
+.end

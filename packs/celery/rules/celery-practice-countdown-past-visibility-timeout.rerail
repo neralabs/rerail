@@ -1,0 +1,313 @@
+.policy "celery-practice-countdown-past-visibility-timeout" revision 1
+.description "Keep Celery countdowns, etas and retry delays under the broker's visibility timeout (one hour by default on Redis), or Redis and SQS hand the waiting task to a second worker."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A worker holds an eta or countdown task unacknowledged until it runs. Redis and SQS
+// hand an unacknowledged message to another worker once the visibility timeout passes (Redis: one hour by default,
+// SQS: 30 minutes), so a task delayed longer runs twice, or is redelivered again and again in a loop. Celery's Redis
+// and SQS caveats say so, and its calling guide keeps eta and countdown to minutes.
+// Reported, at the delay, when its value is provably longer than the threshold:
+//   - `countdown=` on `.apply_async(...)` and `.send_task(...)`, and on `.retry(...)` called on a bound task's own
+//     first parameter (`self.retry`, `task.retry`) or on a task;
+//   - `eta=<now> + <timedelta>` on the same calls, `<now>` being `datetime.now()`, `datetime.utcnow()`,
+//     `datetime.today()`, Django's `timezone.now()`, or a name bound to one of them;
+//   - a task's `default_retry_delay=`, when the task retries with that delay: it calls `.retry()` without a
+//     countdown (in its body or a function it runs), or sets `autoretry_for` without `retry_backoff`;
+//   - a task's `retry_backoff_max=`, when it sets `autoretry_for` and `retry_backoff`, and its retries reach the cap:
+//     the backoff before the last retry (`retry_backoff * 2 ** (max_retries - 1)`, max_retries from `retry_kwargs`,
+//     else `max_retries=`, else Celery's 3; `None` is unbounded) is past the threshold.
+// Values it reads: int and float literals (a float's whole seconds), `+` and `*` of values, file-local constants and
+// module-level names, `timedelta(...)` with readable fields and its `.total_seconds()`, `min(a, b)` (its smallest
+// readable argument: `min(delay, 86_400)` can wait a day) and `max(a, b)` (any readable argument).
+// The threshold is the largest literal `visibility_timeout` the run sets outside tests (a `"visibility_timeout": N`
+// pair or keyword anywhere, `x["visibility_timeout"] = N`, `<x>.visibility_timeout = N`), else 3600 seconds.
+//   ship.apply_async((order_id,), countdown=60 * 60 * 2)         reported, at the countdown (no visibility_timeout set)
+//   raise self.retry(exc=exc, countdown=min(delay, 86_400))      reported
+//   ship.apply_async((order_id,), countdown=3600)                not reported: at the threshold, not past it
+// Left alone: values at or under the threshold, and values it cannot read (`countdown=delay`, `settings.X`, another
+// module's constant); a run that sets visibility_timeout to a value it cannot read, or whose broker_transport_options
+// is something other than a dict (read from configuration: the team chose a value); a run whose broker is known to
+// be RabbitMQ (every broker URL literal of the run's broker_url settings and `Celery(broker=...)` is amqp, amqps,
+// pyamqp or librabbitmq, as the literal or an environment default); test code and test settings files; `.retry()`
+// on other receivers (a client's own retry method); `default_retry_delay` on a task that never retries with it, and
+// `retry_backoff_max` on a task whose retries never reach it.
+// Gaps: a broker chosen by an environment variable with no default is assumed to be Redis or SQS; on RabbitMQ the
+// limit is the server's consumer_timeout (30 minutes by default), which the rule does not read; SQS's default of
+// 30 minutes is not used, the rule takes Redis's hour; a countdown that grows over retries with no cap
+// (`countdown=30 * 2 ** self.request.retries`) is left alone; `.set(countdown=...)` and `options={...}` on
+// signatures, Task subclasses' class attributes, `self.retry` in a Task subclass's `run`, and `min()` or `max()`
+// inside arithmetic are not read.
+
+#include "lib/celery.rerail"
+
+.violation PastVisibility(at: node, secs: number, limit: number) "This task waits {secs} s before it runs, past the broker's visibility timeout of {limit} s: Redis and SQS then hand the unacknowledged message to another worker, so it runs twice or loops. Keep the delay under the timeout (store far-off work and let a periodic task send it), or raise visibility_timeout above it."
+// countdown= and eta= on a send or a task's retry.
+PastVisibility(at, n, t) :- cv_delay_site(c, at, n), cv_threshold(t), n > t, cv_live(c).
+// A task's default_retry_delay, when the task retries with it.
+PastVisibility(at, n, t) :- cel_task_option(f, "default_retry_delay", at), cv_delay(at, n), cv_threshold(t), n > t,
+    cv_retries_by_default(f), cv_live(f).
+// A task's retry_backoff_max, when its retries reach it.
+PastVisibility(at, n, t) :- cel_task_option(f, "retry_backoff_max", at), cv_delay(at, n), cv_threshold(t), n > t,
+    cv_backoff(f, _, d), d > t, cv_live(f).
+
+// ---- where a delay is given ---------------------------------------------------------------------------------------
+// cv_delay_site(c, v, n): call c delays its task by n seconds, given as v: `countdown=v`, or `eta=v` with v now plus a
+// timedelta.
+.decl cv_delay_site(c: node, v: node, n: number)
+cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "countdown", v), cv_delay(v, n).
+cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "eta", v), cv_eta(v, n).
+// cv_delay_call(c): `<x>.apply_async(...)`, `<x>.send_task(...)`, or a retry of a task.
+.decl cv_delay_call(c: node)
+cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), (m = "apply_async" ; m = "send_task").
+cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "retry"), unparen(o, r), cv_task_handle(r).
+// cv_task_handle(r): r is a task: a bound task's first parameter, read in that task, or a name of a task def.
+.decl cv_task_handle(r: node)
+cv_task_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), cel_task_bound(g), sig_param(g, _, nm, 0, _, _, _),
+    text(nm, x).
+cv_task_handle(r) :- sym_of(r, q), qualname(g, q), cel_task(g).
+// cv_eta(v, n): v is now plus a timedelta of n seconds, either way round.
+.decl cv_eta(v: node, n: number)
+cv_eta(v, n) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
+    ((cv_now(l), cv_td_value(r, n)) ; (cv_now(r), cv_td_value(l, n))).
+// cv_now(e): the current time: a call of a now function, or a name bound to one.
+.decl cv_now_fn(q: symbol)
+cv_now_fn("datetime.datetime.now"). cv_now_fn("datetime.datetime.utcnow"). cv_now_fn("datetime.datetime.today").
+cv_now_fn("django.utils.timezone.now").
+.decl cv_now_call(e: node)
+cv_now_call(e) :- unparen(e, u), kind(u, "call"), field(u, "function", f), sym_of(f, q), cv_now_fn(q).
+.decl cv_now(e: node)
+cv_now(e) :- cv_now_call(e).
+cv_now(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, v, _), cv_now_call(v).
+
+// ---- task options -------------------------------------------------------------------------------------------------
+// cv_retries_by_default(f): task f retries with its default_retry_delay: a `.retry()` call without countdown or eta
+// in a function the task runs, or autoretry_for without retry_backoff.
+.decl cv_retries_by_default(f: node)
+cv_retries_by_default(f) :- cel_task_runs(f, g), kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "retry"),
+    nearest(c, g, scope), !call_arg(c, -1, "countdown", _), !call_arg(c, -1, "eta", _).
+cv_retries_by_default(f) :- cel_task_option(f, "autoretry_for", _), !cv_backoff_factor(f, _).
+// cv_backoff_factor(f, k): f sets autoretry_for and retry_backoff, whose first delay is k seconds (True: 1).
+.decl cv_backoff_factor(f: node, k: number)
+cv_backoff_factor(f, 1) :- cel_task_option(f, "autoretry_for", _), cel_task_flag(f, "retry_backoff").
+cv_backoff_factor(f, k) :- cel_task_option(f, "autoretry_for", _), cel_task_option(f, "retry_backoff", v), cv_num(v, k),
+    k > 0.
+// cv_max_retries(f, m): f retries at most m times; -1 is unbounded (`None`). retry_kwargs' max_retries overrides the
+// option; Celery's default is 3. An unreadable value gives no row.
+.decl cv_max_retries(f: node, m: number)
+cv_max_retries(f, m) :- cv_retry_kwarg(f, v), cv_count(v, m).
+cv_max_retries(f, m) :- cel_task(f), !cv_retry_kwarg(f, _), cel_task_option(f, "max_retries", v), cv_count(v, m).
+cv_max_retries(f, 3) :- cel_task(f), !cv_retry_kwarg(f, _), !cel_task_option(f, "max_retries", _).
+.decl cv_retry_kwarg(f: node, v: node)
+cv_retry_kwarg(f, v) :- cel_task_option(f, "retry_kwargs", d), unparen(d, m), kind(m, "dictionary"), child(m, p, _),
+    kind(p, "pair"), field(p, "key", k), str(k, "max_retries"), field(p, "value", v).
+.decl cv_count(v: node, m: number)
+cv_count(v, -1) :- unparen(v, u), kind(u, "none").
+cv_count(v, m) :- cv_num(v, m).
+// cv_backoff(f, i, d): before retry i (0-based) autoretry waits up to d seconds (retry_backoff * 2 ** i); the walk
+// stops once d is past the threshold, or at the last retry.
+.decl cv_backoff(f: node, i: number, d: number)
+cv_backoff(f, 0, k) :- cv_backoff_factor(f, k), cv_max_retries(f, m), m != 0.
+cv_backoff(f, i + 1, d * 2) :- cv_backoff(f, i, d), i < 40, cv_threshold(t), d <= t, cv_max_retries(f, m),
+    (m = -1 ; i + 1 < m).
+
+// ---- values -------------------------------------------------------------------------------------------------------
+// Values past 100000000 seconds (three years) are not followed, so arithmetic stays bounded.
+// cv_whole(v, n): the string v of an int or float value has whole part n.
+.decl cv_whole(v: symbol, n: number)
+cv_whole(v, n) :- cv_value_text(v), match("(?<w>[0-9]{1,9})(\\.[0-9]*)?", v), n = to_number(w).
+.decl cv_value_text(v: symbol)
+cv_value_text(v) :- kind(u, k), (k = "integer" ; k = "float"), value(u, v).
+cv_value_text(v) :- kind(u, "identifier"), static_value(u, v).
+// cv_lit(e, n): e is n whole seconds of number literals and file-local constants, with `+` and `*`.
+.decl cv_lit(e: node, n: number)
+cv_lit(e, n) :- unparen(e, u), (kind(u, "integer") ; kind(u, "float")), value(u, v), cv_whole(v, n).
+cv_lit(e, n) :- unparen(e, u), kind(u, "identifier"), static_value(u, v), cv_whole(v, n).
+cv_lit(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
+    cv_lit(l, a), cv_lit(r, b), n = a + b, n <= 100000000.
+cv_lit(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "*"), field(u, "left", l), field(u, "right", r),
+    cv_lit(l, a), cv_lit(r, b), (b = 0 ; a <= 100000000 / b), n = a * b, n <= 100000000.
+// cv_leaf(e, n): cv_lit, or a module-level name bound to one (`TWO_HOURS = 2 * 60 * 60`).
+.decl cv_leaf(e: node, n: number)
+cv_leaf(e, n) :- cv_lit(e, n).
+cv_leaf(e, n) :- unparen(e, u), kind(u, "identifier"), !static_value(u, _), text(u, x), look(u, x, m), kind(m, "module"),
+    asg(m, x, v, _), cv_lit(v, n).
+// cv_num(e, n): e is n whole seconds: `+` and `*` of cv_leaf values.
+.decl cv_num(e: node, n: number)
+cv_num(e, n) :- cv_leaf(e, n).
+cv_num(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
+    cv_num(l, a), cv_num(r, b), n = a + b, n <= 100000000.
+cv_num(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "*"), field(u, "left", l), field(u, "right", r),
+    cv_num(l, a), cv_num(r, b), (b = 0 ; a <= 100000000 / b), n = a * b, n <= 100000000.
+// cv_td(c, n): call c is `timedelta(...)` of n whole seconds; every argument readable.
+.decl cv_td_call(c: node)
+cv_td_call(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "datetime.timedelta").
+.decl cv_td_unit(i: number, k: symbol, s: number)
+cv_td_unit(0, "days", 86400). cv_td_unit(1, "seconds", 1). cv_td_unit(2, "microseconds", 0).
+cv_td_unit(3, "milliseconds", 0). cv_td_unit(4, "minutes", 60). cv_td_unit(5, "hours", 3600).
+cv_td_unit(6, "weeks", 604800).
+.decl cv_td_part(c: node, a: node, n: number)
+cv_td_part(c, a, n) :- cv_td_call(c), call_arg(c, i, k, a), (cv_td_unit(i, _, s) ; (i = -1, cv_td_unit(_, k, s))),
+    cv_num(a, x), (s = 0 ; x <= 100000000 / s), n = x * s.
+.decl cv_td_open(c: node)
+cv_td_open(c) :- cv_td_call(c), call_arg(c, _, _, a), !cv_td_part(c, a, _).
+cv_td_open(c) :- cv_td_call(c), field(c, "arguments", al), child(al, a, _),
+    (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
+.decl cv_td(c: node, n: number)
+cv_td(c, n) :- cv_td_call(c), !cv_td_open(c), n = sum x : { cv_td_part(c, a, x) }.
+// cv_td_value(e, n): e is a timedelta of n seconds: a call, or a name bound to one (module-level or local).
+.decl cv_td_value(e: node, n: number)
+cv_td_value(e, n) :- unparen(e, u), cv_td(u, n).
+cv_td_value(e, n) :- unparen(e, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, v, _), unparen(v, w),
+    cv_td(w, n).
+// cv_secs(e, n): e is n seconds: a number (cv_num), a timedelta's `.total_seconds()`, or `+` and `*` of those.
+.decl cv_secs(e: node, n: number)
+cv_secs(e, n) :- cv_num(e, n).
+cv_secs(e, n) :- unparen(e, u), kind(u, "call"), field(u, "function", f), attr_of(f, o, "total_seconds"),
+    !call_arg(u, _, _, _), cv_td_value(o, n).
+cv_secs(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
+    cv_secs(l, a), cv_secs(r, b), n = a + b, n <= 100000000.
+cv_secs(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "*"), field(u, "left", l), field(u, "right", r),
+    cv_secs(l, a), cv_secs(r, b), (b = 0 ; a <= 100000000 / b), n = a * b, n <= 100000000.
+// cv_delay(e, n): the delay e can reach n seconds: cv_secs, `min(a, b, ...)` its smallest readable argument (an
+// unreadable one, as `delay` in `min(delay, 86_400)`, is bounded by the others), `max(...)` any readable argument.
+.decl cv_delay(e: node, n: number)
+cv_delay(e, n) :- cv_secs(e, n).
+cv_delay(e, n) :- unparen(e, u), cv_builtin_call(u, "min"), posarg(u, _, a), cv_secs(a, n), !cv_min_below(u, n).
+cv_delay(e, n) :- unparen(e, u), cv_builtin_call(u, "max"), posarg(u, _, a), cv_secs(a, n).
+.decl cv_min_below(u: node, n: number)
+cv_min_below(u, n) :- cv_builtin_call(u, "min"), posarg(u, _, a), cv_secs(a, n), posarg(u, _, b), cv_secs(b, m), m < n.
+// cv_builtin_call(u, x): `x(a, b, ...)` with two or more positional arguments, x the builtin (no binding in the file).
+.decl cv_builtin_call(u: node, x: symbol)
+cv_builtin_call(u, x) :- kind(u, "call"), field(u, "function", f), kind(f, "identifier"), text(f, x),
+    (x = "min" ; x = "max"), builtin_ref(f, x), posarg(u, 1, _), !cv_splat_arg(u).
+.decl cv_splat_arg(u: node)
+cv_splat_arg(u) :- kind(u, "call"), field(u, "arguments", al), child(al, a, _), kind(a, "list_splat").
+
+// ---- the threshold ------------------------------------------------------------------------------------------------
+// cv_vt_value(v): the run sets a visibility_timeout to v, outside tests.
+.decl cv_vt_value(v: node)
+cv_vt_value(v) :- kind(p, "pair"), field(p, "key", k), str(k, "visibility_timeout"), field(p, "value", v), cv_live(p).
+cv_vt_value(v) :- call_arg(c, -1, "visibility_timeout", v), cv_live(c).
+cv_vt_value(v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "subscript", s),
+    str(s, "visibility_timeout"), field(a, "right", v), cv_live(a).
+cv_vt_value(v) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, _, "visibility_timeout"), field(a, "right", v),
+    cv_live(a).
+cv_vt_value(v) :- cel_setting("visibility_timeout", v, s), cv_live(s).
+// cv_vt_open(): the run sets a visibility_timeout the rule cannot read, or passes broker_transport_options it cannot
+// read (a dict from configuration may hold one).
+.decl cv_vt_open()
+cv_vt_open() :- cv_vt_value(v), !cv_secs(v, _).
+cv_vt_open() :- cel_setting("broker_transport_options", v, s), cv_live(s), !cv_dict(v).
+// cv_dict(v): a dict literal without `**` spread, or a module-level name bound to one.
+.decl cv_dict(v: node)
+cv_dict(v) :- unparen(v, u), kind(u, "dictionary"), !cv_dict_spread(u).
+cv_dict(v) :- unparen(v, u), kind(u, "identifier"), text(u, x), look(u, x, m), kind(m, "module"), asg(m, x, w, _),
+    unparen(w, d), kind(d, "dictionary"), !cv_dict_spread(d).
+.decl cv_dict_spread(d: node)
+cv_dict_spread(d) :- kind(d, "dictionary"), child(d, s, _), kind(s, "dictionary_splat").
+.decl cv_vt_known(n: number)
+cv_vt_known(n) :- cv_vt_value(v), cv_secs(v, n).
+// cv_threshold(t): the largest visibility_timeout the run sets, else Redis's default of one hour. No row when the
+// run's value is unreadable or its broker is RabbitMQ.
+.decl cv_threshold(t: number)
+cv_threshold(t) :- !cv_vt_open(), !cv_rabbit(), cv_vt_known(_), t = max n : { cv_vt_known(n) }.
+cv_threshold(3600) :- !cv_vt_open(), !cv_rabbit(), !cv_vt_known(_).
+// cv_broker_value(v): the run's broker URL: a broker_url setting, or `Celery(..., broker=v)`.
+.decl cv_broker_value(v: node)
+cv_broker_value(v) :- cel_setting("broker_url", v, s), cv_live(s).
+cv_broker_value(v) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), cel_app_class(q),
+    call_arg(c, -1, "broker", v), cv_live(c).
+// cv_broker_scheme(s): the URL scheme of a broker value's string literal: the value itself (a string or f-string), or
+// the default of an environment read inside it (`os.environ.get("X", "amqp://...")`, `env("X", default=...)`). Other
+// strings in it are not URLs (`url.replace("amqps://", "pyamqp://")`).
+.decl cv_broker_scheme(s: symbol)
+cv_broker_scheme(s) :- cv_broker_value(v), cv_url_literal(v, n), text(n, t),
+    match("[a-zA-Z]*['\"]+(?<s>[a-z0-9+]+)://.*", t).
+.decl cv_url_literal(v: node, n: node)
+cv_url_literal(v, n) :- cv_broker_value(v), unparen(v, n), kind(n, "string").
+cv_url_literal(v, n) :- cv_broker_value(v), (unparen(v, c) ; within(c, v)), kind(c, "call"), field(c, "function", f),
+    cv_env_fn(f), (posarg(c, i, n), i >= 1 ; call_arg(c, -1, "default", n)), kind(n, "string").
+// cv_env_fn(f): a function that reads configuration with a default: os.environ.get, os.getenv, environ's env(...),
+// env.str(...), decouple's config(...).
+.decl cv_env_fn(f: node)
+cv_env_fn(f) :- (kind(f, "identifier"), text(f, x) ; attr_of(f, _, x)),
+    (x = "get" ; x = "getenv" ; x = "env" ; x = "str" ; x = "config").
+.decl cv_rabbit_scheme(s: symbol)
+cv_rabbit_scheme("amqp"). cv_rabbit_scheme("amqps"). cv_rabbit_scheme("pyamqp"). cv_rabbit_scheme("librabbitmq").
+// cv_rabbit(): every broker scheme the run names is RabbitMQ's, and it names one.
+.decl cv_rabbit()
+cv_rabbit() :- cv_broker_scheme(s), cv_rabbit_scheme(s), !cv_other_broker().
+.decl cv_other_broker()
+cv_other_broker() :- cv_broker_scheme(s), !cv_rabbit_scheme(s).
+
+// ---- files --------------------------------------------------------------------------------------------------------
+// cv_live(n): n is outside test code and test settings files (`test*.py`, `*_test*.py`).
+.decl cv_live(n: node)
+cv_live(n) :- docof(n, d), !cel_test_doc(d), !cv_test_settings(d).
+.decl cv_test_settings(d: number)
+cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py", s)).
+
+// The cases, `cases/celery-practice-countdown-past-visibility-timeout/`: `proj/` is a Redis run with no
+// visibility_timeout (threshold one hour), in which each line ending in `# caught` is reported and no other line;
+// `vt_set/` sets visibility_timeout to 12 hours; `vt_config/` sets it from the environment and `vt_options/` reads its
+// transport options from configuration (both silent); `rabbit/` uses RabbitMQ (silent); `env_broker/` picks RabbitMQ
+// or Redis from the environment, with scheme strings only in a replace() call (reported).
+.test cases exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/celery.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tasks.py"
+    .fixture "proj/tests/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tests/__init__.py"
+    .fixture "proj/tests/test_tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tests/test_tasks.py"
+    .expect _ at "proj/tasks.py":20
+    .expect _ at "proj/tasks.py":21
+    .expect _ at "proj/tasks.py":22
+    .expect _ at "proj/tasks.py":23
+    .expect _ at "proj/tasks.py":24
+    .expect _ at "proj/tasks.py":25
+    .expect _ at "proj/tasks.py":26
+    .expect _ at "proj/tasks.py":27
+    .expect _ at "proj/tasks.py":28
+    .expect _ at "proj/tasks.py":30
+    .expect _ at "proj/tasks.py":31
+    .expect _ at "proj/tasks.py":60
+    .expect _ at "proj/tasks.py":68
+    .expect _ at "proj/tasks.py":71
+    .expect _ at "proj/tasks.py":79
+    .expect _ at "proj/tasks.py":87
+    .expect _ at "proj/tasks.py":94
+.end
+
+.test vt_set exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_set/proj/__init__.py"
+    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_set/proj/settings.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_set/proj/tasks.py"
+    .expect _ at "proj/tasks.py":15
+    .expect _ at "proj/tasks.py":16
+.end
+
+.test vt_config exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_config/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_config/proj/celery.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_config/proj/tasks.py"
+.end
+
+.test vt_options exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_options/proj/__init__.py"
+    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_options/proj/settings.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_options/proj/tasks.py"
+.end
+
+.test rabbit exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/celery.py"
+    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/settings.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/tasks.py"
+.end
+
+.test env_broker exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/env_broker/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/env_broker/proj/celery.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/env_broker/proj/tasks.py"
+    .expect _ at "proj/tasks.py":10
+.end

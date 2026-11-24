@@ -1,0 +1,297 @@
+.policy "drf-practice-related-field-not-prefetched" revision 1
+.description "Load every relation a DRF list view's serializer reads in the view's queryset (select or prefetch it), so a list request does not run one extra query per row."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A list view serializes every row of its queryset; a serializer field that reads a
+// related object (or collection) of the row runs one query per row unless the queryset loaded it (DRF Generic views,
+// "Avoiding N+1 Queries"; Haki Benita, "Improve Serialization Performance in Django Rest Framework"). The view, the
+// serializer and the model usually sit in three modules, which no single-file check joins.
+// It matches a DRF list view (ListAPIView, ListCreateAPIView, ModelViewSet, ReadOnlyModelViewSet, ListModelMixin, or
+// a viewset's own `list`) outside test code whose (inherited) `serializer_class` is a ModelSerializer of the run with
+// Meta.model mc, when a field of that serializer reads relation r of mc for each row:
+//   - a declared field that is a nested serializer on r (by its name or `source="r"`);
+//   - a declared field with a dotted `source="r.attr…"`;
+//   - a declared related or plain field on r that renders the related object (StringRelatedField, SlugRelatedField,
+//     CharField(source="r"), ...): every rest_framework field but PrimaryKeyRelatedField and HyperlinkedRelatedField,
+//     which read the key (`r_id`) without a query;
+//   - any field on a "many" relation r (a ManyToManyField, a reverse ForeignKey by its related_name or `<model>_set`),
+//     PrimaryKeyRelatedField(many=True) included: the related rows take a query each time;
+//   - a ManyToManyField or reverse relation named in Meta.fields (a forward ManyToManyField also through `"__all__"` or
+//     `exclude`), which ModelSerializer renders as a list of keys, one query per row;
+//   - with `Meta.depth >= 1`, any forward relation in the fields, which ModelSerializer nests.
+// Relations: ForeignKey, OneToOneField, ManyToManyField, ParentalKey/ParentalManyToManyField, mptt's Tree* fields and
+// taggit's TaggableManager, declared on mc or a model base of the run; reverse ones from a relation of another model
+// whose target is mc (a class reference, "Model" or "app.Model"). Write-only fields (`write_only=True`, or in
+// Meta.extra_kwargs) read nothing and are skipped, as are SerializerMethodFields (drf-practice-method-field-query).
+// The queryset must be visible and load nothing for r: the view's (inherited) `queryset = ...` and every
+// `get_queryset()` it runs (its own, or a run base's when it has none, and the bases' when it calls super()) return
+// chains of QuerySet methods from `M.objects` (M = mc), `self.queryset`, `super().get_queryset()`, or local names
+// assigned only such chains; and no `select_related(...)`/`prefetch_related(...)` in the view's class body or its run
+// bases loads r: a lookup equal to r or starting with `r__`, `Prefetch("r")`, or, for a forward one-row relation,
+// `select_related()` with no argument.
+// Reported once per view, relation and serializer field, where the fix goes: at the view's own get_queryset() when it
+// has one; else at its own `queryset =` assignment; else (the queryset is inherited) at its own `serializer_class =`
+// assignment, the choice that brought in the reads; else at the class name, unless a run base view that lists with the
+// same serializer is reported instead.
+//   class BookSerializer(serializers.ModelSerializer):
+//       author = AuthorSerializer(read_only=True)
+//       class Meta: model = Book; fields = ["id", "author", "tags"]   (tags: ManyToManyField)
+//   class BookViewSet(viewsets.ModelViewSet):
+//       queryset = Book.objects.all()                     reported twice: `author` and `tags` are not loaded
+//       serializer_class = BookSerializer
+//   class BookList(generics.ListAPIView):
+//       queryset = Book.objects.select_related("author").prefetch_related("tags")   not reported
+//       serializer_class = BookSerializer
+// Left alone: a plain ForeignKey in Meta.fields (PrimaryKeyRelatedField reads `author_id`); views whose queryset the
+// rule cannot see: a helper function, a custom QuerySet or manager method (`Book.objects.with_stats()`), a related
+// manager (`self.request.user.books`), a custom manager attribute, a model whose `objects` is a manager class of the
+// run with its own get_queryset (it may load the relation), a root model other than the serializer's; views with a
+// get_serializer_class() or get_serializer() of their own or a run base's (the list action may use another
+// serializer); serializers overriding to_representation (own or a run base's); fields not in Meta.fields; detail-only
+// views (RetrieveAPIView, APIView); test code.
+// Gaps: the relation is the source's first step only, so `source="author.country.name"` is satisfied by loading
+// `author`; a `Prefetch("r", to_attr="x")` counts as loading r; select_related() with no argument counts for nullable
+// ForeignKeys, which it skips; a string relation target resolves by class name and can pick a same-named model of
+// another app; nested serializers' own relations are not followed; `fields` built by a call is not read.
+
+#include "lib/drf.rerail"
+
+.violation RelatedFieldNotPrefetched(at: node, view: symbol, ser: symbol, fld: symbol, rel: symbol, load: symbol) "`{view}` lists its rows with `{ser}`, whose field `{fld}` reads `{rel}` of every row, and its queryset does not load `{rel}`: one extra query per row on every list request. Add `.{load}(\"{rel}\")` to the queryset this view lists. Leave it if the list action uses another serializer, or a manager or filter backend already loads `{rel}`."
+RelatedFieldNotPrefetched(at, vn, sn, x, r, load) :- rnp_hit(v, sc, x, r, many), rnp_at(v, sc, at), def_name(v, vn),
+    def_name(sc, sn), rnp_load_method(many, load).
+
+.decl rnp_load_method(many: symbol, load: symbol)
+rnp_load_method("one", "select_related"). rnp_load_method("many", "prefetch_related").
+
+// ---- relations of a model ----------------------------------------------------------------------------------------
+// rnp_rel_class(t, many): relation field classes by last name, and whether the row holds one related object or many.
+.decl rnp_rel_class(t: symbol, many: symbol)
+rnp_rel_class("ForeignKey", "one"). rnp_rel_class("OneToOneField", "one"). rnp_rel_class("ParentalKey", "one").
+rnp_rel_class("ManyToManyField", "many"). rnp_rel_class("ParentalManyToManyField", "many").
+// rnp_ext_rel(q, many): relation classes of other packages (mptt, taggit), which lib/django's fields do not know.
+.decl rnp_ext_rel(q: symbol, many: symbol)
+rnp_ext_rel("mptt.fields.TreeForeignKey", "one"). rnp_ext_rel("mptt.fields.TreeOneToOneField", "one").
+rnp_ext_rel("mptt.fields.TreeManyToManyField", "many"). rnp_ext_rel("taggit.managers.TaggableManager", "many").
+// rnp_model_class(mc, c): c is model mc or a class of the run among its bases: where mc's fields are written.
+.decl rnp_model_class(mc: node, c: node)
+rnp_model_class(mc, mc) :- dj_model(mc).
+rnp_model_class(mc, c) :- dj_model_super(mc, c).
+// rnp_body_call(c, x, k): class c's body has `x = k`, k a call.
+.decl rnp_body_call(c: node, x: symbol, k: node)
+rnp_body_call(c, x, k) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, x), field(a, "right", v), unparen(v, k), kind(k, "call").
+// rnp_fwd(c, x, k, many): model class c declares relation field x as call k.
+.decl rnp_fwd(c: node, x: symbol, k: node, many: symbol)
+rnp_fwd(c, x, k, many) :- dj_class_field(c, x, k, t), rnp_rel_class(t, many).
+rnp_fwd(c, x, k, many) :- rnp_body_call(c, x, k), field(k, "function", fn), sym_of(fn, q), rnp_ext_rel(q, many).
+// rnp_rel(mc, r, many, fwd): r is a relation of model mc: a forward field of mc or its bases ("fwd"), or the
+// accessor of another model's relation to mc ("rev").
+.decl rnp_rel(mc: node, r: symbol, many: symbol, dir: symbol)
+rnp_rel(mc, r, many, "fwd") :- rnp_model_class(mc, c), rnp_fwd(c, r, _, many).
+rnp_rel(mc, r, many, "rev") :- rnp_fwd(x, f, k, fm), rnp_target(k, x, mc), rnp_rev_name(x, f, k, fm, r, many).
+// rnp_target(k, x, mc): relation call k, in model class x, points to model class mc: its first argument or `to=`.
+.decl rnp_to(k: node, a: node)
+rnp_to(k, a) :- rnp_fwd(_, _, k, _), call_arg(k, 0, "", a).
+rnp_to(k, a) :- rnp_fwd(_, _, k, _), call_arg(k, -1, "to", a).
+.decl rnp_target(k: node, x: node, mc: node)
+rnp_target(k, x, mc) :- rnp_fwd(x, _, k, _), rnp_to(k, a), unparen(a, u), sym_of(u, q), class_def(mc, q), dj_model(mc).
+rnp_target(k, x, mc) :- rnp_fwd(x, _, k, _), rnp_to(k, a), str(a, s), def_name(mc, s), dj_model(mc).
+rnp_target(k, x, mc) :- rnp_fwd(x, _, k, _), rnp_to(k, a), str(a, s), match("[A-Za-z_][A-Za-z0-9_]*\\.(?<n>[A-Za-z_][A-Za-z0-9_]*)", s),
+    def_name(mc, n), dj_model(mc).
+rnp_target(k, x, x) :- rnp_fwd(x, _, k, _), rnp_to(k, a), str(a, "self").
+// rnp_rev_name(x, f, k, fm, r, many): the accessor r on the target model: related_name, else `<model>_set` (or
+// `<model>` for a OneToOneField); "+" or a `%(class)s` template names none.
+.decl rnp_rev_name(x: node, f: symbol, k: node, fm: symbol, r: symbol, many: symbol)
+rnp_rev_name(x, f, k, fm, r, many) :- rnp_fwd(x, f, k, fm), call_arg(k, -1, "related_name", a), str(a, r),
+    !contains("+", r), !contains("%", r), rnp_rev_many(k, fm, many).
+rnp_rev_name(x, f, k, fm, r, "many") :- rnp_fwd(x, f, k, fm), !call_arg(k, -1, "related_name", _), !rnp_one_to_one(k),
+    def_name(x, n), r = cat(@lower(n), "_set").
+rnp_rev_name(x, f, k, "one", r, "one") :- rnp_fwd(x, f, k, "one"), !call_arg(k, -1, "related_name", _),
+    rnp_one_to_one(k), def_name(x, n), r = @lower(n).
+.decl rnp_one_to_one(k: node)
+rnp_one_to_one(k) :- dj_class_field(_, _, k, "OneToOneField").
+rnp_one_to_one(k) :- rnp_fwd(_, _, k, _), field(k, "function", fn), sym_of(fn, "mptt.fields.TreeOneToOneField").
+.decl rnp_rev_many(k: node, fm: symbol, many: symbol)
+rnp_rev_many(k, "many", "many") :- rnp_fwd(_, _, k, "many").
+rnp_rev_many(k, "one", "many") :- rnp_fwd(_, _, k, "one"), !rnp_one_to_one(k).
+rnp_rev_many(k, "one", "one") :- rnp_one_to_one(k).
+
+// ---- the list view and its serializer ----------------------------------------------------------------------------
+// rnp_view(v, sc, mc): list view v outside test code serializes with sc (its inherited serializer_class, with no
+// get_serializer_class or get_serializer of its own or a run base's), a serializer of model mc that does not override
+// to_representation.
+.decl rnp_view(v: node, sc: node, mc: node)
+rnp_view(v, sc, mc) :- drf_list_view(v), docof(v, d), !dj_test_doc(d), drf_attr(v, "serializer_class", e),
+    unparen(e, u), sym_of(u, q), class_def(sc, q), drf_model_serializer(sc), drf_meta_model(sc, mc),
+    !drf_method(v, "get_serializer_class", _), !drf_method(v, "get_serializer", _),
+    !drf_method(sc, "to_representation", _).
+
+// ---- serializer fields that read a relation per row --------------------------------------------------------------
+// rnp_listed(sc, x): serializer sc's Meta.fields names x. rnp_covers(sc): its fields are "__all__", or it sets exclude
+// (and no fields), so every forward model field not excluded is in.
+.decl rnp_listed(sc: node, x: symbol)
+rnp_listed(sc, x) :- rnp_view(_, sc, _), drf_meta_opt(sc, "fields", v), drf_str_elem(v, x).
+.decl rnp_has_fields(sc: node)
+rnp_has_fields(sc) :- rnp_view(_, sc, _), drf_meta_opt(sc, "fields", _).
+.decl rnp_excluded(sc: node, x: symbol)
+rnp_excluded(sc, x) :- rnp_view(_, sc, _), drf_meta_opt(sc, "exclude", v), drf_str_elem(v, x).
+.decl rnp_covered(sc: node, x: symbol)
+rnp_covered(sc, x) :- rnp_view(_, sc, mc), drf_fields_all(sc), rnp_rel(mc, x, _, "fwd").
+rnp_covered(sc, x) :- rnp_view(_, sc, mc), !rnp_has_fields(sc), drf_meta_opt(sc, "exclude", _), rnp_rel(mc, x, _, "fwd"),
+    !rnp_excluded(sc, x).
+.decl rnp_in(sc: node, x: symbol)
+rnp_in(sc, x) :- rnp_listed(sc, x).
+rnp_in(sc, x) :- rnp_view(_, sc, _), drf_fields_all(sc), drf_declared(sc, x, _).
+rnp_in(sc, x) :- rnp_view(_, sc, _), !rnp_has_fields(sc), drf_meta_opt(sc, "exclude", _), drf_declared(sc, x, _).
+// rnp_wo(sc, x): Meta.extra_kwargs makes x write-only.
+.decl rnp_wo(sc: node, x: symbol)
+rnp_wo(sc, x) :- rnp_view(_, sc, _), drf_meta_opt(sc, "extra_kwargs", v), unparen(v, d), kind(d, "dictionary"),
+    child(d, p, _), kind(p, "pair"), field(p, "key", kn), str(kn, x), field(p, "value", ov), unparen(ov, o),
+    kind(o, "dictionary"), child(o, q, _), kind(q, "pair"), field(q, "key", qk), str(qk, "write_only"),
+    field(q, "value", t), kind(t, "true").
+
+// Declared fields. rnp_path(k, x, p): field x = k reads attribute path p of the row: its source, else its name.
+.decl rnp_decl(sc: node, x: symbol, k: node)
+rnp_decl(sc, x, k) :- rnp_view(_, sc, _), drf_declared(sc, x, k), rnp_in(sc, x), !drf_kw_true(k, "write_only"),
+    !rnp_silent_kind(k), !rnp_custom_get(k).
+.decl rnp_silent_kind(k: node)
+rnp_silent_kind(k) :- drf_field_kind(k, "SerializerMethodField").
+rnp_silent_kind(k) :- drf_field_kind(k, "HiddenField").
+rnp_silent_kind(k) :- drf_field_kind(k, "HyperlinkedIdentityField").
+// rnp_custom_get(k): k's field class is a class of the run that, itself or through a run base, decides what it reads
+// (get_attribute, use_pk_only_optimization).
+.decl rnp_custom_get(k: node)
+rnp_custom_get(k) :- rnp_view(_, sc, _), drf_declared(sc, _, k), field(k, "function", fn), sym_of(fn, q), class_def(c, q),
+    (drf_method(c, "get_attribute", _) ; drf_method(c, "use_pk_only_optimization", _)).
+.decl rnp_path(k: node, x: symbol, p: symbol)
+rnp_path(k, x, p) :- rnp_decl(_, x, k), drf_kw(k, "source", sv), str(sv, p).
+rnp_path(k, x, x) :- rnp_decl(_, x, k), !drf_kw(k, "source", _).
+// rnp_pk_only(k): the field reads the key of a one-row relation, not the related row.
+.decl rnp_pk_only(k: node)
+rnp_pk_only(k) :- drf_field_kind(k, "PrimaryKeyRelatedField").
+rnp_pk_only(k) :- drf_field_kind(k, "HyperlinkedRelatedField"), !drf_kw(k, "lookup_field", _).
+// rnp_reads(sc, x, r, many): serializer sc's field x reads relation r of each row.
+.decl rnp_reads(sc: node, x: symbol, r: symbol, many: symbol)
+rnp_reads(sc, x, r, many) :- rnp_view(_, sc, mc), rnp_decl(sc, x, k), rnp_path(k, x, p),
+    match("(?<r>[^.]+)\\..+", p), rnp_rel(mc, r, many, _).
+rnp_reads(sc, x, r, many) :- rnp_view(_, sc, mc), rnp_decl(sc, x, k), rnp_path(k, x, r), rnp_rel(mc, r, many, _),
+    (drf_nested(k, _) ; many = "many" ; drf_field_lib(k, _), !rnp_pk_only(k)).
+// Fields ModelSerializer builds: a many relation named in fields (or a forward one covered by "__all__"/exclude), and
+// with depth >= 1 any relation.
+.decl rnp_auto(sc: node, x: symbol)
+rnp_auto(sc, x) :- rnp_view(_, sc, _), (rnp_listed(sc, x) ; rnp_covered(sc, x)), !drf_declared(sc, x, _), !rnp_wo(sc, x).
+.decl rnp_deep(sc: node)
+rnp_deep(sc) :- rnp_view(_, sc, _), drf_meta_opt(sc, "depth", v), unparen(v, u), kind(u, "integer"), text(u, t), t != "0".
+rnp_reads(sc, x, x, "many") :- rnp_view(_, sc, mc), rnp_auto(sc, x), rnp_rel(mc, x, "many", _).
+rnp_reads(sc, x, x, many) :- rnp_view(_, sc, mc), rnp_deep(sc), rnp_auto(sc, x), rnp_rel(mc, x, many, "fwd").
+
+// ---- the view's queryset -----------------------------------------------------------------------------------------
+// rnp_qfn(v, f): a get_queryset() view v runs: its own, else a run base's; and the bases' when one calls super().
+.decl rnp_qfn(v: node, f: node)
+rnp_qfn(v, f) :- rnp_view(v, _, _), drf_method(v, "get_queryset", f).
+rnp_qfn(v, g) :- rnp_qfn(v, f), rnp_super_qs(c), within(c, f), drf_ancestor(v, b), drf_own_method(b, "get_queryset", g).
+.decl rnp_super_qs(c: node)
+rnp_super_qs(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "get_queryset"), kind(o, "call"),
+    field(o, "function", s), kind(s, "identifier"), text(s, "super").
+// rnp_ex(x, h): expression x is a queryset the view may list, read in scope h (a get_queryset, or the queryset
+// attribute's own value for a class attribute): a returned value, a receiver along a QuerySet chain, or a value a
+// local name the chain starts from is assigned.
+.decl rnp_ex(x: node, h: node)
+rnp_ex(e, f) :- rnp_qfn(_, f), kind(r, "return_statement"), def_frame(r, f), child(r, e, 0).
+rnp_ex(e, e) :- rnp_view(v, _, _), drf_view_queryset(v, e).
+rnp_ex(o, h) :- rnp_ex(x, h), unparen(x, u), rnp_step(u, o).
+rnp_ex(w, h) :- rnp_ex(x, h), unparen(x, u), kind(u, "identifier"), text(u, n), asg(h, n, w, _).
+// rnp_step(u, o): u is `o.m(...)` for a QuerySet method m that returns a QuerySet.
+.decl rnp_step(u: node, o: node)
+rnp_step(u, o) :- kind(u, "call"), field(u, "function", f), attr_of(f, o, m), dj_qs_method(m).
+// rnp_seen(x, h): x is a shape the rule follows.
+.decl rnp_seen(x: node, h: node)
+rnp_seen(x, h) :- rnp_ex(x, h), unparen(x, u), rnp_step(u, _).
+rnp_seen(x, h) :- rnp_ex(x, h), unparen(x, u), attr_of(u, o, "objects"), sym_of(o, _).
+rnp_seen(x, h) :- rnp_ex(x, h), unparen(x, u), attr_of(u, s, "queryset"), kind(s, "identifier"), text(s, "self").
+rnp_seen(x, h) :- rnp_ex(x, h), unparen(x, u), rnp_super_qs(u).
+rnp_seen(x, h) :- rnp_ex(x, h), unparen(x, u), kind(u, "identifier"), text(u, n), asg(h, n, _, _), !otgt(h, n).
+// rnp_root(x, q): x is `M.objects`, M named q.
+.decl rnp_root(x: node, q: symbol)
+rnp_root(x, q) :- rnp_ex(x, _), unparen(x, u), attr_of(u, o, "objects"), sym_of(o, q).
+// rnp_hidden(v, mc): something view v lists comes from where the rule cannot see.
+.decl rnp_hidden(v: node, mc: node)
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_qfn(v, f), rnp_ex(x, f), !rnp_seen(x, f).
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), drf_view_queryset(v, e), rnp_ex(x, e), !rnp_seen(x, e).
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_qfn(v, f), rnp_ex(x, f), rnp_root(x, q), !class_def(mc, q).
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), drf_view_queryset(v, e), rnp_ex(x, e), rnp_root(x, q), !class_def(mc, q).
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_custom_manager(mc).
+.decl rnp_has_qs(v: node)
+rnp_has_qs(v) :- rnp_qfn(v, _).
+rnp_has_qs(v) :- rnp_view(v, _, _), drf_view_queryset(v, _).
+// rnp_custom_manager(mc): mc (or a model base) sets `objects` to a manager class of the run, directly or through
+// `.from_queryset(...)`, that overrides get_queryset itself or through a run base.
+.decl rnp_custom_manager(mc: node)
+rnp_custom_manager(mc) :- rnp_view(_, _, mc), rnp_model_class(mc, c), rnp_body_call(c, "objects", k), rnp_mgr_class(k, q),
+    rnp_gq_class(q).
+.decl rnp_mgr_class(k: node, q: symbol)
+rnp_mgr_class(k, q) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q).
+rnp_mgr_class(k, q) :- kind(k, "call"), field(k, "function", fn), kind(fn, "call"), field(fn, "function", g),
+    attr_of(g, o, "from_queryset"), sym_of(o, q).
+.decl rnp_gq_class(q: symbol)
+rnp_gq_class(q) :- class_def(c, q), drf_own_method(c, "get_queryset", _).
+rnp_gq_class(q) :- class_def(c, q), class_base(c, b), rnp_gq_class(b).
+
+// rnp_loaded(v, r, many): a select_related/prefetch_related call in view v's class body, or a run base view's, loads r.
+.decl rnp_view_class(v: node, c: node)
+rnp_view_class(v, v) :- rnp_view(v, _, _).
+rnp_view_class(v, b) :- rnp_view(v, _, _), drf_ancestor(v, b).
+.decl rnp_load(v: node, s: symbol)
+rnp_load(v, s) :- rnp_view_class(v, c), drf_related_load(k, s), within(k, c).
+.decl rnp_loaded(v: node, r: symbol, many: symbol)
+rnp_loaded(v, r, many) :- rnp_reads(sc, _, r, many), rnp_view(v, sc, _), rnp_load(v, r).
+rnp_loaded(v, r, many) :- rnp_reads(sc, _, r, many), rnp_view(v, sc, _), rnp_load(v, s), prefix(cat(r, "__"), s).
+rnp_loaded(v, r, "one") :- rnp_reads(sc, _, r, "one"), rnp_view(v, sc, mc), rnp_rel(mc, r, "one", "fwd"),
+    rnp_load(v, "*").
+
+// ---- hits and where they are reported ----------------------------------------------------------------------------
+.decl rnp_hit(v: node, sc: node, x: symbol, r: symbol, many: symbol)
+rnp_hit(v, sc, x, r, many) :- rnp_view(v, sc, mc), rnp_reads(sc, x, r, many), rnp_has_qs(v), !rnp_hidden(v, mc),
+    !rnp_loaded(v, r, many).
+// rnp_at(v, sc, at): own get_queryset, else own queryset, else own serializer_class, else the class name unless a run
+// base view listing with the same serializer is itself a hit.
+.decl rnp_own_gq(v: node)
+rnp_own_gq(v) :- drf_own_method(v, "get_queryset", _).
+.decl rnp_own(v: node)
+rnp_own(v) :- rnp_own_gq(v).
+rnp_own(v) :- drf_own_attr(v, "queryset", _, _).
+rnp_own(v) :- drf_own_attr(v, "serializer_class", _, _).
+.decl rnp_base_hit(v: node, sc: node)
+rnp_base_hit(v, sc) :- rnp_hit(v, sc, _, _, _), drf_ancestor(v, b), rnp_hit(b, sc, _, _, _).
+.decl rnp_at(v: node, sc: node, at: node)
+rnp_at(v, sc, n) :- rnp_hit(v, sc, _, _, _), drf_own_method(v, "get_queryset", f), field(f, "name", n).
+rnp_at(v, sc, a) :- rnp_hit(v, sc, _, _, _), !rnp_own_gq(v), drf_own_attr(v, "queryset", _, a).
+rnp_at(v, sc, a) :- rnp_hit(v, sc, _, _, _), !rnp_own_gq(v), !drf_own_attr(v, "queryset", _, _),
+    drf_own_attr(v, "serializer_class", _, a).
+rnp_at(v, sc, n) :- rnp_hit(v, sc, _, _, _), !rnp_own(v), !rnp_base_hit(v, sc), field(v, "name", n).
+
+// The cases, `cases/drf-practice-related-field-not-prefetched/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "core/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/core/__init__.py"
+    .fixture "core/views.py" from "../cases/drf-practice-related-field-not-prefetched/core/views.py"
+    .fixture "shop/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/shop/__init__.py"
+    .fixture "shop/models.py" from "../cases/drf-practice-related-field-not-prefetched/shop/models.py"
+    .fixture "shop/api/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/__init__.py"
+    .fixture "shop/api/serializers.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/serializers.py"
+    .fixture "shop/api/views.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/views.py"
+    .fixture "shop/tests/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../cases/drf-practice-related-field-not-prefetched/shop/tests/test_views.py"
+    .expect _ at "shop/api/views.py":31
+    .expect _ at "shop/api/views.py":36
+    .expect _ at "shop/api/views.py":41
+    .expect _ at "shop/api/views.py":46
+    .expect _ at "shop/api/views.py":53
+    .expect _ at "shop/api/views.py":61
+    .expect _ at "shop/api/views.py":66
+    .expect _ at "shop/api/views.py":71
+    .expect _ at "shop/api/views.py":77
+    .expect _ at "shop/api/views.py":85
+.end

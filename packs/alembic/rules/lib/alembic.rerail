@@ -1,0 +1,358 @@
+// lib/alembic: Alembic migrations, the SQLAlchemy models they change, and the env.py that runs them, as the
+// alembic-practice rules read them. Names resolve through imports (python/names' sym_of), so `from alembic import op`
+// makes `op.create_index(...)` an Alembic operation and `import sqlalchemy as sa` makes `sa.Column(...)` a Column.
+// Model classes and their columns resolve across the files of the run (class_base), so a column a mixin in another
+// module declares still belongs to the model.
+//
+// Interface
+//   Files:        al_migration_doc(d)        document d is an Alembic revision: module-level `revision = ...` and
+//                                            `down_revision = ...`
+//                 al_env_doc(d)              document d is an env.py that reads alembic.context
+//                 al_test_doc(d)             document d is test code (tests/test/testing directories, test_*.py,
+//                                            *_test.py, conftest.py)
+//   Revisions:    al_revision(d, r)          revision d's own id r (the `revision` string)
+//                 al_down_revision(d, r)     revision d revises r: `down_revision`'s string, or each string of a
+//                                            merge revision's tuple
+//                 al_branch_labeled(d)       revision d sets `branch_labels` to something other than None
+//                 al_parent(n, m)            revision n (outside test code) names revision m in its down_revision:
+//                                            m in n's directory first, else m anywhere in the run (trees that reuse
+//                                            ids stay apart)
+//                 al_ancestor(n, m)          revision m is a strict ancestor of n (n descends from m)
+//                 al_head(h)                 revision h (outside test code) is no other revision's parent
+//                 al_top_assign(d, x, v)     document d's module level assigns name x the value v
+//   Steps:        al_step(f, s)              f is the migration's module-level `def upgrade()` (s "upgrade") or
+//                                            `def downgrade()` (s "downgrade")
+//                 al_in_step(n, f)           n runs when step f runs: inside f, or inside a module-level function of
+//                                            the same file that f calls by name (one level)
+//   Operations:   al_call(c, m, form)        call c is Alembic operation m: `op.m(...)` (form "op") or `b.m(...)` on
+//                                            the handle b of a `with op.batch_alter_table(...) as b:` around it
+//                                            (form "batch")
+//                 al_role(c, role, e)        e is operation c's argument for role "table", "name", "column",
+//                                            "column_name", "columns", "referent" or "new_table", positional or by
+//                                            keyword, as each operation's signature places it (al_role_at)
+//                 al_table(c, t)             operation c acts on the table named t: its table argument, or the
+//                                            batch_alter_table's (a literal, `op.f("...")`, or a module constant)
+//                 al_batch_with(w, v, tn, b) with-statement w opens `op.batch_alter_table(tn, ...)` as v; b its body
+//                 al_creates_table(f, t)     step f creates table t: `op.create_table("t", ...)` or a project's own
+//                                            `create_table("t", ...)` wrapper
+//                 al_on_existing(c, m, t, f) operation m (c) in upgrade step f acts on table t, which f does not
+//                                            create: a table that already holds rows in production
+//                 al_kw(c, k, v)             call c passes keyword k=v
+//                 al_true_kw(c, k)           call c passes k=True
+//   Transactions: al_autocommit_with(w, b)   with-statement w opens `...autocommit_block()`; b is its body
+//                 al_in_autocommit(n)        n runs inside an autocommit block (outside the migration transaction)
+//   Dialects:     al_non_pg(n)               n sits in a branch that runs only on a database other than PostgreSQL:
+//                                            the else of `if _is_pg(conn):`/`if dialect.name == "postgresql":`, the
+//                                            body of `if dialect.name != "postgresql":` or `if ... == "sqlite":`,
+//                                            the else of `if not isinstance(d, SQLiteDialect):`, or code after
+//                                            `if not _is_mysql(): return` (tests read lowercased)
+//   Columns:      al_column_call(c)          call c builds a sqlalchemy Column (`sa.Column`, `Column`, sqlmodel's)
+//                 al_column_name(c, x)       Column c's name: its first positional argument
+//                 al_added_column(c, col)    add_column operation c adds the Column call col
+//                 al_name_value(e, s)        expression e names the string s: a literal, `op.f("s")`, or a module
+//                                            constant bound to a literal
+//   Models:       al_model(k, t)             class k maps table t: `__tablename__ = "t"` in its body, or a sqlmodel
+//                                            `class K(..., table=True)` without one (table: the lowercased name)
+//                 al_model_super(k, b)       class b of the run is among model k's bases, directly or not
+//                 al_class_column(k, x, s)   class k's body maps column x at statement s: `a = Column(...)`,
+//                                            `a = mapped_column(...)`, `a: Mapped[T] = mapped_column(...)`, a bare
+//                                            `a: Mapped[T]`, or (sqlmodel) an annotated field; x is the Column's
+//                                            explicit name when it has one, else the attribute
+//                 al_model_column(k, t, x)   model k (table t) maps column x, declared on k or on a base of the run
+//                 al_mapped_class(k)         class k is a mapped ORM class: al_model, or a subclass of one
+//   env.py:       al_env_configure(c)        call c is `context.configure(...)` in env.py
+//                 al_env_tree(d, e)          revision d sits under the directory of env.py e (a repository can hold
+//                                            several Alembic trees, each with its own env.py: dispatch's core and
+//                                            tenant schemas)
+//                 al_in_some_tree(d)         revision d sits under some env.py's directory
+//                 al_sets_lock_timeout(d)    document d holds a string that mentions lock_timeout
+//
+// Alembic background
+//   - Each revision runs `upgrade()` in one transaction on PostgreSQL (transactional DDL) unless env.py turns it off;
+//     `with op.get_context().autocommit_block():` commits what ran before it and runs its body outside any transaction,
+//     which CREATE/DROP INDEX CONCURRENTLY and (before PG 12) ALTER TYPE ... ADD VALUE need.
+//   - `with op.batch_alter_table("t") as batch_op:` names the table once; `batch_op.create_index("ix", ["c"])` acts on t.
+//     On PostgreSQL a batch emits the same ALTER statements as `op.*` (recreate="auto" only copies tables on SQLite).
+//   - A table the same `upgrade()` creates is empty, so locks on it cost nothing: every "existing table" rule leaves
+//     its operations alone. A table created by an earlier revision of the same release is not seen as new (gap).
+//   - Projects that run on several databases branch on the dialect; only PostgreSQL's branch is this pack's concern.
+//   e.g.  from alembic import op
+//         import sqlalchemy as sa
+//         def upgrade():                                      al_step(<upgrade>, "upgrade")
+//             op.create_table("tags", sa.Column("id", ...))  al_creates_table(<upgrade>, "tags")
+//             op.create_index("ix_tags_id", "tags", ["id"])   al_call(_, "create_index", "op"), al_table(_, "tags"),
+//                                                             not al_on_existing (tags is new)
+//             with op.batch_alter_table("users") as b:        al_batch_with(_, "b", <"users">, _)
+//                 b.add_column(sa.Column("x", sa.Integer()))  al_call(_, "add_column", "batch"), al_table(_, "users"),
+//                                                             al_on_existing(_, "add_column", "users", <upgrade>),
+//                                                             al_added_column(_, <sa.Column(...)>)
+//         class User(Base):                                   al_model(<User>, "users")
+//             __tablename__ = "users"
+//             email: Mapped[str] = mapped_column(String(255))  al_class_column(<User>, "email", _)
+#include "python/ast.rerail"
+#include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
+
+// ---- files -------------------------------------------------------------------------------------------------------
+// al_top_assign(d, x, v): `x = v` (or `x: T = v`) at module level of document d.
+.decl al_top_assign(d: number, x: symbol, v: node)
+al_top_assign(d, x, v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x),
+    field(a, "right", v), nearest(a, m, scope), kind(m, "module"), docof(a, d).
+.decl al_migration_doc(d: number)
+al_migration_doc(d) :- al_top_assign(d, "revision", _), al_top_assign(d, "down_revision", _).
+.decl al_env_doc(d: number)
+al_env_doc(d) :- file_name(d, "env.py"), kind(e, "identifier"), sym_of(e, q), prefix("alembic.context", q), docof(e, d).
+.decl al_env_tree(d: number, e: number)
+al_env_tree(d, e) :- al_env_doc(e), doc(e, ep, _), r = @replace_all(ep, "env\\.py$", ""), al_migration_doc(d),
+    doc(d, p, _), prefix(r, p).
+.decl al_in_some_tree(d: number)
+al_in_some_tree(d) :- al_env_tree(d, _).
+.decl al_test_doc(d: number)
+al_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing")).
+al_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ;
+    s = "conftest.py").
+
+// ---- revisions ---------------------------------------------------------------------------------------------------
+.decl al_revision(d: number, r: symbol)
+al_revision(d, r) :- al_migration_doc(d), al_top_assign(d, "revision", v), str(v, r).
+// A merge revision revises each revision of its tuple (or list).
+.decl al_down_revision(d: number, r: symbol)
+al_down_revision(d, r) :- al_migration_doc(d), al_top_assign(d, "down_revision", v), str(v, r).
+al_down_revision(d, r) :- al_migration_doc(d), al_top_assign(d, "down_revision", v), (kind(v, "tuple") ;
+    kind(v, "list")), child(v, e, _), str(e, r).
+.decl al_branch_labeled(d: number)
+al_branch_labeled(d) :- al_migration_doc(d), al_top_assign(d, "branch_labels", v), !kind(v, "none").
+// al_rev_dir(d, p): revision d's directory; al_dir_has(p, r): directory p holds a revision with id r.
+.decl al_rev_dir(d: number, p: symbol)
+al_rev_dir(d, p) :- al_revision(d, _), !al_test_doc(d), doc(d, f, _), p = @replace_all(cat("/", f), "/[^/]*$", "").
+.decl al_dir_has(p: symbol, r: symbol)
+al_dir_has(p, r) :- al_revision(d, r), al_rev_dir(d, p).
+.decl al_parent(n: number, m: number)
+al_parent(n, m) :- al_rev_dir(n, p), al_down_revision(n, r), al_revision(m, r), al_rev_dir(m, p), m != n.
+al_parent(n, m) :- al_rev_dir(n, p), al_down_revision(n, r), !al_dir_has(p, r), al_revision(m, r), al_rev_dir(m, _),
+    m != n.
+.decl al_ancestor(n: number, m: number)
+al_ancestor(n, m) :- al_parent(n, m).
+al_ancestor(n, m) :- al_ancestor(n, k), al_parent(k, m).
+.decl al_has_child(m: number)
+al_has_child(m) :- al_parent(_, m).
+.decl al_head(h: number)
+al_head(h) :- al_rev_dir(h, _), !al_has_child(h).
+
+// ---- steps -------------------------------------------------------------------------------------------------------
+.decl al_step(f: node, s: symbol)
+al_step(f, s) :- kind(f, "function_definition"), def_name(f, s), (s = "upgrade" ; s = "downgrade"), nearest(f, m, scope),
+    kind(m, "module"), docof(f, d), al_migration_doc(d).
+// al_helper(f, g): step f calls g, a module-level function of the same file, by its bare name.
+.decl al_helper(f: node, g: node)
+al_helper(f, g) :- al_step(f, _), kind(c, "call"), within(c, f), field(c, "function", fn), kind(fn, "identifier"),
+    text(fn, x), kind(g, "function_definition"), def_name(g, x), nearest(g, m, scope), kind(m, "module"), docof(g, d),
+    docof(f, d), g != f.
+.decl al_in_step(n: node, f: node)
+al_in_step(n, f) :- al_step(f, _), within(n, f).
+al_in_step(n, f) :- al_helper(f, g), within(n, g).
+
+// ---- operations --------------------------------------------------------------------------------------------------
+.decl al_op_call(c: node, m: symbol)
+al_op_call(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), unparen(o, u), sym_of(u, "alembic.op").
+// al_batch_with(w, v, tn, b): `with op.batch_alter_table(tn, ...) as v:` (tn positional or `table_name=`).
+.decl al_batch_with(w: node, v: symbol, tn: node, b: node)
+al_batch_with(w, v, tn, b) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, e, 0), unparen(e, c),
+    al_op_call(c, "batch_alter_table"), (call_arg(c, 0, "", tn) ; call_arg(c, -1, "table_name", tn)),
+    field(ap, "alias", t), text(t, v), field(w, "body", b).
+.decl al_batch_call(c: node, m: symbol, w: node)
+al_batch_call(c, m, w) :- al_batch_with(w, v, _, b), kind(c, "call"), within(c, b), field(c, "function", f),
+    attr_of(f, o, m), kind(o, "identifier"), text(o, v).
+.decl al_call(c: node, m: symbol, form: symbol)
+al_call(c, m, "op") :- al_op_call(c, m).
+al_call(c, m, "batch") :- al_batch_call(c, m, _).
+// al_role_at(m, form, role, i, k): operation m's argument for role is positional i or keyword k (Alembic 1.x
+// signatures; a batch operation leaves out the table argument, which its batch_alter_table gives).
+.decl al_role_at(m: symbol, form: symbol, role: symbol, i: number, k: symbol)
+al_role_at("create_table", "op", "table", 0, "table_name").
+al_role_at("drop_table", "op", "table", 0, "table_name").
+al_role_at("rename_table", "op", "table", 0, "old_table_name").
+al_role_at("rename_table", "op", "new_table", 1, "new_table_name").
+al_role_at("add_column", "op", "table", 0, "table_name").
+al_role_at("add_column", "op", "column", 1, "column").
+al_role_at("add_column", "batch", "column", 0, "column").
+al_role_at("drop_column", "op", "table", 0, "table_name").
+al_role_at("drop_column", "op", "column_name", 1, "column_name").
+al_role_at("drop_column", "batch", "column_name", 0, "column_name").
+al_role_at("alter_column", "op", "table", 0, "table_name").
+al_role_at("alter_column", "op", "column_name", 1, "column_name").
+al_role_at("alter_column", "batch", "column_name", 0, "column_name").
+al_role_at("create_index", "op", "name", 0, "index_name").
+al_role_at("create_index", "op", "table", 1, "table_name").
+al_role_at("create_index", "op", "columns", 2, "columns").
+al_role_at("create_index", "batch", "name", 0, "index_name").
+al_role_at("create_index", "batch", "columns", 1, "columns").
+al_role_at("drop_index", "op", "name", 0, "index_name").
+al_role_at("drop_index", "op", "table", 1, "table_name").
+al_role_at("drop_index", "batch", "name", 0, "index_name").
+al_role_at("create_unique_constraint", "op", "name", 0, "constraint_name").
+al_role_at("create_unique_constraint", "op", "table", 1, "table_name").
+al_role_at("create_unique_constraint", "op", "columns", 2, "columns").
+al_role_at("create_unique_constraint", "batch", "name", 0, "constraint_name").
+al_role_at("create_unique_constraint", "batch", "columns", 1, "columns").
+al_role_at("create_foreign_key", "op", "name", 0, "constraint_name").
+al_role_at("create_foreign_key", "op", "table", 1, "source_table").
+al_role_at("create_foreign_key", "op", "referent", 2, "referent_table").
+al_role_at("create_foreign_key", "batch", "name", 0, "constraint_name").
+al_role_at("create_foreign_key", "batch", "referent", 1, "referent_table").
+al_role_at("create_check_constraint", "op", "name", 0, "constraint_name").
+al_role_at("create_check_constraint", "op", "table", 1, "table_name").
+al_role_at("create_check_constraint", "batch", "name", 0, "constraint_name").
+al_role_at("create_primary_key", "op", "name", 0, "constraint_name").
+al_role_at("create_primary_key", "op", "table", 1, "table_name").
+al_role_at("drop_constraint", "op", "name", 0, "constraint_name").
+al_role_at("drop_constraint", "op", "table", 1, "table_name").
+al_role_at("drop_constraint", "batch", "name", 0, "constraint_name").
+.decl al_role(c: node, role: symbol, e: node)
+al_role(c, r, e) :- al_call(c, m, fm), al_role_at(m, fm, r, i, _), call_arg(c, i, "", e).
+al_role(c, r, e) :- al_call(c, m, fm), al_role_at(m, fm, r, _, k), call_arg(c, -1, k, e).
+// al_name_value(e, s): e names the string s: a literal, Alembic's naming wrapper `op.f("s")` (or a batch's
+// `b.f("s")`), or an identifier bound to a literal in the same file (a module constant: `INDEX = "ix_files_path"`).
+.decl al_name_value(e: node, s: symbol)
+al_name_value(e, s) :- unparen(e, u), str(u, s).
+al_name_value(e, s) :- unparen(e, u), kind(u, "identifier"), static_value(u, s).
+al_name_value(e, s) :- unparen(e, u), al_call(u, "f", _), call_arg(u, 0, "", a), unparen(a, v), str(v, s).
+.decl al_table(c: node, t: symbol)
+al_table(c, t) :- al_call(c, _, "op"), al_role(c, "table", e), al_name_value(e, t).
+al_table(c, t) :- al_batch_call(c, _, w), al_batch_with(w, _, tn, _), al_name_value(tn, t).
+// al_creates_table(f, t): step f creates table t: `op.create_table("t", ...)`, or a project's own wrapper called
+// `create_table` (a bare name or an attribute, such as superset's `migrations.shared.utils.create_table("t", ...)`)
+// whose first argument names t.
+.decl al_creates_table(f: node, t: symbol)
+al_creates_table(f, t) :- al_call(c, "create_table", "op"), al_in_step(c, f), al_table(c, t).
+al_creates_table(f, t) :- al_create_table_wrapper(c), (call_arg(c, 0, "", a) ; call_arg(c, -1, "table_name", a)),
+    al_name_value(a, t), al_in_step(c, f).
+.decl al_create_table_wrapper(c: node)
+al_create_table_wrapper(c) :- kind(c, "call"), field(c, "function", fn), kind(fn, "identifier"), text(fn, "create_table").
+al_create_table_wrapper(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "create_table"),
+    !al_call(c, "create_table", _).
+.decl al_on_existing(c: node, m: symbol, t: symbol, f: node)
+al_on_existing(c, m, t, f) :- al_call(c, m, _), al_table(c, t), al_in_step(c, f), al_step(f, "upgrade"),
+    !al_creates_table(f, t).
+.decl al_kw(c: node, k: symbol, v: node)
+al_kw(c, k, v) :- call_arg(c, -1, k, v).
+.decl al_true_kw(c: node, k: symbol)
+al_true_kw(c, k) :- call_arg(c, -1, k, v), unparen(v, u), kind(u, "true").
+
+// ---- transactions ------------------------------------------------------------------------------------------------
+// al_autocommit_with(w, b): `with op.get_context().autocommit_block():` (or any `<x>.autocommit_block()`, such as a
+// MigrationContext held in a local).
+.decl al_autocommit_with(w: node, b: node)
+al_autocommit_with(w, b) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", v), unparen(v, c), kind(c, "call"), field(c, "function", f),
+    attr_of(f, _, "autocommit_block"), field(w, "body", b).
+.decl al_in_autocommit(n: node)
+al_in_autocommit(n) :- al_autocommit_with(_, b), within(n, b).
+
+// ---- dialects ----------------------------------------------------------------------------------------------------
+// The test of an if statement, read as lowercased text: does it name PostgreSQL (`_is_pg(conn)`, `dialect.name ==
+// "postgresql"`, `is_postgres`, `PGDialect`), another database (`"sqlite"`, `SQLiteDialect`, `_is_mysql()`), or negate?
+.decl al_pg_test(x: symbol)
+al_pg_test(x) :- al_if_test(_, x), (contains("postgres", x) ; contains("_pg", x) ; contains("is_pg", x) ;
+    contains("pgdialect", x)).
+.decl al_other_db_test(x: symbol)
+al_other_db_test(x) :- al_if_test(_, x), (contains("sqlite", x) ; contains("mysql", x) ; contains("mssql", x) ;
+    contains("oracle", x) ; contains("mariadb", x)).
+.decl al_negated_test(x: symbol)
+al_negated_test(x) :- al_if_test(_, x), (contains("!=", x) ; contains("not ", x) ; contains("not(", x)).
+.decl al_if_test(s: node, x: symbol)
+al_if_test(s, y) :- kind(s, "if_statement"), field(s, "condition", c), text(c, x), y = @lower(x).
+// al_else_part(s, e): the elif and else clauses of if statement s.
+.decl al_else_part(s: node, e: node)
+al_else_part(s, e) :- kind(s, "if_statement"), field(s, "alternative", e).
+// al_non_pg(n): n runs only on another database: the else of a PostgreSQL test, the body of a negated one, the body of
+// another database's test, the else of a negated other-database test (`if not isinstance(d, SQLiteDialect): ... else:`),
+// or code after a guard that returns unless the database is another one (`if not _is_mysql(): return`, `if _is_pg(c):
+// return`). The opposite guard (`if dialect != "postgresql": return`) leaves what follows on PostgreSQL.
+.decl al_non_pg(n: node)
+al_non_pg(n) :- al_if_test(s, x), al_pg_test(x), !al_negated_test(x), al_else_part(s, e), within(n, e).
+al_non_pg(n) :- al_if_test(s, x), al_pg_test(x), al_negated_test(x), field(s, "consequence", b), within(n, b).
+al_non_pg(n) :- al_if_test(s, x), al_other_db_test(x), !al_pg_test(x), !al_negated_test(x), field(s, "consequence", b),
+    within(n, b).
+al_non_pg(n) :- al_if_test(s, x), al_other_db_test(x), !al_pg_test(x), al_negated_test(x), al_else_part(s, e),
+    within(n, e).
+al_non_pg(n) :- kind(g, "function_definition"), field(g, "body", fb), body_stmt(fb, s, i), al_non_pg_guard(s),
+    body_stmt(fb, s2, j), j > i, within(n, s2).
+al_non_pg(n) :- kind(g, "function_definition"), field(g, "body", fb), body_stmt(fb, s, i), al_non_pg_guard(s),
+    body_stmt(fb, n, j), j > i.
+.decl al_non_pg_guard(s: node)
+al_non_pg_guard(s) :- al_if_test(s, x), al_other_db_test(x), !al_pg_test(x), al_negated_test(x), al_return_only(s).
+al_non_pg_guard(s) :- al_if_test(s, x), al_pg_test(x), !al_negated_test(x), al_return_only(s).
+.decl al_return_only(s: node)
+al_return_only(s) :- !field(s, "alternative", _), field(s, "consequence", b), body_len(b, 1), body_stmt(b, r, 0),
+    kind(r, "return_statement").
+
+// ---- columns -----------------------------------------------------------------------------------------------------
+.decl al_column_q(q: symbol)
+al_column_q("sqlalchemy.Column"). al_column_q("sqlalchemy.schema.Column"). al_column_q("sqlalchemy.sql.schema.Column").
+al_column_q("sqlmodel.Column").
+.decl al_column_call(c: node)
+al_column_call(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), al_column_q(q).
+.decl al_column_name(c: node, x: symbol)
+al_column_name(c, x) :- al_column_call(c), call_arg(c, 0, "", a), al_name_value(a, x).
+.decl al_added_column(c: node, col: node)
+al_added_column(c, col) :- al_call(c, "add_column", _), al_role(c, "column", e), unparen(e, col), al_column_call(col).
+
+// ---- models ------------------------------------------------------------------------------------------------------
+// al_class_stmt(k, a): statement a of class k's body is `x = v`, `x: T = v` or a bare `x: T`.
+.decl al_class_stmt(k: node, a: node)
+al_class_stmt(k, a) :- kind(k, "class_definition"), field(k, "body", b), body_stmt(b, s, _), kind(s, "expression_statement"),
+    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier").
+.decl al_tablename(k: node, t: symbol)
+al_tablename(k, t) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__tablename__"), field(a, "right", v),
+    al_name_value(v, t).
+// al_sqlmodel_table(k): `class K(..., table=True)`: a sqlmodel table class.
+.decl al_sqlmodel_table(k: node)
+al_sqlmodel_table(k) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, kw, _),
+    kind(kw, "keyword_argument"), field(kw, "name", nm), text(nm, "table"), field(kw, "value", v), kind(v, "true").
+.decl al_model(k: node, t: symbol)
+al_model(k, t) :- al_tablename(k, t).
+al_model(k, t) :- al_sqlmodel_table(k), !al_tablename(k, _), def_name(k, x), t = @lower(x).
+.decl al_model_super(k: node, b: node)
+al_model_super(k, b) :- al_model(k, _), class_base(k, q), class_def(b, q).
+al_model_super(k, b) :- al_model_super(k, m), class_base(m, q), class_def(b, q).
+.decl al_mapped_value(v: node)
+al_mapped_value(v) :- unparen(v, c), al_column_call(c).
+al_mapped_value(v) :- unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, "sqlalchemy.orm.mapped_column").
+.decl al_explicit_name(v: node, x: symbol)
+al_explicit_name(v, x) :- unparen(v, c), kind(c, "call"), al_mapped_value(c), call_arg(c, 0, "", a), unparen(a, s),
+    str(s, x).
+// al_class_column(k, x, a): statement a of class k maps column x.
+.decl al_class_column(k: node, x: symbol, a: node)
+// `a = Column("name", ...)`, `a = mapped_column(...)`, with or without an annotation.
+al_class_column(k, x, a) :- al_class_stmt(k, a), field(a, "right", v), al_mapped_value(v), al_explicit_name(v, x).
+al_class_column(k, x, a) :- al_class_stmt(k, a), field(a, "right", v), al_mapped_value(v), !al_explicit_name(v, _),
+    field(a, "left", l), text(l, x).
+// A bare `a: Mapped[T]` (SQLAlchemy 2.0 declarative).
+al_class_column(k, x, a) :- al_class_stmt(k, a), !field(a, "right", _), field(a, "type", t), text(t, ty),
+    prefix("Mapped[", ty), field(a, "left", l), text(l, x).
+// sqlmodel: every annotated field of a table class, or of a class among its bases, that is no Relationship.
+al_class_column(k, x, a) :- al_sqlmodel_field_class(k), al_class_stmt(k, a), field(a, "type", t), text(t, ty),
+    !prefix("ClassVar", ty), !al_sqlmodel_relationship(a), field(a, "left", l), text(l, x), !prefix("_", x).
+.decl al_sqlmodel_field_class(k: node)
+al_sqlmodel_field_class(k) :- al_sqlmodel_table(k).
+al_sqlmodel_field_class(b) :- al_sqlmodel_table(k), al_model_super(k, b).
+.decl al_sqlmodel_relationship(a: node)
+al_sqlmodel_relationship(a) :- field(a, "right", v), unparen(v, c), kind(c, "call"), field(c, "function", f),
+    sym_of(f, "sqlmodel.Relationship").
+.decl al_model_column(k: node, t: symbol, x: symbol)
+al_model_column(k, t, x) :- al_model(k, t), al_class_column(k, x, _).
+al_model_column(k, t, x) :- al_model(k, t), al_model_super(k, b), al_class_column(b, x, _).
+// al_mapped_class(k): a mapped class: one that names its table, or a subclass of one (single-table inheritance).
+.decl al_mapped_q(q: symbol)
+al_mapped_q(q) :- al_model(k, _), class_def(k, q).
+al_mapped_q(q) :- class_def(k, q), class_base(k, b), al_mapped_q(b).
+.decl al_mapped_class(k: node)
+al_mapped_class(k) :- class_def(k, q), al_mapped_q(q).
+
+// ---- env.py ------------------------------------------------------------------------------------------------------
+.decl al_env_configure(c: node)
+al_env_configure(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "alembic.context.configure"), docof(c, d),
+    al_env_doc(d).
+.decl al_sets_lock_timeout(d: number)
+al_sets_lock_timeout(d) :- kind(s, "string"), text(s, x), contains("lock_timeout", x), docof(s, d).

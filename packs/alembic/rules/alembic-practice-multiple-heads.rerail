@@ -1,0 +1,133 @@
+.policy "alembic-practice-multiple-heads" revision 1
+.description "Give each Alembic migration tree one head: point a new revision's down_revision at the current head, or add a merge revision."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Two revisions written on the same parent (two branches each adding a migration on the
+// head they saw) leave the tree with two heads, and `alembic upgrade head` refuses to run: "Multiple head revisions are
+// present for given argument 'head'" (Alembic, "Working with Branches"). pytest-alembic's test_single_head_revision
+// exists for the same merge conflict, which otherwise breaks only at deploy.
+// It reads every revision file of the run (al_migration_doc, outside test code) as a graph: a revision's parents are
+// the revisions its `down_revision` names (each of a merge's tuple or list), resolved first among the revisions of the
+// same directory and only then elsewhere, so two version directories that reuse ids ("0001", "0002") stay apart. A head
+// is a revision no other revision names in its `down_revision`. Reported, at a head's `down_revision = ...`:
+//   a2 <- a3 (head), a2 <- a4 <- a5 (head)        a3 and a5 both: they share the ancestor a2 and no merge joins them
+//   down_revision: Union[str, None] = "a2"         annotated assignments count the same
+//   n4 = ("n2", "n3") (head), n2 <- n5 (head)      a merge revision can be one of the heads; the message names the
+//                                                  revision with one parent to rebase (n3 on n4's line, n5 on its own)
+//   m4 = ("m2", "m3"), m5 = ("m3", "m2")           two branches each merged the same heads: no single-parent revision
+//                                                  to rebase, so MultipleMergeHeads says merge again or drop one
+// Each head is reported once per other head of its tree.
+// Left alone:
+//   down_revision = ("b2", "b3")                   a merge revision (even without `from alembic import op` and with an
+//                                                  empty upgrade()) joins the lines: one head
+//   core/versions/0002, tenant/versions/0003       heads of trees that share no ancestor (independent migration trees,
+//                                                  or a second base): each tree has its own head
+//   l1 <- l3 (branch_labels=("reports",)) <- l4    a line that sets branch_labels, or depends_on, between the fork and its
+//                                                  head is an intentional branch (`alembic upgrade heads`); labels on the
+//                                                  shared base or trunk do not silence a fork
+//   revisions in test trees
+// Gaps: a second base without branch_labels in the same version directory (two heads with no common ancestor) is left
+// alone; a `revision`/`down_revision` that is not a string literal is unresolved (its line looks like a separate tree);
+// revisions outside the run (a library's version_locations) are unseen.
+
+#include "lib/alembic.rerail"
+
+.violation MultipleHeads(at: node, r: symbol, o: symbol, x: symbol) "Revision {r} and revision {o} are both heads of this migration tree: they branch from a common revision and no merge revision lists both in its down_revision, so `alembic upgrade head` fails with \"Multiple head revisions are present\". If this line is the newer one and its first revision, {x}, has not run on any shared database, point {x}'s down_revision at \"{o}\"; otherwise add a merge revision with `alembic merge heads`. Leave it only for an intentional parallel branch, and give that branch's first revision branch_labels."
+.violation MultipleMergeHeads(at: node, r: symbol, o: symbol) "Revision {r} and revision {o} are both heads of this migration tree: they branch from a common revision and no merge revision lists both in its down_revision, so `alembic upgrade head` fails with \"Multiple head revisions are present\". Add a merge revision with `alembic merge heads`, or, if one of the two is a merge revision that has not run on any shared database, delete it. Leave it only for an intentional parallel branch, and give that branch's first revision branch_labels."
+
+// ---- the revision graph ------------------------------------------------------------------------------------------
+// The graph is lib/alembic's: al_parent (directory-first id resolution, test code left out), al_ancestor, al_head.
+// mh_rev(d, r): revision file d (outside test code) has id r.
+.decl mh_rev(d: number, r: symbol)
+mh_rev(d, r) :- al_revision(d, r), al_rev_dir(d, _).
+.decl mh_parent(n: number, m: number)
+mh_parent(n, m) :- al_parent(n, m).
+// mh_up(n, m): m is n or an ancestor of n.
+.decl mh_up(n: number, m: number)
+mh_up(n, n) :- mh_rev(n, _).
+mh_up(n, m) :- al_ancestor(n, m).
+.decl mh_head(h: number)
+mh_head(h) :- al_head(h).
+// mh_pair(h, o): two heads with different ids that share an ancestor: one tree, two heads.
+.decl mh_pair(h: number, o: number)
+mh_pair(h, o) :- mh_head(h), mh_head(o), h != o, mh_rev(h, r), mh_rev(o, s), r != s, mh_parent(h, _),
+    mh_up(h, a), mh_up(o, a).
+// mh_intentional(x): revision x starts or declares a deliberate branch: branch_labels or depends_on.
+.decl mh_intentional(x: number)
+mh_intentional(x) :- al_branch_labeled(x).
+mh_intentional(x) :- al_top_assign(x, "depends_on", v), !kind(v, "none").
+// mh_line(h, o, x): x is on h's own line: h or an ancestor of h that is not o or an ancestor of o.
+.decl mh_line(h: number, o: number, x: number)
+mh_line(h, o, x) :- mh_pair(h, o), mh_up(h, x), !mh_up(o, x).
+.decl mh_marked(h: number, o: number)
+mh_marked(h, o) :- mh_line(h, o, x), mh_intentional(x).
+// mh_single(n): revision n has one parent (a plain `down_revision = "..."`), so it can be rebased.
+.decl mh_single(n: number)
+mh_single(n) :- al_top_assign(n, "down_revision", v), str(v, _).
+// mh_line_root(h, o, x): x is a first revision of h's line: a revision with one parent, which lies on o's ancestry.
+// Pointing x at o makes o an ancestor of h. A line made only of merges (two branches that each ran `alembic merge
+// heads` on the same heads) has none.
+.decl mh_line_root(h: number, o: number, x: symbol)
+mh_line_root(h, o, x) :- mh_line(h, o, n), mh_single(n), mh_parent(n, p), mh_up(o, p), mh_rev(n, x).
+.decl mh_has_root(h: number, o: number)
+mh_has_root(h, o) :- mh_line_root(h, o, _).
+// mh_down_assign(d, a): the module-level `down_revision = ...` assignment of revision d.
+.decl mh_down_assign(d: number, a: node)
+mh_down_assign(d, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, "down_revision"),
+    nearest(a, m, scope), kind(m, "module"), docof(a, d), mh_rev(d, _).
+
+// mh_conflict(h, o): heads h and o of one tree, neither line marked as an intentional branch.
+.decl mh_conflict(h: number, o: number)
+mh_conflict(h, o) :- mh_pair(h, o), !mh_marked(h, o), !mh_marked(o, h).
+MultipleHeads(a, r, s, x) :- mh_conflict(h, o), mh_line_root(h, o, x), mh_down_assign(h, a), mh_rev(h, r),
+    mh_rev(o, s).
+MultipleMergeHeads(a, r, s) :- mh_conflict(h, o), !mh_has_root(h, o), mh_down_assign(h, a), mh_rev(h, r),
+    mh_rev(o, s).
+
+// The cases, `cases/alembic-practice-multiple-heads/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "fork/alembic/versions/a1_init.py" from "../cases/alembic-practice-multiple-heads/fork/alembic/versions/a1_init.py"
+    .fixture "fork/alembic/versions/a2_email.py" from "../cases/alembic-practice-multiple-heads/fork/alembic/versions/a2_email.py"
+    .fixture "fork/alembic/versions/a3_orders.py" from "../cases/alembic-practice-multiple-heads/fork/alembic/versions/a3_orders.py"
+    .fixture "fork/alembic/versions/a4_tags.py" from "../cases/alembic-practice-multiple-heads/fork/alembic/versions/a4_tags.py"
+    .fixture "fork/alembic/versions/a5_tag_index.py" from "../cases/alembic-practice-multiple-heads/fork/alembic/versions/a5_tag_index.py"
+    .fixture "labelled/alembic/versions/l1_init.py" from "../cases/alembic-practice-multiple-heads/labelled/alembic/versions/l1_init.py"
+    .fixture "labelled/alembic/versions/l2_email.py" from "../cases/alembic-practice-multiple-heads/labelled/alembic/versions/l2_email.py"
+    .fixture "labelled/alembic/versions/l3_reports.py" from "../cases/alembic-practice-multiple-heads/labelled/alembic/versions/l3_reports.py"
+    .fixture "labelled/alembic/versions/l4_report_rows.py" from "../cases/alembic-practice-multiple-heads/labelled/alembic/versions/l4_report_rows.py"
+    .fixture "labelled/alembic/versions/l5_billing.py" from "../cases/alembic-practice-multiple-heads/labelled/alembic/versions/l5_billing.py"
+    .fixture "merged/alembic/versions/b1_init.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b1_init.py"
+    .fixture "merged/alembic/versions/b2_email.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b2_email.py"
+    .fixture "merged/alembic/versions/b3_orders.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b3_orders.py"
+    .fixture "merged/alembic/versions/b4_merge.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b4_merge.py"
+    .fixture "merged/alembic/versions/b5_tags.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b5_tags.py"
+    .fixture "merged/alembic/versions/b6_audit.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b6_audit.py"
+    .fixture "merged/alembic/versions/b7_notes.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b7_notes.py"
+    .fixture "merged/alembic/versions/b8_merge.py" from "../cases/alembic-practice-multiple-heads/merged/alembic/versions/b8_merge.py"
+    .fixture "mergehead/alembic/versions/n1_init.py" from "../cases/alembic-practice-multiple-heads/mergehead/alembic/versions/n1_init.py"
+    .fixture "mergehead/alembic/versions/n2_orders.py" from "../cases/alembic-practice-multiple-heads/mergehead/alembic/versions/n2_orders.py"
+    .fixture "mergehead/alembic/versions/n3_tags.py" from "../cases/alembic-practice-multiple-heads/mergehead/alembic/versions/n3_tags.py"
+    .fixture "mergehead/alembic/versions/n4_merge.py" from "../cases/alembic-practice-multiple-heads/mergehead/alembic/versions/n4_merge.py"
+    .fixture "mergehead/alembic/versions/n5_notes.py" from "../cases/alembic-practice-multiple-heads/mergehead/alembic/versions/n5_notes.py"
+    .fixture "remerged/alembic/versions/m1_init.py" from "../cases/alembic-practice-multiple-heads/remerged/alembic/versions/m1_init.py"
+    .fixture "remerged/alembic/versions/m2_orders.py" from "../cases/alembic-practice-multiple-heads/remerged/alembic/versions/m2_orders.py"
+    .fixture "remerged/alembic/versions/m3_tags.py" from "../cases/alembic-practice-multiple-heads/remerged/alembic/versions/m3_tags.py"
+    .fixture "remerged/alembic/versions/m4_merge.py" from "../cases/alembic-practice-multiple-heads/remerged/alembic/versions/m4_merge.py"
+    .fixture "remerged/alembic/versions/m5_merge.py" from "../cases/alembic-practice-multiple-heads/remerged/alembic/versions/m5_merge.py"
+    .fixture "services/core/versions/0001_core.py" from "../cases/alembic-practice-multiple-heads/services/core/versions/0001_core.py"
+    .fixture "services/core/versions/0002_core.py" from "../cases/alembic-practice-multiple-heads/services/core/versions/0002_core.py"
+    .fixture "services/tenant/versions/0001_tenant.py" from "../cases/alembic-practice-multiple-heads/services/tenant/versions/0001_tenant.py"
+    .fixture "services/tenant/versions/0002_tenant.py" from "../cases/alembic-practice-multiple-heads/services/tenant/versions/0002_tenant.py"
+    .fixture "services/tenant/versions/0003_tenant.py" from "../cases/alembic-practice-multiple-heads/services/tenant/versions/0003_tenant.py"
+    .fixture "tests/migrations/versions/x1.py" from "../cases/alembic-practice-multiple-heads/tests/migrations/versions/x1.py"
+    .fixture "tests/migrations/versions/x2.py" from "../cases/alembic-practice-multiple-heads/tests/migrations/versions/x2.py"
+    .fixture "tests/migrations/versions/x3.py" from "../cases/alembic-practice-multiple-heads/tests/migrations/versions/x3.py"
+    .expect _ at "fork/alembic/versions/a3_orders.py":8
+    .expect _ at "fork/alembic/versions/a5_tag_index.py":6
+    .expect _ at "mergehead/alembic/versions/n4_merge.py":4
+    .expect _ at "mergehead/alembic/versions/n5_notes.py":6
+    .expect _ at "remerged/alembic/versions/m4_merge.py":4
+    .expect _ at "remerged/alembic/versions/m5_merge.py":4
+.end

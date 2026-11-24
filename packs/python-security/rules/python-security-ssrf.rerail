@@ -1,0 +1,252 @@
+.policy "python-security-ssrf" revision 1
+.description "Don't let request data choose the scheme or host of an outgoing HTTP request; check the host against an allow-list first."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Client request data (lib/security's sources: Django/DRF `request.GET`/`.POST`/
+// `.data`/…, Flask `request.args`/`.get_json()`/…, Starlette `request.query_params`/`.json()`/…, FastAPI and Flask
+// route parameters, a pydantic body's fields) that decides where the server sends an HTTP request, in the same
+// function or through the project's own functions across files (a `fetch(url)` wrapper around `requests.get(url)`
+// is followed into its parameter), reported at the call that sends the request. The sinks, by their URL argument
+// (the first positional, or the second after the method, or `url=`):
+//   - `requests.get/post/put/patch/delete/head/options/request`; `httpx.get/…/request/stream`; `urllib3.request`,
+//     `aiohttp.request`; `urllib.request.urlopen`, `urlretrieve` and `Request`;
+//   - the same methods (and `ws_connect`, `stream`, `urlopen`) on a client: `requests.Session()`,
+//     `httpx.Client()`/`AsyncClient()`, `aiohttp.ClientSession()`, `urllib3.PoolManager()`, bound to a name (`s =
+//     …`, `with … as s`, `async with`), held in `self.<attr>` by the class, or a parameter annotated with the class.
+// The value must control the scheme and host: the whole URL is client text (through `str()`, `urljoin`, unquote,
+// `.strip()`, `x or DEFAULT`, subscripts and attributes of it), or client text is spliced in before the host ends:
+// an f-string interpolation, `+` right operand, `%` or `.format()` placeholder whose preceding literal text has no
+// `/`, `?` or `#` after its `://`, and either sits first or follows a literal `://`.
+//   requests.get(request.GET["url"])                                  reported
+//   requests.get(f"https://{request.GET['host']}/status")             reported
+//   requests.get(urljoin(API_BASE, target))                           reported: an absolute target replaces the host
+//   requests.get(f"{settings.API}/items/{item_id}")                   not reported: the host is fixed
+//   requests.post(TOKEN_URL, data={"code": request.GET["code"]})      not reported: an OAuth code exchange
+// Sanitisers it trusts (for precision; see gaps): a name its function checks (lib/security's sec_checked: passed
+// to a validator-named call such as `validate_url(url)` or `is_allowed_host(urlparse(url).hostname)`, or tested
+// with `in`/`not in`), also through a name assigned from it (`parsed = urlparse(url)`, then `parsed.hostname in
+// ALLOWED`); a function of the run named like a validator, whose return carries nothing; and every library call
+// lib/security stops at (`int()`, `urlparse()`…). Not sanitisers: `validators.url()` and pydantic `HttpUrl`, which
+// check the format only (changedetection.io's and langflow's advisories).
+// Left alone: client data only in `data=`, `json=`, `params=`, `headers=`; a fixed host with a client path or
+// query, a `BASE + path` concatenation whose left side is not a literal; URLs from settings or the database; test
+// files.
+// Overlap: Ruff S310 / Bandit B310 audit only `urlopen`'s scheme, from any source; nothing covers requests, httpx,
+// aiohttp or urllib3. Semgrep's Django/Flask `ssrf-requests` rules are single-function `requests.*` searches.
+// Gaps: lib/security's (Django URL kwargs and `self.kwargs` are not sources; values stored on objects or in the
+// database are not followed; calls the call graph cannot resolve). Checks are flow-insensitive and trusted even
+// though resolve-then-check helpers are bypassable by redirects and DNS rebinding (Label Studio's and Open WebUI's
+// advisories); any `x in …` counts, a blocklist too. A check in a caller clears the value it passes on, not a helper
+// that re-reads the request. `BASE + client_text` with BASE a name is left alone, though `@evil` after a host
+// without a trailing slash moves it. Clients reached through other attributes or factories are not recognised.
+// A product whose feature is fetching the URL a user gives (bookmark checks, RAG loaders) is reported: blocking
+// private addresses is then the fix, and the rule cannot see one that is done in a transport adapter.
+
+#include "lib/security.rerail"
+
+.violation Ssrf(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) sets this request's host, so a client can make the server call internal services. Check the host against an allow-list, unless a check elsewhere does."
+
+// ---- where the host ends -----------------------------------------------------------------------------------------
+// ss_piece_ends(p): literal piece p of a string ends the host: after its first `://` (or from its start, with none)
+// it has a `/`, `?` or `#`.
+.decl ss_piece_ends(p: node)
+ss_piece_ends(p) :- kind(p, "string_content"), text(p, t), r = @rx_replace(t, "(?s)^.*?://", ""),
+    match("(?s).*[/?#].*", r).
+// ss_piece_scheme(p): literal piece p holds a `://`.
+.decl ss_piece_scheme(p: node)
+ss_piece_scheme(p) :- kind(p, "string_content"), text(p, t), contains("://", t).
+// ss_slot(s, a): interpolation a of f-string s sits before the host ends: no literal piece before it ends the host,
+// and it is first or a literal `://` precedes it (`f"{base}{path}"` with a fixed base is left alone).
+.decl ss_slot(s: node, a: node)
+ss_slot(s, a) :- kind(s, "string"), child(s, i, k), kind(i, "interpolation"), field(i, "expression", a),
+    count : { child(s, p, j), j < k, ss_piece_ends(p) } = 0,
+    count : { child(s, q, j), j < k, kind(q, "interpolation") } = 0.
+ss_slot(s, a) :- kind(s, "string"), child(s, i, k), kind(i, "interpolation"), field(i, "expression", a),
+    count : { child(s, p, j), j < k, ss_piece_ends(p) } = 0,
+    child(s, q, j), j < k, ss_piece_scheme(q).
+// ss_open(e): e is a literal prefix that leaves the host open (`"https://"`, `scheme + "://"`, a name assigned one).
+.decl ss_open(e: node)
+ss_open(s) :- kind(s, "string"), child(s, q, _), ss_piece_scheme(q), count : { child(s, p, _), ss_piece_ends(p) } = 0.
+ss_open(b) :- kind(b, "binary_operator"), op(b, "+"), field(b, "right", r), unparen(r, r2), ss_open(r2).
+ss_open(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), unparen(v, v2), ss_open(v2).
+// ss_fmt_slot(c, a): `%` or `.format()` c puts a into a literal at a placeholder (positional k, or `{name}`) whose
+// preceding text keeps the host open (ss_pre_ok).
+.decl ss_fmt_slot(c: node, a: node)
+ss_fmt_slot(b, a) :- kind(b, "binary_operator"), op(b, "%"), field(b, "left", l), unparen(l, l2), plain_str(l2, v),
+    field(b, "right", r), unparen(r, r2), ss_pct_item(r2, k, a),
+    pre = @rx_replace(v, cat("(?s)^((?:[^%]|%%)*(?:%[^%](?:[^%]|%%)*){", cat(to_string(k), "})%.*$")), "$1"),
+    ss_pre_ok(pre, k).
+ss_fmt_slot(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "format"), unparen(o, o2),
+    plain_str(o2, v), posarg(c, k, a),
+    pre = @rx_replace(v, cat("(?s)^((?:[^{]|\\{\\{)*(?:\\{[^}]*\\}(?:[^{]|\\{\\{)*){", cat(to_string(k), "})\\{.*$")), "$1"),
+    ss_pre_ok(pre, k).
+ss_fmt_slot(c, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "format"), unparen(o, o2),
+    plain_str(o2, v), call_arg(c, -1, n, a), contains(cat("{", n), v),
+    pre = @rx_replace(v, cat("(?s)^(.*?)\\{", cat(n, "[}:!].*$")), "$1"), ss_pre_ok(pre, 1).
+.decl ss_pct_item(r: node, k: number, a: node)
+ss_pct_item(r, 0, r) :- kind(b, "binary_operator"), op(b, "%"), field(b, "right", r0), unparen(r0, r), !kind(r, "tuple").
+ss_pct_item(t, k, a) :- kind(b, "binary_operator"), op(b, "%"), field(b, "right", r0), unparen(r0, t), kind(t, "tuple"),
+    child(t, a, k).
+// ss_pre_ok(pre, k): the text before placeholder k keeps the host open: no `/`, `?`, `#` after its first `://`, and
+// k = 0 or a `://` precedes.
+.decl ss_pre_ok(pre: symbol, k: number)
+ss_pre_ok(pre, k) :- ss_pre_cand(pre, k), r = @rx_replace(pre, "(?s)^.*?://", ""), !match("(?s).*[/?#].*", r),
+    (k = 0 ; contains("://", pre)).
+.decl ss_pre_cand(pre: symbol, k: number)
+ss_pre_cand(pre, k) :- kind(b, "binary_operator"), op(b, "%"), field(b, "left", l), unparen(l, l2), plain_str(l2, v),
+    field(b, "right", r), unparen(r, r2), ss_pct_item(r2, k, _),
+    pre = @rx_replace(v, cat("(?s)^((?:[^%]|%%)*(?:%[^%](?:[^%]|%%)*){", cat(to_string(k), "})%.*$")), "$1").
+ss_pre_cand(pre, k) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "format"), unparen(o, o2),
+    plain_str(o2, v), posarg(c, k, _),
+    pre = @rx_replace(v, cat("(?s)^((?:[^{]|\\{\\{)*(?:\\{[^}]*\\}(?:[^{]|\\{\\{)*){", cat(to_string(k), "})\\{.*$")), "$1").
+ss_pre_cand(pre, 1) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "format"), unparen(o, o2),
+    plain_str(o2, v), call_arg(c, -1, n, _), contains(cat("{", n), v),
+    pre = @rx_replace(v, cat("(?s)^(.*?)\\{", cat(n, "[}:!].*$")), "$1").
+
+// ---- checks ------------------------------------------------------------------------------------------------------
+// ss_checked(h, x): scope h checks name x (sec_checked), or checks a name assigned from an expression that reads x
+// (`parsed = urlparse(url)` and `parsed.hostname not in ALLOWED_HOSTS`).
+.decl ss_checked(h: node, x: symbol)
+ss_checked(h, x) :- sec_checked(h, x).
+ss_checked(h, x) :- sec_checked(h, y), asg(h, y, v, _), ss_mentions(v, x), x != y, x != "self", x != "cls",
+    x != "request".
+.decl ss_mentions(v: node, x: symbol)
+ss_mentions(v, x) :- asg(_, _, v, _), unparen(v, i), kind(i, "identifier"), text(i, x).
+ss_mentions(v, x) :- asg(_, _, v, _), has(v, i, "identifier"), text(i, x), !field(_, "attribute", i).
+
+// ---- client text that sets the host ------------------------------------------------------------------------------
+// ss_step(e, a): e's whole value holds a's: lib/security's steps that keep the text's start (parentheses, await,
+// subscripts, attributes and method calls on it, pass-through library calls such as str() and urljoin(),
+// conditionals, and/or, containers), not those that splice it into a larger string.
+.decl ss_step(e: node, a: node)
+ss_step(p, a) :- sec_step(p, a), (kind(p, "parenthesized_expression") ; kind(p, "await") ; kind(p, "subscript") ;
+    kind(p, "attribute") ; kind(p, "conditional_expression") ; kind(p, "boolean_operator") ; sec_container(p) ;
+    kind(p, "dictionary") ; kind(p, "list_comprehension") ; kind(p, "generator_expression") ;
+    kind(p, "set_comprehension")).
+ss_step(c, f) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, _).
+ss_step(c, a) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), sec_pass_q(q), call_arg(c, _, _, a).
+.decl ss_val(e: node, s: node)
+ss_val(e, e) :- sec_source(e, _).
+ss_val(e, s) :- ss_step(e, a), ss_val(a, s).
+ss_val(s, x) :- ss_slot(s, a), ss_val(a, x).
+ss_val(b, s) :- kind(b, "binary_operator"), (op(b, "+") ; op(b, "%")), field(b, "left", a), ss_val(a, s).
+ss_val(b, s) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", l), unparen(l, l2), ss_open(l2),
+    field(b, "right", a), ss_val(a, s).
+ss_val(c, s) :- ss_fmt_slot(c, a), ss_val(a, s).
+ss_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ss_checked(h, x), sec_bind(h, x, v), ss_val(v, s),
+    r != v.
+ss_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !ss_checked(g, x), ss_param(g, x, s).
+ss_val(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), ss_val(v, s).
+ss_val(c, s) :- call_target(c, g), ss_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), ss_val(a, s).
+ss_val(c, s) :- call_target(c, g), ss_returns(g, s), !sec_validator_def(g), ss_own_source(g, s).
+.decl ss_param(g: node, x: symbol, s: node)
+ss_param(g, x, p) :- sec_route_param(g, x, p).
+ss_param(g, x, s) :- sec_param_at(_, g, a, x), ss_val(a, s), !sec_checked_expr(a).
+.decl ss_returns(g: node, s: node)
+ss_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), ss_val(v, s),
+    !sec_checked_expr(v).
+.decl ss_own_source(g: node, s: node)
+ss_own_source(g, s) :- ss_returns(g, s), within(s, g).
+ss_own_source(g, s) :- ss_returns(g, s), ss_reach(g, h), within(s, h).
+.decl ss_reach(g: node, h: node)
+ss_reach(g, h) :- ss_returns(g, _), calls(g, h).
+ss_reach(g, k) :- ss_reach(g, h), calls(h, k).
+
+// ---- HTTP clients ------------------------------------------------------------------------------------------------
+// ss_q0(q) / ss_q1(q): module functions whose URL is the first argument / the second (after the method), or `url=`.
+.decl ss_q0(q: symbol)
+ss_q0(cat("requests.", m)) :- ss_m0(m), m != "ws_connect".
+ss_q0(cat("requests.api.", m)) :- ss_m0(m), m != "ws_connect".
+ss_q0(cat("httpx.", m)) :- ss_m0(m), m != "ws_connect".
+ss_q0("urllib.request.urlopen"). ss_q0("urllib.request.urlretrieve"). ss_q0("urllib.request.Request").
+.decl ss_q1(q: symbol)
+ss_q1("requests.request"). ss_q1("requests.api.request"). ss_q1("httpx.request"). ss_q1("httpx.stream").
+ss_q1("urllib3.request"). ss_q1("aiohttp.request").
+// ss_m0(m) / ss_m1(m): client methods whose URL is the first argument / the second.
+.decl ss_m0(m: symbol)
+ss_m0("get"). ss_m0("post"). ss_m0("put"). ss_m0("patch"). ss_m0("delete"). ss_m0("head"). ss_m0("options").
+ss_m0("ws_connect").
+.decl ss_m1(m: symbol)
+ss_m1("request"). ss_m1("stream"). ss_m1("urlopen").
+// ss_client_q(q): HTTP client classes (and requests' `session()` factory).
+.decl ss_client_q(q: symbol)
+ss_client_q("requests.Session"). ss_client_q("requests.session"). ss_client_q("requests.sessions.Session").
+ss_client_q("requests.sessions.session"). ss_client_q("httpx.Client"). ss_client_q("httpx.AsyncClient").
+ss_client_q("aiohttp.ClientSession"). ss_client_q("aiohttp.client.ClientSession"). ss_client_q("urllib3.PoolManager").
+ss_client_q("urllib3.ProxyManager"). ss_client_q("urllib3.poolmanager.PoolManager").
+// ss_client(e): e is an HTTP client: a constructor call, a name bound to one (`s = …`, `with … as s`), a parameter
+// annotated with the class, or `self.<attr>` that its class assigns one.
+.decl ss_client(e: node)
+ss_client(c) :- sec_call_q(c, q), ss_client_q(q).
+ss_client(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, v2), ss_client(v2).
+ss_client(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
+    sec_ann(a, t), sym_of(t, q), ss_client_q(q).
+ss_client(e) :- attr_of(e, o, at), kind(o, "identifier"), text(o, "self"), nearest(e, f, fdef), nearest(f, k, scope),
+    kind(k, "class_definition"), ss_self_client(k, at).
+.decl ss_self_client(k: node, at: symbol)
+ss_self_client(k, at) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, o, at), kind(o, "identifier"),
+    text(o, "self"), field(a, "right", v), unparen(v, v2), ss_client(v2), nearest(a, f, fdef), nearest(f, k, scope),
+    kind(k, "class_definition").
+
+// ss_sink(c, e): call c sends an HTTP request to URL e.
+.decl ss_sink(c: node, e: node)
+ss_sink(c, e) :- sec_call_q(c, q), ss_q0(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "url", e)).
+ss_sink(c, e) :- sec_call_q(c, q), ss_q1(q), (sec_arg(c, 1, _, e) ; sec_arg(c, -1, "url", e)).
+ss_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ss_m0(m), unparen(o, o2), ss_client(o2),
+    (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "url", e)).
+ss_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ss_m1(m), unparen(o, o2), ss_client(o2),
+    (sec_arg(c, 1, _, e) ; sec_arg(c, -1, "url", e)).
+.decl ss_hit(c: node, s: node)
+ss_hit(c, s) :- ss_sink(c, e), ss_val(e, s), !sec_checked_expr(e).
+.decl ss_live(c: node)
+ss_live(c) :- ss_hit(c, _), docof(c, d), !sec_test_doc(d).
+
+Ssrf(c, what, p, l) :- ss_live(c), s = min s2 : { ss_hit(c, s2) }, sec_origin(s, what, p, l).
+
+// The cases, `cases/python-security-ssrf/`, read as one repository: each line ending in `# caught` is reported, and
+// no other line.
+.test cases exactly
+    .fixture "api/__init__.py" from "../cases/python-security-ssrf/api/__init__.py"
+    .fixture "api/clients.py" from "../cases/python-security-ssrf/api/clients.py"
+    .fixture "api/routes.py" from "../cases/python-security-ssrf/api/routes.py"
+    .fixture "bookmarks/__init__.py" from "../cases/python-security-ssrf/bookmarks/__init__.py"
+    .fixture "bookmarks/http_client.py" from "../cases/python-security-ssrf/bookmarks/http_client.py"
+    .fixture "bookmarks/oauth.py" from "../cases/python-security-ssrf/bookmarks/oauth.py"
+    .fixture "bookmarks/security.py" from "../cases/python-security-ssrf/bookmarks/security.py"
+    .fixture "bookmarks/services.py" from "../cases/python-security-ssrf/bookmarks/services.py"
+    .fixture "bookmarks/tests/__init__.py" from "../cases/python-security-ssrf/bookmarks/tests/__init__.py"
+    .fixture "bookmarks/tests/test_views.py" from "../cases/python-security-ssrf/bookmarks/tests/test_views.py"
+    .fixture "bookmarks/views.py" from "../cases/python-security-ssrf/bookmarks/views.py"
+    .fixture "webapp/__init__.py" from "../cases/python-security-ssrf/webapp/__init__.py"
+    .fixture "webapp/app.py" from "../cases/python-security-ssrf/webapp/app.py"
+    .expect _ at "api/clients.py":14
+    .expect _ at "api/routes.py":25
+    .expect _ at "api/routes.py":32
+    .expect _ at "api/routes.py":39
+    .expect _ at "api/routes.py":45
+    .expect _ at "api/routes.py":50
+    .expect _ at "api/routes.py":62
+    .expect _ at "bookmarks/http_client.py":8
+    .expect _ at "bookmarks/http_client.py":12
+    .expect _ at "bookmarks/services.py":19
+    .expect _ at "bookmarks/views.py":23
+    .expect _ at "bookmarks/views.py":28
+    .expect _ at "bookmarks/views.py":34
+    .expect _ at "bookmarks/views.py":51
+    .expect _ at "bookmarks/views.py":56
+    .expect _ at "bookmarks/views.py":60
+    .expect _ at "bookmarks/views.py":65
+    .expect _ at "bookmarks/views.py":71
+    .expect _ at "bookmarks/views.py":76
+    .expect _ at "bookmarks/views.py":83
+    .expect _ at "bookmarks/views.py":90
+    .expect _ at "bookmarks/views.py":97
+    .expect _ at "bookmarks/views.py":105
+    .expect _ at "bookmarks/views.py":116
+    .expect _ at "webapp/app.py":16
+    .expect _ at "webapp/app.py":23
+    .expect _ at "webapp/app.py":29
+    .expect _ at "webapp/app.py":34
+.end

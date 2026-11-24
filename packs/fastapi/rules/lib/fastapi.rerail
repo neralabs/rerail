@@ -1,0 +1,381 @@
+// lib/fastapi: FastAPI and Starlette apps, routers, routes, dependencies, request sessions and background tasks, as
+// the fastapi-practice rules read them. Names resolve through imports (python/names' sym_of), so `from fastapi
+// import Depends` and `import fastapi` both reach "fastapi.Depends"; a router or dependency defined in one module and
+// used in another is followed by its qualified name, and class bases resolve across the files of the run.
+//
+// Interface
+//   Apps, routers:  fa_ctor(v, k)               call v builds a FastAPI/Starlette app (k "app") or an APIRouter/Router
+//                                               (k "router"): the class through imports or a subclass of the run, or
+//                                               a callee whose last name is `FastAPI` or ends in `APIRouter` (a
+//                                               project's alias: `APIRouter = get_api_router_class(...)`)
+//                   fa_router(r, k)             r stands for one app or router: a constructor call (fa_ctor), or a
+//                                               parameter annotated with one of the classes (`def setup(app: FastAPI)`)
+//                   fa_router_ref(o, r)         expression o refers to router r: a name bound to its constructor in
+//                                               any scope it can see, an import of a module variable bound to it, a
+//                                               `self.<attr>` assigned it, or a parameter annotated with its class
+//                   fa_router_kw(r, k, v)       constructor r passes keyword k = v (`lifespan=`, `dependencies=`)
+//                   fa_include(p, c, call)      `p.include_router(c, ...)` at call: router c is served under p
+//                   fa_include_kw(call, k, v)   that include passes keyword k = v (`prefix=`, `dependencies=`)
+//   Routes:         fa_route(f, dc, r, m)       def f is a route on router r: decorated with `o.m(...)` (dc the
+//                                               decorator call, m get/post/put/patch/delete/options/head/trace/
+//                                               api_route/websocket), the same decorator applied by hand
+//                                               (`app.get(path)(f)`, dc the inner call), or registered by
+//                                               `o.add_api_route(path, f)` (dc that call, m "api_route")
+//                   fa_route_def(f)             f is a route on some router
+//                   fa_route_path(dc, p)        route call dc's path string p (first positional or `path=`)
+//                   fa_route_kw(dc, k, v)       route call dc passes keyword k = v (`response_model=`, ...)
+//                   fa_middleware(f)            f is HTTP middleware FastAPI runs per request: `@app.middleware("http")`,
+//                                               or `dispatch` of a BaseHTTPMiddleware subclass of the run
+//   Dependencies:   fa_depends(c)               c is a `Depends(...)` or `Security(...)` call (fastapi, fastapi.params)
+//                   fa_depends_fn(c, g)         Depends call c runs def g: a function by name, a class's `__init__`,
+//                                               an instance's `__call__` (`Depends(Checker(...))`), or the class of
+//                                               `Annotated[T, Depends()]`
+//                   fa_param(f, p, x, ann, d)   parameter p of def f named x, not `*args`/`**kwargs`, with its
+//                                               annotation and default (unset for none), parentheses and the
+//                                               annotation's `type` wrapper off
+//                   fa_param_dep(f, p, x, c)    parameter x of f is filled by Depends call c: its default, its
+//                                               `Annotated[...]` metadata, or the metadata of an alias the
+//                                               annotation names (`SessionDep = Annotated[Session, Depends(get_db)]`,
+//                                               in any module)
+//                   fa_param_type(f, p, x, t)   parameter x's declared type, as an expression t: the annotation, or
+//                                               `T` of `Annotated[T, ...]`, also through such an alias; `Optional[T]`
+//                                               and `T | None` give T
+//                   fa_decorator_dep(dc, c)     route call dc lists Depends call c in `dependencies=[...]`
+//                   fa_router_dep(r, c)         router r's constructor lists Depends call c in `dependencies=[...]`
+//                   fa_needs(f, g)              FastAPI runs def g to call route or dependency f: through a
+//                                               parameter's dependency or the route decorator's `dependencies=`
+//                                               (a router's and an include's dependencies are fa_router_dep and
+//                                               fa_include_kw, which a rule joins itself)
+//                   fa_needs_reach(f, g)        the closure of fa_needs: f's dependencies, theirs, ...
+//                   fa_dependency(g)            def g is run by some Depends call of the run
+//                   fa_yield_dep(g)             dependency g is a generator: a `yield` in its own frame
+//                   fa_per_request(f)           FastAPI calls f per request: a route, a dependency or HTTP middleware
+//   Sessions:       fa_session_class(q, how)    q is a SQLAlchemy/SQLModel session class, how "sync" or "async",
+//                                               a subclass of the run included
+//                   fa_session_type(t, how)     type expression t names a session class, also inside Optional,
+//                                               `| None`, Generator/Iterator/AsyncGenerator/AsyncIterator
+//                   fa_session_maker(v, how)    v builds a session: `Session(...)`/`AsyncSession(...)`, a call of a
+//                                               name bound (in any module) to `sessionmaker(...)` or
+//                                               `async_sessionmaker(...)`, or `<maker>.begin()`
+//                   fa_session_dep(g, how)      dependency g provides a session: its return annotation names a
+//                                               session class, or it yields or returns a session it makes
+//                                               (fa_session_maker), directly or through `with ... as s`
+//                   fa_session_param(f, p, x, how)
+//                                               parameter x of route or dependency f holds the request's session:
+//                                               its type names a session class, or its dependency is fa_session_dep
+//   Background:     fa_bg_param(f, x)           parameter x of f is annotated BackgroundTasks
+//                   fa_add_task(c, fn, f)       call c, in def f, schedules fn: `x.add_task(fn, ...)` on a
+//                                               BackgroundTasks parameter x of f, or `BackgroundTask(fn, ...)`
+//   Files:          fa_test_doc(d)              document d is test code: a tests/test/testing directory,
+//                                               test_*.py, *_test.py, conftest.py
+//                   fa_fastapi_doc(d)           document d imports fastapi or starlette
+//
+// FastAPI background
+//   - A route is a def decorated by a method of an app or router: `@router.get("/x")`. An app's routes and its
+//     included routers' routes are all served; include_router copies the routes the router has when it is called.
+//   - A parameter's dependency is `Depends(dep)` as its default, or in its `Annotated[T, ...]` metadata, often through
+//     a module-level alias. FastAPI runs a `def` route or dependency in a threadpool and an `async def` one on the
+//     event loop; a plain helper either calls runs where its caller runs.
+//   - A dependency that yields hands the yielded value to the route; its code after `yield` (the exit code) runs
+//     once the route is done: before the response in 0.106-0.117, after it since 0.118.
+//   e.g.  router = APIRouter(dependencies=[Depends(verify)])   fa_ctor(<APIRouter(...)>, "router"),
+//                                                             fa_router_dep(<APIRouter(...)>, <Depends(verify)>)
+//         def get_db():
+//             with SessionLocal() as db: yield db             fa_yield_dep, fa_session_dep(<get_db>, "sync")
+//         SessionDep = Annotated[Session, Depends(get_db)]
+//         @router.get("/items/{id}")                          fa_route(<read>, <router.get(...)>, <APIRouter(...)>,
+//         async def read(id: int, db: SessionDep): ...        "get"), fa_param_dep(<read>, _, "db", <Depends(get_db)>),
+//                                                             fa_session_param(<read>, _, "db", "sync"),
+//                                                             fa_needs(<read>, <get_db>)
+#include "python/ast.rerail"
+#include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
+
+// ---- values ------------------------------------------------------------------------------------------------------
+// fa_unwrap(v, w): w is what expression v evaluates to, with parentheses and chained assignments taken off:
+// `a = b = APIRouter()` gives the call for both names.
+.decl fa_unwrap(v: node, w: node)
+fa_unwrap(v, w) :- unparen(v, w), !kind(w, "assignment").
+fa_unwrap(v, w) :- unparen(v, a), kind(a, "assignment"), field(a, "right", r), fa_unwrap(r, w).
+// fa_bind(s, x, v): scope s binds x to value v (`x = v`, `x = y = v`, `x: T = v`).
+.decl fa_bind(s: node, x: symbol, v: node)
+fa_bind(s, x, w) :- asg(s, x, r, _), fa_unwrap(r, w).
+fa_bind(s, y, w) :- asg(s, _, r, _), unparen(r, a), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, y), field(a, "right", r2), fa_unwrap(r2, w).
+// fa_module_var(q, v): a module binds its variable q (the module's dotted name, then the variable) to value v.
+.decl fa_module_var(q: symbol, v: node)
+fa_module_var(q, v) :- fa_bind(m, x, v), kind(m, "module"), modname(m, mq), q = @dot(mq, x).
+// fa_value(e, v): expression e holds value v: a name bound to v in the scope it reads (a local, a global of its
+// module), or an imported module variable bound to v in another module of the run.
+.decl fa_value(e: node, v: node)
+fa_value(e, v) :- kind(e, "identifier"), text(e, x), look(e, x, s), fa_bind(s, x, v).
+fa_value(e, v) :- sym_of(e, q), fa_module_var(q, v).
+// fa_strip(e, m): e with parentheses and the annotation's `type` wrapper off.
+.decl fa_strip(e: node, m: node)
+fa_strip(e, m) :- unparen(e, b), !kind(b, "type"), m = b.
+fa_strip(e, m) :- unparen(e, b), kind(b, "type"), child(b, i, 0), fa_strip(i, m).
+
+// ---- subscripts and annotations ----------------------------------------------------------------------------------
+// fa_sub(s, q): s is `X[...]` (a subscript, or the generic_type tree-sitter writes in annotations) whose X denotes q.
+// fa_sub_arg(s, i, a): a is its i-th argument, without the annotation's `type` wrapper.
+.decl fa_sub(s: node, q: symbol)
+fa_sub(s, q) :- kind(s, "subscript"), field(s, "value", v), sym_of(v, q).
+fa_sub(s, q) :- kind(s, "generic_type"), child(s, v, 0), sym_of(v, q).
+.decl fa_sub_arg(s: node, i: number, a: node)
+fa_sub_arg(s, i, a) :- fa_sub(s, _), kind(s, "subscript"), field(s, "subscript", e), child(s, e, j),
+    i = count : { field(s, "subscript", e2), child(s, e2, j2), j2 < j }, fa_strip(e, a).
+fa_sub_arg(s, i, a) :- fa_sub(s, _), kind(s, "generic_type"), child(s, p, 1), kind(p, "type_parameter"),
+    child(p, t, j), kind(t, "type"), i = count : { child(p, t2, j2), kind(t2, "type"), j2 < j }, fa_strip(t, a).
+.decl fa_annotated_q(q: symbol)
+fa_annotated_q("typing.Annotated"). fa_annotated_q("typing_extensions.Annotated").
+// fa_annotated(e, t, m): e is `Annotated[t, ..., m, ...]`, m one of its metadata.
+.decl fa_annotated(e: node, t: node, m: node)
+fa_annotated(e, t, m) :- fa_sub(e, q), fa_annotated_q(q), fa_sub_arg(e, 0, t), fa_sub_arg(e, i, m), i > 0.
+// fa_alias(e, a): annotation expression e names a module-level alias whose value a is `Annotated[...]`
+// (`CurrentUser = Annotated[User, Depends(get_current_user)]`), in this module or another one of the run.
+.decl fa_alias(e: node, a: node)
+fa_alias(e, a) :- fa_value(e, a), fa_annotated(a, _, _).
+// fa_type_core(e, t): the type an annotation e (a parameter's or a return's, fa_type_root) declares, Annotated
+// metadata, aliases, Optional and `| None` taken off: t is the class expression itself.
+.decl fa_type_root(e: node)
+fa_type_root(a) :- sig_param(_, _, _, _, _, a0, _), fa_strip(a0, a).
+fa_type_root(a) :- kind(f, "function_definition"), field(f, "return_type", a0), fa_strip(a0, a).
+.decl fa_type_down(e: node, m: node)
+fa_type_down(e, e) :- fa_type_root(e).
+fa_type_down(e, b) :- fa_type_down(e, m), fa_annotated(m, b, _).
+fa_type_down(e, b) :- fa_type_down(e, m), fa_alias(m, a), fa_annotated(a, b, _).
+fa_type_down(e, b) :- fa_type_down(e, m), fa_optional(m, b).
+.decl fa_type_core(e: node, t: node)
+fa_type_core(e, t) :- fa_type_down(e, t), !fa_annotated(t, _, _), !fa_alias(t, _), !fa_optional(t, _).
+// fa_optional(m, a): m is `Optional[a]`, `Union[a, None]` or `a | None` (either side).
+.decl fa_optional(m: node, a: node)
+fa_optional(m, a) :- fa_sub(m, q), (q = "typing.Optional" ; q = "typing_extensions.Optional"), fa_sub_arg(m, 0, a).
+fa_optional(m, a) :- (kind(m, "binary_operator") ; kind(m, "union_type")), child(m, l, 0), child(m, r, _), l != r,
+    fa_strip(r, rn), kind(rn, "none"), fa_strip(l, a).
+fa_optional(m, a) :- (kind(m, "binary_operator") ; kind(m, "union_type")), child(m, l, 0), child(m, r, _), l != r,
+    fa_strip(l, ln), kind(ln, "none"), fa_strip(r, a).
+
+// ---- apps and routers --------------------------------------------------------------------------------------------
+.decl fa_app_class(q: symbol, k: symbol)
+fa_app_class("fastapi.FastAPI", "app"). fa_app_class("fastapi.applications.FastAPI", "app").
+fa_app_class("starlette.applications.Starlette", "app").
+fa_app_class("fastapi.APIRouter", "router"). fa_app_class("fastapi.routing.APIRouter", "router").
+fa_app_class("starlette.routing.Router", "router").
+// fa_app_q(q, k): q names an app or router class: FastAPI's, Starlette's, or a class of the run deriving from one.
+.decl fa_app_q(q: symbol, k: symbol)
+fa_app_q(q, k) :- fa_app_class(q, k).
+fa_app_q(q, k) :- class_def(c, q), class_base(c, b), fa_app_q(b, k).
+.decl fa_ctor(v: node, k: symbol)
+fa_ctor(v, k) :- kind(v, "call"), field(v, "function", f), sym_of(f, q), fa_app_q(q, k).
+fa_ctor(v, "app") :- kind(v, "call"), call_name(v, "FastAPI").
+fa_ctor(v, "router") :- kind(v, "call"), call_name(v, x), suffix("APIRouter", x).
+// fa_router_param(p, k): parameter p is annotated with an app or router class.
+.decl fa_router_param(p: node, k: symbol)
+fa_router_param(p, k) :- sig_param(_, p, _, _, _, a, _), fa_strip(a, t), sym_of(t, q), fa_app_q(q, k).
+.decl fa_router(r: node, k: symbol)
+fa_router(r, k) :- fa_ctor(r, k).
+fa_router(p, k) :- fa_router_param(p, k).
+.decl fa_router_ref(o: node, r: node)
+fa_router_ref(o, r) :- fa_value(o, r), fa_ctor(r, _).
+fa_router_ref(o, r) :- attr_of(o, so, a), kind(so, "identifier"), text(so, "self"), assigned_attr(_, "self", a, v),
+    fa_unwrap(v, r), fa_ctor(r, _).
+fa_router_ref(o, p) :- kind(o, "identifier"), text(o, x), look(o, x, f), sig_param(f, p, nm, _, _, _, _), text(nm, x),
+    fa_router_param(p, _).
+.decl fa_router_kw(r: node, k: symbol, v: node)
+fa_router_kw(r, k, v) :- fa_ctor(r, _), call_arg(r, -1, k, v0), unparen(v0, v).
+.decl fa_include(p: node, c: node, call: node)
+fa_include(p, c, call) :- kind(call, "call"), field(call, "function", fn), attr_of(fn, o, "include_router"),
+    fa_router_ref(o, p), (call_arg(call, 0, "", a) ; call_arg(call, -1, "router", a)), unparen(a, ae),
+    fa_router_ref(ae, c).
+.decl fa_include_kw(call: node, k: symbol, v: node)
+fa_include_kw(call, k, v) :- fa_include(_, _, call), call_arg(call, -1, k, v0), unparen(v0, v).
+
+// ---- routes ------------------------------------------------------------------------------------------------------
+.decl fa_route_verb(m: symbol)
+fa_route_verb("get"). fa_route_verb("post"). fa_route_verb("put"). fa_route_verb("patch").
+fa_route_verb("delete"). fa_route_verb("options"). fa_route_verb("head"). fa_route_verb("trace").
+fa_route_verb("api_route"). fa_route_verb("websocket").
+.decl fa_route(f: node, dc: node, r: node, m: symbol)
+fa_route(f, dc, r, m) :- kind(f, "function_definition"), decorator(f, e), unparen(e, dc), kind(dc, "call"),
+    field(dc, "function", fn), attr_of(fn, o, m), fa_route_verb(m), fa_router_ref(o, r).
+fa_route(f, c, r, "api_route") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "add_api_route"),
+    fa_router_ref(o, r), (call_arg(c, 1, "", e0) ; call_arg(c, -1, "endpoint", e0)), unparen(e0, e), sym_of(e, q),
+    qualname(f, q), kind(f, "function_definition").
+// The decorator applied by hand: `app.get("/r/{slug}")(serve_recipe)` (mealie's SPA routes); dc is the inner call.
+fa_route(f, dc, r, m) :- kind(c, "call"), field(c, "function", dc0), unparen(dc0, dc), kind(dc, "call"),
+    field(dc, "function", fn), attr_of(fn, o, m), fa_route_verb(m), fa_router_ref(o, r), call_arg(c, 0, "", e0),
+    unparen(e0, e), sym_of(e, q), qualname(f, q), kind(f, "function_definition").
+.decl fa_route_def(f: node)
+fa_route_def(f) :- fa_route(f, _, _, _).
+.decl fa_route_path(dc: node, p: symbol)
+fa_route_path(dc, p) :- fa_route(_, dc, _, _), call_arg(dc, 0, "", a), str(a, p).
+fa_route_path(dc, p) :- fa_route(_, dc, _, _), call_arg(dc, -1, "path", a), str(a, p).
+.decl fa_route_kw(dc: node, k: symbol, v: node)
+fa_route_kw(dc, k, v) :- fa_route(_, dc, _, _), call_arg(dc, -1, k, v0), unparen(v0, v).
+// fa_middleware(f): `@app.middleware("http")` on f, or `dispatch` in a class deriving from BaseHTTPMiddleware.
+.decl fa_middleware(f: node)
+fa_middleware(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, dc), kind(dc, "call"),
+    field(dc, "function", fn), attr_of(fn, o, "middleware"), fa_router_ref(o, _), call_arg(dc, 0, "", a), str(a, "http").
+fa_middleware(f) :- kind(f, "function_definition"), def_name(f, "dispatch"), nearest(f, k, scope),
+    kind(k, "class_definition"), class_def(k, kq), fa_base_http_middleware(kq).
+.decl fa_base_http_middleware(q: symbol)
+fa_base_http_middleware("starlette.middleware.base.BaseHTTPMiddleware").
+fa_base_http_middleware("fastapi.middleware.base.BaseHTTPMiddleware").
+fa_base_http_middleware(q) :- class_def(c, q), class_base(c, b), fa_base_http_middleware(b).
+
+// ---- dependencies ------------------------------------------------------------------------------------------------
+.decl fa_depends_q(q: symbol)
+fa_depends_q("fastapi.Depends"). fa_depends_q("fastapi.Security"). fa_depends_q("fastapi.params.Depends").
+fa_depends_q("fastapi.params.Security"). fa_depends_q("fastapi.param_functions.Depends").
+fa_depends_q("fastapi.param_functions.Security").
+.decl fa_depends(c: node)
+fa_depends(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), fa_depends_q(q).
+// fa_depends_arg(c, e): the dependency Depends call c names (first positional or `dependency=`).
+.decl fa_depends_arg(c: node, e: node)
+fa_depends_arg(c, e) :- fa_depends(c), (call_arg(c, 0, "", a) ; call_arg(c, -1, "dependency", a)), unparen(a, e).
+.decl fa_depends_fn(c: node, g: node)
+fa_depends_fn(c, g) :- fa_depends_arg(c, e), sym_of(e, q), qualname(g, q), kind(g, "function_definition").
+fa_depends_fn(c, g) :- fa_depends_arg(c, e), sym_of(e, q), class_def(_, q), mro_method(q, "__init__", g).
+fa_depends_fn(c, g) :- fa_depends_arg(c, e), kind(e, "call"), field(e, "function", k), sym_of(k, q), class_def(_, q),
+    mro_method(q, "__call__", g).
+// `Annotated[T, Depends()]`: Depends with no argument runs the class T.
+fa_depends_fn(c, g) :- fa_depends(c), !fa_depends_arg(c, _), fa_annotated(a, t, c), sym_of(t, q), class_def(_, q),
+    mro_method(q, "__init__", g).
+.decl fa_param(f: node, p: node, x: symbol, ann: loc, d: loc)
+fa_param(f, p, x, a, d) :- sig_param(f, p, nm, _, k, a0, d0), (k = "pos" ; k = "kwonly" ; k = "posonly"), text(nm, x),
+    fa_loc_strip(a0, a), fa_loc_strip(d0, d).
+.decl fa_loc_strip(e: loc, m: loc)
+fa_loc_strip(e, e) :- unset(e).
+fa_loc_strip(e, m) :- fa_strip(e, m).
+.decl fa_param_dep(f: node, p: node, x: symbol, c: node)
+fa_param_dep(f, p, x, c) :- fa_param(f, p, x, _, c), fa_depends(c).
+fa_param_dep(f, p, x, c) :- fa_param(f, p, x, a, _), fa_ann_dep(a, c).
+// fa_ann_dep(a, c): annotation a carries Depends call c in its metadata, itself or through an alias (one level of
+// alias inside Annotated's type too: `Annotated[CurrentUser, ...]` is not followed).
+.decl fa_ann_dep(a: node, c: node)
+fa_ann_dep(a, c) :- fa_annotated(a, _, c), fa_depends(c).
+fa_ann_dep(a, c) :- fa_alias(a, v), fa_annotated(v, _, c), fa_depends(c).
+fa_ann_dep(a, c) :- fa_optional(a, b), fa_ann_dep(b, c).
+.decl fa_param_type(f: node, p: node, x: symbol, t: node)
+fa_param_type(f, p, x, t) :- fa_param(f, p, x, a, _), fa_type_core(a, t).
+.decl fa_decorator_dep(dc: node, c: node)
+fa_decorator_dep(dc, c) :- fa_route_kw(dc, "dependencies", l), fa_list_item(l, c), fa_depends(c).
+.decl fa_router_dep(r: node, c: node)
+fa_router_dep(r, c) :- fa_router_kw(r, "dependencies", l), fa_list_item(l, c), fa_depends(c).
+// fa_list_item(l, e): e is an item of list or tuple literal l.
+.decl fa_list_item(l: node, e: node)
+fa_list_item(l, e) :- (kind(l, "list") ; kind(l, "tuple")), child(l, e0, _), !kind(e0, "comment"), unparen(e0, e),
+    e0 != l.
+// fa_needs(f, g): to call f, FastAPI first runs g.
+.decl fa_needs(f: node, g: node)
+fa_needs(f, g) :- fa_param_dep(f, _, _, c), fa_depends_fn(c, g).
+fa_needs(f, g) :- fa_route(f, dc, _, _), fa_decorator_dep(dc, c), fa_depends_fn(c, g).
+.decl fa_needs_reach(f: node, g: node)
+fa_needs_reach(f, g) :- fa_needs(f, g).
+fa_needs_reach(f, h) :- fa_needs_reach(f, g), fa_needs(g, h).
+.decl fa_dependency(g: node)
+fa_dependency(g) :- fa_depends_fn(_, g).
+// fa_yield_dep(g): a yield in g's own frame (not in a nested def or lambda).
+.decl fa_yield_dep(g: node)
+fa_yield_dep(g) :- fa_dependency(g), kind(y, "yield"), def_frame(y, g).
+.decl fa_per_request(f: node)
+fa_per_request(f) :- fa_route_def(f).
+fa_per_request(f) :- fa_dependency(f).
+fa_per_request(f) :- fa_middleware(f).
+
+// ---- sessions ----------------------------------------------------------------------------------------------------
+.decl fa_session_lib(q: symbol, how: symbol)
+fa_session_lib("sqlalchemy.orm.Session", "sync"). fa_session_lib("sqlalchemy.orm.session.Session", "sync").
+fa_session_lib("sqlalchemy.orm.scoped_session", "sync"). fa_session_lib("sqlalchemy.orm.scoping.scoped_session", "sync").
+fa_session_lib("sqlmodel.Session", "sync"). fa_session_lib("sqlmodel.orm.session.Session", "sync").
+fa_session_lib("flask_sqlalchemy.session.Session", "sync").
+fa_session_lib("sqlalchemy.ext.asyncio.AsyncSession", "async").
+fa_session_lib("sqlalchemy.ext.asyncio.session.AsyncSession", "async").
+fa_session_lib("sqlalchemy.ext.asyncio.async_scoped_session", "async").
+fa_session_lib("sqlalchemy.ext.asyncio.scoping.async_scoped_session", "async").
+fa_session_lib("sqlmodel.ext.asyncio.session.AsyncSession", "async").
+.decl fa_session_class(q: symbol, how: symbol)
+fa_session_class(q, how) :- fa_session_lib(q, how).
+fa_session_class(q, how) :- class_def(c, q), class_base(c, b), fa_session_class(b, how).
+// fa_session_type(t, how): a type expression naming a session class, directly or as the yielded/returned type of a
+// generator annotation, or through Optional and `| None`.
+.decl fa_session_type(t: node, how: symbol)
+fa_session_type(t, how) :- sym_of(t, q), fa_session_class(q, how).
+// A parametrized session class: `scoped_session[Session]`, `AsyncSession[...]` in an annotation.
+fa_session_type(t, how) :- fa_sub(t, q), fa_session_class(q, how).
+fa_session_type(t, how) :- fa_sub(t, q), fa_gen_q(q), fa_sub_arg(t, 0, a), fa_session_type(a, how).
+fa_session_type(t, how) :- fa_optional(t, a), fa_session_type(a, how).
+fa_session_type(t, how) :- fa_strip(t, m), m != t, fa_session_type(m, how).
+// A project's alias of a session class, in any module: `AsyncSession = NewType("AsyncSession", _AsyncSession)` (polar),
+// `DbSession = Session`.
+fa_session_type(t, how) :- fa_value(t, v), kind(v, "call"), call_name(v, "NewType"), call_arg(v, 1, "", a0),
+    fa_strip(a0, a), fa_session_type(a, how).
+fa_session_type(t, how) :- fa_value(t, v), !kind(v, "call"), fa_session_type(v, how).
+.decl fa_gen_q(q: symbol)
+fa_gen_q(cat(m, x)) :- (m = "typing." ; m = "collections.abc." ; m = "typing_extensions."),
+    (x = "Generator" ; x = "Iterator" ; x = "Iterable" ; x = "AsyncGenerator" ; x = "AsyncIterator" ; x = "AsyncIterable").
+// fa_maker_value(v, how): v is `sessionmaker(...)` / `async_sessionmaker(...)` (sqlalchemy.orm, sqlalchemy.ext.asyncio),
+// or `scoped_session(...)`.
+.decl fa_maker_value(v: node, how: symbol)
+fa_maker_value(v, "sync") :- kind(v, "call"), field(v, "function", f), sym_of(f, q),
+    (q = "sqlalchemy.orm.sessionmaker" ; q = "sqlalchemy.orm.session.sessionmaker" ; q = "sqlalchemy.orm.scoped_session" ;
+     q = "sqlalchemy.orm.scoping.scoped_session").
+fa_maker_value(v, "async") :- kind(v, "call"), field(v, "function", f), sym_of(f, q),
+    (q = "sqlalchemy.ext.asyncio.async_sessionmaker" ; q = "sqlalchemy.ext.asyncio.session.async_sessionmaker" ;
+     q = "sqlalchemy.ext.asyncio.async_scoped_session").
+.decl fa_session_maker(v: node, how: symbol)
+fa_session_maker(v, how) :- kind(v, "call"), field(v, "function", f), sym_of(f, q), fa_session_class(q, how).
+fa_session_maker(v, how) :- kind(v, "call"), field(v, "function", f), fa_value(f, m), fa_maker_value(m, how).
+// A maker built and called inline: `sessionmaker(bind=engine)()`, `scoped_session(...)()`.
+fa_session_maker(v, how) :- kind(v, "call"), field(v, "function", f0), unparen(f0, f), fa_maker_value(f, how).
+fa_session_maker(v, how) :- kind(v, "call"), field(v, "function", f), attr_of(f, o, "begin"), fa_value(o, m),
+    fa_maker_value(m, how).
+// `async with maker() as s` / `with maker() as s`: the session the with-item makes.
+.decl fa_with_session(w: node, x: symbol, how: symbol)
+fa_with_session(w, x, how) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v0, 0), unparen(v0, v),
+    fa_session_maker(v, how), field(ap, "alias", t), child(t, n, 0), kind(n, "identifier"), text(n, x).
+fa_with_session(w, x, how) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v0, 0), unparen(v0, v),
+    fa_session_maker(v, how), field(ap, "alias", t), kind(t, "identifier"), text(t, x).
+// fa_session_dep(g, how): what dependency g yields or returns is a session.
+.decl fa_session_dep(g: node, how: symbol)
+fa_session_dep(g, how) :- fa_dependency(g), field(g, "return_type", rt), fa_session_type(rt, how).
+fa_session_dep(g, how) :- fa_dependency(g), fa_gives(g, e), fa_session_maker(e, how).
+fa_session_dep(g, how) :- fa_dependency(g), fa_gives(g, e), kind(e, "identifier"), text(e, x), def_frame(e, g),
+    fa_local_session(g, x, how).
+// fa_gives(g, e): g yields or returns expression e (in its own frame).
+.decl fa_gives(g: node, e: node)
+fa_gives(g, e) :- kind(y, "yield"), def_frame(y, g), child(y, e0, _), unparen(e0, e), !kind(e, "comment").
+fa_gives(g, e) :- kind(r, "return_statement"), def_frame(r, g), child(r, e0, _), unparen(e0, e), !kind(e, "comment").
+// fa_local_session(g, x, how): g binds local x to a session: `x = maker()` or `with maker() as x`.
+.decl fa_local_session(g: node, x: symbol, how: symbol)
+fa_local_session(g, x, how) :- fa_dependency(g), fa_bind(g, x, v), fa_session_maker(v, how).
+fa_local_session(g, x, how) :- fa_dependency(g), fa_with_session(w, x, how), def_frame(w, g).
+.decl fa_session_param(f: node, p: node, x: symbol, how: symbol)
+fa_session_param(f, p, x, how) :- fa_per_request(f), fa_param_type(f, p, x, t), fa_session_type(t, how).
+fa_session_param(f, p, x, how) :- fa_per_request(f), fa_param_dep(f, p, x, c), fa_depends_fn(c, g),
+    fa_session_dep(g, how).
+
+// ---- background tasks --------------------------------------------------------------------------------------------
+.decl fa_bg_q(q: symbol)
+fa_bg_q("fastapi.BackgroundTasks"). fa_bg_q("fastapi.background.BackgroundTasks").
+fa_bg_q("starlette.background.BackgroundTasks").
+.decl fa_bg_param(f: node, x: symbol)
+fa_bg_param(f, x) :- fa_param(f, _, x, a, _), fa_type_core(a, t), sym_of(t, q), fa_bg_q(q).
+.decl fa_add_task(c: node, fn: node, f: node)
+fa_add_task(c, fn, f) :- kind(c, "call"), field(c, "function", cf), attr_of(cf, o, "add_task"), kind(o, "identifier"),
+    text(o, x), look(o, x, f), fa_bg_param(f, x), call_arg(c, 0, "", fn0), unparen(fn0, fn).
+fa_add_task(c, fn, f) :- kind(c, "call"), field(c, "function", cf), sym_of(cf, q),
+    (q = "starlette.background.BackgroundTask" ; q = "fastapi.background.BackgroundTask"), call_arg(c, 0, "", fn0),
+    unparen(fn0, fn), def_frame(c, f).
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl fa_test_doc(d: number)
+fa_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing")).
+fa_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_test.py", s) ; glob("*_tests.py", s) ;
+    s = "conftest.py").
+.decl fa_fastapi_doc(d: number)
+fa_fastapi_doc(d) :- import_alias(i, _, m, _, _), (m = "fastapi" ; prefix("fastapi.", m) ; m = "starlette" ;
+    prefix("starlette.", m)), docof(i, d).
+fa_fastapi_doc(d) :- kind(i, "import_from_statement"), module_text(i, m), (m = "fastapi" ; prefix("fastapi.", m) ;
+    m = "starlette" ; prefix("starlette.", m)), docof(i, d).

@@ -1,0 +1,125 @@
+.policy "celery-practice-unknown-task-name" revision 1
+.description "Name a task by a string only when a task of the run is registered under it: a worker discards a message for an unregistered name, and such a beat entry never runs."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Celery sends only a task's name; the worker looks it up in its registry, and for a
+// name no task registered it logs "Received unregistered task of type ..." and discards the message
+// (celery/worker/consumer/consumer.py, UNKNOWN_TASK_ERROR). A beat entry whose "task" has a typo, or names a task that
+// was renamed or moved to another module, is sent on schedule and dropped every time: the job silently never runs.
+// Reported, at the string (or at a constant of the same file holding it), when no task of the run is registered under
+// it and the run owns the name:
+//   - the first argument (or `name=`) of `<x>.send_task(...)`, of celery's `signature(...)` and of `<app>.signature(...)`;
+//   - the "task" of a beat schedule entry (a dict with a "task" key and a "schedule" or "options" key).
+// A task is registered under its `name=` (a literal, or a module constant of the run), else under <module>.<def>,
+// which a string matches also by a dotted tail (lib/celery's cel_task_named); a class deriving from celery's Task is
+// registered under its `name = "..."` attribute, else <module>.<Class>. The run owns a name n when n's module part
+// (before the last dot) is a module of the run (a document whose module name is it or ends with "." + it), or when the
+// run registers tasks under explicit dotted names that share n's first segment (`name="reports.scheduler"`). When a
+// task with n's last segment as its def name exists elsewhere (a moved task), the message names it.
+//   "task": "proj.tasks.shipp"          reported (proj/tasks.py defines `ship`)
+//   app.send_task("proj.tasks.ship")    not reported (`@shared_task def ship` in proj/tasks.py)
+//   app.send_task("billing.charge")     not reported (no module `billing` in the run: another service's task)
+// Left alone: Celery's own and library tasks (`celery.*`, `django_celery_beat.*`, `django_celery_results.*`, ...);
+// names whose module part is not a module of the run and whose first segment no explicit task name shares (another
+// service's tasks: send_task is often used exactly for that); names built at runtime (f-strings, variables, parameters)
+// and constants imported from another module; commented-out entries; test code (cel_test_doc).
+// Gaps: tasks registered by a decorator wrapper that computes the name, or by `app.task(fn)` called as a function;
+// task modules autodiscovered from outside the run (an installed package); whether the worker actually imports the
+// module that defines the task (`include`/`imports`/autodiscover) is not checked.
+
+#include "lib/celery.rerail"
+
+.violation UnknownTaskName(at: node, n: symbol, hint: symbol) "No task of this run is registered as \"{n}\": a worker discards a message with that name as unregistered, and a beat entry with it never runs.{hint} Use the task's registered name (its name=, else module.function). If another service's worker registers this name, leave it."
+UnknownTaskName(at, n, hint) :- uk_unknown(at, n), uk_moved(n, q), hint = cat(" A task with that function name is registered as \"", cat(q, "\"; it may have moved or been renamed.")).
+UnknownTaskName(at, n, "") :- uk_unknown(at, n), !uk_moved(n, _).
+
+.decl uk_unknown(at: node, n: symbol)
+uk_unknown(at, n) :- uk_ref(at, n), !uk_known(n), uk_owned(n), !uk_lib(n), docof(at, d), !cel_test_doc(d).
+
+// ---- the names the run uses --------------------------------------------------------------------------------------
+// uk_site(e, how): expression e is where a task is named: send_task's first argument or `name=`, signature's first
+// argument, a beat entry's "task".
+.decl uk_site(e: node, how: symbol)
+uk_site(e, "send_task") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "send_task"),
+    (posarg(c, 0, e) ; call_arg(c, -1, "name", e)).
+uk_site(e, "signature") :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q),
+    (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature"),
+    posarg(c, 0, e).
+uk_site(e, "signature") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "signature"), unparen(o, u),
+    cel_app_ref(u), posarg(c, 0, e).
+uk_site(e, "beat") :- kind(p, "pair"), field(p, "key", k), str(k, "task"), field(p, "value", e), child(m, p, _),
+    kind(m, "dictionary"), child(m, p2, _), kind(p2, "pair"), field(p2, "key", k2), uk_beat_key(k2).
+// uk_beat_key(k): a beat entry's own keys: "schedule", or "options" (its execution options), which also marks the
+// entries a run lists before it adds their schedules (paperless-ngx reads each cron from the environment).
+.decl uk_beat_key(k: node)
+uk_beat_key(k) :- str(k, "schedule").
+uk_beat_key(k) :- str(k, "options").
+// uk_ref(e, n): site e names the task n: a string literal, or a name bound once at module level in its own file to one.
+.decl uk_ref(e: node, n: symbol)
+uk_ref(e, n) :- uk_site(e, _), str(e, n).
+uk_ref(e, n) :- uk_site(e, _), kind(e, "identifier"), text(e, x), look(e, x, m), kind(m, "module"), asg(m, x, v, _),
+    str(v, n), count : { asg(m, x, _, _) } = 1.
+
+// ---- the names the run registers ---------------------------------------------------------------------------------
+// uk_reg(n, how): a task of the run is registered as n, "explicit" (a name= or a class's name attribute) or "implicit"
+// (<module>.<def>, <module>.<Class>).
+.decl uk_reg(n: symbol, how: symbol)
+uk_reg(n, "explicit") :- cel_task_option(_, "name", v), str(v, n).
+uk_reg(n, "explicit") :- cel_task_option(_, "name", v), unparen(v, u), (kind(u, "identifier") ; kind(u, "attribute")),
+    cel_sym(u, q), cel_module_var(q, w), str(w, n).
+uk_reg(n, "implicit") :- cel_task_name(f, n), !cel_task_option(f, "name", _).
+uk_reg(n, "explicit") :- uk_task_class(c), uk_class_name_attr(c, n).
+uk_reg(@dot(mq, x), "implicit") :- uk_task_class(c), !uk_class_name_attr(c, _), def_name(c, x), docof(c, d),
+    doc(d, _, mq), mq != "", nearest(c, m, scope), kind(m, "module").
+.decl uk_known(n: symbol)
+uk_known(n) :- uk_ref(_, n), uk_reg(n, _).
+uk_known(n) :- uk_ref(_, n), uk_reg(q, "implicit"), suffix(cat(".", n), q).
+// uk_task_class(c): c derives from celery's Task, through the run's classes.
+.decl uk_task_class_q(q: symbol)
+uk_task_class_q("celery.Task"). uk_task_class_q("celery.app.task.Task").
+uk_task_class_q(q) :- class_def(c, q), cel_class_base(c, b), uk_task_class_q(b).
+.decl uk_task_class(c: node)
+uk_task_class(c) :- kind(c, "class_definition"), cel_class_base(c, b), uk_task_class_q(b).
+// uk_class_name_attr(c, n): `name = "n"` in c's body.
+.decl uk_class_name_attr(c: node, n: symbol)
+uk_class_name_attr(c, n) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "name"),
+    field(a, "right", v), str(v, n).
+
+// ---- ownership ---------------------------------------------------------------------------------------------------
+// uk_owned(n): n's module part is a module of the run, or n's first segment is shared by an explicit dotted name.
+.decl uk_owned(n: symbol)
+uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", doc(_, _, m).
+uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", doc(_, _, q), suffix(cat(".", m), q).
+uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", h = @head(n), uk_reg(x, "explicit"), x != h, @head(x) = h.
+// uk_lib(n): Celery's own tasks and those of libraries around it.
+.decl uk_lib(n: symbol)
+uk_lib(n) :- uk_ref(_, n), h = @head(n), (h = "celery" ; prefix("celery_", h) ; prefix("django_celery", h) ;
+    h = "djcelery" ; h = "kombu" ; h = "flower" ; h = "redbeat").
+// uk_moved(n, q): a task whose def is named for n's last segment is registered as q.
+.decl uk_moved(n: symbol, q: symbol)
+uk_moved(n, q) :- uk_ref(_, n), split_dot(n, _, x), cel_task(f), def_name(f, x), cel_task_name(f, q), q != n.
+
+// The cases, `cases/celery-practice-unknown-task-name/`: one repository in which each line ending in `# caught` is
+// reported and no other line.
+.test cases exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-unknown-task-name/proj/celery.py"
+    .fixture "proj/contract.py" from "../cases/celery-practice-unknown-task-name/proj/contract.py"
+    .fixture "proj/maintenance.py" from "../cases/celery-practice-unknown-task-name/proj/maintenance.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-unknown-task-name/proj/tasks.py"
+    .fixture "proj/tests/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/tests/__init__.py"
+    .fixture "proj/tests/test_beat.py" from "../cases/celery-practice-unknown-task-name/proj/tests/test_beat.py"
+    .fixture "proj/web/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/web/__init__.py"
+    .fixture "proj/web/views.py" from "../cases/celery-practice-unknown-task-name/proj/web/views.py"
+    .expect _ at "proj/celery.py":15
+    .expect _ at "proj/celery.py":74
+    .expect _ at "proj/celery.py":19
+    .expect _ at "proj/celery.py":31
+    .expect _ at "proj/web/views.py":11
+    .expect _ at "proj/web/views.py":12
+    .expect _ at "proj/web/views.py":13
+    .expect _ at "proj/web/views.py":19
+    .expect _ at "proj/web/views.py":21
+.end

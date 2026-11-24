@@ -1,0 +1,92 @@
+.policy "alembic-practice-not-null-without-server-default" revision 1
+.description "Give a NOT NULL column added to an existing table a server_default, or add it nullable and backfill, so the migration does not fail on a populated table."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. `ALTER TABLE t ADD COLUMN c ... NOT NULL` with no DEFAULT fails on PostgreSQL as soon
+// as t holds one row: every existing row would get NULL. The migration passes on an empty development database and
+// fails in production. SQLAlchemy's `default=` is applied by SQLAlchemy when it inserts a row; it never reaches the
+// database, so it does not fill the existing rows (only `server_default=` does).
+// Reported: in `upgrade()` (or a module-level helper it calls), `op.add_column(t, sa.Column(...))` or
+// `batch_op.add_column(sa.Column(...))` on a table that upgrade() does not create, where the Column says
+// `nullable=False` or `primary_key=True` and passes no `server_default` (or `server_default=None`). A Column that
+// passes `default=` gets the second message.
+//   op.add_column("users", sa.Column("nick", sa.String(40), nullable=False))                reported
+//   op.add_column("users", sa.Column("tier", sa.String(20), default="free", nullable=False)) reported (default= message)
+//   op.add_column("users", sa.Column("code", sa.String(8), primary_key=True))                 reported
+//   op.add_column("users", sa.Column("tier", sa.String(20), server_default="free", nullable=False))  not reported
+//   op.add_column("users", sa.Column("nick", sa.String(40)))                                  not reported: nullable
+// Left alone: a table the same upgrade() creates; the branch of a dialect test that runs only on another database
+// (`else:` of `if _is_pg(conn):`; MySQL fills NOT NULL columns with an implicit default); generated columns
+// (`sa.Computed(...)`, `sa.Identity(...)`); an integer `primary_key=True` column without `autoincrement=False`, which
+// SQLAlchemy renders as SERIAL/BIGSERIAL on PostgreSQL and so numbers the existing rows; downgrade(); tests; files
+// that are no Alembic revision.
+// Gaps: a Column built into a variable before add_column; `nullable=` given as an expression. A table created by an
+// earlier revision that no database has run yet (the same unreleased batch) is still empty, and is reported: the
+// message says when the column is safe as written.
+
+#include "lib/alembic.rerail"
+
+.violation NotNullNoDefault(at: node, col: symbol, table: symbol) "Column `{col}` is added to existing table `{table}` as NOT NULL with no server_default: on PostgreSQL the ALTER TABLE fails as soon as the table holds a row. Pass `server_default=` (then `op.alter_column(..., server_default=None)` if the app should supply values), or add it nullable, backfill, and set `nullable=False` with alter_column. Leave it only if no database that runs this migration can hold rows in `{table}` yet."
+.violation NotNullPythonDefault(at: node, col: symbol, table: symbol) "Column `{col}` is added to existing table `{table}` as NOT NULL with only `default=`: SQLAlchemy applies `default=` when it inserts a row, and it never reaches the database, so the ALTER TABLE still fails on a populated table. Use `server_default=` to fill the existing rows, or (for a TEXT/JSON column that must also run on MySQL before 8.0.13, which rejects their defaults) add it nullable, backfill, then set NOT NULL."
+
+// nn_added(col, x, t): upgrade adds Column col (named x) to existing table t, outside a non-PostgreSQL branch and
+// outside test code.
+.decl nn_added(col: node, x: symbol, t: symbol)
+nn_added(col, x, t) :- al_on_existing(c, "add_column", t, _), al_added_column(c, col), al_column_name(col, x),
+    !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+
+// nn_not_null(col): the Column is NOT NULL: `nullable=False`, or a primary key not rendered as SERIAL.
+.decl nn_not_null(col: node)
+nn_not_null(col) :- al_kw(col, "nullable", v), unparen(v, u), kind(u, "false").
+nn_not_null(col) :- al_true_kw(col, "primary_key"), !nn_serial(col), !nn_nullable_true(col).
+.decl nn_nullable_true(col: node)
+nn_nullable_true(col) :- al_true_kw(col, "nullable").
+
+// nn_serial(col): an integer primary key SQLAlchemy renders as SERIAL/BIGSERIAL/SMALLSERIAL on PostgreSQL (its
+// type argument names an integer type and autoincrement is not False).
+.decl nn_serial(col: node)
+nn_serial(col) :- al_column_call(col), call_arg(col, i, "", a), i <= 1, text(a, s), (contains("Integer", s) ;
+    contains("INTEGER", s) ; contains("BIGINT", s) ; contains("SMALLINT", s)), !nn_no_autoincrement(col).
+.decl nn_no_autoincrement(col: node)
+nn_no_autoincrement(col) :- al_kw(col, "autoincrement", v), unparen(v, u), kind(u, "false").
+
+// nn_server_default(col): `server_default=` with a value other than None.
+.decl nn_server_default(col: node)
+nn_server_default(col) :- al_kw(col, "server_default", v), unparen(v, u), !kind(u, "none").
+
+// nn_generated(col): a Computed or Identity column: the database computes its value.
+.decl nn_generated(col: node)
+nn_generated(col) :- al_column_call(col), call_arg(col, _, "", a), unparen(a, g), kind(g, "call"),
+    field(g, "function", f), sym_of(f, q), prefix("sqlalchemy.", q), (suffix(".Computed", q) ; suffix(".Identity", q)).
+
+.decl nn_python_default(col: node)
+nn_python_default(col) :- al_kw(col, "default", v), unparen(v, u), !kind(u, "none").
+
+.decl nn_hit(col: node, x: symbol, t: symbol)
+nn_hit(col, x, t) :- nn_added(col, x, t), nn_not_null(col), !nn_server_default(col), !nn_generated(col).
+
+NotNullNoDefault(col, x, t) :- nn_hit(col, x, t), !nn_python_default(col).
+NotNullPythonDefault(col, x, t) :- nn_hit(col, x, t), nn_python_default(col).
+
+// The cases, `cases/alembic-practice-not-null-without-server-default/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/other_op.py" from "../cases/alembic-practice-not-null-without-server-default/app/other_op.py"
+    .fixture "app/schema.py" from "../cases/alembic-practice-not-null-without-server-default/app/schema.py"
+    .fixture "migrations/versions/a1_user_columns.py" from "../cases/alembic-practice-not-null-without-server-default/migrations/versions/a1_user_columns.py"
+    .fixture "migrations/versions/a2_teams.py" from "../cases/alembic-practice-not-null-without-server-default/migrations/versions/a2_teams.py"
+    .fixture "tests/test_migration_shapes.py" from "../cases/alembic-practice-not-null-without-server-default/tests/test_migration_shapes.py"
+    .expect _ at "migrations/versions/a1_user_columns.py":16
+    .expect _ at "migrations/versions/a1_user_columns.py":17
+    .expect _ at "migrations/versions/a1_user_columns.py":18
+    .expect _ at "migrations/versions/a1_user_columns.py":19
+    .expect _ at "migrations/versions/a1_user_columns.py":22
+    .expect _ at "migrations/versions/a1_user_columns.py":28
+    .expect _ at "migrations/versions/a1_user_columns.py":29
+    .expect _ at "migrations/versions/a1_user_columns.py":30
+    .expect _ at "migrations/versions/a1_user_columns.py":32
+    .expect _ at "migrations/versions/a1_user_columns.py":33
+    .expect _ at "migrations/versions/a2_teams.py":22
+    .expect _ at "migrations/versions/a2_teams.py":43
+.end

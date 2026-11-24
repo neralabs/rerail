@@ -1,0 +1,38 @@
+{
+  "django-practice-addfield-default-runs-once": {
+    "risk": "data-safety",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "migration.default-evaluated-once"
+  },
+  "django-practice-alterfield-rewrites-table": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "critical",
+    "hazard": "pg.type-change-rewrites"
+  },
+  "django-practice-bulk-ignore-conflicts-used": {
+    "risk": "data-safety",
+    "layer": "data-access",
+    "severity": "high",
+    "hazard": "orm.ignored-conflict-rows-used"
+  },
+  "django-practice-runpython-live-model": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "migration.live-model-in-data-migration"
+  },
+  "django-practice-runpython-with-schema-change": {
+    "risk": "availability",
+    "layer": "migrations",
+    "severity": "high",
+    "hazard": "pg.data-and-schema-in-one-transaction"
+  },
+  "django-practice-settings-env-fails-open": {
+    "risk": "security",
+    "layer": "config",
+    "severity": "critical",
+    "hazard": "config.insecure-default"
+  }
+}

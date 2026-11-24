@@ -1,0 +1,252 @@
+.policy "sqlalchemy-practice-bulk-write-skips-hooks" revision 1
+.description "Avoid bulk UPDATE, DELETE or INSERT statements on a model whose mapper events, attribute events or validators they skip; run that work or change the objects through the session."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. SQLAlchemy's ORM-enabled `update(M)`/`delete(M)`/`insert(M)` statements run through
+// `session.execute(...)`, the legacy `Query.update()`/`Query.delete()`, `bulk_insert_mappings`,
+// `bulk_update_mappings` and `bulk_save_objects` write rows past the unit of work: no mapper event (before_/after_
+// insert, update, delete) fires, and neither do attribute `set` events nor `@validates` methods. A write is reported
+// when its model has such a hook for the operation, in any non-test file of the run:
+//   - a mapper event for that operation, `@event.listens_for(M, "after_update")` or `event.listen(M, ...)`, on M, on a
+//     base class of M in the run with `propagate=True`, or `event.listen(cls, ...)` in a base's or M's own
+//     `__declare_last__`/`__declare_first__` (which runs once per mapped subclass);
+//   - for an update or insert, a `set` event on `M.<col>` or a `@validates("<col>")` method of M or its bases, for a
+//     column the write sets: `.values(col=...)`, `.values({"col": ...})`, `.values({M.col: ...})`, the
+//     `Query.update({...})` dict; any column when the values cannot be read (`insert(M), rows`, `.values(**d)`,
+//     `bulk_*_mappings(M, rows)`). `bulk_save_objects([M(...) ...])` builds the objects first, so their validators and
+//     set events ran: only its insert mapper events count.
+// The message names each skipped hook and where it is registered.
+//   session.execute(update(Item).values(label=x))    reported when Item has an after_update listener
+//   session.execute(update(Tag).values(name=x))      reported when Tag has @validates("name")
+//   session.execute(update(Tag).values(color=x))     not reported: the validator is for name only
+//   session.execute(delete(Tag))                     not reported: a validator is not a delete hook
+//   session.execute(delete(Note))                    not reported: Note has no hook
+// Left alone: a write inside one of the model's own hooks (the listener, a method the listener names such as
+// `event.listen(M, "before_update", M.before_update)`, a validator); a model whose events a session-level
+// `do_orm_execute` listener handles: one that reads `is_update`/`is_delete`/`is_insert` and names the model, or names
+// no model at all; tests, and Alembic migrations (they run once, on purpose).
+// Gaps: models reached through a variable (`self.model`, generic repositories); a listener on a base without
+// `propagate=True` is treated as not applying to subclasses; `event.listen(Mapper, ...)` for every mapper; a
+// do_orm_execute listener that delegates to helpers; hooks registered on a variable target.
+
+#include "lib/sqlalchemy.rerail"
+
+.violation BulkWriteSkipsHooks(at: node, what: symbol, model: symbol, hooks: symbol) "`{what}` writes {model} rows past the session's unit of work and skips {hooks}. If this write needs that work, do it here as well, or load the objects and change them through the session; leave it when skipping them is deliberate."
+
+BulkWriteSkipsHooks(c, w, mn, hs) :- bw_write(c, k, mq, w), class_def(mc, mq), sa_model(mc), def_name(mc, mn),
+    !bw_in_hook(c, mq), !bw_rerun(k, mq), docof(c, d), !sa_test_doc(d), !sa_migration_doc(d),
+    hs = join h by h sep "; " : { bw_skipped(c, h) }, hs != "".
+
+// ---- the writes ----------------------------------------------------------------------------------------------------
+// bw_write(c, k, mq, w): c writes rows of model mq past the unit of work, operation k ("insert", "update",
+// "delete"); w names the write in the message.
+.decl bw_write(c: node, k: symbol, mq: symbol, w: symbol)
+bw_write(c, k, mq, w) :- sa_bulk_write(c, k, mq), (k = "insert" ; k = "update" ; k = "delete"),
+    field(c, "function", f), attr_of(f, _, "execute"), split_dot(mq, _, n), w = cat(k, "(", n, ")").
+bw_write(c, k, mq, w) :- sa_bulk_write(c, k, mq), (k = "update" ; k = "delete"), field(c, "function", f),
+    attr_of(f, _, k), w = cat("Query.", k, "()").
+bw_write(c, "insert", mq, "bulk_insert_mappings()") :- sa_bulk_write(c, "bulk_insert_mappings", mq).
+bw_write(c, "update", mq, "bulk_update_mappings()") :- sa_bulk_write(c, "bulk_update_mappings", mq).
+bw_write(c, "insert", mq, "bulk_save_objects()") :- bw_objects(c, mq).
+
+// bw_objects(c, mq): `session.bulk_save_objects(objs)` where objs are new instances of mq: a list comprehension or a
+// list of `M(...)` calls, or a name the same scope binds to one.
+.decl bw_objects(c: node, mq: symbol)
+bw_objects(c, mq) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "bulk_save_objects"), posarg(c, 0, a),
+    bw_new_objects(a, mq).
+.decl bw_new_objects(a: node, mq: symbol)
+bw_new_objects(a, mq) :- unparen(a, e), kind(e, "list_comprehension"), field(e, "body", b), unparen(b, k),
+    kind(k, "call"), field(k, "function", kf), sym_of(kf, mq), sa_model_q(mq).
+bw_new_objects(a, mq) :- unparen(a, e), kind(e, "list"), child(e, b, _), unparen(b, k), kind(k, "call"),
+    field(k, "function", kf), sym_of(kf, mq), sa_model_q(mq).
+bw_new_objects(a, mq) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, sc), asg(sc, x, v, _),
+    bw_new_objects(v, mq).
+
+// ---- the columns a write sets --------------------------------------------------------------------------------------
+// bw_stmt(c, s): the statement `session.execute(...)` runs, written inline or bound to a name first.
+.decl bw_stmt(c: node, s: node)
+bw_stmt(c, s) :- bw_write(c, _, _, _), field(c, "function", f), attr_of(f, _, "execute"), posarg(c, 0, s),
+    sa_dml(s, _, _).
+bw_stmt(c, v) :- bw_write(c, _, _, _), field(c, "function", f), attr_of(f, _, "execute"), posarg(c, 0, n),
+    kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _), sa_dml(v, _, _).
+// bw_chain(s, k): k is a call along statement chain s (s itself included).
+.decl bw_chain(s: node, k: node)
+bw_chain(s, k) :- bw_stmt(_, s), unparen(s, k), kind(k, "call").
+bw_chain(s, k) :- bw_chain(s, e), field(e, "function", f), attr_of(f, o, _), unparen(o, k), kind(k, "call").
+// bw_values(c, a): a is a positional argument of a `.values(...)` call on c's statement, or the values dict of
+// `Query.update`.
+.decl bw_values(c: node, a: node)
+bw_values(c, a) :- bw_stmt(c, s), bw_chain(s, k), field(k, "function", f), attr_of(f, _, "values"), call_arg(k, _, "", a).
+bw_values(c, a) :- bw_write(c, "update", _, "Query.update()"), posarg(c, 0, a).
+// bw_values_kw(c, a): a is a `col=value` keyword argument of a `.values(...)` call on c's statement.
+.decl bw_values_kw(c: node, a: node)
+bw_values_kw(c, a) :- bw_stmt(c, s), bw_chain(s, k), field(k, "function", f), attr_of(f, _, "values"),
+    field(k, "arguments", al), child(al, a, _), kind(a, "keyword_argument").
+// bw_sets(c, x): write c sets column x, read from its values.
+.decl bw_sets(c: node, x: symbol)
+bw_sets(c, x) :- bw_values_kw(c, a), field(a, "name", n), text(n, x).
+bw_sets(c, x) :- bw_values(c, a), unparen(a, dd), kind(dd, "dictionary"), child(dd, p, _), kind(p, "pair"),
+    field(p, "key", kk), bw_key(kk, x).
+.decl bw_key(kk: node, x: symbol)
+bw_key(kk, x) :- str(kk, x).
+bw_key(kk, x) :- unparen(kk, e), attr_of(e, _, x).
+// bw_cols_unknown(c): the columns c sets cannot all be read, so every column counts.
+.decl bw_cols_unknown(c: node)
+// mappings, and `session.execute(stmt, rows)`
+bw_cols_unknown(c) :- bw_write(c, _, _, w), (w = "bulk_insert_mappings()" ; w = "bulk_update_mappings()").
+bw_cols_unknown(c) :- bw_write(c, _, _, _), field(c, "function", f), attr_of(f, _, "execute"), posarg(c, 1, _).
+// an execute write with no `.values(...)` (an insert or update whose rows come from elsewhere)
+bw_cols_unknown(c) :- bw_write(c, k, _, _), k != "delete", field(c, "function", f), attr_of(f, _, "execute"),
+    !bw_has_values(c).
+// a positional values argument that is not a dict whose keys all read (a name, a splat in the dict), or a
+// `*rows`/`**d` argument
+bw_cols_unknown(c) :- bw_values(c, a), !kind(a, "comment"), !bw_plain_dict(a).
+bw_cols_unknown(c) :- bw_values_call(c, k), field(k, "arguments", al), child(al, a, _),
+    (kind(a, "dictionary_splat") ; kind(a, "list_splat")).
+// an upsert's update part, or a SELECT feeding the insert
+bw_cols_unknown(c) :- bw_stmt(c, s), bw_chain(s, k), field(k, "function", f), attr_of(f, _, m),
+    (m = "on_conflict_do_update" ; m = "on_duplicate_key_update" ; m = "from_select").
+// `Query.update(...)` with no values argument read
+bw_cols_unknown(c) :- bw_write(c, "update", _, "Query.update()"), !posarg(c, 0, _).
+.decl bw_values_call(c: node, k: node)
+bw_values_call(c, k) :- bw_stmt(c, s), bw_chain(s, k), field(k, "function", f), attr_of(f, _, "values").
+.decl bw_has_values(c: node)
+bw_has_values(c) :- bw_values_call(c, _).
+// bw_plain_dict(a): a dict literal whose every entry is a pair with a string or attribute key.
+.decl bw_plain_dict(a: node)
+bw_plain_dict(a) :- unparen(a, dd), kind(dd, "dictionary"), !bw_odd_entry(dd).
+.decl bw_odd_entry(dd: node)
+bw_odd_entry(dd) :- kind(dd, "dictionary"), child(dd, p, _), !kind(p, "pair"), !kind(p, "comment"),
+    !kind(p, "{"), !kind(p, "}"), !kind(p, ",").
+bw_odd_entry(dd) :- kind(dd, "dictionary"), child(dd, p, _), kind(p, "pair"), field(p, "key", kk), !bw_key(kk, _).
+
+// ---- the hooks -----------------------------------------------------------------------------------------------------
+// bw_skipped(c, h): h describes a hook write c skips.
+.decl bw_skipped(c: node, h: symbol)
+bw_skipped(c, h) :- bw_write(c, k, mq, _), bw_hook(mq, k, "", h).
+bw_skipped(c, h) :- bw_write(c, k, mq, _), (k = "insert" ; k = "update"), !bw_objects(c, _), bw_hook(mq, k, x, h),
+    x != "", (bw_cols_unknown(c) ; bw_sets(c, x)).
+
+// bw_reg(at, t, ev, a): at registers a listener for event ev on target t: `event.listen(t, "ev", a)` (a the
+// listener argument) or `@event.listens_for(t, "ev")` (a the decorated def).
+.decl bw_reg(at: node, t: node, ev: symbol, a: node)
+bw_reg(at, t, ev, f) :- sa_event_call(at, t, ev), decorator(f, at).
+bw_reg(at, t, ev, a) :- sa_event_call(at, t, ev), posarg(at, 2, a).
+.decl bw_propagates(at: node)
+bw_propagates(at) :- call_arg(at, -1, "propagate", v), unparen(v, t), kind(t, "true").
+// bw_covers(at, t, mq): target t of registration at covers model mq: t names mq; or names a base of mq in the run
+// and propagates; or is `cls` inside `__declare_last__`/`__declare_first__` of mq or a base of mq.
+.decl bw_covers(at: node, t: node, mq: symbol)
+bw_covers(at, t, mq) :- bw_reg(at, t, _, _), sym_of(t, mq), class_def(mc, mq), sa_model(mc).
+bw_covers(at, t, mq) :- bw_reg(at, t, _, _), bw_propagates(at), sym_of(t, bq), class_def(b, bq),
+    sa_model_super(mc, b), class_def(mc, mq).
+bw_covers(at, t, mq) :- bw_reg(at, t, _, _), bw_declare_cls(at, t, b), class_def(b, mq), sa_model(b).
+bw_covers(at, t, mq) :- bw_reg(at, t, _, _), bw_declare_cls(at, t, b), sa_model_super(mc, b), class_def(mc, mq).
+// bw_declare_cls(at, t, b): t is `cls` and at sits in class b's `__declare_last__`/`__declare_first__`.
+.decl bw_declare_cls(at: node, t: node, b: node)
+bw_declare_cls(at, t, b) :- unparen(t, i), kind(i, "identifier"), text(i, "cls"), within(at, f),
+    kind(f, "function_definition"), def_name(f, fn), (fn = "__declare_last__" ; fn = "__declare_first__"),
+    nearest(f, b, scope), kind(b, "class_definition").
+// bw_listener(at, a, name, f): the listener a registration names, for the message, and its def f when the run has it.
+.decl bw_listener_name(at: node, name: symbol)
+bw_listener_name(at, n) :- bw_reg(at, _, _, f), kind(f, "function_definition"), def_name(f, n).
+bw_listener_name(at, n) :- bw_reg(at, t, _, a), !kind(a, "function_definition"), !bw_declare_cls(at, t, _), text(a, n).
+bw_listener_name(at, n) :- bw_reg(at, t, _, a), bw_declare_cls(at, t, b), def_name(b, bn), attr_of(a, o, m),
+    text(o, "cls"), n = cat(bn, ".", m).
+.decl bw_listener_def(at: node, f: node)
+bw_listener_def(at, f) :- bw_reg(at, _, _, f), kind(f, "function_definition").
+bw_listener_def(at, f) :- bw_reg(at, _, _, a), !kind(a, "function_definition"), sym_of(a, q), qualname(f, q),
+    kind(f, "function_definition").
+bw_listener_def(at, f) :- bw_reg(at, _, _, a), unparen(a, e), attr_of(e, o, m), sym_of(o, cq), method(cq, m, f).
+bw_listener_def(at, f) :- bw_reg(at, t, _, a), bw_declare_cls(at, t, b), unparen(a, e), attr_of(e, o, m),
+    text(o, "cls"), class_def(b, bq), method(bq, m, f).
+
+// bw_mapper_ev(ev, k): mapper event ev runs for operation k.
+.decl bw_mapper_ev(ev: symbol, k: symbol)
+bw_mapper_ev(cat(p, "_", k), k) :- (p = "before" ; p = "after"), (k = "insert" ; k = "update" ; k = "delete").
+// bw_hook_at(mq, k, x, at, f, h): a hook of model mq that write operation k skips, registered at at (its def f when
+// known, else at itself); x is the column it watches ("" for a mapper event); h describes it.
+.decl bw_hook_at(mq: symbol, k: symbol, x: symbol, at: node, h: symbol)
+bw_hook_at(mq, k, "", at, h) :- bw_reg(at, t, ev, _), bw_mapper_ev(ev, k), bw_covers(at, t, mq),
+    bw_listener_name(at, n), bw_place(at, p), h = cat(ev, " listener `", n, "` (", p, ")").
+bw_hook_at(mq, k, x, at, h) :- bw_reg(at, t, "set", _), (k = "insert" ; k = "update"), unparen(t, tt),
+    attr_of(tt, o, x), bw_covers(at, o, mq), bw_listener_name(at, n), bw_place(at, p),
+    h = cat("set listener `", n, "` on ", x, " (", p, ")").
+bw_hook_at(mq, k, x, f, h) :- bw_validator(b, f, x), (k = "insert" ; k = "update"), class_def(b, bq),
+    (class_def(b, mq), sa_model(b) ; sa_model_super(mc, b), class_def(mc, mq)), def_name(b, bn), def_name(f, fn),
+    bw_place(f, p), h = cat("validator `", bn, ".", fn, "` for ", x, " (", p, ")").
+.decl bw_hook(mq: symbol, k: symbol, x: symbol, h: symbol)
+bw_hook(mq, k, x, h) :- bw_hook_at(mq, k, x, at, h), docof(at, d), !sa_test_doc(d), !sa_migration_doc(d).
+// the targets of attribute events resolve like mapper events, through bw_covers on the attribute's owner
+bw_covers(at, o, mq) :- bw_reg(at, t, "set", _), unparen(t, tt), attr_of(tt, o, _), sym_of(o, mq), class_def(mc, mq),
+    sa_model(mc).
+bw_covers(at, o, mq) :- bw_reg(at, t, "set", _), bw_propagates(at), unparen(t, tt), attr_of(tt, o, _), sym_of(o, bq),
+    class_def(b, bq), sa_model_super(mc, b), class_def(mc, mq).
+// bw_validator(b, f, x): method f of class b is `@validates("x", ...)` (sqlalchemy.orm.validates; b a model or a
+// mixin; lib's sa_validates covers models only).
+.decl bw_validator(b: node, f: node, x: symbol)
+bw_validator(b, f, x) :- decorator(f, e), kind(e, "call"), field(e, "function", vf), sym_of(vf, vq),
+    (vq = "sqlalchemy.orm.validates" ; vq = "sqlalchemy.orm.mapper.validates"), call_arg(e, _, "", a), str(a, x),
+    nearest(f, b, scope), kind(b, "class_definition").
+.decl bw_place(n: node, p: symbol)
+bw_place(n, p) :- docof(n, d), doc(d, path, _), line(n, l), p = cat(path, ":", to_string(l)).
+
+// bw_in_hook(c, mq): c runs inside one of mq's own hooks: a listener def (decorated, named by the registration, or a
+// method the registration names) or a validator.
+.decl bw_in_hook(c: node, mq: symbol)
+bw_in_hook(c, mq) :- bw_write(c, _, mq, _), bw_hook_at(mq, _, _, at, _), bw_listener_def(at, f), within(c, f).
+bw_in_hook(c, mq) :- bw_write(c, _, mq, _), bw_hook_at(mq, _, _, f, _), kind(f, "function_definition"), within(c, f).
+
+// bw_rerun(k, mq): a session-level `do_orm_execute` listener reads `is_<k>` and names mq, or names no model: it may
+// run mq's hooks for bulk statements itself.
+.decl bw_exec_listener(f: node)
+bw_exec_listener(f) :- bw_reg(at, _, "do_orm_execute", _), bw_listener_def(at, f), docof(at, d), !sa_test_doc(d).
+.decl bw_exec_names(f: node, mq: symbol)
+bw_exec_names(f, mq) :- bw_exec_listener(f), within(n, f), sym_of(n, mq), sa_model_q(mq).
+.decl bw_exec_names_any(f: node)
+bw_exec_names_any(f) :- bw_exec_names(f, _).
+.decl bw_rerun(k: symbol, mq: symbol)
+bw_rerun(k, mq) :- bw_write(_, k, mq, _), bw_exec_listener(f), within(n, f), attr_of(n, _, cat("is_", k)),
+    (bw_exec_names(f, mq) ; !bw_exec_names_any(f)).
+
+// The cases, `cases/sqlalchemy-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line. `generic` is a second repository whose do_orm_execute listener names no
+// model.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/__init__.py"
+    .fixture "app/db.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/db.py"
+    .fixture "app/events.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/events.py"
+    .fixture "app/legacy.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/legacy.py"
+    .fixture "app/models.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/models.py"
+    .fixture "app/services.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/services.py"
+    .fixture "app/tests/__init__.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/__init__.py"
+    .fixture "app/tests/conftest.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/conftest.py"
+    .fixture "app/tests/test_services.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/test_services.py"
+    .fixture "migrations/versions/0002_fill_labels.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/migrations/versions/0002_fill_labels.py"
+    .expect _ at "app/legacy.py":6
+    .expect _ at "app/legacy.py":7
+    .expect _ at "app/legacy.py":10
+    .expect _ at "app/services.py":11
+    .expect _ at "app/services.py":16
+    .expect _ at "app/services.py":20
+    .expect _ at "app/services.py":24
+    .expect _ at "app/services.py":28
+    .expect _ at "app/services.py":44
+    .expect _ at "app/services.py":48
+    .expect _ at "app/services.py":52
+    .expect _ at "app/services.py":60
+    .expect _ at "app/services.py":68
+    .expect _ at "app/services.py":76
+    .expect _ at "app/services.py":80
+    .expect _ at "app/services.py":88
+    .expect _ at "app/services.py":92
+    .expect _ at "app/services.py":104
+.end
+
+.test generic exactly
+    .fixture "shop/__init__.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/__init__.py"
+    .fixture "shop/models.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/models.py"
+    .fixture "shop/orders.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/orders.py"
+    .expect _ at "shop/orders.py":8
+.end

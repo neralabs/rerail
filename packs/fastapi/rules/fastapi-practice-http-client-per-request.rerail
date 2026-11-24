@@ -1,0 +1,115 @@
+.policy "fastapi-practice-http-client-per-request" revision 1
+.description "Don't build an httpx or aiohttp client in a FastAPI route, dependency or middleware, or a helper they call; create one client for the app and reuse it."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. An `httpx.AsyncClient`, `httpx.Client` or `aiohttp.ClientSession` owns a
+// connection pool: building one per request pays DNS, TCP and TLS setup on every call, throws the keep-alive pool
+// away, and under load runs the process out of sockets. It reports, outside test code, the constructor call (bare, in
+// `with`/`async with`, or returned) of one of those classes (through imports; `httpx2`, and a subclass of the run,
+// included) when it sits in a def FastAPI calls per request (lib/fastapi's fa_per_request: a route, a dependency, HTTP
+// middleware), or in a workspace def such a function reaches through sync or awaited calls (python/calls, across
+// files; a class's `__init__` when the request path constructs the class). It reports each constructor once; in a
+// helper, the message names the helper and one per-request function that reaches it.
+//   routes.py:    @router.get("/a") async def a(url): async with httpx.AsyncClient() as c: ...   reported
+//   services.py:  async def fetch_json(url): async with aiohttp.ClientSession() as s: ...      reported, when a route
+//                                                                                              awaits fetch_json()
+// Left alone: clients built at module level, in the lifespan, or anywhere no per-request function reaches (CLI,
+// scripts, background work handed to `BackgroundTasks.add_task` or `create_task`, which is an argument, not a call);
+// a def decorated `@lru_cache`/`@cache`/`@alru_cache`, and anything reached only through one; a constructor whose result
+// is stored in a module variable (`global _session; _session = aiohttp.ClientSession()`, a lazy shared pool) or on an
+// attribute outside `__init__` (`self._client = httpx.AsyncClient()`, `app.state.http = ...`); a client built with
+// `transport=`, `mounts=` or aiohttp's `connector=` (a one-off transport: an SSRF-pinning transport, a proxy, a unix
+// socket); code in a nested def or lambda that is never called; another library's `AsyncClient` (socketio) or
+// `TestClient`; test files.
+//   routes.py:    @router.get("/ok") async def ok(request): await request.app.state.http.get(url)   not reported
+//   clients.py:   @lru_cache def get_client(): return httpx.Client()                              not reported
+// Gaps: a helper is followed through every branch, so a constructor on a rare path (an error fallback) is reported;
+// a call of unknown target (python/calls' call_open: through containers, getattr, an instance attribute holding a
+// callable) is not followed; a class instantiated once but whose `__init__` a route also reaches is reported; a client
+// cached in a dict or other container is not recognised as shared.
+
+#include "lib/fastapi.rerail"
+#include "python/calls.rerail"
+
+.violation ClientPerRequest(at: node, what: symbol, fx: symbol)
+    "`{what}(...)` builds a new HTTP client, with its own connection pool, on every request to `{fx}`, paying DNS, TCP and TLS setup each time and exhausting sockets under load. Create one client for the app (in the lifespan, on `app.state`, or a module-level client closed on shutdown) and reuse it, passing timeouts and headers per call and keeping no cookies on it when calls are per user (`aiohttp.DummyCookieJar()`); leave it if this call needs settings a request can't pass (custom transport, proxy, certificates)."
+ClientPerRequest(c, what, fx) :- hc_ctor(c, h, what), hc_start(h), def_name(h, fx).
+.violation ClientReached(at: node, what: symbol, hx: symbol, fx: symbol, p: symbol, r: node)
+    "`{what}(...)` in `{hx}` builds a new HTTP client, with its own connection pool, each time a request runs it (`{fx}` at {p}:{r.line} reaches it), paying DNS, TCP and TLS setup each time and exhausting sockets under load. Create one client for the app (in the lifespan, on `app.state`, or a module-level client closed on shutdown) and pass or import it, passing timeouts and headers per call and keeping no cookies on it when calls are per user (`aiohttp.DummyCookieJar()`); leave it if this call needs settings a request can't pass (custom transport, proxy, certificates)."
+ClientReached(c, what, hx, fx, p, r) :- hc_ctor(c, h, what), !hc_start(h), def_name(h, hx),
+    r = min f : { hc_reach(f, h) }, def_name(r, fx), docof(r, d), doc(d, p, _).
+
+// ---- clients -----------------------------------------------------------------------------------------------------
+// hc_client_q(q): an HTTP client class that owns a connection pool.
+.decl hc_lib(q: symbol)
+hc_lib("httpx.AsyncClient"). hc_lib("httpx.Client"). hc_lib("httpx._client.AsyncClient"). hc_lib("httpx._client.Client").
+hc_lib("httpx2.AsyncClient"). hc_lib("httpx2.Client").
+hc_lib("aiohttp.ClientSession"). hc_lib("aiohttp.client.ClientSession").
+.decl hc_client_q(q: symbol)
+hc_client_q(q) :- hc_lib(q).
+hc_client_q(q) :- class_def(c, q), class_base(c, b), hc_client_q(b).
+// hc_custom_kw(k): a keyword that gives the client a transport of its own; such a client is left alone.
+.decl hc_custom_kw(k: symbol)
+hc_custom_kw("transport"). hc_custom_kw("mounts"). hc_custom_kw("connector").
+
+// hc_ctor(c, h, what): call c, in def h's frame (a lambda's calls are its def's) outside test code, builds a client
+// that is not kept as a shared one (hc_kept) and has no transport of its own; what is the callee as written.
+.decl hc_ctor(c: node, h: node, what: symbol)
+hc_ctor(c, h, what) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), hc_client_q(q), owner(c, h),
+    !hc_custom(c), !hc_kept(c, h), docof(c, d), !fa_test_doc(d), text(fn, what).
+.decl hc_custom(c: node)
+hc_custom(c) :- call_arg(c, -1, k, _), hc_custom_kw(k).
+// hc_kept(c, h): what call c returns is stored for later requests: assigned to a name whose home scope is not h
+// (`global` or `nonlocal`), or to an attribute by a def other than `__init__` (a lazy `self._client`,
+// `app.state.http`). A client built so is shared; so is one a class builds when its instance is kept so
+// (`global _client; _client = PolarSelfClient(...)`).
+.decl hc_kept(c: node, h: node)
+hc_kept(c, h) :- owner(c, h), asg(t, _, r, _), fa_unwrap(r, c), t != h.
+hc_kept(c, h) :- owner(c, h), kind(s, "assignment"), field(s, "left", l), kind(l, "attribute"), field(s, "right", r),
+    fa_unwrap(r, c), !def_name(h, "__init__").
+
+// ---- the request path --------------------------------------------------------------------------------------------
+// hc_start(f): a def FastAPI calls per request, outside test code.
+.decl hc_start(f: node)
+hc_start(f) :- fa_per_request(f), docof(f, d), !fa_test_doc(d).
+// hc_reach(f, h): per-request f runs def h: f itself, or through calls (sync or awaited), not through a cached def or a
+// call whose result is kept (hc_kept: a lazily built singleton).
+.decl hc_reach(f: node, h: node)
+hc_reach(f, f) :- hc_start(f).
+hc_reach(f, h) :- hc_reach(f, g), owner(c, g), call_target(c, h), !hc_kept(c, g), !hc_cached(h).
+// hc_cached(g): g's result is cached across calls (`@functools.lru_cache`, `@functools.cache`, `@alru_cache`).
+.decl hc_cached(g: node)
+hc_cached(g) :- decorator(g, e0), unparen(e0, e), sym_of(e, q), hc_cache_q(q).
+hc_cached(g) :- decorator(g, e0), unparen(e0, e), kind(e, "call"), field(e, "function", fn), sym_of(fn, q),
+    hc_cache_q(q).
+.decl hc_cache_q(q: symbol)
+hc_cache_q("functools.lru_cache"). hc_cache_q("functools.cache"). hc_cache_q("async_lru.alru_cache").
+
+// The cases, `cases/fastapi-practice-http-client-per-request/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/fastapi-practice-http-client-per-request/app/__init__.py"
+    .fixture "app/cli.py" from "../cases/fastapi-practice-http-client-per-request/app/cli.py"
+    .fixture "app/clients.py" from "../cases/fastapi-practice-http-client-per-request/app/clients.py"
+    .fixture "app/deps.py" from "../cases/fastapi-practice-http-client-per-request/app/deps.py"
+    .fixture "app/main.py" from "../cases/fastapi-practice-http-client-per-request/app/main.py"
+    .fixture "app/routes.py" from "../cases/fastapi-practice-http-client-per-request/app/routes.py"
+    .fixture "app/services.py" from "../cases/fastapi-practice-http-client-per-request/app/services.py"
+    .fixture "app/worker.py" from "../cases/fastapi-practice-http-client-per-request/app/worker.py"
+    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-http-client-per-request/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-http-client-per-request/app/tests/test_routes.py"
+    .expect _ at "app/clients.py":27
+    .expect _ at "app/clients.py":32
+    .expect _ at "app/deps.py":7
+    .expect _ at "app/deps.py":16
+    .expect _ at "app/main.py":26
+    .expect _ at "app/main.py":40
+    .expect _ at "app/routes.py":17
+    .expect _ at "app/routes.py":23
+    .expect _ at "app/routes.py":32
+    .expect _ at "app/routes.py":42
+    .expect _ at "app/services.py":6
+    .expect _ at "app/services.py":16
+    .expect _ at "app/services.py":21
+.end

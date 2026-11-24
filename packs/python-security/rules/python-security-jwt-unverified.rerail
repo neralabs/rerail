@@ -1,0 +1,311 @@
+.policy "python-security-jwt-unverified" revision 1
+.description "Verify a JSON Web Token's signature against a fixed list of algorithms before trusting its claims, and never let the token's own header choose the algorithm."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. PyJWT (`jwt.decode`, `jwt.decode_complete`) and python-jose (`jose.jwt.decode`,
+// `get_unverified_claims`), resolved through imports (`authlib.jose` and a module of the run named jwt are other
+// names). Outside test files it reports three shapes:
+//   Unverified       claims read without checking the signature (`options={"verify_signature": False}`, a dict
+//                    literal or a name bound to one; PyJWT 1's `verify=False`; python-jose `get_unverified_claims`)
+//                    that the code trusts: the function is an authentication hook (DRF/Django `authenticate`, a
+//                    function a FastAPI `Depends`/`Security` names, or a name like get_current_user, authenticate,
+//                    user_from_token, verify_token, login_required) and reads them; they are passed to a lookup
+//                    (a callee naming a user, account, member, principal or identity, a Django manager, a session or
+//                    db `get`/`filter`/`where`); they are assigned to an identity (`request.user`, `g.current_user`,
+//                    `session[...]`); or they are returned from a function no caller of the run calls. A function of
+//                    the run that returns them is followed to its callers, and each call is judged the same way
+//                    (UnverifiedHelper, at the call, naming the decode's file and line).
+//   HeaderAlgorithm  `algorithms=` (or the third positional argument) holds the `alg` of a header read without
+//                    verification: `jwt.get_unverified_header(t)`, `json.loads` of a base64 decode, a function of the
+//                    run returning one, or a parameter a caller passes one to (Netflix Lemur GHSA-r9gp-7f88-9r54);
+//                    HeaderAlgorithmInline when the header is read inside the decode call itself.
+//   OpenAlgorithms   python-jose `jwt.decode` without `algorithms` (or `algorithms=None`), and `algorithms` that list
+//                    `"none"` or take `get_default_algorithms()` (CVE-2022-29217).
+//   def authenticate(self, request):
+//       payload = jwt.decode(token, options={"verify_signature": False})   reported: an authentication hook
+//       return User.objects.get(pk=payload["sub"]), token
+//   def is_jwt(token):
+//       jwt.decode(token, options={"verify_signature": False})             not reported: a format sniff
+// Left alone: a function that also verifies the same token (a decode with the signature on, or a call named verify*/
+// validat* given it: read `iss`/`kid`, then verify), or sends it to the issuer's userinfo/introspection endpoint;
+// claims only logged, compared or truth-tested; a header `alg` tested with `in`/`==`/`!=` or passed to a
+// validator-named call first (the same expression text, or the name it is bound to; lib/security's sec_check_arg);
+// PyJWT 2 `jwt.decode` without `algorithms` (it raises); `verify_exp: False` alone; test files.
+// Gaps: options built from a non-literal (`{"verify_signature": verify}`) or merged at runtime are not read; claims
+// stored on an object and read back later are not followed; a lookup through a callee whose names say nothing about
+// users (`repo.get(...)`) is missed outside authentication hooks; a mixed HS*/RS* algorithm list is not reported.
+#include "lib/security.rerail"
+
+.violation Unverified(at: node, how: symbol) "This JWT is decoded without checking its signature, and its claims {how}, so a forged token passes. Verify it with the key and fixed `algorithms`; leave it if they only pick the key."
+Unverified(c, how) :- ju_nosig(c), !ju_reverified(c), r = min r0 : { ju_trust(c, r0) }, ju_how(r, how).
+
+.violation UnverifiedHelper(at: node, callee: symbol, p: symbol, l: number, how: symbol) "`{callee}` returns claims of a JWT decoded without its signature ({p}:{l}), and they {how} here, so a forged token passes. Verify the token with the key and fixed `algorithms` first."
+UnverifiedHelper(c, cn, p, l, how) :- ju_src(c, _), !ju_nosig(c), !ju_reverified(c), r = min r0 : { ju_trust(c, r0) },
+    ju_how(r, how), s = min s0 : { ju_src(c, s0) }, docof(s, d), doc(d, p, _), line(s, l), field(c, "function", f),
+    text(f, cn).
+
+.violation HeaderAlgorithm(at: node, p: symbol, l: number) "`algorithms` comes from the token's own unverified header ({p}:{l}), so the sender picks the check. Pass a fixed list; leave it if `alg` is tested against an allow-list first."
+HeaderAlgorithm(c, p, l) :- ju_decode(c, _), o = min o0 : { ju_header_alg(c, o0) }, !within(o, c), docof(o, d),
+    doc(d, p, _), line(o, l).
+.violation HeaderAlgorithmInline(at: node) "`algorithms` comes from this token's own unverified header, so the sender picks the check. Pass a fixed list; leave it if `alg` is tested against an allow-list first."
+HeaderAlgorithmInline(c) :- ju_decode(c, _), o = min o0 : { ju_header_alg(c, o0) }, within(o, c).
+
+.violation OpenAlgorithms(at: node, what: symbol) "This decode {what}, so a token can choose an unsigned or key-confused check. Pass `algorithms=[...]` naming only what your key signs with."
+OpenAlgorithms(c, "lets python-jose accept any `alg` the token names") :- ju_jose_open(c).
+OpenAlgorithms(c, "accepts `none` or every algorithm PyJWT knows") :- ju_weak_algs(c), !ju_jose_open(c).
+
+// ---- decode calls ------------------------------------------------------------------------------------------------
+// ju_decode(c, lib): c, outside test code, decodes a token with PyJWT ("pyjwt") or python-jose ("jose").
+.decl ju_decode_q(q: symbol, lib: symbol)
+ju_decode_q("jwt.decode", "pyjwt"). ju_decode_q("jwt.api_jwt.decode", "pyjwt").
+ju_decode_q("jwt.decode_complete", "pyjwt"). ju_decode_q("jwt.api_jwt.decode_complete", "pyjwt").
+ju_decode_q("jose.jwt.decode", "jose").
+.decl ju_decode(c: node, lib: symbol)
+ju_decode(c, lib) :- sec_call_q(c, q), ju_decode_q(q, lib), docof(c, d), !sec_test_doc(d).
+// ju_token_arg(c, t): t is the token call c decodes or checks.
+.decl ju_token_arg(c: node, t: node)
+ju_token_arg(c, t) :- sec_arg(c, 0, "", t).
+ju_token_arg(c, t) :- sec_arg(c, -1, k, t), (k = "jwt" ; k = "token").
+// ju_splat(c): call c passes `*args`/`**kwargs`, so an argument it seems to lack may be there.
+.decl ju_splat(c: node)
+ju_splat(c) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _),
+    (kind(sp, "list_splat") ; kind(sp, "dictionary_splat")).
+
+// ju_nosig(c): call c reads a token's claims without checking its signature.
+.decl ju_nosig(c: node)
+ju_nosig(c) :- ju_decode(c, _), sec_arg(c, -1, "options", v), ju_nosig_opts(v).
+ju_nosig(c) :- ju_decode(c, _), sec_arg(c, 3, "", v), ju_nosig_opts(v).
+ju_nosig(c) :- ju_decode(c, "pyjwt"), sec_arg(c, -1, "verify", v), kind(v, "false").
+ju_nosig(c) :- (sec_call_q(c, "jose.jwt.get_unverified_claims") ; sec_call_q(c, "jose.jws.get_unverified_claims")),
+    docof(c, d), !sec_test_doc(d).
+// ju_nosig_opts(v): options v turn the signature check off: a dict literal with `"verify_signature": False`,
+// `dict(verify_signature=False)`, or a name bound to one where the reference resolves.
+.decl ju_nosig_opts(v: node)
+ju_nosig_opts(v) :- kind(v, "dictionary"), child(v, p, _), kind(p, "pair"), field(p, "key", k), str(k, "verify_signature"),
+    field(p, "value", f0), unparen(f0, f), kind(f, "false").
+ju_nosig_opts(v) :- sec_call_q(v, "builtins.dict"), sec_arg(v, -1, "verify_signature", f), kind(f, "false").
+ju_nosig_opts(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v0, _), unparen(v0, v),
+    ju_nosig_opts(v).
+
+// ---- unverified claims and where they go -------------------------------------------------------------------------
+// ju_src(c, s): call c returns claims of the unverified decode s: s itself, or a call of the run's function that
+// returns them (followed through any number of such functions).
+.decl ju_src(c: node, s: node)
+ju_src(c, c) :- ju_nosig(c).
+ju_src(k, s) :- call_target(k, g), ju_ret(g, s), docof(k, d), !sec_test_doc(d).
+// ju_ret(g, s): function g returns the unverified claims of s and does not verify the token itself.
+.decl ju_ret(g: node, s: node)
+ju_ret(g, s) :- ju_src(c, s), ju_returned(c, g), !ju_reverified(c).
+.decl ju_returned(c: node, g: node)
+ju_returned(c, g) :- ju_src(c, _), nearest(c, g, fdef), kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef),
+    ju_val(v, c).
+
+// ju_val(e, c): expression e holds the claims c returned, or a part of them: lib/security's propagation steps
+// (subscripts, `.get()`, containers, f-strings, str()), a class built from them (`TokenPayload(**payload)`), and
+// the names bound to them.
+.decl ju_val(e: node, c: node)
+ju_val(c, c) :- ju_src(c, _).
+ju_val(e, c) :- sec_step(e, a), ju_val(a, c).
+ju_val(e, c) :- ju_model_call(e), call_arg(e, _, _, a), ju_val(a, c).
+ju_val(e, c) :- ju_model_call(e), field(e, "arguments", al), child(al, sp, _), kind(sp, "dictionary_splat"),
+    child(sp, a, 0), ju_val(a, c).
+ju_val(r, c) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, ju_val(v, c).
+// ju_model_call(e): e builds a model from its arguments: a capitalised callee or a pydantic/marshmallow loader.
+.decl ju_model_call(e: node)
+ju_model_call(e) :- kind(e, "call"), field(e, "function", f), leaf_name(f, x), match("_?[A-Z].*", x).
+ju_model_call(e) :- call_name(e, x), (x = "model_validate" ; x = "parse_obj" ; x = "from_dict" ; x = "load").
+
+// ju_in_args(u, k): claim value u sits in an argument of call k.
+.decl ju_in_args(u: node, k: node)
+ju_in_args(u, k) :- ju_val(u, _), inside(u, k, "call"), field(k, "arguments", al), within(u, al).
+// ju_logged(u): claim value u is an argument of a logging call or print.
+.decl ju_logged(u: node)
+ju_logged(u) :- ju_in_args(u, k), ju_log_call(k).
+.decl ju_log_call(k: node)
+ju_log_call(k) :- call_name(k, m), (m = "debug" ; m = "info" ; m = "warning" ; m = "warn" ; m = "error" ;
+    m = "exception" ; m = "critical" ; m = "log"), field(k, "function", f), attr_of(f, o, _), text(o, t), icontains("log", t).
+ju_log_call(k) :- call_name(k, "print").
+// ju_read(u, c): u reads the claims c returned, outside a logging call: a name bound to them, or the call itself
+// used as a value (returned, or passed on).
+.decl ju_read(u: node, c: node)
+ju_read(u, c) :- ju_val(u, c), kind(u, "identifier"), !field(_, "left", u), !ju_logged(u).
+ju_read(c, c) :- ju_src(c, _), (kind(r, "return_statement") ; kind(r, "argument_list")), child(r, c, _), !ju_logged(c).
+
+// ju_trust(c, rank): the function around c trusts the claims c returned: 1 it authenticates with them, 2 it looks
+// a user up with them, 3 it sets the caller's identity to them, 4 it returns them and no caller of the run calls it.
+.decl ju_trust(c: node, rank: number)
+ju_trust(c, 1) :- ju_src(c, _), nearest(c, g, fdef), ju_hook(g), ju_read(u, c), nearest(u, g, fdef).
+ju_trust(c, 2) :- ju_src(c, _), nearest(c, g, fdef), ju_val(u, c), ju_in_args(u, k), nearest(k, g, fdef),
+    ju_lookup_call(k), !ju_claims_method(k).
+ju_trust(c, 3) :- ju_src(c, _), nearest(c, g, fdef), kind(a, "assignment"), nearest(a, g, fdef), field(a, "left", lt),
+    ju_identity_target(lt), field(a, "right", rt), ju_val(u, c), (u = rt ; within(u, rt)).
+ju_trust(c, 4) :- ju_returned(c, g), !call_target(_, g).
+.decl ju_how(rank: number, how: symbol)
+ju_how(1, "authenticate the caller"). ju_how(2, "pick the user"). ju_how(3, "set the caller's identity").
+ju_how(4, "are returned as trusted").
+
+// ju_hook(g): function g authenticates a request: a method named authenticate (DRF authentication classes, Django
+// authentication backends), a function a FastAPI `Depends(...)`/`Security(...)` names, or a function whose name says so.
+.decl ju_hook(g: node)
+ju_hook(g) :- kind(g, "function_definition"), def_name(g, x), ju_hook_name(x).
+ju_hook(g) :- kind(g, "function_definition"), def_name(g, x), sec_dep(e), sec_arg(e, 0, "", a), leaf_name(a, x).
+ju_hook(g) :- kind(g, "function_definition"), def_name(g, x), sec_dep(e), sec_arg(e, -1, "dependency", a), leaf_name(a, x).
+.decl ju_hook_name(x: symbol)
+ju_hook_name(x) :- def_name(_, x),
+    match("(?i).*(authenticat|current_user|get_current|user_from|from_token|login_required|requires_auth|(verify|validate)_(access_|id_|auth_|bearer_)?(token|jwt)).*", x).
+// ju_lookup_call(k): call k finds who the caller is: a callee naming a user, account, member, principal, identity or
+// customer, a Django manager, or a `get`/`filter`/`where`-like method on a session, database, query or repository.
+.decl ju_lookup_call(k: node)
+ju_lookup_call(k) :- kind(k, "call"), field(k, "function", f), text(f, t), !ju_log_call(k),
+    (icontains("user", t) ; icontains("account", t) ; icontains("member", t) ; icontains("principal", t) ;
+     icontains("identity", t) ; icontains("customer", t) ; contains(".objects.", t)).
+ju_lookup_call(k) :- call_name(k, m), ju_lookup_method(m), field(k, "function", f), attr_of(f, o, _), leaf_name(o, x),
+    (icontains("session", x) ; x = "db" ; icontains("query", x) ; icontains("repo", x) ; x = "objects" ; x = "crud").
+.decl ju_lookup_method(m: symbol)
+ju_lookup_method("get"). ju_lookup_method("filter"). ju_lookup_method("filter_by"). ju_lookup_method("where").
+ju_lookup_method("get_or_404"). ju_lookup_method("one"). ju_lookup_method("first"). ju_lookup_method("scalar").
+ju_lookup_method("find_one"). ju_lookup_method("execute"). ju_lookup_method("exec"). ju_lookup_method("aget").
+// ju_claims_method(k): k is a method call on the claims themselves (`claims.get("sub")`).
+.decl ju_claims_method(k: node)
+ju_claims_method(k) :- field(k, "function", f), attr_of(f, o, _), ju_val(o, _).
+// ju_identity_target(l): assignment target l holds who the caller is: an attribute naming a user, principal,
+// identity, account or claims (`request.user`, `g.current_user`, `request.state.claims`), or a session key.
+.decl ju_identity_target(l: node)
+ju_identity_target(l) :- attr_of(l, _, n), (icontains("user", n) ; icontains("principal", n) ; icontains("identity", n) ;
+    icontains("account", n) ; n = "claims" ; n = "auth").
+ju_identity_target(l) :- kind(l, "subscript"), field(l, "value", v), text(v, t), icontains("session", t).
+
+// ju_reverified(c): the function around c also verifies the same token (by its text): a decode with the signature
+// on, or a call named verify*/validat* given it; or it sends the token to the issuer's userinfo or introspection
+// endpoint, which rejects a forged one. Reading `iss` or `kid` to pick the key is then fine.
+.decl ju_reverified(c: node)
+ju_reverified(c) :- ju_maybe_src(c), ju_token_arg(c, t), text(t, tt), nearest(c, g, fdef), ju_verifier(c2, t2),
+    c2 != c, nearest(c2, g, fdef), text(t2, tt).
+ju_reverified(c) :- ju_nosig(c), ju_token_arg(c, t), text(t, tt), nearest(c, g, fdef), kind(k, "call"),
+    nearest(k, g, fdef), call_name(k, n), (icontains("userinfo", n) ; icontains("introspect", n)),
+    has(g, t2, ju_ref_kind), text(t2, tt), t2 != t.
+.decl ju_ref_kind(k: symbol)
+ju_ref_kind("identifier"). ju_ref_kind("attribute"). ju_ref_kind("subscript").
+.decl ju_verifier(c: node, t: node)
+ju_verifier(c, t) :- ju_decode(c, _), !ju_nosig(c), ju_token_arg(c, t).
+ju_verifier(c, t) :- call_name(c, n), (icontains("verif", n) ; icontains("validat", n)), !icontains("unverif", n),
+    call_arg(c, _, _, t).
+// ju_maybe_src(c): c may return unverified claims (a superset of ju_src, without its recursion through ju_reverified):
+// an unverified decode, or a call of a function that makes one, directly or through the functions it calls.
+.decl ju_maybe_src(c: node)
+ju_maybe_src(c) :- ju_nosig(c).
+ju_maybe_src(k) :- call_target(k, g), ju_nosig_fn(g).
+.decl ju_nosig_fn(g: node)
+ju_nosig_fn(g) :- ju_nosig(c), nearest(c, g, fdef).
+ju_nosig_fn(g) :- ju_nosig_fn(h), call_target(k, h), nearest(k, g, fdef).
+
+// ---- algorithms from the token's header --------------------------------------------------------------------------
+// ju_hdr(e): e reads a token's header without verifying it: get_unverified_header(s), `json.loads` of a base64
+// decode, or a call of the run's function that returns one.
+.decl ju_hdr(e: node)
+ju_hdr(c) :- call_name(c, n), (n = "get_unverified_header" ; n = "get_unverified_headers"), docof(c, d), !sec_test_doc(d).
+ju_hdr(c) :- sec_call_q(c, "json.loads"), sec_arg(c, 0, "", a), has(a, k, "call"), call_name(k, n),
+    (icontains("b64", n) ; icontains("base64", n)), docof(c, d), !sec_test_doc(d).
+ju_hdr(k) :- call_target(k, g), ju_hdr_ret(g), docof(k, d), !sec_test_doc(d).
+.decl ju_hdr_ret(g: node)
+ju_hdr_ret(g) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), ju_hdrv(v, _).
+// ju_hdrv(e, o): e holds the header read at o.
+.decl ju_hdrv(e: node, o: node)
+ju_hdrv(e, e) :- ju_hdr(e).
+ju_hdrv(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ju_hdrv(a, o).
+ju_hdrv(w, o) :- kind(w, "await"), child(w, a, 0), ju_hdrv(a, o).
+ju_hdrv(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, ju_hdrv(v, o).
+// ju_algv(e, o): e holds the `alg` of the header read at o, unchecked: `header["alg"]`, `header.get("alg")`, a list
+// of one, a name bound to one, a parameter a caller passes one to. A value tested with `in`/`==` or passed to a
+// validator-named call in its function stops it.
+.decl ju_algv(e: node, o: node)
+ju_algv(e, o) :- kind(e, "subscript"), field(e, "value", v), field(e, "subscript", k), str(k, "alg"), ju_hdrv(v, o),
+    !ju_alg_checked(e).
+ju_algv(e, o) :- kind(e, "call"), field(e, "function", f), attr_of(f, v, "get"), sec_arg(e, 0, "", k), str(k, "alg"),
+    ju_hdrv(v, o), !ju_alg_checked(e).
+ju_algv(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ju_algv(a, o).
+ju_algv(t, o) :- sec_container(t), child(t, a, _), ju_algv(a, o).
+ju_algv(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, ju_algv(v, o),
+    !ju_name_checked(h, x).
+ju_algv(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_param_at(_, g, a, x), ju_algv(a, o).
+// ju_alg_checked(e): the function around `alg` read e tests an expression with e's text against an allow-list or a
+// constant.
+.decl ju_alg_checked(e: node)
+ju_alg_checked(e) :- ju_alg_site(e), text(e, t), nearest(e, h, fscope), sec_check_arg(h, a), text(a, t).
+ju_alg_checked(e) :- ju_alg_site(e), text(e, t), nearest(e, h, fscope), ju_eq_side(h, a), text(a, t).
+// ju_alg_site(e): e reads `alg` off a mapping: `x["alg"]`, `x.get("alg")`.
+.decl ju_alg_site(e: node)
+ju_alg_site(e) :- kind(e, "subscript"), field(e, "subscript", k), str(k, "alg").
+ju_alg_site(e) :- kind(e, "call"), field(e, "function", f), attr_of(f, _, "get"), sec_arg(e, 0, "", k), str(k, "alg").
+// ju_eq_side(h, a): a is a side of an `==`/`!=` test in scope h.
+.decl ju_eq_side(h: node, a: node)
+ju_eq_side(h, a) :- kind(c, "comparison_operator"), (op(c, "==") ; op(c, "!=")), child(c, a, _), nearest(c, h, fscope).
+// ju_name_checked(h, x): scope h tests name x itself with `in`/`==`/`!=`, or passes it to a validator-named call.
+// (lib/security's sec_checked also reads names under attributes and calls, at the cost of every call argument.)
+.decl ju_name_checked(h: node, x: symbol)
+ju_name_checked(h, x) :- ju_eq_side(h, a), unparen(a, i), kind(i, "identifier"), text(i, x).
+ju_name_checked(h, x) :- sec_check_arg(h, a), unparen(a, i), kind(i, "identifier"), text(i, x).
+// ju_alg_arg(c, a): a is the `algorithms` argument of decode c.
+.decl ju_alg_arg(c: node, a: node)
+ju_alg_arg(c, a) :- ju_decode(c, _), sec_arg(c, -1, "algorithms", a).
+ju_alg_arg(c, a) :- ju_decode(c, _), sec_arg(c, 2, "", a).
+.decl ju_alg_kind(k: symbol)
+ju_alg_kind("identifier"). ju_alg_kind("subscript"). ju_alg_kind("call").
+// ju_header_alg(c, o): decode c takes its algorithms from the header read at o.
+.decl ju_header_alg(c: node, o: node)
+ju_header_alg(c, o) :- ju_alg_arg(c, a), ju_algv(a, o).
+ju_header_alg(c, o) :- ju_alg_arg(c, a), has(a, u, ju_alg_kind), ju_algv(u, o).
+
+// ---- open algorithm lists ----------------------------------------------------------------------------------------
+// ju_jose_open(c): a python-jose decode that checks the signature with whatever algorithm the header names.
+.decl ju_jose_open(c: node)
+ju_jose_open(c) :- ju_decode(c, "jose"), !ju_nosig(c), !ju_alg_arg(c, _), !ju_splat(c).
+ju_jose_open(c) :- ju_decode(c, "jose"), !ju_nosig(c), sec_arg(c, -1, "algorithms", v), kind(v, "none").
+// ju_weak_algs(c): decode c's algorithms list `"none"` or every algorithm the library has.
+.decl ju_weak_algs(c: node)
+ju_weak_algs(c) :- ju_alg_arg(c, a0), ju_alg_value(a0, a), ju_weak_list(a).
+.decl ju_alg_value(a: node, v: node)
+ju_alg_value(a, a) :- ju_alg_arg(_, a).
+ju_alg_value(a, v) :- ju_alg_arg(_, a), kind(a, "identifier"), text(a, x), look(a, x, h), asg(h, x, v0, _), unparen(v0, v).
+.decl ju_weak_list(a: node)
+ju_weak_list(a) :- ju_alg_value(_, a), kind(a, "call"), call_name(a, "get_default_algorithms").
+ju_weak_list(a) :- ju_alg_value(_, a), has(a, k, "call"), call_name(k, "get_default_algorithms").
+ju_weak_list(a) :- ju_alg_value(_, a), sec_container(a), child(a, s, _), str(s, v), match("(?i)none", v).
+
+// The cases, `cases/python-security-jwt-unverified/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/python-security-jwt-unverified/app/__init__.py"
+    .fixture "app/algorithms.py" from "../cases/python-security-jwt-unverified/app/algorithms.py"
+    .fixture "app/deps.py" from "../cases/python-security-jwt-unverified/app/deps.py"
+    .fixture "app/drf_auth.py" from "../cases/python-security-jwt-unverified/app/drf_auth.py"
+    .fixture "app/header_alg.py" from "../cases/python-security-jwt-unverified/app/header_alg.py"
+    .fixture "app/jose_auth.py" from "../cases/python-security-jwt-unverified/app/jose_auth.py"
+    .fixture "app/oauth.py" from "../cases/python-security-jwt-unverified/app/oauth.py"
+    .fixture "app/sessions.py" from "../cases/python-security-jwt-unverified/app/sessions.py"
+    .fixture "app/tokens.py" from "../cases/python-security-jwt-unverified/app/tokens.py"
+    .fixture "app/utils.py" from "../cases/python-security-jwt-unverified/app/utils.py"
+    .fixture "app/views.py" from "../cases/python-security-jwt-unverified/app/views.py"
+    .fixture "tests/test_auth.py" from "../cases/python-security-jwt-unverified/tests/test_auth.py"
+    .expect _ at "app/algorithms.py":8
+    .expect _ at "app/algorithms.py":12
+    .expect _ at "app/algorithms.py":16
+    .expect _ at "app/algorithms.py":20
+    .expect _ at "app/deps.py":18
+    .expect _ at "app/deps.py":31
+    .expect _ at "app/drf_auth.py":17
+    .expect _ at "app/drf_auth.py":30
+    .expect _ at "app/header_alg.py":20
+    .expect _ at "app/header_alg.py":24
+    .expect _ at "app/header_alg.py":49
+    .expect _ at "app/jose_auth.py":10
+    .expect _ at "app/jose_auth.py":18
+    .expect _ at "app/jose_auth.py":31
+    .expect _ at "app/jose_auth.py":35
+    .expect _ at "app/oauth.py":15
+    .expect _ at "app/sessions.py":6
+    .expect _ at "app/sessions.py":11
+    .expect _ at "app/tokens.py":19
+    .expect _ at "app/views.py":15
+.end

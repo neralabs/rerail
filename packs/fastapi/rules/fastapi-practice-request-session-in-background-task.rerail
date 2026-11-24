@@ -1,0 +1,126 @@
+.policy "fastapi-practice-request-session-in-background-task" revision 1
+.description "A FastAPI route or dependency must not hand the request's database session to a background task; pass ids and open a new session inside the task."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Background tasks run after the response is sent, while the yield dependency or
+// middleware that owns the request's SQLAlchemy session commits, rolls back and closes it around that response
+// (before the task in FastAPI 0.106-0.117, racing it since 0.118). A task handed that session works on a closed or
+// reset one: its writes escape the request's commit/rollback, objects loaded in the request are detached, and an
+// AsyncSession can be used by two tasks at once. In a route, dependency or HTTP middleware (lib/fastapi's
+// fa_per_request), outside test code, a call that schedules work (fa_add_task: `bg.add_task(fn, ...)` on a
+// BackgroundTasks parameter, or `BackgroundTask(fn, ...)`) is reported:
+//   - at an argument after the callable, positional or keyword, that is the request's session: a parameter holding it
+//     (fa_session_param: annotated as a sync or async session, through Annotated or an alias such as `DbSession` in
+//     another module, or filled by a dependency that gives one), a local alias of one (`s = db`), or
+//     `<x>.state.<a>` when the run assigns a session to `.state.<a>` (dispatch's middleware);
+//   - at the callable, when it reads such a session itself: a lambda or a nested def reading it from the enclosing
+//     function, `functools.partial(fn, db)`, or a bound method of an object built in the same function from it
+//     (`ReportService(db).run`, or `svc = ReportService(db)` then `svc.run`);
+//   - either way, for a session the function opened with `with SessionLocal() as s` (or `async with`): the block
+//     closes it before the task runs.
+//   routes.py:  def create(db: SessionDep, bg: BackgroundTasks): bg.add_task(send_report, db, 1)    reported at db
+//   routes.py:  def create(db: SessionDep, bg: BackgroundTasks): bg.add_task(lambda: send(db))      reported at lambda
+// Left alone: ids, slugs and plain values (`user_id=user.id`, `db.info["email"]`); a task that opens its own session
+// (`with SessionLocal() as db:` inside it); a session the function opens without `with` and hands off
+// (`s = SessionLocal()`: the task owns and closes it); `add_task` on something that is not a BackgroundTasks
+// parameter (`queue.add_task(...)`); `requests.Session` and other non-SQLAlchemy sessions; a plain helper taking
+// `bg` and `db` as parameters (not a route or dependency: its caller decides whose session it is); test files.
+//   routes.py:  def create(db: SessionDep, bg: BackgroundTasks): bg.add_task(send_report_by_id, user_id=user.id)
+// Gaps: a session reached through `self` in a class-based view (mealie's `self.repos`/`self.service`, so
+// `RecipeBulkScraperService(self.service, self.repos, ...).scrape` is not reported); a session inside a container
+// or an object the function did not build from it; `bg` held in an attribute (`self.bg.add_task`); the request
+// object itself passed to a task that reads `request.state.db` later; a helper that schedules the task when called
+// from a route with the request's session.
+
+#include "lib/fastapi.rerail"
+
+.violation SessionToTask(at: node, task: symbol, e: symbol, what: symbol, when: symbol)
+    "Background task `{task}` gets `{e}`, {what}, which is closed {when}: the task's writes escape the request's commit or rollback, and objects loaded in the request are detached. Pass ids or plain values and open a new session inside the task (`with SessionLocal() as db:`); commit in the request first if the task must read what the request wrote."
+SessionToTask(a, t, e, what, when) :- rb_start(c, fn, _), rb_arg(c, a), rb_session(a, e, k), rb_text(k, what, when),
+    rb_task_name(fn, t).
+SessionToTask(fn, t, e, what, when) :- rb_start(_, fn, _), s = min y : { rb_reads(fn, y), rb_session(y, _, _) },
+    rb_session(s, e, k), rb_text(k, what, when), rb_task_name(fn, t).
+
+.decl rb_text(k: symbol, what: symbol, when: symbol)
+rb_text("request", "the request's database session", "by its dependency or middleware around the response, before or while the task runs").
+rb_text("with", "a session this function opened with `with`", "when that block ends, before the task runs").
+
+// rb_start(c, fn, f): call c schedules callable fn in f, a route, dependency or HTTP middleware outside test code.
+.decl rb_start(c: node, fn: node, f: node)
+rb_start(c, fn, f) :- fa_add_task(c, fn, f), fa_per_request(f), docof(c, d), !fa_test_doc(d).
+
+// rb_task_name(fn, t): how the message names the scheduled callable.
+.decl rb_task_name(fn: node, t: symbol)
+rb_task_name(fn, t) :- rb_start(_, fn, _), !kind(fn, "lambda"), text(fn, t).
+rb_task_name(fn, "lambda") :- rb_start(_, fn, _), kind(fn, "lambda").
+
+// rb_arg(c, a): an argument of c after the callable, positional or by keyword.
+.decl rb_arg(c: node, a: node)
+rb_arg(c, a) :- rb_start(c, _, _), call_arg(c, i, "", a0), i >= 1, unparen(a0, a).
+rb_arg(c, a) :- rb_start(c, _, _), call_arg(c, -1, k, a0), k != "", unparen(a0, a).
+
+// rb_session(e, t, k): expression e (written t) holds a session: k "request" for the request's (a parameter holding
+// it, `<x>.state.<a>` assigned one), k "with" for one the enclosing function opened with `with`; also through a local
+// alias (`s = db`).
+.decl rb_session(e: node, t: symbol, k: symbol)
+rb_session(e, x, "request") :- ast_name(e, x), look(e, x, s), fa_session_param(s, _, x, _).
+rb_session(e, x, "with") :- ast_name(e, x), look(e, x, s), fa_with_session(w, x, _), def_frame(w, s).
+rb_session(e, t, "request") :- attr_of(e, o, a), attr_of(o, _, "state"), rb_state(a), text(e, t).
+rb_session(e, x, k) :- ast_name(e, x), look(e, x, s), kind(s, "function_definition"), fa_bind(s, x, v),
+    rb_session(v, _, k), !fa_param(s, _, x, _, _).
+
+// rb_state(a): the run assigns a session to `<x>.state.a` (`request.state.db = SessionLocal()`).
+.decl rb_state(a: symbol)
+rb_state(a) :- kind(n, "assignment"), field(n, "left", l), attr_of(l, s, a), attr_of(s, _, "state"),
+    field(n, "right", r0), fa_unwrap(r0, r), fa_session_maker(r, _).
+rb_state(a) :- kind(n, "assignment"), field(n, "left", l), attr_of(l, s, a), attr_of(s, _, "state"),
+    field(n, "right", r0), fa_unwrap(r0, r), rb_session(r, _, "request").
+
+// rb_reads(fn, e): the scheduled callable fn itself reads expression e from the function that schedules it.
+.decl rb_reads(fn: node, e: node)
+// A lambda or a nested def (rb_body): a name it does not bind itself (it reads it from an enclosing function), or an
+// attribute chain (`request.state.db`).
+rb_reads(fn, e) :- rb_body(fn, g), within(e, g), ast_name(e, x), look(e, x, s), s != g, !within(s, g).
+rb_reads(fn, e) :- rb_body(fn, g), within(e, g), kind(e, "attribute").
+// rb_body(fn, g): the scheduled callable fn is lambda g, or names g, a def nested in a function.
+.decl rb_body(fn: node, g: node)
+rb_body(fn, fn) :- rb_start(_, fn, _), kind(fn, "lambda").
+rb_body(fn, g) :- rb_start(_, fn, _), ast_name(fn, y), look(fn, y, s), kind(s, "function_definition"),
+    defn(s, y, g), kind(g, "function_definition").
+// `functools.partial(task, db)`: an argument after the callable.
+rb_reads(fn, a) :- rb_start(_, fn, _), kind(fn, "call"), field(fn, "function", pf), sym_of(pf, "functools.partial"),
+    (call_arg(fn, i, "", a0), i >= 1 ; call_arg(fn, -1, k, a0), k != ""), unparen(a0, a).
+// `Service(db).run`, or `svc.run` with `svc = Service(db)` in the scheduling function: an argument of that call.
+rb_reads(fn, a) :- rb_start(_, fn, _), attr_of(fn, o0, _), unparen(o0, o), kind(o, "call"), rb_ctor_arg(o, a).
+rb_reads(fn, a) :- rb_start(_, fn, f), attr_of(fn, o0, _), unparen(o0, o), ast_name(o, y), look(o, y, f),
+    fa_bind(f, y, v), kind(v, "call"), rb_ctor_arg(v, a).
+.decl rb_ctor_arg(v: node, a: node)
+rb_ctor_arg(v, a) :- kind(v, "call"), call_arg(v, _, _, a0), unparen(a0, a).
+
+// The cases, `cases/fastapi-practice-request-session-in-background-task/`, read as one repository: each line ending
+// in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../cases/fastapi-practice-request-session-in-background-task/app/__init__.py"
+    .fixture "app/db.py" from "../cases/fastapi-practice-request-session-in-background-task/app/db.py"
+    .fixture "app/deps.py" from "../cases/fastapi-practice-request-session-in-background-task/app/deps.py"
+    .fixture "app/jobs.py" from "../cases/fastapi-practice-request-session-in-background-task/app/jobs.py"
+    .fixture "app/main.py" from "../cases/fastapi-practice-request-session-in-background-task/app/main.py"
+    .fixture "app/routes.py" from "../cases/fastapi-practice-request-session-in-background-task/app/routes.py"
+    .fixture "app/tasks.py" from "../cases/fastapi-practice-request-session-in-background-task/app/tasks.py"
+    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-request-session-in-background-task/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-request-session-in-background-task/app/tests/test_routes.py"
+    .expect _ at "app/main.py":20
+    .expect _ at "app/routes.py":24
+    .expect _ at "app/routes.py":33
+    .expect _ at "app/routes.py":44
+    .expect _ at "app/routes.py":51
+    .expect _ at "app/routes.py":57
+    .expect _ at "app/routes.py":62
+    .expect _ at "app/routes.py":71
+    .expect _ at "app/routes.py":77
+    .expect _ at "app/routes.py":83
+    .expect _ at "app/routes.py":85
+    .expect _ at "app/routes.py":92
+    .expect _ at "app/routes.py":97
+.end
