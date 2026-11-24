@@ -543,6 +543,18 @@ impl<'a> Doc<'a> {
         };
         if l < self.entry.nodes { l } else { NO_ROW }
     }
+    /// `view_text_span(l)`: numbered node `l`'s bytes' range in its document's own source, `start << 32 | end`.
+    #[inline]
+    pub fn text_span(&self, l: u32) -> u64 {
+        let x = self.tape_node(l);
+        u64::from(self.tape.start(x)) << 32 | u64::from(self.tape.end(x))
+    }
+    /// Numbered node `l`'s text, read where its source lies (`text_span`): none where the range is not the source's
+    /// text (a tape and a source that disagree).
+    pub fn text(&self, l: u32) -> Option<&'a str> {
+        let span = self.text_span(l);
+        std::str::from_utf8(self.source.get((span >> 32) as usize..span as u32 as usize)?).ok()
+    }
 }
 
 /// The 1-based line holding byte `at` (`lines_line`: `LineTable::line` + 1), by a line index (`newlines`, decision

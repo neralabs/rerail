@@ -98,17 +98,20 @@ pub const PLACED_TABLE: u32 = 4;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// Offsets in their homes (`homes`: the tape's, then the lines').
+    /// Offsets in their homes (`homes`: the tape's, the lines', then the source's).
     pub tape: u64,
     pub lines: u64,
-    pub homes: [u32; 2],
+    /// The document's own source text (a guest's its own program, not its host's): its first byte in home
+    /// `homes[2]`, where a node's text is read in place (`view_text_span`, decision 0287 §2).
+    pub source: u64,
+    pub homes: [u32; 3],
     pub key: u32,
     pub rows: [u32; ROWS],
     pub view: crate::view::TapeView,
     /// The tape's length in bytes from `tape`: the host's reads read it as a slice (`rerail_tape_format::view_reads`).
     pub bytes: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 12 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
 
 /// A row's first rows: one per view of `VIEWS`, then the views no kernel reads, the host's alone: `child`'s sibling
 /// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`) and `end_point` (`END`), and the other
@@ -390,7 +393,7 @@ pub fn ukl() -> String {
         ("Run", "segments", offset_of!(ViewDoc, segments)),
     ];
     let mut s = format!(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
          typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint64_t by_key;\n    uint32_t ends[{}];\n    uint32_t counted;\n    uint32_t pad;\n}} ViewDir;\n",
         ROWS,
@@ -398,6 +401,7 @@ pub fn ukl() -> String {
         ROWS,
     );
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, source) == {}, \"ViewRow.source\");\n", std::mem::offset_of!(ViewRow, source));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == {}, \"ViewRow.homes\");\n", std::mem::offset_of!(ViewRow, homes));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewHome) == {}, \"ViewHome: size\");\n", std::mem::size_of::<ViewHome>());
@@ -411,6 +415,7 @@ pub fn ukl() -> String {
     s += "UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_source(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[2], e->source); }\n";
     // A document's lines by their home's base and their offset there (`ViewRow::lines`): a view read takes both (`ll`,
     // `la`), as a load's base must be 8-aligned and a tape's line index is 4-aligned in it (decision 0612).
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines_base(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], 0); }\n";
@@ -1175,6 +1180,22 @@ pub fn end(b: &mut B<'_, '_>) -> Value {
     let numbering = b.follow(b.tape, at::NUMBERING);
     let node = b.c32(0);
     b.call_at("num_rank", numbering, &[node, end])
+}
+
+/// `view_text_span(l)`: numbered node `l`'s text as its bytes' range in its document's own source, `start << 32 | end`
+/// (`tape_start`, `tape_end`: a guest's in its own program, not where its host places it). The text is the source's
+/// bytes there (`ViewRow::source`), read where they lie: the host's `Projected` text (`long_text`, `text_any`), and on
+/// the device a text function's operand (decision 0287 §2).
+#[cfg(feature = "ir")]
+pub fn text_span(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let start = b.call_tape("tape_start", &[x]);
+    let end = b.call_tape("tape_end", &[x]);
+    let start = b.f.ins().uextend(I64, start);
+    let high = b.f.ins().ishl_imm(start, 32);
+    let end = b.f.ins().uextend(I64, end);
+    b.f.ins().bor(high, end)
 }
 
 /// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
