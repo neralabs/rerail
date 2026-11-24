@@ -24,6 +24,7 @@ pub mod bitlex_prove;
 pub mod bitlex_prove_gpu;
 pub mod bitlex_rust;
 pub mod bitlex_sat;
+pub mod bitlex_csat;
 pub mod bitlex_tier2;
 pub mod block;
 pub mod class_pack;

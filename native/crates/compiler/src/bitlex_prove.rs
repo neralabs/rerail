@@ -754,7 +754,7 @@ const STREAM: u16 = u16::MAX;
 
 /// Proofs over a window of bytes, by a SAT solver, with the lemmas they prove on the way.
 ///
-/// The window is each operation at each lag the value reads it at, as clauses (`bitlex_sat`).
+/// The window is each operation at each lag the value reads it at, as a circuit (`bitlex_csat`, decision 0670).
 /// The free values are as `never`'s: each lag's byte (one of the groups of bytes its readers
 /// tell apart, or before the stream from some lag on), and what the window does not hold. Each
 /// carried value (`toggle`, `escaped`, `fill`, a fixed point's carry) has its equation at every
@@ -823,13 +823,13 @@ enum Replayed {
 /// A round of a question (`Induction::never_round`).
 pub enum Round {
     Answered(bool),
-    /// Stopped at a solve: its formula's variables and clauses.
+    /// Stopped at a solve: its formula's variables and clauses (its gates' as `Gates::cnf` writes them).
     Formula(u32, Clauses),
 }
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 3;
+pub const PROOFS_VERSION: u32 = 4;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1210,7 +1210,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), question: 0, solver: Solver::default(), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1469,7 +1469,7 @@ impl Induction {
                     roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
                 let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
-                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default(), memo_added: Vec::new(), readers_added: Vec::new() };
+                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, gates: Gates::default(), clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default(), memo_added: Vec::new(), readers_added: Vec::new() };
                 // A literal that is true.
                 u.clauses.push(&[1]);
                 // Before the stream: from some lag past the position's on.
@@ -1495,15 +1495,7 @@ impl Induction {
                     let vs: Vec<Lit> = gs.iter().map(|_| u.fresh()).collect();
                     let b = u.before.get(&lag).copied();
                     // Exactly one group, or none before the stream.
-                    u.clauses.push(&vs.iter().copied().chain(b).collect::<Vec<_>>());
-                    for (i, &x) in vs.iter().enumerate() {
-                        if let Some(b) = b {
-                            u.clauses.push(&[-b, -x]);
-                        }
-                        for &y in &vs[i + 1..] {
-                            u.clauses.push(&[-x, -y]);
-                        }
-                    }
+                    u.gates.one(&vs.iter().copied().chain(b).collect::<Vec<_>>());
                     // Past the end the bytes are 0x00 (`block::padded`): the group of 0x00 is the one
                     // `groups` gives first.
                     if let Some(&p) = u.past.get(&lag) {
@@ -1525,8 +1517,8 @@ impl Induction {
         let window = &mut self.window_list[j].1;
         let mut u = window.attach(ops, tables, nexts);
         let out = 'solve: {
-        let Window { far, reach, at_position, held, normal, base, .. } = &*window;
-        let (far, reach, base) = (*far, *reach, *base);
+        let Window { far, reach, at_position, held, fan, base_gates, .. } = &*window;
+        let (far, reach, base_gates) = (*far, *reach, *base_gates);
         if bounded && let Some(&b) = u.before.get(&(reach + 1)) {
             u.clauses.push(&[b]);
         }
@@ -1592,18 +1584,19 @@ impl Induction {
         }
         // In rounds, a new solve: its formula, for the batch (`never_round`).
         if self.capture && i == self.replay.len() {
-            self.captured = Some((u.vars.unsigned_abs(), u.clauses.clone()));
+            let mut clauses = u.clauses.clone();
+            u.gates.cnf(&mut clauses);
+            self.captured = Some((u.vars.unsigned_abs(), clauses));
             break 'solve Outcome::Unknown;
         }
         let s = &mut self.solver;
-        // The window's clauses as normalized once, then the solve's: as `add_all` of them all.
+        // The window's gates as they stand (their fanout made once), its plain clauses and the solve's own.
         s.reset(u.vars as usize);
-        s.place_all(normal);
-        for c in (base..u.clauses.len()).map(|k| u.clauses.get(k)) {
+        for c in u.clauses.iter() {
             s.add(c);
         }
         let before = s.conflicts;
-        let answer = s.solve(self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
+        let answer = s.solve(&u.gates, fan, base_gates, self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
         self.work.spend(s.conflicts - before);
         let answer = match answer {
             Sat::Unsat => Outcome::Proved,
@@ -1673,7 +1666,8 @@ fn cube(ops: &mut Vec<BlockOp>, lemma: &Lemma) -> u16 {
     acc
 }
 
-use crate::bitlex_sat::{Answer as Sat, Clauses, Lit, Solver};
+use crate::bitlex_csat::{Fanout, Gates, Solver};
+use crate::bitlex_sat::{Answer as Sat, Clauses, Lit};
 
 /// Whether `at` is a carried value with an equation (`never_unrolled`).
 fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
@@ -1736,6 +1730,8 @@ struct Unrolled<'a> {
     nexts: &'a HashMap<u16, u16>,
     d: u32,
     reach: u32,
+    /// The window's gates (decision 0670) and its plain clauses: the stream's chains, the units, a solve's own.
+    gates: Gates,
     clauses: Clauses,
     vars: i32,
     memo: HashMap<(u16, u32), Lit>,
@@ -1751,8 +1747,8 @@ struct Unrolled<'a> {
     readers_added: Vec<(Reader, u32, bool)>,
 }
 
-/// A window's clauses and literals, apart from the operations they were made of (`Unrolled`
-/// again, by `attach`): a question's solves differ only in the clauses they add to it.
+/// A window's gates, clauses and literals, apart from the operations they were made of (`Unrolled`
+/// again, by `attach`): a question's solves differ only in the gates and clauses they add to it.
 /// A solve borrows its parts (`Window::attach`) and gives them back with what it added undone
 /// (`Window::give_back`): no copy of them a solve.
 struct Window {
@@ -1762,17 +1758,19 @@ struct Window {
     at_position: Vec<Reader>,
     /// The values the window's operations make, at their lags, sorted.
     held: Vec<(u16, u32)>,
-    /// Its clauses as the solver takes them (`Clauses::normalized`): placed with no sorting.
-    normal: Clauses,
-    /// Its own clauses and variables: past them, a solve's.
+    /// Each variable's gates among the window's own (`Fanout`): made once, read by every solve.
+    fan: Fanout,
+    /// Its own gates, clauses and variables: past them, a solve's.
+    base_gates: usize,
     base: usize,
     base_vars: i32,
     parts: Parts,
 }
 
-/// A window's clauses and literals.
+/// A window's gates, clauses and literals.
 struct Parts {
     d: u32,
+    gates: Gates,
     clauses: Clauses,
     vars: i32,
     memo: HashMap<(u16, u32), Lit>,
@@ -1792,6 +1790,7 @@ impl Window {
             nexts,
             d: p.d,
             reach: self.reach,
+            gates: std::mem::take(&mut p.gates),
             clauses: std::mem::take(&mut p.clauses),
             vars: p.vars,
             memo: std::mem::take(&mut p.memo),
@@ -1804,9 +1803,10 @@ impl Window {
         }
     }
 
-    /// A solve's `Unrolled` back: its clauses, variables and literals undone, the window's own.
+    /// A solve's `Unrolled` back: its gates, clauses, variables and literals undone, the window's own.
     fn give_back(&mut self, u: Unrolled<'_>) {
-        let Unrolled { mut clauses, mut memo, before, past, groups, mut readers, memo_added, readers_added, .. } = u;
+        let Unrolled { mut gates, mut clauses, mut memo, before, past, groups, mut readers, memo_added, readers_added, .. } = u;
+        gates.truncate(self.base_gates);
         clauses.truncate(self.base);
         for k in memo_added {
             memo.remove(&k);
@@ -1815,17 +1815,17 @@ impl Window {
             readers.remove(&k);
         }
         let p = &mut self.parts;
-        (p.clauses, p.vars, p.memo, p.before, p.past, p.groups, p.readers) = (clauses, self.base_vars, memo, before, past, groups, readers);
+        (p.gates, p.clauses, p.vars, p.memo, p.before, p.past, p.groups, p.readers) = (gates, clauses, self.base_vars, memo, before, past, groups, readers);
     }
 }
 
 impl<'a> Unrolled<'a> {
     fn detach(self, far: u32, at_position: Vec<Reader>) -> Window {
-        let Unrolled { d, reach, clauses, vars, memo, before, past, groups, readers, .. } = self;
+        let Unrolled { d, reach, gates, clauses, vars, memo, before, past, groups, readers, .. } = self;
         let mut held: Vec<(u16, u32)> = memo.keys().copied().collect();
         held.sort_unstable();
-        let (normal, base) = (clauses.normalized(), clauses.len());
-        Window { reach, far, at_position, held, normal, base, base_vars: vars, parts: Parts { d, clauses, vars, memo, before, past, groups, readers } }
+        let fan = Fanout::of(&gates, gates.len(), vars.unsigned_abs() as usize);
+        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers } }
     }
 }
 
@@ -1837,9 +1837,7 @@ impl Unrolled<'_> {
 
     fn and(&mut self, a: Lit, b: Lit) -> Lit {
         let x = self.fresh();
-        self.clauses.push(&[-x, a]);
-        self.clauses.push(&[-x, b]);
-        self.clauses.push(&[x, -a, -b]);
+        self.gates.and(x, &[a, b]);
         x
     }
 
@@ -1849,16 +1847,13 @@ impl Unrolled<'_> {
 
     fn xor(&mut self, a: Lit, b: Lit) -> Lit {
         let x = self.fresh();
-        for c in [[-x, a, b], [-x, -a, -b], [x, -a, b], [x, a, -b]] {
-            self.clauses.push(&c);
-        }
+        self.gates.xor(x, a, b);
         x
     }
 
     /// `x` is `a` exactly: `x`'s equation.
     fn equal(&mut self, x: Lit, a: Lit) {
-        self.clauses.push(&[-x, a]);
-        self.clauses.push(&[x, -a]);
+        self.gates.and(x, &[a]);
     }
 
     /// Whether the byte at `lag` is in the stream: neither before it nor past its end.
@@ -1900,13 +1895,10 @@ impl Unrolled<'_> {
         {
             yes.push(b);
         }
+        // `x` is the `or` of `yes`: not `x` is none of them.
         let x = self.fresh();
-        let mut c = vec![-x];
-        c.extend(&yes);
-        self.clauses.push(&c);
-        for &y in &yes {
-            self.clauses.push(&[x, -y]);
-        }
+        let none: Vec<Lit> = yes.iter().map(|&y| -y).collect();
+        self.gates.and(-x, &none);
         self.readers.insert((r, lag, zero_before), x);
         self.readers_added.push((r, lag, zero_before));
         x
