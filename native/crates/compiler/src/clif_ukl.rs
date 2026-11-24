@@ -24,6 +24,10 @@
 //!
 //! What it does not print is an error, never a fallback: vectors, stack slots, the stack pointer, traps, and more than
 //! one result.
+//!
+//! **To be used or removed** (decision 0348, "Open"): its one user is the preprocessing words on the device
+//! (`metal_programs`' `pp_on`), which no product path calls. It goes with them, unless the generated parsers'
+//! campaign (tier 2 on the device) uses it first.
 
 #[path = "clif_ukl/shape.rs"]
 mod shape;
