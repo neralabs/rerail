@@ -55,7 +55,7 @@ describe("a person's change through a power cut right after Rerail said it was m
       const stop = spawnSync(process.execPath, [
         "--import", "tsx", "--import", join(PACKAGE_ROOT, "test/support/processes/record-log-syncs.ts"),
         join(PACKAGE_ROOT, "src/cli/cli.ts"), "--rerail-managed-child", "stop", "--repo", checkout, "--database", databasePath,
-      ], { cwd: checkout, encoding: "utf8", env: { ...process.env, RERAIL_HOME: home, RERAIL_AUTOSTART: "0", RERAIL_TEST_LOG_SYNCS: syncRecord } });
+      ], { cwd: PACKAGE_ROOT, encoding: "utf8", env: { ...process.env, RERAIL_HOME: home, RERAIL_AUTOSTART: "0", RERAIL_TEST_LOG_SYNCS: syncRecord } });
       expect(stop.stderr).toBe("");
       expect(stop.stdout).toContain("Rerail is stopped in");
       expect(stop.status).toBe(0);

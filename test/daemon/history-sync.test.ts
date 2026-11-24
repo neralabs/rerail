@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon, startHistorySync, type HistorySync } from "../../src/daemon/index.js";
 import { openRerailDatabase, type RerailDatabase } from "../../src/engine/index.js";
 import { cutPowerInCopy } from "../support/engine/power-cut.js";
-import { recordLogSyncs } from "../support/engine/log-syncs.js";
+import { recordLogSyncs, syncedLength } from "../support/engine/log-syncs.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const PERIOD_MS = 1_000;
@@ -153,6 +153,7 @@ describe("the daemon's sync of the history", () => {
     const periodMs = 20;
     started(path, { periodMs });
     commit();
+    const committedAt = Date.now();
     const kept = (): number[] => {
       const copy = cutPowerInCopy(path);
       cleanups.push(() => removeFolderSync(dirname(copy)));
@@ -163,8 +164,11 @@ describe("the daemon's sync of the history", () => {
         database.close();
       }
     };
-    // The power goes several periods after the commit, with nothing else asking for the disk.
-    await new Promise(resolve => setTimeout(resolve, 10 * periodMs));
+    // The power goes more than one period after the commit, once a sync ended or 10 s on: a disk can take a while to
+    // confirm a sync (a Windows lab disk took over 200 ms), and the cut keeps only what a sync that ended put there.
+    const sleep = async (ms: number): Promise<void> => await new Promise(resolve => setTimeout(resolve, ms));
+    while (syncedLength(path) === 0 && Date.now() - committedAt < 10_000) await sleep(periodMs);
+    await sleep(Math.max(0, 2 * periodMs - (Date.now() - committedAt)));
     expect(kept()).toEqual([1]);
-  });
+  }, 30_000);
 });
