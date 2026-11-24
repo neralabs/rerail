@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher, type Stats } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import { replaceFile, sidecarWriter } from "../file-replace.js";
+import { heldOnWindows, replaceFile, sidecarWriter } from "../file-replace.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { processState } from "../process-liveness.js";
 
@@ -440,7 +440,7 @@ async function reportPass(handed: readonly HandedOn[], handler: UntakenHandler):
  * rename leaves one, holding the scrubbed event, which no pass would take. What decides is whether the process whose
  * pid the sidecar's name holds still runs (`processState`, signal 0): a writer that runs may still be writing, so its
  * sidecar stays, and a pid another process took since keeps it until that one ends too. A file that cannot be removed
- * now (Windows holds it) is tried again at the next pass.
+ * now is tried again at the next pass (`removeQuietly`).
  */
 function removeOrphanedSidecars(home: string): void {
   for (const name of folderNames(home)) {
@@ -449,26 +449,33 @@ function removeOrphanedSidecars(home: string): void {
   }
 }
 
-function removeQuietly(path: string): void {
+/** The files `removeQuietly` could not remove for a reason other than Windows holding them, each said once on stderr. */
+const unremovable = new Set<string>();
+
+/**
+ * Removes the file at `path`; true once it is gone. False while it stays: a file Windows holds (`heldOnWindows`) goes
+ * a moment later, and any other failure (a folder under its name, a folder the daemon may not write) is said once
+ * with the file's path on stderr, which the daemon writes to its log.
+ */
+function removeQuietly(path: string): boolean {
   try {
     rmSync(path, { force: true });
-  } catch {
-    // Windows holds it: the next pass tries again.
+    unremovable.delete(path);
+    return true;
+  } catch (error) {
+    if (!heldOnWindows(error) && !unremovable.has(path)) {
+      unremovable.add(path);
+      process.stderr.write(`rerail: ${path} could not be removed, and each pass tries again: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return false;
   }
 }
 
-/**
- * Removes the event file `name`, forgetting the taker met it once it is gone; false while Windows holds it open, or
- * where it is a folder.
- */
+/** Removes the event file `name`, forgetting the taker met it once it is gone; false while it stays (`removeQuietly`). */
 function removedName(home: string, name: string, done: Set<string>): boolean {
-  try {
-    rmSync(join(untakenFolder(home), name), { force: true });
-    done.delete(name);
-    return true;
-  } catch {
-    return false;
-  }
+  if (!removeQuietly(join(untakenFolder(home), name))) return false;
+  done.delete(name);
+  return true;
 }
 
 /**
