@@ -1,0 +1,1 @@
+`rerail packs add <pack>@<version>` now installs a version published since npm last fetched that pack's details on your computer. It used to stop with "No matching version found" until npm fetched them again.

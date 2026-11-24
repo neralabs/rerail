@@ -27,7 +27,7 @@ fn render(src: &str, nodes: &[Node]) -> String {
     out
 }
 
-/// Decision 0061's example, on a named-only tape (RER-131): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
+/// Decision 0061's example, on a named-only tape (decision 0161): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
 /// `:-`, `!`, `)`, the clause's `.`) are left out (`docs/parser-generators/32-named-only-rr-tapes.md`). The
 /// declaration's `.` is stored: its modifiers may hold a `.`.
 #[test]
@@ -122,7 +122,7 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
 
 /// Every `.rerail` file in the repository tapes. Its tape has an ERROR exactly when running it fails to parse, every
 /// node's span holds its children's, and the leaves and comments cover every byte but whitespace and the tokens the
-/// grammar implies, once (a named-only tape, RER-131).
+/// grammar implies, once (a named-only tape, decision 0161).
 #[test]
 fn every_rule_file_tapes_and_its_leaves_cover_it() {
     let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");

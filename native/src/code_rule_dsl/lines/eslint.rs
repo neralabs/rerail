@@ -107,7 +107,7 @@ fn sort_keys_restarts_after_a_blank_line() {
 /// no-unexpected-multiline for calls and computed members: the `(` or `[` on a line after the
 /// token before it (comments passed over, as `getTokenBefore` does), unless optional (a call's
 /// `?.` is a token, a member's an `optional_chain`) or without arguments. A named-only tape keeps
-/// neither bracket (RER-131), so the rule asks the named structure, as the pack's rule does: a
+/// neither bracket (decision 0161), so the rule asks the named structure, as the pack's rule does: a
 /// call's argument list starts at its `(`, and a member reports at its index, the first node after
 /// its `[` (ESLint's start, moved past the bracket and any space).
 #[test]

@@ -32,7 +32,7 @@ pub struct Comparison {
     /// `tokens` only: binary operators whose operands compare in either order (ESLint
     /// no-dupe-else-if's `equal`); empty when none.
     pub commute: Vec<String>,
-    /// `tokens` only: the grammar of the tape's implied tokens (RER-131), which says which leaves
+    /// `tokens` only: the grammar of the tape's implied tokens (decision 0161), which says which leaves
     /// stand for a node whose tokens the tape left out (`[]`, `()`); set per grammar at compile
     /// time, `None` for a parsed tree, which keeps its tokens.
     pub(crate) implied: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
@@ -340,7 +340,7 @@ fn outside_parentheses<'t, D: Doc>(node: &Node<'t, D>) -> Option<(Node<'t, D>, N
 
 /// The `,` tokens among `list`'s children before its child `element`.
 /// The commas before `element` in `list`: those a tape stores (a hole's, a leading one's), and the
-/// one between two elements that none separates, which the grammar implies (RER-131).
+/// one between two elements that none separates, which the grammar implies (decision 0161).
 fn commas_before<'r, D: Doc>(list: &Node<'r, D>, element: &Node<'r, D>) -> Option<usize> {
     let start = element.range().start;
     let (mut commas, mut after_element) = (0, false);
@@ -411,7 +411,7 @@ fn commuted_equal<D: Doc>(
 
 /// A node's leaf tokens: the text of every leaf that is not a comment, and the tokens of the text
 /// between leaves. Comments and white space are not tokens. A tape leaves out the tokens its
-/// grammar implies (`implied`, RER-131), so that text may hold several (`).` in `f(a)\n.p`, which
+/// grammar implies (`implied`, decision 0161), so that text may hold several (`).` in `f(a)\n.p`, which
 /// a full tree holds as `)` and `.`): it is split at white space, then into runs of word
 /// characters and single other characters, the same way on both sides of a comparison. A leaf
 /// whose kind has children holds just the word its grammar implies (`[ ]`: `[`, `]`).

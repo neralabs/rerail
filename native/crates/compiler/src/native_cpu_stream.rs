@@ -1,5 +1,5 @@
 //! Tier 2 on the CPU JIT: Cranelift emits a program's words (`native_ir::StructuralOperation`'s
-//! tier-2 words) as one function `tempo_stream(ctx)`. Each word is one block of code made from
+//! tier-2 words) as one function `rerail_stream(ctx)`. Each word is one block of code made from
 //! the word and its operand alone, and its tables (a switch's targets, a string's bytes). Nothing in it is fixed for a language or a tape format.
 //!
 //! The machine's state (`stream::run`, the reference) is in SSA variables where every token
@@ -2186,7 +2186,7 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
 fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape, table: Table<'_>, refusals: &[crate::program::TokenMark], pinned: bool) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
     let key = WordFn::Token { any_mark, extras: shape.extra.is_some() };
     if !fns.contains_key(&key) {
-        let name = format!("tempo_word_{}", fns.len());
+        let name = format!("rerail_word_{}", fns.len());
         let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, &table.fns.names(), |g, q, heads| take_token(g, q, any_mark, shape, table, refusals, heads))?;
         fns.insert(key, made);
     }
@@ -2245,12 +2245,12 @@ impl TableFns {
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
         let drops = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
-        let shift = if wraps { Some(outline(module, "tempo_stream_shift", 8, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
-        let drop = if drops { Some(outline(module, "tempo_stream_drop", 14, 4, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
-        let blocks = outline(module, "tempo_tape_blocks", 5, 2, false, &[], |f, p, heads| crate::native_cpu_tape::blocks_from(f, p, w.off, heads))?;
-        let commit = outline(module, "tempo_tape_commit", 11, 1, false, &[], |f, p, heads| crate::native_cpu_tape::commit(f, p, x.classes, heads))?;
-        let uncode = outline(module, "tempo_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
-        let finish = outline(module, "tempo_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
+        let shift = if wraps { Some(outline(module, "rerail_stream_shift", 8, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
+        let drop = if drops { Some(outline(module, "rerail_stream_drop", 14, 4, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
+        let blocks = outline(module, "rerail_tape_blocks", 5, 2, false, &[], |f, p, heads| crate::native_cpu_tape::blocks_from(f, p, w.off, heads))?;
+        let commit = outline(module, "rerail_tape_commit", 11, 1, false, &[], |f, p, heads| crate::native_cpu_tape::commit(f, p, x.classes, heads))?;
+        let uncode = outline(module, "rerail_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
+        let finish = outline(module, "rerail_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
         Ok(TableFns { shift, drop, blocks, commit, uncode, finish })
     }
 
@@ -2689,12 +2689,12 @@ struct Lowered {
 }
 
 /// Tier 2 lowered in the clusters of `cut` (`native_cpu_clusters`): one function a cluster.
-/// One cluster is the one function `tempo_stream(ctx)`, its state in its stack frame. With
-/// more, `tempo_stream` holds the state and calls the cluster of the first word; a cluster's
+/// One cluster is the one function `rerail_stream(ctx)`, its state in its stack frame. With
+/// more, `rerail_stream` holds the state and calls the cluster of the first word; a cluster's
 /// function takes `ctx` (and the state in it) and the index of the place it enters at, and a jump
 /// to a word of another cluster is a tail call of that cluster (`return_call`, the `tail`
 /// calling convention): no stack grows, and every function returns the run's result to
-/// `tempo_stream`.
+/// `rerail_stream`.
 pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<CompiledStream, Error> {
     compile_at(native, cut, rerail_tape_format::Narrow::WIDTHS, native.tag)
 }
@@ -2739,7 +2739,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         flags.push(("opt_level", "speed"));
     }
     // With a function a grammar rule, `ctx` is in a register of its own through the run
-    // (Cranelift's pinned register, x21): `tempo_stream` sets it (and gives the host's back),
+    // (Cranelift's pinned register, x21): `rerail_stream` sets it (and gives the host's back),
     // each function reads it once where it is entered, into one value with no use fixed to an
     // argument's register (a call passes no `ctx`), which the allocator keeps in one
     // callee-saved register through the function, as rustc keeps the lean parser's `self`.
@@ -2774,7 +2774,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
-    let id = module.declare_function("tempo_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let id = module.declare_function("rerail_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
     // The calls open (`Mem::Ret`) are a field of the state in `ctx`, read and written where a
     // call is made and returns, and read by `TOKEN`'s room check, as the lean parser's
     // `self` fields are: no value of them lives across a call. Passed as an argument, one value
@@ -2800,7 +2800,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         signature.clone()
     };
     let cids: Vec<cranelift_module::FuncId> = if clustered {
-        (0..cut.count).map(|c| module.declare_function(&format!("tempo_stream_c{c}"), Linkage::Local, &csig).map_err(|_| Error::BackendFailure)).collect::<Result<_, _>>()?
+        (0..cut.count).map(|c| module.declare_function(&format!("rerail_stream_c{c}"), Linkage::Local, &csig).map_err(|_| Error::BackendFailure)).collect::<Result<_, _>>()?
     } else {
         vec![id]
     };
@@ -3080,7 +3080,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         let zero = f.ins().iconst(types::I64, 0);
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
-        // In clusters, the state is `tempo_stream`'s, in `ctx`.
+        // In clusters, the state is `rerail_stream`'s, in `ctx`.
         let slot = (!clustered).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3)));
         // The state's address: `ctx`, every cluster's first argument, as the lean parser's
         // `&mut self` (one register the allocator keeps, no move a block).
@@ -3389,7 +3389,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         let key = $key;
                         let args: &[Value] = $args;
                         if !word_fns.contains_key(&key) {
-                            let name = format!("tempo_word_{}", word_fns.len());
+                            let name = format!("rerail_word_{}", word_fns.len());
                             let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), pinned_ctx, &table.fns.names(), |g, q, _| own_word(g, q, $refuses, &body))?;
                             word_fns.insert(key, made);
                         }
@@ -3776,7 +3776,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                 let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
                                 let extra = r.extra;
                                 let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
-                                let name = format!("tempo_word_{}", word_fns.len());
+                                let name = format!("rerail_word_{}", word_fns.len());
                                 let made = outline(&mut module, &name, 3, 1, pinned_ctx, &[], |g, q, hs| {
                                     let ctx = q[0];
                                     let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
@@ -3804,7 +3804,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             let r = if outlined {
                                 let key = WordFn::TokenMark { index: i };
                                 if !word_fns.contains_key(&key) {
-                                    let name = format!("tempo_word_{}", word_fns.len());
+                                    let name = format!("rerail_word_{}", word_fns.len());
                                     let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
                                         let ctx = q[0];
                                         let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
@@ -3973,7 +3973,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let r = {
                         let key = WordFn::Check { index: check };
                         if !word_fns.contains_key(&key) {
-                            let name = format!("tempo_word_{}", word_fns.len());
+                            let name = format!("rerail_word_{}", word_fns.len());
                             let made = outline(&mut module, &name, 3, 1, pinned_ctx, &[], |g, q, hs| {
                                 let ctx = q[0];
                                 let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
@@ -4656,7 +4656,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     if times {
         eprintln!("tier 2: joined and checked {:.2?}", phase.elapsed());
     }
-    // `tempo_stream` itself, in clusters: the state, then the first word's cluster.
+    // `rerail_stream` itself, in clusters: the state, then the first word's cluster.
     let driver = if clustered {
         let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), signature.clone());
         {
@@ -4787,7 +4787,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         Error::BackendFailure
     })?;
     let code = module.get_finalized_function(id);
-    // SAFETY: `tempo_stream` was declared and defined with this signature.
+    // SAFETY: `rerail_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let own_calls = calls;
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);

@@ -529,7 +529,7 @@ impl Facts {
         on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)
     }
     /// `id`'s anonymous children in source order: the tokens the tape stores (the grammar's implied
-    /// ones are not, RER-131).
+    /// ones are not, decision 0161).
     pub fn tokens(&self, id: u32) -> Vec<Token> {
         self.children(id)
             .into_iter()

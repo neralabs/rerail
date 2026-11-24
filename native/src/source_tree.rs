@@ -19,7 +19,9 @@ const PROGRAMS: &str = "native/src/code_rule_dsl/typing/programs";
 ///
 /// - `RERAIL_SOURCE_ROOT`;
 /// - a checkout or an installed package above the file this code was loaded from: the program, a test binary, or
-///   the Node addon, built into its checkout's `target/` or installed in its package's `native/`;
+///   the Node addon, built into its checkout's `target/` or `native/`, or installed in its engine package
+///   (`@neralabs/rerail-engine-<suffix>`) inside the package's own `node_modules`;
+/// - the installed package the Node loader named (`name_package`);
 /// - a checkout above the package `cargo run` or `cargo test` runs (`CARGO_MANIFEST_DIR`, as the program runs);
 /// - a checkout above the working directory.
 ///
@@ -28,7 +30,23 @@ const PROGRAMS: &str = "native/src/code_rule_dsl/typing/programs";
 /// A search each call (the loader's lookup, a canonical path, a walk up the directories: 1.9 M instructions): a
 /// caller that makes many paths finds the directories once and hands them on (`phase0::Dirs`), not this.
 pub fn root() -> Option<PathBuf> {
-    find(std::env::var_os("RERAIL_SOURCE_ROOT"), image(), [std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from), std::env::current_dir().ok()])
+    find(
+        std::env::var_os("RERAIL_SOURCE_ROOT"),
+        image(),
+        NAMED_PACKAGE.get().cloned(),
+        [std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from), std::env::current_dir().ok()],
+    )
+}
+
+/// The installed package the Node loader named for this process (`name_package`).
+static NAMED_PACKAGE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Names the installed package the Node addon was loaded for. The addon is installed in an engine package of its
+/// own. npm puts that inside `@neralabs/rerail`, where the package is found above the addon, or next to it, and a
+/// package manager that keeps a store links it in from there: in both of the last two nothing above the addon is
+/// the package. The loader knows its own package, so it names it once, as it loads the addon; the first name stands.
+pub fn name_package(root: PathBuf) {
+    let _ = NAMED_PACKAGE.set(root);
 }
 
 /// The root's `native/` directory: `native` (as the working directory has it) when no root is found, so that what
@@ -37,12 +55,14 @@ pub fn native() -> PathBuf {
     root().map_or_else(|| PathBuf::from("native"), |root| root.join("native"))
 }
 
-/// `root()` from what it reads: the override, the loaded image, and the other places a checkout is looked for above.
-fn find(source_root: Option<OsString>, image: Option<PathBuf>, others: [Option<PathBuf>; 2]) -> Option<PathBuf> {
+/// `root()` from what it reads: the override, the loaded image, the package the loader named, and the other places
+/// a checkout is looked for above. The named package is taken only as an installed package, and only where nothing
+/// above the image is a root: a checkout's build and a package that holds its own engine read their own files.
+fn find(source_root: Option<OsString>, image: Option<PathBuf>, named: Option<PathBuf>, others: [Option<PathBuf>; 2]) -> Option<PathBuf> {
     if let Some(root) = source_root {
         return Some(PathBuf::from(root));
     }
-    let from_image = image.and_then(|image| above(&image, is_root_or_installed));
+    let from_image = image.and_then(|image| above(&image, is_root_or_installed)).or_else(|| named.filter(|package| is_installed(package)));
     from_image.or_else(|| others.into_iter().flatten().find_map(|start| above(&start, is_root)))
 }
 
@@ -215,12 +235,48 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         layout(dir.path(), INSTALLED);
         let addon = dir.path().join("native/addon.node");
-        assert_eq!(super::find(None, Some(addon.clone()), [None, None]), Some(canonical(dir.path().to_owned())));
+        assert_eq!(super::find(None, Some(addon.clone()), None, [None, None]), Some(canonical(dir.path().to_owned())));
         // Not from the working directory or the package cargo runs: only the engine's own files are its library.
-        assert_eq!(super::find(None, None, [Some(dir.path().to_owned()), Some(dir.path().join("native"))]), None);
+        assert_eq!(super::find(None, None, None, [Some(dir.path().to_owned()), Some(dir.path().join("native"))]), None);
         // A package missing either half of what it ships is not one.
         std::fs::remove_file(dir.path().join("native/src/code_rule_dsl/typing/programs/sources.rerail")).unwrap();
-        assert_eq!(super::find(None, Some(addon), [None, None]), None);
+        assert_eq!(super::find(None, Some(addon), None, [None, None]), None);
+    }
+
+    #[test]
+    fn an_installed_package_is_the_root_around_its_engine_package_or_the_one_the_loader_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let scope = dir.path().join("node_modules/@neralabs");
+        let package = scope.join("rerail");
+        layout(&package, &["package.json", "docs/rule-syntax/lib/core.rerail", "native/src/code_rule_dsl/typing/programs/sources.rerail"]);
+        // Inside the package, where npm puts the optional dependencies its shrinkwrap lists.
+        let inside = package.join("node_modules/@neralabs/rerail-engine-linux-x64-gnu/addon.node");
+        // Beside it, where npm puts a package the install names with it.
+        let beside = scope.join("rerail-engine-linux-x64-gnu/addon.node");
+        // In a store, where a package manager that links packages in keeps it.
+        let stored = dir.path().join("store/rerail-engine-linux-x64-gnu/node_modules/@neralabs/rerail-engine-linux-x64-gnu/addon.node");
+        for addon in [&inside, &beside, &stored] {
+            layout(addon.parent().unwrap(), &["package.json", "addon.node"]);
+        }
+        assert_eq!(super::find(None, Some(inside), None, [None, None]), Some(canonical(package.clone())));
+        // Nothing above these two is the package, and no directory near them is taken for it: the loader names it.
+        for addon in [&beside, &stored] {
+            assert_eq!(super::find(None, Some(addon.clone()), None, [None, None]), None);
+            assert_eq!(super::find(None, Some(addon.clone()), Some(package.clone()), [None, None]), Some(package.clone()));
+        }
+        // A named package that is missing either half of what it ships is not one.
+        std::fs::remove_file(package.join("docs/rule-syntax/lib/core.rerail")).unwrap();
+        assert_eq!(super::find(None, Some(beside), Some(package), [None, None]), None);
+    }
+
+    #[test]
+    fn a_root_above_the_addon_is_taken_before_the_package_the_loader_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("checkout");
+        layout(&checkout, CHECKOUT);
+        let named = dir.path().join("node_modules/@neralabs/rerail");
+        layout(&named, INSTALLED);
+        assert_eq!(super::find(None, Some(checkout.join("target/debug/addon.node")), Some(named), [None, None]), Some(canonical(checkout)));
     }
 
     #[test]
@@ -228,9 +284,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         layout(dir.path(), CHECKOUT);
         let root = Some(canonical(dir.path().to_owned()));
-        assert_eq!(super::find(None, Some(dir.path().join("target/debug/addon.node")), [None, None]), root);
-        assert_eq!(super::find(None, None, [Some(dir.path().join("native")), None]), root);
-        assert_eq!(super::find(None, Some(std::path::PathBuf::from("/")), [None, Some(dir.path().join("docs"))]), root);
+        assert_eq!(super::find(None, Some(dir.path().join("target/debug/addon.node")), None, [None, None]), root);
+        assert_eq!(super::find(None, None, None, [Some(dir.path().join("native")), None]), root);
+        assert_eq!(super::find(None, Some(std::path::PathBuf::from("/")), None, [None, Some(dir.path().join("docs"))]), root);
     }
 
     #[test]
@@ -240,7 +296,7 @@ mod tests {
         layout(dir.path(), CHECKOUT);
         let package = dir.path().join("node_modules/@neralabs/rerail");
         layout(&package, INSTALLED);
-        assert_eq!(super::find(None, Some(package.join("native/addon.node")), [Some(dir.path().to_owned()), None]), Some(canonical(package)));
+        assert_eq!(super::find(None, Some(package.join("native/addon.node")), None, [Some(dir.path().to_owned()), None]), Some(canonical(package)));
     }
 
     #[test]
@@ -248,8 +304,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         layout(dir.path(), &["native/addon.node", "docs/rule-syntax/lib/core.rerail"]);
         let addon = dir.path().join("native/addon.node");
-        assert_eq!(super::find(None, Some(addon.clone()), [Some(dir.path().to_owned()), None]), None);
+        assert_eq!(super::find(None, Some(addon.clone()), None, [Some(dir.path().to_owned()), None]), None);
         let named = std::ffi::OsString::from("/no/such/checkout");
-        assert_eq!(super::find(Some(named), Some(addon), [Some(dir.path().to_owned()), None]), Some(std::path::PathBuf::from("/no/such/checkout")));
+        assert_eq!(super::find(Some(named), Some(addon), None, [Some(dir.path().to_owned()), None]), Some(std::path::PathBuf::from("/no/such/checkout")));
     }
 }

@@ -23,6 +23,22 @@ const SHARD_ONE = actionsLog([
   "Post job cleanup.",
 ]);
 
+// Shard 1 on Windows as CI logs it now: the suite step's header shows only its command's first line, and the line that
+// passes vitest `--shard=` comes later in the command, echoed under the header.
+const WINDOWS_SHARD_ONE = actionsLog([
+  '##[group]Run read -ra tests <<< "$TESTS"',
+  '\u001b[36;1mread -ra tests <<< "$TESTS"\u001b[0m',
+  '\u001b[36;1mnode_modules/.bin/vitest run --dir test --shard=1/5 "$@"\u001b[0m',
+  "env:",
+  "  TESTS: ",
+  "##[endgroup]",
+  " \u001b[32m✓\u001b[39m test/engine/a.test.ts \u001b[2m(45 tests)\u001b[22m\u001b[33m 353000\u001b[2mms\u001b[22m\u001b[39m",
+  "\u001b[2m   Duration \u001b[22m 300.00s\u001b[2m (tests 91%)\u001b[22m",
+  "##[group]Run npx vitest run integration/claude-hook-rules.test.ts",
+  " \u001b[32m✓\u001b[39m integration/claude-hook-rules.test.ts \u001b[2m(3 tests)\u001b[22m 50000ms",
+  "\u001b[2m   Duration \u001b[22m 60.00s\u001b[2m (tests 98%)\u001b[22m",
+]);
+
 describe("unit-test-times", () => {
   it("knows the unit test jobs by name, and each one's platform and shard", () => {
     expect(unitJob("Unit tests (2/3)")).toEqual({ platform: "linux", shard: 2 });
@@ -36,6 +52,21 @@ describe("unit-test-times", () => {
     expect(Object.fromEntries(log.files)).toEqual({ "test/cli/a.test.ts": 60000, "test/b.test.mjs": 20000, "test/skipped.test.ts": 0 });
     expect(log.suiteMs).toBe(40000);
     expect(log.extraMs).toBe(10000);
+  });
+
+  it("knows the suite step by the --shard= of its command, on any line of a command of several lines", () => {
+    const log = parseUnitLog(WINDOWS_SHARD_ONE);
+    expect(Object.fromEntries(log.files)).toEqual({ "test/engine/a.test.ts": 353000 });
+    expect(log.suiteMs).toBe(300000);
+    expect(log.extraMs).toBe(60000);
+  });
+
+  it("refuses a platform whose jobs give no test file's time, rather than writing it with none", () => {
+    const jobs = [
+      { platform: "linux", shard: 1, log: { files: new Map([["a.test.ts", 5]]), suiteMs: 5, extraMs: 0 } },
+      { platform: "win32", shard: 1, log: { files: new Map(), suiteMs: 0, extraMs: 0 } },
+    ];
+    expect(() => unitTestTimes(jobs, () => true)).toThrow(/win32/u);
   });
 
   it("keeps each file's median per platform, the files the checkout has, and the extra step as test-file time", () => {
