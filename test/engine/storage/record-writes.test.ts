@@ -27,6 +27,43 @@ const auditInput: AuditInput = {
 const roots: string[] = [];
 const closers: Array<() => Promise<void> | void> = [];
 
+/** The word the next write lock wait's thread holds its try with (`holdNextLockWaitTry`), while one is set. */
+const heldTries = vi.hoisted(() => ({ next: undefined as Int32Array | undefined }));
+vi.mock("node:worker_threads", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:worker_threads")>();
+  const preload = new URL("../../support/engine/held-lock-wait-try.ts", import.meta.url).href;
+  class Worker extends actual.Worker {
+    constructor(script: string | URL, options: import("node:worker_threads").WorkerOptions = {}) {
+      const heldTry = heldTries.next;
+      heldTries.next = undefined;
+      super(script, heldTry === undefined ? options : {
+        ...options,
+        execArgv: [...(options.execArgv ?? []), "--import", preload],
+        workerData: { ...(options.workerData as object), heldTry },
+      });
+    }
+  }
+  return { ...actual, Worker };
+});
+
+/**
+ * Holds the first try of the next write lock wait started here that takes the lock (`held-lock-wait-try.ts`), as a
+ * thread the system stops between its two statements holds it: `held` settles once that try holds the lock, and
+ * `release` lets it go.
+ */
+function holdNextLockWaitTry(): { held: Promise<void>; release: () => void } {
+  const word = new Int32Array(new SharedArrayBuffer(8));
+  heldTries.next = word;
+  const taken = Atomics.waitAsync(word, 0, 0);
+  const release = (): void => {
+    heldTries.next = undefined;
+    Atomics.store(word, 1, 1);
+    Atomics.notify(word, 1);
+  };
+  closers.push(release);
+  return { held: taken.async ? taken.value.then(() => undefined) : Promise.resolve(), release };
+}
+
 afterEach(async () => {
   for (const close of closers.splice(0).reverse()) await close();
   vi.restoreAllMocks();
@@ -340,6 +377,54 @@ describe("record writes while another process holds the write lock", () => {
     await settled(path);
     expect(rows(path, "SELECT session_id FROM sessions")).toEqual([[session.sessionId]]);
     expect(rows(path, "SELECT session_id FROM policy_session_owners")).toEqual([]);
+  }, 30_000);
+
+  // The lock wait learns that the lock is free by taking it and giving it back on a connection of its thread's own.
+  // Before, the owner claim's one try for the session's row, its waiting time spent, met that take as a holder and failed
+  // with the lock's error though no other connection held the lock: as the lock was given back, a session's open failed
+  // so 1 run in 160 (`engine-service-runtimes.test.ts`). The take held here is one the system stops in its two statements.
+  it("are made for a session's owner claim past the bound while the lock wait takes the lock to learn it is free", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    const holder = holderHere(path);
+    const lockWaitTry = holdNextLockWaitTry();
+    const clock = boundClock();
+    sessions.openSession(session, 1_000);
+    clock.pastTheBound();
+    holder.exec("COMMIT");
+    await lockWaitTry.held;
+
+    const claimed = thrown(() => controls.registerOwner(session.sessionId, "background"));
+    lockWaitTry.release();
+
+    expect(claimed).toBeUndefined();
+    expect(rows(path, "SELECT session_id FROM policy_session_owners")).toEqual([[session.sessionId]]);
+  }, 30_000);
+
+  // A quiet session's open for a scan that met the lock waits for it the same way (`engine-service.ts`). Before, another
+  // session's owner claim, a transaction that reads the session's row before it writes, met that wait's take as a holder,
+  // and SQLite failed its write at once rather than wait for it.
+  it("leave a session's owner claim no lock wait's take to meet", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    sessions.openSession(session, 1_000);
+    const holder = holderHere(path);
+    const lockWaitTry = holdNextLockWaitTry();
+    const stop = new AbortController();
+    closers.push(() => stop.abort());
+    const { waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    const freed = waitForWriteLock(path, stop.signal);
+    holder.exec("COMMIT");
+    await lockWaitTry.held;
+
+    const claimed = thrown(() => controls.registerOwner(session.sessionId, "background"));
+    lockWaitTry.release();
+
+    expect(claimed).toBeUndefined();
+    expect(await freed).toBe(true);
+    expect(rows(path, "SELECT session_id FROM policy_session_owners")).toEqual([[session.sessionId]]);
   }, 30_000);
 
   it("are reported lost at the last store's close without waiting, once asked longer ago than the bound", async () => {
