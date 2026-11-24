@@ -159,9 +159,8 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
 const SUMMARY: &str = "program";
 
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
-fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
-    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+fn settings(given: &super::Texts<'_>, root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
+    let (settings, _) = super::base::root_settings(given.programs, &given.graphs, given.read, root, options)?;
     Ok(super::added::Added::of(&settings, options))
 }
 
@@ -290,7 +289,7 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     let owner = super::ThreadStore::owner(root).filter(|owner| owner.is_staged());
     let programs = given.programs;
     let checking = super::thread_usage();
-    let key = key(given, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(given, root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
         miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
@@ -406,7 +405,7 @@ pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let key = key(given, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(given, root, options)?, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();

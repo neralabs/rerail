@@ -1687,19 +1687,10 @@ fn run_observed_within(
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
     let masked_texts = masked(programs);
     let masked: &[&str] = &masked_texts.iter().map(|t| t.as_ref()).collect::<Vec<_>>();
-    let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
-        true
-    } else if crate::git_workspace::snapshot::contains(root) {
-        // The program without the root's settings: whether its outputs read Git metadata alone, and no setting.
-        let (probe, _) = combine_version(programs, masked, &given.graphs, &added::Added::of(&[], options), read)?;
-        use crate::code_rule_dsl::logic::program_image::{About, analyses};
-        let need = analyses::needed(&probe, &About::of(&probe), probe.output_names().iter().filter_map(|o| probe.rel(o)));
-        git::metadata_only(&probe) && !probe.rel("env").is_some_and(|env| need[env.index()])
-    } else { false };
-    if !metadata_without_env {
+    let (settings, reads_root) = root_settings(programs, &given.graphs, read, root, options)?;
+    if reads_root {
         git::prime_root(root)?;
     }
-    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !metadata_without_env).map_err(Error::Plan)?;
     let mut added = added::Added::of(&settings, options);
     drop(setting);
     // What the run is of, whichever build runs it: its manifest's lane (`record_corpus_run_lane`).

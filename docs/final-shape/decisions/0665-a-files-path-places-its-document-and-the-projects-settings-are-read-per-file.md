@@ -214,6 +214,14 @@ farm host, so it is in the slow tier.
   against the original over React's seven label fixtures: the same findings (72 rows). React's four chains through
   `p36` now root at `sym_of` (`wrapper_call`'s `react#memo`, `create_element`), the import resolution.
 
+- **The root's settings are read one way.** The run decided whether to read `rerail.env` (not over a Git revision
+  whose outputs read metadata alone and no `env`: the commit's tree may be absent), but its summary and its reuse key
+  read it always, and failed on a commit without its tree (`revision_cli_reads_commit_metadata_without_its_tree`).
+  `base::root_settings` decides once for the three.
+- **The converter's tests read the staged overlays.** Two reference tests read the pulled dead-code overlay, which
+  still reads `tape_line` (removed by 0612, whose fixed overlay is staged in `publish/` for the next archive). The
+  tests' overlay directory is each file's staged copy where the tree stages one, else the pulled one (links).
+
 ## Left open
 
 - **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through every
@@ -231,11 +239,9 @@ farm host, so it is in the slow tier.
   each run: the tree walk and each `package.json` (cheap, and 0660 reads a project's configuration once per run). A
   source file's edit leaves their digest the same and misses no other file. Skipping the walk itself needs the
   configuration files' digests kept between runs.
-- Two of boot's reference tests read the pulled data layer's dead-code overlay, which still reads `tape_line` (removed
-  by 0612; the fixed overlay is staged in `publish/`, not yet published), and
-  `revision_cli_reads_commit_metadata_without_its_tree` fails on a missing tree object. Both fail the same way at
-  this branch's base.
 - `cpu_and_metal_read_the_same_tape_values` fails on Linux hosts with a stratum past its launch budget (0603). It
-  fails the same way on this branch's base (`872f3a300b`), so this change did not cause it. Its 8 dispatches are its
-  3 programs, 3 relaunches and 2 of the UKL library's launches (`Pass::library` adds them to `dispatches`), which
-  `one_launch` does not count among the launches.
+  fails the same way on this branch's base (`872f3a300b`), so this change did not cause it. Its 8 dispatches, named
+  launch by launch, are 6 `join_run`s (3 programs, 3 relaunches) and 2 `view_expand`s: two views made into device
+  relations for the stratum (`expand_view`, 0353 step 4's copy), views with no read in place (`device_chunk::
+  read_kind` reads node, child, field, core, line, the places, tape, depth and order). The fix is 0353 step 4's:
+  those views' reads, written once in CLIF (0310).

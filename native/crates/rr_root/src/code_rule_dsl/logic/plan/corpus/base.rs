@@ -316,12 +316,33 @@ impl ProgramFields for Summary {
     }
 }
 
+/// The root's settings (`<root>/rerail.env`, then the `env` option's `key=value`s, the command line's `--env`), and
+/// whether the file was read. Over a Git revision whose outputs read Git metadata alone and no `env` (`git::
+/// metadata_only`), the file is not read: the commit's tree, which holds it, may be absent. The run, its summary and
+/// its reuse key read them so, each the same.
+pub fn root_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<(Vec<(String, String)>, bool)> {
+    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+    let without = if options.get("workspaceLanguagePaths").is_some() {
+        true
+    } else if crate::git_workspace::snapshot::contains(root) {
+        let masked_texts = masked(programs);
+        let masked: Vec<&str> = masked_texts.iter().map(|t| t.as_ref()).collect();
+        let (probe, _) = combine_version(programs, &masked, graphs, &added::Added::of(&[], options), read)?;
+        use crate::code_rule_dsl::logic::program_image::{About, analyses};
+        let need = analyses::needed(&probe, &About::of(&probe), probe.output_names().iter().filter_map(|o| probe.rel(o)));
+        git::metadata_only(&probe) && !probe.rel("env").is_some_and(|env| need[env.index()])
+    } else {
+        false
+    };
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !without).map_err(Error::Plan)?;
+    Ok((settings, !without))
+}
+
 /// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
 /// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
 /// (`texts_digest`, decision 0225 §3).
 pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let (settings, _) = root_settings(programs, graphs, read, root, options)?;
     let masked = masked(programs);
     Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
