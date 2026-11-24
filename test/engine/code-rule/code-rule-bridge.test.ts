@@ -5665,6 +5665,22 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(editPaths(auditGeneratedEdits)).toContain(named("lib/src/x.py"));
   });
 
+  // A checkout inside the worktree has a `HEAD` of its own: the walk lists its index against no other. A clone of the
+  // same repository holds the worktree's `HEAD` commit, and its index measured against that commit names other files.
+  it("records a file the session's command staged in a clone of the same repository inside a worktree before its first walk", async () => {
+    const { root, roots, owned, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    const nested = join(worktree, "lib");
+    git(worktree, "clone", "--quiet", "-c", "core.autocrlf=false", root, nested);
+    await shellInWorktree(bridge, async () => {
+      // The text `other`, the worktree's `HEAD`, holds there, where the clone's `HEAD` is `main`.
+      await writeFile(join(nested, "src", "a.py"), "old\nviolation\n");
+      git(nested, "add", "src/a.py");
+      owned.push(nested);
+      roots.push(worktree);
+    }, worktree);
+    expect(editPaths(auditGeneratedEdits)).toContain(named("lib/src/a.py"));
+  });
+
   it("records a file marked assume-unchanged that the session's command changed in a worktree before its first walk whose listing of marked files failed", async () => {
     const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
     git(worktree, "update-index", "--assume-unchanged", "src/a.py");
@@ -5812,8 +5828,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       await rm(notes);
       roots.push(worktree);
     });
-    const blobs = asyncGitCalls.args.filter(args => args.includes("cat-file")).length;
-    expect({ deleted: editModes(auditGeneratedEdits).filter(([path]) => path === named("src/notes.py")), blobs }).toEqual({ deleted: [], blobs: 0 });
+    const started = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
+    // The one `reflog` is the shared walk's (`gitFirstSightListing`): with no change left to ask of the checkout, the
+    // session starts no reading of Git's verdicts, which would start another.
+    expect({ deleted: editModes(auditGeneratedEdits).filter(([path]) => path === named("src/notes.py")), blobs: started("cat-file"), moves: started("reflog") })
+      .toEqual({ deleted: [], blobs: 0, moves: 1 });
   });
 
   it("walks a worktree inside the session's folder once", async () => {
