@@ -1305,6 +1305,14 @@ function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheck
   if (checkpoint !== "edit" || !discovery.baselineComplete || discovery.commandDuringPass) return true;
   return discovery.gaps.length > 0 || discovery.baselineRoots.size > 0;
 }
+
+/**
+ * Asks for one more pass after a baseline walk, unless one is asked for already: it reconciles changes to
+ * already-observed files made during the initial traversal.
+ */
+function passAfterBaseline(discovery: SourceDiscovery, walk: WalkStart, checkpoint: DiscoveryCheckpoint): void {
+  if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+}
 /**
  * The paths a pass left to the pass after because a shell command of the session that began by `commandSince` ran
  * through it (`#toolChanges`): each the session saw before whose stamp the command may have written, gone ones
@@ -3349,8 +3357,7 @@ export class CodeRuleBridge {
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
     // Only once applied: a pass whose audit failed leaves the next to read whole, which finds its changes again.
     discovery.notices.ended(seen, { linked: reads.linked, files: scan.sources.size }, await ignores);
-    // Reconcile changes to already-observed files made during the initial traversal.
-    if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+    passAfterBaseline(discovery, walk, checkpoint);
   }
 
   /**
