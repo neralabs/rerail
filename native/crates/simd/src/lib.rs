@@ -986,25 +986,32 @@ pub mod ptr {
                 }
                 #[inline(always)]
                 fn wrapping_offset(self, offset: Simd<isize, N>) -> Self {
-                    // As addresses, `offset` in `T`s.
+                    // As addresses, `offset` in `T`s: scaled by a shift where `T`'s size is a power of two (NEON
+                    // has no 64-bit multiply).
                     let a: [isize; N] = bits(self.0);
-                    let k = Simd::<isize, N>::splat(size_of::<T>() as isize);
-                    Simd(bits(bin::<isize, { chunks::ADD }, N>(&a, &(offset * k).0)))
+                    let o = if size_of::<T>().is_power_of_two() { offset << Simd::splat(size_of::<T>().trailing_zeros() as isize) } else { offset * Simd::splat(size_of::<T>() as isize) };
+                    Simd(bits(bin::<isize, { chunks::ADD }, N>(&a, &o.0)))
                 }
                 #[inline(always)]
                 fn wrapping_add(self, count: Simd<usize, N>) -> Self {
                     let a: [usize; N] = bits(self.0);
-                    let k = Simd::<usize, N>::splat(size_of::<T>());
-                    Simd(bits(bin::<usize, { chunks::ADD }, N>(&a, &(count * k).0)))
+                    Simd(bits(bin::<usize, { chunks::ADD }, N>(&a, &scale::<T, N>(count).0)))
                 }
                 #[inline(always)]
                 fn wrapping_sub(self, count: Simd<usize, N>) -> Self {
                     let a: [usize; N] = bits(self.0);
-                    let k = Simd::<usize, N>::splat(size_of::<T>());
-                    Simd(bits(bin::<usize, { chunks::SUB }, N>(&a, &(count * k).0)))
+                    Simd(bits(bin::<usize, { chunks::SUB }, N>(&a, &scale::<T, N>(count).0)))
                 }
             }
         };
+    }
+    /// `count` `T`s as bytes: a shift where `T`'s size is a power of two (NEON has no 64-bit multiply).
+    #[inline(always)]
+    fn scale<T, const N: usize>(count: Simd<usize, N>) -> Simd<usize, N>
+    where
+        LaneCount<N>: SupportedLaneCount,
+    {
+        if size_of::<T>().is_power_of_two() { count << Simd::splat(size_of::<T>().trailing_zeros() as usize) } else { count * Simd::splat(size_of::<T>()) }
     }
     ptrs!(SimdConstPtr, const, with_exposed_provenance);
     ptrs!(SimdMutPtr, mut, with_exposed_provenance_mut);

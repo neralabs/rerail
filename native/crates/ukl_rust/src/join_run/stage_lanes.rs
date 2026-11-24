@@ -159,7 +159,7 @@ where
             let x = if self.run {
                 Simd::from_array((colp(self.l, k, self.cap, self.t[0]) as *const [i64; N]).read_unaligned())
             } else {
-                I::gather_ptr(Simd::<*const i64, N>::splat(colp(self.l, k, self.cap, 0)).wrapping_add(self.t.cast::<usize>()))
+                ln::gather64_ix(colp(self.l, k, self.cap, 0).cast::<u8>(), self.t, 3).cast::<i64>()
             };
             v[k as usize].write(x);
             self.have.set(self.have.get() | 1 << k);
@@ -471,17 +471,16 @@ impl Lanes<'_> {
         }
     }
 
-    /// Each lane's row's slots and binds out at its place `a` of `o`, the lanes `w`.
+    /// Each lane's row's slots and binds out at its place `a` of `o`, the lanes of `on`'s bits.
     #[inline(always)]
-    unsafe fn write_rows<const N: usize>(&self, b: &BindAt<N>, row: &Row<N>, o: *mut i64, a: R<N>, w: W<N>)
+    unsafe fn write_rows<const N: usize>(&self, b: &BindAt<N>, row: &Row<N>, o: *mut i64, a: R<N>, on: u64)
     where
         LaneCount<N>: SupportedLaneCount,
     {
         let s = self.st.s;
-        let on = w.cast::<isize>();
-        let at = |c: u32| Simd::<*mut i64, N>::splat(o.add(c as usize * s.cap_out as usize)).wrapping_add(a.cast::<usize>());
+        let out = |v: I<N>, c: u32| ln::scatter64_ix(v.cast::<u64>(), o.add(c as usize * s.cap_out as usize).cast::<u8>(), a, 3, on);
         for k in 0..s.nslots.min(16) {
-            b.slot(k).scatter_select_ptr(at(k), on);
+            out(b.slot(k), k);
         }
         for k in 0..s.nbinds.min(16) as usize {
             let i = s.bind_idx[k];
@@ -494,7 +493,7 @@ impl Lanes<'_> {
                 1 => self.parval(b, i),
                 _ => row.get(i),
             };
-            v.scatter_select_ptr(at(s.bind_slot[k]), on);
+            out(v, s.bind_slot[k]);
         }
     }
 }
@@ -626,7 +625,7 @@ where
             return;
         }
         let a = sr::<N>(self.run) + ranks::<N>(bits);
-        l.write_rows(b, row, self.o, a, w & a.simd_lt(sr(l.st.s.cap_out)).cast::<i64>());
+        l.write_rows(b, row, self.o, a, (w & a.simd_lt(sr(l.st.s.cap_out)).cast::<i64>()).to_bitmask());
         self.run += bits.count_ones();
     }
 }

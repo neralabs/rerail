@@ -70,11 +70,10 @@ where
 
     /// The lanes whose row is table row `y`'s (each lane's own `y`).
     unsafe fn same(&self, d: &Dedup, t: *const i64, y: R<N>, on: W<N>) -> W<N> {
+        // Every lane's `y` is a row of the table (a lane off reads its own).
         let mut m = on;
-        let rows = y.cast::<usize>();
         for c in 0..d.ncols.min(16) as usize {
-            let p = Simd::<*const i64, N>::splat(t.add(d.cols[c] as usize * d.cap as usize)).wrapping_add(rows);
-            m &= I::gather_select_ptr(p, on.cast::<isize>(), I::splat(0)).simd_eq(self.v[c]).cast::<i32>();
+            m &= ln::gather64_ix(t.add(d.cols[c] as usize * d.cap as usize).cast::<u8>(), y, 3).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
         }
         m
     }
@@ -88,8 +87,8 @@ where
             if !go.any() {
                 break;
             }
-            let p = Simd::<*const u32, N>::splat(m).wrapping_add((at * sr(3)).cast::<usize>());
-            let y = R::gather_select_ptr(p, go.cast::<isize>(), sr(NONE));
+            // Each lane's place, walking or not, is one of the map's.
+            let y = go.select(ln::gather32_ix(m.cast::<u8>(), at * sr(3), 2), sr(NONE));
             go &= y.simd_ne(sr(NONE));
             let Some(f) = go.first_set() else { break };
             // A lane done reads the first walking lane's row: every read is of a row there is.
@@ -124,7 +123,7 @@ where
             if !go.any() {
                 break;
             }
-            let y = R::gather_select_ptr(Simd::<*const u32, N>::splat(p).wrapping_add(at.cast::<usize>()), go.cast::<isize>(), sr(NONE));
+            let y = go.select(ln::gather32_ix(p.cast::<u8>(), at, 2), sr(NONE));
             go &= y.simd_ne(sr(NONE));
             let mine = go & y.simd_eq(me);
             keep |= mine;

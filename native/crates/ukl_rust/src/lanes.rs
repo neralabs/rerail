@@ -53,6 +53,40 @@ where
 {
     Simd::gather_ptr(a.cast::<u64>())
 }
+/// The double word at `base + (ix << s)` for each lane: a scalar base and each lane's 32-bit index, each lane one
+/// load whose address is its index extended and shifted (`ldr x, [base, w, uxtw #s]`), no vector of addresses.
+#[inline(always)]
+pub unsafe fn gather64_ix<const N: usize>(base: *const u8, ix: R<N>, s: u32) -> V<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let ix = ix.to_array();
+    Simd::from_array(core::array::from_fn(|i| base.wrapping_add((ix[i] as usize) << s).cast::<u64>().read_unaligned()))
+}
+/// The word at `base + (ix << s)` for each lane (`gather64_ix`).
+#[inline(always)]
+pub unsafe fn gather32_ix<const N: usize>(base: *const u8, ix: R<N>, s: u32) -> R<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let ix = ix.to_array();
+    Simd::from_array(core::array::from_fn(|i| base.wrapping_add((ix[i] as usize) << s).cast::<u32>().read_unaligned()))
+}
+/// Each lane of `v` whose bit of `on` is set written at `base + (ix << s)`, in lane order; a lane off writes a place
+/// of its own (its address chosen as a value, no branch a lane).
+#[inline(always)]
+pub unsafe fn scatter64_ix<const N: usize>(v: V<N>, base: *mut u8, ix: R<N>, s: u32, on: u64)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let (v, ix) = (v.to_array(), ix.to_array());
+    let mut sink = 0u64;
+    for i in 0..N {
+        let p = core::hint::select_unpredictable(on >> i & 1 != 0, base.wrapping_add((ix[i] as usize) << s).cast::<u64>(), &raw mut sink);
+        p.write_unaligned(v[i]);
+    }
+}
+
 /// `p + u * k` as each lane's address.
 #[inline(always)]
 fn at<const N: usize>(p: *const u8, u: R<N>, k: u32) -> P<N>
@@ -192,7 +226,7 @@ pub unsafe fn rel_group_row<const N: usize>(d: *const u8, index: u32, q: R<N>) -
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    gather32(at(follow(index_of(d, index), 48), q, 4))
+    gather32_ix(follow(index_of(d, index), 48), q, 2)
 }
 
 /// `rel_group_row` of `N` consecutive places from `q` of relation `d`'s index `index` (all in its rows): one load.
@@ -281,12 +315,21 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let width = r32(c, 0);
-    let chunks = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64(at(c.wrapping_add(8), seg, 8)) };
-    let a = Simd::splat(c).wrapping_add((scaled(within, width) + chunks).cast::<usize>());
-    if width != 4 {
-        return gather64(a);
-    }
-    let low = gather32(a).cast::<u64>();
+    let low = if one && (width == 4 || width == 8) {
+        // Every lane's row in one chunk: its base and each lane's place in it.
+        let base = c.wrapping_add(r64(c, 8 + 8 * seg[0] as u64) as usize);
+        if width == 8 {
+            return gather64_ix(base, within, 3);
+        }
+        gather32_ix(base, within, 2).cast::<u64>()
+    } else {
+        let chunks = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64(at(c.wrapping_add(8), seg, 8)) };
+        let a = Simd::splat(c).wrapping_add((scaled(within, width) + chunks).cast::<usize>());
+        if width != 4 {
+            return gather64(a);
+        }
+        gather32(a).cast::<u64>()
+    };
     let dh = r32(c, 4);
     if dh == 0 {
         return low;
