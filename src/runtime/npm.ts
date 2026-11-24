@@ -145,6 +145,30 @@ const NPM_TIMEOUT = /\bnpm (?:error|ERR!) network timeout at: /u;
 /** The URL npm's fetch error names: `request to <url> failed, reason: …` or `network timeout at: <url>`. */
 const NPM_FETCH_URL = /(?:request to|network timeout at:) (https?:\/\/[^\s,]+)/u;
 
+/** npm's code where its registry has no such package (E404) or version (ETARGET), or the package is built for another system. */
+const NPM_PACKAGE_REFUSED = /\bnpm (?:error|ERR!) code (E404|ETARGET|EBADPLATFORM)\b/u;
+/** The address npm's E404 names: `404 Not Found - GET <url>`. */
+const NPM_NOT_FOUND_URL = /\bGET (https?:\/\/\S+)/u;
+
+/** npm's refusal of one package an install named, as its own output gives it. */
+export interface NpmPackageRefusal {
+  /** No such package (E404), no such version (ETARGET), or a package built for another system (EBADPLATFORM). */
+  readonly code: "E404" | "ETARGET" | "EBADPLATFORM";
+  /** The registry npm asked, where its error names the request. */
+  readonly registry: string | undefined;
+}
+
+/**
+ * npm's refusal of the package `name` in the output of a failed install; undefined where npm failed for another
+ * reason, or over another package.
+ */
+export function npmPackageRefusal(message: string, name: string): NpmPackageRefusal | undefined {
+  const code = NPM_PACKAGE_REFUSED.exec(message)?.[1] as NpmPackageRefusal["code"] | undefined;
+  if (code === undefined || !message.includes(name)) return undefined;
+  const address = NPM_NOT_FOUND_URL.exec(message)?.[1];
+  return { code, registry: address === undefined ? undefined : URL.parse(address)?.origin };
+}
+
 /**
  * npm waits 10 s, then 60 s, before its two retries of a request, and against a registry that is down it does that for
  * every package an install needs, one after another: many minutes without a word. One quick retry still rides out a
