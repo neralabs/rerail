@@ -75,6 +75,10 @@ class CommitWatch {
   }
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Syncs the log of the database at `databasePath` every `periodMs` while commits wait, one sync at a time, off the
  * daemon's thread (`syncHistoryLog`): the next look is due `periodMs` after the last one ended, so a stalled disk
@@ -99,14 +103,14 @@ export function startHistorySync(databasePath: string, options: HistorySyncOptio
       if (failing) log("rerail daemon: syncing the history to the disk works again\n");
       failing = false;
     } catch (error) {
-      if (!failing) log(`rerail daemon: syncing the history to the disk failed, trying again every ${periodMs / 1000} s: ${error instanceof Error ? error.message : String(error)}\n`);
+      if (!failing) log(`rerail daemon: syncing the history to the disk failed, trying again every ${periodMs / 1000} s: ${errorText(error)}\n`);
       failing = true;
     }
   };
   const next = (): void => {
     if (stopped) return;
     timer = setTimeout(() => {
-      looking = look().catch((error: unknown) => log(`rerail daemon: syncing the history: ${error instanceof Error ? error.message : String(error)}\n`)).then(next);
+      looking = look().catch((error: unknown) => log(`rerail daemon: syncing the history: ${errorText(error)}\n`)).then(next);
     }, periodMs);
     timer.unref();
   };

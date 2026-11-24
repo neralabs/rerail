@@ -129,6 +129,13 @@ export function experimentalSummary(feature: ExperimentalFeature, description: s
   return `Experimental: answers 404 experimental-off unless the daemon runs with ${experimentVariable(feature)}=1. ${description}`;
 }
 
+/** The handler's answer, given once a write it made is on the disk (`syncToDisk`). */
+async function answerOnDisk(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
+  const result = await operation.handler(stores, input as never, caller);
+  if (operation.method !== "GET") await stores.syncToDisk();
+  return result;
+}
+
 /**
  * Run one operation for one caller; a write that returns counts toward the stores' change token, and is answered only
  * once it is on the disk: a rule or setting change a person made, or any other write, must not roll back after a power
@@ -140,9 +147,7 @@ export async function invokeOperation(operation: Operation, stores: RerailApiSto
     throw new ApiError(404, "experimental-off", experimentOffMessage(operation.experiment, "start the Rerail daemon with"));
   }
   try {
-    const result = await operation.handler(stores, input as never, caller);
-    if (operation.method !== "GET") await stores.syncToDisk();
-    return result;
+    return await answerOnDisk(operation, stores, input, caller);
   } catch (error) {
     if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);
     throw error;

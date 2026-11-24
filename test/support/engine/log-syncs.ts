@@ -56,14 +56,19 @@ const WRITES = /^\s*(insert|update|delete|replace|create|drop|alter)\b/iu;
 /** Records each commit that wrote on a connection whose commits sync the log (`synchronous` FULL or EXTRA). */
 function recordDurableCommits(): void {
   const dirty = new WeakSet<Database.Database>();
-  const ended = (database: Database.Database, inTransactionBefore: boolean, source: string): void => {
+  // Whether the statement just run ended a transaction that wrote, or wrote outside one.
+  const committedAWrite = (database: Database.Database, inTransactionBefore: boolean, source: string): boolean => {
     if (database.inTransaction) {
       if (WRITES.test(source)) dirty.add(database);
-      return;
+      return false;
     }
     const wrote = inTransactionBefore ? dirty.has(database) : WRITES.test(source);
     dirty.delete(database);
-    if (wrote && !database.memory && (database.pragma("synchronous", { simple: true }) as number) >= 2) record(database.name, logState(database.name));
+    return wrote;
+  };
+  const ended = (database: Database.Database, inTransactionBefore: boolean, source: string): void => {
+    if (!committedAWrite(database, inTransactionBefore, source) || database.memory) return;
+    if ((database.pragma("synchronous", { simple: true }) as number) >= 2) record(database.name, logState(database.name));
   };
   const probe = new Database(":memory:");
   const statement = Object.getPrototypeOf(probe.prepare("SELECT 1")) as Record<"run" | "get" | "all", (...args: unknown[]) => unknown>;
