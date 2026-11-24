@@ -1287,9 +1287,10 @@ pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(u
 const NONE: u32 = u32::MAX;
 
 /// Format 16 (or 16z where `z`) written from the tree `t`, each node's code mapped to the language's number
-/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's).
-#[cfg(test)]
-pub(crate) fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's; other crates'
+/// tests' too, `test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
     write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
 }
 

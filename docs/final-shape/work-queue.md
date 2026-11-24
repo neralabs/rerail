@@ -11341,3 +11341,26 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - a check over clif, tape-format, lang, facts-base, facts, tests-lang, ukl, setfix, gpu and engine: no errors but the sessions_base `translate` visibility defect (Relax's, since roll-up 112);
   - tests: clif 17; tape-format 51; facts-base 83; lang 78; facts 14; ukl-vec 51; tests-lang `vtab::syntax` 90 and the rest 86; tests-transducer `packed` 36; tests-tape `persisted_image_round_trips_without_parsing`.
   - tests-tape whole passed the 12 GB cap (the suite's memory growth, open).
+
+### Q544. Roll-up 117 (uglykl-CPU-SIMD-parallelization cdb5619dd0 onto Pulling-it-all-together): what the merge chose
+
+- uglykl-CPU-SIMD-parallelization (30 commits, to cdb5619dd0; decisions 0567 step 3, 0671): the CPU device runs a kernel as its checked-in Rust (rerail-ukl-rust, chosen by the digest of its source and defines, `ComputeFunctionLibrary::with_rust`); the label passes' `label_parents` and `label_leaves` as ukl-vec's Rust; rerail-simd (std::simd's interface on stable); the relation reads at N lanes (`lanes.rs`); a recursive set head's rows as a map the program keeps (`dedup_less`); a join's count keeps its finds; a hashed index marks each place with its key's tag (`PK_IX_MARK`).
+- The hand-written `join_run` (and its `join_run/` lanes) is removed, as the user decided (clash 3): join_grid, join_phase and join_chain are to be written as CPU Rust in 0567's style, with the tests moved to them. Until then the join program runs as the CPU device's c++ build. `CALLING_READS` is empty; `JOIN_PROGRAM` is gone.
+- Relation reads with a far base (the hub's, decision 0353 step 6) carried into the branch's code: `rel_get(d, r, c, far)` and the N-lane walk take the far base (the descriptor's `FAR_BASE` flag); join_stages' stage, index and probe functions take the hub's `R_rows, R_far` (`RelB`) beside the branch's finds (`V`). The index's phases are the hub's place and offsets, then the branch's mark (`PK_IX_OFFS` 30, `PK_IX_MARK` 31). `index_of(rel, cols, may_move)` keeps the hub's fresh paths (a view's new home, a far link).
+- setfix's device run: the branch's set heads as maps (no `round_index`), with the hub's lattice loop. `BlockVec::unwritten_in` is now `rows::unwritten_in`.
+- clif's reads: the hub's `tape_place` and `tape_place_past_comments`, then the branch's `rel_group_mark` last; the reads' addresses test expects `("rel_get", 2)`.
+- The generated Rust (ukl_aot's `*_w8.rs`/`*_w32.rs`, ukl_rust's label kernels) is regenerated from the merged sources (`UKL_RS_WRITE=1`). The label source is the hub's: the format 15 branches are gone (0631), and the view is 136 bytes.
+- Fixed on the way:
+  - ukl-vec's Rust writer: a load in a block entered with no lane on (a uniform branch none of its lanes takes) read through lane 0's address, which such a lane never set: `label_leaves` faulted on a document past one block. A load's address is now `NO_LANE`'s zeros when no lane runs, as a store's off lanes write to a sink.
+  - ukl-aot's test documents place their source after the language's codes (`set_source_offset`), as the residency does since 0353 step 7.
+  - The CPU device's reservations (the program's arena, the text arena, the canonical table, a sort's room) are held by a ledger of their own (`metal_join::Reservation`, `Tracked`): on the CPU they are the host's pages, which no block or pooled lease held, so every bind failed 0491 step 2's check in a test build.
+  - What a level's queued jobs reach is held from their queueing for the life of its program's kit (`Batch::queued_held`, `Kit::held`): the submission open at queueing commits before the program launches, and a rerun (`finish`, an arena mapped further) binds the kit's buffers again after its first submission completed.
+  - `Places::on_device`'s directory, a buffer of no block's, is held by a ledger of its own.
+  - `f16::write_from` is behind `test-hooks` too: gpu's tests use it.
+  - gpu's clock test: the CPU device has a kernel clock on arm64 (`backend.h`, since roll-up 104).
+  - setfix device tests: the branch's measure test opens its store as the hub's tests do.
+- Checked with Relax, RERAIL_GPU=cpu:
+  - check over device-metal, ukl-rust, simd, ukl-vec, clif, gpu, device, atoms, setfix and facts: no errors;
+  - tests: simd 3; ukl-rust 4; clif 18; ukl-vec 54; ukl-aot 14 of 15; device-metal `setfix::device` 47; gpu 38; facts 14; tape-format 51; device 10 of 11.
+  - ukl-aot's `the_label_passes_parents_take_no_more_instructions` counts the instructions a node: under Relax's JIT, 3,630 against at most 108. A measurement of an optimized build.
+  - device's `the_engine_finds_the_file_it_was_loaded_from`: under Relax the code is the JIT's, which the loader names no file for (Relax's environment).

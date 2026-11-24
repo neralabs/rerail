@@ -2472,3 +2472,120 @@ use rerail_blocks::vector::Vector;
             eprintln!("MEASURE {name:<20} rounds {}, stacks after the first {}, remaps {}", rounds.0, rounds.1, rounds.2);
         }
     }
+
+    /// The same strata on the engine's CPU joins (scalar Rust) and on the device's join program, warm: wall and the
+    /// process's CPU time of each, the best of three (a measure: `--ignored`). On the CPU device (`RERAIL_GPU=cpu`) a
+    /// kernel with Rust of its source (`rerail_ukl_rust::kernels`) runs as it; `RERAIL_CPU_RUST=0` makes each the c++ build.
+    #[test]
+    #[ignore]
+    fn joins_timed_on_the_cpu_and_the_device() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let cpu_seconds = || {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
+            s(u.ru_utime) + s(u.ru_stime)
+        };
+        let faults = || {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            u.ru_minflt as i64
+        };
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 5u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE e (c0, c1);").unwrap();
+        {
+            let tx = db.unchecked_transaction().unwrap();
+            for _ in 0..100_000 {
+                tx.execute("INSERT INTO a VALUES (?1, ?2)", [next(1_000_000), next(20_000)]).unwrap();
+                tx.execute("INSERT INTO b VALUES (?1, ?2)", [next(20_000), next(1_000_000)]).unwrap();
+            }
+            // Chains with shortcuts: a closure of many rounds.
+            for v in 0..400 {
+                tx.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+                if next(4) == 0 {
+                    tx.execute("INSERT INTO e VALUES (?1, ?2)", [v, next(400)]).unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        let src = |t: &str| format!("t:x:{}:{}:ii", hex(&format!("temp.{t}")), hex("c0, c1"));
+        let (a, b, e) = (src("a"), src("b"), src("e"));
+        let strata: [(&str, Vec<String>); 2] = [
+            // h0(x, z) :- a(x, y), b(y, z), z < x.
+            ("keyed join, 100 K x 100 K", vec![format!("seed 0 {}", hex(&format!("pos {a} v0 v1\npos {b} v1 v2\nlt v2 v0\nhead v0 v2")))]),
+            // h0(x, y) :- e(x, y).   h0(x, z) :- h0(x, y), e(y, z).
+            (
+                "closure, 400 nodes",
+                vec![format!("seed 0 {}", hex(&format!("pos {e} v0 v1\nhead v0 v1"))), format!("join 0 0 {}", hex(&format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2")))],
+            ),
+        ];
+        // `RERAIL_TIMED_REPEAT=n`: each run n times (a profile's samples), `RERAIL_TIMED_ONLY=device|cpu` one side,
+        // `RERAIL_TIMED_STRATUM=text` the strata whose name has it.
+        let repeat = std::env::var("RERAIL_TIMED_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(4usize).max(2);
+        let only = std::env::var("RERAIL_TIMED_ONLY").ok();
+        let stratum = std::env::var("RERAIL_TIMED_STRATUM").ok();
+        for (what, rules) in &strata {
+            if stratum.as_deref().is_some_and(|w| !what.contains(w)) {
+                continue;
+            }
+            let mut rows = Vec::new();
+            for device in [false, true] {
+                if only.as_deref().is_some_and(|o| o != if device { "device" } else { "cpu" }) {
+                    rows.push(-1);
+                    continue;
+                }
+                let mut best = (f64::MAX, f64::MAX);
+                // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
+                let mut prog = (f64::MAX, f64::MAX);
+                let mut faulted = i64::MAX;
+                for k in 0..repeat {
+                    db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                    let mut spec = vec!["name timed".to_owned()];
+                    if device {
+                        spec.push("device".into());
+                    }
+                    spec.push("rel h0 ii empty".into());
+                    spec.extend(rules.iter().cloned());
+                    super::super::open(&db, &spec.join("\n")).unwrap();
+                    let (t, c, f) = (std::time::Instant::now(), cpu_seconds(), faults());
+                    super::super::run(&db, "timed", 0).unwrap();
+                    let (wall, cpu) = (t.elapsed().as_secs_f64(), cpu_seconds() - c);
+                    if k > 0 {
+                        faulted = faulted.min(faults() - f);
+                    }
+                    if device {
+                        let r = super::take_report().filter(|r| r.refused.is_none());
+                        assert!(r.is_some(), "{what}: run on the device");
+                        if let Some(r) = r.filter(|_| k > 0) {
+                            prog = (prog.0.min(r.wait_wall), prog.1.min(r.encode_cpu));
+                        }
+                    }
+                    super::super::close(&db, "timed").unwrap();
+                    // The first run warms (compiles, sizes); the best of the others.
+                    if k > 0 {
+                        best = (best.0.min(wall), best.1.min(cpu));
+                    }
+                }
+                let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
+                rows.push(n);
+                eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU, {faulted} page faults", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
+                if device {
+                    eprintln!("{what}: device: its program {:.1} ms (waited on), its encoding {:.1} ms CPU", prog.0 * 1e3, prog.1 * 1e3);
+                }
+            }
+            if !rows.contains(&-1) {
+                assert_eq!(rows[0], rows[1], "{what}: the same rows");
+            }
+        }
+    }
