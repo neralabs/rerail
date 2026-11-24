@@ -35,9 +35,14 @@ made step by step.
 
 `rerail-blocks/src/bistate.rs`:
 
-- **`Read`**: a relation at one state, read where it lies. Its methods are `arity`, `total` (its ids, live or not),
-  `live_word(w)` (the liveness of 64 ids at a time) and `get(id, c)`.
-- **`Bistate<B, A>`**: two states of the same rows, where ids below `before.total()` are the same rows in both. It
+- **Branded ids** (`ids.rs`): `RowId` (a row), `ColumnIndex` (a column) and `WordIndex` (a word of 64 liveness
+  bits), each its integer underneath (`repr(transparent)`), so one is never passed where another is meant (the user,
+  2026-11-24: "Please brand the id types").
+- **`Read`**: a relation at one state, read where it lies. Its methods are `arity`, `end` (the `RowId` past its last
+  id), `live_word(w: WordIndex)` (the liveness of 64 rows at a time) and `get(id: RowId, c: ColumnIndex)`.
+- **`Bistate<S>`**: two states of the same rows, both of type `S: Read`, where ids below `before.end()` are the same
+  rows in both. One type serves both states: the after state reads every row the before state reads, so no pair
+  needs two types, and step 2 makes a bistate two frontiers of one trace (`Bistate<'t>`, no type parameter). It
   reads `added`, `gone`, `counts` and `is_identity` from the two states' liveness words. It is `cold(after)` when
   there is no before.
 - **`check`** and **`reference`**: the law, and the oracle.
@@ -59,12 +64,12 @@ L1. No test exercised the case.
 Tests:
 
 - `bistate::tests`: a base and its delta, a delta of nothing new, a full relation as a cold run, marked states with
-  a row brought back, and totals at word boundaries.
+  a row brought back, and ends at word boundaries.
 - setfix's `a_maintained_relations_versions_are_read_where_its_rows_lie` and
   `a_relation_derived_again_is_a_version_of_its_kept_rows` now `check` their versions. In the first, a row killed and
   pushed again is both gone and added.
 
-Cost: `added`, `gone`, `counts` and `is_identity` read `after.total() / 64` words. That is the arithmetic the code
+Cost: `added`, `gone`, `counts` and `is_identity` read `after.end() / 64` words. That is the arithmetic the code
 had before, not yet P1's O(change). Step 3 fixes it.
 
 On the way, the roll-up 116 merge left `rerail-facts` uncompiled. One side passed `&Arc<dyn AtomTable>` where the

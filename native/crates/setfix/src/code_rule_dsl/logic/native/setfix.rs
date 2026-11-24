@@ -36,7 +36,7 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
-use rerail_blocks::bistate::{Bistate, Marked};
+use rerail_blocks::bistate::{Bistate, ColumnIndex, Marked, RowId};
 use rerail_blocks::vector::Vector;
 use rerail_section::{Handle, Section};
 pub mod scalars;
@@ -6890,19 +6890,19 @@ impl InRel {
         let v = self.version()?;
         match ver {
             Ver::Old => None,
-            Ver::Minus => Some(v.gone().collect()),
-            Ver::Plus => Some(v.added().collect()),
+            Ver::Minus => Some(v.gone().map(RowId::get).collect()),
+            Ver::Plus => Some(v.added().map(RowId::get).collect()),
         }
     }
     /// Its version as a bistate (decision 0678): before, its first rows less the dead bits they had at the start
     /// (`start`); after, all its rows less its dead bits now. Both read its rows where they lie. `None` without a
     /// version.
-    #[allow(clippy::type_complexity)]
-    pub fn version(&self) -> Option<Bistate<Marked<'_, impl Fn(u32, usize) -> i64 + '_>, Marked<'_, impl Fn(u32, usize) -> i64 + '_>>> {
+    pub fn version(&self) -> Option<Bistate<Marked<'_, impl Fn(RowId, ColumnIndex) -> i64 + '_>>> {
         let (n0, dead0) = self.start()?;
-        let get = move |id: u32, c: usize| self.value(id as usize, c);
-        let before = Marked { arity: self.k, rows: n0 as u32, dead: dead0, get };
-        Some(Bistate::new(before, Marked { arity: self.k, rows: self.n as u32, dead: &self.dead, get }))
+        let end = |n: usize| RowId::new(u32::try_from(n).expect("a relation's rows fit a row id"));
+        let get = move |id: RowId, c: ColumnIndex| self.value(id.get() as usize, c.get());
+        let before = Marked { arity: self.k, end: end(n0), dead: dead0, get };
+        Some(Bistate::new(before, Marked { arity: self.k, end: end(self.n), dead: &self.dead, get }))
     }
     /// Its version `ver` as a relation read in place, no row copied (decision 0364 stage 2): `Old`, its first rows
     /// with the start's dead rows (its rows shared); `Minus` and `Plus`, a view of their ids over it. `None` without

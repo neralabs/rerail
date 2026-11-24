@@ -30,6 +30,7 @@ pub mod col;
 pub mod deferrable;
 pub mod facts;
 pub mod free;
+pub mod ids;
 /// A relation's reads in UKL, for every kernel that reads a relation in its block (decision 0325; the host's are
 /// written directly, decision 0536, and the CLIF's are the JIT's, `rerail_clif::relation`): the library's header,
 /// which a kernel source including it is preprocessed with (the device layer's programs; decision 0440 §3.3).
