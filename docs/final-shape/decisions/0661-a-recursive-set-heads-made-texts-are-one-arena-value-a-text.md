@@ -171,9 +171,9 @@ the device can run goes to it and stays there. Its findings are the CPU run's (C
 
 `literal_key`, not recursive, also moved to the device: its string join, and its function's value compared.
 
-A first run with the string join's row stage bound to the run's view format, where before a row stage had format 0,
-found one more RUF059 finding on the device. A row stage reads no view unless it is a string join, so its format is
-0 again otherwise. The two runs since have the CPU's findings. Which stage read the format wrongly was not found.
+A first run found one more RUF059 finding on the device. It was put down to the string join's row stage bound to the
+run's view format; that was wrong. About one run in seven differed, from an index another batch took being given back
+under it (decision 0664). Since that fix the repeated runs have the CPU's findings.
 
 Under the default binding, placement still puts these strata on the CPU at this scale (0657's threshold). That is
 the intended outcome: they can run on the device; at 10 files they should not.

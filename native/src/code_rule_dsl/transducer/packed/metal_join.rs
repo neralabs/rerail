@@ -1011,6 +1011,14 @@ impl DevIndex {
 }
 
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
+/// An index's last bucket offset before its build writes it (its rows, `ix_offs_one`): never a count of rows.
+const UNBUILT: u32 = u32::MAX;
+
+/// The byte in its block of index room `room`'s last bucket offset: its rows once built.
+fn last_offset(room: &rerail_blocks::relation::IndexRoom) -> usize {
+    room.offs + 4 * (room.mask as usize + 1)
+}
+
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))
@@ -1095,12 +1103,20 @@ impl Building {
         self.home.block.offset_of(self.rel)
     }
 
-    /// No longer in flight: its block's list forgets it (under the block's index lock, `held`).
-    fn forget(&self, held: &mut Vec<crate::code_rule_dsl::facts::rows::InFlight>) {
-        if self.queued {
-            let at = self.at();
-            held.retain(|f| !(f.at == at && f.room.index == self.room.index));
+    /// No longer in flight: its block's list forgets it (under the block's index lock, `held`). Whether another batch
+    /// took it meanwhile.
+    fn forget(&self, held: &mut Vec<crate::code_rule_dsl::facts::rows::InFlight>) -> bool {
+        if !self.queued {
+            return false;
         }
+        let at = self.at();
+        let mut taken = false;
+        held.retain(|f| {
+            let this = f.at == at && f.room.index == self.room.index;
+            taken |= this && f.taken;
+            !this
+        });
+        taken
     }
 
     /// The descriptor's bytes now.
@@ -1639,6 +1655,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// The submissions of indexes other batches build that this one's stages read (`InFlight`): waited for at its finish,
     /// and one the device failed fails this batch too.
     borrowed: Vec<Submitted>,
+    /// What each index of another batch's build this one took held as its work ran (its last bucket offset, copied
+    /// by its program before its stages), and the rows it holds when built: `UNBUILT` fails the batch (`finish`).
+    taken: Vec<(Words, u32)>,
     /// Whether a gate was queued since the last `finish`.
     gated: bool,
     /// The round ends queued in the open program (`Building::behind`).
@@ -1721,6 +1740,7 @@ impl Batch {
             arena_cap: cap,
             building: Vec::new(),
             borrowed: Vec::new(),
+            taken: Vec::new(),
             atoms: None,
             kept: None,
             written: Vec::new(),
@@ -1852,10 +1872,11 @@ impl Batch {
         let s = pass.commit().map_err(Error::from)?;
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
-        // be built (`finish`), as may one queued after a round end: none is told.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live ) {
+        // be built (`finish`), as may one queued after a round end: none is told (decision 0664). One behind a phase
+        // that parks is built by a later submission: its taker checks (`UNBUILT`).
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && b.behind.is_none()) {
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch() });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), taken: false });
             b.queued = true;
         }
         self.committed.push(s);
@@ -1919,6 +1940,13 @@ impl Batch {
         for s in self.borrowed.drain(..) {
             failed += usize::from(!s.wait_ok().1);
         }
+        // An index taken from another batch's build that was not built when this one's work read it: its builder's
+        // program parked before the build, which a later submission of it made. This batch's rows are not whole.
+        let unbuilt = self.taken.drain(..).filter(|(w, rows)| w.get(0) != *rows).count();
+        if unbuilt > 0 {
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "an index taken in flight, read before it was built (its batch on the CPU)", unbuilt as u64);
+            failed += unbuilt;
+        }
         let overran = self.overran();
         self.written.clear();
         if !overran.is_empty() {
@@ -1946,7 +1974,7 @@ impl Batch {
         self.gated = false;
         for b in self.building.drain(..) {
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            b.forget(&mut held);
+            let taken = b.forget(&mut held);
             if (stopped && b.gated) || b.live {
                 continue;
             }
@@ -1965,7 +1993,12 @@ impl Batch {
             // or this batch's builder was not all encoded: it goes back, its room the block's again, and a later
             // probe finds the one built.
             let other = r.find_index_from(&room.key[..room.ncols], room.from, room.rows_n).is_some_and(|i| i != room.index);
-            if other || !b.encoded {
+            // One another batch took is read by that batch's stages through its entry in the directory, which giving
+            // it back clears, and that batch's work may not have run yet: it is marked built beside the other, which
+            // is as good (decision 0664: a taker of `home`'s index read an empty one, and `ibind` lost its 459 rows).
+            if other && taken {
+                crate::code_rule_dsl::prof::count_named("device.index built twice, kept: another batch took it".into(), 4 * room.rows_n as usize);
+            } else if other || !b.encoded {
                 if other {
                     crate::code_rule_dsl::prof::count_named("device.index built twice, given back".into(),4 * room.rows_n as usize);
                 }
@@ -2051,7 +2084,7 @@ impl Batch {
         }
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let room = {
-            let held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            let mut held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
             // relation's index is built again for each round (below): none found.
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32).filter(|_| !rel.live) {
@@ -2073,9 +2106,13 @@ impl Batch {
             // the block's room twice (row 9 of 0353: two waves of a level each built [0,1], and the [0] after found
             // no bytes left, and copied the relation). A live relation's is this batch's own, each round's.
             let at = home.block.offset_of(std::ptr::from_ref(r));
-            if let Some(f) = held.iter().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
+            if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 let index = f.room.index as u32;
+                let room = f.room;
+                f.taken = true;
                 self.borrowed.push(f.done.watch());
+                drop(held);
+                self.check_taken(&home, &room, rel.index_rows() as u32)?;
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
@@ -2141,6 +2178,12 @@ impl Batch {
             return Ok(DevIndex { moved: Some(copy), ..ix });
         };
         let n = rel.rows;
+        if !rel.live && rel.index_rows() > 0 {
+            // Its last bucket offset unbuilt until its build writes its rows there (`ix_offs_one`): what a batch that
+            // takes it in flight checks (`check_taken`).
+            // SAFETY: the room is this batch's, just reserved in the block; nothing reads or writes it yet.
+            unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().write_volatile(UNBUILT) };
+        }
         // Held by the batch from here: an error before its builder is all encoded gives the room back when the batch
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
@@ -2156,6 +2199,31 @@ impl Batch {
     /// the level bucketed in one launch, sorted in one sort, placed in one launch (`flush`), before the level's stages,
     /// which probe it. A live relation's (`DevRel::live`) is of its rows as the device claimed them when it runs, at
     /// most `rows`: its keys past them go to its own last bucket (`IX_LIVE`), one more in the level's sort.
+    /// Index room `room` of another batch's build, taken in flight (`InFlight`): its last bucket offset copied, by a
+    /// phase before the stages that probe it, into a word of this batch's (`sum_one` of one part), so that `finish`
+    /// sees what the stages read. `rows` once built; `UNBUILT` where the builder's program parked before the build,
+    /// which its later submission makes (a park re-launches the rest of a program; no submission orders this batch's
+    /// work after that one).
+    fn check_taken(&mut self, home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, room: &rerail_blocks::relation::IndexRoom, rows: u32) -> Result<(), Error> {
+        if rows == 0 {
+            return Ok(());
+        }
+        let buffer = bound(home)?;
+        let words = Words::zeroed(2)?;
+        let mut job = Job::new(JobKind::Sum, 0, Stage::default());
+        let src = job.reach(&buffer.buffer, last_offset(room) as u64, false)?;
+        let wa = job.reach(&words.buffer.buffer, 0, true)?;
+        // One part: its offset into the second word, its total (the offset read) into the first.
+        let p: Vec<u64> = vec![1, wa, src, wa + 4];
+        job.p = Some(as_bytes(&p).to_vec());
+        job.count = 1;
+        job.order(&[src], &[wa]);
+        self.queue(job)?;
+        self.program.hold.push(buffer);
+        self.taken.push((words, rows));
+        Ok(())
+    }
+
     fn queue_index(&mut self, rel: &DevRel, cols: &[usize], room: &rerail_blocks::relation::IndexRoom, buffer: &Held) -> Result<(), Error> {
         // Its keys at most (its items'), and the rows its room holds: a live relation mapped as reached has room for
         // its rows mapped, grown with them (`Kit::grow_rooms`), its items its bound's.
@@ -5403,6 +5471,31 @@ pub mod tests {
         taker.finish().unwrap();
         builder.finish().unwrap();
         assert_eq!(r.find_index(&[0], n as u32), Some(built.index as usize));
+        // Taken, and the same index built by the host meanwhile (it finds none marked): the builder, done first, keeps
+        // its own, which the taker's work may not have read yet. Given back, its entry in the directory was cleared,
+        // and a taker's probes read an empty index.
+        let mut builder = Batch::new().unwrap();
+        let built = builder.index(&placed, &[0, 1]).unwrap();
+        builder.commit_open().unwrap();
+        let mut taker = Batch::new().unwrap();
+        let taken = taker.index(&placed, &[0, 1]).unwrap();
+        assert!(!taken.built && taken.index == built.index, "taken");
+        let home = placed.home.as_ref().unwrap();
+        let hosts = {
+            let _lock = home.ix.lock().unwrap();
+            // SAFETY: under the block's index lock; the rows are written.
+            let room = unsafe { r.try_reserve_index(&home.block, &[0, 1], n as u32) }.unwrap();
+            unsafe {
+                r.build_index(&room);
+                r.index_built(&room);
+            }
+            room.index
+        };
+        builder.finish().unwrap();
+        let ix = r.index_at(built.index as usize);
+        assert!(ix.ncols == 2 && ix.state != rerail_blocks::relation::DEAD && ix.offs.len() == r.index_at(hosts).offs.len(), "a taken index kept by its builder");
+        assert_eq!(ix.rows.as_slice().len(), n, "its rows");
+        taker.finish().unwrap();
         // Not committed: each builds its own, and the second to finish gives its back.
         let (mut a, mut b) = (Batch::new().unwrap(), Batch::new().unwrap());
         let (ia, ib) = (a.index(&placed, &[1]).unwrap(), b.index(&placed, &[1]).unwrap());

@@ -85,6 +85,9 @@ pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
     pub done: rerail_accel::gpu::join::Submitted,
+    /// Whether another batch took it: its takers' stages read it through its entry in the relation's directory, after
+    /// its builder's batch may be done, so its builder never gives it back (`give_back_index` clears the entry).
+    pub taken: bool,
 }
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
