@@ -1,7 +1,7 @@
 # 0661. A recursive set head's made texts are one arena value a text
 
-Status: in progress (2026-11-23). Seven of the eight strata run on the device, and `literal_key` beside them; `ask_c`
-needs the forms listed at the end.
+Status: done (2026-11-24). Seven of the eight strata run on the device, and `literal_key` beside them. `ask_c`'s
+terms are the device's (0668); its component stays on the CPU, as it loads files inside its fixpoint (below).
 
 ## Intro
 
@@ -175,8 +175,9 @@ under it (decision 0664). Since that fix the repeated runs have the CPU's findin
 Under the default binding, placement still puts these strata on the CPU at this scale (0657's threshold). That is
 the intended outcome: they can run on the device; at 10 files they should not.
 
-## Still to build
+## What stays on the CPU
 
 - **The `ask_c` component**: its terms are the device's since decision 0668 (`@rx_group`, `@substr` of row numbers,
   `str_between` of cats). The component is refused at run time for its gates and requests (0668, "What still keeps it
-  on the CPU").
+  on the CPU"), and stays there: its fixpoint loads files, which the device cannot do. The user, 2026-11-24: "Loading
+  files can't happen on the GPU anyway".
