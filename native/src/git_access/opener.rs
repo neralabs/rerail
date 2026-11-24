@@ -99,9 +99,9 @@ pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
     let (found, trust) = gix::discover::upwards_opts(root, upwards_options())
         .map_err(|error| discovery_error("cannot discover Git repository", &error))?;
     let (git_dir, _) = found.into_repository_and_work_tree_directories();
-    let after = measure_before_open(&sources, &git_dir, trust)?;
+    let measured_after_open = measure_before_open(&sources, &git_dir, trust)?;
     let repository = open_as_git_does(root, &sources, trust)?;
-    check_sizes(after.into_iter().chain(global_files(&repository)))?;
+    check_sizes(measured_after_open.into_iter().chain(global_files(&repository)))?;
     Ok(repository)
 }
 
