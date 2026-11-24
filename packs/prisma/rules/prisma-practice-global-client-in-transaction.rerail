@@ -188,11 +188,16 @@ gct_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), 
     gct_target(d, s, t), gct_exports(t, x, q), x != "default".
 // gct_target(d, s, t): import specifier s in document d names module t of the run: "./x" and "../x" from d's
 // directory, and the aliases "@/x" and "~/x" as `<dir>/src/x` or `<dir>/x` for a directory above d (the
-// create-next-app and T3 layouts), each with tsx/names' extension and index candidates (resolve_base).
+// create-next-app and T3 layouts), each with tsx/names' extension and index candidates (resolve_base). t must be parsed
+// in this run: another dialect's file (a `.ts` module seen from the `.tsx` run) is only text here, has no exports to
+// follow, and is named as a package is (the fallback of gct_sym), the same way from every file of the run.
 .decl gct_target(d: number, s: symbol, t: symbol)
-gct_target(d, s, t) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), resolve_base(@join(@dir(p), s), t).
+gct_target(d, s, t) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), resolve_base(@join(@dir(p), s), t),
+    gct_parsed(t).
 gct_target(d, s, t) :- import_spec(i, s), match("[@~]/(?<r>.+)", s), docof(i, d), doc(d, p, _), gct_anc(p, a),
-    (b = @join(a, cat("src/", r)) ; b = @join(a, r)), resolve_base(b, t).
+    (b = @join(a, cat("src/", r)) ; b = @join(a, r)), resolve_base(b, t), gct_parsed(t).
+.decl gct_parsed(m: symbol)  // module m is a document this run parsed (it has nodes), not one it reads as text only
+gct_parsed(m) :- kind(n, "program"), docof(n, d), doc(d, _, m).
 .decl gct_anc(p: symbol, a: symbol)  // a is a directory above document p ("" for the root)
 gct_anc(p, a) :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _), match("(?<a>.*)/[^/]*", p).
 gct_anc(p, "") :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _).
