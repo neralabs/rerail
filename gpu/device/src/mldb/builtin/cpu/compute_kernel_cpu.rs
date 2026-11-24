@@ -277,12 +277,18 @@ fn open_library(lib: &std::path::Path) -> Result<crate::os::Lib, String> {
     crate::os::Lib::open(&[path.as_ref()], crate::os::Scope::Local).ok_or_else(|| format!("loading {}: {}", lib.display(), crate::os::Lib::error()))
 }
 
+/// A debugging aid: `RERAIL_CPU_SANITIZE`, flags the kernels' compile adds (`-fsanitize=undefined,bounds-strict`: a
+/// read or write past a fixed array, of a thread's or a group's, reported at its line). Its own libraries (the key).
+fn sanitize() -> Vec<String> {
+    std::env::var("RERAIL_CPU_SANITIZE").map(|v| v.split_whitespace().map(str::to_owned).collect()).unwrap_or_default()
+}
+
 impl CpuComputeFunctionLibrary {
     /// Compiles C++ (UKL preprocessed for the CPU) with the host's compiler into a shared object, and loads it.
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, sanitize().join(" ").as_bytes(), preprocessed_source.as_bytes()]);
         // The shipped library (`crate::store::shipped`), of this compiler: loaded in place.
         if let Some(shipped) = crate::store::shipped("cpu", &k, LIB_EXTENSION)
             && let Ok(opened) = open_library(&shipped)
@@ -325,6 +331,7 @@ impl CpuComputeFunctionLibrary {
             let o = std::process::Command::new(cxx)
                 .args(flags)
                 .args(strict_simd().then_some("-O0"))
+                .args(sanitize())
                 .args(out)
                 .arg(&tmp)
                 .arg(&src)
