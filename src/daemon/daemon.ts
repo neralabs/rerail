@@ -24,6 +24,7 @@ import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
+import { startHistorySync, type HistorySync, type HistorySyncOptions } from "./history-sync.js";
 import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -79,6 +80,8 @@ export interface RerailDaemonOptions {
   remoteSink?: false | { intervalMs: number };
   /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
   checkoutPruning?: false | { intervalMs: number };
+  /** False keeps the history's sync in the background off ({@link startHistorySync}); tests may pass its period and sync. */
+  historySync?: false | HistorySyncOptions;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -501,6 +504,7 @@ export class RerailDaemon {
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
   #checkoutPruning: CheckoutPruning | undefined;
+  #historySync: HistorySync | undefined;
   /** What `RerailDaemonOptions.updateChecks` started, once nothing can fail the start. */
   #updateChecks: ReturnType<NonNullable<RerailDaemonOptions["updateChecks"]>> | undefined;
   #recordCheck: NodeJS.Timeout | undefined;
@@ -622,6 +626,7 @@ export class RerailDaemon {
       await daemon.#announce(remembered);
       daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
+      daemon.#startHistorySync();
       daemon.#startUpdateChecks();
       daemon.#startProvenanceMove();
       return daemon;
@@ -644,6 +649,12 @@ export class RerailDaemon {
   #startCheckoutPruning(): void {
     const pruning = this.#options.checkoutPruning;
     if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
+  }
+
+  /** Once nothing can fail the start: the log's sync about every 5 s while commits wait, off the daemon's thread. */
+  #startHistorySync(): void {
+    const sync = this.#options.historySync;
+    if (sync !== false) this.#historySync = startHistorySync(this.#databasePath, sync ?? {});
   }
 
   /** Once nothing can fail the start: the daily ask for a newer Rerail, where the entry point passes one. */
@@ -788,6 +799,8 @@ export class RerailDaemon {
       await closeHttpServer(this.#server);
     } finally {
       try {
+        // Before the database closes: the last connection to close removes the log, which no sync may hold open then.
+        await this.#historySync?.stop();
         await this.#nativeServer.close();
         await this.#engineService.close();
       } finally {
