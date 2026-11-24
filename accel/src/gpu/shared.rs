@@ -376,6 +376,9 @@ struct Pool {
     /// Leases made and served from the pool, for the profile.
     made: u64,
     reused: u64,
+    /// Idle buffers released (to fit the budget, or all at once): a returned block another lease of its class did
+    /// not take (`released_idle`).
+    released: u64,
     /// Idle deferrable files (archived segments) by directory and class, the oldest first, and how many in all.
     files: HashMap<(std::path::PathBuf, usize), Vec<(u64, std::path::PathBuf)>>,
     files_idle: usize,
@@ -412,6 +415,7 @@ impl Pool {
             .map(|(c, _)| *c);
         let Some(c) = oldest else { return false };
         self.idle.get_mut(&c).unwrap().remove(0);
+        self.released += 1;
         self.held -= c;
         if c >= SLAB_MIN {
             self.held_slabs -= c;
@@ -966,6 +970,11 @@ pub fn trim_idle() {
     dev().trim(&crate::budget::budgets(), 0);
 }
 
+/// The idle buffers the pool has released so far (to fit the budget, or all at once: `drop_free`, `drop_idle`).
+pub fn released_idle() -> u64 {
+    dev().pool.lock().expect("the pool").released
+}
+
 thread_local! {
     /// Whether this thread's leases keep within the budget (`within_budget`).
     static BOUNDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1018,6 +1027,7 @@ pub fn pool_counts() -> (usize, u64, u64) {
 pub fn drop_idle() {
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
+    p.released += p.idle.values().map(|v| v.len() as u64).sum::<u64>();
     p.idle.clear();
     p.held = 0;
     p.held_slabs = 0;
@@ -1031,6 +1041,7 @@ pub fn drop_idle() {
 pub fn drop_free() {
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
+    p.released += p.idle.values().map(|v| v.len() as u64).sum::<u64>();
     p.idle.clear();
     p.held = 0;
     p.held_slabs = 0;
