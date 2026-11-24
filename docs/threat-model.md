@@ -273,8 +273,10 @@ without hooks or network.
 - **Git read in process** (`native/src/git_access/`): the ignore matcher and the workspace discovery open every
   repository they read through one opener. Three reads of the code rules open gix directly instead, with its own
   defaults (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD` tree's committed
-  sources): they read the index and objects, not ignore rules, and none of this paragraph's checks applies to them; on
-  Windows the first of them in a process can start the first `git.exe` on `PATH` to find the system config file. The
+  sources): they read the index and objects, not ignore rules, and their opens take none of this paragraph's checks.
+  The first two open a repository another user owns outside `safe.directory`, which gix's defaults allow with reduced
+  trust; the third runs after the workspace discovery, which refuses one. On Windows the first of them in a process can
+  start the first `git.exe` on `PATH` to find the system config file. The
   opener starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
   It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). In a
