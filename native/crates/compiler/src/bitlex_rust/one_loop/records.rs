@@ -433,10 +433,39 @@ pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
         let code = g.rule(name)?;
         rules.push_str(&if rl.hot.contains(*name) { code } else { no_refusing(&code) });
     }
-    let mut arms = String::new();
-    for (l, code) in rl.places.borrow().iter().enumerate() {
-        let _ = write!(arms, "                {l} => {{\n{}                }}\n", super::super::indent(code, "                    "));
+    // A place that only goes to another is that other wherever it is named (decision 0673 step 11): no arm of its own,
+    // as the lean parser has no statement that only goes on to the next.
+    let places = rl.places.borrow();
+    let jump = |code: &str| code.strip_prefix("st = ").and_then(|r| r.strip_suffix(";\ncontinue 'run;\n")).and_then(|n| n.parse::<usize>().ok());
+    let mut to: Vec<usize> = (0..places.len()).collect();
+    for (l, code) in places.iter().enumerate() {
+        if l > 0
+            && let Some(m) = jump(code)
+        {
+            to[l] = m;
+        }
     }
+    let target = |mut l: usize| {
+        for _ in 0..to.len() {
+            if to[l] == l {
+                break;
+            }
+            l = to[l];
+        }
+        l
+    };
+    let mut arms = String::new();
+    for (l, code) in places.iter().enumerate() {
+        if target(l) != l {
+            continue;
+        }
+        let mut code = code.clone();
+        for n in (0..places.len()).filter(|&n| target(n) != n) {
+            code = code.replace(&format!("st = {n};\n"), &format!("st = {};\n", target(n))).replace(&format!("push({n});"), &format!("push({});", target(n))).replace(&format!("push({n} | "), &format!("push({} | ", target(n)));
+        }
+        let _ = write!(arms, "                {l} => {{\n{}                }}\n", super::super::indent(&code, "                    "));
+    }
+    drop(places);
     // The stack a local of the loop's, so its length and room stay in registers across the parser's calls.
     let arms = arms.replace("self.stack.", "stack.");
     if one.is_some() {

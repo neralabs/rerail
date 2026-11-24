@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: steps 1 to 10 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: steps 1 to 11 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -284,11 +284,10 @@ The comparison also found two gaps in the decisions, which both forms share:
   no test between can hold at its tokens: no mark, no word that is one of its tokens' words, and no test of a kind
   with the same tokens (a token has one kind). The arm is then one condition, `matches!(self.word(), …) ||
   self.kind() == t::HASH_WORD && …`, as the lean parser tests an arm's tokens together. No decision of rr's numbers its
-  arms in either form. Kotlin has 12, from 14. Its `statement` is decided by marks that are not peeks, in an order
-  its grammar sets, which is outside rr's ten gaps.
+  arms in either form. Kotlin has 12, from 14. Step 11 removes the rest.
 
-One place jumps to another and does nothing else (`6 => { st = 8; … }`). It is the start of `block_body`'s loop, and
-it stays.
+One place jumped to another and did nothing else (`6 => { st = 8; … }`), the start of `block_body`'s loop. Step 11
+removes it.
 
 rr's `tier2.rs` is 3,210 lines, from 3,237, and `tier2_loop.rs` is 3,716, from 3,968. Kotlin's `tier2.rs` is 8,317,
 from 8,394. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
@@ -307,9 +306,8 @@ What gap 7 left:
   another kind. Its take is the lean parser's `anon()`: a listed word is its own leaf (`ANON`), and any other token
   of the kind is an `identifier`. The function is gone.
 - **A repetition is a `while`.** `loop { if C { … } else { break; } }` is now `while C { … }` (`loops_as_whiles`), as
-  lean's `pragma` reads its strings. The `loop`s that remain end at a mark (`m_line`, `m_newline`) before testing
-  their tokens. The lean parser writes those as `while` with the line's test in the condition, and here the mark's
-  test is the first arm of the decision inside the loop.
+  lean's `pragma` reads its strings. The `loop`s that ended at a mark (`m_line`, `m_newline`) are `while`s from
+  step 11.
 
 rr's `tier2.rs` is 3,079 lines, from 3,210, and `tier2_loop.rs` is 3,614, from 3,716. Kotlin's `tier2.rs` is 8,305, from
 8,317. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
@@ -324,16 +322,43 @@ Its test is a call of its scan, `self.pat_paren_term_0_0(self.i, self.n)`, with 
 scanning to the `)` where it decides.
 
 rr's marks are now its three gap marks, `float_at`, `line` and `newline`, which play the part of the lean parser's
-`on_line` and its float test. Kotlin has 13 marks, and 18 of its marks became peeks. The three paren peeks each scan to
-the same `)`, where the lean parser scans once and then tests the token after it. That is one scan more per
-alternative, at a `(` only.
+`on_line` and its float test. Kotlin has 13 marks, and 18 of its marks became peeks. The three paren peeks each scanned to
+the same `)`; step 11 scans once.
 
 rr's `tier2.rs` is 2,949 lines, from 3,079, and `tier2_loop.rs` is 3,484, from 3,614. Kotlin's `tier2.rs` is 7,999, from
 8,305. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
 
+## Step 11: one scan of a bracket; no jump-only place; `while !mark`; no numbered arms (done)
+
+Steps 8 to 10 had left four differences from the lean parser. Each is now gone.
+
+- **A bracket is scanned once.** A run that opens a bracket, holds tokens with that bracket nested, and closes it
+  (`bracket`) is tested by one scan a bracket, `past_lparen(j) -> Option<usize>` (`scan_fn`): where the bracket
+  closes, or none. A peek tests the tokens after it there, `self.past_lparen(self.i).is_some_and(|e| …)`. Where a
+  decision's own tests call a scan more than once at the token, `decide` calls it once before them, `let past_lparen
+  = self.past_lparen(self.i);`, as the lean parser scans to the `)` once and asks what follows. rr's `literal`
+  decides so.
+- **No place only jumps.** A loop-form place whose code is `st = M; continue 'run;` is not written; every jump or
+  push to it goes to `M` (`records.rs`).
+- **A repetition that ends at a mark is a `while`.** `loop { if mark { break; } else if D { … } … }` is `while !mark
+  { if D { … } … }`, and `loop { if C { break; } else { … } }` is `while !C { … }` (`loops_as_whiles`). The `loop`s
+  left are the bracket scans, the widths retry, and `violation_declaration`'s two, which the lean parser's
+  `violation` writes as `loop { if … else if … else { break } }` too.
+- **No numbered arms.** A run of a decision's `if` chain joins an earlier run of its arm where no test between can
+  hold where it may. Each test is classed by where it may hold (`Holds`): at some words and tokens of some kinds, or
+  anywhere. A mark holds where its definitions' first tokens are, words and kinds both (Kotlin's `named` starts with
+  an identifier or with `!`). A run also moves down to its arm's later run where the runs between are apart from it.
+  An arm still reached apart is written in each run where its code is one call or take with its saves, as the lean
+  parser writes a call twice; else its later run is one condition, `!(between) && (its tests)`, in the earlier run.
+  Neither rr nor Kotlin numbers an arm.
+
+rr's `tier2.rs` is 2,791 lines, from 2,949, and `tier2_loop.rs` is 3,330, from 3,484. Kotlin's `tier2.rs` is 7,552, from
+7,999. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
 ## Where the ten gaps stand
 
-1. Marks: every rr mark of tokens is a peek (steps 1, 5, 10). The gap marks remain as the lean parser's line tests.
+1. Marks: every rr mark of tokens is a peek (steps 1, 5, 10), a bracket scanned once (step 11). The gap marks remain
+   as the lean parser's line tests.
 2. Statements: decided by the `.` and the word after it (step 4).
 3. JSON: a policy document is JSON's grammar read into one leaf (step 6).
 4. Going back: a `(` is decided past its `)` (step 5, the user's option C).
@@ -341,7 +366,8 @@ rr's `tier2.rs` is 2,949 lines, from 3,079, and `tier2_loop.rs` is 3,484, from 3
 6. A bare term fails where it ends (step 5).
 7. Tokens: a kind is `self.kind() == t::K`, a choice of tokens is one take, `punctuation` is `anon()`, and a tested
    token is taken with no test (steps 2, 9).
-8. Numbered arms: none in rr, in either form (steps 3, 5, 8).
+8. Numbered arms: none in rr, in either form, or in Kotlin (steps 3, 5, 8, 11).
 9. Helpers: one take, a leaf's refusal checked once, depth counted where the grammar recurses, and no unused helper
    (step 7).
-10. The loop form: its places are in the calls form's shapes (step 8).
+10. The loop form: its places are in the calls form's shapes, and none only jumps (steps 8, 11). A repetition is a
+    `while` (steps 9, 11).

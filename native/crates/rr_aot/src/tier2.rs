@@ -904,10 +904,8 @@ impl<L: Layout> P<'_, L> {
             self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
         } else if self.kind() == t::IDENTIFIER {
             self.tk_as(true, k::IDENTIFIER, f::NAME)?;
-            loop {
-                if self.m_newline() {
-                    break;
-                } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+            while !self.m_newline() {
+                if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
                     if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) {
                         self.tk_as(true, ANON[self.word() as usize], 0)?;
                     } else {
@@ -978,10 +976,8 @@ impl<L: Layout> P<'_, L> {
 
     /// `block_body`.
     fn block_body(&mut self) -> R {
-        loop {
-            if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 {
-                break;
-            } else if matches!(self.word(), w::HASH_INCLUDE_34 | w::DOT_13 | w::MUST_35 | w::MAY_36) || self.kind() == t::IDENTIFIER {
+        while !(self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56) {
+            if matches!(self.word(), w::HASH_INCLUDE_34 | w::DOT_13 | w::MUST_35 | w::MAY_36) || self.kind() == t::IDENTIFIER {
                 self.block_statement()?;
                 self.field_made(f::BODY);
             } else {
@@ -1059,10 +1055,8 @@ impl<L: Layout> P<'_, L> {
         self.word_leaf_as(w::COLON_15, k::COLON)?;
         self.functor_type()?;
         self.field_made(f::RETURN_TYPE);
-        loop {
-            if self.m_line() {
-                break;
-            } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+        while !self.m_line() {
+            if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
                 if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) {
                     self.tk_as(true, ANON[self.word() as usize], 0)?;
                 } else {
@@ -1090,10 +1084,8 @@ impl<L: Layout> P<'_, L> {
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
-        loop {
-            if self.m_line() {
-                break;
-            } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+        while !self.m_line() {
+            if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
                 if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) {
                     self.tk_as(true, ANON[self.word() as usize], 0)?;
                 } else {
@@ -1299,26 +1291,22 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        loop {
-            if self.m_line() {
-                break;
-            } else {
-                match self.word() {
-                    w::HASH_INCLUDE_34 | w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::LBRACE_20 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 => {
-                        self.merge_as(true, k::RAW_TEXT)?;
-                    }
-                    _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
-                        self.merge_as(true, k::RAW_TEXT)?;
-                    }
-                    _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                        self.merge_as(true, k::RAW_TEXT)?;
-                    }
-                    _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                        self.merge_as(true, k::RAW_TEXT)?;
-                    }
-                    _ => {
-                        break;
-                    }
+        while !self.m_line() {
+            match self.word() {
+                w::HASH_INCLUDE_34 | w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::LBRACE_20 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                }
+                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                }
+                _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                }
+                _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                }
+                _ => {
+                    break;
                 }
             }
         }
@@ -1858,12 +1846,13 @@ impl<L: Layout> P<'_, L> {
     /// `literal`.
     fn literal(&mut self) -> R {
         self.deeper()?;
-        if self.pat_paren_term_0_0(self.i, self.n) {
+        let past_lparen = self.past_lparen(self.i);
+        if past_lparen.is_some_and(|e| (self.word_at(e) == w::EQ_16 || self.word_at(e) == w::BANG_EQ_5 || self.word_at(e) == w::LT_17 || self.word_at(e) == w::LT_EQ_6 || self.word_at(e) == w::GT_18 || self.word_at(e) == w::GT_EQ_7 || self.word_at(e) == w::PLUS_28 || self.word_at(e) == w::MINUS_27 || self.word_at(e) == w::STAR_24 || self.word_at(e) == w::SLASH_29 || self.word_at(e) == w::PERCENT_30)) {
             self.term()?;
             if matches!(self.word(), w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31) {
                 self.literal_tail()?;
             }
-        } else if self.pat_paren_tilde_0_0(self.i, self.n) {
+        } else if past_lparen.is_some_and(|e| self.word_at(e) == w::TILDE_31) {
             self.paren_subject()?;
             self.pattern_tail()?;
         } else if self.word() == w::BANG_19 {
@@ -1923,7 +1912,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `paren_inner`.
     fn paren_inner(&mut self) -> R {
-        if self.pat_paren_closes_0_0(self.i, self.n) {
+        if self.past_lparen(self.i).is_some_and(|e| self.word_at(e) == w::RPAREN_11) {
             self.paren_subject()?;
         } else if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 {
             self.term()?;
@@ -2051,7 +2040,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 {
             self.aggregate()?;
-        } else if self.pat_agg_call_0_0(self.i, self.n) {
+        } else if (self.word() == w::MIN_48 || self.word() == w::MAX_49 || self.word() == w::SUM_50 || self.word() == w::PRODUCT_60 || self.word() == w::MEAN_51 || self.word() == w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
             self.aggregate()?;
         } else if (self.word() == w::MIN_48 || self.word() == w::MAX_49 || self.word() == w::SUM_50 || self.word() == w::PRODUCT_60 || self.word() == w::MEAN_51 || self.word() == w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) {
             self.aggregate()?;
@@ -2470,178 +2459,31 @@ impl<L: Layout> P<'_, L> {
         self.word_at(j) == w::RBRACE_21 && !self.bit_at(j, 1) && true
     }
 
-    #[allow(unused_variables)]
-    fn pat_paren_term_0_0(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::LPAREN_10 && self.pat_paren_term_0_1(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_term_0_1(&self, j: usize, prev: usize) -> bool {
-        let (mut j, mut prev) = (j, prev);
+    /// Where the bracket that opens at token `j` closes: the token after its close; none where no bracket opens there
+    /// or a token it may not hold comes first. As the lean parser scans to the `)`, its pairs counted.
+    fn past_lparen(&self, j: usize) -> Option<usize> {
+        if !(self.word_at(j) == w::LPAREN_10) {
+            return None;
+        }
         let mut depth = [0u32; 1];
+        let mut j = j + 1;
         loop {
-            if depth.iter().all(|&d| d == 0) && true && self.pat_paren_term_0_2(j, prev) {
-                return true;
+            if depth.iter().all(|&d| d == 0) && self.word_at(j) == w::RPAREN_11 {
+                return Some(j + 1);
             }
             if j >= self.n || !((self.kind_at(j) == t::STRING || self.kind_at(j) == t::CODE_LITERAL || self.kind_at(j) == t::HASH_WORD && self.word_at(j) != w::HASH_INCLUDE_34 || self.kind_at(j) == t::IDENTIFIER || self.kind_at(j) == t::NUMBER || self.kind_at(j) == t::PUNCT || self.kind_at(j) == t::BAD || self.kind_at(j) == t::BAD_CHAR)) {
-                return false;
+                return None;
             }
             if self.word_at(j) == w::LPAREN_10 {
                 depth[0] += 1;
             } else if self.word_at(j) == w::RPAREN_11 {
                 if depth[0] == 0 {
-                    return false;
+                    return None;
                 }
                 depth[0] -= 1;
             }
-            prev = j;
             j += 1;
         }
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_term_0_2(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::RPAREN_11 && self.pat_paren_term_0_3(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_term_0_3(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        (self.word_at(j) == w::EQ_16 || self.word_at(j) == w::BANG_EQ_5 || self.word_at(j) == w::LT_17 || self.word_at(j) == w::LT_EQ_6 || self.word_at(j) == w::GT_18 || self.word_at(j) == w::GT_EQ_7 || self.word_at(j) == w::PLUS_28 || self.word_at(j) == w::MINUS_27 || self.word_at(j) == w::STAR_24 || self.word_at(j) == w::SLASH_29 || self.word_at(j) == w::PERCENT_30) && true
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_tilde_0_0(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::LPAREN_10 && self.pat_paren_tilde_0_1(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_tilde_0_1(&self, j: usize, prev: usize) -> bool {
-        let (mut j, mut prev) = (j, prev);
-        let mut depth = [0u32; 1];
-        loop {
-            if depth.iter().all(|&d| d == 0) && true && self.pat_paren_tilde_0_2(j, prev) {
-                return true;
-            }
-            if j >= self.n || !((self.kind_at(j) == t::STRING || self.kind_at(j) == t::CODE_LITERAL || self.kind_at(j) == t::HASH_WORD && self.word_at(j) != w::HASH_INCLUDE_34 || self.kind_at(j) == t::IDENTIFIER || self.kind_at(j) == t::NUMBER || self.kind_at(j) == t::PUNCT || self.kind_at(j) == t::BAD || self.kind_at(j) == t::BAD_CHAR)) {
-                return false;
-            }
-            if self.word_at(j) == w::LPAREN_10 {
-                depth[0] += 1;
-            } else if self.word_at(j) == w::RPAREN_11 {
-                if depth[0] == 0 {
-                    return false;
-                }
-                depth[0] -= 1;
-            }
-            prev = j;
-            j += 1;
-        }
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_tilde_0_2(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::RPAREN_11 && self.pat_paren_tilde_0_3(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_tilde_0_3(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::TILDE_31 && true
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_closes_0_0(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::LPAREN_10 && self.pat_paren_closes_0_1(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_closes_0_1(&self, j: usize, prev: usize) -> bool {
-        let (mut j, mut prev) = (j, prev);
-        let mut depth = [0u32; 1];
-        loop {
-            if depth.iter().all(|&d| d == 0) && true && self.pat_paren_closes_0_2(j, prev) {
-                return true;
-            }
-            if j >= self.n || !((self.kind_at(j) == t::STRING || self.kind_at(j) == t::CODE_LITERAL || self.kind_at(j) == t::HASH_WORD && self.word_at(j) != w::HASH_INCLUDE_34 || self.kind_at(j) == t::IDENTIFIER || self.kind_at(j) == t::NUMBER || self.kind_at(j) == t::PUNCT || self.kind_at(j) == t::BAD || self.kind_at(j) == t::BAD_CHAR)) {
-                return false;
-            }
-            if self.word_at(j) == w::LPAREN_10 {
-                depth[0] += 1;
-            } else if self.word_at(j) == w::RPAREN_11 {
-                if depth[0] == 0 {
-                    return false;
-                }
-                depth[0] -= 1;
-            }
-            prev = j;
-            j += 1;
-        }
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_closes_0_2(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::RPAREN_11 && self.pat_paren_closes_0_3(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_paren_closes_0_3(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::RPAREN_11 && true
-    }
-
-    #[allow(unused_variables)]
-    fn pat_agg_call_0_0(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        (self.word_at(j) == w::MIN_48 || self.word_at(j) == w::MAX_49 || self.word_at(j) == w::SUM_50 || self.word_at(j) == w::PRODUCT_60 || self.word_at(j) == w::MEAN_51 || self.word_at(j) == w::JOIN_52) && self.pat_agg_call_0_1(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_agg_call_0_1(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::LPAREN_10 && self.pat_agg_call_0_2(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_agg_call_0_2(&self, j: usize, prev: usize) -> bool {
-        let (mut j, mut prev) = (j, prev);
-        let mut depth = [0u32; 1];
-        loop {
-            if depth.iter().all(|&d| d == 0) && true && self.pat_agg_call_0_3(j, prev) {
-                return true;
-            }
-            if j >= self.n || !((self.kind_at(j) == t::STRING || self.kind_at(j) == t::CODE_LITERAL || self.kind_at(j) == t::HASH_WORD && self.word_at(j) != w::HASH_INCLUDE_34 || self.kind_at(j) == t::IDENTIFIER || self.kind_at(j) == t::NUMBER || self.kind_at(j) == t::PUNCT || self.kind_at(j) == t::BAD || self.kind_at(j) == t::BAD_CHAR)) {
-                return false;
-            }
-            if self.word_at(j) == w::LPAREN_10 {
-                depth[0] += 1;
-            } else if self.word_at(j) == w::RPAREN_11 {
-                if depth[0] == 0 {
-                    return false;
-                }
-                depth[0] -= 1;
-            }
-            prev = j;
-            j += 1;
-        }
-    }
-
-    #[allow(unused_variables)]
-    fn pat_agg_call_0_3(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::RPAREN_11 && self.pat_agg_call_0_4(j + 1, j)
-    }
-
-    #[allow(unused_variables)]
-    fn pat_agg_call_0_4(&self, j: usize, prev: usize) -> bool {
-        let _ = prev;
-        self.word_at(j) == w::COLON_15 && true
     }
 
 

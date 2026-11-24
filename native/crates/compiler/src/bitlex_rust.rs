@@ -147,6 +147,8 @@ struct G<'a> {
     leaf_call: std::cell::Cell<bool>,
     /// The levels that count the depth (`depth_cuts`).
     cuts: std::cell::RefCell<Option<HashSet<String>>>,
+    /// The bracket scans (`scan_fn`): each one's bracket and tokens, and its function's name.
+    scans: std::cell::RefCell<Vec<(String, String)>>,
 }
 
 /// `s`'s lines at `p`.
@@ -305,7 +307,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -505,6 +507,26 @@ impl<'a> G<'a> {
     /// elsewhere (inside parentheses) the mark is passed, as the lean parser asks `asi` only where
     /// `stmt` is set.
     fn decide(&self, arms: &[(Vec<First>, String)], ex: &[(usize, bool)], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
+        let code = self.decide_tests(arms, ex, unmarked, exit, none, pad);
+        // A bracket's scan (`scan_fn`) its own tests ask more than once at the token: once, before them, as the lean
+        // parser scans to the `)` once and asks what follows (decision 0673 step 11).
+        let own = |l: &str| l.len() - l.trim_start().len() == pad.len() && (l.trim_start().starts_with("if ") || l.trim_start().starts_with("} else if "));
+        let mut lets = String::new();
+        let mut code = code;
+        for (_, f) in self.scans.borrow().iter() {
+            let call = format!("self.{f}(self.i)");
+            if code.lines().filter(|l| own(l)).map(|l| l.matches(call.as_str()).count()).sum::<usize>() < 2 {
+                continue;
+            }
+            let _ = writeln!(lets, "{pad}let {f} = {call};");
+            // The line right after one of its tests is at the same token: a peek's test there (`no_retests`) reads it too.
+            let lines: Vec<&str> = code.lines().collect();
+            code = lines.iter().enumerate().map(|(i, l)| if own(l) || (i > 0 && own(lines[i - 1])) { l.replace(call.as_str(), f) } else { (*l).to_owned() }).collect::<Vec<_>>().join("\n") + "\n";
+        }
+        lets + &code
+    }
+
+    fn decide_tests(&self, arms: &[(Vec<First>, String)], ex: &[(usize, bool)], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
         let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
         let gated = self.gated(ex);
         let n = arms.len();
@@ -570,10 +592,13 @@ impl<'a> G<'a> {
         let mut mg: Vec<(Vec<String>, usize)> = Vec::new();
         // The marks of the last run of marks, by arm.
         let mut last_marks: Vec<usize> = Vec::new();
+        // Each mark's test, by the mark: the words it may hold at (`decide_tests`' runs).
+        let mut mark_conds: Vec<(String, usize)> = Vec::new();
         for (m, f, t) in &marks {
             let c = guard(f, self.mark_test(*m));
             let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
             let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
+            mark_conds.push((c.clone(), *m));
             match mg.last_mut() {
                 Some((cs, tt)) if tt == t => {
                     cs.push(c);
@@ -672,36 +697,103 @@ impl<'a> G<'a> {
             for (pat, t) in ws {
                 push(word_test(pat), *t, &mut runs);
             }
-            // A kind whose arm has a run before it joins that run where no test between can hold at its tokens: no mark,
-            // a word none of its tokens is, another kind's (a token is of one kind). The lean parser tests an arm's
-            // tokens together (decision 0673 step 8).
+            for (cs, t) in &kg {
+                cs.iter().filter(|c| !early_kinds.iter().any(|e| e.0 == **c)).for_each(|c| push(c.clone(), *t, &mut runs));
+            }
+            // A run joins an earlier run of its arm where no run between can hold at a token it holds at: their tests
+            // ask apart words, a word none of a kind's tokens is, or kinds of apart tokens (a token is of one kind). The
+            // lean parser tests an arm's tokens together (decision 0673 steps 8 and 11).
+            // Where a test may hold: at a token that is one of `.0`'s words or of one of `.1`'s kinds; None, anywhere.
+            type Holds = Option<(Vec<String>, Vec<String>)>;
             let tokens_of = |k: &str| -> Vec<&str> { self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| n.as_str()).collect() };
-            for (k, f, t) in &kinds {
-                let c = guard(f, self.kind_test(k, "self.kind()", "self.word()"));
-                if early_kinds.iter().any(|e| e.0 == c) {
+            let holds = |c: &str| -> Holds {
+                if let Some(p) = c.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')).filter(|p| !p.contains('(')) {
+                    return Some((p.split(" | ").map(str::to_owned).collect(), vec![]));
+                }
+                if let Some(w) = c.strip_prefix("self.word() == ").filter(|w| w.starts_with("w::") && !w.contains(' ')) {
+                    return Some((vec![w.to_owned()], vec![]));
+                }
+                if let Some(o) = kinds.iter().find(|o| guard(&o.1, self.kind_test(&o.0, "self.kind()", "self.word()")) == c) {
+                    return Some((vec![], vec![o.0.clone()]));
+                }
+                let &(_, m) = mark_conds.iter().find(|x| x.0 == c)?;
+                // A mark: each definition's first token, a choice of words and kinds.
+                let (mut ws, mut ks) = (Vec::new(), Vec::new());
+                for d in self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name) {
+                    for x in d.tokens.and_then(|(_, seq)| seq.first())? {
+                        match x {
+                            TokenElem::Kind(k) => ks.push(k.clone()),
+                            TokenElem::Word(w) => ws.push(format!("w::{}", self.word_const(self.word_of(&String::from_utf8_lossy(w))?))),
+                            TokenElem::With(_) | TokenElem::Without(_) => {}
+                            _ => return None,
+                        }
+                    }
+                }
+                Some((ws, ks))
+            };
+            let apart = |a: &Holds, b: &Holds| {
+                let (Some((aw, ak)), Some((bw, bk))) = (a, b) else { return false };
+                let word_kind = |ws: &[String], ks: &[String]| ks.iter().all(|k| {
+                    let kw = self.kind_words(k);
+                    ws.iter().all(|w| !kw.contains(w))
+                });
+                aw.iter().all(|w| !bw.contains(w)) && word_kind(aw, bk) && word_kind(bw, ak) && ak.iter().all(|k| bk.iter().all(|o| k != o && tokens_of(o).iter().all(|x| !tokens_of(k).contains(x))))
+            };
+            let mut j = 1;
+            while j < runs.len() {
+                let t = runs[j].1;
+                let mine: Vec<Holds> = runs[j].0.iter().map(|c| holds(c)).collect();
+                let earlier = runs[..j].iter().rposition(|r| r.1 == t);
+                let clear = |i: usize, of: &[Holds]| runs[i + 1..j].iter().all(|r| r.0.iter().all(|c| of.iter().all(|m| apart(m, &holds(c)))));
+                let join = earlier.filter(|&i| clear(i, &mine));
+                // Else the earlier run goes down to this one, where the runs between are apart from it.
+                if join.is_none()
+                    && let Some(i) = earlier
+                    && clear(i, &runs[i].0.iter().map(|c| holds(c)).collect::<Vec<_>>())
+                {
+                    let mut cs = runs.remove(i).0;
+                    cs.extend(std::mem::take(&mut runs[j - 1].0));
+                    runs[j - 1].0 = cs;
+                    j = i.max(1);
                     continue;
                 }
-                let (own, words_of) = (tokens_of(k), self.kind_words(k));
-                let clear = |r: &(Vec<String>, usize)| {
-                    r.0.iter().all(|c| {
-                        if let Some(p) = c.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')) {
-                            p.split(" | ").all(|w| !words_of.iter().any(|x| x == w))
-                        } else if let Some(w) = c.strip_prefix("self.word() == ") {
-                            !words_of.iter().any(|x| x == w)
-                        } else if let Some(o) = kinds.iter().find(|o| guard(&o.1, self.kind_test(&o.0, "self.kind()", "self.word()")) == *c) {
-                            o.0 != *k && tokens_of(&o.0).iter().all(|x| !own.contains(x))
-                        } else {
-                            false
+                match join {
+                    Some(i) => {
+                        let cs = runs.remove(j).0;
+                        runs[i].0.extend(cs);
+                        // The runs now side by side of one arm are one.
+                        if i + 1 < runs.len() && runs[i + 1].1 == t {
+                            let cs = runs.remove(i + 1).0;
+                            runs[i].0.extend(cs);
                         }
-                    })
-                };
-                match runs.iter().rposition(|r| r.1 == *t) {
-                    Some(at) if f.is_none() && runs[at + 1..].iter().all(clear) => runs[at].0.push(c),
-                    _ => push(c, *t, &mut runs),
+                        j = i + 1;
+                    }
+                    None => j += 1,
                 }
             }
+            let short = |t: usize| {
+                let b = body_of(t);
+                b.lines().filter(|l| l.contains("?;") || l.contains("continue 'run;") || l.contains("return ")).count() <= 1 && b.lines().count() <= 6 && !b.contains('{')
+            };
+            // An arm still reached apart whose code is long: one condition, the runs between negated before its later
+            // tests, as the lean parser's `if a || !e && b`. The runs between stay where they are, and decide where they hold.
+            let mut j = 1;
+            while j < runs.len() {
+                let t = runs[j].1;
+                if !short(t)
+                    && let Some(i) = runs[..j].iter().rposition(|r| r.1 == t)
+                {
+                    let between: Vec<String> = runs[i + 1..j].iter().flat_map(|r| r.0.iter().cloned()).collect();
+                    let mine = runs.remove(j).0;
+                    runs[i].0.push(format!("!({}) && ({})", between.join(" || "), mine.join(" || ")));
+                    continue;
+                }
+                j += 1;
+            }
             let mut seen = HashSet::new();
-            if runs.iter().all(|r| seen.insert(r.1)) {
+            // An arm the runs reach apart: its code in each, where it is one call or take (with the saves around it), as
+            // the lean parser writes a call twice (decision 0673 step 11); else the arms are numbered.
+            if runs.iter().all(|r| seen.insert(r.1) || short(r.1)) {
                 let q = format!("{pad}    ");
                 let mut out = String::new();
                 for (i, (cs, t)) in runs.iter().enumerate() {
@@ -1611,6 +1703,71 @@ impl<'a> G<'a> {
 
     /// The token before the token a run starts at, as its first function's `prev`: found
     /// only where the run's first element reads it, a `(C)*` with an ending; else none (`self.n`), as no element reads it.
+    /// A run that scans a bracket: tokens at known places, then an opening token, the tokens between it and its closing
+    /// one (`(C)* nest (O to C)`), the closing one, and tokens at known places after it. The opening token's place in the
+    /// run; one scan finds where the bracket closes (`scan_fn`), as the lean parser scans to the `)` once and asks what
+    /// follows.
+    fn bracket(seq: &[Vec<TokenElem>]) -> Option<usize> {
+        let k = seq.iter().position(|e| matches!(e.as_slice(), [TokenElem::Many(..)]))?;
+        let [TokenElem::Many(_, nests, ending)] = seq[k].as_slice() else { return None };
+        let fixed = |es: &[Vec<TokenElem>]| Self::fixed(es);
+        (k >= 1 && ending.is_empty() && k + 1 < seq.len() && nests.iter().any(|n| n.open == seq[k - 1] && n.close == seq[k + 1]) && fixed(&seq[..k]) && fixed(&seq[k + 1..])).then_some(k - 1)
+    }
+
+    /// The scan of a bracket run (`bracket`) whose opening token is at `h`: its function's name, and its code. One
+    /// function a bracket and the tokens it may hold, however many marks ask it.
+    fn scan_fn(&self, seq: &[Vec<TokenElem>], h: usize) -> Result<(String, String), String> {
+        let [TokenElem::Many(choices, nests, _)] = seq[h + 1].as_slice() else { return Err("a scan of no repetition".into()) };
+        let key = format!("{:?}", &seq[h..h + 3]);
+        let mut scans = self.scans.borrow_mut();
+        let base = match seq[h].as_slice() {
+            [TokenElem::Word(w)] => self.word_of(&String::from_utf8_lossy(w)).map(|id| self.word_const(id).trim_end_matches(|c: char| c.is_ascii_digit() || c == '_').to_ascii_lowercase()),
+            _ => None,
+        }
+        .unwrap_or_else(|| "bracket".to_owned());
+        let name = match scans.iter().find(|x| x.0 == key) {
+            Some(x) => x.1.clone(),
+            None => {
+                let same = scans.iter().filter(|x| x.1.starts_with(&format!("past_{base}"))).count();
+                let n = if same == 0 { format!("past_{base}") } else { format!("past_{base}_{same}") };
+                scans.push((key, n.clone()));
+                n
+            }
+        };
+        let mut b = String::new();
+        let _ = writeln!(b, "    /// Where the bracket that opens at token `j` closes: the token after its close; none where no bracket opens there");
+        let _ = writeln!(b, "    /// or a token it may not hold comes first. As the lean parser scans to the `)`, its pairs counted.");
+        let _ = writeln!(b, "    fn {name}(&self, j: usize) -> Option<usize> {{");
+        let _ = writeln!(b, "        if !({}) {{
+            return None;
+        }}", self.elem(&seq[h], "j")?);
+        let _ = writeln!(b, "        let mut depth = [0u32; {}];
+        let mut j = j + 1;
+        loop {{", nests.len().max(1));
+        let _ = writeln!(b, "            if depth.iter().all(|&d| d == 0) && {} {{
+                return Some(j + 1);
+            }}", self.elem(&seq[h + 2], "j")?);
+        let _ = writeln!(b, "            if j >= self.n || !({}) {{
+                return None;
+            }}", self.elem(choices, "j")?);
+        for (d, n) in nests.iter().enumerate() {
+            let _ = writeln!(b, "            if {} {{
+                depth[{d}] += 1;
+            }} else if {} {{
+                if depth[{d}] == 0 {{
+                    return None;
+                }}
+                depth[{d}] -= 1;
+            }}", self.elem(&n.open, "j")?, self.elem(&n.close, "j")?);
+        }
+        b.push_str("            j += 1;
+        }
+    }
+
+");
+        Ok((name, b))
+    }
+
     /// Whether a run's tokens are each one token at a place it knows (no repetition, no mark asked of a token): a peek
     /// tests it inline.
     fn fixed(seq: &[Vec<TokenElem>]) -> bool {
@@ -1912,6 +2069,18 @@ impl<'a> G<'a> {
             }
             // A run that scans (a repetition, a token with or without a mark): its function (`marks` writes it), as the
             // lean parser's `literal` scans to the `)` where it decides.
+            if let Some(h) = Self::bracket(seq) {
+                for (k, e) in seq[..h].iter().enumerate() {
+                    let t = self.elem(e, &if k == 0 { "self.i".to_owned() } else { format!("self.i + {k}") })?;
+                    c.push(if k == 0 { t.replace("self.word_at(self.i)", "self.word()") } else { t });
+                }
+                let (f, _) = self.scan_fn(seq, h)?;
+                let at = if h == 0 { "self.i".to_owned() } else { format!("self.i + {h}") };
+                let tail: Vec<String> = seq[h + 3..].iter().enumerate().map(|(k, e)| self.elem(e, &if k == 0 { "e".to_owned() } else { format!("e + {k}") })).collect::<Result<_, _>>()?;
+                c.push(if tail.is_empty() { format!("self.{f}({at}).is_some()") } else { format!("self.{f}({at}).is_some_and(|e| {})", tail.join(" && ")) });
+                ors.push(c.join(" && "));
+                continue;
+            }
             if !Self::fixed(seq) {
                 c.push(format!("self.pat_{}_{d}_0(self.i, {})", ident(name), Self::run_prev(seq)));
                 ors.push(c.join(" && "));
@@ -1948,6 +2117,13 @@ impl<'a> G<'a> {
             if peeks >> order & 1 == 1 {
                 for (d, def) in self.x.marks.iter().filter(|x| x.name == m.name).enumerate() {
                     if let Some((_, seq)) = def.tokens
+                        && let Some(h) = Self::bracket(seq)
+                    {
+                        let (f, code) = self.scan_fn(seq, h)?;
+                        if !fns.contains(&format!("    fn {f}(")) {
+                            fns.push_str(&code);
+                        }
+                    } else if let Some((_, seq)) = def.tokens
                         && !Self::fixed(seq)
                     {
                         self.run(seq, &format!("pat_{n}_{d}"), &mut fns)?;
@@ -2864,6 +3040,34 @@ fn loops_as_whiles(code: &str) -> String {
             let close = (i + 2..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() <= q.len())?;
             (lines[close] == format!("{q}}} else {{") && lines.get(close + 1)?.trim() == "break;" && *lines.get(close + 2)? == format!("{q}}}") && *lines.get(close + 3)? == format!("{p}}}")).then_some((c, close))
         });
+        // `loop { if C { break; } else if D { … } … }`: `while !C { if D { … } … }`, the loop's end its condition, as the
+        // lean parser's `while self.on_line(…)`.
+        let ends = cond.filter(|_| found.is_none()).filter(|_| lines.get(i + 2).is_some_and(|b| b.trim() == "break;")).and_then(|c| {
+            let d = lines.get(i + 3)?.strip_prefix(q.as_str())?.strip_prefix("} else if ")?;
+            Some((c, d))
+        });
+        // `loop { if C { break; } else { … } }`: `while !C { … }`.
+        let plain = cond.filter(|_| found.is_none() && ends.is_none()).filter(|_| lines.get(i + 2).is_some_and(|b| b.trim() == "break;") && lines.get(i + 3) == Some(&format!("{q}}} else {{").as_str())).and_then(|c| {
+            let close = (i + 4..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() <= q.len())?;
+            (lines[close] == format!("{q}}}") && *lines.get(close + 1)? == format!("{p}}}")).then_some((c, close))
+        });
+        if let Some((c, close)) = plain {
+            let not = if c.starts_with("self.") && !c.contains(' ') { format!("!{c}") } else { format!("!({c})") };
+            let _ = writeln!(out, "{p}while {not} {{");
+            for b in &lines[i + 4..close] {
+                out.push_str(b.strip_prefix("    ").unwrap_or(b));
+                out.push('\n');
+            }
+            let _ = writeln!(out, "{p}}}");
+            i = close + 2;
+            continue;
+        }
+        if let Some((c, d)) = ends {
+            let not = if c.starts_with("self.") && !c.contains(' ') { format!("!{c}") } else { format!("!({c})") };
+            let _ = writeln!(out, "{p}while {not} {{\n{q}if {d}");
+            i += 4;
+            continue;
+        }
         if let Some((c, close)) = found {
             let _ = writeln!(out, "{p}while {c} {{");
             for b in &lines[i + 2..close] {
