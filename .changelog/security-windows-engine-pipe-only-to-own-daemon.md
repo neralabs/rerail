@@ -1,1 +1,0 @@
-On Windows, with `RERAIL_ENGINE_SOCKET` set, a hook sends events only to the daemon `daemon.json` records, or to an engine that proves it holds that daemon's capability. Before, once that daemon had ended, as after a logoff or a restart, any local user who made a pipe of that name got the hooks' events, prompts included, and the capability.
