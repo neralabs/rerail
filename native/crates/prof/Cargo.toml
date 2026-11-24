@@ -94,7 +94,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

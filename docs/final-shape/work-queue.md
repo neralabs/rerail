@@ -11233,3 +11233,46 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - rerail-store's suite passes the memory cap with four threads;
   - tests-corpus: the test stores' template holds no library under Relax (`core.rerail: in no module of phase 0's plan`), as at roll-up 111, and `a_second_run_in_one_process_records_the_first_runs_manifest` passes the cap;
   - rerail-engine's check: napi-derive's constructor registry fires twice under Relax.
+
+### Q540. Roll-up 113 (main 4a14d61f6f onto Pulling-it-all-together): what the merge chose
+
+- main (21 commits): `.rerail` packs and the Django pack (#930), `sql_query`'s golden and the issued-ahead stratum (#949, #932), Git calls that start no configured program (#978), linked worktrees' includes (#996), the rule-reading deadline (#1003), the update and dashboard work, Windows module names (#967), the daemon start (#987), and dependency bumps.
+- The wave clash (#930's fences against the hub's 0386), resolved as the user decided:
+  - 0386's `lanes::wave::Scope` and commit-at-submit stay. Main's fences, depth, `OpenWaves`, `FENCES`, `exec::fenced` and `fence_jobs` are not taken. `exec.rs`, `threads.rs`, `facts_only.rs` and setfix's `device.rs` are the hub's.
+  - Main's failure handling is ported onto the scope as `Commits`:
+    - a flush runs every deferred submission, whether its launches ran or failed, and returns the first error;
+    - a commit not run (a panic) goes back to `DEFERRED`;
+    - `Scope::exit` runs each leftover finish under `catch_unwind`.
+  - Main's wave tests run on the scope (`nothing_a_job_deferred_outlives_it`, nine ways; `open_submissions_follow_the_job_scope`). With the hub's old flush and exit, ways 2–6 and 9 fail.
+  - `RERAIL_STREAM_AT_SUBMIT` is kept, read through `rerail_context::setting`.
+- rr_host (`describe`, `spans`, `run`) is main's code on the hub's program image (`Version`, `ProgramFields`, `RuleRef`/`TermRef`) and on decision 0612's `LineTable`. The source is `Arc<Text>`, and syntax errors come from the facts. Main's `Locs::lines` is not taken.
+  - The hub's `run_policies` goes on past a failing policy, so a QUIET run's failures are the runs that hold an `error`, in place of main's retry loop.
+  - The lines test follows 0612: the empty line after a final newline is a line.
+- Git: the hub's rule (250abffc6b: Rerail's Gits never inherit a hook's repository variables) and main's #978 both hold.
+  - Main's GIT_INDEX_FILE test is adapted: an index the call names is read; the one the process inherited never is.
+  - `runGitAsync` keeps stdout's bytes only when asked (`keepBytes`), so an answer no longer carries both copies.
+  - The guarded diff keeps the bytes of the names it keeps.
+- tests-logic: main's `sql_query_builds_the_golden_sql` and `a_stratum_issued_ahead_reads_an_input_the_loop_binds_later` are on the hub's program image and lowering (`body::nth`, `Lit`, `lower::lowered`).
+  - `golden/sql_query.txt` is re-blessed. The only difference is the aggregate helper's name: the hub's is `rr_h_agg_<digest>`, where main's was `rr_agg1`, in 14 places. The SQL is the same.
+- Red tests fixed on the way:
+  - The executors' guard named costs.rs at its old place (`logic_core`, moved to `costs` in 10d). The text readers' guard counted the base read's key split in `inputs.rs`; it is in `leaves.rs` since roll-up 108.
+  - accel: two pool tests leased without the pool lock (`a_lease_the_queue_reaches_goes_back_after_its_work`, `a_staged_column_is_read_once_its_gate_opens`). The budget test counted their 64 KB. Both now hold `big_leases`.
+  - accel's `jobs_side_by_side_on_a_device_lane_share_its_time` had a 2 ms slack, which a stall between the outer clock reads and the calls they bracket passed. Its bounds now take that time from clock reads around the first start and the last finish.
+  - setfix: a frozen relation's dead rows stayed out of its block relation (decision 0478 step 5d). `Rel::dead` grows in the run's open block, and since rows have a home of their own the two differ, so `into_chunk` refused. `in_block_dead` now writes them once in the rows' home first, as `InRel::held` does.
+- Checked with Relax, RERAIL_GPU=cpu. Tests:
+  - accel 81 of 81 (twice, four threads); run 43; setfix 136; facts 14; rr-root 53; planner 6;
+  - engine, all but `rr_host` (4 of 4 alone) and the guards (passed alone);
+  - tests-logic, whole crate at two threads: all but `typed_corpus_reads_declarations_and_dependency_summaries`;
+  - tests-corpus `an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack`.
+  - The three repository checks and tsc pass. vitest: git, git-guard, worktree-pack, code-rule-bridge and database-baseline pass.
+- Owed on a farm Mac, one filtered run each (the user's order):
+  1. setfix's device tests;
+  2. the 300-file corpus at every thread count;
+  3. the Django pack at 4 threads, repeated, with and without RERAIL_STREAM_AT_SUBMIT.
+- Not green, and not from this merge (to the green pass):
+  - The executor coverage gate: the label kit's reserved arena (`reserve_arena`, a `device::reserve` mapping) is no block or lease, so the bound-buffer check fails it. It is red since 10d-3, which recorded it.
+  - tests-logic and engine: the test process grows to the 12 GB cap by the end of a whole-crate run.
+  - `typed_corpus_reads_declarations_and_dependency_summaries`.
+  - headless-scan (67 of 161) needs a current native addon. The worktree's is from Nov 22, and Relax builds none.
+  - store-base `the_image_is_the_one_the_loader_names` under Relax.
+  - The earlier list stands: accel-gpu `concurrent_levels`, the store suite's memory, the tests-corpus template under Relax, napi's constructor registry, kotlin_parser, json_tapes, device-metal parity, and the packs.tsv re-bless.

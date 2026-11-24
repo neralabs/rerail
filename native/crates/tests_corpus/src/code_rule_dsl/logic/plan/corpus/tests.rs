@@ -1398,6 +1398,25 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
     (alone, together)
 }
 
+/// RUF034 alone: `value` answered on request, and python/ast.rerail's demand on `unparen`. `value`'s request reads
+/// `unparen`, whose demand comes from `same_pair`, which negates `same_leaf`, which reads `value`: the demand leaves
+/// `same_pair` out to stay stratified, and then joins the compared nodes by a child's position only, across files. Its
+/// answer was cross-file once preparation applied the demand, after combining had judged it file-local, and the run
+/// was refused ("`value` is answered on request in the cross-file part"). Beside a reader of `value` across files it
+/// ran, `value` eager. Alone it runs too, and finds what it finds there.
+#[test]
+fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
+    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
+                .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
+                cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
+    let across = ".language python\n.decl twin(v: symbol)\n\
+                  twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
+    let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
+    let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
+    assert_eq!(together, [["1"], ["3"]], "the same branches, literals by value");
+    assert_eq!(alone, together);
+}
+
 /// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
 /// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
 /// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
@@ -2221,12 +2240,17 @@ fn every_switch_lowering_reads_is_classified() {
     let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
     let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
-    // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
-    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    // reads a switch (`scoping`, the tail's passes), the `.rerail` lowering its `rr::parse` runs (`logic/rr`,
+    // `front`), and the passes it replays to judge an answer as the program's own demand leaves it
+    // (`answers_where_documents_are_version` through `reading_demanded`: simplify, reach index, demand). The combined
+    // program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+        "logic/plan/corpus/preparation/simplify.rs", "logic/plan/corpus/preparation/prune.rs", "logic/plan/corpus/preparation/demand.rs",
+        "logic/plan/corpus/preparation/magic.rs", "logic/plan/corpus/preparation/magic",
     ]);
+    combining.push(("corpus/base.rs, answers_where_documents_are_version".to_owned(), base_region("\npub fn answers_where_documents_are_version(", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
     combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).

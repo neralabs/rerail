@@ -5064,13 +5064,16 @@ impl Csr {
 
 /// A frozen relation's dead rows `dead` handed to the block relation that holds its last rows (decision 0478 step
 /// 5d: `Relation::adopt_dead`), and read there (borrowed: `rows::shared`): its kills delta, the device's dead
-/// rows, reads the same words (`Relation::try_kills_own`). Left as they are when they lie in another block.
+/// rows, reads the same words (`Relation::try_kills_own`). Bits that grew elsewhere (a relation's `dead` starts in
+/// the run's open block, before its rows have a home of their own) are written once in its rows' block first, as
+/// `InRel::held`'s are; left as they are when that block has no room for them.
 fn in_block_dead(dead: rerail_blocks::vector::Vector<u64>, rows: &Rows) -> rerail_blocks::vector::Vector<u64> {
     let Some(p) = rows.parts().last() else { return dead };
     if dead.is_empty() || dead.is_shared() {
         return dead;
     }
     let facts = p.facts();
+    let dead = if dead.can_give(facts) { dead } else { crate::code_rule_dsl::facts::rows::collect_in(Some(&p.home()), dead) };
     match dead.into_chunk(facts) {
         Ok(g) => {
             let adopted = {

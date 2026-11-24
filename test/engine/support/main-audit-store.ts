@@ -14,8 +14,8 @@ import { holdsTable } from "../../../src/engine/storage/table-probe.js";
 import { blindFilePaths, type AuditRecord } from "../../../src/engine/audit/audit.js";
 import { audits, type AuditRow } from "../../../src/engine/storage/schema.js";
 
-/** An audit as `main` read it then: its `AuditRecord` had no `origin` yet. */
-export type MainAuditRecord = Omit<AuditRecord, "origin">;
+/** An audit as `main` read it then: its `AuditRecord` had no `origin` yet, nor an owner besides its session. */
+export type MainAuditRecord = Omit<AuditRecord, "origin" | "repositoryId" | "recordedBy">;
 
 /**
  * Databases known to hold `audit_unlisted_failures`. A read-only open applies no DDL, so a file only an earlier build

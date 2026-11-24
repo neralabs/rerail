@@ -55,6 +55,7 @@ mod main_instance;
 mod model;
 pub use rerail_workspace::panic_boundary;
 mod path_owner;
+pub mod pipe_server;
 pub mod process;
 /// The warning on a macOS whose allocator aborts the engine's work (`bin/rerail-engine.rs`).
 pub mod os_warning;

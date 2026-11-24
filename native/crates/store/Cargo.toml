@@ -44,7 +44,7 @@ rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "fun
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 same-file = "1.0.6"

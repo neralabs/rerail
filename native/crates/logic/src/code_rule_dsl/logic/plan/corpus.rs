@@ -105,8 +105,8 @@ pub mod connections;
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
 /// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
 /// keys a session's kept frames, which a diagnostic switch turned on mid-session must not make cold. A switch read in
-/// lowering or preparation is listed here or as changing none, which a test checks
-/// (`every_switch_lowering_reads_is_classified`).
+/// lowering or preparation is listed here, in `COMBINING` (which the prepared key holds through the combined
+/// program's), or as changing none, which a test checks (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
@@ -114,12 +114,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_NEAREST_BUFFERS",
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
-    "RERAIL_REACH_INDEX",
-    // `simplify`.
-    "RERAIL_EXISTENCE_COUNTS",
-    "RERAIL_INLINE_FILTERS",
-    "RERAIL_JOIN_KEYS",
-    "RERAIL_PROJECT_COLUMNS",
     // `run_observed`'s preparation, and its passes (`preparation`): by parts (decision 0345) or whole.
     "RERAIL_PREPARE",
     "RERAIL_TEXT_TESTS",
