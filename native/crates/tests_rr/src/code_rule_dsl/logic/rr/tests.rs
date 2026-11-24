@@ -6162,7 +6162,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             union.extend(lower::rule_digests(&v));
         }
         let whole_rules = lower::rule_digests(&w);
-        let today = lower::link_versions(built.clone()).unwrap();
+        let today = lower::link_library(built.clone()).unwrap().with(None).unwrap();
         let today_rules: usize = today.version.rules().count();
         let helpers = |rules: &BTreeSet<(String, [u8; 32])>| rules.iter().map(|(h, _)| h).filter(|h| h.starts_with("rr_")).collect::<BTreeSet<_>>().len();
         let today_helpers: BTreeSet<String> = today.version.rules().map(|r| today.version.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_")).collect();
@@ -6300,7 +6300,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail as lt;
             use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
             use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
-            let linked = lower::link_versions(built.clone()).unwrap();
+            let linked = lower::link_library(built.clone()).unwrap().with(None).unwrap();
             let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = linked.lowered;
             let mut p = Pipeline::new("spike: the tail to kind sets", linked.version);
             p.program(&mut Passes).program(&mut CrossingCycles);
@@ -6364,7 +6364,8 @@ fn modules_named_by_content_link_to_the_whole_lowering() {
         l.split_inclusive(|c: char| !(c.is_alphanumeric() || c == '_'))
             .map(|w| {
                 let (word, end) = w.split_at(w.len() - w.chars().last().filter(|c| !(c.is_alphanumeric() || *c == '_')).map_or(0, char::len_utf8));
-                let word = if word.starts_with("rr_m_") && word.len() > 33 && word.as_bytes()[word.len() - 33] == b'_' {
+                // A module's helper's digest, in its name or a name made from it (`rr_demand_agg_rr_m_…`).
+                let word = if word.contains("rr_m_") && word.len() > 33 && word.as_bytes()[word.len() - 33] == b'_' && word[word.len() - 32..].bytes().all(|b| b.is_ascii_hexdigit()) {
                     &word[..word.len() - 33]
                 } else if word.starts_with("rr_") && !word.starts_with("rr_h_") {
                     word.trim_end_matches(|c: char| c.is_ascii_digit())
@@ -6392,7 +6393,7 @@ fn modules_named_by_content_link_to_the_whole_lowering() {
                 assert!(!has(&path.display().to_string()) && !has(&file), "{pack}: the image of {} holds its path or name", path.display());
             }
         }
-        let linked = lower::link_versions(modules).unwrap();
+        let linked = lower::link_library(modules).unwrap().with(None).unwrap();
         let versions: Vec<&Arc<Version>> = vec![&linked.version];
         let whole = lower::lower_module_in_written(whole, &[]).unwrap();
         let lines = |vs: &[&Arc<Version>]| -> BTreeSet<String> { vs.iter().flat_map(|v| v.rules().map(|r| plain(&v.show_rule(r))).collect::<Vec<_>>()).collect() };
@@ -6413,7 +6414,8 @@ fn rule_lines_names_aside(printed: &str) -> BTreeSet<String> {
         l.split_inclusive(|c: char| !(c.is_alphanumeric() || c == '_'))
             .map(|w| {
                 let (word, end) = w.split_at(w.len() - w.chars().last().filter(|c| !(c.is_alphanumeric() || *c == '_')).map_or(0, char::len_utf8));
-                let word = if word.starts_with("rr_m_") && word.len() > 33 && word.as_bytes()[word.len() - 33] == b'_' {
+                // A module's helper's digest, in its name or a name made from it (`rr_demand_agg_rr_m_…`).
+                let word = if word.contains("rr_m_") && word.len() > 33 && word.as_bytes()[word.len() - 33] == b'_' && word[word.len() - 32..].bytes().all(|b| b.is_ascii_hexdigit()) {
                     &word[..word.len() - 33]
                 } else if word.starts_with("rr_") && !word.starts_with("rr_h_") {
                     word.trim_end_matches(|c: char| c.is_ascii_digit())
@@ -6487,6 +6489,51 @@ fn programs_of_one_library_share_its_union() {
     assert_eq!(super::library_unions_made(), before + 1, "the second is linked onto it");
 }
 
+/// T9 (decision 0639 §4): a module depends on its scope's interface, not its scope's rules. Each module of every
+/// pack's library and of the phase programs, lowered against its scope's modules lowered from their statements less
+/// their rules (their headers), is its image: the declarations its clauses' lowering makes it keeps as its own.
+#[test]
+fn every_module_lowers_alike_against_its_scopes_headers() {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    dirs.push(crate::source_tree::native().join("src/code_rule_dsl/typing/programs"));
+    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    // The library files every pack's programs include, planned once: a module shared by packs is lowered once.
+    let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    for dir in dirs {
+        for path in walk_rr(&dir) {
+            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+            if let Ok(Some(m)) = super::modules(&src) {
+                paths.extend(m.files.into_iter().map(|(p, _, _)| p));
+            }
+        }
+    }
+    let plan = super::planned_library(&paths.into_iter().collect::<Vec<_>>()).unwrap();
+    let at: std::collections::HashMap<&str, usize> = plan.iter().enumerate().map(|(i, m)| (m.key.as_str(), i)).collect();
+    let (mut compared, mut differ) = (0, Vec::new());
+    let mut headers: Vec<lower::Module> = Vec::with_capacity(plan.len());
+    for m in &plan {
+        let statements: Vec<from_tape::Stmt> = m.files.lines().filter(|f| !f.is_empty()).flat_map(|f| no_includes(read(Path::new(f)).unwrap().0)).collect();
+        let bare: Vec<from_tape::Stmt> = statements.iter().filter(|s| !s.has_body()).cloned().collect();
+        let scope: Vec<&lower::Module> = m.scope.split(',').filter(|k| !k.is_empty()).map(|k| &headers[at[k]]).collect();
+        let name = m.files.lines().next().unwrap_or_default().to_owned();
+        let header = lower::lower_module_in_written(bare, &scope).unwrap_or_else(|e| panic!("{name}: its header alone: {e}"));
+        if !scope.is_empty() {
+            let alone = lower::lower_module_in_written(statements, &scope).unwrap_or_else(|e| panic!("{name}: against its scope's headers: {e}"));
+            let image = m.module().unwrap();
+            compared += 1;
+            if module_image::encode(&image).unwrap().bytes() != module_image::encode(&alone).unwrap().bytes() {
+                let (a, b) = (rule_lines_names_aside(&print_version(image.version()).unwrap()), rule_lines_names_aside(&print_version(alone.version()).unwrap()));
+                differ.push(format!("{name}: only its image's: {:?}; only against the headers: {:?}", a.difference(&b).take(4).collect::<Vec<_>>(), b.difference(&a).take(4).collect::<Vec<_>>()));
+            }
+        }
+        headers.push(header);
+    }
+    assert!(compared > 50, "{compared} modules compared");
+    assert!(differ.is_empty(), "{} of {compared} modules differ against their scope's headers:\n{}", differ.len(), differ.join("\n"));
+}
+
 /// T8 (decision 0639 §4): the link is a union with nothing to decide, so two modules that give one relation two
 /// declarations (`link_conflict`), or one helper's name two sets of rules (`helper_conflict`), fail it; modules that
 /// agree link. That no library has either is T1 and T2: every program links.
@@ -6526,7 +6573,7 @@ fn a_linked_library_is_a_union_over_its_modules_images() {
     let paths: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
     let modules = super::library_modules(&paths).unwrap();
     let held: Vec<Arc<Version>> = modules.iter().map(|m| Arc::clone(m.version())).collect();
-    let linked = lower::link_versions(modules).unwrap();
+    let linked = lower::link_library(modules).unwrap().with(None).unwrap();
     let v = &linked.version;
     let (header, parts) = v.union_parts().expect("the link is a union");
     assert_eq!(header.size(), 0, "its header holds no rules");

@@ -402,6 +402,10 @@ struct Lowerer {
     /// The module's helpers, by the names its walk's end gave them (decision 0639 §4): by content or by module, so a
     /// link unites them by name, whatever was linked before.
     named: Vec<String>,
+    /// The declarations its clauses' lowering makes for them (decision 0639 §4, a module's interface): `tape`,
+    /// `rx_span`, a kind set of one kind, a demand's or the file system's request. The module keeps each as its own
+    /// though its scope's lowering made it too (`unseed`), so its image is the same against its scope's headers alone.
+    uses: BTreeSet<String>,
     /// How many of its inputs, first in `prog.inputs`, its `.input` statements state: the rest are those its clauses'
     /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
     /// would order them.
@@ -710,17 +714,25 @@ pub fn content_names(v: &crate::code_rule_dsl::logic::program_image::Version, ma
         }
         for h in &c {
             let stem = &stem_of[h];
-            let Some(once) = once_stem.get(h.as_str()).filter(|_| !cyclic) else {
+            // A helper that reads one named by its module is its module's too: its content is that module's.
+            let of_module = reads[h].iter().any(|x| names.get(x).is_some_and(|n| n.starts_with("rr_m_")));
+            let Some(once) = once_stem.get(h.as_str()).filter(|_| !cyclic && !of_module) else {
                 let mut key = salt.clone();
                 put_bytes(&mut key, h.as_bytes());
                 names.insert(h.clone(), format!("rr_m_{stem}_{}", name_digest(&key)));
                 continue;
             };
+            // A helper named already by its name; one not yet (it reads this one, so it is named after it) by its stem,
+            // as its walk's number is the lowering's counter, which another lowering of the same rules counts otherwise.
             let named = |r: &str| -> String {
                 if r == h {
                     "@self".to_owned()
+                } else if let Some(n) = names.get(r) {
+                    n.clone()
+                } else if let Some(stem) = stem_of.get(r) {
+                    format!("@helper {stem}")
                 } else {
-                    names.get(r).cloned().unwrap_or_else(|| r.to_owned())
+                    r.to_owned()
                 }
             };
             let mut key = Vec::new();
@@ -1140,6 +1152,13 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
     drop(rules);
     let places = l.unseed(seeded);
     l.stated = l.prog.input_names().iter().take_while(|r| stated.contains(*r)).count();
+    // The inputs its lowering added are a set, by name: in no order of the clauses that first read them, so a link
+    // of modules orders them as one lowering of them all (`append_fields`).
+    let mut inputs = l.prog.input_names();
+    if inputs[l.stated..].windows(2).any(|w| w[0] > w[1]) {
+        inputs[l.stated..].sort();
+        l.prog.fields().set_inputs(&inputs);
+    }
     l.deps = own_deps;
     let docof = declares_docof.then_some(l.docof_of_locs);
     // The module's header goes into its version with its rules: what the link and the modules that include it read.
@@ -1443,15 +1462,16 @@ impl Lowerer {
     /// The module's own part: what `seed` took from its includes taken out. The includes' `.violation`s its rules
     /// gave a place to are returned.
     fn unseed(&mut self, seeded: Seeded) -> BTreeSet<String> {
+        let uses = std::mem::take(&mut self.uses);
         let p = &mut self.prog;
         for r in p.declared_names() {
-            if seeded.decls.contains(&r) {
+            if seeded.decls.contains(&r) && !uses.contains(&r) {
                 p.fields().undeclare(&r);
             }
         }
-        p.fields().retain_inputs(|r| !seeded.inputs.contains(r));
+        p.fields().retain_inputs(|r| !seeded.inputs.contains(r) || uses.contains(r));
         p.edit(|b| b.natives(), |n| Field::Natives(n), |n| n.retain(|r, _| !seeded.natives.contains(r)));
-        p.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.retain(|r, _| !seeded.kindsets.contains(r)));
+        p.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.retain(|r, _| !seeded.kindsets.contains(r) || uses.contains(r)));
         p.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| d.retain(|r, _| !seeded.lattice.contains(r)));
         p.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| t.retain(|r, _| !seeded.tapes.contains(r)));
         p.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |q| q.retain(|r, _| !seeded.qualifiers.contains(r)));
@@ -1632,11 +1652,6 @@ pub struct LinkedVersions {
     pub lowered: Lowered,
 }
 
-/// `link` with the modules' rules kept as versions (`LinkedVersions`): their union (`link_library`), alone.
-pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
-    link_library(modules)?.with(None)
-}
-
 /// A library's modules linked (decision 0639 §4): the union's header (a base of no rules: every name of every part,
 /// and the fields the link states), its parts, and what the lowerer knows of them, so a program's own module is
 /// linked onto it (`with`) and nothing of the library is linked again. `rr` keeps one per set of module keys.
@@ -1781,7 +1796,7 @@ pub fn link_conflict(a: &(impl crate::code_rule_dsl::logic::program_image::field
 /// A module's fields (`Lowerer::link`), `b`'s, added to `a`'s, the modules' linked so far: a version's edit's or a
 /// tree's. A declaration, a lattice, a kind set, a native or an answer of `b` replaces `a`'s; facts, qualifiers and
 /// tape columns add to `a`'s; the inputs `b` states first (`b_stated`) go after the `stated` `a` states first, the rest
-/// last; each list keeps its first.
+/// (those a lowering added) last, by name; each list keeps its first.
 pub fn append_fields(a: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), b: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), stated: &mut usize, b_stated: usize) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     for rel in b.declared_names() {
@@ -1824,7 +1839,9 @@ pub fn append_fields(a: &mut (impl crate::code_rule_dsl::logic::program_image::f
             inputs.push(rel);
         }
     }
-    if inputs.len() != was {
+    let at = (*stated).min(inputs.len());
+    if inputs.len() != was || inputs[at..].windows(2).any(|w| w[0] > w[1]) {
+        inputs[at..].sort();
         a.set_inputs(&inputs);
     }
     for rel in b.output_names() {
@@ -3909,6 +3926,7 @@ impl Lowerer {
             return Ok(());
         }
         let ctx = ctx.transpose()?;
+        self.uses.insert(req.to_owned());
         self.prog.declare_cols(req, given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())));
         let args: Vec<Tm> = given
             .iter()
@@ -3940,6 +3958,7 @@ impl Lowerer {
             return Ok(());
         }
         let Some(key) = args.first() else { return Ok(()) };
+        self.uses.insert(demand.to_owned());
         self.prog.declare_cols(demand, [("k", "sym")]);
         let s = match self.tv(key) {
             // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
@@ -4197,6 +4216,7 @@ impl Lowerer {
 
     /// `tape(n, par, size, depth)`, read by the tree's ranges and climbs.
     fn need_tape(&mut self) {
+        self.uses.insert("tape".to_owned());
         if !self.prog.declares("tape") {
             self.prog.declare_cols("tape", ["n", "par", "size", "depth"].map(|c| (c, "int")));
         }
@@ -4670,6 +4690,7 @@ impl Lowerer {
 
     /// `rx_span` as an input of the program (`facts::vtab::syntax`'s `Extra` makes it).
     fn rx_span_input(&mut self) {
+        self.uses.insert("rx_span".to_owned());
         if !self.prog.has_input("rx_span") {
             self.prog.fields().add_input("rx_span");
             let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
@@ -4835,6 +4856,7 @@ impl Lowerer {
             T::Str(kind) => {
                 let name = kind_set_name(&kind);
                 self.prog.set_kindset(&name, vec![kind]);
+                self.uses.insert(name.clone());
                 Ok(name)
             }
             _ => Err(Error::Syntax(format!("{rel}: the set is a relation of kinds or one kind"))),
@@ -6286,7 +6308,7 @@ pub fn undo_round(prog: &mut (impl crate::code_rule_dsl::logic::program_image::f
 }
 
 /// The file system's answers and their requests (t21 E1).
-pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+pub const FILE_SYSTEM: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req"), ("file_interface", "rr_interface_req")];
 
 /// The engine's other answers and their requests: a module's lowering, a Git view's revisions, objects, payloads and
 /// inventory, and the analysis history's scans. Each request is of several columns, made by rules (`git.rerail`, `analysis.rerail`).
