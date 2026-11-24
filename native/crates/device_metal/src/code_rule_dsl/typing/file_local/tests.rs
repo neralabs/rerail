@@ -100,6 +100,91 @@ fn a_rule_joining_a_phase_export_is_cross_file_and_one_joining_an_option_is_not(
     assert_eq!(parts.causes["typed"], "reads types__sig with no location");
 }
 
+/// A file's path names its document (decision 0665): a relation keyed by `doc`'s path, joined with another by that
+/// path, stays per-file, and `locate` finds its rows' document through the path. A path is no location: the
+/// published locations (which a memo reads a document off) leave it out, and the path is a key. A path written out
+/// names one document too, the same in every atom that writes it (a policy about a named file, `bcgp_block("a.py",
+/// …)`); two paths are two. A setting's path is not one (`package_for`, bound whole beside every chunk, holds every
+/// file's row): two files of one package is a setting, and a per-file rule reading another file's row by it is
+/// per-file only by its own document.
+#[test]
+fn a_join_by_a_files_own_path_stays_per_file() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl src_line(d: number, l: number, sp: span)\n.input src_line\n\
+                .decl package_for(path: symbol, dir: symbol)\n.input package_for\n\
+                .decl line_of(p: symbol, l: number)\nline_of(p, l) :- doc(d, p, _), src_line(d, l, _).\n\
+                .decl last(p: symbol, k: number)\nlast(p, k) :- line_of(p, _), k = max l : { line_of(p, l) }.\n\
+                .decl lead(p: symbol, l: number)\nlead(p, l) :- last(p, k), line_of(p, l), l < k.\n.output lead\n\
+                .decl same_pkg(p: symbol, q: symbol)\nsame_pkg(p, q) :- package_for(p, dir), package_for(q, dir), p != q.\n.output same_pkg\n\
+                .decl named(l: number)\nnamed(l) :- line_of(\"a.py\", l), last(\"a.py\", k), l < k.\n.output named\n\
+                .decl shared(p: symbol)\nshared(p) :- line_of(p, l), line_of(q, l), p != q.\n.output shared\n";
+    let both = ".decl both(l: number)\nboth(l) :- line_of(\"a.py\", l), line_of(\"b.py\", l).\n.output both\n";
+    let split = split_of(&read(&format!("{text}{both}")));
+    assert!(!split.local.contains("both"), "two paths: {:?}", split.local);
+    assert!(split.causes["both"].starts_with("joins 2 documents"), "{}", split.causes["both"]);
+    let v = read(text);
+    let split = split_of(&v);
+    for rel in ["line_of", "last", "lead"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+        assert_eq!(split.locations[rel], Vec::<usize>::new(), "{rel}: a path is no location: {:?}", split.locations);
+        assert_eq!(split.path_keys.get(rel).map(Vec::as_slice), Some(&[0][..]), "{rel}: its path is a key: {:?}", split.path_keys);
+    }
+    assert!(split.constants.contains("same_pkg"), "settings alone: {:?} {:?}", split.constants, split.causes);
+    assert!(split.local.contains("named"), "one path written twice: {:?} {:?}", split.local, split.causes);
+    // Located: `lead` is derived with its document, found through its path.
+    let (out, found) = located(v);
+    assert!(found.as_ref().is_ok_and(|f| f.iter().any(|r| r == "lead") && f.iter().any(|r| r == "named")), "{found:?}");
+    let made: Vec<String> = out.rules().filter(|r| out.rel_name(r.head().rel()).starts_with("lead_at")).flat_map(|r| reads(&out, r)).collect();
+    assert!(made.iter().any(|r| r == "doc"), "the located rule reads its document off its path: {made:?}");
+    // `line_of`, read by per-file rules and by the cross-file `shared`, stays, and is relayed: `shared` reads its
+    // located form, of documents found through its path.
+    assert!(found.as_ref().is_ok_and(|f| f.iter().any(|r| r == "line_of")), "{found:?}");
+    assert!(!moved(&out).iter().any(|r| r == "line_of"), "{:?}", moved(&out));
+    let shared: Vec<String> = out.rules().filter(|r| out.rel_name(r.head().rel()) == "shared").flat_map(|r| reads(&out, r)).collect();
+    assert!(!shared.is_empty() && shared.iter().all(|r| r.starts_with("line_of_at")), "{shared:?}");
+    let split = split_of(&out);
+    assert!(split.local.iter().any(|r| r.starts_with("lead_at")) && split.local.contains("line_of"), "{:?} {:?}", split.local, split.causes);
+    // What the cross part reads back from a located form stays there, though its path would place it in one file.
+    assert!(!split.local.contains("lead") && !split.local.contains("named"), "{:?}", split.local);
+    // Located again (a later round), nothing is relayed twice.
+    let (again, _) = located(out.clone());
+    assert_eq!(again.rules().count(), out.rules().count(), "located once");
+    let relay = split.local.iter().find(|r| r.starts_with("line_of_at")).expect("the relay is per-file");
+    assert_eq!(split.locations[relay], vec![0], "the relay's rows name their document: {:?}", split.locations);
+}
+
+/// The project's settings (decision 0665: a package's `package.json` fields, its tsconfig, the run's environment) are
+/// read like the run's options: a per-file rule that joins them stays per-file, and a relation derived from them alone
+/// is a constant, derived in both parts. A rule that reads another file's rows, or the tree's list of files (no
+/// configuration), is cross-file.
+#[test]
+fn a_rule_reading_a_setting_stays_per_file_and_one_reading_another_files_rows_does_not() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl kind(n: node, k: symbol)\n.input kind\n\
+                .decl docof(n: node, d: number)\n.input docof\n.decl file(path: symbol)\n.input file\n\
+                .decl package_for(path: symbol, dir: symbol)\n.input package_for\n.decl package_field(dir: symbol, key: symbol, v: symbol)\n.input package_field\n\
+                .decl env(key: symbol, value: symbol)\n.input env\n\
+                .decl module_doc(d: number)\nmodule_doc(d) :- doc(d, p, _), package_for(p, dir), package_field(dir, \"type\", \"module\").\n.output module_doc\n\
+                .decl on_linux(n: node)\non_linux(n) :- kind(n, \"if_statement\"), env(\"python.platform\", \"linux\").\n.output on_linux\n\
+                .decl pkg_dep(dir: symbol, m: symbol)\npkg_dep(dir, m) :- package_field(dir, \"dependencies/react\", m).\n\
+                .decl reactish(d: number)\nreactish(d) :- doc(d, p, _), package_for(p, dir), pkg_dep(dir, _).\n.output reactish\n\
+                .decl elsewhere(d: number)\nelsewhere(d) :- doc(d, _, _), kind(n, \"if_statement\"), docof(n, e), e != d.\n.output elsewhere\n\
+                .decl listed(d: number)\nlisted(d) :- doc(d, _, _), file(\"setup.py\").\n.output listed\n\
+                .decl dep_list(l: symbol)\ndep_list(\"dependencies\"). dep_list(\"peerDependencies\").\n\
+                .decl dep_package(m: symbol, r: symbol)\ndep_package(\"react\", \"react\"). dep_package(\"vue\", \"other\").\n\
+                .decl package_dep(dir: symbol, l: symbol, m: symbol)\npackage_dep(dir, l, m) :- dep_list(l), dep_package(m, _), package_field(dir, cat(l, \"/\", @replace_all(m, \"/\", \"~1\")), _).\n\
+                .decl deps_on(dir: symbol, r: symbol)\ndeps_on(dir, r) :- package_dep(dir, _, m), dep_package(m, r).\n\
+                .decl other_jsx(d: number)\nother_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, \"other\"), !deps_on(dir, \"react\").\n.output other_jsx\n";
+    let split = split_of(&read(text));
+    // React's gate (`tsx/react.rerail`): settings and facts joined with a file's own path.
+    assert!(split.constants.contains("deps_on"), "{:?} {:?}", split.constants, split.causes);
+    for rel in ["module_doc", "on_linux", "reactish", "other_jsx"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    assert!(split.constants.contains("pkg_dep"), "derived from settings alone: {:?}", split.constants);
+    assert!(!split.local.contains("elsewhere"), "{:?}", split.local);
+    assert!(!split.local.contains("listed"), "the tree's files are no setting: {:?}", split.local);
+    assert_eq!(split.causes["listed"], "reads file with no location");
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text

@@ -3104,6 +3104,28 @@ fn run_observed_within(
             })
             .collect()
     };
+    // The project's settings (decision 0665): a file's entry is kept under the settings rows its relations can read,
+    // its own (its package's, its tsconfig's) or every file's (`memo::settings_scopes`), so an edit of a package's
+    // `package.json` misses the files under it alone, and a source file's edit none. A file's ids are made once per
+    // digest of its own settings.
+    let settings_scopes = memo::settings_scopes(&local_placed, &memo_ids.keys().cloned().collect());
+    let settings = {
+        let bound: Vec<(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> =
+            repository.iter().filter(|(name, ..)| crate::code_rule_dsl::typing::file_local::setting_input(name)).map(|(name, source, _)| (name.as_str(), source.as_ref())).collect();
+        memo::SettingsDigests::of(&bound)
+    };
+    let all_ids = Arc::new(memo_ids.clone());
+    let by_settings: parking_lot::Mutex<HashMap<[u8; 32], Arc<BTreeMap<String, [u8; 32]>>>> = Default::default();
+    // A file's ids: `memo_ids`, each relation reading the settings under those it reads of them.
+    let ids_of = |path: &str| -> Arc<BTreeMap<String, [u8; 32]>> {
+        if settings_scopes.is_empty() {
+            return Arc::clone(&all_ids);
+        }
+        // A path the store cannot name holds no settings rows: its own are none.
+        let atom = store.intern_atoms(&[path]).ok().and_then(|a| a.first().map(|&a| i64::from(a))).unwrap_or(i64::MIN);
+        let own = settings.digest(memo::SettingsScope::OwnFile, atom);
+        Arc::clone(by_settings.lock().entry(own).or_insert_with(|| Arc::new(settings.identities(&memo_ids, &settings_scopes, atom))))
+    };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the phases' exports".into()));
     // The phases' exports the program reads, as relations of atoms (`add_phased`).
     let repository = {
@@ -4279,9 +4301,9 @@ fn run_observed_within(
         "{} demanded relations; tree distributions {}", memo_rows.len(), if memo_tree_stats { "retained" } else { "omitted" }));
     let has_counts = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS);
     // The relations an entry does not hold under their identities now (decision 0225 §2): a rule's edit reached them.
-    let missing_of = |e: &memo::Entry| -> BTreeSet<String> {
+    let missing_of = |e: &memo::Entry, path: &str| -> BTreeSet<String> {
         let covered = memo::covered(e);
-        memo_ids.iter().filter(|(_, id)| !covered.contains(&memo::covered_words(id))).map(|(r, _)| r.clone()).collect()
+        ids_of(path).iter().filter(|(_, id)| !covered.contains(&memo::covered_words(id))).map(|(r, _)| r.clone()).collect()
     };
     // A window's files resolved together: as found before the first wave, or (a load's) looked up now. A hit's
     // entry is decoded here; a miss's file is read here, and is a new content if it changed since it was found.
@@ -4321,7 +4343,7 @@ fn run_observed_within(
                 // An unchanged file on the kept route: its outputs, its rows the kept inputs' (decision 0117 step 1).
                 if let (true, true, Some(found), Some(content)) = (memoised, b.outputs, b.found.as_ref(), b.content) {
                     let _decode = crate::code_rule_dsl::logic::profile::span(|| "memo decode: the outputs".into());
-                    if let Some(entry) = found.projected(*d, &memo::outputs_alone).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| missing_of(e).is_empty()) {
+                    if let Some(entry) = found.projected(*d, &memo::outputs_alone).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| missing_of(e, path).is_empty()) {
                         kept_hits.lock().insert(path.clone(), (content, *d, found.clone()));
                         return Ok(Some((b.content, Ok(entry))));
                     }
@@ -4334,8 +4356,8 @@ fn run_observed_within(
                         eprintln!("rerail: memo entry of {path} unused: it holds no tree counts");
                     }
                     match entry {
-                        Some(entry) if has_counts(&entry) && missing_of(&entry).is_empty() => return Ok(Some((b.content, Ok(entry)))),
-                        Some(entry) if missing_of(&entry).len() < memo_ids.len() => partial = Some(entry),
+                        Some(entry) if has_counts(&entry) && missing_of(&entry, path).is_empty() => return Ok(Some((b.content, Ok(entry)))),
+                        Some(entry) if missing_of(&entry, path).len() < memo_ids.len() => partial = Some(entry),
                         _ => {}
                     }
                 }
@@ -4568,7 +4590,7 @@ fn run_observed_within(
             let coned = {
                 let held = partials.lock();
                 let keys: Vec<i64> = docs.iter().map(|d| i64::from(d.key)).collect();
-                (!keys.is_empty() && keys.iter().all(|k| held.contains_key(k))).then(|| keys.iter().flat_map(|k| missing_of(&held[k])).collect::<BTreeSet<String>>())
+                (!keys.is_empty() && keys.iter().all(|k| held.contains_key(k))).then(|| docs.iter().flat_map(|d| missing_of(&held[&i64::from(d.key)], &d.path)).collect::<BTreeSet<String>>())
             };
             // The programs each file's language declares it holds (decision 0431 §4, step 3), made from its tape at its
             // load: the batch is built once with them, and no round asks for them. A chunk of partial hits makes those
@@ -5658,7 +5680,7 @@ fn run_observed_within(
                     HashMap::new()
                 };
                 let cone: Option<BTreeSet<String>> = (!chunk_partials.is_empty() && chunk_partials.len() == chunk_docs.len())
-                    .then(|| chunk_partials.values().flat_map(&missing_of).collect());
+                    .then(|| chunk_docs.iter().filter_map(|(d, path, ..)| chunk_partials.get(d).map(|e| missing_of(e, path))).flatten().collect());
                 phase("local", statements.count());
                 statements.enter("wait");
                 // The tape values its partial hits' files asked inside the fixpoint (`memo::VALUES`), in file order.
@@ -5973,7 +5995,7 @@ fn run_observed_within(
                 // Read no more here: handed to the store's writer (decision 0102). It holds every relation under its
                 // identity now: derived, or (a partial hit's) kept from its entry.
                 let (Some(id), Some(mut entry)) = (source_id, entries.remove(d)) else { continue };
-                memo::cover(&mut entry, memo_ids.values());
+                memo::cover(&mut entry, ids_of(path).values());
                 let stands = standing(d, &entry);
                 publish.push((*id, world::store_path(path).to_owned(), *d, entry, stands, *digest));
             }
@@ -9624,7 +9646,7 @@ fn run_observed_within(
         CorpusDocs { from_tape: built(&hit_docs_built.0), parsed: built(&hit_docs_built.1), held: corpus_held, made, documents }
     };
     crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents (Q332)", || format!("{corpus_docs:?}"));
-    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, unfillable, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), settings: (!settings_scopes.is_empty()).then(|| settings.all()), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, unfillable, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

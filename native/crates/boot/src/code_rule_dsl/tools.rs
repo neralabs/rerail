@@ -2546,8 +2546,19 @@ mod pack_split_tests {
     /// 537 policies, 142 of which ask for guests of their own and run alone, take 84 s of CPU at once,
     /// JavaScript's 121 about 15 s (decision 0652).
     fn pack_shard_runs(dir: &str, shard: Option<(usize, usize)>) {
+        pack_runs_as(dir, shard, "strict")
+    }
+
+    /// Every policy of `dir` run alone (`RERAIL_BATCH_PACK=off`), as a run of one policy is: a policy batched with
+    /// others is split as part of their pack, which can hold a relation one file's that the policy alone does not.
+    /// bounded-composed-graph-paths was refused alone over the corpus, its batch passing (decision 0665).
+    fn pack_alone_runs(dir: &str) {
+        pack_runs_as(dir, None, "off")
+    }
+
+    fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
         // SAFETY: nextest runs each test in a process of its own.
-        unsafe { std::env::set_var("RERAIL_BATCH_PACK", "strict") };
+        unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
         let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
         let tmp = tempfile::tempdir().unwrap();
         let rules = tmp.path().join("rules").join(dir);
@@ -2630,6 +2641,11 @@ mod pack_split_tests {
         the_sql_pack_is_split_with_its_crossings_declared: "packs/sql",
         the_typescript_pack_is_split_with_its_crossings_declared: "packs/typescript",
         the_vue_pack_is_split_with_its_crossings_declared: "packs/vue",
+    }
+
+    #[test]
+    fn the_data_layer_is_split_with_its_crossings_declared_policy_by_policy() {
+        pack_alone_runs("data-layer")
     }
 
     macro_rules! shards {

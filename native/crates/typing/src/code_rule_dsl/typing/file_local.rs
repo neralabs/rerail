@@ -200,10 +200,35 @@ pub fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
-/// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
-/// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
+/// The project's settings (decision 0665): inputs the repository reads from its configuration files alone (each
+/// `package.json`'s name and string fields, its exports, each tsconfig's base and paths, the package and tsconfig a
+/// file is under) and the run's environment (`env`), the same beside every chunk. A source file's edit changes none of
+/// them. Placeless to the split, as the options are: a per-file rule joins them and stays per-file. Bound whole beside
+/// every chunk, a setting keyed by a file's path (`SETTINGS_BY_PATH`) holds every file's row, so its path places no
+/// document; which rows a file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
+pub fn setting_input(rel: &str) -> bool {
+    matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env")
+}
+
+/// The settings with a row per file (decision 0665): `package_for(path, dir)`, `tsconfig_for(path, dir)`, keyed by
+/// its path in column 0. `SETTINGS_BY_FOLDER` holds those keyed by the folder such a row names, in column 0.
+pub const SETTINGS_BY_PATH: [&str; 2] = ["package_for", "tsconfig_for"];
+pub const SETTINGS_BY_FOLDER: [&str; 4] = ["package", "package_field", "tsconfig", "tsconfig_path"];
+
+/// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest
+/// shares its host's, and its chunk), and a chunk holds its own documents' `doc` rows alone, so a variable bound there
+/// places the rule's document as the document's id does, and a join by it stays in one file. It is no location: a
+/// row's document is read off a location's value (a node id, a document key), not off a path, so the split's published
+/// locations leave it out (`FileLocal::path_keys` holds it).
+pub fn path_key_column(rel: &str) -> Option<usize> {
+    (rel == "doc").then_some(1)
+}
+
+/// An input with one value for the whole run, as a fact has: the run's options (`option_input`), its settings
+/// (`setting_input`), or an earlier phase's export (`corpus::phases`), bound once its rows are known. A rule reading
+/// one joins no document by it.
 pub fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
-    option_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
+    option_input(rel) || setting_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
 }
 
 /// Rule `rule`'s `a = b` between two variables, and its `d = @doc(n)` (decision 0091's scope guards), by their slots:
@@ -578,6 +603,11 @@ pub const CROSS_FILE: &str = "cross_file";
 
 /// The qualifier `locate_all` gives a relation it moved, beside `CROSS_FILE`: a move, not a declaration (0652).
 pub const MOVED_CROSS_FILE: &str = "moved_cross_file";
+
+/// The qualifier `locate` gives a relation the cross-file part reads back from its located form (`r(…) :- r_at(_,
+/// …)`, decision 0665): a union of the chunks' rows, cross-file by what it is for, though a path it keeps (a column
+/// `FileLocal::path_keys` names) would place it in one file. Neither a declaration nor a move (0652).
+pub const READ_LOCATED: &str = "read_located";
 
 /// The qualifier of a relation whose rows choose how its readers are evaluated, not what they derive: a pair cache's
 /// guard (`rr_pair_cache_…_small`), a deferred join's hot endpoints (`rr_deferred_…_hot`). Its readers derive the

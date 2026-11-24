@@ -1518,6 +1518,10 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
                 if let Some(cols) = split.locations.get(r) {
                     word(r, format!("part:loc={}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")));
                 }
+                // Its path keys (decision 0665): a part places by them as by its locations.
+                if let Some(cols) = split.path_keys.get(r) {
+                    word(r, format!("part:key={}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")));
+                }
             }
             for r in &read_elsewhere {
                 if !outputs.contains(r) {

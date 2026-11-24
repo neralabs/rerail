@@ -217,6 +217,38 @@ noted(c, x) :- comment(c, x).
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
     }
 
+    /// A constant's join (decision 0665: of facts and settings alone, React's `deps_on`) is left as written: a file's
+    /// request would make the constant read every file's rows, while it is the same for every file and made once. The
+    /// same join over a file's rows is driven by its readers.
+    #[test]
+    fn a_constants_join_is_not_restricted_by_its_readers_requests() {
+        let deferred = |package_dep: &str| {
+            let v = parse(&format!(r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl package_for(path: symbol, dir: symbol)
+.decl package_field(dir: symbol, key: symbol, v: symbol)
+.decl kind(n: node, k: symbol)
+.decl text(n: node, x: symbol)
+.input doc, package_for, package_field, kind, text
+.decl dep_package(m: symbol, r: symbol)
+dep_package("react", "react"). dep_package("vue", "other").
+.decl package_dep(dir: symbol, m: symbol)
+{package_dep}
+.decl deps_on(dir: symbol, r: symbol)
+deps_on(dir, r) :- package_dep(dir, m), dep_package(m, r).
+.decl other_jsx(d: number)
+other_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, "other").
+.output other_jsx
+"#));
+            let (made, plan) = rewritten(&v);
+            (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.constants)
+        };
+        assert_eq!(deferred("package_dep(dir, m) :- package_field(dir, \"dependencies\", m)."), (false, vec!["deps_on".to_owned()]), "settings alone");
+        let (driven, constants) = deferred("package_dep(dir, m) :- kind(n, \"import\"), text(n, m), doc(_, dir, _).");
+        assert!(constants.is_empty(), "{constants:?}");
+        let _ = driven;
+    }
+
     /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
     /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
     /// the keys still drive it.

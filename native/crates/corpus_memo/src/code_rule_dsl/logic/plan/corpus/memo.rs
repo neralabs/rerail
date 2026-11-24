@@ -224,6 +224,188 @@ impl Strata {
     }
 }
 
+/// What a memoised relation's rows can read of the project's settings (decision 0665, `file_local::setting_input`):
+/// the settings of its own file alone, or any file's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsScope {
+    /// The file's own: its `package_for` and `tsconfig_for` rows, and the rows of the folders they name.
+    OwnFile,
+    /// Every file's.
+    All,
+}
+
+/// How each of `rels` reads the settings in the file-local program `local` (decision 0665); a relation reading none is
+/// left out. Per rule, a read of a setting keyed by a path (`package_for(p, dir)`) is its own file's where `p` is its
+/// document's path (`doc(d, p, _)`), and a read of one keyed by a folder (`package_field(dir, …)`) is where `dir` is
+/// a folder its own path's row names. A derived relation is keyed so too through a column its rules carry the key in
+/// (`package_dep(dir, k, m) :- package_field(dir, k, m)`). A read through any other key (a constant, another file's
+/// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
+pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
+    use crate::code_rule_dsl::logic::program_image::TermRef;
+    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, SETTINGS_BY_PATH};
+    /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
+    #[derive(Clone, Default, PartialEq)]
+    struct Reach {
+        all: bool,
+        own: bool,
+        folder: BTreeSet<usize>,
+        path: BTreeSet<usize>,
+    }
+    let v = &local.v;
+    let base = |rel: &str| -> Option<Reach> {
+        if SETTINGS_BY_FOLDER.contains(&rel) {
+            Some(Reach { folder: [0].into(), ..Reach::default() })
+        } else if SETTINGS_BY_PATH.contains(&rel) {
+            Some(Reach { path: [0].into(), ..Reach::default() })
+        } else {
+            None
+        }
+    };
+    let mut reach: HashMap<String, Reach> = HashMap::new();
+    loop {
+        let mut changed = false;
+        for rule in v.rules() {
+            let head = v.rel_name(rule.head().rel());
+            let head_at = |t: TermRef<'_>| -> Option<usize> { t.var().and_then(|s| rule.head().args().position(|h| h.var() == Some(s))) };
+            let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).collect();
+            // Its document's paths, and the folders their settings rows name.
+            let own: HashSet<_> = atoms.iter().filter(|a| !a.neg() && v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
+            let folders: HashSet<_> = atoms
+                .iter()
+                .filter(|a| !a.neg() && SETTINGS_BY_PATH.contains(&v.rel_name(a.rel())))
+                .filter(|a| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
+                .filter_map(|a| a.args().nth(1).and_then(|t| t.var()))
+                .collect();
+            let mut got = reach.get(head).cloned().unwrap_or_default();
+            for a in &atoms {
+                let rel = v.rel_name(a.rel());
+                let Some(r) = base(rel).or_else(|| reach.get(rel).cloned()) else { continue };
+                got.all |= r.all;
+                got.own |= r.own;
+                for (keys, by_folder) in [(&r.folder, true), (&r.path, false)] {
+                    for &c in keys {
+                        let t = a.args().nth(c);
+                        let anchored = t.and_then(|t| t.var()).is_some_and(|x| if by_folder { folders.contains(&x) } else { own.contains(&x) });
+                        match (anchored, t.and_then(head_at)) {
+                            (true, _) => got.own = true,
+                            (false, Some(j)) if by_folder => {
+                                got.folder.insert(j);
+                            }
+                            (false, Some(j)) => {
+                                got.path.insert(j);
+                            }
+                            (false, None) => got.all = true,
+                        }
+                    }
+                }
+            }
+            if reach.get(head) != Some(&got) && got != Reach::default() {
+                reach.insert(head.to_owned(), got);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    rels.iter()
+        .filter_map(|rel| {
+            let r = reach.get(rel.as_str())?;
+            let all = r.all || !r.folder.is_empty() || !r.path.is_empty();
+            Some((rel.clone(), if all { SettingsScope::All } else { SettingsScope::OwnFile }))
+        })
+        .collect()
+}
+
+/// The digests of the project's settings rows (decision 0665): all of them, and each file's own (`SettingsScope`), by
+/// its path's atom. Made from the repository's relations as the run binds them, read where they are.
+#[derive(Default)]
+pub struct SettingsDigests {
+    all: [u8; 32],
+    /// Each setting keyed by a path, its rows by that path; keyed by a folder, by that folder: (relation, row).
+    by_path: HashMap<i64, Vec<(usize, Vec<i64>)>>,
+    by_folder: HashMap<i64, Vec<(usize, Vec<i64>)>>,
+}
+
+impl SettingsDigests {
+    /// Of `rels`: each setting the run binds, by name.
+    pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
+        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, SETTINGS_BY_PATH};
+        let mut out = SettingsDigests::default();
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.settings/v1\0");
+        let mut sorted: Vec<&(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> = rels.iter().collect();
+        sorted.sort_by_key(|(name, _)| *name);
+        for (k, (name, source)) in sorted.into_iter().enumerate() {
+            let width = source.columns().len();
+            let mut rows: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
+            rows.sort_unstable();
+            hash.update(name.as_bytes());
+            hash.update([0]);
+            for row in &rows {
+                row.iter().for_each(|x| hash.update(x.to_le_bytes()));
+            }
+            let keyed = if SETTINGS_BY_PATH.contains(name) {
+                Some(&mut out.by_path)
+            } else if SETTINGS_BY_FOLDER.contains(name) {
+                Some(&mut out.by_folder)
+            } else {
+                None
+            };
+            if let Some(keyed) = keyed {
+                for row in rows.into_iter().filter(|r| !r.is_empty()) {
+                    keyed.entry(row[0]).or_default().push((k, row));
+                }
+            }
+        }
+        out.all = hash.finalize().into();
+        out
+    }
+
+    /// The digest of every settings row.
+    pub fn all(&self) -> [u8; 32] {
+        self.all
+    }
+
+    /// The digest `scope` reads for the file whose path is atom `path`.
+    pub fn digest(&self, scope: SettingsScope, path: i64) -> [u8; 32] {
+        if scope == SettingsScope::All {
+            return self.all;
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.settings-of-a-file/v1\0");
+        let own = self.by_path.get(&path).map(Vec::as_slice).unwrap_or_default();
+        let folders: BTreeSet<i64> = own.iter().filter_map(|(_, r)| r.get(1).copied()).collect();
+        for (k, row) in own.iter().chain(folders.iter().flat_map(|f| self.by_folder.get(f).into_iter().flatten())) {
+            hash.update((*k as u64).to_le_bytes());
+            row.iter().for_each(|x| hash.update(x.to_le_bytes()));
+            hash.update([0xff]);
+        }
+        hash.finalize().into()
+    }
+
+    /// `ids` for the file whose path is atom `path`: each relation that reads the settings (`scopes`) under the rows
+    /// it can read of them.
+    pub fn identities(&self, ids: &BTreeMap<String, [u8; 32]>, scopes: &BTreeMap<String, SettingsScope>, path: i64) -> BTreeMap<String, [u8; 32]> {
+        let (own, all) = (self.digest(SettingsScope::OwnFile, path), self.all);
+        ids.iter()
+            .map(|(rel, id)| {
+                let id = match scopes.get(rel) {
+                    None => *id,
+                    Some(scope) => {
+                        let mut hash = Sha256::new();
+                        hash.update(b"rerail.corpus-local-identity-settings/v1\0");
+                        hash.update(id);
+                        hash.update(if *scope == SettingsScope::All { all } else { own });
+                        hash.finalize().into()
+                    }
+                };
+                (rel.clone(), id)
+            })
+            .collect()
+    }
+}
+
 /// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {

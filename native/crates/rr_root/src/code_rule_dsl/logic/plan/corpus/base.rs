@@ -102,6 +102,9 @@ pub struct Report {
     /// Of the files the memo held, those read as partial hits (decision 0225 §2): their entries kept but the
     /// relations an edit changed, which their chunk derives again.
     pub memo_partial: usize,
+    /// The digest of the project's settings rows the run bound (decision 0665, `memo::SettingsDigests`): a source
+    /// file's edit leaves it, an edit of a configuration file changes it. `None`: the file-local part reads none.
+    pub settings: Option<[u8; 32]>,
     /// Of the files the memo held, those read for their outputs alone (decision 0117 step 1), and the values of
     /// their export and base rows decoded all the same: none, as the kept inputs hold those rows.
     pub memo_kept: (usize, usize),

@@ -2333,6 +2333,126 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// A program whose per-file rule reads the project's settings (decision 0665): a function of a file under a package
+/// of `"type": "module"`.
+const SETTINGS_READ: &str = r#"
+.decl typed(n: node)
+typed(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), package_field(dir, "type", "module").
+.output typed
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- typed(n), field(n, "name", i), text(i, x), docof(n, d), doc(d, p, _).
+.output shown
+"#;
+
+/// A run of `SETTINGS_READ` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn settings_read_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, SETTINGS_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: a file's memo entry is kept under its own package's settings. Two packages, `a` (a module, two
+/// files) and `b` (one file). A source file's edit leaves the settings as they were, and the other files are read
+/// from the memo; an edit of `b/package.json` misses `b`'s files alone; and after each edit the rows are a fresh
+/// run's.
+#[test]
+fn a_files_entry_is_kept_under_its_own_packages_settings() {
+    let files = [
+        ("a/package.json", "{\"name\": \"a\", \"type\": \"module\"}\n"),
+        ("a/x.py", "def f():\n    pass\n"),
+        ("a/y.py", "def g():\n    pass\n"),
+        ("b/package.json", "{\"name\": \"b\"}\n"),
+        ("b/z.py", "def h():\n    pass\n"),
+    ];
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let fresh = |name: &str, edits: &[(&str, &str)]| {
+        let dir = make(name, edits);
+        let (_, rows) = settings_read_run(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        rows
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("settings-memo", &[]);
+    let (first, rows) = settings_read_run(&dir);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g")], "a full run's rows");
+    assert!(first.settings.is_some(), "the file-local part reads the settings");
+    // The documents under `b`: `z.py`, and `package.json` where the run reads JSON as documents.
+    let under_b = first.files - 2;
+    // A source file's edit: the settings are as they were, and every other file is read from the memo.
+    let source_edit = [("b/z.py", "# an edit\ndef h():\n    pass\n")];
+    std::fs::write(dir.join("ws/b/z.py"), source_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.settings, first.settings, "a source file's edit changes no setting");
+    assert_eq!(edited.memo.0, edited.files - 1, "every other file is read from the memo: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, fresh("settings-memo-fresh-1", &source_edit), "the rows are a fresh run's");
+    // `b` becomes a module: its files miss, `a`'s are read from the memo.
+    let package_edit = [("b/package.json", "{\"name\": \"b\", \"type\": \"module\"}\n")];
+    std::fs::write(dir.join("ws/b/package.json"), package_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_ne!(edited.settings, first.settings, "an edit of a package.json changes the settings");
+    assert_eq!(edited.memo.0, edited.files - under_b, "the files under b alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g"), row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-2", &[source_edit[0], package_edit[0]]), "the rows are a fresh run's");
+    // `a` is no module: `a`'s files miss, `b`'s are read from the memo.
+    std::fs::write(dir.join("ws/a/package.json"), "{\"name\": \"a\"}\n").unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.memo.0, under_b, "the files under a alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-3", &[source_edit[0], package_edit[0], ("a/package.json", "{\"name\": \"a\"}\n")]), "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
+/// folder its own path's row names (directly or through a relation keyed by it), is the file's own; one through
+/// another key (a constant folder, any file's row) is every file's.
+#[test]
+fn a_relation_reads_its_own_files_settings_only_through_its_own_path() {
+    use crate::code_rule_dsl::logic::plan::corpus::memo::{SettingsScope, settings_scopes};
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("settings-scopes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, r#"
+.decl dep(dir: symbol, m: symbol)
+dep(dir, m) :- package_field(dir, "dependencies/react", m).
+.decl own(n: node)
+own(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), dep(dir, _).
+.output own
+.decl any(n: node)
+any(n) :- kind(n, "function_definition"), package_for(_, dir), dep(dir, _).
+.output any
+.decl root(n: node)
+root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
+.output root
+.decl none(n: node)
+none(n) :- kind(n, "function_definition").
+.output none
+"#).unwrap();
+    let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
+    let rels = ["own", "any", "root", "none"].map(str::to_owned).into_iter().collect();
+    let scopes = settings_scopes(&placed, &rels);
+    assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("none"), None, "{scopes:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R11 (step 6): a file's programs are made once, at its parse, and kept with its tape. A fresh run
 /// makes the HTML file's script at its parse and the batch reads it off the file's record; a run of another program
 /// (no memo hit) finds the file's tape in the store and its script with it, parsing nothing; a tape whose record is

@@ -31,6 +31,10 @@ pub struct Plans {
     pub shared: Vec<String>,
     /// The joins left as written: the chunks make them, and a cross-file reader would state their requests.
     pub cross: Vec<String>,
+    /// The joins left as written because the split holds them constants (decision 0665): of facts and settings alone,
+    /// the same for every file and made once. Read by a file's rule, the requests would be the files', and the
+    /// constant would read every file's rows. A constant only constants read is driven as any join is.
+    pub constants: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
 }
@@ -283,6 +287,11 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
             let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&current)?;
             same_doc = split.row_documents.clone();
             pairs.retain(|(rel, _, _)| {
+                // A constant a file's rule reads (decision 0665): its requests would be the files'.
+                if split.constants.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.constants.contains(p.head_rel(rules[i]))) {
+                    plans.constants.push(rel.clone());
+                    return false;
+                }
                 let cross = split.local.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.local.contains(p.head_rel(rules[i])));
                 if cross {
                     plans.cross.push(rel.clone());
@@ -478,7 +487,7 @@ impl ProgramPass for DeferJoins {
         let mut program = Program::of(version);
         let plans = rewrite(&mut program, version, self.deferral.adaptive, self.deferral.cache_pairs)?;
         cx.decide("deferred joins", || {
-            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross)
+            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}; left as written, constants: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross, plans.constants)
         });
         for mut join in plans.author {
             if let Access::Factors { cache: None } = &join.access {
