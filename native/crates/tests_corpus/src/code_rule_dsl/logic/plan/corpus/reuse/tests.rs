@@ -144,8 +144,6 @@
 
     #[test]
     fn outputs_and_records_round_trip() {
-        let files = vec![("a.rro".to_owned(), b"1\t2\n".to_vec()), ("b.rro".to_owned(), Vec::new())];
-        assert_eq!(super::decode_outputs(&super::encode_outputs(&files)).unwrap(), files);
         let c = vec![("doc".to_owned(), "a.py".to_owned(), "ab".to_owned()), ("rule".to_owned(), "/x/core.rerail".to_owned(), "cd".to_owned())];
         assert_eq!(super::decode_consulted(&super::encode_consulted(&c)), Some(c.clone()));
         let bytes = super::encode_consulted(&c);

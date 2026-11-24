@@ -10986,3 +10986,24 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - setfix device 39 passed. The two parity reds were red before this merge and are left for the green pass;
   - tests-corpus session and cross views 35, phase 0 10, and `the_run_after_a_cold_one_with_tape_values_writes_nothing` (now green).
 - r5 (`r5_the_runs_read_no_sql_inside_the_waves`) was red after the merge: it came in with roll-up 99 (rr-align's 0639 §3 answer). Fixed in the next commit.
+
+### Q528. Roll-up 101 (Typing-support-final-shape 06bc84f2fa onto Pulling-it-all-together): what the merge chose
+
+- Typing-support-final-shape's 8 commits since acdd65304e (which roll-up 100 carried in through sync-integration-hub-tape): K4's cuts, the run's and phase 1's single frame (`frame.rs`), kept entries read in place, the prepared program's pointer read once, and a command's frame checked before any rule text is read.
+- The theirs' side, by K4's design:
+  - reuse.rs: the run's frame (`kept.reads`, `kept.plans`, `Summary::decode`) replaces the record's decoded consulted list;
+  - phases.rs: `frame: Option<(key, Option<frame::Frame>)>`, the frame module now in frame.rs;
+  - prepared.rs: `prepared_from(gather(..))` over the rows read in place;
+  - constants.rs: `Leaves` checks the consulted leaves (with the hub's `Vector` plans).
+- A snapshot's settings file, where both sides fixed `revision_cli_reads_commit_metadata_without_its_tree`. There is one mechanism per job:
+  - the run's decision stays the hub's `run_settings` (both sides' runs make the same one);
+  - the key and the record's summary (`combined_with_settings`, reuse's `settings`) take theirs' `settings_as_read`, which marks the file as unreadable without reading the program. A command's frame needs that: it is checked before any rule text is read.
+  - The hub's probe of the program for the summary goes.
+- boot tools.rs: both test modules are kept (the hub's `launch_tests`, theirs' `command_frame_tests`).
+- Ported to the hub's block types:
+  - `Frame::plans` is a `Vector`;
+  - prepared's `locations`/`same_doc` columns, set members and interned ids are `Vector`s.
+- Checked with Relax, RERAIL_GPU=cpu: logic and boot, 0 errors. Tests:
+  - boot command frame 1, revision metadata 1;
+  - tests-corpus reuse, warm and prepared 23.
+- `fresh_and_restored_programs_have_identical_relation_identities` failed under Relax at its child spawn (`nice <binary>`, not a self-spawn), not on its assertions. Fixed in the next commit, then passed.

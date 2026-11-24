@@ -91,6 +91,17 @@ pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String,
     settings_with_file(root, flags, true)
 }
 
+/// `settings`, for what keys a run before it runs (its frame's key, its program's summary): in a Git snapshot whose
+/// `rerail.env` cannot be read (a commit whose tree is not in the repository), the flags alone and why, as the run
+/// itself reads none where its program reads only Git's metadata (`corpus::run_observed`). Elsewhere, `settings`.
+pub fn settings_as_read(root: &std::path::Path, flags: &[String]) -> Result<(Vec<(String, String)>, Option<String>), String> {
+    match settings(root, flags) {
+        Ok(settings) => Ok((settings, None)),
+        Err(why) if crate::git_workspace::snapshot::contains(root) => Ok((settings_with_file(root, flags, false)?, Some(why))),
+        Err(why) => Err(why),
+    }
+}
+
 pub fn settings_with_file(root: &std::path::Path, flags: &[String], read_file: bool) -> Result<Vec<(String, String)>, String> {
     let file = root.join("rerail.env");
     let text = if read_file {

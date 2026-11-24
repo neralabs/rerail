@@ -1040,6 +1040,12 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 }
 
 fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
+    logic_framed(programs, root, t_facts, out, run).map(|(text, _)| text)
+}
+
+/// `logic_checked`, with the run's frame (`Report::frame`) where the command is one run whatever its corpus holds: no
+/// program names a language of several dialects, so a command's frame may lead to it (`reuse::command`).
+fn logic_framed(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<(String, Option<[u8; 32]>), ProgramRunError> {
     let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -1086,10 +1092,24 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
         }
     }
     let report = report.ok_or_else(|| "no programs".to_owned())?;
+    let one_run = runs.len() == 1 && !programs.iter().any(|t| names_dialects(t));
+    let frame = report.frame.filter(|_| one_run);
+    Ok((report_text(programs.len(), &report, modes, binding, t_facts), frame))
+}
+
+/// Whether `text` names a language of several dialects (`.language typescript`): its run may split by the dialects a
+/// corpus holds (`dialect_runs`).
+fn names_dialects(text: &str) -> bool {
+    use super::language::CodeRuleLanguage;
+    text.lines().map(str::trim_start).find_map(|l| l.strip_prefix(".language ")).map(|n| n.trim().trim_matches('"')).is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1))
+}
+
+/// A `logic` command's report as text.
+fn report_text(programs: usize, report: &super::logic::plan::corpus::Report, modes: &str, binding: super::typing::file_local::Binding, t_facts: Option<&std::path::Path>) -> String {
     let execution = if modes.is_empty() { "sql" } else { modes };
     let mut text = format!(
         "{} programs; {} files, {} nodes in {} chunks, {} components native ({execution}, nearest on {binding:?})\n",
-        programs.len(),
+        programs,
         report.files,
         report.nodes,
         report.chunks,
@@ -1139,7 +1159,7 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
     if t_facts.is_some() {
         text += "  (planner statistics and node ids read from the T facts file)\n";
     }
-    Ok(text)
+    text
 }
 
 
@@ -1608,6 +1628,7 @@ use crate::code_rule_dsl::logic::profile::timeline_mark;
 
 fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
+    let command_args = args.to_vec();
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
     let mut revision = None;
@@ -1651,11 +1672,13 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
         _ => return Err(USAGE.into()),
     };
-    // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
-    // `#include`s are read in.
-    let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
-    let _sources;
-    let programs = if Path::new(program.as_str()).is_dir() {
+    if revision.is_none() && analysis_scope.is_some() {
+        return Err("--analysis-scope requires --revision".into());
+    }
+    use super::logic::plan::corpus::{Typing, reuse};
+    // The rule files: a directory's every `.rerail` (and JSON policy), run as one program; or the one file named.
+    let is_dir = Path::new(program.as_str()).is_dir();
+    let listed: Vec<std::path::PathBuf> = if is_dir {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
             .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -1663,43 +1686,85 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rerail") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
             .collect();
         files.sort();
-        // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone it
-        // has neither the declarations it reads nor the rules that fill its inputs.
-        // Each read once, as the run observes it, and its text handed on to `program_texts_read`.
-        let read: Vec<Result<String, String>> = files.iter().map(|path| crate::tools::read_program_file(path)).collect();
-        let included: std::collections::BTreeSet<std::ffi::OsString> = read
-            .iter()
-            .filter_map(|text| text.as_ref().ok())
-            .flat_map(|text| {
-                text.lines()
-                    .filter_map(|l| l.trim().strip_prefix("#include"))
-                    .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
-                    .flatten()
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
-        timeline_mark("the program files listed");
-        let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
-        _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
-        timeline_mark("the program texts read");
-        texts
+        files
     } else {
-        let path = Path::new(program.as_str());
-        let text = crate::tools::program_text(path)?;
-        _sources = super::logic::rr::profile_join_sources(&[path]);
-        vec![text]
+        vec![std::path::PathBuf::from(program.as_str())]
     };
-    drop(reading);
-    if programs.is_empty() {
-        return Err(format!("{program} has no .rerail programs"));
-    }
-    if revision.is_none() && analysis_scope.is_some() {
-        return Err("--analysis-scope requires --revision".into());
-    }
-    let eval = |root: &Path| {
-        let run = || logic_checked(&programs, root, facts, Path::new(out), &crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env });
-        if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+    // The command's frame (t33 K4, `reuse::command`): its rule files as the observer sees them (a `stat` each) lead to
+    // its run's frame, checked before any rule text is read. Not for a run of a revision (its root is a view made for
+    // the run), a session's full run, or one reproducing T.
+    let options = serde_json::json!({ "env": env, "reuse": true });
+    let command = (revision.is_none() && !full && facts.is_none() && reuse::wanted(&options, &Typing::default(), None))
+        .then(|| -> Result<_, String> {
+            let dir = if is_dir { Some(dunce::canonicalize(program).map_err(|e| format!("{program}: {e}"))?) } else { None };
+            let files: Vec<std::path::PathBuf> = match &dir {
+                Some(d) => listed.iter().filter_map(|f| f.file_name()).map(|n| d.join(n)).collect(),
+                None => vec![dunce::canonicalize(program).map_err(|e| format!("{program}: {e}"))?],
+            };
+            // Everything on the command line but its output directory, which changes no output.
+            let extra = format!("{program}\0{modes}\0{metal}\0{chunk}\0{:?}", command_args.iter().filter(|a| *a != out).collect::<Vec<_>>());
+            let key = reuse::command::key(&files, Path::new(root), &options, &modes, &Typing::default(), &extra).map_err(|e| e.to_string())?;
+            Ok((key, dir, files))
+        })
+        .transpose()?;
+    // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
+    // `#include`s are read in.
+    let read_programs = || -> Result<(Vec<String>, _), String> {
+        let _reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
+        let (programs, sources) = if is_dir {
+            let files = listed.clone();
+            // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone
+            // it has neither the declarations it reads nor the rules that fill its inputs.
+            // Each read once, as the run observes it, and its text handed on to `program_texts_read`.
+            let read: Vec<Result<String, String>> = files.iter().map(|path| crate::tools::read_program_file(path)).collect();
+            let included: std::collections::BTreeSet<std::ffi::OsString> = read
+                .iter()
+                .filter_map(|text| text.as_ref().ok())
+                .flat_map(|text| {
+                    text.lines()
+                        .filter_map(|l| l.trim().strip_prefix("#include"))
+                        .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
+                        .flatten()
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
+            timeline_mark("the program files listed");
+            let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
+            let sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
+            timeline_mark("the program texts read");
+            (texts, sources)
+        } else {
+            let path = Path::new(program.as_str());
+            let text = crate::tools::program_text(path)?;
+            (vec![text], super::logic::rr::profile_join_sources(&[path]))
+        };
+        if programs.is_empty() {
+            return Err(format!("{program} has no .rerail programs"));
+        }
+        Ok((programs, sources))
+    };
+    // Without a command's frame, read before the run begins, as ever.
+    let early = if command.is_none() { Some(read_programs()?) } else { None };
+    let eval = |root: &Path| -> Result<String, ProgramRunError> {
+        let logic_run = crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env };
+        let Some((key, dir, files)) = &command else {
+            let (programs, _sources) = early.as_ref().expect("read early");
+            let run = || logic_checked(programs, root, facts, Path::new(out), &logic_run);
+            return if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() };
+        };
+        let binding = if metal { super::typing::file_local::Binding::Metal } else { super::typing::file_local::Binding::Cpu };
+        if let Some((report, programs)) = reuse::command::reused(key, root, Path::new(out), &Typing::default(), &options)? {
+            return Ok(report_text(programs, &report, &modes, binding, None));
+        }
+        let (programs, _sources) = read_programs()?;
+        // The run's manifest names the command's frame, kept once the run ends.
+        let _naming = reuse::Naming::enter(*key);
+        let (text, frame) = logic_framed(&programs, root, facts, Path::new(out), &logic_run)?;
+        if let Some(then) = frame {
+            reuse::command::record(key, dir.as_deref(), files, &then, programs.len());
+        }
+        Ok(text)
     };
     let mut invocation = PolicyInvocation::begin(Path::new(root), revision.as_deref(), analysis_scope.as_deref())?;
     let report = invocation.evaluate(eval)?;
@@ -2868,5 +2933,81 @@ mod launch_tests {
         }
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         super::launch_checks().unwrap();
+    }
+}
+
+/// The command's frame (t33 K4, `reuse::command`): a `logic` command whose rule files, and their directory's listing,
+/// are as the last run of it found them takes its run's frame without reading a rule text; an edited rule file, or one
+/// added to the directory, runs it again. Each run's outputs are a cold run's.
+#[cfg(test)]
+mod command_frame_tests {
+    use super::*;
+
+    const PROGRAM: &str = r#"
+.decl named(t: symbol)
+named(t) :- kind(a, "identifier"), text(a, t), contains("o", t).
+.output named
+"#;
+
+    struct Command {
+        dir: std::path::PathBuf,
+        runs: usize,
+    }
+
+    impl Command {
+        /// A run of `logic <rules> <src> <out>` over the store `store`: its report, and `named`'s rows.
+        fn run(&mut self, store: &str) -> (String, Vec<String>) {
+            self.runs += 1;
+            let out = self.dir.join(format!("out{}", self.runs));
+            crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join(store)));
+            let args: Vec<String> = ["logic", "rules", "src"].iter().map(|a| if *a == "logic" { (*a).to_owned() } else { self.dir.join(a).display().to_string() }).chain([out.display().to_string()]).collect();
+            let text = cli_in(&args, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap();
+            let mut rows: Vec<String> = crate::code_rule_dsl::logic::plan::output::shown(&out, "named").unwrap_or_default().into_iter().map(|r| r.join(",")).collect();
+            rows.sort();
+            (text, rows)
+        }
+    }
+
+    impl Drop for Command {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    const TAKEN: &str = "the command's frame";
+
+    #[test]
+    fn an_unchanged_command_is_answered_by_its_frame_and_a_rule_edit_or_new_rule_runs_it() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("command-frame");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("rules")).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("rules/a.rerail"), PROGRAM).unwrap();
+        std::fs::write(dir.join("src/a.py"), "def foo(x):\n    return x\n").unwrap();
+        std::fs::write(dir.join("src/b.py"), "def solo(z):\n    return bar\n").unwrap();
+        let mut c = Command { dir, runs: 0 };
+        let (cold, rows) = c.run("kept.sqlite");
+        assert!(!cold.contains(TAKEN), "a cold run has no frame: {cold}");
+        assert!(!rows.is_empty(), "the program finds names: {cold}");
+        let (warm, warm_rows) = c.run("kept.sqlite");
+        assert!(warm.contains(TAKEN), "an unchanged command takes its frame: {warm}");
+        assert_eq!(warm_rows, rows, "the frame's outputs are the cold run's");
+        // A rule file edited: its text differs, so its run does.
+        std::fs::write(c.dir.join("rules/a.rerail"), PROGRAM.replace("contains(\"o\", t)", "contains(\"a\", t)")).unwrap();
+        let (edited, edited_rows) = c.run("kept.sqlite");
+        assert!(!edited.contains(TAKEN), "an edited rule file runs the command: {edited}");
+        assert_eq!(edited_rows, c.run("fresh-1.sqlite").1, "the edited run's outputs are a cold run's");
+        let (again, again_rows) = c.run("kept.sqlite");
+        assert!(again.contains(TAKEN), "the run after the edit takes the edit's frame: {again}");
+        assert_eq!(again_rows, edited_rows);
+        // A rule file added to the directory: the command runs more programs.
+        std::fs::write(c.dir.join("rules/b.rerail"), PROGRAM.replace("named", "other").replace("contains(\"o\", t)", "contains(\"z\", t)")).unwrap();
+        let (added, added_rows) = c.run("kept.sqlite");
+        assert!(!added.contains(TAKEN), "a rule file added runs the command: {added}");
+        assert!(added.starts_with("2 programs"), "both programs run: {added}");
+        assert_eq!(added_rows, c.run("fresh-2.sqlite").1, "the run's outputs are a cold run's");
+        let (last, _) = c.run("kept.sqlite");
+        assert!(last.contains(TAKEN) && last.starts_with("2 programs"), "the frame keeps the programs' count: {last}");
     }
 }

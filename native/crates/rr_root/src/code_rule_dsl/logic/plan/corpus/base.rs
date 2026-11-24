@@ -110,6 +110,8 @@ pub struct Report {
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
     pub prepared: &'static str,
+    /// The run's frame (`frame`, t33 K4): the one it was answered from, or kept under as it ended.
+    pub frame: Option<[u8; 32]>,
     /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
     pub cross_strata: Option<(usize, usize)>,
     /// A run with no session, its strata kept in the tape cache (decision 0077 §4): the cross-file strata it
@@ -306,8 +308,8 @@ impl ProgramFields for Summary {
 /// The run's settings (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the command line's `--env`),
 /// and whether the run reads no file (`true`): a run of a workspace's language paths, or a program over a Git snapshot
 /// whose outputs read the snapshot's metadata alone and no setting (the selected commit may have no tree to read the
-/// file from). `masked` are `programs` as the run's keys read them (`masked`). The one decision, the run's and its
-/// record's summary's (`combined_with_settings`).
+/// file from). `masked` are `programs` as the run's keys read them (`masked`). The run's: its key and its record's
+/// summary read the file as `settings_as_read` does (`combined_with_settings`), without the program (t33 K4).
 pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<(Vec<(String, String)>, bool)> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
@@ -325,13 +327,16 @@ pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32
     Ok((settings, metadata_without_env))
 }
 
-/// The program `programs` combine to, as `changes` combines them: the run's settings (`run_settings`) as the rows the
-/// run adds (decision 0249), the texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3).
+/// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
+/// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
+/// (`texts_digest`, decision 0225 §3).
 pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+    // As the run reads them: a snapshot's settings file that does not read is none, for a program that reads Git's
+    // metadata alone (any other's run fails on it).
+    let (settings, _) = crate::code_rule_dsl::logic::settings::settings_as_read(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
-    let masked: Vec<&str> = masked.iter().map(|t| t.as_ref()).collect();
-    let (settings, _) = run_settings(programs, &masked, graphs, read, root, options)?;
-    Ok(combine_version(programs, &masked, graphs, &added::Added::of(&settings, options), read)?.0)
+    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
 /// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off
@@ -374,19 +379,23 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
         trace(format!("the documents differ: {} files, {} kept", files.len(), workspace.len()));
         return Ok(None);
     }
-    // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
-    let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 12] = ["git_object_predicate", "package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_tracking_index", "git_revision_rows", "git_root_repo", analysis_history::INPUT];
-    let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    let mut world = world::World::new(root, &prog);
-    let moved = world.changed(&requests);
-    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), moved.is_none());
-    if !(inputs_still && world_still) {
-        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests; first changed {moved:?})", read.len(), requests.len()));
-    } else if !changed.is_empty() {
+    // Every leaf by its reader (`leaves`): a changed document is the run's delta, any other leaf changed none can say.
+    let mut leaves = leaves::Leaves::new(root, &prog);
+    let mut changed = Vec::new();
+    for leaf in consulted {
+        if leaves.still(leaf) {
+            continue;
+        }
+        if leaf.0 != "doc" {
+            trace(format!("a leaf changed: {} {}", leaf.0, leaf.1));
+            return Ok(None);
+        }
+        changed.push(leaf.1.clone());
+    }
+    if !changed.is_empty() {
         trace(format!("{} documents changed: {:?}", changed.len(), changed.iter().take(3).collect::<Vec<_>>()));
     }
-    Ok((inputs_still && world_still).then_some(changed))
+    Ok(Some(changed))
 }
 
 /// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty. None now:

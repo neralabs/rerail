@@ -250,27 +250,163 @@ fn text(v: &Value) -> Result<String, String> {
     }
 }
 
-/// The rows of `rel` by their first column (an index): each row less that column, in order.
-fn indexed<'a>(facts: &'a Facts, rel: &str) -> Result<Vec<(i64, &'a [Value])>, String> {
-    let mut rows: Vec<(i64, &[Value])> = facts.get(rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, &r[1..]))).collect::<Result<_, String>>()?;
-    rows.sort_by_key(|(k, _)| *k);
-    Ok(rows)
+/// The pointer's rows, where they are: a kept entry of the store, read in place (`kept_entry::Entries::visit`,
+/// decision 0353), or facts (the engine's shipped bundle, a program this process prepared for another store).
+enum Rows<'a> {
+    Facts(&'a Facts),
+    Kept(&'a ContentStore, i64),
 }
 
-/// The rows of `rel` grouped by their first column (an index), each group in the order of its second (an index), each
-/// row less both.
-fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Value]>>, String> {
-    let mut out: BTreeMap<i64, Vec<(i64, &[Value])>> = BTreeMap::new();
-    for r in facts.get(rel).into_iter().flatten() {
-        out.entry(int(&r[0])?).or_default().push((int(&r[1])?, &r[2..]));
+/// A row's cells, as `Rows` hands them.
+trait Cells {
+    fn len(&self) -> usize;
+    fn int(&self, c: usize) -> Result<i64, String>;
+    fn text(&self, c: usize) -> Result<String, String>;
+}
+
+/// A row of facts' values.
+struct Values<'a>(&'a [Value]);
+
+impl Cells for Values<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
     }
-    Ok(out
-        .into_iter()
-        .map(|(k, mut rows)| {
-            rows.sort_by_key(|(i, _)| *i);
-            (k, rows.into_iter().map(|(_, r)| r).collect())
-        })
-        .collect())
+    fn int(&self, c: usize) -> Result<i64, String> {
+        int(self.0.get(c).ok_or_else(|| bad(format!("no column {c}")))?)
+    }
+    fn text(&self, c: usize) -> Result<String, String> {
+        text(self.0.get(c).ok_or_else(|| bad(format!("no column {c}")))?)
+    }
+}
+
+impl Cells for crate::code_rule_dsl::logic::plan::kept_entry::Row<'_> {
+    fn len(&self) -> usize {
+        crate::code_rule_dsl::logic::plan::kept_entry::Row::len(self)
+    }
+    fn int(&self, c: usize) -> Result<i64, String> {
+        crate::code_rule_dsl::logic::plan::kept_entry::Row::int(self, c).ok_or_else(|| bad(format!("column {c} is no number")))
+    }
+    fn text(&self, c: usize) -> Result<String, String> {
+        crate::code_rule_dsl::logic::plan::kept_entry::Row::text(self, c).map(|t| t.to_string()).ok_or_else(|| bad(format!("column {c} is no string")))
+    }
+}
+
+impl Rows<'_> {
+    /// Each row of the pointer's relations (`prepared_*`), with its relation, in no order: one read of the entry.
+    fn all(&self, f: &mut dyn FnMut(&str, &dyn Cells) -> Result<(), String>) -> Result<(), String> {
+        match self {
+            Rows::Facts(facts) => facts.iter().try_for_each(|(rel, rows)| rows.iter().try_for_each(|r| f(rel, &Values(&r[..])))),
+            Rows::Kept(store, part) => {
+                let mut failed = None;
+                let (_, bad_parts) = pointer::ENTRIES.visit(store, Some(&[*part]), &|r| r.starts_with("prepared_"), &mut |_, rel, row| match f(rel, row) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        failed = Some(e);
+                        false
+                    }
+                });
+                match failed {
+                    Some(e) => Err(e),
+                    None if !bad_parts.is_empty() => Err(bad("a row that does not read")),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+}
+
+/// The pointer's rows as read (`gather`), each relation's parsed, with the places its indexes give: what
+/// `prepared_from` makes the prepared program of, and `lookup` reads the program's texts and atoms from.
+#[derive(Default)]
+struct Gathered {
+    program: BTreeMap<String, [u8; 32]>,
+    domains: lower::Domains,
+    ops: Vec<(i64, i64)>,
+    set_kinds: BTreeMap<i64, Vec<(i64, i64)>>,
+    sets: Vec<(i64, String)>,
+    lists: BTreeMap<String, Vec<(i64, String)>>,
+    matchers: Vec<(i64, (String, String, Vec<String>))>,
+    located: Option<i64>,
+    merged: Option<(usize, usize)>,
+    interned: Vec<(i64, i64)>,
+    interned_atoms: BTreeMap<i64, Vec<(i64, (String, u32))>>,
+    tests: Vec<(i64, (String, String))>,
+    patterns: BTreeMap<i64, Vec<(i64, String)>>,
+    matches: Vec<(i64, String)>,
+    split: bool,
+    locations: BTreeMap<String, Vector<usize>>,
+    same_doc: BTreeMap<String, Vector<usize>>,
+    memo_part: Option<String>,
+    memo_reach: BTreeMap<i64, Arc<[String]>>,
+    memo_stratum: Vec<(String, [u8; 32], i64)>,
+    decided: Vec<(i64, ((String, String), u64))>,
+}
+
+/// The pointer's rows, read once.
+fn gather(rows: &Rows<'_>) -> Result<Gathered, String> {
+    let mut g = Gathered::default();
+    rows.all(&mut |rel, r| {
+        match rel {
+            PROGRAM => {
+                g.program.insert(r.text(0)?, unhex(&r.text(1)?).ok_or_else(|| bad("a program's digest"))?);
+            }
+            "prepared_domain" => {
+                let codes = r.text(1)?;
+                let ds = codes.chars().map(|c| domain_of_code(c).ok_or_else(|| bad(format!("no domain {c}")))).collect::<Result<Vec<_>, String>>()?;
+                g.domains.insert(r.text(0)?, ds);
+            }
+            "prepared_op" => g.ops.push((r.int(0)?, r.int(1)?)),
+            "prepared_set_kind" => g.set_kinds.entry(r.int(0)?).or_default().push((r.int(1)?, r.int(2)?)),
+            "prepared_set" => g.sets.push((r.int(0)?, r.text(1)?)),
+            "prepared_located_rel" | "prepared_demanded" | "prepared_pushed" | "prepared_factorized" | "prepared_marker" | "prepared_file_local" | "prepared_constant" => {
+                g.lists.entry(rel.to_owned()).or_default().push((r.int(0)?, r.text(1)?));
+            }
+            // Captured names (decision 0107): none in a program kept before.
+            "prepared_matcher" => {
+                let captures = if r.len() > 3 { Some(r.text(3)?) } else { None };
+                let captures = captures.filter(|c| !c.is_empty()).map(|c| c.split(',').map(str::to_owned).collect()).unwrap_or_default();
+                g.matchers.push((r.int(0)?, (r.text(1)?, r.text(2)?, captures)));
+            }
+            "prepared_located" => g.located = Some(r.int(0)?),
+            "prepared_merged" => g.merged = Some((r.int(0)? as usize, r.int(1)? as usize)),
+            "prepared_interned" => g.interned.push((r.int(0)?, r.int(1)?)),
+            "prepared_interned_atom" => {
+                let atom = u32::try_from(r.int(3)?).map_err(bad)?;
+                g.interned_atoms.entry(r.int(0)?).or_default().push((r.int(1)?, (r.text(2)?, atom)));
+            }
+            "prepared_test" => g.tests.push((r.int(0)?, (r.text(1)?, r.text(2)?))),
+            "prepared_test_pattern" => g.patterns.entry(r.int(0)?).or_default().push((r.int(1)?, r.text(2)?)),
+            "prepared_match" => g.matches.push((r.int(0)?, r.text(1)?)),
+            "prepared_split" => g.split = true,
+            "prepared_location" | "prepared_same_doc" => {
+                let cols = r.text(1)?;
+                let cols = cols_of_text(&cols).ok_or_else(|| bad(format!("columns {cols}")))?;
+                let map = if rel == "prepared_location" { &mut g.locations } else { &mut g.same_doc };
+                map.insert(r.text(0)?, cols);
+            }
+            "prepared_memo_part" => g.memo_part = Some(r.text(0)?),
+            // Each set once, shared by the relations that reach it.
+            "prepared_memo_reach" => {
+                let rels = r.text(1)?;
+                let rels: Arc<[String]> = if rels.is_empty() { Arc::from(Vec::new()) } else { rels.split(',').map(str::to_owned).collect() };
+                g.memo_reach.insert(r.int(0)?, rels);
+            }
+            "prepared_memo_stratum" => {
+                let id = unhex(&r.text(2)?).ok_or_else(|| bad("a memo stratum's identity".to_owned()))?;
+                g.memo_stratum.push((r.text(1)?, id, r.int(3)?));
+            }
+            "prepared_decided" => g.decided.push((r.int(0)?, ((r.text(1)?, r.text(2)?), r.int(3)? as u64))),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(g)
+}
+
+/// Rows by their place (an index), in its order.
+fn in_order<T>(mut rows: Vec<(i64, T)>) -> Vec<T> {
+    rows.sort_by_key(|(k, _)| *k);
+    rows.into_iter().map(|(_, t)| t).collect()
 }
 
 /// The prepared program of `facts` (what preparing found, `rest_of`), its source's version (the program before
@@ -281,81 +417,60 @@ pub fn prepared_of(
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
 ) -> Result<Prepared, String> {
-    let domains: lower::Domains = facts
-        .get("prepared_domain")
-        .into_iter()
-        .flatten()
-        .map(|r| {
-            let codes = text(&r[1])?;
-            let ds = codes.chars().map(|c| domain_of_code(c).ok_or_else(|| bad(format!("no domain {c}")))).collect::<Result<Vec<_>, String>>()?;
-            Ok((text(&r[0])?, ds))
-        })
-        .collect::<Result<_, String>>()?;
-    let ops: Vector<i64> = indexed(facts, "prepared_op")?.iter().map(|(_, r)| int(&r[0])).collect::<Result<_, _>>()?;
-    let ops: [i64; 3] = <[i64; 3]>::try_from(&ops[..]).map_err(|_| bad("not three operators"))?;
-    let kinds = nested(facts, "prepared_set_kind")?;
-    let mut sets = Vec::new();
-    for (k, r) in indexed(facts, "prepared_set")? {
-        let members = kinds.get(&k).into_iter().flatten().map(|v| int(&v[0])).collect::<Result<_, _>>()?;
-        sets.push((text(&r[0])?, members));
-    }
-    let list = |rel: &str| -> Result<Vec<String>, String> { indexed(facts, rel)?.iter().map(|(_, r)| text(&r[0])).collect() };
-    // A program kept before decision 0106 has no matchers.
-    let matchers = if facts.contains_key("prepared_matcher") {
-        indexed(facts, "prepared_matcher")?
-            .iter()
-            .map(|(_, r)| {
-                // Captured names (decision 0107): none in a program kept before.
-                let captures = r.get(2).map(text).transpose()?.filter(|c| !c.is_empty()).map(|c| c.split(',').map(str::to_owned).collect()).unwrap_or_default();
-                Ok((text(&r[0])?, text(&r[1])?, captures))
-            })
-            .collect::<Result<Vec<_>, String>>()?
-    } else {
-        Vec::new()
-    };
-    let ok = facts.get("prepared_located").and_then(|r| r.first()).map(|r| int(&r[0])).transpose()?.ok_or_else(|| bad("no located"))?;
-    let located_rels = list("prepared_located_rel")?;
-    let located = if ok == 1 { Ok(located_rels) } else { Err(located_rels) };
-    let merged = facts.get("prepared_merged").and_then(|r| r.first()).ok_or_else(|| bad("no merged"))?;
-    let merged = (int(&merged[0])? as usize, int(&merged[1])? as usize);
-    let atoms = nested(facts, "prepared_interned_atom")?;
-    let mut interned = Vec::new();
-    for (k, r) in indexed(facts, "prepared_interned")? {
-        let rows = atoms.get(&k).cloned().unwrap_or_default();
-        if rows.len() as i64 != int(&r[0])? {
-            return Err(bad(format!("intern call {k} has {} of its {} strings", rows.len(), int(&r[0])?)));
+    prepared_from(gather(&Rows::Facts(facts))?, None, source, version, dialect)
+}
+
+/// The prepared program of the pointer's rows `g`, its atoms moved by `moved` where they moved (`moves`): the interned
+/// names' atoms and the operators'.
+fn prepared_from(
+    mut g: Gathered,
+    moved: Option<&rustc_hash::FxHashMap<u32, u32>>,
+    source: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    dialect: GrammarDialect,
+) -> Result<Prepared, String> {
+    let atom = |a: i64| -> Result<i64, String> {
+        match moved {
+            None => Ok(a),
+            Some(to) => u32::try_from(a).ok().and_then(|a| to.get(&a)).map(|a| i64::from(*a)).ok_or_else(|| bad(format!("the atom {a} did not move"))),
         }
-        let strings = rows.iter().map(|v| text(&v[0])).collect::<Result<Vec<_>, _>>()?;
-        let ids = rows.iter().map(|v| int(&v[1]).map(|a| a as u32)).collect::<Result<Vector<_>, _>>()?;
-        interned.push((strings, ids));
+    };
+    let ops: Vec<i64> = in_order(g.ops).into_iter().map(atom).collect::<Result<_, _>>()?;
+    let ops: [i64; 3] = ops.try_into().map_err(|_| bad("not three operators"))?;
+    let sets = in_order(g.sets.into_iter().map(|(k, rel)| (k, (rel, in_order(g.set_kinds.remove(&k).unwrap_or_default()).into_iter().collect()))).collect());
+    let mut lists = std::mem::take(&mut g.lists);
+    let mut list = |rel: &str| in_order(lists.remove(rel).unwrap_or_default());
+    let ok = g.located.ok_or_else(|| bad("no located"))?;
+    let located_rels = list("prepared_located_rel");
+    let located = if ok == 1 { Ok(located_rels) } else { Err(located_rels) };
+    let merged = g.merged.ok_or_else(|| bad("no merged"))?;
+    let mut interned = Vec::new();
+    for (k, width) in in_order(g.interned.iter().map(|(k, w)| (*k, (*k, *w))).collect()) {
+        let call = in_order(g.interned_atoms.remove(&k).unwrap_or_default());
+        if call.len() as i64 != width {
+            return Err(bad(format!("intern call {k} has {} of its {width} strings", call.len())));
+        }
+        let (strings, ids): (Vec<String>, Vec<i64>) = call.into_iter().map(|(x, a)| (x, i64::from(a))).unzip();
+        interned.push((strings, ids.into_iter().map(|a| atom(a).map(|a| a as u32)).collect::<Result<Vector<u32>, String>>()?));
     }
-    let patterns = nested(facts, "prepared_test_pattern")?;
     let (mut relations, mut specs) = (Vec::new(), Vec::new());
-    for (k, r) in indexed(facts, "prepared_test")? {
-        relations.push(text(&r[0])?);
-        specs.push((text(&r[1])?, patterns.get(&k).into_iter().flatten().map(|v| text(&v[0])).collect::<Result<Vec<_>, _>>()?));
+    for (k, (rel, op)) in in_order(g.tests.into_iter().map(|(k, t)| (k, (k, t))).collect()) {
+        relations.push(rel);
+        specs.push((op, in_order(g.patterns.remove(&k).unwrap_or_default())));
     }
     let vocabulary = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' vocabulary".into());
         let mut vocabulary = Vocabulary::from_kept_specs(&relations, specs);
-        vocabulary.matches = indexed(facts, "prepared_match")?
-            .iter()
-            .map(|(_, r)| regex::Regex::new(&text(&r[0])?).map(Arc::new).map_err(bad))
-            .collect::<Result<_, String>>()?;
-        vocabulary.markers = list("prepared_marker")?;
+        vocabulary.matches = in_order(g.matches).iter().map(|m| regex::Regex::new(m).map(Arc::new).map_err(bad)).collect::<Result<_, String>>()?;
+        vocabulary.markers = list("prepared_marker");
         vocabulary
     };
-    let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
+    let split = match g.split {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
-            let columns = |rel: &str| -> Result<BTreeMap<String, Vector<usize>>, String> {
-                facts.get(rel).into_iter().flatten().map(|r| {
-                    let cols = text(&r[1])?;
-                    Ok((text(&r[0])?, cols_of_text(&cols).ok_or_else(|| bad(format!("columns {cols}")))?))
-                }).collect()
-            };
-            let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
+            let set = |rels: Vec<String>| rels.into_iter().collect::<std::collections::BTreeSet<String>>();
+            let (local, constants) = (set(list("prepared_file_local")), set(list("prepared_constant")));
+            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), local, constants, std::mem::take(&mut g.locations), std::mem::take(&mut g.same_doc))?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
@@ -364,33 +479,21 @@ pub fn prepared_of(
     };
     // The memo's strata, when the program was kept with them; else the first run makes them.
     let memo_strata = std::sync::OnceLock::new();
-    if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
-        let digest = unhex(&text(&part[0])?).ok_or_else(|| bad("a memo part's digest".to_owned()))?;
-        // Each set once, shared by the relations that reach it.
-        let mut sets: BTreeMap<i64, Arc<[String]>> = BTreeMap::new();
-        for r in facts.get("prepared_memo_reach").into_iter().flatten() {
-            let rels = text(&r[1])?;
-            let rels: Arc<[String]> = if rels.is_empty() { Arc::from(Vec::new()) } else { rels.split(',').map(str::to_owned).collect() };
-            sets.insert(int(&r[0])?, rels);
-        }
-        let mut by_rel = BTreeMap::new();
-        for r in facts.get("prepared_memo_stratum").into_iter().flatten() {
-            let id = unhex(&text(&r[2])?).ok_or_else(|| bad("a memo stratum's identity".to_owned()))?;
-            let reached = sets.get(&int(&r[3])?).cloned().unwrap_or_else(|| Arc::from(Vec::new()));
-            by_rel.insert(text(&r[1])?, (id, reached));
-        }
+    if let Some(digest) = &g.memo_part {
+        let digest = unhex(digest).ok_or_else(|| bad("a memo part's digest".to_owned()))?;
+        let by_rel = g.memo_stratum.into_iter().map(|(rel, id, set)| (rel, (id, g.memo_reach.get(&set).cloned().unwrap_or_else(|| Arc::from(Vec::new()))))).collect();
         let _ = memo_strata.set((digest, super::memo::Strata { by_rel }));
     }
     Ok(Prepared {
         source,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
-        lowered: lower::Lowered { version, domains: Arc::new(domains), ops, dialect, normal: Default::default() },
+        lowered: lower::Lowered { version, domains: Arc::new(g.domains), ops, dialect, normal: Default::default() },
         sets,
-        matchers,
-        demanded: list("prepared_demanded")?,
-        pushed: list("prepared_pushed")?,
-        factorized: list("prepared_factorized")?,
+        matchers: in_order(g.matchers),
+        demanded: list("prepared_demanded"),
+        pushed: list("prepared_pushed"),
+        factorized: list("prepared_factorized"),
         located,
         merged,
         split,
@@ -400,7 +503,7 @@ pub fn prepared_of(
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),
-        decided: indexed(facts, "prepared_decided")?.iter().map(|(_, r)| Ok(((text(&r[0])?, text(&r[1])?), int(&r[2])? as u64))).collect::<Result<_, String>>()?,
+        decided: in_order(g.decided).into_iter().collect(),
         memo_strata,
     })
 }
@@ -448,25 +551,25 @@ pub(super) enum Found {
 /// programs' texts, and whether its atoms moved.
 pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
     let start = std::time::Instant::now();
-    // The store's, where its program's text is stored (a pointer is kept only beside its text, `record`).
-    let kept = source.and_then(|_| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the pointer, read".into()); pointer::get(store, key) });
-    let (mut facts, size) = match kept {
-        Some(facts) => (facts, 0),
+    // The store's, where its program's text is stored (a pointer is kept only beside its text, `record`): its rows read
+    // where the store keeps them, once. Else the engine's shipped one.
+    let kept = source.and_then(|_| {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the pointer, read".into());
+        gather(&Rows::Kept(store, pointer::part(key))).ok().filter(|g| !g.program.is_empty())
+    });
+    let (g, size) = match kept {
+        Some(g) => (g, 0),
         None => match crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
             Some(bytes) => {
                 crate::code_rule_dsl::prof::count("corpus.prepared_shipped", 1);
                 let Ok(facts) = program_facts::decode(bytes) else { return Ok(None) };
-                (facts, bytes.len())
+                let Ok(g) = gather(&Rows::Facts(&facts)) else { return Ok(None) };
+                (g, bytes.len())
             }
             None => return Ok(None),
         },
     };
-    let mut texts: BTreeMap<String, [u8; 32]> = BTreeMap::new();
-    for row in facts.remove(PROGRAM).unwrap_or_default() {
-        let [Value::Str(name), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
-        let Some(digest) = unhex(digest) else { return Ok(None) };
-        texts.insert(name.to_string(), digest);
-    }
+    let texts = &g.program;
     let (Some(source), Some(lowered)) = (texts.get("source"), texts.get("lowered")) else { return Ok(None) };
     let mut documents = Vec::new();
     // Both programs' versions opened from their images, no tree decoded (decision 0281's path, steps 5 and R): the
@@ -488,16 +591,16 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     // Its atoms this store's, the version is read as opened; another store's (decision 0270), its tree is decoded
     // once to move them and imaged again (the one tree a lookup reads, and only on a move: work queue Q43).
     let mut version = version;
-    let found = match relocate(store, &mut facts, &version) {
-        Some(None) => Found::Kept,
-        Some(Some(moved)) => {
+    let (found, moved) = match moves(store, &g, &version) {
+        Some(None) => (Found::Kept, None),
+        Some(Some((to, moved))) => {
             version = moved;
             crate::code_rule_dsl::prof::count("corpus.prepared_moved", 1);
-            Found::Moved
+            (Found::Moved, Some(to))
         }
         None => return Ok(None),
     };
-    let got = { let _s = crate::code_rule_dsl::logic::profile::span(|| "what preparing found, read".into()); prepared_of(&facts, source, version, dialect) };
+    let got = { let _s = crate::code_rule_dsl::logic::profile::span(|| "what preparing found, read".into()); prepared_from(g, moved.as_ref(), source, version, dialect) };
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of shipped facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), size as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
@@ -523,17 +626,45 @@ pub(super) fn moved(store: &ContentStore, prepared: &Prepared, dialect: GrammarD
 /// Moves the lowered program's name atoms, and the pointer's (`prepared_op`, `prepared_interned_atom`), to `store`'s
 /// (decision 0270): its strings interned here in one call. `Some(None)` when they are already this store's,
 /// `Some(version)` of the moved program when they moved; `None` when the program holds a name atom no intern call
+/// Moves the lowered program's name atoms, and the pointer's (`prepared_op`, `prepared_interned_atom`), to `store`'s
+/// (decision 0270): its strings interned here in one call. `Some(None)` when they are already this store's,
+/// `Some(version)` of the moved program when they moved; `None` when the program holds a name atom no intern call
 /// made, or the store refuses.
 pub fn relocate(
     store: &ContentStore,
     facts: &mut Facts,
     version: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
 ) -> Option<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+    let Some((to, moved)) = moves(store, &gather(&Rows::Facts(facts)).ok()?, version)? else { return Some(None) };
+    let to_of = |v: &Value| -> Option<Value> { Some(Value::Int(i64::from(*to.get(&u32::try_from(v.integer()?).ok()?)?))) };
+    for row in facts.get_mut("prepared_interned_atom")? {
+        let mut cells: Vec<Value> = row.to_vec();
+        cells[3] = to_of(cells.get(3)?)?;
+        *row = cells.into();
+    }
+    for row in facts.get_mut("prepared_op")? {
+        let mut cells: Vec<Value> = row.to_vec();
+        cells[1] = to_of(cells.get(1)?)?;
+        *row = cells.into();
+    }
+    Some(Some(moved))
+}
+
+/// Where the pointer's name atoms (`g`'s) move to in `store` (decision 0270), and the lowered program `version` with
+/// its atoms moved: `Some(None)` when they are this store's already; `None` when a name has no atom here, or the
+/// store refuses.
+#[allow(clippy::type_complexity)]
+fn moves(
+    store: &ContentStore,
+    g: &Gathered,
+    version: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+) -> Option<Option<(rustc_hash::FxHashMap<u32, u32>, std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>)>> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
-    let rows = facts.get_mut("prepared_interned_atom")?;
-    let strings: Vec<&str> = rows.iter().map(|r| match r.get(2) { Some(Value::Str(x)) => Some(x.as_str()), _ => None }).collect::<Option<_>>()?;
-    let old: Vector<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
-    let new: Vector<u32> = store.intern_atoms(&strings).ok()?.into_iter().collect();
+    let (strings, old): (Vec<&str>, Vec<u32>) = g.interned_atoms.values().flatten().map(|(_, (x, atom))| (x.as_str(), *atom)).unzip();
+    if strings.is_empty() {
+        return None;
+    }
+    let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().collect();
     if new == old {
         return Some(None);
     }
@@ -544,18 +675,7 @@ pub fn relocate(
         lower::relocate(version, &to).ok()??
     };
     crate::code_rule_dsl::logic::profile::decision("the prepared program's atoms (decision 0270)", || format!("prepared by another store: its {} names moved to this store's atoms", strings.len()));
-    for (row, &a) in rows.iter_mut().zip(&new) {
-        let mut cells: Vec<Value> = row.to_vec();
-        cells[3] = Value::Int(i64::from(a));
-        *row = cells.into();
-    }
-    for row in facts.get_mut("prepared_op")? {
-        let mut cells: Vec<Value> = row.to_vec();
-        let a = u32::try_from(cells.get(1)?.integer()?).ok()?;
-        cells[1] = Value::Int(i64::from(*to.get(&a)?));
-        *row = cells.into();
-    }
-    Some(Some(moved))
+    Some(Some((to, moved)))
 }
 
 /// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
@@ -637,13 +757,17 @@ mod pointer {
     use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
     use crate::content_store::{ContentStore, HashKey};
 
-    const ENTRIES: Entries = Entries::new("rerail.prepared");
+    pub(super) const ENTRIES: Entries = Entries::new("rerail.prepared");
 
     fn plan(key: &[u8; 32]) -> [u8; 32] {
         super::pointer_plan(key).plans[0]
     }
 
     /// The program `key`'s pointer, as kept; `None` when the store keeps none (or one that no longer reads).
+    pub(super) fn part(key: &[u8; 32]) -> i64 {
+        Entries::part(&plan(key))
+    }
+
     pub(super) fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Facts> {
         ENTRIES.get(store, Entries::part(&plan(key)))
     }

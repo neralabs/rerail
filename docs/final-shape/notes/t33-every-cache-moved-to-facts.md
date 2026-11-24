@@ -400,10 +400,20 @@ changed) is not normalized, planned or walked. Its outputs are read where they a
 one that is an input (a pack's violations, handed on through `rr_found_through`) where the run binds it
 (`plan::decode_bound`). A run whose outputs include any other (a view of an input, or any output of a run with no
 kept part, as the Git inventory's) still runs. The outputs of the warm runs, framed and not, are the cold run's (661
-relations). Next in line: the kept entries (`kept_entry::Entries::read`, seven users: the prepared pointer, the kept
-plans and choices, phase 0's graphs, the combine, phase frames, the parts) decode every row into values before a
-reader reads them, a copy decision 0353 forbids, and the largest single read left on the warm path; each reader
-reads its relations in place, as the kept plans' numbers already do (`get_numbers`).
+relations). Then (2.57 G to 2.41 G): the kept plans read where a run first plans, with their analyses apart (every
+run reads those), and the store's own check of whether it holds them made before the waves; the quiet cross part
+puts nothing when its kept statistics are the measured ones; and the store's connections plan a statement once
+(`SQLITE_DBCONFIG_ENABLE_QPSG`): SQLite 3.54 re-planned a cached statement at each new value of a parameter it reads
+as a possible integer, so each source lookup by its hash was prepared again, some 800 times an unchanged run.
+The kept entries (`kept_entry::Entries::read`, seven users) decoded every row into values before a reader read
+them, a copy decision 0353 forbids. A reader now reads an entry's rows where the block holds them
+(`Entries::visit`: a row's place and cells, decoded as asked, each atom's text once a visit), and `read` is made on
+it. Moved (2026-11-23): the combine's entry (its read record and what it names) and the prepared pointer (60k rows,
+read once, `prepared::gather`, its atoms' move a map applied as it reads). Neither read is cheaper than the copy was:
+the cost is the block's decode and the parse, not the values. Still through `read`: the kept plans and choices
+(their numbers in place, `get_numbers`), phase 0's graphs (program facts a graph is made of, read by framed runs
+too), phase frames and the parts. With these the warm run without its frame is 2.41 G, the framed 0.84 G: the gap
+is the per-process derivations listed above, a few percent each, and no one read.
 
 Phase 0's graph images (22 ms of opens: some 110 segment files, a segment a single-source record) are written as
 one record a call now; most calls keep one text's graph, so the small segments stay until the store's writer places

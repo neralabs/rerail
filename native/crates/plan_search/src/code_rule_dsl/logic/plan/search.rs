@@ -1569,7 +1569,20 @@ pub struct RunPlans {
     analyses_new: std::sync::atomic::AtomicBool,
     /// The lines this run found heavy while they ran their prepared plan: searched from then on (`prepared_heavy`).
     prepared_searched: parking_lot::Mutex<HashSet<u128>>,
+    /// The store's kept plans, prepared plans and analyses (and its join notes), not yet read (t33 K4): read where the
+    /// run first asks for one (`settle`), or before its first wave where a wave may plan (decision 0104). A run that
+    /// plans nothing (every file a memo hit, its cross part quiet) reads none of them.
+    pending: parking_lot::Mutex<Option<Box<dyn FnOnce() -> Stored + Send>>>,
+    pending_any: std::sync::atomic::AtomicBool,
+    /// The store's analyses, not yet read: apart from the plans, as a run that plans nothing asks for some.
+    pending_analyses: parking_lot::Mutex<Option<Box<dyn FnOnce() -> super::kept_analyses::ByVersion + Send>>>,
+    pending_analyses_any: std::sync::atomic::AtomicBool,
 }
+
+/// What the store kept for a run's planning (`RunPlans::defer`): its plans and the versions' prepared plans.
+pub type Stored = (StoredPlans, prepared::ByVersion);
+/// The read of the store's analyses (`RunPlans::defer`).
+pub type StoredAnalyses = Box<dyn FnOnce() -> super::kept_analyses::ByVersion + Send>;
 
 impl Default for RunPlans {
     fn default() -> Self {
@@ -1654,6 +1667,46 @@ impl RunPlans {
             analyses: Default::default(),
             analyses_new: Default::default(),
             prepared_searched: Default::default(),
+            pending: Default::default(),
+            pending_any: Default::default(),
+            pending_analyses: Default::default(),
+            pending_analyses_any: Default::default(),
+        }
+    }
+
+    /// The store's plans, read by `read` where the run first asks for them (`settle`), and its analyses by `analyses`
+    /// where it first asks for one (`settle_analyses`).
+    pub fn defer(&self, read: Box<dyn FnOnce() -> Stored + Send>, analyses: StoredAnalyses) {
+        *self.pending.lock() = Some(read);
+        self.pending_any.store(true, std::sync::atomic::Ordering::Release);
+        *self.pending_analyses.lock() = Some(analyses);
+        self.pending_analyses_any.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// The store's analyses, read now where they are not yet (`defer`).
+    pub fn settle_analyses(&self) {
+        if !self.pending_analyses_any.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut pending = self.pending_analyses.lock();
+        if let Some(read) = pending.take() {
+            self.analyses.store(Arc::new(read()));
+            self.pending_analyses_any.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// The store's plans, read now where they are not yet (`defer`): once, under the lock, so a thread that asks while
+    /// another reads them waits for them.
+    pub fn settle(&self) {
+        if !self.pending_any.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut pending = self.pending.lock();
+        if let Some(read) = pending.take() {
+            let (plans, ready) = read();
+            self.stored.store(Arc::new(plans));
+            self.prepared.store(Arc::new(ready));
+            self.pending_any.store(false, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -1689,6 +1742,7 @@ impl RunPlans {
     /// it is kept, so a plan from another scale is a better start than a search from nothing).
     fn stored_near(&self, key: &PlanKey, len: usize, nodes: f64) -> Option<Kept> {
         let at = scale(nodes);
+        self.settle();
         let stored = self.stored.load();
         let found = (0..=12u8).find_map(|d| {
             [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| stored.get(&(*key, s)))
@@ -1851,7 +1905,10 @@ pub fn run_holds_plans() -> bool {
 /// The prepared plans the store kept of the version whose identity is `id` (Q228).
 #[doc(hidden)]
 pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
-    with_plans(|p| p.and_then(|p| p.prepared.load().get(id).cloned()))
+    with_plans(|p| p.and_then(|p| {
+        p.settle();
+        p.prepared.load().get(id).cloned()
+    }))
 }
 
 /// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store. A version
@@ -1863,6 +1920,7 @@ pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
     let new = !made.0.is_empty();
     with_plans(|p| {
         if let Some(p) = p.as_ref() {
+            p.settle();
             p.prepared.rcu(|m| {
                 let mut m = prepared::ByVersion::clone(m);
                 m.insert(id, Arc::clone(&made));
@@ -1871,6 +1929,37 @@ pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
             if new {
                 p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+        }
+    });
+}
+
+/// This thread's run reads the store's plans with `read` where it first asks for them (`RunPlans::defer`).
+pub fn defer_stored(read: Box<dyn FnOnce() -> Stored + Send>, analyses: StoredAnalyses) {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.defer(read, analyses);
+        }
+    });
+}
+
+/// This thread's run's store plans, read now where they are not yet: before a wave that may plan (decision 0104).
+pub fn settle_stored() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.settle();
+            p.settle_analyses();
+        }
+    });
+}
+
+/// This thread's run's store plans, read now where they are not yet and the run kept a plan: what it writes (its plans,
+/// the join notes its lines made) is merged with them.
+pub fn settle_if_planned() {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref()
+            && p.kept.load().iter().next().is_some()
+        {
+            p.settle();
         }
     });
 }
@@ -1892,7 +1981,10 @@ pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
 /// The rows the store kept of the analysis `key` names (`kept_analyses`).
 #[doc(hidden)]
 pub fn analysis_stored(key: &super::kept_analyses::Key) -> Option<Arc<Vec<super::super::program_image::manager::Row>>> {
-    with_plans(|p| p.and_then(|p| p.analyses.load().get(key).cloned()))
+    with_plans(|p| p.and_then(|p| {
+        p.settle_analyses();
+        p.analyses.load().get(key).cloned()
+    }))
 }
 
 /// Keeps `rows`, the analysis `key` names as this run made it, for the store.
@@ -1900,6 +1992,7 @@ pub fn analysis_stored(key: &super::kept_analyses::Key) -> Option<Arc<Vec<super:
 pub fn analysis_made(key: super::kept_analyses::Key, rows: Arc<Vec<super::super::program_image::manager::Row>>) {
     with_plans(|p| {
         if let Some(p) = p.as_ref() {
+            p.settle_analyses();
             p.analyses.rcu(|m| {
                 let mut m = super::kept_analyses::ByVersion::clone(m);
                 m.insert(key.clone(), Arc::clone(&rows));
@@ -1926,18 +2019,29 @@ pub fn analyses_to_store() -> Option<Arc<super::kept_analyses::ByVersion>> {
 
 /// The kept analyses held for this thread's run, as read and made.
 pub fn analyses_held() -> Arc<super::kept_analyses::ByVersion> {
-    with_plans(|p| p.map(|p| p.analyses.load_full()).unwrap_or_default())
+    with_plans(|p| p.map(|p| {
+        p.settle_analyses();
+        p.analyses.load_full()
+    }).unwrap_or_default())
 }
 
 /// The prepared plans held for this thread's run, as read and made.
 pub fn prepared_held() -> Arc<prepared::ByVersion> {
-    with_plans(|p| p.map(|p| p.prepared.load_full()).unwrap_or_default())
+    with_plans(|p| p.map(|p| {
+        p.settle();
+        p.prepared.load_full()
+    }).unwrap_or_default())
 }
 
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = with_plans(|p| p.cloned())?;
+    // A run that kept no plan changes none: the store's are not read for it.
+    if plans.kept.load().iter().next().is_none() {
+        return None;
+    }
+    plans.settle();
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
     for (key, e) in kept.iter() {
@@ -1986,7 +2090,10 @@ pub fn lines_take() -> Vec<joins::LineRun> {
 
 /// The plans the store kept for this thread's run, as read (the join memo's write, where no plan changed).
 pub fn stored_plans() -> Option<StoredPlans> {
-    with_plans(|p| p.map(|p| StoredPlans::clone(&p.stored.load())))
+    with_plans(|p| p.map(|p| {
+        p.settle();
+        StoredPlans::clone(&p.stored.load())
+    }))
 }
 
 /// This thread's kept plans, for a job on another thread to enter.

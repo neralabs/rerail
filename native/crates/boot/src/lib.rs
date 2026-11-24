@@ -1672,8 +1672,8 @@ pub mod code_rule_dsl {
                     pub use rerail_logic::code_rule_dsl::logic::plan::corpus::prepared::*;
                 }
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
+                // The command line checks a command's frame (`reuse::command`), in every build.
                 pub mod reuse {
-                    #[cfg(any(test, feature = "test-hooks"))]
                     pub use rerail_logic::code_rule_dsl::logic::plan::corpus::reuse::*;
                 }
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
