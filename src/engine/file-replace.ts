@@ -147,6 +147,18 @@ export interface ReplaceFileSyncOptions extends RenameSyncOptions {
  */
 const sidecarOf = (path: string): string => `${path}.${process.pid}.${randomUUID()}.tmp`;
 
+/** A sidecar's name, as {@link sidecarOf} makes it: what it replaces, the writer's pid, a UUID. */
+const SIDECAR_NAME = /^.+\.(\d+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/u;
+
+/**
+ * The pid of the process that wrote the sidecar named `name` ({@link sidecarOf}); undefined for any other name. A write
+ * cut short (its process ended between the sidecar's open and its rename) leaves the sidecar behind.
+ */
+export function sidecarWriter(name: string): number | undefined {
+  const pid = SIDECAR_NAME.exec(name)?.[1];
+  return pid === undefined ? undefined : Number(pid);
+}
+
 /**
  * Makes `text` the whole of the file at `path`: a reader sees the old file or the new one, never part of either, and
  * the old file is never removed first. The text goes to a new file beside `path`, which {@link renameWithRetry} then

@@ -68,7 +68,7 @@ fn define_unicode_word(
     signature.params.push(AbiParam::new(pointer_type));
     signature.params.push(AbiParam::new(types::I32));
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_regex_unicode_word", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_regex_unicode_word", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -197,7 +197,7 @@ fn define_utf8_scalar(
     signature.params.push(AbiParam::new(types::I32));
     signature.params.push(AbiParam::new(types::I32));
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_regex_utf8_scalar", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_regex_utf8_scalar", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -344,9 +344,9 @@ fn define_unicode_word_side(
     signature.params.push(AbiParam::new(types::I32));
     signature.returns.push(AbiParam::new(types::I32));
     let name = if left {
-        "tempo_regex_unicode_word_left"
+        "rerail_regex_unicode_word_left"
     } else {
-        "tempo_regex_unicode_word_right"
+        "rerail_regex_unicode_word_right"
     };
     let id = module.declare_function(name, Linkage::Local, &signature)?;
     let mut context = module.make_context();
@@ -464,7 +464,7 @@ fn define_look_matches(
         signature.params.push(AbiParam::new(types::I32));
     }
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_regex_look_matches", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_regex_look_matches", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let unicode_left = module.declare_func_in_func(unicode_word_left, &mut context.func);
@@ -724,9 +724,9 @@ fn define_closure(
     }
     signature.returns.push(AbiParam::new(types::I64));
     let name = if ordered {
-        "tempo_regex_nfa_ordered_closure"
+        "rerail_regex_nfa_ordered_closure"
     } else {
-        "tempo_regex_nfa_closure"
+        "rerail_regex_nfa_closure"
     };
     let id = module.declare_function(name, Linkage::Local, &signature)?;
     let mut context = module.make_context();
@@ -1311,7 +1311,7 @@ fn define_find(
     }
     signature.returns.push(AbiParam::new(types::I64));
     signature.returns.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_regex_nfa_find", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_regex_nfa_find", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let closure = module.declare_func_in_func(ordered_closure, &mut context.func);

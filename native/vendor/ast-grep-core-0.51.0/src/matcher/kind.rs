@@ -73,7 +73,7 @@ pub mod kind_utils {
     goal == candidate || is_error_kind(goal)
   }
 
-  /// Rerail (RER-131): the kind of a pattern's end-of-children goal, which no node has. A pattern
+  /// Rerail (decision 0161): the kind of a pattern's end-of-children goal, which no node has. A pattern
   /// node whose parse ended in tokens its grammar implies (which no tape stores) ends its
   /// children with it in their place: it matches no node, skips a token or a comment, refuses a
   /// named node, and holds where the candidates end, as the tokens it stands for did.

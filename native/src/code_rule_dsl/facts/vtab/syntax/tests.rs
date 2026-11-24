@@ -391,7 +391,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
 }
 
 /// `core.rerail`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
-/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, RER-131), literals decode, and
+/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, decision 0161), literals decode, and
 /// the source-text, token and place relations agree.
 #[test]
 fn core_rr_relations_hold_what_core_rr_says() {

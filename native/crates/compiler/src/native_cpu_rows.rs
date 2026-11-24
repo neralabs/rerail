@@ -1,6 +1,6 @@
 //! Row programs on the CPU JIT (decision 0095 §2): Cranelift emits a row program's native IR
 //! (`native_ir::BlockNative` of a `block::BlockProgram` with `rows`) as one function
-//! `tempo_rows(columns, params, sets, words, out)`. Its one loop is over the run's words, 64 rows
+//! `rerail_rows(columns, params, sets, words, out)`. Its one loop is over the run's words, 64 rows
 //! each; a word's body is straight-line:
 //!
 //! - **`Cmp`**: each of the word's 64 rows loaded from its column, read at the comparison's
@@ -94,7 +94,7 @@ pub(super) fn compile(native: &BlockNative, columns: usize) -> Result<CompiledRo
     }
     signature.params.push(AbiParam::new(types::I64));
     signature.params.push(AbiParam::new(pointer));
-    let id = module.declare_function("tempo_rows", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let id = module.declare_function("rerail_rows", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
     let mut context: Context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();

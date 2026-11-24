@@ -78,7 +78,7 @@ Who interacts with Rerail, and how far each is trusted.
 | **The person** (OS user who installed Rerail) | Yes | Everything. The `person` caller on `/api`. |
 | **The coding agent** | **Partly.** Well-behaved MCP client, but may be prompt-injected and usually has a same-user shell | `agent` caller on `/mcp`, scoped to its checkout. With a shell, anything a same-user process can do (T1). |
 | **Repository content**: source, config, `.git`, committed `.rerail/`, `.npmrc`, `.claude/settings.json` | **No** | Parsed by the engine, quoted in steer text, decides where some files are written. |
-| **Rule-pack authors** (`@neralabs/rerail-pack-*` on npm) | For content, not code | Packs are JSON; their `message` and `fix` text reaches the agent. |
+| **Rule-pack authors** (`@neralabs/rerail-pack-*` on npm) | For content, not code | Packs are JSON and `.rerail` rule files; their `message` and `fix` text reaches the agent. |
 | **npm registry and Rerail's release pipeline** | Yes, with no extra integrity check | Supplies the code Rerail runs. |
 | **Another OS user on the same machine** | No | Reaches loopback ports, reads world-readable files, sees process arguments (`ps`). |
 | **A sandboxed process allowed to reach localhost** | No | Reaches `127.0.0.1:4737`; cannot read `~/.rerail`. |
@@ -148,7 +148,8 @@ a secret token sent as `x-rerail-access`, on every request.
   - Compared by SHA-256 of both values with `timingSafeEqual` (`sameSecret` in `src/runtime/daemon-control.ts`).
   - 32 random bytes, written 0600 via a temp file and rename.
   - Kept across restarts by a loopback daemon; minted at each start by a remote or public-host daemon.
-- **Engine socket.** Hooks send events to `POST /events` on a Unix socket in a per-user 0700 folder (T14).
+- **Engine socket.** Hooks send events to `POST /events`, and, while another process holds the database's write lock,
+  the receipt of a steer their answer carried to `POST /receipts`, on a Unix socket in a per-user 0700 folder (T14).
   - The engine service (`startEngineService`, `src/runtime/engine-service.ts`) requires the capability as
     `x-rerail-access` and answers `401` before reading the body.
   - Reason: a request names where its runtime writes (`storageRoot`, `databasePath`), and the daemon runs outside every
@@ -317,15 +318,18 @@ Steer text carries repository content into the agent's context, so it is built f
 
 ### B5: npm to installed code
 
-Code from npm installs without install scripts and is checked before it runs. Packs are JSON, never code. The native
-engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
+Code from npm installs without install scripts and is checked before it runs. Packs are JSON and `.rerail` rule files, never
+JavaScript: the engine runs a pack's `.rerail` rules in a short-lived process, within a deadline and a memory budget;
+reading them for the catalog has the deadline and a thread cap but no memory watch (`runChildSync`). The native engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
 
 <details>
 <summary>Packs, updates, releases and customer profiles</summary>
 
-- **Packs** install with `--ignore-scripts` (`src/setup/rule-pack-store.ts`). `packAddSpec` accepts only
-  `@neralabs/rerail-pack-<id>` at an exact version, or an existing absolute tarball or folder; Git, URL, `npm:` and
-  `file:` specs are refused. Pack files are parsed as JSON through zod, never `require`d.
+- **Packs** install with `--ignore-scripts` (`src/setup/rule-pack-store.ts`). `packAddSpec` accepts a pack id
+  (Rerail's own pack), a `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` package name, each optionally at a version,
+  range or tag, or an existing tarball or folder, given to npm as its absolute path; npm options, Git, URL, `npm:` and
+  `file:` specs are refused. Pack JSON is parsed through zod, never `require`d; a pack's `.rerail` files are read and
+  run by the engine in a child process (`src/engine/rr/rr-child-process.ts`).
 - **Core updates** are staged (`src/setup/updater.ts`); no silent update runs:
   1. npm installs core and this machine's engine package into a staging prefix with `--ignore-scripts`, core's
      dependencies from its shrinkwrap. The engine package must have the integrity that shrinkwrap pins for it.
@@ -357,6 +361,9 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
+- A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
+  beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
+  (`keepReceipt` in `src/runtime/session-store.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
@@ -1016,7 +1023,9 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - The enforcer's spool in `tmpdir()` survives a crash.
 - On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
   names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
-  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  the capability, on another, then the receipt of a steer the event's answer carried (`POST /receipts`), with the
+  capability too, on that connection after the answer, or on a new one once that connection has been idle 5 s. The
+  time between the two is not short. A Claude Code or Codex hook checks before it
   waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
   then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
   12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free

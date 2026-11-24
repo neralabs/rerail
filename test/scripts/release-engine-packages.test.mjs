@@ -65,6 +65,7 @@ describe("enginePackageJson", () => {
     expect(enginePackageJson(linuxX64, core)).toEqual({
       name: linuxX64.name,
       version: core.version,
+      description: "The native engine of Rerail for Linux with glibc on x64. Install @neralabs/rerail, not this package.",
       license: "Apache-2.0",
       repository: core.repository,
       os: ["linux"],
