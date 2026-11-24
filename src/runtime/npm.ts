@@ -92,17 +92,22 @@ export async function runCommand(command: string, args: readonly string[], optio
     cancelStop();
     reject(error);
   });
-  child.once("exit", (code, signal) => {
+  // A command stopped for running too long is reported as soon as it exits: a process it started may still hold its
+  // output open.
+  child.once("exit", () => {
     cancelStop();
-    const detail = cleanCommandError(stderr || stdout);
-    if (timedOut) {
-      reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(detail)));
-      return;
-    }
+    if (timedOut) reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(cleanCommandError(stderr || stdout))));
+  });
+  // Any other ends at "close", once the child's output is read to its end. "exit" can come first, and an answer taken
+  // then can be missing what the child wrote last: on Linux, about one `npm view --json` in ten under load came back
+  // empty, which the caller then read as JSON.
+  child.once("close", (code, signal) => {
+    if (timedOut) return;
     if (code === 0) {
       resolveCommand({ stdout, stderr });
       return;
     }
+    const detail = cleanCommandError(stderr || stdout);
     const detailSuffix = detail.length === 0 ? "" : `: ${detail}`;
     reject(new Error(`${command} failed (${signal ?? code ?? "unknown"})${detailSuffix}`));
   });

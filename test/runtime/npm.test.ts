@@ -49,7 +49,7 @@ describe("runNpm on Windows", () => {
     const node = fullyQualified(join(await binDirectory("node.exe"), "node.exe"));
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
+      process.nextTick(() => { child.emit("exit", 0, null); child.emit("close", 0, null); });
       return child as unknown as childProcess.ChildProcess;
     });
     Object.defineProperty(process, "platform", { ...platform, value: "win32" });
@@ -66,7 +66,7 @@ describe("runNpm on Windows", () => {
     const binaries = await binDirectory("node.exe");
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
+      process.nextTick(() => { child.emit("exit", 0, null); child.emit("close", 0, null); });
       return child as unknown as childProcess.ChildProcess;
     });
     Object.defineProperty(process, "platform", { ...platform, value: "win32" });
@@ -83,7 +83,7 @@ describe("runNpm on Windows", () => {
     vi.stubEnv("npm_execpath", "");
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
+      process.nextTick(() => { child.emit("exit", 0, null); child.emit("close", 0, null); });
       return child as unknown as childProcess.ChildProcess;
     });
     await inFolder(bin, async () => {
@@ -170,6 +170,15 @@ describe("runCommand", () => {
 
   it("leaves a command that finishes in time alone", async () => {
     await expect(runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "ok", stderr: "" });
+  });
+
+  // A process the command started writes once the command has exited (its input, a pipe the command held, ends then),
+  // so the output ends only after "exit": the answer is read to its end, as npm's must be when "exit" outruns its last
+  // output under load.
+  it("reads what is written after the command exits, to the end of its output", async () => {
+    const afterExit = "process.stdin.on('end', () => process.stdout.write('late')); process.stdin.resume()";
+    const command = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(afterExit)}], { stdio: ['pipe', 'inherit', 'inherit'] }); require('node:fs').writeSync(1, 'early '); process.exit(0)`;
+    await expect(runCommand(process.execPath, ["-e", command], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "early late", stderr: "" });
   });
 });
 
