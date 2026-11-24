@@ -51,6 +51,11 @@ describe("the cmdlets a script names without their module", () => {
       .toEqual(["gps", "ls", "select", "sort", "measure"]);
   });
 
+  it("reads an alias after the dot written right after a brace, a parenthesis, a semicolon, a pipe or an equals sign", () => {
+    expect(cmdletsWithoutModule("{. ls }\n$n = $(. gps)\n$x = 1;. sort\n$items |. select\n$y =. measure"))
+      .toEqual(["ls", "gps", "sort", "select", "measure"]);
+  });
+
   it("reads no alias in a comment, and reads one after a comment that holds an apostrophe", () => {
     expect(cmdletsWithoutModule([
       "# Don't sort here",

@@ -31,11 +31,12 @@ const NAME_ALONE = /(?<![\w\\.-])[a-z]+-[a-z]\w*/giu;
  */
 const NOT_CODE = /@"[\s\S]*?\n"@|@'[\s\S]*?\n'@|"(?:[^"`]|`[\s\S])*"|'[^']*'|<#[\s\S]*?#>|#[^\n]*/gu;
 /**
- * An alias where PowerShell reads a command: after a line's start, `;`, a pipe, `{`, `(`, `=`, `&`, a lone `.` or the
- * keywords `return`, `throw`, `exit` and `in`, and before a space, `;`, a pipe, a parenthesis, a brace or a line's end.
+ * An alias where PowerShell reads a command: after a line's start, `;`, a pipe, `{`, `(`, `=`, `&`, a lone `.` (also
+ * right after `;`, a pipe, `{`, `(` or `=`; `&.` calls a command named `.`) or the keywords `return`, `throw`, `exit`
+ * and `in`, and before a space, `;`, a pipe, a parenthesis, a brace or a line's end.
  */
 const ALIAS_AT_COMMAND = new RegExp(
-  String.raw`(?:^|[;|{(=&]|(?<!\S)\.(?=[ \t])|(?<![\w$-])(?:return|throw|exit|in)(?=[ \t]))[ \t]*` +
+  String.raw`(?:^|[;|{(=&]|(?<![^\s;|{(=])\.(?=[ \t])|(?<![\w$-])(?:return|throw|exit|in)(?=[ \t]))[ \t]*` +
     String.raw`(${POWERSHELL_ALIASES.map(alias => alias.replace(/[?]/gu, "\\$&")).join("|")})(?=[\s;|(){}]|$)`,
   "gimu",
 );
