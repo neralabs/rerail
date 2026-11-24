@@ -529,7 +529,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 
 `src/api/http.ts` mounts the operations with Hono and emits OpenAPI; `src/api/mcp.ts` registers them as MCP tools.
 
-Validation failures return `400 { error: "invalid-request", issues }`. Handler errors carry a status and a code: `rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`.
+Validation failures return `400 { error: "invalid-request", issues }`. Handler errors carry a status and a code: `rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`. A write whose change was made but could not be confirmed on the disk (its log's sync failed) answers `503 not-on-disk`, whose message says so and that trying it again may make the change twice; the dashboard shows that message, and MCP, `rerail scan` and `rerail settings` show `not-on-disk: <message>`.
 
 </details>
 

@@ -222,8 +222,13 @@ declare module "*/ui/attachments.js" {
   };
 }
 
+declare module "*/ui/api.js" {
+  /** One write to the daemon's API; a refusal rejects, a change made but not confirmed on the disk as `NotOnDisk`. */
+  export function send(method: string, path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<{ status: number; etag: string | undefined; body: unknown }>;
+}
+
 declare module "*/ui/format.js" {
-  /** A failure toast: what did not happen, then the error as a sentence. */
+  /** A failure toast: what did not happen, then the error as a sentence, or a `NotOnDisk` error's words alone. */
   export function failed(what: string, error: unknown): string;
   /** Who a violation is credited to: its session, which its button opens, or the repository (`session` null). */
   export function violationOwner(violation: { sessionId: string | null; host: string | null }): { session: string | null; label: string; title: string };

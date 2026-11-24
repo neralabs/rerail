@@ -11,7 +11,9 @@ export const andList = names => (names.length <= 1 ? names[0] ?? "" : `${names.s
 export function failed(what, error) {
   const why = collapse(error?.message ?? error);
   if (why === "") return `${what}.`;
-  return `${what}. ${why[0].toUpperCase()}${why.slice(1)}${/[\p{L}\p{N})]$/u.test(why) ? "." : ""}`;
+  const sentence = `${why[0].toUpperCase()}${why.slice(1)}${/[\p{L}\p{N})]$/u.test(why) ? "." : ""}`;
+  // A change the daemon made but could not confirm on the disk (`send`'s NotOnDisk) did not fail: its words are the toast.
+  return error?.name === "NotOnDisk" ? sentence : `${what}. ${sentence}`;
 }
 
 /** Local-midnight epoch for the day containing `t`. */

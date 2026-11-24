@@ -135,10 +135,20 @@ export function experimentalSummary(feature: ExperimentalFeature, description: s
   return `Experimental: answers 404 experimental-off unless the daemon runs with ${experimentVariable(feature)}=1. ${description}`;
 }
 
-/** The handler's answer, given once a write it made is on the disk (`syncToDisk`). */
+/**
+ * The handler's answer, given once a write it made is on the disk (`syncToDisk`). A sync that fails comes after the
+ * write committed, so the caller hears `503 not-on-disk`, that the change was made and not confirmed on the disk, and
+ * never that it failed: a caller told so could make a change such as an alias or an audit request twice.
+ */
 async function answerOnDisk(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   const result = await operation.handler(stores, input as never, caller);
-  if (operation.method !== "GET") await stores.syncToDisk();
+  if (operation.method === "GET") return result;
+  try {
+    await stores.syncToDisk();
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new ApiError(503, "not-on-disk", `the change was made, but Rerail could not confirm it is on the disk: a power cut may still undo it, and trying it again may make it twice (${cause})`);
+  }
   return result;
 }
 
