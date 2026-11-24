@@ -19,6 +19,7 @@ import {
   DAEMON_STATE_FILE,
   daemonEndpoint,
   findRunningDaemon,
+  homeDaemonInStart,
   processAlive,
   readDaemonState,
   startDaemon,
@@ -557,6 +558,9 @@ describe("the daemons of a Rerail home", () => {
     const exits = watchedExits(home, env);
     env = exits.env;
     await recordedDaemon();
+    // The daemon writes its record beside the lock again once its start is over, after daemon.json names it
+    // (`HomeDaemonLease.started`): a record written before then would be replaced.
+    await until(() => homeDaemonInStart(home) === undefined, 30_000, "the record beside the lock saying the start is over");
     // The record beside the lock names another process that runs, which the running daemon's answer does not name.
     const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
     others.push(other);
