@@ -5,11 +5,12 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
 import { ago, andList, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { awaitingApproval, awaitingYourApproval, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
+import { awaitingApproval, awaitingYourApproval, isEditedCopy, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
 import { data, ui, ALL_TIME, activityAllOf, allFires, fires, isSetUp, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { newerRelease } from "../settings-model.js";
 import { ensureTitle } from "../poll.js";
-import { invalidate } from "../shell.js";
+import { go, invalidate, openRule } from "../shell.js";
+import { parseRoute } from "../routes.js";
 import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
@@ -140,22 +141,30 @@ function renderLeftOut(root) {
 export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(awaitingYourApproval) : [])
   .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }) || a.rule.id.localeCompare(b.rule.id));
 
+/** Of the rules waiting for your approval, the one Review in Created by you opens: the one that caught the most. */
+export const firstToReview = rules => [...rules].sort((a, b) => allFires(b.rule.id) - allFires(a.rule.id))[0];
+
 /**
  * The rules your coding agent added that wait for your approval (`/rerail-create` adds the rules it suggests this way):
- * how many, what they caught in Log that the agent was not told, and one button to Created by you, where each is opened
- * and read in full before it is approved from its sheet. Not dismissible: a rule left here keeps running in Log.
+ * how many, what they caught in Log that the agent was not told, and one button to Created by you, with the sheet of the
+ * one that caught the most open, where each is read in full before it is approved. Not dismissible: a rule left here
+ * keeps running in Log.
  */
 function renderYours(root) {
   const rules = yourRulesToApprove(), n = rules.length, one = n === 1;
   const caught = rules.reduce((sum, stored) => sum + allFires(stored.rule.id), 0);
-  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, pendingIcon(), h("div", null,
+  const first = n === 0 ? null : firstToReview(rules).rule.id;
+  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught, first]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, pendingIcon(), h("div", null,
     h("b", null, one ? "Your coding agent added a rule. It’s on Log only until you approve it."
       : `Your coding agent added ${fmt(n)} rules. They’re on Log only until you approve them.`),
     h("p", null, caught === 0 ? "Nothing caught in Log yet. "
       : `${one ? "It" : "Together they"} caught ${fmt(caught)} ${plural(caught, "violation")} in Log, which your coding agent wasn’t told about. `,
       `Open ${one ? "it" : "each one"} in Created by you to see what it checks and what it tells the coding agent, then approve it on its page.`),
-    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "created" }, "Review in Created by you"))))));
+    h("p.acts", null, h("button.btn.sm", { "data-act": "reviewcreated", "data-i": first }, "Review in Created by you"))))));
 }
+
+/** A waiting rule's button: its title, or "Review rule" for one with no title of its own and no pack to take one from. */
+const reviewLabel = stored => (!stored.rule.title?.trim() && packOfRule(stored) === undefined ? "Review rule" : titleOf(stored));
 
 /** A waiting rule's item in the approval banner: its pack's page for a pack that waits, else the rule's sheet. */
 function approvalItem(stored) {
@@ -163,14 +172,20 @@ function approvalItem(stored) {
   const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
   return kind === "pack" && packId !== undefined
     ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
-    : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id };
+    : { kind: "rule", label: reviewLabel(stored), act: "detail", target: stored.rule.id };
 }
 
+/**
+ * Whether a waiting rule belongs in the banner for what someone else wrote: not one your coding agent added, which has
+ * its own banner, nor an edited copy, which its original's sheet tells of (`render/rule-edits.js`).
+ */
+const waitsForOthers = stored => awaitingApproval(stored) && !awaitingYourApproval(stored) && !isEditedCopy(stored);
+
 /** The rules and packs here that someone else wrote and that wait for approval, one item each. */
-function othersToApprove() {
+export function othersToApprove() {
   const items = new Map();
   for (const stored of data.loaded ? rulesArray() : []) {
-    if (!awaitingApproval(stored) || awaitingYourApproval(stored)) continue;
+    if (!waitsForOthers(stored)) continue;
     const { kind, id } = stored.approval.subject;
     if (!items.has(`${kind}\0${id}`)) items.set(`${kind}\0${id}`, approvalItem(stored));
   }
@@ -184,22 +199,24 @@ function waitingTitle(list) {
   return n === 1 ? `${what} waits for approval, so it runs in Log and steers no one.` : `${what} wait for approval, so they run in Log and steer no one.`;
 }
 
-const approvalsBanner = (list, copies) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
+/** The approval banner's second line: who wrote what waits, and where each is read and approved. */
+export const othersLine = n => (n === 1
+  ? "Rerail did not write it. Read what it tells the coding agent, then approve it on its page."
+  : "Rerail did not write them. Read what each tells the coding agent, then approve each on their page.");
+
+const approvalsBanner = list => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
   h("b", null, waitingTitle(list)),
-  h("p", null, `Rerail did not write ${list.length === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page. Your coding agent can audit ${list.length === 1 ? "it" : "them"} first: `,
-    h("span.mono", null, "/rerail-create approve the rules"), "."),
-  copies ? h("p", null, `Approving an edited copy turns off the rule it was copied from in ${repoName() || "this repo"}.`) : null,
+  h("p", null, othersLine(list.length)),
   h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))));
 
 /**
  * The rules here whose content, or whose pack's, waits for a person's approval and that someone else wrote (a
- * worktree's own rules, packs Rerail did not publish, your edited copies of rules Rerail ships): each runs in Log until
- * then. Each item opens the sheet where it is approved, after it is read. Not dismissible.
+ * worktree's own rules, packs Rerail did not publish): each runs in Log until then. Each item opens the sheet where it
+ * is approved, after it is read. Not dismissible.
  */
 function renderApprovals(root) {
   const list = othersToApprove();
-  const copies = data.loaded && rulesArray().some(stored => awaitingApproval(stored) && stored.copiedFromRuleId);
-  setContent(root, JSON.stringify([list, copies]), () => (list.length === 0 ? null : approvalsBanner(list, copies)));
+  setContent(root, JSON.stringify(list), () => (list.length === 0 ? null : approvalsBanner(list)));
 }
 
 /* ---------- tiles ---------- */
@@ -431,4 +448,6 @@ function renderBody({ ruleCount, sessionsEver }, sources, repo) {
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
   dismissupdate: () => { dismissUpdate(); invalidate(); },
+  /** Review in Created by you: Created by you, with the sheet of the rule `id` open. */
+  reviewcreated: id => { go(parseRoute("created")); openRule(id); },
 };

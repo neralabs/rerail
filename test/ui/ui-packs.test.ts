@@ -47,6 +47,12 @@ afterEach(() => {
   Object.assign(ui2, { filter: "all", query: "", sort: "violations" });
 });
 
+describe("Add rule packs", () => {
+  it("opens on Cards", () => {
+    expect(ui.catView).toBe("cards");
+  });
+});
+
 describe("the whole-pack switch", () => {
   const rules = (...on: boolean[]) => on.map((enabled, i) => ({ rule: { id: `r${i}` }, enabled }));
 

@@ -20,9 +20,11 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   the theme, the writes, opening and closing the sheet, navigation.
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
-- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`; `pack` for
-  a pack page and Created by you; `packs` for the catalog, which lists the packs Rerail suggests for the repository
-  first, each with why, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
+- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`, whose banner
+  for rules your coding agent added opens Created by you with the sheet of the one that caught the most, and whose
+  banner for rules someone else wrote leaves out edited copies, which their original's sheet tells of; `pack` for a
+  pack page and Created by you; `packs` for the catalog, which opens on cards, lists the packs Rerail suggests for the
+  repository first, each with why, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`access`, `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
   Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
   conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
@@ -30,8 +32,12 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   and when. It renders other people's titles, summaries, hunks, names and links as text nodes only, and links a pull
   request only when `safePeerUrl` accepts it.
 - `render/` holds what several views or the sheet share: a pack page's rule table (Rule · Enforcement · Violations ·
-  On/off, as Overview's Most violations logged) and its controls (`rules.js`, `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
-  state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
+  On/off, as Overview's Most violations logged; "Edited" on a rule a coding agent edited) and its controls (`rules.js`,
+  `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
+  state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`; for a rule a coding
+  agent edited, a notice of when, which parts changed and the prompt that undoes it, with ✕: `rule-edits.js` finds the
+  edited copy that waits for approval, which parts it changes, and whether the notice was dismissed, per edit and on
+  this computer, as Overview's banner for a newer Rerail is), a rule pack in the
   sheet (`pack-panel.js`: why Rerail suggested it, and until it is added its rules under Start on and Start off), the
   session timeline (`timeline.js`), and a command to copy (`command.js`).
 - `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);

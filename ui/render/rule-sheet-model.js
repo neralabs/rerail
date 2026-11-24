@@ -1,6 +1,6 @@
 /**
  * What the rule sheet says, without the DOM: the "Edit with coding agent" prompts, the "What the agent sees" hand-off,
- * dates with the year, which rules the sheet can delete and what deleting one does. Pure functions only.
+ * the Approve button's label, dates with the year, which rules the sheet can delete and what deleting one does. Pure functions only.
  */
 
 /** The prompt box's chips: the sheet's own section names; the box title carries the verb. */
@@ -39,6 +39,12 @@ export const agentSeesHint = ({ fromPack, log }) => [
 
 /** What saving a change from the prompt box does: as `agentSeesHint`, for a change to more than the message. */
 export const askHint = ({ fromPack }) => [...(fromPack ? [COPY_NOTE] : []), "Applies in open sessions once your agent saves it."].join(" ");
+
+/**
+ * The Approve button of a rule your coding agent added: "Approve and steer" while it is set to steer and held on Log only
+ * by the approval (which approving lifts), else "Approve". The same approval either way.
+ */
+export const approveLabel = stored => (stored.modeSource?.by === "awaiting-approval" ? "Approve and steer" : "Approve");
 
 const DAY_FORMAT = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" });
 

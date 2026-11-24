@@ -6,13 +6,15 @@
  * rule created by you a Delete in a footer at the end. A rule pack's contents render here too (`pack-panel.js`).
  */
 import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
-import { fmt, plural, whenLabel, clock, violationOwner } from "../format.js";
+import { andList, fmt, plural, whenLabel, clock, violationOwner } from "../format.js";
 import { ruleMode, modeLabel, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, notRunningReason, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
 import { outcomesOf } from "../history-model.js";
-import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
+import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, approveLabel, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
+import { changedParts, editedTitle, pendingEditOf, undoEditPrompt } from "./rule-edits.js";
+import { commandBlock } from "./command.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
 const kv = rows => rows.flatMap(([k, v, cls]) => [h("dt", null, k), h("dd", { class: cls }, v)]);
@@ -65,8 +67,8 @@ function buildRule() {
   el.sees = h("section.psec.sees");
   el.recent = h("div");
   el.foot = h("div.pfoot");
-  el.approval = h("div");
-  el.notRunning = h("div");
+  el.approval = h("div.pnotice");
+  el.notRunning = h("div.pnotice");
   el.body = h("div.pbody", null, el.pask, el.notRunning, el.approval,
     h("div.enf", null, h("div.enfhead", null, h("div.lbl", null, "On a violation"), el.enforcement), el.modeText, h("p.enfhint", null, MODE_READ_ONLY)),
     el.stats, el.statsNone,
@@ -129,9 +131,9 @@ function renderStats(stored, id) {
   });
 }
 
-/** The Approve button, which approves exactly the content this page read. */
-const approveButton = subject => h("p.acts", null,
-  h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"));
+/** The Approve button, which approves exactly the content this page read; `label` says what approving does. */
+const approveButton = (subject, label = "Approve") => h("p.acts", null,
+  h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, label));
 
 /**
  * What approving a waiting rule does: approval lifts the hold on a rule set to steer, so it steers; a rule set to Log
@@ -141,12 +143,15 @@ const onceApproved = stored => (stored.modeSource?.by === "awaiting-approval"
   ? "then approve it, and Rerail tells your coding agent as it works, so it fixes what this rule catches."
   : "then approve it. It’s set to Log only, so Rerail keeps recording what it catches without telling your coding agent.");
 
-/** A rule your coding agent added that waits: who added it, what it caught in Log, and Approve, here after it is read. */
+/**
+ * A rule your coding agent added that waits: who added it, what it caught in Log, and Approve, here after it is read;
+ * "Approve and steer" for one set to steer, which approving lets steer.
+ */
 const yourRuleNotice = (stored, subject, caught) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
   h("b", null, "Added by your coding agent, on Log only."),
   h("p", null, caught === 0 ? "Nothing caught in Log yet. " : `Caught ${fmt(caught)} ${plural(caught, "violation")} in Log so far, and your coding agent wasn’t told. `,
     `Review what it checks and what it tells the coding agent, ${onceApproved(stored)}`),
-  approveButton(subject)));
+  approveButton(subject, approveLabel(stored))));
 
 /**
  * For an edited copy (of a rule Rerail ships, or of your approved rule a coding agent edited): which rule, and that
@@ -181,16 +186,37 @@ function renderNotRunning(stored) {
 }
 
 /**
+ * For a rule a coding agent edited, whose copy waits (`rule-edits.js`): when it was edited, which of the sheet's parts
+ * changed, the prompt that undoes it with Copy, and ✕, which dismisses it for this edit.
+ */
+function editNotice(stored, copy) {
+  const parts = changedParts(stored, copy);
+  return h("div.welcome.edited", { role: "status" }, icon("pencil", 16), h("div.editbody", null,
+    h("b", null, editedTitle(copy)),
+    parts.length ? h("p", null, `What changed: ${andList(parts)}.`) : null,
+    h("p", null, "To undo it, paste this into a session with your coding agent:"),
+    commandBlock(undoEditPrompt(stored.rule.id))),
+  h("button.x", { "data-act": "dismissedit", "data-i": copy.approval.subject.digest, "aria-label": "Dismiss", title: "Dismiss" }, "✕"));
+}
+
+/** The notice of a rule that needs no approval itself: that it was edited, while the edit is not dismissed. */
+function renderEdit(stored) {
+  const copy = pendingEditOf(stored);
+  const key = copy === null ? null : [stored.rule.id, copy.rule, copy.approval.subject.digest, copy.addedAt, stored.rule];
+  setContent(p.approval, JSON.stringify(["edit", key]), () => (copy === null ? null : editNotice(stored, copy)));
+}
+
+/**
  * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
- * approves exactly the content this page read; nothing once approved, or for a rule that needs none.
+ * approves exactly the content this page read; once approved, or for a rule that needs none, whether it was edited.
  */
 function renderApproval(stored) {
   const waiting = awaitingApproval(stored), subject = stored.approval?.subject;
-  const pack = subject?.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
+  if (!waiting) { renderEdit(stored); return; }
+  const pack = subject.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
   const yours = awaitingYourApproval(stored), caught = yours ? allFires(stored.rule.id) : 0;
-  const key = [waiting, subject, pack?.name, yours, caught, stored.modeSource?.by, stored.copiedFromRuleId];
-  setContent(p.approval, JSON.stringify(key), () => (!waiting ? null
-    : yours ? yourRuleNotice(stored, subject, caught) : otherNotice(stored, subject, pack)));
+  const key = [subject, pack?.name, yours, caught, stored.modeSource?.by, stored.copiedFromRuleId];
+  setContent(p.approval, JSON.stringify(["approval", key]), () => (yours ? yourRuleNotice(stored, subject, caught) : otherNotice(stored, subject, pack)));
 }
 
 /** Where the rule comes from (its pack, or created by you) and when it was added here and last edited. */

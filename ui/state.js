@@ -128,8 +128,8 @@ export const ui = {
   actRule: null,
   /** History by rule's chip ("all", "logged" read Log only, "steered", "declined"): what it counts (`?outcome=`). */
   histOutcome: "all",
-  /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
-  catView: "list",
+  /** Rule packs page: cards (the default) or list, and the pack whose Remove waits for its second click. */
+  catView: "cards",
   removeAsk: null,
   /** Packs removed from the catalog during this visit: their row reads Removed with Undo until the page is left. */
   removedPacks: new Set(),

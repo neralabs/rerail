@@ -1,6 +1,6 @@
 /**
  * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
- * by kind, as a list or as cards; once the recommendations are read, the packs Rerail suggests for this repository
+ * by kind, as cards (the default) or as a list; once the recommendations are read, the packs Rerail suggests for this repository
  * first, each with why, then the others. Each pack has its version and where it stands (Added, or Removed with Undo
  * until the page is left) on a line under its name, and Add pack or a quiet Remove pack that asks first, its question
  * on a line of its own under the pack's text. A pack is added whole: its rules arrive as the pack starts them, opt-in
@@ -93,8 +93,8 @@ function catalog() {
       h("div.chips", { role: "group", "aria-label": "Pack kind" },
         kinds.map(([k, label]) => h("button.chip", { "data-act": "catkind", "data-i": k, "aria-pressed": String(kind === k) }, label))),
       h("div.rangectl.viewctl", { role: "group", "aria-label": "View" },
-        h("button", { "data-act": "catview", "data-i": "list", "aria-pressed": String(ui.catView === "list") }, "List"),
-        h("button", { "data-act": "catview", "data-i": "cards", "aria-pressed": String(ui.catView === "cards") }, "Cards"))),
+        h("button", { "data-act": "catview", "data-i": "cards", "aria-pressed": String(ui.catView === "cards") }, "Cards"),
+        h("button", { "data-act": "catview", "data-i": "list", "aria-pressed": String(ui.catView === "list") }, "List"))),
     catalogBody(shown));
 }
 

@@ -128,6 +128,10 @@ test.describe("rule pack pages and the catalog over mature", () => {
     const alphabetical = (some: Pack[]) => some.map(pack => pack.name).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
     const inOrder = (some: Pack[]) => [...alphabetical(some.filter(pack => suggested.has(pack.id))), ...alphabetical(some.filter(pack => !suggested.has(pack.id)))];
 
+    // The catalog opens on Cards, which comes first in its view toggle.
+    await expect(page.locator("#content .viewctl button")).toHaveText(["Cards", "List"]);
+    await expect(page.locator('#content .viewctl [data-i="cards"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#content .pcard").first()).toBeVisible();
     await expect.poll(rowNames).toEqual(inOrder(packs));
     await page.getByRole("button", { name: "Framework", exact: true }).click();
     await expect.poll(rowNames).toEqual(inOrder(packs.filter(pack => pack.category === "framework")));
@@ -165,6 +169,7 @@ test.describe("rule pack pages and the catalog over mature", () => {
   test("a catalog row asks on a line of its own, then reads Removed with Undo until the page is left", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "packs" });
     await page.goto(url);
+    await page.locator('#content .viewctl [data-i="list"]').click();
     const row = page.locator("#content .prow2").filter({ has: page.locator("b", { hasText: /^Python$/u }) });
     await row.getByRole("button", { name: "Add pack" }).click();
     await expect.poll(async () => (await packRulesAt(rerail, url, "python")).length).toBeGreaterThan(0);

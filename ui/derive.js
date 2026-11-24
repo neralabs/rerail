@@ -43,6 +43,9 @@ export const awaitingApproval = item => item.approval?.approved === false;
 export const awaitingYourApproval = stored => awaitingApproval(stored) && !isFromPack(stored) && stored.approval.subject.kind === "rule"
   && !stored.copiedFromRuleId;
 
+/** Whether a rule is an edited copy of another (of a rule Rerail ships, or of your approved rule), saved in your library. */
+export const isEditedCopy = stored => Boolean(stored.copiedFromRuleId) && !isFromPack(stored);
+
 /** The origin of a rule that came in a rule pack this page does not know (its pack was removed): no publisher is claimed. */
 export const UNKNOWN_PACK_ORIGIN = "From a rule pack";
 

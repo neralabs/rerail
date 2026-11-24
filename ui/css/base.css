@@ -344,6 +344,10 @@ section.group{margin-bottom:24px}
 .count b.zero{color:var(--muted-foreground);font-weight:500}
 .row[aria-selected="true"]{background:var(--brand-subtle);box-shadow:inset 0 0 0 1px var(--brand-border)}
 .row[aria-selected="true"] + .row{border-top-color:transparent}
+/* A selected row at either end of a list follows the list's inner corners (its radius less its 1px border), so its
+ * outline isn't cut off. */
+.list > .row[aria-selected="true"]:first-child{border-top-left-radius:calc(var(--radius-xl) - 1px);border-top-right-radius:calc(var(--radius-xl) - 1px)}
+.list > .row[aria-selected="true"]:last-child{border-bottom-left-radius:calc(var(--radius-xl) - 1px);border-bottom-right-radius:calc(var(--radius-xl) - 1px)}
 .caret{width:20px;height:20px;margin-left:-6px;display:grid;place-items:center;color:var(--muted-foreground);border-radius:var(--radius-md)}
 .caret:hover{background:var(--subtle)}
 .caret svg{transition:transform .15s}

@@ -187,7 +187,7 @@ declare module "*/ui/state.js" {
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: {
     filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "logged" | "steered" | "declined"; view: string; settingUp: boolean;
-    selectedSession: string | null; panel: object | null;
+    selectedSession: string | null; panel: object | null; catView: "cards" | "list";
   };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
@@ -342,6 +342,35 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export function canDelete(stored: object): boolean;
   export function deleteConsequences(input: { repo: string; pastViolations: number; on: boolean }): string[];
   export function splitPath(path: string | null | undefined): { file: string; dir: string };
+  /** "Approve and steer" for a rule held on Log only by its approval, else "Approve". */
+  export function approveLabel(stored: { modeSource?: { by: string } }): string;
+}
+
+declare module "*/ui/views/overview.js" {
+  /** One button of the banner for rules and packs someone else wrote. */
+  export interface ApprovalItem { kind: string; label: string; act: string; target: string }
+  /** The rules and packs here that someone else wrote and that wait for approval, one item each; no edited copy. */
+  export function othersToApprove(): ApprovalItem[];
+  /** That banner's second line, for `n` items. */
+  export function othersLine(n: number): string;
+  /** The rules created by you that wait for your approval, by title. */
+  export function yourRulesToApprove(): Array<{ rule: { id: string } }>;
+  /** Of `rules`, the one Review in Created by you opens: the one that caught the most since install. */
+  export function firstToReview<Rule extends { rule: { id: string } }>(rules: readonly Rule[]): Rule;
+}
+
+declare module "*/ui/render/rule-edits.js" {
+  /** A stored rule as these read it; only the fields the tests read. */
+  interface Edited { rule: { id: string }; addedAt?: number | null; approval?: { approved: boolean; subject: { kind: string; id: string; digest: string } } | null }
+  /** The waiting copy of `stored` whose notice was not dismissed, else `null`. */
+  export function pendingEditOf(stored: object): Edited | null;
+  export function editDismissed(digest: string): boolean;
+  export function dismissEdit(digest: string): void;
+  /** The sheet's sections whose content the edit changed, in the sheet's order. */
+  export function changedParts(was: object, now: object): string[];
+  export function editedTitle(copy: { addedAt: number | null }): string;
+  export function undoEditPrompt(id: string): string;
+  export const EDITED_TIP: string;
 }
 
 declare module "*/ui/views/merge.js" {

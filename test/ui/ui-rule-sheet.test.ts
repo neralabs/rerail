@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ASK, ASK_OPEN, LOG_NOTE, agentSeesHint, agentSeesPrompt, askHint, askPrompt, canDelete, deleteConsequences, fmtDay, libraryAttachments, splitPath } from "../../ui/render/rule-sheet-model.js";
 import { createSuggestions } from "../../ui/views/create.js";
+import { toStoredRules } from "../../ui/poll.js";
+import { data } from "../../ui/state.js";
+import { EDITED_TIP, changedParts, dismissEdit, editDismissed, editedTitle, pendingEditOf, undoEditPrompt } from "../../ui/render/rule-edits.js";
 
 const RULE = { id: "lib:no-raw-fetch", title: "No raw fetch", scope: "src/**/*.ts", mode: "Steer" };
 
@@ -128,5 +131,127 @@ describe("Places to start on Create a rule", () => {
     expect(createSuggestions(null, new Map(), packs)).toEqual([]);
     expect(createSuggestions([recommendation("unknown"), recommendation("react"), { ...recommendation("react"), folder: "web" }], new Map(), packs))
       .toEqual([{ packId: "react", name: "React", reason: "fits" }]);
+  });
+});
+
+type Fields = Record<string, unknown>;
+const DAY = 86_400_000;
+
+/** One entry of `GET /api/repository/rules`; `rule` fields override the rule document's. */
+const ruleEntry = (id: string, fields: Fields = {}, rule: Fields = {}) => ({
+  kind: "code",
+  rule: {
+    id, mode: "steer", description: "No debugger statements.", scope: { include: ["src/**/*.ts"] },
+    clauses: [{ match: { kind: "debugger_statement" }, violation: { message: "Remove the debugger statement." } }], ...rule,
+  },
+  folder: "", on: true, mode: "steer",
+  source: { kind: "pack", id: "javascript" }, onSource: { by: "pack-start" }, modeSource: { by: "pack-start" },
+  suppressions: "honour", suppressionsSource: { by: "rule-default" }, config: null, configSource: {}, configError: null,
+  revision: 1, addedAt: Date.now(), updatedAt: Date.now(), copiedFromRuleId: null, approval: null,
+  ...fields,
+});
+
+/** The coding agent's edit of `original`, saved as a library copy that waits for approval at `digest`. */
+const copyOf = (original: string, digest: string, rule: Fields = {}, fields: Fields = {}) => ruleEntry(`${original}-copy`, {
+  source: { kind: "library_rule", id: `${original}-copy`, packId: null }, modeSource: { by: "awaiting-approval" }, mode: "log",
+  copiedFromRuleId: original, approval: { subject: { kind: "rule", id: `${original}-copy`, digest }, approved: false }, ...fields,
+}, rule);
+
+const loadRules = (...entries: ReturnType<typeof ruleEntry>[]) => { data.rules = toStoredRules(entries); };
+const ruleById = (id: string) => data.rules.get(id)!;
+
+/** A computer's `localStorage`, empty. */
+const storage = () => {
+  const saved = new Map<string, string>();
+  return { saved, getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, value); } };
+};
+
+describe("a rule a coding agent edited", () => {
+  beforeEach(() => { vi.stubGlobal("localStorage", storage()); });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    data.rules = new Map();
+  });
+
+  describe("its sheet's notice and its row's Edited", () => {
+    it("has a pending edit while its copy waits for approval, and none once the copy is approved", () => {
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:a", { description: "No debugger, ever." }));
+      expect(pendingEditOf(ruleById("no-debugger"))?.rule.id).toBe("no-debugger-copy");
+      // The copy itself is not an edited rule.
+      expect(pendingEditOf(ruleById("no-debugger-copy"))).toBeNull();
+
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:a", {}, {
+        approval: { subject: { kind: "rule", id: "no-debugger-copy", digest: "sha256:a" }, approved: true },
+      }));
+      expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
+    });
+
+    it("names the parts that changed, in the sheet's order and by its section names", () => {
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:b", {
+        scope: { include: ["src/**"] },
+        clauses: [{ match: { kind: "debugger_statement" }, violation: { message: "Take the debugger out." } }],
+      }));
+      expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual(["What the agent sees", "Where it applies"]);
+
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:c", {
+        description: "Never ship a debugger.",
+        clauses: [{ match: { kind: "debugger_statement", inside: "function" }, violation: { message: "Remove the debugger statement." } }],
+      }));
+      expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual(["Description", "What it checks"]);
+    });
+
+    it("does not count the mode as a change: Log or Steer is a setting, changed without a copy", () => {
+      // The copy runs in Log until approved, and its document may say another mode.
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:d", { mode: "log" }));
+      expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual([]);
+    });
+
+    it("says when it was edited, the prompt that undoes it, and the row's hover", () => {
+      expect(editedTitle({ addedAt: Date.now() })).toBe("This rule was edited today.");
+      expect(editedTitle({ addedAt: Date.now() - 3 * DAY })).toBe("This rule was edited 3 days ago.");
+      expect(editedTitle({ addedAt: null })).toBe("This rule was edited.");
+      expect(undoEditPrompt("eslint-no-debugger")).toBe("/rerail-create undo the edit to eslint-no-debugger");
+      expect(EDITED_TIP).toBe("This rule was edited. Open it to see what changed.");
+    });
+  });
+
+  describe("dismissing the notice", () => {
+    it("hides the notice and the row's Edited for that edit, and is remembered on this computer", () => {
+      const local = storage();
+      vi.stubGlobal("localStorage", local);
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:e", { description: "No debugger, ever." }));
+
+      dismissEdit("sha256:e");
+
+      expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
+      expect(local.saved.get("rerail-edit-dismissed:sha256:e")).toBe("1");
+    });
+
+    it("is per edit: a later edit of the same rule shows again", () => {
+      dismissEdit("sha256:f");
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:g", { description: "No debugger in src either." }));
+
+      expect(pendingEditOf(ruleById("no-debugger"))?.approval?.subject.digest).toBe("sha256:g");
+    });
+
+    it("reads a dismissal saved in an earlier visit", () => {
+      const local = storage();
+      local.setItem("rerail-edit-dismissed:sha256:h", "1");
+      vi.stubGlobal("localStorage", local);
+
+      expect(editDismissed("sha256:h")).toBe(true);
+      expect(editDismissed("sha256:i")).toBe(false);
+    });
+
+    it("holds for the visit when storage is blocked", () => {
+      vi.stubGlobal("localStorage", { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } });
+      loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:j", { description: "No debugger, ever." }));
+      expect(pendingEditOf(ruleById("no-debugger"))).not.toBeNull();
+
+      dismissEdit("sha256:j");
+
+      expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
+    });
   });
 });

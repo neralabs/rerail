@@ -1,0 +1,1 @@
+An edited rule gets no approval banner on Overview: its sheet says when it was edited, which parts changed and what to paste to undo it, and its row reads Edited. Review in Created by you opens the rule that caught the most, a waiting rule set to steer offers Approve and steer, and Add rule packs opens on Cards.

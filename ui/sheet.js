@@ -7,6 +7,7 @@ import { ui } from "./state.js";
 import { renderPanel } from "./render/panel.js";
 import { ruleSheetActions } from "./render/rule-sheet-actions.js";
 import { closePanel, invalidate, openRule } from "./shell.js";
+import { dismissEdit } from "./render/rule-edits.js";
 
 /** An open sheet shows its rule's numbers and recent violations, and a pack's rules. */
 export const SHEET_NEEDS = ["rules", "packs", "activity", "ruleFindings"];
@@ -22,5 +23,7 @@ export const sheetActions = {
     ui.backToPack = null;
     invalidate();
   },
+  /** The ✕ on an edited rule's notice: `data-i` is the edit's digest. The row's "Edited" goes with it. */
+  dismissedit: digest => { dismissEdit(digest); invalidate(); },
   ...ruleSheetActions,
 };
