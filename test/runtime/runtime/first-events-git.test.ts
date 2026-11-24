@@ -293,18 +293,21 @@ describe("a repository's first events in a daemon", () => {
     expect(await disposedAtGit(opened, () => true)).toEqual({ running: [], spawned: 0, blocked: 0 });
   });
 
-  // The pass over the other worktrees waits at each linked worktree until the session's open has answered, so the Git
-  // disposed at is one the pass started in a linked worktree after the open.
-  it("ends the pass over the other worktrees, its Git exited, and starts no Git once it is disposed while that pass runs after a session's open", { timeout: 30_000 }, async () => {
+  // The pass over the other worktrees waits at each linked worktree until the session's open has answered and the session
+  // has ended, so the Git disposed at is one the pass started in a linked worktree after both. With no session left to
+  // close, dispose returns only as soon as it has waited for the pass: a session's close outlasts a stopped Git's exit.
+  it("ends the pass over the other worktrees, its Git exited, and starts no Git once it is disposed while that pass runs after a session's open and end", { timeout: 30_000 }, async () => {
     const pass = Promise.withResolvers<void>();
     submoduleReads.before = async checkout => {
       if (basename(checkout).startsWith("wt-")) await pass.promise;
     };
-    let answered = false;
-    const inWorktree = (args: readonly string[]): boolean => answered && args.some((arg, i) => args[i - 1] === "-C" && basename(arg).startsWith("wt-"));
+    let ended = false;
+    const inWorktree = (args: readonly string[]): boolean => ended && args.some((arg, i) => args[i - 1] === "-C" && basename(arg).startsWith("wt-"));
     const opened = async (runtime: RerailRuntime, main: string): Promise<void> => {
-      await runtime.ingest({ kind: "session-start", eventId: "own-start", session: { host: "claude-code", sessionId: "own", cwd: main } });
-      answered = true;
+      const session = { host: "claude-code", sessionId: "own", cwd: main } as const;
+      await runtime.ingest({ kind: "session-start", eventId: "own-start", session });
+      await runtime.ingest({ kind: "session-end", eventId: "own-end", sessionId: "own", session });
+      ended = true;
       pass.resolve();
     };
     try {
