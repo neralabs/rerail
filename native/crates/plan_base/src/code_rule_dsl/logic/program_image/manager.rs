@@ -243,19 +243,51 @@ impl Delta {
             let added = d.added.iter().filter_map(|&id| output.rule(id)).map(|r| output.rel_name(r.head().rel()).to_owned());
             d.heads = Some(removed.chain(added).collect());
         }
-        // An overlay of the input whose own layer states no declaration or fact (one that removes rules or sets the
-        // inputs and outputs, a part's or a selection's) has the input's: those are not compared (each comparison
-        // reads every declaration and fact of both).
-        let states = match &**output {
-            Version::Overlay { parent, delta, .. } if Arc::ptr_eq(parent, input) => States {
-                decls: delta.decl_count() > 0 || !delta.u32s(super::R::DeclGone).is_empty(),
-                facts: delta.fact_count() > 0 || !delta.u32s(super::R::FactGone).is_empty(),
-                about: delta.owns() & 4 != 0,
-            },
-            _ => States { decls: true, facts: true, about: true },
-        };
-        fields_delta(input, output, &mut d, states);
+        // An overlay of the input states its fields in its own layer: those it names are compared with the input's,
+        // and no other (a comparison of every declaration and fact of both reads the program's relations, at each
+        // step). A view holds its parent's fields, the input's. Any other output is compared whole.
+        match &**output {
+            Version::Overlay { parent, .. } if Arc::ptr_eq(parent, input) => layer_delta(input, output, &mut d),
+            Version::View { .. } if same_numbering(input, output) => {}
+            _ => fields_delta(input, output, &mut d),
+        }
         d
+    }
+}
+
+/// The fields' part of the delta of `output`, an overlay of `input`, read off its own layer: each declaration and fact
+/// relation the layer states or takes out, against the input's, by hash; the `.about` rows where the layer owns them;
+/// the inputs and outputs by hash.
+fn layer_delta(input: &Version, output: &Version, d: &mut Delta) {
+    let Version::Overlay { delta: layer, .. } = output else { return };
+    let gone = |r| layer.u32s(r).iter().map(|&a| super::AtomId(a));
+    for a in (0..layer.decl_count()).map(|k| layer.decl_name(k)).chain(gone(super::R::DeclGone)) {
+        if input.decl(a).map(|x| x.hash()) != output.decl(a).map(|x| x.hash())
+            && let Some(r) = output.rel(output.text(a))
+        {
+            d.decls.insert(r);
+        }
+    }
+    if !d.decls.is_empty() {
+        d.touched = d.touched | Reads::DECLS;
+    }
+    let mut facts = (0..layer.fact_count()).map(|k| layer.fact_key(k)).filter(|(_, about)| !about).map(|(a, _)| a).chain(gone(super::R::FactGone));
+    if facts.any(|a| input.facts(a).map(|f| f.hash()) != output.facts(a).map(|f| f.hash())) {
+        d.touched = d.touched | Reads::FACTS;
+    }
+    let about = |v: &Version| -> Vec<(String, u64)> {
+        let mut x: Vec<(String, u64)> = v.about_facts().into_iter().map(|f| (v.text(f.name()).to_owned(), f.hash())).collect();
+        x.sort_unstable();
+        x
+    };
+    if layer.owns() & 4 != 0 && about(input) != about(output) {
+        d.touched = d.touched | Reads::ABOUT;
+    }
+    if input.inputs_hash() != output.inputs_hash() {
+        d.touched = d.touched | Reads::INPUTS;
+    }
+    if input.outputs_hash() != output.outputs_hash() {
+        d.touched = d.touched | Reads::OUTPUTS;
     }
 }
 
@@ -265,19 +297,12 @@ fn same_numbering(input: &Arc<Version>, output: &Arc<Version>) -> bool {
     Arc::ptr_eq(parent, input) || matches!(&**input, Version::View { parent: p, .. } if Arc::ptr_eq(p, parent))
 }
 
-/// The fields' part of the delta, by each part's hash: declarations by relation, facts, `.about` rows, inputs and
-/// outputs. Their count is the program's relations, never its rules.
-/// Which of the output's fields its own layer may state apart from the input's (`Delta::of`).
-struct States {
-    decls: bool,
-    facts: bool,
-    about: bool,
-}
-
-fn fields_delta(input: &Version, output: &Version, d: &mut Delta, states: States) {
+/// The fields' part of the delta of an output not read off its input, by each part's hash: declarations by relation,
+/// facts, `.about` rows, inputs and outputs. Their count is the program's relations, never its rules.
+fn fields_delta(input: &Version, output: &Version, d: &mut Delta) {
     use std::collections::HashMap;
     let decls = |v: &Version| -> HashMap<String, u64> { v.decls().into_iter().map(|x| (v.text(x.name()).to_owned(), x.hash())).collect() };
-    let (a, b) = if states.decls { (decls(input), decls(output)) } else { Default::default() };
+    let (a, b) = (decls(input), decls(output));
     for (name, h) in &b {
         if a.get(name) != Some(h) {
             d.decls.insert(output.rel(name).expect("a declared relation has an id"));
@@ -296,10 +321,10 @@ fn fields_delta(input: &Version, output: &Version, d: &mut Delta, states: States
         x.sort_unstable();
         x
     };
-    if states.facts && facts(input.all_facts(), input) != facts(output.all_facts(), output) {
+    if facts(input.all_facts(), input) != facts(output.all_facts(), output) {
         d.touched = d.touched | Reads::FACTS;
     }
-    if (states.facts || states.about) && facts(input.about_facts(), input) != facts(output.about_facts(), output) {
+    if facts(input.about_facts(), input) != facts(output.about_facts(), output) {
         d.touched = d.touched | Reads::ABOUT;
     }
     if input.inputs_hash() != output.inputs_hash() {
@@ -788,6 +813,10 @@ pub trait ProgramPass {
         Vec::new()
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()>;
+    /// Whether its output over a program is each rule's own, read with the program's fields: a rule's output is not
+    /// read off another rule (decision 0639 §6a's local steps). Over an edit of a version its last run left as it was
+    /// (`Pipeline::left_as_is`), it then runs over the edit's added rules alone.
+    const LOCAL: bool = false;
     /// Over an edit of its last run's input of rules alone (`Pipeline::again`, decisions 0393, 0385): its output
     /// written onto its last output (`w`'s input) from the edit alone, where the decisions it made over the whole are the edit's input's
     /// too. `Ok(false)`, the default, runs it whole. A pass that writes here leaves in its last output every rule but
@@ -885,11 +914,13 @@ pub struct ProgramW<'p> {
     input: &'p Arc<Version>,
     b: Option<(Builder<'p>, Mode)>,
     visited: usize,
+    /// An edit finished as an overlay, never folded (`Pipeline::left_again`).
+    unfolded: bool,
 }
 
 impl<'p> ProgramW<'p> {
     fn new(input: &'p Arc<Version>) -> Self {
-        ProgramW { input, b: None, visited: 0 }
+        ProgramW { input, b: None, visited: 0, unfolded: false }
     }
     fn builder(&mut self, mode: Mode) -> Result<&mut Builder<'p>> {
         let input = self.input;
@@ -935,6 +966,7 @@ impl<'p> ProgramW<'p> {
         let Some((b, mode)) = self.b.filter(|(b, m)| *m == Mode::Derive || !b.is_empty()) else { return Ok((self.input.clone(), Form::Unchanged, self.visited)) };
         let (v, form) = match mode {
             Mode::Overlay => (b.finish_overlay()?, Form::Overlay),
+            Mode::Edit if self.unfolded => (b.finish_overlay()?, Form::Overlay),
             Mode::Derive => (b.finish()?.0, Form::Derived),
             Mode::Edit => {
                 let (v, made) = b.finish()?;
@@ -1082,6 +1114,10 @@ impl Run {
     }
 }
 
+/// A step run again onto the version its last run left as it was (`Pipeline::left_again`): its output, form and
+/// rules visited, and the version its record and analyses are carried from.
+type LeftAgain = (Arc<Version>, Form, usize, Arc<Version>);
+
 /// The last run's step at a step's place, against the step's input.
 enum Prior {
     None,
@@ -1112,6 +1148,8 @@ pub struct Pipeline<'s> {
     asked: Option<AskedByRule>,
     /// A step read from the store left the record to be read again from its output (`load`).
     asked_again: bool,
+    /// The version each later step's last run left as it was, and the sum of its rules' hashes (`left_as_is`).
+    left: Option<(Arc<Version>, u64)>,
 }
 
 /// The request record (`Version::asked`, decision 0174's `asked` rows) by rule id, carried through a pipeline's
@@ -1344,7 +1382,35 @@ impl<'s> Pipeline<'s> {
 
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
         let asked = AskedByRule::of(&v);
-        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false }
+        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false, left: None }
+    }
+    /// From here on, each step's last run left `last` as it was (decision 0639 §6a: a program linked from modules
+    /// whose tails ran the same steps, which leave the link as it is): the current version is written as an edit of
+    /// `last` (`rebase`), and each later step runs again over the edit from `last` (`program_step`), its output written
+    /// onto `last`. Where the current version cannot be written so (more than half of `last` changed, or `last` too
+    /// deep), or the pipeline is keyed or kept, the later steps run as before.
+    pub fn left_as_is(&mut self, last: Arc<Version>) -> &mut Self {
+        if self.failed.is_some() || self.keyed.is_some() || self.keep {
+            return self;
+        }
+        let r = self.load().and_then(|()| self.state_asked()).and_then(|()| rebase(&last, &self.v));
+        match r {
+            Ok(Some(v)) => {
+                if self.asked.is_some() {
+                    self.asked = AskedByRule::of(&v);
+                }
+                self.v = v;
+                let sum = last.rules().fold(0u64, |s, r| s.wrapping_add(r.hash()));
+                self.left = Some((last, sum));
+            }
+            Ok(None) => {}
+            Err(e) => self.failed = Some(format!("{}: {e}", self.name)),
+        }
+        self
+    }
+    /// The version each step's last run left as it was (`left_as_is`), where the current version is written onto it.
+    pub fn left(&self) -> Option<&Arc<Version>> {
+        self.left.as_ref().map(|(v, _)| v)
     }
     /// A pipeline whose last step states the request record itself (a part's fields, `passes::PartOf`): the record is
     /// not carried by rule, nor stated again after each step (Q180). Restated after a step, the record is a layer of
@@ -1423,9 +1489,17 @@ impl<'s> Pipeline<'s> {
     /// The last run's step at this one's place, if it ran `pass`, against the current input. Over an edit, the
     /// last input's analyses are carried to the current one first, so a pass reads them at the edit's cost.
     fn prior(&mut self, pass: &'static str) -> Result<Prior> {
-        let Some(k) = self.last.get_mut(self.kept.len()).and_then(|k| k.take_if(|k| k.pass == pass)) else { return Ok(Prior::None) };
+        let found = self.last.get_mut(self.kept.len()).and_then(|k| k.take_if(|k| k.pass == pass));
+        // No last run at this place, and one the pipeline was told of (`left_as_is`): it left `last` as it was.
+        let (k, left) = match (found, &self.left) {
+            (Some(k), _) => (k, false),
+            (None, Some((l, _))) => (Kept { pass: pass.into(), input: l.clone(), output: l.clone(), form: Form::Unchanged, rule: None, plan: Vec::new(), said: Vec::new(), asked: None }, true),
+            (None, None) => return Ok(Prior::None),
+        };
+        // Over the very version it left as it was: an edit of nothing, which each pass runs again over as over any
+        // (a local one over no rules), and an across one, its last run stated and not seen, runs whole.
         if Arc::ptr_eq(&k.input, &self.v) {
-            return Ok(Prior::Same(k));
+            return Ok(if left { Prior::Edit(k, Delta::default()) } else { Prior::Same(k) });
         }
         // An input not made as an edit of the last one (a step after one that ran whole): a rebuilt delta, of the
         // whole program, is never read, so it is not made.
@@ -1605,11 +1679,32 @@ impl<'s> Pipeline<'s> {
     fn program_step<P: ProgramPass>(&mut self, pass: &mut P) -> Result<()> {
         let prior = self.prior(P::NAME)?;
         let v = self.v.clone();
+        // The last run `left_as_is` stated: its input and output the version named.
+        let left = |k: &Kept| self.left.as_ref().is_some_and(|(l, _)| Arc::ptr_eq(l, &k.input) && Arc::ptr_eq(l, &k.output));
+        let left_prior = matches!(&prior, Prior::Edit(k, _) if left(k));
+        // Over an edit of a version the last run left as it was (`left_as_is`): its output over the edit alone, onto it.
+        if let Prior::Edit(k, d) = &prior
+            && left_prior
+            && let Some((out, form, visited, from)) = self.left_again(pass, &v, &k.output, d)?
+        {
+            // The record by the current input's ids: the last output's rules are the input's, and each rule written
+            // onto it names the input's rule it came from.
+            let carry = match (&self.asked, Arc::ptr_eq(&from, &v)) {
+                (Some(a), false) => Carry::Onto(a.clone()),
+                _ => Carry::Step,
+            };
+            if !(form == Form::Folded && matches!(carry, Carry::Onto(_))) {
+                self.record(P::NAME, out, Ran::Delta, form, visited, &from, None, carry)?;
+                self.planned(pass.plan(), Vec::new());
+                return Ok(());
+            }
+        }
         // Over an edit of the last run's input: the pass writes the edit onto its last output where it can. Only an
         // edit of rules alone: the last output holds the last input's declarations, facts, inputs and outputs, which
         // a pass writing onto it does not state again (decision 0385).
         if let Prior::Edit(k, d) = &prior
             && d.touched == Reads::RULES
+            && !left_prior
             && let Some(carry) = self.spares_record(k, d)
         {
             let made = {
@@ -1641,9 +1736,11 @@ impl<'s> Pipeline<'s> {
         let (out, form, visited) = made?;
         // Over an edit, its output written as an edit of its last output (`rebase`, decision 0393): the steps after
         // it are run again over an edit too, not whole.
+        // A last output that was its input (`left_as_is`) holds rules of other runs' sources: the output is written onto
+        // it by content (`rebase`).
         if let Prior::Edit(k, _) = &prior
             && !Delta::read_off(&k.output, &out)
-            && let Some(r) = rebase_output(&k.output, &out)?
+            && let Some(r) = if left_prior { rebase(&k.output, &out)? } else { rebase_output(&k.output, &out)? }
         {
             // The record carried to the whole output, then place by place to its rebase (decision 0393); where a
             // request's rules are not in the same places, the whole output is kept.
@@ -1664,6 +1761,79 @@ impl<'s> Pipeline<'s> {
         self.record(P::NAME, out, Ran::Whole, form, visited, &v, None, Carry::Step)?;
         self.planned(pass.plan(), said);
         Ok(())
+    }
+
+    /// A step over `v`, an edit `d` of `last`, which its last run left as it was (`left_as_is`): a local pass
+    /// (`ProgramPass::LOCAL`) run over the edit's added rules alone (`edit_view`, with `v`'s fields), any other through
+    /// its `again` onto `last`. Its output, its form, the rules it visited, and the version the record and analyses
+    /// are carried from: `v` itself where the pass changed none of the edit, else `last`, with the edit's removals,
+    /// the output's rules (each naming `v`'s rule it came from) and `v`'s fields as the pass left them. `None` where
+    /// the pass runs whole.
+    fn left_again<P: ProgramPass>(&self, pass: &mut P, v: &Arc<Version>, last: &Arc<Version>, d: &Delta) -> Result<Option<LeftAgain>> {
+        if !P::LOCAL {
+            let cx = Cx { v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
+            // The pass writes onto `last` what it makes of the edit's rules, never folded; the edit's fields are stated
+            // first.
+            let mut w = ProgramW { unfolded: true, ..ProgramW::new(last) };
+            w.on()?.fields().state_fields_as(last, v);
+            if !pass.again(&cx, &Last { input: last, output: last, delta: d, plan: &[] }, &mut w)? {
+                return Ok(None);
+            }
+            let (out, form, visited) = w.finish()?;
+            return Ok(Some((out, form, visited, last.clone())));
+        }
+        let Some(edit) = self.edit_view(v, d) else { return Ok(None) };
+        let (o, form, visited) = {
+            let cx = Cx { v: &edit, store: edit.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
+            let mut w = ProgramW::new(&edit);
+            pass.run(&cx, &mut w)?;
+            w.finish()?
+        };
+        if form == Form::Unchanged {
+            return Ok(Some((v.clone(), Form::Unchanged, visited, v.clone())));
+        }
+        // The output's rules by the rule of `v` each came from: a rule it kept is that rule (its id `v`'s), one it
+        // made names its source, and a derivation's every rule does.
+        let od = Delta::of(&edit, &o);
+        let made: HashSet<RuleId> = od.added.iter().copied().collect();
+        let mut b = Builder::on(last);
+        for id in d.removed.iter() {
+            b.remove(id);
+        }
+        for r in o.rules() {
+            match if od.rebuilt || made.contains(&r.id()) { r.source() } else { Some(r.id()) } {
+                Some(s) => b.copy_from(&o, r, s),
+                None => b.copy(&o, r),
+            };
+        }
+        b.fields().state_fields_as(last, &o);
+        // Never folded: each later step's input stays an edit of `last` (`rebase` writes so too).
+        Ok(Some((b.finish_overlay()?, Form::Overlay, visited, last.clone())))
+    }
+
+    /// The view of `v`, an edit `d` of the version `left_as_is` named, that holds the edit's added rules alone, with
+    /// `v`'s fields. Its digest is `v`'s less the rules it leaves out, the named version's (their hashes summed once)
+    /// less those the edit removed. `None` where the added rules are more ranges than a view holds.
+    fn edit_view(&self, v: &Arc<Version>, d: &Delta) -> Option<Arc<Version>> {
+        let (last, sum) = self.left.as_ref()?;
+        let mut ids: Vec<u32> = d.added.iter().map(|r| r.0).collect();
+        ids.sort_unstable();
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for k in ids {
+            match ranges.last_mut() {
+                Some((_, end)) if *end == k => *end = k + 1,
+                _ => ranges.push((k, k + 1)),
+            }
+        }
+        let removed = d.removed.iter().filter_map(|id| last.rule(id)).fold(0u64, |s, r| s.wrapping_add(r.hash()));
+        let digest = v.digest().wrapping_sub(sum.wrapping_sub(removed));
+        // A view of a view is of its parent: `v` a view of `last` adds no rule, and has its parent's fields.
+        let over = match &**v {
+            Version::View { parent, .. } if ranges.is_empty() => parent,
+            Version::View { .. } => return None,
+            _ => v,
+        };
+        (ranges.len() <= super::version::max_ranges(over.size())).then(|| Version::view(over, ranges, d.added.len(), digest))
     }
 
     /// The plan of the step just recorded, and the profile's decisions it made, kept with it.

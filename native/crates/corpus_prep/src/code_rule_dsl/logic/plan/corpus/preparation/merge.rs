@@ -91,10 +91,11 @@ impl ProgramPass for DropRepeated {
             // An earlier rule of the input repeats it: the input's own rules come before the edit's added ones, and of
             // two added ones the first is written.
             let earlier = v.heads(r.head().rel()).take_while(|o| o.id() != r.id()).any(|o| o.hash() == r.hash() && v.show_rule(o) == v.show_rule(r));
+            // Copied with itself as its source: the request record finds its readers by it (`AskedByRule::onto`).
             if earlier {
                 self.0 += 1;
             } else {
-                b.copy(v, r);
+                b.keep_into(v, r);
             }
         }
         Ok(true)

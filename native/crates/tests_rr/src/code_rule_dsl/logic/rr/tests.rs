@@ -7014,7 +7014,22 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
                 out
             };
             let own_rels: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).chain(ProgramFields::declared_names(&**own.version())).collect();
-            let (end, touched) = super::tail_steps_in(Arc::clone(&m), true, fresh().lowered, None, &super::program_steps(), Some(&own_rels)).ok()?;
+            let tailed = match super::tail_steps_in(Arc::clone(&m), true, fresh().lowered, None, &super::program_steps(), Some(&own_rels)) {
+                Ok(t) => t,
+                Err(e) => return Some(format!("{pack}: {}: the program's steps: {e}", path.display())),
+            };
+            // The steps after the downward ones ran onto the link, which their last runs (the modules' tails) left as it
+            // was: each local one over the edit alone. An across step runs whole, and a step after one that made a
+            // program more than half new (no edit of the link, `rebase`) does.
+            use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::{AggregateDemand, WidenCyclicContexts};
+            use crate::code_rule_dsl::logic::program_image::manager::{ProgramPass, Ran};
+            if tailed.onto.is_empty() {
+                return Some(format!("{pack}: {}: the steps after the downward ones did not run onto the link", path.display()));
+            }
+            if let Some((s, _)) = tailed.onto.iter().find(|(s, on_link)| *on_link && s.ran != Ran::Delta && ![AggregateDemand::NAME, WidenCyclicContexts::NAME].contains(&s.pass)) {
+                return Some(format!("{pack}: {}: {} ran {:?} onto the link, over {} rules", path.display(), s.pass, s.ran, s.input.0));
+            }
+            let (end, touched) = (tailed.version, tailed.touched);
             match touched {
                 Some(touched) => {
                     let (was, now) = (content(&m), content(&end));
@@ -7244,7 +7259,7 @@ fn spike_0639_tail_by_module() {
         }
         // E13 and E15 over the pack's programs.
         let (mut same, mut differ, mut failed) = (0, 0, 0);
-        let mut times: [f64; 5] = [0.0; 5];
+        let mut times: [f64; 6] = [0.0; 6];
         let mut timed = 0;
         for (path, src, files) in texts.iter().take(per) {
             let Ok((ms, _, _)) = super::library_modules_planned(files) else { failed += 1; continue };
@@ -7282,11 +7297,22 @@ fn spike_0639_tail_by_module() {
                 let down = super::tail_steps(Arc::clone(&m), true, linked.lowered, None, &down);
                 let t3 = t.elapsed().as_secs_f64();
                 if let Ok(d) = down {
-                    let linked = lower::link_library(ms.clone()).unwrap().with(Some(own)).unwrap();
+                    let linked = lower::link_library(ms.clone()).unwrap().with(Some(own.clone())).unwrap();
                     let t = Instant::now();
                     let _ = super::tail_steps(d, true, linked.lowered, None, &after);
                     let t4 = t.elapsed().as_secs_f64();
-                    for (k, x) in [t1, t2, t3, t4, 0.0].into_iter().enumerate() {
+                    // The program's steps over the link: checked whole and every step run whole, against run onto the
+                    // link, which the module steps left as it was (`rr::tail_steps_in` with the own module's relations).
+                    let own_rels: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).chain(ProgramFields::declared_names(&**own.version())).collect();
+                    let linked = lower::link_library(ms.clone()).unwrap().with(Some(own.clone())).unwrap();
+                    let t = Instant::now();
+                    let _ = super::tail_steps_in(Arc::clone(&m), true, linked.lowered, None, &super::program_steps(), None);
+                    let t5 = t.elapsed().as_secs_f64();
+                    let linked = lower::link_library(ms.clone()).unwrap().with(Some(own)).unwrap();
+                    let t = Instant::now();
+                    let _ = super::tail_steps_in(Arc::clone(&m), true, linked.lowered, None, &super::program_steps(), Some(&own_rels));
+                    let t6 = t.elapsed().as_secs_f64();
+                    for (k, x) in [t1, t2, t3, t4, t5, t6].into_iter().enumerate() {
                         times[k] += x;
                     }
                     timed += 1;
@@ -7354,7 +7380,15 @@ fn spike_0639_tail_by_module() {
         }
         if timed > 0 {
             let ms = |x: f64| x * 1000.0 / timed as f64;
-            eprintln!("E15 {pack}: {timed} programs, ms a program: TAIL {:.1}; module steps {:.1}; downward alone {:.1}; the steps after them {:.1}", ms(times[0]), ms(times[1]), ms(times[2]), ms(times[3]));
+            eprintln!(
+                "E15 {pack}: {timed} programs, ms a program: TAIL {:.1}; module steps {:.1}; downward alone {:.1}; the steps after them {:.1}; the program's steps whole {:.1}, onto the link {:.1}",
+                ms(times[0]),
+                ms(times[1]),
+                ms(times[2]),
+                ms(times[3]),
+                ms(times[4]),
+                ms(times[5])
+            );
         }
     }
 }

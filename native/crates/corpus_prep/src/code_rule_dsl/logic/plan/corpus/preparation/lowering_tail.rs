@@ -153,6 +153,7 @@ pub struct LiteralsOnce;
 
 impl ProgramPass for LiteralsOnce {
     const NAME: &'static str = "each literal of a body once";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let mut once: BTreeMap<RuleId, Vec<u32>> = BTreeMap::new();
@@ -191,6 +192,7 @@ pub struct DropSelfRules;
 
 impl ProgramPass for DropSelfRules {
     const NAME: &'static str = "drop the rules that are their own body";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let args = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| a.args().map(|t| v.show_term(r, t)).collect::<Vec<_>>();
@@ -213,6 +215,7 @@ pub struct FactsOnce;
 
 impl ProgramPass for FactsOnce {
     const NAME: &'static str = "each fact once";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v: &Version = cx.v();
         let mut once = Vec::new();
@@ -248,6 +251,7 @@ pub struct Unit;
 
 impl ProgramPass for Unit {
     const NAME: &'static str = "a rule reading no relation reads the unit";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         const UNIT: &str = "rr_unit";
         let v = cx.v();
@@ -730,6 +734,7 @@ enum Ordered {
 
 impl ProgramPass for OrderNodes {
     const NAME: &'static str = "order the nodes compared";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::front::AggOp;
         use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, CmpOp};
@@ -944,6 +949,7 @@ pub struct DeclareAxes;
 
 impl ProgramPass for DeclareAxes {
     const NAME: &'static str = "declare the tree axes read";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let mut axes: Vec<&str> = Vec::new();
@@ -992,6 +998,7 @@ impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Unit1<'_> {
 
 impl ProgramPass for BooleanRelations {
     const NAME: &'static str = "nullary relations as sets of the unit";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v: &Version = cx.v();
         let names: BTreeSet<String> = v.decls().into_iter().filter(|d| d.cols().next().is_none()).map(|d| v.text(d.name()).to_owned()).collect();
@@ -1029,6 +1036,7 @@ pub struct ScopeGlobs;
 
 impl ProgramPass for ScopeGlobs {
     const NAME: &'static str = "the scope's globs";
+    const LOCAL: bool = true;
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{reads_tool_calls, scope_globs, scope_text_globs};
         let v = cx.v();

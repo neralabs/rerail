@@ -649,19 +649,28 @@ silently. Each place a digest stands for content, what can collide, and what is 
    - `DOWNWARD` is `downward_steps()`, the steps that declare `Place::Downward`.
    - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0662's view, names
      `img_`) takes out the same sets, undeclarations and facts as `KindSets` in every pack.
-   - The program's checks are of its own components (`cycles::check_within`) where every step's changes are read off
-     its overlays and views (`rr::changed_since`). `cycles::check` is 15.0 of django's 15.5 ms of checks. A step
-     that makes a new base (`KindSets` rewriting rules, `AggregateDemand` placing demand) leaves its changes unread,
-     and the program is checked whole: in the packs most programs still are.
+   - The program's checks are of its own components (`cycles::check_within`), the relations each step changed read
+     off the version it made: an overlay's or view's edit (`rr::changed_since`), or a derivation's rules by their
+     sources (`rr::derived_changes`: a rule whose hash is not its source's, one with no source, a source no rule came
+     from). `cycles::check` is 15.0 of django's 15.5 ms of checks. Every pack program's checks narrow (T13).
+   - Settings are a list, each row with its place (`setting(k, key, text)`): a module's tail states the settings its
+     link holds beyond its scope's union, by key and text as a multiset. Compared as rows, a scope's `.cache` was
+     stated again by each module reading it, and named twice in a program linking two (the flaky
+     `the_git_programs_read_their_library_once`).
+   - The steps after the downward ones run over the edit alone (`Pipeline::left_as_is`). Their last run is the link
+     as its own input and output, which the modules' tails left as it is (T11). The downward steps' output is written
+     as an edit of the link (`rebase`), and each later step's output onto the link again, an overlay never folded, so
+     `Delta::of` reads each step's edit off one layer. A pass that declares itself local (`ProgramPass::LOCAL`: each
+     rule's output its own, read with the program's fields; the eight local after-steps) runs over a view of the
+     input that holds the edit's added rules alone; `DropRepeated` through its `again` onto the link; an across step
+     (`AggregateDemand`, `Widen`) whole, its output rebased onto the link. Where the edit is more than half the link
+     (blade's 20-rule programs) the steps run whole. `Delta::of` reads an overlay's fields off its own layer, and
+     `state_fields_as` compares each part by its hash: the prior's delta was 0.15 ms a step, now 0.008 ms. T13 holds
+     that each local step ran over the edit (`Ran::Delta`). The program's steps over the link, whole against onto
+     it with its checks narrowed (E15, spark2, one thread, ms a program over 6): django 40.6 against 23.3, python
+     15.2 against 9.8, react 21.8 against 18.0, phases 10.1 against 7.6.
 
    **Left of step 6:**
-   - A derivation's changes, read off it: the pass manager records, for a derived base, the heads of the rules it
-     wrote rather than kept, so `Delta::of` gives them and the checks narrow for every program. Writing `KindSets`
-     and `AggregateDemand` as edits instead was tried and dropped: stating read-through fields on an overlay repeats
-     list settings (`.cache` named twice), and the deeper overlay chains broke the `program_image` tests' forms.
-   - The steps after the downward ones over their edit alone (`Pipeline::again`): the program has no kept run of
-     those steps to be again of (its modules ran them apart), so the last run is the union as its own output, which
-     the local steps leave as it is (T11's second half).
    - `KindSets` as a rules pass in the Pipeline (decision 0662 §5.1): the view read into a run in place and the
      pass's plan kept with its image. No in-process evaluator exists apart from a corpus run (50–90 ms fixed, E5,
      against `KindSets`' 2 ms), and a second one would break S003. The view as an engine input is the work.

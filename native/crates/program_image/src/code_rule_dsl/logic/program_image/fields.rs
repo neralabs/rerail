@@ -406,45 +406,53 @@ impl ProgramFields for Version {
 impl Builder<'_> {
     /// States `now`'s fields (its declarations, facts, inputs, outputs and `.about` rows) where they differ from
     /// `was`'s, each read by name: `now` a version made apart from `was`, the version this builder edits, its rules
-    /// the builder's own (`manager`'s edit of the last version to the new one).
+    /// the builder's own (`manager`'s edit of the last version to the new one). Each part is compared by its hash, as a
+    /// version's digest holds it: only those that differ are read.
     pub(in crate::code_rule_dsl::logic::program_image) fn state_fields_as(&mut self, was: &Version, now: &Version) {
-        for rel in now.declared_names() {
-            let cols = now.columns_of(&rel);
-            if was.columns_of(&rel) != cols {
-                let cols = cols.unwrap_or_default();
+        let decl = |v: &Version, rel: &str| v.decl_of(rel).map(|d| d.hash());
+        for d in now.decls() {
+            let rel = now.text(d.name());
+            if decl(was, rel) != Some(d.hash()) {
+                let cols = now.columns_of(rel).unwrap_or_default();
                 let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                Builder::declare(self, &rel, &pairs);
+                Builder::declare(self, rel, &pairs);
             }
         }
-        for rel in was.declared_names() {
-            if !now.declares(&rel) {
-                self.undeclare(&rel);
+        for d in was.decls() {
+            let rel = was.text(d.name());
+            if !now.declares(rel) {
+                self.undeclare(rel);
             }
         }
-        for rel in now.fact_names() {
-            let rows = now.fact_rows(&rel);
-            if !was.states_facts(&rel) || was.fact_rows(&rel) != rows {
-                self.set_facts(&rel, &rows);
+        let facts = |v: &Version, rel: &str| v.find(rel).and_then(|a| v.facts(a)).map(|f| f.hash());
+        for f in now.all_facts() {
+            let rel = now.text(f.name());
+            if facts(was, rel) != Some(f.hash()) {
+                self.set_facts(rel, &now.fact_rows(rel));
             }
         }
-        for rel in was.fact_names() {
-            if !now.states_facts(&rel) {
-                self.drop_facts(&rel);
+        for f in was.all_facts() {
+            let rel = was.text(f.name());
+            if facts(now, rel).is_none() {
+                self.drop_facts(rel);
             }
         }
-        let inputs = now.input_names();
-        if was.input_names() != inputs {
-            self.set_inputs(&inputs);
+        if was.inputs_hash() != now.inputs_hash() {
+            self.set_inputs(&now.input_names());
         }
-        let outputs = now.output_names();
-        if was.output_names() != outputs {
-            self.set_outputs(&outputs);
+        if was.outputs_hash() != now.outputs_hash() {
+            self.set_outputs(&now.output_names());
         }
-        let names: BTreeSet<String> = [was, now].iter().flat_map(|v| v.about_facts().into_iter().map(|f| v.text(f.name()).to_owned()).collect::<Vec<_>>()).collect();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let about = now.about_held(&names);
-        if was.about_held(&names) != about {
-            self.set_about(&about);
+        let about = |v: &Version| -> Vec<(String, u64)> {
+            let mut x: Vec<(String, u64)> = v.about_facts().into_iter().map(|f| (v.text(f.name()).to_owned(), f.hash())).collect();
+            x.sort_unstable();
+            x
+        };
+        let (a, b) = (about(was), about(now));
+        if a != b {
+            let names: BTreeSet<&str> = a.iter().chain(&b).map(|(n, _)| n.as_str()).collect();
+            let names: Vec<&str> = names.into_iter().collect();
+            self.set_about(&now.about_held(&names));
         }
     }
 
