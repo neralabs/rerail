@@ -20,6 +20,7 @@
 
 use super::vtab::Relation;
 use crate::content_store::{ContentStore, StoreResult};
+use rerail_lang::code_rule_dsl::tsconfig;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -146,9 +147,6 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
 
 /// The names a project configuration has, the first found in a folder governing it.
 const TSCONFIG_NAMES: [&str; 2] = ["tsconfig.json", "jsconfig.json"];
-/// How many `extends` a configuration chain follows.
-const MAX_EXTENDS: usize = 8;
-
 /// `a/b/../c` as `a/c`: `.` and `..` segments resolved, never above the root.
 fn normalize(path: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
@@ -169,64 +167,72 @@ fn join(dir: &str, rel: &str) -> String {
     if rel.starts_with('/') { normalize(rel) } else { normalize(&format!("{dir}/{rel}")) }
 }
 
-/// JSONC as JSON: `//` and `/* */` comments and a comma before `}` or `]` dropped, strings kept as they are.
-fn jsonc(text: &str) -> String {
-    let b = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    let mut start = 0;
-    let mut in_str = false;
-    while i < b.len() {
-        match b[i] {
-            b'\\' if in_str => i += 1,
-            b'"' => in_str = !in_str,
-            b'/' if !in_str && b.get(i + 1) == Some(&b'/') => {
-                out.push_str(&text[start..i]);
-                i = memchr::memchr(b'\n', &b[i..]).map_or(b.len(), |n| i + n);
-                start = i;
-                continue;
-            }
-            b'/' if !in_str && b.get(i + 1) == Some(&b'*') => {
-                out.push_str(&text[start..i]);
-                i = memchr::memmem::find(&b[i + 2..], b"*/").map_or(b.len(), |n| i + 2 + n + 2);
-                start = i;
-                continue;
-            }
-            b',' if !in_str => {
-                let next = b[i + 1..].iter().position(|c| !c.is_ascii_whitespace()).map(|n| b[i + 1 + n]);
-                if matches!(next, Some(b'}' | b']')) {
-                    out.push_str(&text[start..i]);
-                    start = i + 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
+/// The files on disk below a root, by absolute `/`-separated path, as the shared `extends` resolver reads them
+/// (`tsconfig::ConfigFiles`, decision 0660).
+struct Disk {
+    base: String,
+    /// The root with its symlinks resolved, as `real_path` resolves a path below it.
+    canonical: Option<PathBuf>,
+}
+
+impl Disk {
+    fn new(root: &Path) -> Self {
+        let base = root.to_string_lossy().replace('\\', "/");
+        let base = if base.starts_with('/') { base } else { format!("/{base}") };
+        Disk { base: base.trim_end_matches('/').to_owned(), canonical: std::fs::canonicalize(root).ok() }
     }
-    out.push_str(&text[start.min(text.len())..]);
-    out
+
+    /// The path on disk of an absolute path here (`/C:/a` on Windows is `C:/a`).
+    fn on_disk(&self, path: &str) -> PathBuf {
+        PathBuf::from(if cfg!(windows) { path.trim_start_matches('/') } else { path })
+    }
+
+    /// The root-relative path of an absolute one, where it lies below the root.
+    fn relative<'p>(&self, path: &'p str) -> Option<&'p str> {
+        path.strip_prefix(self.base.as_str())?.strip_prefix('/')
+    }
+}
+
+impl tsconfig::ConfigFiles for Disk {
+    fn base(&self) -> &str {
+        &self.base
+    }
+    fn is_file(&self, path: &str) -> bool {
+        self.on_disk(path).is_file()
+    }
+    fn is_directory(&self, path: &str) -> bool {
+        self.on_disk(path).is_dir()
+    }
+    fn real_path(&self, path: &str) -> String {
+        // A path below the root is spelled from the root; one linked from outside it keeps its own spelling, which
+        // `relative` refuses: nothing above the root is read.
+        let Ok(real) = std::fs::canonicalize(self.on_disk(path)) else { return path.to_owned() };
+        match self.canonical.as_ref().and_then(|c| real.strip_prefix(c).ok()) {
+            Some(rest) if rest.as_os_str().is_empty() => self.base.clone(),
+            Some(rest) => format!("{}/{}", self.base, rest.to_string_lossy().replace('\\', "/")),
+            None => format!("/{}", real.to_string_lossy().replace('\\', "/").trim_start_matches('/')),
+        }
+    }
+    fn text(&self, path: &str) -> Option<String> {
+        std::fs::read_to_string(self.on_disk(path)).ok()
+    }
 }
 
 /// The `compilerOptions` of the configuration at `file` (from the root), the chain it `extends` merged beneath its
-/// own, with `baseUrl` resolved from the root where each configuration of the chain sets it. `None` where it cannot
-/// be read.
-fn compiler_options(root: &Path, file: &str, depth: usize) -> Option<serde_json::Map<String, Value>> {
-    let text = std::fs::read_to_string(root.join(file)).ok()?;
-    let json: Value = serde_json::from_str(&jsonc(&text)).ok()?;
+/// own (later bases over earlier ones), with `baseUrl` resolved from the root where each configuration of the chain
+/// sets it. A base is a relative or absolute path, or a package's configuration in a `node_modules` folder at or
+/// above it (`tsconfig::extends_path`); one outside the root is not read. `None` where it cannot be read.
+fn compiler_options(disk: &Disk, file: &str, depth: usize) -> Option<serde_json::Map<String, Value>> {
+    use tsconfig::ConfigFiles;
+    let text = disk.text(&format!("{}/{file}", disk.base))?;
+    let json: Value = serde_json::from_str(&tsconfig::strip_jsonc(&text)).ok()?;
     let dir = file.rsplit_once('/').map_or("", |(d, _)| d);
     let mut merged = serde_json::Map::new();
-    if depth < MAX_EXTENDS {
-        let extends = match json.get("extends") {
-            Some(Value::String(e)) => vec![e.clone()],
-            Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
-            _ => Vec::new(),
-        };
-        for e in extends.iter().filter(|e| e.starts_with('.') || e.starts_with('/')) {
-            let mut base = join(dir, e);
-            if !root.join(&base).is_file() {
-                base.push_str(".json");
-            }
-            if let Some(opts) = compiler_options(root, &base, depth + 1) {
+    if depth < tsconfig::MAX_EXTENDS_DEPTH {
+        let directory = if dir.is_empty() { disk.base.clone() } else { format!("{}/{dir}", disk.base) };
+        for e in tsconfig::extends_of(&json) {
+            let base = tsconfig::extends_path(disk, e, &directory);
+            if let Some(opts) = base.as_deref().and_then(|b| disk.relative(b)).and_then(|b| compiler_options(disk, b, depth + 1)) {
                 merged.extend(opts);
             }
         }
@@ -245,6 +251,7 @@ fn compiler_options(root: &Path, file: &str, depth: usize) -> Option<serde_json:
 
 /// `tsconfig`, `tsconfig_path` of each project configuration in the tree, and `tsconfig_for` of each document.
 fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
+    let disk = Disk::new(root);
     let name = |f: &str| f.rsplit_once('/').map_or(f, |(_, n)| n).to_owned();
     let mut configs: BTreeMap<String, String> = BTreeMap::new();
     for f in &rows.file {
@@ -258,7 +265,7 @@ fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
         }
     }
     for (dir, file) in &configs {
-        let Some(opts) = compiler_options(root, file, 0) else { continue };
+        let Some(opts) = compiler_options(&disk, file, 0) else { continue };
         let base = opts.get("baseUrl").and_then(Value::as_str).map_or_else(|| dir.clone(), str::to_owned);
         rows.tsconfig.push((dir.clone(), base));
         if let Some(Value::Object(paths)) = opts.get("paths") {
@@ -425,5 +432,35 @@ pub mod tests {
         assert!(!rows.package_field.iter().any(|(_, k, _)| k == "n"));
         assert_eq!(rows.package_for, [("web/src/a.ts".to_owned(), "web".to_owned())]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A project configuration is read as TypeScript reads it (decision 0660): JSONC, a chain of `extends` merged
+    /// beneath its own options (a relative base without `.json`, a package's configuration in `node_modules` by its
+    /// `tsconfig` field), and each `baseUrl` from the configuration that sets it.
+    #[test]
+    fn a_project_configuration_is_read_with_the_chain_it_extends() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("app/tsconfig.json", "\u{feff}{\n  // the app\n  \"extends\": [\"@org/cfg\", \"./base\"],\n  \"compilerOptions\": {\n    \"paths\": { \"~/*\": [\"src/*\",], },\n  },\n}\n");
+        write("app/base.json", "{ /* shared */ \"compilerOptions\": { \"baseUrl\": \"./src\" } }");
+        write("node_modules/@org/cfg/package.json", "{ \"name\": \"@org/cfg\", \"tsconfig\": \"strict.json\" }");
+        write("node_modules/@org/cfg/strict.json", "{ \"compilerOptions\": { \"baseUrl\": \"lib\", \"paths\": { \"x\": [\"y\"] } } }");
+        write("app/src/a.ts", "export const a = 1;\n");
+        write("b.ts", "export const b = 1;\n");
+        let mut rows = Rows::default();
+        tree(root, &["app/src/a.ts".to_owned(), "b.ts".to_owned()], &mut rows);
+        // `./base` is merged over `@org/cfg` (later over earlier), the app's own `paths` over both.
+        assert_eq!(rows.tsconfig, vec![("app".to_owned(), "app/src".to_owned())]);
+        assert_eq!(rows.tsconfig_path, vec![("app".to_owned(), "~/*".to_owned(), "src/*".to_owned())]);
+        assert_eq!(rows.tsconfig_for, vec![("app/src/a.ts".to_owned(), "app".to_owned())]);
+        // The package's configuration alone: its `baseUrl` from its own folder.
+        let disk = Disk::new(root);
+        let base = compiler_options(&disk, "node_modules/@org/cfg/strict.json", 0).unwrap();
+        assert_eq!(base.get("baseUrl"), Some(&Value::String("node_modules/@org/cfg/lib".to_owned())));
     }
 }
