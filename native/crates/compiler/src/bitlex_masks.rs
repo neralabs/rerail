@@ -206,15 +206,28 @@ struct Bounds {
 /// it; a `prev` of such a value, and an `or` of two, are bounded too. A value bounded so moves
 /// its bits down in the word with no carry (`BlockOp::Early`, `Lowering::early_to`). `None`
 /// where the operations do not show it.
-pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32> {
-    fn go(ops: &[BlockOp], tables: &[ClassTable], v: u16, memo: &mut HashMap<u16, Bounds>, depth: u32) -> Bounds {
+///
+/// `kept` holds each value's bounds a walk found with no part of it past the depth cut, so the
+/// same as any walk's (the operations never change, decision 0670): a compile asks of each value
+/// once, not of its whole cone again at every `early_to`.
+pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16, kept: &mut HashMap<u16, Bounds>) -> Option<u32> {
+    /// `v`'s bounds, and whether the walk to them met the depth cut.
+    fn go(ops: &[BlockOp], tables: &[ClassTable], v: u16, memo: &mut HashMap<u16, (Bounds, bool)>, kept: &mut HashMap<u16, Bounds>, depth: u32) -> (Bounds, bool) {
+        if let Some(&b) = kept.get(&v) {
+            return (b, false);
+        }
         if let Some(&b) = memo.get(&v) {
             return b;
         }
         if depth > 256 {
-            return Bounds::default();
+            return (Bounds::default(), true);
         }
-        let mut get = |x: u16| go(ops, tables, x, memo, depth + 1);
+        let mut cut = false;
+        let mut get = |x: u16| {
+            let (b, c) = go(ops, tables, x, memo, kept, depth + 1);
+            cut |= c;
+            b
+        };
         // The smaller of two bounds, either one known; the larger, both known.
         let min = |x: Option<u32>, y: Option<u32>| match (x, y) {
             (Some(x), Some(y)) => Some(x.min(y)),
@@ -292,15 +305,20 @@ pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32>
             }
             _ => Bounds::default(),
         };
-        memo.insert(v, b);
-        b
+        if !cut {
+            kept.insert(v, b);
+        }
+        memo.insert(v, (b, cut));
+        (b, cut)
     }
-    go(ops, tables, v, &mut HashMap::default(), 0).zero_from
+    go(ops, tables, v, &mut HashMap::default(), kept, 0).0.zero_from
 }
 
 pub struct Lowering {
     /// Tier 2's shape.
     pub shape: Shape,
+    /// Each value's bounds `first_bits` has found (decision 0670).
+    first_bits_kept: HashMap<u16, Bounds>,
     pub program: BlockProgram,
     /// Each operation's value, so an operation is emitted once.
     pub seen: HashMap<BlockOp, u16>,
@@ -547,16 +565,41 @@ pub enum AsRust {
     No,
 }
 
-/// With `RERAIL_PROVING_TRACE`, the prover's steps and the time spent so far in a compile, at
-/// each of its phases (decision 0654).
+/// The process's CPU time, every thread's, in seconds (none where there is no `getrusage`).
+fn process_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        // SAFETY: `getrusage` writes the struct it is given.
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        s(u.ru_utime) + s(u.ru_stime)
+    }
+    #[cfg(not(unix))]
+    0.0
+}
+
+/// With `RERAIL_PROVING_TRACE`, the prover's steps, the time and the process's CPU spent so far in a
+/// compile, at each of its phases (decision 0654), and the threads the phase since the last mark kept
+/// busy (its CPU over its time; decision 0670).
 fn phase_mark(low: &Lowering, what: &str) {
-    thread_local! { static START: std::cell::Cell<Option<(std::time::Instant, u64)>> = const { std::cell::Cell::new(None) }; }
+    thread_local! { static START: std::cell::Cell<Option<(std::time::Instant, u64, f64)>> = const { std::cell::Cell::new(None) }; }
+    thread_local! { static LAST: std::cell::Cell<(f64, f64)> = const { std::cell::Cell::new((0.0, 0.0)) }; }
     if std::env::var_os("RERAIL_PROVING_TRACE").is_none() {
         return;
     }
     let left = low.proofs.work.left();
-    let (t, l0) = START.with(|c| if what == "start" || c.get().is_none() { c.set(Some((std::time::Instant::now(), left))); c.get().unwrap() } else { c.get().unwrap() });
-    eprintln!("phase {what}: {} steps spent, {:.1} s", l0.saturating_sub(left), t.elapsed().as_secs_f64());
+    let (t, l0, c0) = START.with(|c| {
+        if what == "start" || c.get().is_none() {
+            c.set(Some((std::time::Instant::now(), left, process_cpu())));
+            LAST.with(|l| l.set((0.0, 0.0)));
+        }
+        c.get().unwrap()
+    });
+    let (wall, cpu) = (t.elapsed().as_secs_f64(), process_cpu() - c0);
+    let (w1, c1) = LAST.with(|l| l.replace((wall, cpu)));
+    let busy = if wall - w1 > 1e-3 { (cpu - c1) / (wall - w1) } else { 0.0 };
+    eprintln!("phase {what}: {} steps spent, {wall:.1} s, {cpu:.1} s CPU; since the last, {:.2} s at {busy:.1} threads", l0.saturating_sub(left), wall - w1);
 }
 
 /// `compile_shaped`, with the provers' answers a compile made before (`Compiled::proofs`,
@@ -565,6 +608,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let mut low = Lowering {
         proofs: bitlex_prove::Proofs { known, made: Vec::new(), used: Vec::new(), work: bitlex_prove::Budget::new(std::env::var("RERAIL_PROVING_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(bitlex_prove::PROVING_STEPS)) },
         shape,
+        first_bits_kept: HashMap::default(),
         program: BlockProgram::default(),
         seen: HashMap::default(),
         table_products: Vec::new(),
@@ -955,6 +999,9 @@ fn proof_ops<'a>(program: &'a BlockProgram, prefix: &Option<(Vec<u8>, Val)>) -> 
         None => std::borrow::Cow::Borrowed(&program.ops),
     }
 }
+
+/// The first chunk of a walk's items proved ahead (`Lowering::first_proved`).
+const FIRST_CHUNK: usize = 32;
 
 impl Lowering {
     /// The operations added since `from`, as a cost of `what` (`Compiled::costs`).
@@ -1724,7 +1771,7 @@ impl Lowering {
     /// word (`BlockOp::Early`). So a test of a file's start that looks ahead, as a byte order
     /// mark's, delays nothing it is combined with (decision 0330). Else `x` as it is.
     pub fn early_to(&mut self, x: Val, d: u8) -> Val {
-        if x.d <= d || !first_bits(&self.program.ops, &self.program.tables, x.v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
+        if x.d <= d || !first_bits(&self.program.ops, &self.program.tables, x.v, &mut self.first_bits_kept).is_some_and(|s| s <= crate::block::EARLY_BITS) {
             return x;
         }
         let k = x.d - d;
@@ -1839,12 +1886,15 @@ impl Lowering {
     /// The first of `n` items that holds, where item `i` (made by `make`) holds when each of its
     /// values is proved zero everywhere as `ask` proves it, the values after one not proved not
     /// asked: as a walk over the items asking each in turn finds it, and with its questions and
-    /// answers (decision 0663). The items are taken a chunk at a time, a thread's each: a chunk's
-    /// questions proved ahead together, each within its share of the budget, and kept in the
-    /// walk's order up to the item that holds; the rest are not kept, nor their steps spent.
+    /// answers (decision 0663). The items are taken a chunk at a time: a chunk's questions proved
+    /// ahead together, each within its share of the budget, and kept in the walk's order up to the
+    /// item that holds; the rest are not kept, nor their steps spent. The chunks double from
+    /// `FIRST_CHUNK` (decision 0670): a walk waits for its slowest item at a few chunks' ends, not
+    /// at every thread count's, makes at most twice the items it reaches, and is the same walk on
+    /// every machine.
     pub fn first_proved(&mut self, n: usize, mut make: impl FnMut(&mut Lowering, usize) -> Result<Vec<Val>, String>, ask: Ask) -> Result<Option<usize>, String> {
         use rayon::prelude::*;
-        let chunk = rayon::current_num_threads().max(1);
+        let mut chunk = FIRST_CHUNK;
         let mut i = 0;
         while i < n {
             let items: Vec<Vec<Val>> = (i..n.min(i + chunk)).map(|k| make(self, k)).collect::<Result<_, _>>()?;
@@ -1932,6 +1982,7 @@ impl Lowering {
                 }
             }
             i += chunk;
+            chunk *= 2;
         }
         Ok(None)
     }
@@ -1999,19 +2050,33 @@ impl Lowering {
     /// question asked twice in the batch is proved once.
     pub fn either_never_many(&mut self, prover: &bitlex_prove::Induction, xs: &[Val]) -> Vec<bool> {
         use rayon::prelude::*;
+        let trace = std::env::var_os("RERAIL_PROVING_TRACE").is_some();
+        let (t0, c0) = (std::time::Instant::now(), process_cpu());
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
         let mut out: Vec<Option<bool>> = vec![None; xs.len()];
-        // The questions to prove: each its text, value and places in `xs`.
+        // The questions to prove: each its text, value and places in `xs`. The texts and keys
+        // made on the threads (decision 0670), each value's in its place.
+        let asker = prover.asker("either never");
+        let rounds = &self.program.rounds;
+        let apart = &self.apart;
+        let texts: Vec<Option<(Vec<u8>, bitlex_prove::Key)>> = xs
+            .par_iter()
+            .map(|x| {
+                (!bitlex_prove::never_by_shape(&ops, apart, x.v)).then(|| {
+                    let text = bitlex_prove::question_given(&ops, tables, rounds, x.v, x.d, &asker, prover.given());
+                    let key = bitlex_prove::key_of(&text);
+                    (text, key)
+                })
+            })
+            .collect();
         let mut asked: Vec<(Vec<u8>, Val, Vec<usize>)> = Vec::new();
         let mut by_key: HashMap<bitlex_prove::Key, usize> = HashMap::default();
-        for (i, &x) in xs.iter().enumerate() {
-            if bitlex_prove::never_by_shape(&ops, &self.apart, x.v) {
+        for ((i, &x), made) in xs.iter().enumerate().zip(texts) {
+            let Some((text, key)) = made else {
                 out[i] = Some(true);
                 continue;
-            }
-            let text = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
-            let key = bitlex_prove::key_of(&text);
+            };
             if let Some(&bitlex_prove::Answer::Never(b)) = self.proofs.known.get(&key) {
                 self.proofs.used.push((key, bitlex_prove::Answer::Never(b)));
                 out[i] = Some(b);
@@ -2028,7 +2093,7 @@ impl Lowering {
         // Refuted by a stream found before: not proved, with no prover.
         let mut refuted = Vec::new();
         asked.retain(|(text, x, places)| {
-            let r = self.streams.refutes(&ops, tables, &self.program.rounds, x.v, x.d);
+            let r = self.streams.refutes(&ops, tables, rounds, x.v, x.d);
             if r {
                 refuted.push((text.clone(), places.clone()));
             }
@@ -2042,6 +2107,8 @@ impl Lowering {
         }
         let budgets: Vec<bitlex_prove::Budget> = asked.iter().map(|_| self.proofs.work.child()).collect();
         let xs: Vec<Val> = asked.iter().map(|a| a.1).collect();
+        let (t1, c1) = (std::time::Instant::now(), process_cpu());
+        let longest = std::sync::atomic::AtomicU64::new(0);
         #[cfg(not(target_family = "wasm"))]
         let on_gpu = crate::bitlex_prove_gpu::enabled();
         #[cfg(target_family = "wasm")]
@@ -2052,12 +2119,37 @@ impl Lowering {
             xs.par_iter()
                 .zip(&budgets)
                 .map(|(x, work)| {
+                    let t = std::time::Instant::now();
                     let mut p = prover.fork(work);
-                    let a = work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in_before_solve(work, &ops, tables, x.v, x.d) || p.never(&ops, tables, x.v, x.d));
+                    let (mut e, mut by_enum) = (0.0, false);
+                    let a = work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && {
+                        let te = std::time::Instant::now();
+                        by_enum = bitlex_prove::never_in_before_solve(work, &ops, tables, x.v, x.d);
+                        e = te.elapsed().as_secs_f64();
+                        by_enum || p.never(&ops, tables, x.v, x.d)
+                    };
+                    let took = t.elapsed();
+                    longest.fetch_max(took.as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+                    if trace && took.as_secs_f64() > 0.05 {
+                        let (solves, conflicts, lemmas, windows) = p.stats();
+                        eprintln!("long question {:.3} s ({a}{}): enumeration {e:.3} s; {solves} solves, {conflicts} conflicts, {lemmas} lemmas, {windows} windows", took.as_secs_f64(), if by_enum { ", by enumeration" } else { "" });
+                    }
                     (a, p.found().to_vec())
                 })
                 .unzip()
         };
+        if trace {
+            let (w1, w2) = (t1.duration_since(t0).as_secs_f64(), t1.elapsed().as_secs_f64());
+            let c2 = process_cpu();
+            eprintln!(
+                "batch {} values, {} asked: before {w1:.3} s at {:.1} threads; proving {w2:.3} s at {:.1} threads, the longest {:.3} s",
+                out.len(),
+                xs.len(),
+                (c1 - c0) / w1.max(1e-6),
+                (c2 - c1) / w2.max(1e-6),
+                longest.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6
+            );
+        }
         self.streams.add(found.into_iter().flatten());
         for (((text, _, places), a), work) in asked.into_iter().zip(answers).zip(&budgets) {
             self.proofs.work.spend(work.spent());

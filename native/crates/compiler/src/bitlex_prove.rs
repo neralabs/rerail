@@ -1223,6 +1223,12 @@ impl Induction {
     /// `work` for its budget: for a question of a batch answered on another thread (decision
     /// 0654). Its answers are this one's: the streams it has not seen only refute questions a
     /// solve would refute.
+    /// The last question's solves, its solver's conflicts in all, its lemmas and its windows
+    /// (`RERAIL_PROVING_TRACE`).
+    pub fn stats(&self) -> (u32, u64, usize, usize) {
+        (SOLVES.saturating_sub(self.solves), self.solver.conflicts, self.lemmas.len(), self.window_list.len())
+    }
+
     pub fn fork(&self, work: &Budget) -> Induction {
         let mut p = Induction::new(&self.rounds, self.horizon, self.conflicts).within(work);
         p.given = self.given.clone();

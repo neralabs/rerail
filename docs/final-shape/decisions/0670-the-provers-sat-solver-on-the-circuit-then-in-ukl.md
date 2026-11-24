@@ -1,8 +1,9 @@
 # 0670: The prover's SAT solver on the circuit, then in UKL
 
-Status: step 1 done; steps 2 to 4 next (the user, 2026-11-24: "tell me about how the SAT solver is implemented and how it can be
+Status: step 1 done; step 2 in progress, steps 3 and 4 next (the user, 2026-11-24: "tell me about how the SAT solver is implemented and how it can be
 improved and particularly parallelized via a GPU or SIMD operations. I am serious about wanting the SAT solver to be
-in UKL", then "go ahead" to the plan below). Follows 0654 (the solves in batches, the GPU's propagation) and 0663.
+in UKL", then "go ahead" to the plan below, and "go ahead" again to its steps 2 to 4 planned anew after step 1's
+measurement). Follows 0654 (the solves in batches, the GPU's propagation) and 0663.
 
 ## Intro
 
@@ -60,13 +61,15 @@ solve's own: the bounded start, the bytes left out, the lemmas.
    `Fanout`, so a solve loads nothing but values; `Induction` solves with `bitlex_csat`. `bitlex_sat` stays as the
    tests' reference (the same answer for every formula, and every model a model of the clauses) and for 0654's
    kernel's clauses until step 2.
-2. **Propagation at level 0 on the circuit, bit-sliced.** A round's formulas share the block program: three values
-   as two bit planes, 64 formulas a word on the CPU, 32 a lane's word in a UKL kernel. It decides the 62% with no
-   search. The kernel reads the circuit's arrays, not clauses (0654's ceiling).
+2. **More questions at once** (planned anew after step 1, below: the solves propagation decides are cheap now, and
+   the wall is the questions' order). The walks and batches that ask questions one after another, or wait for
+   their slowest, ask more of them together: on the CPU's idle threads now, and as batches a device can take.
+   A bit-sliced propagation of its own (the first plan's step 2) is dropped: on the device it is step 3's first
+   phase.
 3. **CDCL in UKL**: a SIMD group a formula, from a work queue, launches bounded (0540); the group's lanes take the
    changed variables' gates; conflict analysis on the trail; learned clauses in the formula's own space, a formula
    past it is unknown (sound). Lanes order their pushes by prefix sums, so a formula's answer does not depend on the
-   schedule.
+   schedule. Its first phase is propagation at level 0, which decides most formulas with no search.
 4. **The windows made on the device** from the block program and each question's value, delay and horizon: the CPU
    sends questions, not circuits.
 
@@ -106,3 +109,36 @@ lifted:
   solver then proves at about the same cost.
 - **The wall is the questions' order, not the solver's throughput.** The test keeps about 4 of the Spark's 20 threads
   busy on average. A faster or wider solver cuts the wall only on the questions a round asks together.
+
+**Step 2, first part** (a DGX Spark, cold Kotlin, the budget lifted, `RERAIL_PROVING_TRACE`; each phase mark now
+says the threads it kept busy, and each batch its parts and its longest question):
+
+| | Before | After |
+|---|---|---|
+| To the end of proving (traced runs, the same day) | 7.5 to 7.8 s | 6.4 to 6.6 s |
+| Row modes | 1.9 to 2.4 s at 7 to 10 threads | 1.2 to 1.5 s at 13 to 14 |
+| From the row modes to the gap ends | 2.1 to 2.3 s at 2.8 | 1.5 to 1.6 s at 3.8 |
+| The walks there (`first_proved`, 13 of them) | 2.3 s | 0.9 s |
+| Gap marks | 1.4 to 1.6 s at 8 | 1.2 to 1.4 s at 9 |
+
+- **The walks' chunks double** (`first_proved`, from 32 items): their items are 5 to 50 ms, an item rarely holds,
+  and each chunk of a thread count's items waited for its slowest. The chunks no longer depend on the machine's
+  thread count, so a walk under a budget that binds is the same on every machine.
+- **A batch's question texts are made on the threads** (`either_never_many`): 0.43 s on one thread for the row
+  modes' 9,376 values before. The streams' refutations stay serial: `Witnesses::refutes` extends its values as it
+  goes.
+- **`first_bits` keeps each value's bounds** for the compile (the operations are only appended): it walked a
+  value's whole cone again at each `early_to`, 9% of the compile's own thread. Checked during a whole cold compile
+  against the walk as it was: the same at every call.
+- The answers are the same, byte for byte; 387 tests of the quick tiers pass.
+
+**What sets the wall now:**
+- **Questions that fail late.** Every question over 50 ms in a batch answered "not proved", after all its 64
+  solves, in 32 windows, with one lemma: the lemma's shrinking (each value dropped, a proof one level down each) is
+  a chain of dependent solves. One such question is the gap marks' batch (1.19 s of its 1.21 s), the assumptions'
+  (0.75 s of 12 questions) and half the row modes'. More questions at once cannot shorten a chain, nor can a device;
+  making each failure earlier or cheaper can.
+- **Tier 2's lowering, twice, on one thread**: a survey of the rows that need masks, then the lowering with them
+  (about 0.5 s of a compile, from shipped answers too).
+- The pair lemmas' `first_bytes_many` (0.8 to 1.8 s at 3 to 7 threads).
+
