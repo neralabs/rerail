@@ -1,3 +1,3 @@
 ---
-"@neralabs/rerail-pack-django": patch
+"@neralabs/rerail-pack-django": minor
 ---
