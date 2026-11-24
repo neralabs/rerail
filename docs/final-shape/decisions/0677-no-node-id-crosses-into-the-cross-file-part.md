@@ -166,10 +166,70 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    - **One hand-written use remains.** A JavaScript policy's two relations are under `value_type`, and are listed
      with the tail.
 2. **Python name resolution: the phase `py_names`.** This is family 1. It covers 2,536 relations, 84% of the list.
-   Its plan is above (§ Fixing, 1).
+   The design is below (§ Fix 2).
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
+
+### Fix 2: the design of `py_names`
+
+**Where the node enters.** Python's resolution is already keyed by symbols: `exports(m, x, q)`,
+`exported(m, x)` and `resolve_export(q, r)` hold no node. The node enters in `names.rerail`'s `sym_of(n, q)`, in
+two rules:
+- `sym_of(n, q) :- qn(n, q0), resolve_export(q0, q)`. It is cross-file only because `resolve_export` is, and
+  `export_query(q) :- qn(_, q)` gathers every file's queried names into it.
+- `sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q)`. This is a
+  class's member, found by its qualname in any file.
+
+`qn` (a name through the file's own bindings and imports, and its attribute chain) is per file, and so are the other
+two rules of `sym_of`.
+
+**What the memo can key by.** A file's memo entry is keyed by the setting rows it can read (`settings_scopes`,
+0665). Two kinds of read are keyed by the file's own rows:
+- a setting read at the file's own path (`tsx_names__target_at(p, s, t)`);
+- a setting read by a key that such a row names (`tsx_names__exports(t, …)`).
+
+A read by any other key is of every file's rows. That includes a symbol computed from the file's content, such as
+`resolve_export(q0, …)` asked by `qn`'s `q0`. Every change to any module's exports would then miss every file, which
+is 0083 §2.3's every-file miss again. So the phase hands on what each file reads by its path, and each module's
+facts by the module, anchored at the file's path.
+
+**The phase** (`native/src/code_rule_dsl/typing/programs/py_names.rerail`, `.phase py_names`). It runs over the same
+files, first, to its fixed point, and holds no node in its cross part. Its own per-file rules may use nodes (`qn`,
+`def_name`, `qualname`), as `tsx_names`'s do (`import_spec`). It hands on:
+- `resolved_at(p, q0, r)`: in the file at path `p`, the qualified name `q0` (a `qn` of that file) is `r`. Re-exports
+  and star imports are followed (`resolve_export`). Where `q0`'s module exports no such name, `r = q0`.
+- `reads_at(p, m)`: the file at `p` reads module `m`. That is its own module, the module of each `r` it resolves to,
+  and every package above them.
+- `class(m, c)`, `defined(m, q)` and `public(m, x)`: module `m` defines the class `c`, and the qualname `q` (its
+  defs, classes and their members, nested). `x` is part of `m`'s public interface (`public_name`).
+
+**The reader** (`names.rerail`, `upgrade.rerail`):
+- `sym_of(n, q) :- qn(n, q0), <n's file at p>, py_names__resolved_at(p, q0, q)`.
+- `sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), <n's file at p>, py_names__reads_at(p, m),
+  py_names__class(m, c), q = @dot(c, a), py_names__defined(m, q)`.
+
+  A member is defined in its class's module, so the class's module anchors both reads.
+- `site_exported` reads `py_names__public(m, x)` for its own module, which is anchored by `reads_at`.
+- `upgrade.rerail`'s `sym_at` reads `resolved_at` as `sym_of` does.
+- `resolve_export`, `export_query`, `exports` and `exported` leave the per-file programs. They stay in
+  `imports.rerail` for the phase, and for the rules that ask about modules themselves (`reaches`, the data layer's
+  `public-api-triples`), which hold no node.
+
+`file_local::SETTINGS_BY_PATH` gains `("py_names__resolved_at", none)` and `("py_names__reads_at", 1)`, and
+`SETTINGS_BY_FOLDER` gains `py_names__class`, `py_names__defined` and `py_names__public`.
+
+**Tests first**, as 0665's were:
+1. The phase's exports on a small workspace: a package's `__init__` re-exporting from a submodule, a chain of two
+   re-exports, a star import with and without `__all__`, a class with a method and a nested class, and an import
+   of a module outside the workspace.
+2. `sym_of` before and after is the same on the same workspace and on the python pack's tests. Every pack's findings
+   are unchanged (the pack tests, and the data layer's 142 checks).
+3. The split: `sym_of`, and the policies' relations that read it, are file-local. The node list loses the relations
+   under `resolve_export`, and the test's list shrinks with them.
+4. The edits: a body edit misses its own file alone. A change to a module's exports misses that module's file and
+   the files whose `resolved_at` rows changed. `maintain_tests::a_moved_definition_costs_about_itself` is measured
+   again.
 
 ## Open
 
