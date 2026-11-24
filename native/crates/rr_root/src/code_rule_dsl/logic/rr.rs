@@ -835,7 +835,7 @@ pub fn planned_key(key: &str) -> Option<crate::content_store::HashKey> {
     if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let mut bytes = format!("rerail module image v4 (helpers named by content) {}\0", super::program_image::FORMAT).into_bytes();
+    let mut bytes = format!("rerail module image v5 (helpers named by content) {}\0", super::program_image::FORMAT).into_bytes();
     switched(&mut bytes);
     bytes.push(0);
     bytes.extend_from_slice(key.as_bytes());
@@ -1199,59 +1199,142 @@ pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::A
 
 /// The lowering's whole-program half on versions (`lower::whole` on a tree), over the linked program `start` (a
 /// union of modules, decision 0639 §4): checked declared where `declared` (a text's link: `link_seeded`), then the
-/// passes `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
+/// passes `whole` runs, in its order (`TAIL`), from what the lowerer knows of the modules (`lowered`).
 fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    tail_steps(start, declared, lowered, library, &TAIL)
+}
+
+/// A step of the lowering's tail (`lowering_tail_on`), each one pass or check (decision 0639 §6).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TailStep {
+    /// A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name is
+    /// declared by its pass.
+    ContextPasses,
+    CrossingCycles,
+    /// Only for a text's link (`declared`).
+    Declared,
+    ThreeValued,
+    Findings,
+    CoreDecls,
+    SpanPatterns,
+    GrammarNames,
+    BuiltinsOut,
+    KindSets,
+    Unit,
+    BooleanRelations,
+    ScopeGlobs,
+    /// Both rounds of `lower::ON_REQUEST`.
+    SourcesOnRequest,
+    OrderNodes,
+    DeclareAxes,
+    /// `finish`'s checks, on the version.
+    Checks,
+    AggregateDemand,
+    LiteralsOnce,
+    DropSelfRules,
+    DropRepeated,
+    FactsOnce,
+    /// The widening rounds, to a fixed point (16 at most).
+    Widen,
+}
+
+/// The tail's steps in the order `whole` runs them.
+pub const TAIL: [TailStep; 24] = {
+    use TailStep::*;
+    [ContextPasses, CrossingCycles, Declared, ThreeValued, Findings, CoreDecls, SpanPatterns, GrammarNames, BuiltinsOut, KindSets, Unit, BooleanRelations, ScopeGlobs, SourcesOnRequest, OrderNodes, DeclareAxes, Checks, AggregateDemand, Unit, LiteralsOnce, DropSelfRules, DropRepeated, FactsOnce, Widen]
+};
+
+/// The tail's steps that read what the whole program reads (decision 0639 §6, downward).
+pub const DOWNWARD: [TailStep; 2] = [TailStep::KindSets, TailStep::SourcesOnRequest];
+
+/// The tail's `steps` over `start`, in their order (`lowering_tail_on` runs `TAIL`).
+pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep]) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::manager::Pipeline;
+    use super::plan::corpus::preparation::{DropRepeated, lowering_tail, on_request::SourcesOnRequest};
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
     let mut p = Pipeline::new("the lowering's tail", start);
-    {
-        use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
-        // A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name
-        // is declared by its pass.
-        p.program(&mut super::contexts::Passes);
-        p.program(&mut super::contexts::CrossingCycles);
-        if declared {
-            p.program(&mut lowering_tail::Declared);
+    for &step in steps {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("the lowering's tail: {step:?}"));
+        match step {
+            TailStep::ContextPasses => {
+                p.program(&mut super::contexts::Passes);
+            }
+            TailStep::CrossingCycles => {
+                p.program(&mut super::contexts::CrossingCycles);
+            }
+            TailStep::Declared if declared => {
+                p.program(&mut lowering_tail::Declared);
+            }
+            TailStep::Declared => {}
+            TailStep::ThreeValued => {
+                p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
+            }
+            TailStep::Findings => {
+                p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
+            }
+            TailStep::CoreDecls => {
+                p.program(&mut lowering_tail::CoreDecls { docof_of_locs });
+            }
+            TailStep::SpanPatterns => {
+                p.program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) });
+            }
+            TailStep::GrammarNames => {
+                p.program(&mut lowering_tail::GrammarNames);
+            }
+            TailStep::BuiltinsOut => {
+                p.program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+            }
+            TailStep::KindSets => {
+                p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
+            }
+            TailStep::Unit => {
+                p.program(&mut lowering_tail::Unit);
+            }
+            TailStep::BooleanRelations => {
+                p.program(&mut lowering_tail::BooleanRelations);
+            }
+            TailStep::ScopeGlobs => {
+                p.program(&mut lowering_tail::ScopeGlobs);
+            }
+            TailStep::SourcesOnRequest => {
+                for round in lower::ON_REQUEST {
+                    p.program(&mut SourcesOnRequest { round });
+                }
+            }
+            TailStep::OrderNodes => {
+                p.program(&mut lowering_tail::OrderNodes);
+            }
+            TailStep::DeclareAxes => {
+                p.program(&mut lowering_tail::DeclareAxes);
+            }
+            TailStep::Checks => super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?,
+            TailStep::AggregateDemand => {
+                p.program(&mut lowering_tail::AggregateDemand);
+            }
+            TailStep::LiteralsOnce => {
+                p.program(&mut lowering_tail::LiteralsOnce);
+            }
+            TailStep::DropSelfRules => {
+                p.program(&mut lowering_tail::DropSelfRules);
+            }
+            TailStep::DropRepeated => {
+                p.program(&mut DropRepeated::default());
+            }
+            TailStep::FactsOnce => {
+                p.program(&mut lowering_tail::FactsOnce);
+            }
+            TailStep::Widen => {
+                for _ in 0..16 {
+                    let mut widen = lowering_tail::WidenCyclicContexts::default();
+                    p.program(&mut widen);
+                    p.current().map_err(Error::Syntax)?;
+                    if !widen.changed {
+                        break;
+                    }
+                }
+            }
         }
-        p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
-        p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
-        p.program(&mut lowering_tail::CoreDecls { docof_of_locs });
-        p.program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) });
-        p.program(&mut lowering_tail::GrammarNames);
-        p.program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-        p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
-        p.program(&mut lowering_tail::Unit);
-        p.program(&mut lowering_tail::BooleanRelations);
-        p.program(&mut lowering_tail::ScopeGlobs);
-        for round in lower::ON_REQUEST {
-            p.program(&mut SourcesOnRequest { round });
-        }
-        p.program(&mut lowering_tail::OrderNodes);
-        p.program(&mut lowering_tail::DeclareAxes);
-        // `finish`'s checks, on the version.
-        let _checks = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: finish_checks_given".to_owned());
-        super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
     }
-    {
-        use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
-        let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
-        p.program(&mut lowering_tail::AggregateDemand);
-        p.program(&mut lowering_tail::Unit);
-        p.program(&mut lowering_tail::LiteralsOnce);
-        p.program(&mut lowering_tail::DropSelfRules);
-        p.program(&mut DropRepeated::default());
-        p.program(&mut lowering_tail::FactsOnce);
-    }
-    let widening = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: the widening rounds".to_owned());
-    for _ in 0..16 {
-        let mut widen = super::plan::corpus::preparation::lowering_tail::WidenCyclicContexts::default();
-        p.program(&mut widen);
-        p.current().map_err(Error::Syntax)?;
-        if !widen.changed {
-            break;
-        }
-    }
-    drop(widening);
     let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)

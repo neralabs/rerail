@@ -77,12 +77,21 @@ fn pack_files() -> Vec<std::path::PathBuf> {
 }
 
 /// Every seventh pack program, as the text's test samples them, parsed a thread each: one after another they took
-/// most of a minute (two on Windows), and three tests read them.
+/// most of a minute (two on Windows). Three tests read them, so they are parsed once for the three: three tests
+/// parsing them at once held a store's atom lease from each other for minutes (each run's observer waiting for the
+/// lease its flushing holder gives back only at the lease's timeout). The loop is on the machine's cores (`on_cores`,
+/// decision 0442): a parse waits for the engine's jobs, which a thread of rayon's global pool queues on its own pool,
+/// whose threads' stacks are too small for their waits to help.
 fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
     use rayon::prelude::*;
-    let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
-    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-    files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
+    static PARSED: std::sync::OnceLock<Vec<(std::path::PathBuf, Arc<Version>)>> = std::sync::OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
+            crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
+            crate::code_rule_dsl::logic::profile::on_cores(|| files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect())
+        })
+        .clone()
 }
 
 /// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,
@@ -96,11 +105,11 @@ fn a_program_reads_back_from_its_image() {
     assert!(back.show().contains("$j = join $y by ($k, $sep) sep \", \" : { ast($y, $k, $sep) }"), "{}", back.show());
     use rayon::prelude::*;
     let programs = pack_programs();
-    programs.par_iter().for_each(|(path, prog)| {
+    crate::code_rule_dsl::logic::profile::on_cores(|| programs.par_iter().for_each(|(path, prog)| {
         let back = Version::open(prog.fold().unwrap().base_bytes().unwrap()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         same(&back, prog);
         handles_agree(&back, prog);
-    });
+    }));
     let n = programs.len();
     assert!(n > 50, "{n}");
 }
@@ -684,7 +693,7 @@ fn normalizable_on(b: &mut Builder<'_>) {
 fn the_planners_passes_over_a_version_hold() {
     use rayon::prelude::*;
     let programs = pack_programs();
-    programs.par_iter().for_each(|(_, prog)| passes_hold(prog));
+    crate::code_rule_dsl::logic::profile::on_cores(|| programs.par_iter().for_each(|(_, prog)| passes_hold(prog)));
     let n = programs.len();
     assert!(n > 50, "{n}");
     let p = {
@@ -960,7 +969,7 @@ fn fields_agree(v: &Arc<Version>) {
 fn a_versions_fields_say_what_its_readers_say() {
     use rayon::prelude::*;
     let programs = pack_programs();
-    programs.par_iter().for_each(|(_, prog)| fields_agree(prog));
+    crate::code_rule_dsl::logic::profile::on_cores(|| programs.par_iter().for_each(|(_, prog)| fields_agree(prog)));
     let n = programs.len();
     assert!(n > 50, "{n}");
     fields_agree(&every_part());

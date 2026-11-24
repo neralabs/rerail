@@ -24,7 +24,11 @@ fn json_rules_pack_is_current() {
         let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e}", golden.display()));
         match translator.translate_file(json) {
             Ok(got) if got == want => {}
-            Ok(_) => differ.push(format!("{id}: differs from {}", golden.display())),
+            Ok(got) => {
+                let (g, w): (Vec<&str>, Vec<&str>) = (got.lines().collect(), want.lines().collect());
+                let at = g.iter().zip(&w).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len()));
+                differ.push(format!("{id}: differs from {} at line {} ({} lines and {}):\n  translated: {:?}\n  the pack's: {:?}", golden.display(), at + 1, g.len(), w.len(), g.get(at), w.get(at)));
+            }
             Err(e) => differ.push(format!("{id}: {e}")),
         }
     }

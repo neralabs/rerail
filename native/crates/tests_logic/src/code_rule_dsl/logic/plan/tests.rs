@@ -1010,7 +1010,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         names.sort_unstable();
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap(), [[names[0]], [names[1]]]);
         // The run's connections close beside it (`close_beside`): once they are closed, nothing holds the store.
-        super::corpus::closes_done();
+        super::corpus::closes_done(&[&store, &out.join("cross.sqlite")]);
         assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
         // The kernel names files by their real path (macOS's /var is /private/var).
         let real = dunce::canonicalize(&out).unwrap().join(store.file_name().unwrap());

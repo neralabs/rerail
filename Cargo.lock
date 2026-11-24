@@ -3185,7 +3185,7 @@ dependencies = [
  "rerail-ukl",
  "rustc-hash",
  "serde",
- "sha2 0.10.9",
+ "sha2 0.10.9", "windows-sys 0.61.2",
 ]
 
 [[package]]

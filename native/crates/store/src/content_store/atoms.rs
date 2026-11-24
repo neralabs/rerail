@@ -792,10 +792,13 @@ impl Atoms {
         })
     }
 
-    /// Shared scratch databases borrow the arena; only its owner stores atoms.
+    /// Shared scratch databases borrow the arena; only its owner stores atoms. A connection on the owner's own path
+    /// (canonical: SQLite names a file by its full path) owns it without the canonical paths' cache (`key`), which is
+    /// the shared object's: the arena's drop flushes on such a connection, and may be the shared object's own drop,
+    /// where no thread holds it (decision 0442).
     fn owns(&self, connection: &Connection) -> bool {
         match (&self.path, connection.path()) {
-            (Some(owner), Some(path)) => *owner == key(Path::new(path)),
+            (Some(owner), Some(path)) => owner.as_path() == Path::new(path) || *owner == key(Path::new(path)),
             _ => false,
         }
     }

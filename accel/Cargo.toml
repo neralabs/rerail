@@ -39,6 +39,10 @@ rerail-device = { path = "../gpu/device" }
 # Kernels on a device other than Metal, compiled from UKL by the device layer (`gpu::kernels::function`, 0440 step C).
 rerail-gpu = { path = "../gpu" }
 
+# A thread's stack limits, for a wait's help to stay within them (`exec::stack_left`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Metal's own tier: its pipelines and binary archives, its command buffers' timeline (decision 0440 step E).
 metal = "0.33.0"

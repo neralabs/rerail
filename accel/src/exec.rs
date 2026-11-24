@@ -87,7 +87,35 @@ fn stack_bounds() -> Option<(usize, usize)> {
     (top > size && size > 0).then(|| (top - size, top))
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux's: the thread's stack attributes (glibc's and musl's `pthread_getattr_np`), the main thread's included. Without
+/// them a help on Linux had no bound, and nested helps overflowed a 2 MiB thread of rayon's global pool (237 pack
+/// programs' parses, each waiting in a store's settle and running the next).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn stack_bounds() -> Option<(usize, usize)> {
+    // SAFETY: this thread's own attributes, read into a value we own and destroyed after.
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) != 0 {
+            return None;
+        }
+        let (mut low, mut size) = (std::ptr::null_mut::<libc::c_void>(), 0usize);
+        let got = libc::pthread_attr_getstack(&attr, &mut low, &mut size);
+        libc::pthread_attr_destroy(&mut attr);
+        let low = low as usize;
+        (got == 0 && size > 0).then(|| (low, low + size))
+    }
+}
+
+/// Windows': the thread's stack limits as the system reserved them.
+#[cfg(windows)]
+fn stack_bounds() -> Option<(usize, usize)> {
+    let (mut low, mut high) = (0usize, 0usize);
+    // SAFETY: two out-parameters of this thread's own limits.
+    unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high) };
+    (high > low).then_some((low, high))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
 fn stack_bounds() -> Option<(usize, usize)> {
     None
 }

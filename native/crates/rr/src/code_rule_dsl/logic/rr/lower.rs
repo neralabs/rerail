@@ -1577,6 +1577,16 @@ fn moved_past(v: &crate::code_rule_dsl::logic::program_image::Version, merged: &
 /// A module's program, from version `v`, as `Lowerer::link` leaves it: each relation renamed by `rename`, then the
 /// first `k` rules of each helper `merged` into another (`(name, made, k)`, in order) and its declaration dropped and
 /// the helper read as that one; its header renamed the same (`renamed_fields`). No rule is decoded.
+/// The names of the named groups (`(?<name>…)`) in `text`.
+fn regex_groups(text: &str) -> BTreeSet<String> {
+    text.match_indices("(?<").filter_map(|(at, _)| {
+        let rest = &text[at + 3..];
+        let end = rest.find('>')?;
+        let name = &rest[..end];
+        (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')).then(|| name.to_owned())
+    }).collect()
+}
+
 pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename: &std::collections::HashMap<String, String>, merged: &[(String, String, usize)]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
     use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, Rewrite, Slot};
     let into: std::collections::HashMap<&str, &str> = merged.iter().map(|(n, m, _)| (n.as_str(), m.as_str())).collect();
@@ -1620,11 +1630,18 @@ pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename:
             b.copy(v, r);
             continue;
         }
-        // A variable named as a renamed relation is renamed too, as `rename_relations` renames it.
+        // A variable named as a renamed relation is renamed too, as `rename_relations` renames it. A helper named by
+        // its content names its rules' other variables by their places: helpers of one content name are one, and so
+        // one text, whichever module's spelling the link keeps (decision 0639 §4). A variable a regex's named group
+        // binds (`(?<c>…)`) keeps its name, the group's, which its content holds: `match` binds it by that name.
+        let content = to(head).is_some_and(|h| h.starts_with("rr_h_"));
+        let groups: BTreeSet<String> = if content { regex_groups(&String::from_utf8_lossy(&template_bytes(v, r))) } else { BTreeSet::new() };
         let mut vars = BTreeMap::new();
         for (i, a) in r.vars().enumerate() {
             if let Some(new) = to(v.text(a)) {
                 vars.insert(Slot(i as u32), b.atom(&new));
+            } else if content && !groups.contains(v.text(a)) {
+                vars.insert(Slot(i as u32), b.atom(&format!("rr_v{i}")));
             }
         }
         let mut rw = Renamed { v, to: &to, vars };
@@ -1971,7 +1988,10 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
         if into.contains_key(rename.get(&rel).map_or(rel.as_str(), String::as_str)) {
             continue;
         }
-        let cols: Vec<(String, String)> = F::columns_of(v, &rel).unwrap_or_default().into_iter().map(|(c, t)| (to(&c), t)).collect();
+        // A helper named by its content names its columns by their places, so it is declared alike wherever it was
+        // lowered (decision 0639 §4: its key holds its columns' types alone, and two modules name them their ways).
+        let content = to(&rel).starts_with("rr_h_");
+        let cols: Vec<(String, String)> = F::columns_of(v, &rel).unwrap_or_default().into_iter().enumerate().map(|(i, (c, t))| (if content { format!("rr_c{i}") } else { to(&c) }, t)).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
         FieldsMut::declare(&mut b.fields(), &to(&rel), &pairs);
     }

@@ -1241,41 +1241,70 @@ impl Drop for ObservedBatch {
 
 /// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock. Until
-/// it is done the file stays open: a run that replaces its files waits for it first (`closes_done`).
+/// it is done its file stays open: a run that replaces that file waits for it first (`closes_done`). A connection of
+/// no file (in memory) is closed beside and counted nowhere: no run replaces it.
 fn close_beside(db: Connection) {
+    let Some(file) = db.path().filter(|p| !p.is_empty()).map(|p| closing_key(Path::new(p))) else {
+        rerail_accel::exec::drop_beside(db);
+        return;
+    };
     let closing = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
-    *closing.0.0.lock().expect("the closes beside") += 1;
-    rerail_accel::exec::drop_beside(Closing(Some(db), closing));
+    *closing.0.0.lock().expect("the closes beside").entry(file.clone()).or_default() += 1;
+    rerail_accel::exec::drop_beside(Closing(Some(db), closing, file));
 }
 
-/// The connections closing beside the machine's runs (`close_beside`), and their end (decision 0442: the machine's,
-/// as the files they hold open are).
-#[derive(Default)]
-struct ClosingBeside((std::sync::Mutex<usize>, std::sync::Condvar));
+/// A database file as the closes beside count it: its directory's real path and its name (SQLite names a
+/// connection's file by its full path, a run by the path it was given).
+fn closing_key(file: &Path) -> std::path::PathBuf {
+    match (file.parent().and_then(|d| std::fs::canonicalize(d).ok()), file.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => file.to_path_buf(),
+    }
+}
 
-/// A connection closing beside the run: counted until its close is done, in the count it was added to.
-struct Closing(Option<Connection>, std::sync::Arc<ClosingBeside>);
+/// The connections closing beside the machine's runs (`close_beside`), by their file, and their end (decision 0442:
+/// the machine's, as the files they hold open are).
+#[derive(Default)]
+struct ClosingBeside((std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, usize>>, std::sync::Condvar));
+
+/// A connection closing beside the run: counted under its file until its close is done.
+struct Closing(Option<Connection>, std::sync::Arc<ClosingBeside>, std::path::PathBuf);
 
 impl Drop for Closing {
     fn drop(&mut self) {
         drop(self.0.take());
         let (n, done) = &self.1.0;
-        *n.lock().expect("the closes beside") -= 1;
+        let mut n = n.lock().expect("the closes beside");
+        if let Some(k) = n.get_mut(&self.2) {
+            *k -= 1;
+            if *k == 0 {
+                n.remove(&self.2);
+            }
+        }
+        drop(n);
         done.notify_all();
     }
 }
 
-/// Waits until every connection closing beside a run is closed: then no file of a run that ended is open. A file
-/// replaced under a connection still closing would be its, and the connection's close deletes its write-ahead log by
-/// name: the new store's. On a thread of the pool it runs the pool's jobs meanwhile (a close may be one of them).
-pub fn closes_done() {
+/// Waits until no connection closing beside a run holds one of `files`: then none of them is open. A file replaced
+/// under a connection still closing would be its, and the connection's close deletes its write-ahead log by name: the
+/// new store's. Only the files to be replaced are waited for: a wait on every close of the machine ran, on a pool's
+/// thread, the other jobs meanwhile, which waited in turn, one stack frame upon another for every run (237 parses of
+/// a parallel loop over pack programs overflowed a pool thread's stack). On a thread of the pool it runs the pool's
+/// jobs meanwhile (a close may be one of them).
+pub fn closes_done(files: &[&Path]) {
+    let keys: Vec<std::path::PathBuf> = files.iter().map(|f| closing_key(f)).collect();
+    if keys.is_empty() {
+        return;
+    }
     let held_ = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
     let (n, done) = &held_.0;
     let mut left = n.lock().expect("the closes beside");
-    while *left > 0 {
+    while keys.iter().any(|k| left.contains_key(k)) {
         if rayon::current_thread_index().is_some() {
             drop(left);
-            if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
+            // The pool's help, within the thread's stack (`help_once`): a job run here may wait and help in turn.
+            if !rerail_accel::exec::help_once() {
                 std::thread::yield_now();
             }
             left = n.lock().expect("the closes beside");
@@ -2138,10 +2167,10 @@ fn run_observed_within(
     };
     // A session's store is kept from run to run; the cross-file scratch never is. A failed run leaves its write-ahead
     // log beside the store; reopening a new store over it reads stale pages.
-    let scratch = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path);
+    let scratch: Vec<&std::path::PathBuf> = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path).filter(|p| !in_memory && p.as_os_str() != ":memory:").collect();
     // An earlier run's connections may be closing still (`close_beside`): not on the files replaced here.
-    closes_done();
-    for p in scratch.filter(|p| !in_memory && p.as_os_str() != ":memory:").flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
+    closes_done(&scratch.iter().map(|p| p.as_path()).collect::<Vec<_>>());
+    for p in scratch.into_iter().flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }

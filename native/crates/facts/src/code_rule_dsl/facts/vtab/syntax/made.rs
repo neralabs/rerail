@@ -621,9 +621,10 @@ impl Batch {
                 need.sort_unstable();
                 need.dedup();
                 if need.is_empty() && waits {
-                    // Another thread's group: the pool's next job, else a wait for a group to end.
+                    // Another thread's group: the pool's next job (`help_once`, within this thread's stack), else a
+                    // wait for a group to end.
                     drop(s);
-                    if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                    if !rerail_accel::exec::help_once() {
                         let mut s = self.rows.state.lock();
                         if want.iter().any(|&i| s.of[i].is_none() && s.claimed[i].is_some_and(|t| t != me)) {
                             self.rows.made.wait_for(&mut s, std::time::Duration::from_millis(1));
