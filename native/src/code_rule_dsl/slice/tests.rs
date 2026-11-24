@@ -1041,9 +1041,9 @@ fn the_statistics_loop_runs_on_the_slices_path() {
 
 mod data_layer;
 
-/// RER-131 probe (scratch): one pack rule on one small file, interpreter only.
+/// Decision 0161 probe (scratch): one pack rule on one small file, interpreter only.
 #[test]
-#[ignore = "RER-131 scratch probe"]
+#[ignore = "Decision 0161 scratch probe"]
 fn rer131_one_rule_probe() {
     let rule = std::env::var("RERAIL_PROBE_RULE").unwrap_or("ruff-e722-bare-except".into());
     let source = std::env::var("RERAIL_PROBE_SOURCE").unwrap_or("try:\n    x()\nexcept:\n    pass\n".into());
@@ -1074,10 +1074,10 @@ fn files_of_one_tape_shape_keep_their_own_sources() {
     assert_eq!(run.paths.len(), 3);
 }
 
-/// RER-131 oracle (ignored): one pack's rules over a file list, interpreter only, keys to `RERAIL_DUMP_KEYS`.
+/// Decision 0161 oracle (ignored): one pack's rules over a file list, interpreter only, keys to `RERAIL_DUMP_KEYS`.
 /// `RERAIL_PACK` (a directory under `packs/`), `RERAIL_FILES` (a list of paths), `RERAIL_MAX` (default 200).
 #[test]
-#[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
+#[ignore = "Decision 0161 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_pack_keys() {
     let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
@@ -1148,10 +1148,10 @@ fn rer131_pack_keys() {
     }
 }
 
-/// RER-131 oracle (ignored), any language: every policy of `RERAIL_PACK` evaluated by the runtime
+/// Decision 0161 oracle (ignored), any language: every policy of `RERAIL_PACK` evaluated by the runtime
 /// over `RERAIL_FILES` (first `RERAIL_MAX`, default 150), its violations as keys to `RERAIL_DUMP_KEYS`.
 #[test]
-#[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
+#[ignore = "Decision 0161 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_runtime_keys() {
     let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();

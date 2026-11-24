@@ -3,7 +3,7 @@
 // ---- array slots -------------------------------------------------------------------------------------------------
 // ESTree's `elements` keeps holes as null: `[a, , b]` has b at index 2. tree-sitter has no node for a hole, so
 // slot counts the commas before an element. The tape keeps a hole's commas and leaves out the separators the
-// grammar implies (RER-131): those are in the source before a child (structural_before), the others are stored.
+// grammar implies (decision 0161): those are in the source before a child (structural_before), the others are stored.
 //   slot(a, e, i)          e is element i of array or array pattern a
 //   slot_count(a, k)       a has k slots: `[]` 0, `[a]` 1, `[a, ]` 1, `[a, ,]` 2
 .decl array_kind(k: symbol)

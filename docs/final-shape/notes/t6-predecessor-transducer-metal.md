@@ -267,7 +267,7 @@ Status: "the terminal virtual table exists for the fixed-word executor. Producti
 - `search_index_sets`: tape, index version, node count, completion; "A complete FTS miss proves that a bounded exact value is absent from a tape. A missing index set means unknown eligibility. Unknown eligibility widens to terminal scanning." (:79-82)
 - Publication in batches of at most 64 tapes; delete+insert by immutable tape identity; GC deletes FTS docs before tape (:84-86).
 
-### Terminal virtual table `tempo_matches(batch)` (:88-120)
+### Terminal virtual table `<predecessor>_matches(batch)` (:88-120)
 - Eponymous-only SQLite vtab; hidden required `batch` column via `xBestIndex`; batch lives in Rust (programs, tapes, optional preorder anchors); JS never gets the token/tape ids/connection (:90-93).
 - `xFilter` receives one batch token; cursor calls `execute_batch()` ONCE for all file/program pairs; a `OnceLock` caches terminal rows so a query referencing the relation twice doesn't execute twice (:95-98).
 - Columns: `batch, file_index, program_index, match_index, start_ordinal, output_label, capture_index, capture_label, capture_node, start_byte, end_byte, complete, error_code` (:102-116). One row per capture (flattened).
@@ -277,10 +277,10 @@ Status: "the terminal virtual table exists for the fixed-word executor. Producti
 - Example query: MATERIALIZED terminal CTE; `complete_pairs` = `min(complete)` per (file, program); matches = complete and non-null match_index; join `rule_programs` on program_index; group by rule/file; `HAVING count(DISTINCT match_index) >= r.minimum` (:126-145).
 - SQL then implements: joins between captures of different programs; counts/ranges/grouping/thresholds; cross-file relations; rule alternatives with priority columns; finding templates from relational columns; absence checks after a completion join; incremental invalidation joins by tape and catalog identity; stable output order with explicit logical keys (:147-156).
 - Scalar functions only for pure per-value ops (hash compare, small posting decode, collation, formatting); "A scalar function must not run one matcher for each file or rule row. That design recreates the nested execution loop." (:158-161)
-- Use virtual tables for batched terminal work and posting expansion; future `tempo_postings(batch)` for decoded preorder lists; future Metal-backed `tempo_matches(batch)` selecting the GPU backend; "The SQL schema and query do not change when the backend changes." (:163-166)
+- Use virtual tables for batched terminal work and posting expansion; future `<predecessor>_postings(batch)` for decoded preorder lists; future Metal-backed `<predecessor>_matches(batch)` selecting the GPU backend; "The SQL schema and query do not change when the backend changes." (:163-166)
 
 ### Execution phases (:168-186)
-1 SQL selects eligible file/program pairs; 2 SQL loads sparse FTS eligibility and kind positions; 3 Rust converts eligibility to one bit set per file; 4 one GPU dispatch finds exact roots for all eligible pairs; 5 `tempo_matches(batch)` exposes matches + completion rows; 6 SQL joins terminal rows into higher-level findings (:170-177). For exact literals, the GPU anchor kernel proves the complete terminal predicate and the runtime emits terminal rows directly, omitting a second dispatch; structural programs still need terminal verification (:179-182).
+1 SQL selects eligible file/program pairs; 2 SQL loads sparse FTS eligibility and kind positions; 3 Rust converts eligibility to one bit set per file; 4 one GPU dispatch finds exact roots for all eligible pairs; 5 `<predecessor>_matches(batch)` exposes matches + completion rows; 6 SQL joins terminal rows into higher-level findings (:170-177). For exact literals, the GPU anchor kernel proves the complete terminal predicate and the runtime emits terminal rows directly, omitting a second dispatch; structural programs still need terminal verification (:179-182).
 - "A dispatch loop is valid only when a hard device limit requires partitioning. The runtime must record that limit and the number of partitions. It must not split work to hide contention or setup costs." (:184-186)
 
 ### Correctness boundaries (:188-196)
@@ -410,7 +410,7 @@ Later contrast: metal-production-grid-cutover-design.md:217-225 restricts SQL to
 - Continuation record fields and reasons (:120-139).
 - **Two-tier lane pool [M]** (:143-150): "The current executor assigns the largest transient task capacity to every physical lane. This rule limits the executor to 64 lanes for practical workspace sizes." 4,096-lane spike with 256 records per arena: Metal time 97.79 s -> 13.72 s; logical workspace 2.69 GB -> 877 MB; fast tier completed 99.07% of tasks, 0.93% overflowed. Design: fast lanes + full-capacity lanes rerunning overflowed evaluations (:152-162).
 - Invocation budget: <=34 primary input partitions, each fast + full = <=68 invocations; 32 more for output continuation (:166-171).
-- Test-only flag `TEMPO_BENCHMARK_SKIP_NORMALIZED_RESULT_PUBLICATION=1` (:196-202).
+- Test-only flag `<PREDECESSOR>_BENCHMARK_SKIP_NORMALIZED_RESULT_PUBLICATION=1` (:196-202).
 - Why abandoned: superseded because a persistent-lane pool still serializes and replicates arenas (optimal-shape :32-33: "uses memory to compensate for the wrong execution shape").
 
 ---
@@ -816,7 +816,7 @@ PIAT sources: `PIAT/research/transducer-ir.md` (308 lines), `PIAT/research/metal
 - The CPU capture-run operator (20-byte capture-event ranges over shared events) as the authors' answer to deep captured repetition, and its measured 178x speedup at 64 pairs (debug).
 - Compiler discrepancies vs native TS (wildcard excluding EXTRA; `FOLLOWING` for repetition crossing gaps; missing/error bits ignored) and the nested-root ordering exception.
 - SQL publication dominating wall time (55.9%) and JSON/dynamic SQL ingestion being measured slower than prepared typed rows.
-- The `tempo_matches(batch)` vtab design specifics (one `execute_batch` per `xFilter`, `OnceLock` caching, completion rows, `complete=0`), and the FTS5 contentless kind/value/text index whose token offset is the preorder ordinal.
+- The `<predecessor>_matches(batch)` vtab design specifics (one `execute_batch` per `xFilter`, `OnceLock` caching, completion rows, `complete=0`), and the FTS5 contentless kind/value/text index whose token offset is the preorder ordinal.
 - That P5's direction change (P5:1576-1581) was itself driven by PIAT's README/lessons-ledger, i.e. the predecessor's final "demand + six typed relations" target is downstream of PIAT, not independent evidence.
 - metal-recursion.md / metal-enqueue.md measurements are PIAT's own experiments on a Python-`ast` tape (5,396,512 nodes, not a tree-sitter CST); not the predecessor's measurements.
 
@@ -935,7 +935,7 @@ Branch targets valid; every opcode/mode/operand/table/grammar-id valid; unused f
 ## S4. SQL-driven transducer execution (as designed in the predecessor)
 - SQL selects eligible (file, program) pairs from persisted conservative facts and FTS5 contentless indexes (kind tokens at preorder offsets; bounded `(kind, value)` tokens; source words), with completion rows so unknown coverage widens to scanning and never proves absence (sql-driven :7-35, :63-86).
 - Rust converts eligibility to a per-file program bitset; one GPU anchor dispatch finds exact roots; exact-literal programs are fully proven by the anchor kernel and emit terminal rows directly (:55-59, :170-182).
-- `tempo_matches(batch)`: eponymous vtab, hidden `batch` column, one `execute_batch()` per `xFilter`, `OnceLock` row cache, flattened one-row-per-capture schema with `complete`/`error_code`; complete negatives as null-`match_index` status rows (:88-120).
+- `<predecessor>_matches(batch)`: eponymous vtab, hidden `batch` column, one `execute_batch()` per `xFilter`, `OnceLock` row cache, flattened one-row-per-capture schema with `complete`/`error_code`; complete negatives as null-`match_index` status rows (:88-120).
 - SQL is the outer rule engine: cross-program capture joins, counts/thresholds, cross-file relations, priorities, templates, absence after completion join, incremental invalidation, explicit ordering; scalar functions only for pure per-value work ("must not run one matcher for each file or rule row") (:122-161). Backend swap must not change SQL (:163-166). Dispatch loops only for recorded hard device limits (:184-186).
 - Status: vtab exists for the fixed-word executor; production policy composition never used it (:3). Later docs narrow SQL to selection, postings, storage, paging (production-grid :217-225) and finally put SQL planning and vtabs outside the cutover scope (cutover plan :10; handover :9). P5's last direction (from PIAT): demand relation in, six typed output relations out, SQL consumes retained output through a batch boundary (P5:1579-1580).
 

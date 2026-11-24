@@ -153,7 +153,7 @@
         // ast-grep 0.45.3 rejects a rule with no inferable kinds ("Rule must specify a set of AST
         // kinds to match"). Rerail keeps accepting it: it is the only way to report an anonymous
         // token (`kind` names named kinds only), such as `==`, `,` or `default`. Such a rule tests
-        // every node the tape holds: a stored token, never one the grammar implies (RER-131), so
+        // every node the tape holds: a stored token, never one the grammar implies (decision 0161), so
         // the parentheses of `(1)` are not there to report.
         let compiled = compile_typescript_rule(json!({
             "inside": { "kind": "parenthesized_expression" },

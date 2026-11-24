@@ -273,7 +273,7 @@ fn breaks_line(root: &tree_sitter::Node<'_>, source: &str) -> bool {
 }
 
 /// A tree-sitter subtree as a sub-tree node, its ranges passed through `clamp`. As a tape is
-/// written, no token the grammar implies is kept (RER-131): the gaps between the stored children
+/// written, no token the grammar implies is kept (decision 0161): the gaps between the stored children
 /// say where it was.
 fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<usize>) -> PNode {
     let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(

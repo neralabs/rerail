@@ -78,7 +78,7 @@ Who interacts with Rerail, and how far each is trusted.
 | **The person** (OS user who installed Rerail) | Yes | Everything. The `person` caller on `/api`. |
 | **The coding agent** | **Partly.** Well-behaved MCP client, but may be prompt-injected and usually has a same-user shell | `agent` caller on `/mcp`, scoped to its checkout. With a shell, anything a same-user process can do (T1). |
 | **Repository content**: source, config, `.git`, committed `.rerail/`, `.npmrc`, `.claude/settings.json` | **No** | Parsed by the engine, quoted in steer text, decides where some files are written. |
-| **Rule-pack authors** (`@neralabs/rerail-pack-*` on npm) | For content, not code | Packs are JSON; their `message` and `fix` text reaches the agent. |
+| **Rule-pack authors** (`@neralabs/rerail-pack-*` on npm) | For content, not code | Packs are JSON and `.rerail` rule files; their `message` and `fix` text reaches the agent. |
 | **npm registry and Rerail's release pipeline** | Yes, with no extra integrity check | Supplies the code Rerail runs. |
 | **Another OS user on the same machine** | No | Reaches loopback ports, reads world-readable files, sees process arguments (`ps`). |
 | **A sandboxed process allowed to reach localhost** | No | Reaches `127.0.0.1:4737`; cannot read `~/.rerail`. |
@@ -317,15 +317,18 @@ Steer text carries repository content into the agent's context, so it is built f
 
 ### B5: npm to installed code
 
-Code from npm installs without install scripts and is checked before it runs. Packs are JSON, never code. The native
-engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
+Code from npm installs without install scripts and is checked before it runs. Packs are JSON and `.rerail` rule files, never
+JavaScript: the engine runs a pack's `.rerail` rules in a short-lived process, within a deadline and a memory budget;
+reading them for the catalog has the deadline and a thread cap but no memory watch (`runChildSync`). The native engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
 
 <details>
 <summary>Packs, updates, releases and customer profiles</summary>
 
-- **Packs** install with `--ignore-scripts` (`src/setup/rule-pack-store.ts`). `packAddSpec` accepts only
-  `@neralabs/rerail-pack-<id>` at an exact version, or an existing absolute tarball or folder; Git, URL, `npm:` and
-  `file:` specs are refused. Pack files are parsed as JSON through zod, never `require`d.
+- **Packs** install with `--ignore-scripts` (`src/setup/rule-pack-store.ts`). `packAddSpec` accepts a pack id
+  (Rerail's own pack), a `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` package name, each optionally at a version,
+  range or tag, or an existing tarball or folder, given to npm as its absolute path; npm options, Git, URL, `npm:` and
+  `file:` specs are refused. Pack JSON is parsed through zod, never `require`d; a pack's `.rerail` files are read and
+  run by the engine in a child process (`src/engine/rr/rr-child-process.ts`).
 - **Core updates** are staged (`src/setup/updater.ts`); no silent update runs:
   1. npm installs core and this machine's engine package into a staging prefix with `--ignore-scripts`, core's
      dependencies from its shrinkwrap. The engine package must have the integrity that shrinkwrap pins for it.

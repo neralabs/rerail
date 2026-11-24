@@ -490,8 +490,8 @@ the npm dist-tag (`latest`, `beta`, or `next`).
 
 `rerail update` names each step on stderr as it starts (checking npm, downloading, checking signatures, checking the
 new version starts, switching to it) and says when one runs long enough that npm may be stuck
-([reference](reference.md#update)). Rule packs update separately: it ends by listing each installed pack with a newer
-version on its channel and the `rerail packs add` command that installs them ([rule packs](rule-packs.md#rerail-packs)).
+([reference](reference.md#update)). Rule packs update with it: it ends by updating each installed pack to the newest
+version that fits the new core (`rerail packs update`; [rule packs](rule-packs.md#rerail-packs)).
 
 <details>
 <summary>Registry and credentials</summary>
@@ -559,7 +559,7 @@ The managed installation uses `~/.cache/rerail/content-v5.sqlite`, and on Window
 a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
 build from a Git checkout uses `<checkout>/.rerail/content-v5.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
-Rerail 0.2.0 moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
+Rerail 0.2.0, first published as 0.2.1, moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
 earlier version rebuilds it. The old file (with its `-wal` and `-shm`) is no longer read and stays beside the new one
 until you delete it; the managed installation's goes when `rerail install --remove` deletes the content cache folder.
 

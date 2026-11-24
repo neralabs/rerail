@@ -172,7 +172,7 @@ The rows are part of the transducer's `Program`, like the masks. They are:
 
 The executors write the tape from the `node` rows in the same pass as the masks:
 
-- **On Metal,** in `tempo_block`, as the extract pass already does.
+- **On Metal,** in `rerail_block`, as the extract pass already does.
 - **On the CPU,** in Cranelift's loop over blocks.
 - **The interpreters** follow the same rows, one step at a time, as the reference.
 

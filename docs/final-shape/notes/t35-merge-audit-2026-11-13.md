@@ -30,7 +30,7 @@ About 97% of the dropped lines were replaced on purpose:
 - the crate split's mounts and visibility changes (`pub(in …)` to `pub`);
 - `Atom.rel` changing type (`.clone()` to `.into()`);
 - one of two parallel designs chosen, with the reason in the merge message;
-- RER-131's rules taken in their newer form (implied tokens read from the tape's kept tokens,
+- Decision 0161's rules taken in their newer form (implied tokens read from the tape's kept tokens,
   not from the source text);
 - the tape format: format 15, one definition in `rerail_tape_format`, over Parser-generators'
   stored digest.
