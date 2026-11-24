@@ -164,6 +164,27 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
   });
 
+  // The setting stands in for a machine with many modules only while a cmdlet named alone is then not found. Were
+  // Microsoft.PowerShell.Management loaded before the command starts, the case above, and the stop's case in
+  // daemon-control.test.ts, would pass with the module's name taken out of the read.
+  it.runIf(process.platform === "win32")("reads nothing under that setting when the cmdlet is named alone, as before its module was named", async () => {
+    const scripts: Array<string | undefined> = [];
+    const results: Array<childProcess.SpawnSyncReturns<string | Buffer>> = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      const alone = args.map(arg => arg.replace("Microsoft.PowerShell.Management\\Get-Process", "Get-Process"));
+      scripts.push(commandScript(alone));
+      const result = runSync(program, withCommandPrefix(alone, MODULE_QUALIFIED_ONLY), options);
+      results.push(result);
+      return result;
+    }) as unknown as typeof childProcess.spawnSync);
+    expect(processStartedAt(process.pid, 30_000)).toBeUndefined();
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual(["Get-Process"]);
+    // PowerShell ran and did not find the cmdlet: the read failed for that, not for a start that failed or ran out of time.
+    expect(results).toHaveLength(1);
+    expect(String(results[0]?.stderr)).toMatch(/CommandNotFoundException/u);
+  });
+
   it("ends a PowerShell that does not answer at its bound and reads nothing", async () => {
     const seen: childProcess.SpawnSyncOptions[] = [];
     await standIn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], seen);
