@@ -60,7 +60,7 @@ export interface RegistrationOptions {
   platform?: NodeJS.Platform;
   /**
    * Keep a Claude Code hook entry on Windows that already runs the same launcher, recorded Node and hook, in either form
-   * a registration writes or wrote: cmd.exe, or `node` from PATH (`hookExecEntry`). Versions 0.2.0 and earlier wrote
+   * a registration writes or wrote: cmd.exe, or `node` from PATH (`hookExecEntry`). Versions 0.2.1 and earlier wrote
    * `node` where the PATH of the process that planned it found the recorded node, so a check of whether Rerail is
    * connected would otherwise read such a registration as out of date. Set-up and `rerail update` leave it off and write
    * the entry this version writes.
@@ -669,7 +669,7 @@ function cmdReadsAsOneWord(path: string): boolean {
 
 /**
  * `entry`, or with `keepHookCommand` the entry of either form for the same hook (`nodeHookEntry`, `cmdHookEntry`) that
- * `settings` already hold: versions 0.2.0 and earlier wrote the `node` form where their PATH found the recorded node,
+ * `settings` already hold: versions 0.2.1 and earlier wrote the `node` form where their PATH found the recorded node,
  * and such a hook still runs, so a check of whether Rerail is connected reads it as current. `entry` is the cmd.exe form
  * only while cmd.exe at its path runs a command (`hookExecEntry`): one that runs none starts no hook, so it reads as out
  * of date.

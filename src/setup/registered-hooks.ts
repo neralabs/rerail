@@ -134,7 +134,7 @@ export async function runRegisteredClaudeHook(
 
 /**
  * The program an exec-form entry names, found as a spawn without a shell finds it: the bare `node` of a Windows entry
- * where cmd.exe could not start the paths or runs no command, or of one 0.2.0 and earlier wrote, resolved through PATH
+ * where cmd.exe could not start the paths or runs no command, or of one 0.2.1 and earlier wrote, resolved through PATH
  * to its absolute path, since the shared child-process helper starts no program there from the current folder. A name
  * PATH cannot resolve stays as written, and the spawn's refusal is the failure reported.
  */

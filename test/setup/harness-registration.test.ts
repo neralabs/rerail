@@ -734,7 +734,7 @@ describe("Claude Code settings.json", () => {
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaCmd] }]);
     expect(await plan({})).toBe("unchanged");
 
-    // The `node` entry versions 0.2.0 and earlier wrote where set-up's PATH found the recorded node: still connected,
+    // The `node` entry versions 0.2.1 and earlier wrote where set-up's PATH found the recorded node: still connected,
     // and set-up and `rerail update` write the cmd.exe entry over it.
     await rewriteEntries(path, viaCmd, { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] });
     await windowsPathNode(home, "other-node");

@@ -333,7 +333,7 @@ describe("whether a coding agent can read Rerail's data", () => {
   });
 
   it("counts Claude Code on Windows as connected whatever node PATH finds first for whoever asks", async () => {
-    // Versions 0.1.4 and earlier wrote Claude Code's Windows hooks with `node` always; 0.1.5 and 0.2.0 with `node` where
+    // Versions 0.1.4 and earlier wrote Claude Code's Windows hooks with `node` always; 0.1.5 to 0.2.1 with `node` where
     // set-up's PATH found the recorded node, here the one running this test, and with cmd.exe where it found another;
     // this one writes cmd.exe. The dashboard and `rerail status` ask from the daemon and the shell, each with a PATH of
     // its own.
