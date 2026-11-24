@@ -282,8 +282,8 @@ Steer text carries repository content into the agent's context, so it is built f
 ### B5: npm to installed code
 
 Code from npm installs without install scripts and is checked before it runs. Packs are JSON and `.rerail` rule files, never
-JavaScript: the engine reads and runs a pack's `.rerail` rules in a short-lived process, within a deadline and a memory
-budget. The native engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
+JavaScript: the engine runs a pack's `.rerail` rules in a short-lived process, within a deadline and a memory budget;
+reading them for the catalog has the deadline and a thread cap but no memory watch (`runChildSync`). The native engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
 
 <details>
 <summary>Packs, updates, releases and customer profiles</summary>
