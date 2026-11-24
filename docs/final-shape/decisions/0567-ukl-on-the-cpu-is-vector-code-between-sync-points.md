@@ -986,6 +986,45 @@ every round. Both are the program's, so both are fixed in `join_stages.uglykl` (
    before (`a_leveled_recursion_on_the_device_has_the_cpus_levels` now passes; the rest are "a stratum past one
    launch and its budget's relaunches"), and the mini fails 2, 3 before (text functions).
 
+### The jobs as lanes, driven phase by phase (the user's: "complete this", 2026-11-23)
+
+**Driven phase by phase, no queue** (`Prog::drive`). The CPU device runs a launch's groups one after another on one
+thread, so the first group runs every item. It walks a launch's items in order: the items a last launch left, the
+seeds, then each phase's items (its segments' ranges, `Work`) as the phase before ends. It counts them as the host
+counts pending items (`ctl[2]`). Only when the budget ends with items left are they written to the slots, for the
+next launch, which takes them back first. `push`, `take` and the turn bound are gone.
+
+**At 8 lanes** (`rerail-simd`, the relation reads of `crate::lanes`):
+
+- **Relational stages** (`stage_lanes`): a join, semi-join or anti-join of a relation in its block, probed by keys
+  or read whole. Each step does 8 bindings' keys, screen, probe, candidate rows, key and column tests, binds,
+  arithmetic and row program as vectors, each lane's walk masked past its own length. A product's, quotient's and
+  remainder's overflow test is each lane's: NEON has no vector test for them.
+- **Dedups and index keys** (`dedup_lanes`):
+  - A mark walks 8 rows' places at once (gathers of the places, of the rows they name, of a set head's map and the
+    relation's rows).
+  - The claims and map placements take their places from 8 rows' hashes; each compare-and-swap is its lane's.
+  - An index's keys are 8 rows' hashes a step.
+- **Still per thread:**
+  - stages over views (`has`, a parent's children, a view read in place);
+  - text stages and aggregates;
+  - the lattice fold's claim, best and merge.
+
+  Neither stratum below uses them.
+
+**Measured** (m3, `--profile profiling`: every crate at opt-level 3; `RERAIL_THREADS=1`, so the CPU's joins run on
+one thread, as the CPU device's program does; `joins_timed_on_the_cpu_and_the_device`, the best of three, the
+process's CPU time):
+
+| stratum | the CPU's scalar joins | the join program at 8 lanes |
+|---|---|---|
+| keyed join, 100 K × 100 K (249,484 rows) | 113.9 ms | 103.4 ms |
+| closure, 400 nodes (157,228 rows, 24 rounds) | 56.6 ms | 72.6 ms |
+
+The keyed join is 9% faster than the scalar joins. The closure is 28% slower: its rounds are many and small, and
+each round is the program's phases (union, dedup, gate, append, delta), where the scalar joins' closure does a
+round's work in fewer passes. That gap is the next work.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
