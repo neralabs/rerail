@@ -164,6 +164,8 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
+    // `op` read in place (decision 0353 row 7, the hub's `Item::Op` rows): after `view_order`, as `VIEWS` has it.
+    Read { family: Family::View, name: "view_op", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::op },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
     // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },

@@ -43,7 +43,7 @@ pub enum Item {
     /// An anonymous child of a numbered node, of any width (`op`'s rows: a token, or a zero-width child the tape
     /// stores, which no token numbers). A Python two-word operator is one (`not in`, `is not`: the grammar's alias
     /// of the two words, one anonymous node).
-    Op = 9,
+    Op = rerail_clif::ids::OP_ITEM as isize,
     /// A numbered node whose tape parent is a numbered node, and the document's root (tape node 0) where it is numbered:
     /// `structural_before`'s and `structural_after`'s rows, and without the root `rr_token_named`'s (`tape_rows`).
     Child = 10,

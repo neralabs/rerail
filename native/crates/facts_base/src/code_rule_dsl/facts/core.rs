@@ -897,6 +897,10 @@ impl<'a> FactsIn<'a> {
             (self.atom(e), e.field)
         })
     }
+    /// The node's tape code (its table's number, `tape_number`): what `code_entry` and an entry's tables by code take.
+    pub fn tape_code(&self, id: u32) -> u32 {
+        on_tape!(self, |t| t.code(id as usize))
+    }
     /// The node's kind atom.
     pub fn kind(&self, id: u32) -> u32 {
         on_tape!(self, |t| self.atom(t.table().entry(t.code(id as usize))))

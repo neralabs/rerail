@@ -1729,8 +1729,8 @@ impl Projected {
 
     /// `bytes` of facts of size `size` (`FactsSize`), before they are built.
     pub fn bytes_of(size: FactsSize) -> usize {
-        // The views' entry and its codes' table too (`view_docs::ViewEntry`).
-        6 * 4 * size[0] as usize + 6 * 16 + 8 * size[1] as usize + 256
+        // The views' entry and its codes' tables too (`view_docs::ViewEntry`): kind, field and name atoms, a u32 each.
+        6 * 4 * size[0] as usize + 6 * 16 + 12 * size[1] as usize + 256
     }
 
     /// As `new`, but with `anchors` (`Projection::node_anchors`) a file's nodes are its root and the subtrees of the
@@ -2302,8 +2302,6 @@ pub struct Batch {
     keeps_strings: bool,
     /// Whether it was renewed from a held batch, whose strings it shares (decision 0616): its vocabulary is its groups'.
     renewed: bool,
-    /// Each tape tag's kinds' names' atoms, by kind code (`op_atom`): interned on the first read of a token of the tag.
-    op_atoms: Vec<OnceLock<Vector<u32>>>,
 }
 
 /// What a batch's groups share, and the batches it grows into (decision 0431 §6): its vocabulary, and the producers of
@@ -3585,6 +3583,7 @@ impl Batch {
             host: grown.host.clone(),
             lines_of: Arc::clone(&grown.lines_of),
             failure: Default::default(),
+            names: projection.wants("op").then(|| store.atoms_handle()),
         };
         let mut renewed_at: Option<Vec<Option<usize>>> = None;
         let (docs, valued, prior_at) = match (&last, alone) {
@@ -3686,7 +3685,6 @@ impl Batch {
             text_rows: OnceLock::new(),
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),
-            op_atoms: (0..256).map(|_| OnceLock::new()).collect(),
             by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },
@@ -4251,11 +4249,11 @@ impl Batch {
                 let [nodes, fielded, siblings, locs] = [c[0], c[1], c[2], c[3]];
                 let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, then siblings; then the host's alone: `op`, the token order's four, `spread`, `end_point`,
-                // and the tape's other relations (`tape_rows`), whose token order's four it counts too.
+                // node_order, `op`, then siblings; then the host's alone: the token order's four, `spread`,
+                // `end_point`, and the tape's other relations (`tape_rows`), whose token order's four it counts too.
                 let views: [usize; TAPE] = [
-                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], own[3],
-                    c[9], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 },
+                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9],
+                    own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 },
                 ];
                 let mut by: [usize; ROWS] = std::array::from_fn(|k| views.get(k).copied().unwrap_or(0));
                 tape_rows::count(self, i, &counts, &mut by);
@@ -4344,18 +4342,11 @@ impl Batch {
             _ => self.row_of_node(view, doc, local, NONE),
         }
     }
-    /// The atom of the text of a token of kind code `code` in a document of tape tag `tag` (`op`'s `s`): its kind's
-    /// name, as `core_rr` reads a token's text, interned once for every kind of the tag.
-    pub(super) fn op_atom(&self, tag: u8, code: u16) -> i64 {
-        let Some(d) = self.dialects.get(tag) else { return -1 };
-        let table = self.op_atoms[usize::from(tag)].get_or_init(|| {
-            let names: Vec<&str> = (0..d.names.len()).map(|c| d.code_name(c as u16)).collect();
-            self.atoms.intern_all(&names).unwrap_or_default()
-        });
-        match table.get(usize::from(code)) {
-            Some(&a) => i64::from(a),
-            None => self.atoms.intern_all(&[d.code_name(code)]).ok().and_then(|v| v.first().copied()).map_or(-1, i64::from),
-        }
+    /// The name atom of anonymous child `x` of a numbered node of `p` (`op`'s `s`): its tape code's, in the document's
+    /// entry (`ViewDoc::names`), the table the kernels' `view_op` reads.
+    pub(super) fn op_atom(&self, p: &Projected, x: u32) -> i64 {
+        let entry = view_docs::ViewEntry::new(p.block(), p, &self.dialects[p.tag()], self.docs.names());
+        entry.names().get(p.f().tape_code(x) as usize).map_or(-1, |&a| i64::from(a))
     }
     /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
     fn row_of_node(&self, view: View, doc: usize, local: u32, x: u32) -> Option<usize> {
@@ -4964,7 +4955,7 @@ impl Viewed {
             ORDER => i64::from(p.key()) << 32 | i64::from(p.order(local)),
             PREV => known.prev.unwrap_or_else(|| Self::prev_id(p, local)),
             UNIT => Self::unit_id(b, p, local),
-            OP => b.op_atom(p.tag(), b.dialects[p.tag()].code(p.f(), x)),
+            OP => b.op_atom(p, x),
             ENDP => Self::end_id(p, local),
             _ => n,
         }
@@ -5163,6 +5154,7 @@ impl Viewed {
             View::Depth => d.depth_row(i, c),
             View::Order => d.order_row(i, c),
             View::Sibling => d.sibling(i, c),
+            View::Op => d.op(i, c),
             View::Loc(place) => d.loc(
                 match place {
                     Place::Line => P::Line,
@@ -5174,7 +5166,7 @@ impl Viewed {
                 i,
                 c,
             ),
-            View::Op | View::Spread | View::End | View::Unit => unreachable!("a view the host reads alone has no directory read (`kernel_view`)"),
+            View::Spread | View::End | View::Unit => unreachable!("a view the host reads alone has no directory read (`kernel_view`)"),
         }
     }
 }
@@ -5200,9 +5192,9 @@ impl Viewed {
         self.each_row_projected(&self.batch.docs[doc], n, columns, row);
     }
     /// Whether a kernel reads this view (`view_reads::VIEWS`, and `next_sibling`): the directory has its reads
-    /// (`read_value`). The token views, `spread`, `end_point` and `unit` are the host's alone.
+    /// (`read_value`). The token order's views, `spread`, `end_point` and `unit` are the host's alone.
     fn kernel_view(&self) -> bool {
-        !matches!(self.view, View::Op | View::Spread | View::End | View::Unit)
+        !matches!(self.view, View::Spread | View::End | View::Unit)
     }
     /// `each_row` off the projection. The slots' ops and the inputs they need are decided once (`read_op`); a row
     /// computes those inputs alone and fills the slots from them (`op_value`), with no reader a column. A view whose

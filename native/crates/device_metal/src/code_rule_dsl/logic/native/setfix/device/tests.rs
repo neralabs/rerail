@@ -1549,6 +1549,30 @@ use rerail_blocks::vector::Vector;
             // host's lines and its placement. With the guest and without. None where the device's buffers have no
             // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
+            // `op` (decision 0353 row 7: its rows were core_rr's): each numbered node's anonymous children, their names
+            // in each document's entry (`ViewDoc::names`), read in place as the host reads them, every column and one.
+            {
+                let src = &own_views.iter().find(|(n, _)| *n == "op").expect("op").1;
+                let d = src.device_view();
+                assert_eq!(d.is_some(), device.has_addresses(), "op: read in place where buffers have addresses");
+                if let Some(d) = d {
+                    let n = src.len();
+                    assert!(n > 0, "op: rows");
+                    for cols in [vec![0, 1], vec![1]] {
+                        let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
+                        let mut batch = mj::Batch::new().expect("the device");
+                        let view = mj::DevRel::view(2, n, d.in_place.clone()).unwrap();
+                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        batch.finish().unwrap();
+                        for (j, &c) in cols.iter().enumerate() {
+                            let host: Vector<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                            assert_eq!(out.column(j), &host[..], "op: column {c} read in place");
+                        }
+                    }
+                }
+            }
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;

@@ -25,6 +25,9 @@ pub const VIEW_LINE: u32 = 9;
 pub const VIEW_TAPE: u32 = 10;
 pub const VIEW_DEPTH: u32 = 11;
 pub const VIEW_ORDER: u32 = 12;
+/// The `op` view (`View::Op`): each numbered node's anonymous children, its id and their name atoms, read in place
+/// only (decision 0353 row 7).
+pub const VIEW_OP: u32 = 13;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -46,6 +49,7 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_TAPE => 10,
         VIEW_DEPTH => 11,
         VIEW_ORDER => 12,
+        VIEW_OP => 13,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -65,6 +69,7 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Tape => VIEW_TAPE,
         View::Depth => VIEW_DEPTH,
         View::Order => VIEW_ORDER,
+        View::Op => VIEW_OP,
         _ => return None,
     })
 }

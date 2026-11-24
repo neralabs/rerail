@@ -2820,6 +2820,10 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
     let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
     let (node, child, field, core_node, line) = (read_of("view_node"), read_of("view_child"), read_of("view_field"), read_of("view_core"), read_of("view_line"));
+    let view_op = read_of("view_op");
+    // The atoms the entries' names are interned in (`ViewDoc::names`, the `op` view's), as a batch reading `op` has.
+    let store = ContentStore::open(&temp("view-reads-op")).unwrap();
+    let atoms = store.atoms_handle();
     // The process's device, where its buffers have device addresses (OpenCL 1.2's have none: 0440 step C).
     let probe = rerail_gpu::shared::get().filter(|_| alloc::<u8>(1).ok().and_then(|b| b.device_address()).is_some()).map(|shared| {
         let source = format!("#include <ukl/backend.h>\n#include <ukl/reads/view.h>\n{KERNEL}");
@@ -2852,7 +2856,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
                 let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
                 let block = p.ranks().block();
-                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let entry = view_docs::ViewEntry::new(block, &p, &dialect, Some(&atoms));
                 let n = p.len();
                 let nf = p.ranks().count(Item::Field);
                 let parent = |l: u32| match p.parent(l as usize) {
@@ -2938,6 +2942,18 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         let (l, _) = doc.after_sibling(i);
                         assert_eq!(doc.sibling(i, 0), p.prev_sibling(l).map_or(-1, |a| p.global(a)), "{at}: sibling row {i}'s before");
                         assert_eq!(doc.sibling(i, 1), p.global(l), "{at}: sibling row {i}'s node");
+                    }
+                    // `op`'s rows (`Item::Op`, decision 0353 row 7): each numbered node's anonymous children, its id and
+                    // their kinds' names' atoms; the Rust read, the JIT's and the projection's alike.
+                    let ops = p.ranks().count(Item::Op);
+                    assert!(shape != Shape::Core || narrowed || ops > 0, "{at}: a document with operators has op rows");
+                    for i in 0..ops {
+                        let x = p.ranks().select(Item::Op, i).unwrap();
+                        assert_eq!(doc.op_child(i), x, "{at}: op row {i}'s child");
+                        let node = p.global(p.f().parent(x).map_or(0, |q| p.local_of_node(q)));
+                        let name = i64::from(atoms.intern(dialect.name(p.f(), x)).unwrap());
+                        assert_eq!([doc.op(i, 0), doc.op(i, 1)], [node, name], "{at}: op row {i}");
+                        assert_eq!([view_op(e, t, v, ll, i, 0), view_op(e, t, v, ll, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
                     }
                 }
                 if let Some((shared, probe)) = probe {

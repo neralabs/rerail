@@ -273,6 +273,22 @@ impl<'a> Doc<'a> {
         let order = unsafe { self.numbering().order_of(l) };
         (i64::from(self.entry.key) << 32) | i64::from(order)
     }
+    /// The `op` view's row `i`: the document's `i`-th anonymous child of a numbered node (`Item::Op`), its tape node.
+    #[inline]
+    pub fn op_child(&self, i: u32) -> u32 {
+        // SAFETY: as `tape_node`.
+        unsafe { self.numbering().select(rerail_clif::ids::OP_ITEM, i) }
+    }
+    /// `view_op(i, col)`: row `i`'s numbered node's id (an anonymous child is no root), its name atom (by its tape
+    /// code, `ViewDoc::names`).
+    #[inline]
+    pub fn op(&self, i: u32, col: u32) -> i64 {
+        let x = self.op_child(i);
+        match col {
+            0 => self.parent_id(1, x),
+            _ => i64::from(self.items(&self.entry.names)[self.tape.number(x) as usize]),
+        }
+    }
     /// The numbered node of the `next_sibling` view's row `i` (a node after a numbered sibling), and its tape node.
     #[inline]
     pub fn after_sibling(&self, i: u32) -> (u32, u32) {

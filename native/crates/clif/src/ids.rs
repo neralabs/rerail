@@ -17,6 +17,8 @@
 /// nodes, the token order's (the lexical tokens, the places with a token, one before, one after), and `op`'s (a
 /// numbered node's anonymous children), and the nodes with a numbered tape parent (and the root: `structural_before`'s, `rr_token_named`'s; `Item`'s numbers).
 pub const ITEMS: u32 = 11;
+/// `op`'s item (the engine's `ranks::Item::Op`): a numbered node's anonymous children, which `view_op` selects.
+pub const OP_ITEM: u32 = 9;
 /// A group's words: one of bits an item, then the counts before it, two to a word.
 pub const WORDS: u32 = ITEMS + ITEMS.div_ceil(2);
 /// Items a select sample stands for.

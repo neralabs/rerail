@@ -67,8 +67,9 @@ typedef struct ViewDoc {
     Run named;
     Run visits;
     Run digests;
+    Run names;
 } ViewDoc;
-UKL_STATIC_ASSERT(sizeof(ViewDoc) == 216, "ViewDoc: size");
+UKL_STATIC_ASSERT(sizeof(ViewDoc) == 232, "ViewDoc: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, key) == 0, "ViewDoc.key");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, tag) == 4, "ViewDoc.tag");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, preorder) == 8, "ViewDoc.preorder");
@@ -91,6 +92,7 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, gaps) == 136, "ViewDoc.gaps");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, named) == 168, "ViewDoc.named");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, visits) == 184, "ViewDoc.visits");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, digests) == 200, "ViewDoc.digests");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, names) == 216, "ViewDoc.names");
 UKL_COLD uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
@@ -108,6 +110,7 @@ UKL_COLD uint32_t clif_view_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOB
 UKL_COLD uint64_t clif_view_tape(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_INLINE uint64_t clif_view_depth(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_INLINE uint64_t clif_view_order(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
+UKL_COLD uint64_t clif_view_op(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_INLINE uint64_t clif_view_core(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5){
  uint64_t v0=0;
  uint64_t v1=0;
@@ -392,4 +395,8 @@ UKL_COLD uint64_t clif_view_tape(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLO
 UKL_INLINE uint64_t clif_view_depth(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5){
  if(clif_view(v,CLIF_T_FORMAT)==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_depth(t,a0,tt,v,ll,la,a4,a5))
  return clif_f16_view_depth(t,a0,tt,v,ll,la,a4,a5);
+}
+UKL_COLD uint64_t clif_view_op(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5){
+ if(clif_view(v,CLIF_T_FORMAT)==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_op(t,a0,tt,v,ll,la,a4,a5))
+ return clif_f16_view_op(t,a0,tt,v,ll,la,a4,a5);
 }

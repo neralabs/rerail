@@ -131,12 +131,19 @@ pub(super) struct Context {
     /// The first failure making a document or a group (a verdict raised, too many positions): every source of the
     /// batch reports it (`Source::failure`), so the statement reading it fails rather than read the rows as absent.
     pub(super) failure: parking_lot::Mutex<Option<String>>,
+    /// The store's atoms, where the batch reads the `op` view: each entry's codes' names are interned into its table
+    /// (`view_docs::ViewEntry::new`, `ViewDoc::names`). None where it does not, so no name is interned for it.
+    pub(super) names: Option<Arc<crate::content_store::atoms::Atoms>>,
 }
 
 impl Docs {
     /// The cache their 16z blocks are decoded into (`super::batch_cache`): the batch's.
     pub(super) fn cache(&self) -> Option<&Arc<rerail_tape_format::f16::ZCache>> {
         self.context.cache.as_ref()
+    }
+    /// The atoms the entries' names are interned in, where the batch reads `op` (`Context::names`).
+    pub(super) fn names(&self) -> Option<&crate::content_store::atoms::Atoms> {
+        self.context.names.as_deref()
     }
 
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.

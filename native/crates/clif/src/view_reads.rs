@@ -66,8 +66,12 @@ pub struct ViewDoc {
     pub named: Run,
     pub visits: Run,
     pub digests: Run,
+    /// By the tape's code (`tape_number`), the atom of its kind's name (u32s): the `op` view's `s` of an anonymous
+    /// child of that code (`view_op`), the host's and the kernels' one table. Interned once where a batch reads `op`;
+    /// empty where it does not.
+    pub names: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 16 * 5);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 16 * 6);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
@@ -100,15 +104,16 @@ pub struct ViewRow {
 const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
 
 /// A row's first rows: one per view of `VIEWS`, then the views no kernel reads, the host's alone: `child`'s sibling
-/// view (`SIBLING`), the token views (`OP`, the token order's four, `TOK`), `spread` (`SPREAD`) and `end_point`
-/// (`END`), and the other relations of the tape's answers (`TAPE`, the engine's `tape_rows`). Every view's rows are
-/// found in the directory, whoever reads them.
+/// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`) and `end_point` (`END`), and the other
+/// relations of the tape's answers (`TAPE`, the engine's `tape_rows`). Every view's rows are found in the directory,
+/// whoever reads them.
 pub const ROWS: usize = TAPE + TAPE_RELATIONS;
+/// `op`'s rows (each numbered node's anonymous children, `Item::Op`): `view_op`'s, in `VIEWS`.
+pub const OP: usize = 12;
+const _: () = assert!(matches!(VIEWS[OP].as_bytes(), b"view_op"));
 pub const SIBLING: usize = VIEWS.len();
-/// `op`'s rows (a document's tokens).
-pub const OP: usize = SIBLING + 1;
 /// The token order's four relations' (`tokens::TokRel`'s order; the engine's `tape_rows`): `TOK + rel`.
-pub const TOK: usize = OP + 1;
+pub const TOK: usize = SIBLING + 1;
 pub const SPREAD: usize = TOK + 4;
 pub const END: usize = SPREAD + 1;
 /// The first of the tape's other relations' (`tape_rows`): `structural_before`, `structural_after`,
@@ -279,8 +284,8 @@ impl ViewDir {
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
-/// `node_order`.
-pub const VIEWS: [&str; 12] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order"];
+/// `node_order`; then `op`.
+pub const VIEWS: [&str; 13] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op"];
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -304,6 +309,7 @@ pub mod at {
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
     pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
+    pub const NAMES: i32 = offset_of!(ViewDoc, names) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -321,12 +327,14 @@ pub const LOC_COLUMNS: u32 = 2;
 pub const TAPE_COLUMNS: u32 = 4;
 pub const DEPTH_COLUMNS: u32 = 2;
 pub const ORDER_COLUMNS: u32 = 2;
+/// `op`'s: its node's id, the anonymous child's name atom.
+pub const OP_COLUMNS: u32 = 2;
 
 /// The entry in UKL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 22] = [
+    let fields: [(&str, &str, usize); 23] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -349,6 +357,7 @@ pub fn ukl() -> String {
         ("Run", "named", offset_of!(ViewDoc, named)),
         ("Run", "visits", offset_of!(ViewDoc, visits)),
         ("Run", "digests", offset_of!(ViewDoc, digests)),
+        ("Run", "names", offset_of!(ViewDoc, names)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
@@ -1082,5 +1091,29 @@ pub fn order(b: &mut B<'_, '_>) -> Value {
         });
         let low = b.f.ins().uextend(I64, low);
         b.f.ins().bor(high, low)
+    })
+}
+
+/// `view_op(i, col)`: column `col` of the `op` view's row `i`: the document's `i`-th anonymous child of a numbered node
+/// (`Item::Op`, `num_select`; one of any width, a zero-width one the tape stores too), its node's id, and its name
+/// atom (by its tape code, `ViewDoc::names`). Each column's branch finds the child itself, as `field`'s do (G13).
+#[cfg(feature = "ir")]
+pub fn op(b: &mut B<'_, '_>) -> Value {
+    let (i, col) = (b.arg(0), b.arg(1));
+    let child = |b: &mut B<'_, '_>| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let op = b.c32(i64::from(crate::ids::OP_ITEM));
+        b.call_at("num_select", numbering, &[op, i])
+    };
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| {
+        let x = child(b);
+        // An anonymous child is no root (`parent_id`'s first argument is not 0): its numbered node's id.
+        let one = b.c32(1);
+        b.parent_id(one, x)
+    }, |b| {
+        let x = child(b);
+        let code = b.call_tape("tape_number", &[x]);
+        b.entry_item(at::NAMES, code)
     })
 }
