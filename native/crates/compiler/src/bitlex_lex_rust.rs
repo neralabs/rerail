@@ -6345,8 +6345,61 @@ impl Gen<'_> {
             }
             if let Some((_, _, by)) = &token_form {
                 let one = |c: usize| x.words.iter().position(|w| w.as_slice() == [c as u8]).map_or(0, |i| i + 1);
-                let row: Vec<String> = (0..256).map(|c| format!("({}, {}, {})", by[c], x.kinds[c], one(c))).collect();
-                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's\n/// `TOKEN`): the token's row where the byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`,\n/// none.\nstatic TOKEN: [(u8, u8, u8); 256] = [{}];\n", row_arms.len(), row.join(", "));
+                let mut rows: Vec<(u8, u8, u8)> = (0..256).map(|c| (by[c], x.kinds[c], one(c) as u8)).collect();
+                // A pair's entry (`256 + c`, `c` its first byte): its word by the load, as the lean lexer's `TOKEN[c +
+                // 256]`. Where a first byte starts two pairs, the second byte picks (`+ 512`), as lean's `<:`.
+                let mut alt = String::new();
+                if out.contains("/*PAIR_ALT ") {
+                    let pairs: Vec<(u8, u8)> = pair_rows.iter().flat_map(|(_, two)| two.iter().copied()).collect();
+                    let code = |a: u8, b: u8| x.words.iter().position(|w| w.as_slice() == [a, b]).map_or(0, |i| i + 1) as u8;
+                    // The second bytes that pick `+ 512`: the second pair's of each first byte that starts two.
+                    let mut seconds: Vec<u8> = Vec::new();
+                    for &(a, b) in &pairs {
+                        if pairs.iter().take_while(|&&q| q != (a, b)).any(|q| q.0 == a) {
+                            seconds.push(b);
+                        }
+                    }
+                    let picks = |a: u8| pairs.iter().filter(|q| q.0 == a).map(|q| seconds.contains(&q.1)).collect::<Vec<_>>();
+                    let ok = pairs.iter().all(|&(a, _)| {
+                        let p = picks(a);
+                        p.len() <= 2 && (p.len() < 2 || p[0] != p[1])
+                    });
+                    if !ok {
+                        return Err("a first byte's pairs the second byte does not pick apart".into());
+                    }
+                    if !seconds.is_empty() {
+                        rows.resize(1024, (u8::MAX, 0, 0));
+                        let test = if seconds.len() == 1 { format!("src[s + 1] == {}", bytes::lit(seconds[0])) } else { format!("matches!(src[s + 1], {})", seconds.iter().map(|&b| bytes::lit(b)).collect::<Vec<_>>().join(" | ")) };
+                        alt = format!(" | ({{p}} & usize::from({test})) << 9");
+                    } else {
+                        rows.resize(512, (u8::MAX, 0, 0));
+                    }
+                    for &(a, b) in &pairs {
+                        let at = 256 + a as usize + if seconds.contains(&b) { 512 } else { 0 };
+                        rows[at] = (by[a as usize], x.kinds[a as usize], code(a, b));
+                    }
+                }
+                // A pair row's arm: its word by the load too, its pair `l - s`.
+                if out.contains("/*PAIR_ALT ") {
+                    let mut from = 0;
+                    while let Some(at) = out[from..].find(" >> (s - base) & 1) as usize;\n").map(|a| a + from) {
+                        from = at + 1;
+                        let line = out[..at].rfind('\n').map_or(0, |l| l + 1);
+                        if !out[line..at].trim_start().starts_with("let l = s + (") {
+                            continue;
+                        }
+                        let end = out[at..].find(" => {").map_or(out.len(), |e| e + at);
+                        if let Some(w) = out[at..end].find(WORD_READ).map(|w| w + at) {
+                            out.replace_range(w..w + WORD_READ.len(), "u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8/*PAIR_ALT (l - s)*/].2)");
+                        }
+                    }
+                }
+                while let Some(at) = out.find("/*PAIR_ALT ") {
+                    let end = at + out[at..].find("*/").ok_or("an unclosed pair mark")? + 2;
+                    let v = out[at + "/*PAIR_ALT ".len()..end - 2].to_owned();
+                    out.replace_range(at..end, &alt.replace("{p}", &v));
+                }
+                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's\n/// `TOKEN`): the token's row where the byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`,\n/// none.{}\nstatic TOKEN: [(u8, u8, u8); {}] = {};\n", row_arms.len(), if rows.len() > 256 { " A pair's at `256 + c`, `c` its first byte, its code its word's (`+ 512` where its second byte picks it)." } else { "" }, rows.len(), table_block(&rows));
                 // The tables the one load replaces, where nothing else reads them.
                 if !out.contains("DISPATCH_LO[") {
                     out = out.replacen(&tables, "", 1);
@@ -7367,9 +7420,18 @@ fn lean_loop(space: &str, kw: &str, wfn: &str, kp: &str, open: &str, branches: &
                 let q = run.trailing_zeros() as usize;
                 run &= run - 1;
                 let s = base + q;
-                let (_, kind1, word1) = TOKEN[usize::from(src[s])];
-                let l = if {kw} >> q & 1 == 1 {{ word_last(n, base, {kw}, s, {wfn}) }} else {{ s + ({kp} >> q & 1) as usize }};
-                let word = if l == s {{ u32::from(word1) }} else {{ word_at(src, s, l + 1 - s) }};
+                let (l, kind1, word) = if {kw} >> q & 1 == 1 {{
+                    // A word: its run, its code by its hash (a word of one byte's by the load).
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s])];
+                    let l = word_last(n, base, {kw}, s, {wfn});
+                    (l, kind1, if l == s {{ u32::from(word1) }} else {{ word_at(src, s, l + 1 - s) }})
+                }} else {{
+                    // An operator, one byte or a pair (`p`): its kind and code by one load, as the lean lexer's
+                    // `TOKEN[c + 256]`.
+                    let p = ({kp} >> q & 1) as usize;
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s]) | p << 8/*PAIR_ALT p*/];
+                    (s + p, kind1, u32::from(word1))
+                }};
                 debug_assert!(len < n, \"a token a byte at most\");
                 // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
                 unsafe {{ out.add(len).write(Rec {{ start: s as u32, last: l as u32, code: u32::from(kind1) | word << 8 }}) }};
@@ -7491,8 +7553,9 @@ fn one_pick(out: &str) -> Option<String> {
         i = end + 1;
     }
     // Which rows a byte picks itself (`TOKEN`'s first of each byte under `direct`).
-    let table = out.split_once("static TOKEN: [(u8, u8, u8); 256] = [")?.1.split_once("];")?.0;
-    let picked: Vec<usize> = table.split("), (").filter_map(|e| e.trim_start_matches('(').split(',').next()?.trim().parse::<usize>().ok()).filter(|&p| p < direct).collect();
+    // Its entries, `(pick, kind, word)`, in its `const` block (`table_block`).
+    let table = out.split_once("static TOKEN: [(u8, u8, u8); ")?.1.split_once("\n};")?.0;
+    let picked: Vec<usize> = table.split('(').skip(1).filter_map(|e| e.split_once(", ")?.0.parse::<usize>().ok()).filter(|&p| p < direct).collect();
     let norm = |c: &str| c.chars().filter(|c| !matches!(c, '(' | ')' | ' ')).collect::<String>();
     let body = |r: usize| rows.iter().find(|x| x.0 == r).map(|x| x.1.clone());
     let arm = |pat: &str, b: &[&str]| format!("{}{pat} => {{\n{}\n{}}},\n", " ".repeat(ai), b.join("\n"), " ".repeat(ai));
@@ -7599,6 +7662,38 @@ fn tidy_lean(out: &str) -> String {
         let p = out[open..=close].to_owned();
         out.replace_range(f..close + 1 + ").is_none()".len(), &format!(".all(|i| {p})"));
     }
+    // `(!(P)).then_some(s).is_none()`: whether `P` holds.
+    let mut from = 0;
+    while let Some(f) = out[from..].find("(!(").map(|f| f + from) {
+        from = f + 1;
+        let open = f + 2;
+        let Some(close) = closing_paren(&out, open) else { break };
+        if out[close + 1..].starts_with(").then_some(s).is_none()") {
+            let p = out[open..=close].to_owned();
+            out.replace_range(f..close + 1 + ").then_some(s).is_none()".len(), &p);
+        }
+    }
+    // A run of one byte at least from the token's first: always.
+    out = out.replace(" && l + 1 - s >= 1 && ", " && ");
+    // The token's last byte and kind, where the tests read both.
+    if let Some(a) = out.find("    let _ = (l, kind);\n")
+        && let Some(e) = out[a..].find("\n}\n").map(|e| e + a)
+        && out[a..e].contains("kind ==")
+        && out[a..e].contains("..=l)")
+    {
+        out.replace_range(a..a + "    let _ = (l, kind);\n".len(), "");
+    }
+    // The token tests read no vector: a plain function, as the lean parser's tests of a token.
+    if let Some(a) = out.find("unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(")
+        && let Some(d) = out[a..].find("\nrerail_simd8::dispatch! {\n    fn token_test(").map(|d| d + a)
+        && let Some(e) = out[d..].find("\n}\n").map(|e| e + d + 3)
+        && !out[a..d].contains("S::")
+        && !out[a..d].contains("<S>")
+    {
+        out.replace_range(d..e, "");
+        out.replace_range(a..a + "unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(".len(), "fn token_test(");
+        out = out.replace("one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nfn token_test(", "one of its own. Its row by its first byte, its kind and whether it is an extra.\nfn token_test(");
+    }
     out
 }
 
@@ -7674,10 +7769,49 @@ fn byte_set_test(b: &str, set: &[bool; 256]) -> String {
         while c + 1 < 256 && set[c + 1] {
             c += 1;
         }
-        arms.push(if lo == c { format!("{lo:#04x}") } else { format!("{lo:#04x}..={c:#04x}") });
+        arms.push(if lo == c { bytes::lit(lo as u8) } else { format!("{}..={}", bytes::lit(lo as u8), bytes::lit(c as u8)) });
         c += 1;
     }
-    if arms.is_empty() { "false".to_owned() } else { format!("matches!({b}, {})", arms.join(" | ")) }
+    match arms.as_slice() {
+        [] => "false".to_owned(),
+        [one] if !one.contains("..=") => format!("({b} == {one})"),
+        _ => format!("matches!({b}, {})", arms.join(" | ")),
+    }
+}
+
+/// `rows` as a `const` block, as the lean lexer builds its tables: a byte's most common entry everywhere, then each run
+/// of bytes of the same entry (a loop where it is longer than one byte), each pair's entry.
+fn table_block(rows: &[(u8, u8, u8)]) -> String {
+    let mut counts: HashMap<(u8, u8, u8), usize> = HashMap::new();
+    for r in &rows[..rows.len().min(256)] {
+        *counts.entry(*r).or_default() += 1;
+    }
+    let dflt = *counts.iter().max_by_key(|&(r, c)| (*c, std::cmp::Reverse(*r))).map(|(r, _)| r).unwrap_or(&(0, 0, 0));
+    let name = |i: usize| match i {
+        0..=255 => format!("{} as usize", bytes::lit(i as u8)),
+        _ => format!("{} + {} as usize", i & !0xff, bytes::lit(i as u8)),
+    };
+    let mut out = format!("{{\n    let mut t = [{dflt:?}; {}];\n", rows.len());
+    let mut i = 0;
+    while i < rows.len() {
+        // A pair's slot no pair has is never read.
+        if rows[i] == dflt || (i >= 256 && rows[i] == (u8::MAX, 0, 0)) {
+            i += 1;
+            continue;
+        }
+        let lo = i;
+        while i + 1 < rows.len() && (i + 1) % 256 != 0 && rows[i + 1] == rows[lo] {
+            i += 1;
+        }
+        if lo == i {
+            let _ = writeln!(out, "    t[{}] = {:?};", name(lo), rows[lo]);
+        } else {
+            let _ = writeln!(out, "    let mut c = {};\n    while c <= {} {{\n        t[c] = {:?};\n        c += 1;\n    }}", name(lo), name(i), rows[lo]);
+        }
+        i += 1;
+    }
+    out.push_str("    t\n}");
+    out
 }
 
 /// The body of the token tests tier 2 asks (`token_test_on`, decision 0655 step 6): a `match` on the mark's bit, each arm
@@ -7778,12 +7912,22 @@ fn no_test_checks(code: &str) -> String {
 fn drop_uncalled_fns(code: &str) -> String {
     let mut lines: Vec<String> = code.lines().map(str::to_owned).collect();
     loop {
-        // Each top-level function: its first line (its doc's), its `fn` line, its last line, its name.
+        // Each top-level function and one-line `static`: its first line (its doc's), its last line, its name.
         let mut items: Vec<(usize, usize, String)> = Vec::new();
         let mut i = 0;
         while i < lines.len() {
             let l = &lines[i];
             let name = l.strip_prefix("unsafe fn ").or_else(|| l.strip_prefix("fn ")).map(|r| r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or("").to_owned());
+            let table = l.strip_prefix("static ").filter(|_| l.ends_with(';')).and_then(|r| r.split_once(':')).map(|(n, _)| n.to_owned());
+            if let Some(name) = table {
+                let mut first = i;
+                while first > 0 && lines[first - 1].starts_with("///") {
+                    first -= 1;
+                }
+                items.push((first, i, name));
+                i += 1;
+                continue;
+            }
             if let Some(name) = name.filter(|n| !n.is_empty()) {
                 let mut first = i;
                 while first > 0 && (lines[first - 1].starts_with("///") || lines[first - 1].starts_with("#[")) {
@@ -7796,9 +7940,9 @@ fn drop_uncalled_fns(code: &str) -> String {
             }
             i += 1;
         }
-        // A call of the function: its name and `(`, or the name given (`= lex_on, on …;`, as `dispatch!` takes it, or `f::<S>(`); not in
-        // a comment, not a method's (`.any(`), not in its own body (a variable of the same name is no call, nor is the
-        // function calling itself).
+        // A call of the function: its name and `(`, `::<S>(`, or the name given (`= lex_on, on …;`, as `dispatch!` takes
+        // it); a table's name read (`&LO_0,`, `RARE_0.0`). Not in a comment, not a method's (`.any(`), not in its own
+        // body (a variable of the same name is no call, nor is the function calling itself).
         let named = |n: &str, own: (usize, usize)| {
             lines
                 .iter()
@@ -7810,7 +7954,7 @@ fn drop_uncalled_fns(code: &str) -> String {
                             let before = l[..k].chars().next_back();
                             !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') && {
                                 let rest = &l[k + n.len()..];
-                                rest.starts_with(['(', ',', ';']) || rest.starts_with("::<")
+                                rest.starts_with(['(', ',', ';']) || rest.starts_with("::<") || (n.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_') && !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
                             }
                         })
                         .count()

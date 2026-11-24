@@ -203,3 +203,22 @@ The arms' code is then tidied as lean writes it (`tidy_lean`): `l` for `(l + 1) 
 
 Tests: the rr suite and both corpus tests over the 1,949 files; JSON's and Kotlin's generated Rust is unchanged
 (their lexers are not `lean_loop`'s), and their suites pass; clippy.
+
+## Step 8: tier 1's tables built as lean's (done)
+
+- **`TOKEN` and `WORDS` are `const` blocks**, as lean's: `TOKEN` a byte's most common entry, then each run of bytes of
+  one entry (`table_block`), where it was 256 literal entries; `WORDS` built from the grammar's `WORD_LIST` by
+  `word_slot`, the hash `word_at` reads, asserting no two words share a slot, where it was a literal row a slot.
+  Kotlin's tier 1, written by the same writer, holds its 122 words the same way.
+- **An operator's code by one load**, as lean's `TOKEN[c + 256]`: a pair's entry is at `256 + c`, its first byte `c`,
+  and where one first byte starts two pairs the second byte picks (`+ 512`, as lean's `<:`). The run's operator and the
+  rare `punct` arm read their word there, where a pair went through `word_at`'s hash. A grammar whose first byte
+  starts three pairs, or whose second bytes cannot pick them apart, is refused by the writer.
+- **`token_test` a plain function**: it reads no vector, so it is no `dispatch!` of a backend's. Its byte tests are
+  Rust's byte literals (`b'0'..=b'9'`), not hex, and the tests tidied as the arms' (a run of one byte at least from
+  the token's first is no test).
+- **No unread table**: `drop_uncalled_fns` drops a one-line `static` nothing reads (the nibble tables only the
+  removed checker read).
+
+Tests: the rr suite and both corpus tests over the 1,949 files; JSON's and Kotlin's suites (Kotlin's tier 1 re-blessed:
+its `WORDS`); clippy.

@@ -26,14 +26,6 @@ static HI_0: [u8; 16] = [0x05, 0x08, 0x12, 0xa0, 0x00, 0x40, 0x00, 0x20, 0x08, 0
 static LO_1: [u8; 16] = [0x8d, 0x9f, 0x9f, 0x9f, 0xbf, 0x9f, 0x9f, 0x8f, 0xcf, 0xcf, 0x8e, 0x82, 0x82, 0x82, 0x82, 0x86];
 static HI_1: [u8; 16] = [0x80, 0x80, 0x00, 0x41, 0x32, 0x04, 0x32, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-/// The classes' nibble tables, pair 2 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_2: [u8; 16] = [0x04, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01, 0x03, 0x1b, 0x13, 0x1b, 0x1b, 0x01];
-static HI_2: [u8; 16] = [0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
-/// The classes' nibble tables, pair 3 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_3: [u8; 16] = [0x00, 0x00, 0x0d, 0x00, 0x08, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x04, 0x01];
-static HI_3: [u8; 16] = [0x00, 0x00, 0x01, 0x00, 0x00, 0x02, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
 /// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and
 /// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.
 #[inline(always)]
@@ -76,9 +68,18 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                 let q = run.trailing_zeros() as usize;
                 run &= run - 1;
                 let s = base + q;
-                let (_, kind1, word1) = TOKEN[usize::from(src[s])];
-                let l = if k_m_word >> q & 1 == 1 { word_last(n, base, k_m_word, s, |i: usize| (i < n && matches!(src[i], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) } else { s + (k_pair_6 >> q & 1) as usize };
-                let word = if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) };
+                let (l, kind1, word) = if k_m_word >> q & 1 == 1 {
+                    // A word: its run, its code by its hash (a word of one byte's by the load).
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s])];
+                    let l = word_last(n, base, k_m_word, s, |i: usize| (i < n && matches!(src[i], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')));
+                    (l, kind1, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                } else {
+                    // An operator, one byte or a pair (`p`): its kind and code by one load, as the lean lexer's
+                    // `TOKEN[c + 256]`.
+                    let p = (k_pair_6 >> q & 1) as usize;
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s]) | p << 8 | (p & usize::from(src[s + 1] == b':')) << 9];
+                    (s + p, kind1, u32::from(word1))
+                };
                 debug_assert!(len < n, "a token a byte at most");
                 // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
                 unsafe { out.add(len).write(Rec { start: s as u32, last: l as u32, code: u32::from(kind1) | word << 8 }) };
@@ -197,7 +198,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     // `punct`: pair
                     let l = s + (k_pair_6 >> (s - base) & 1) as usize;
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                    (l, u32::from(kind1), false, 0x0, u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8 | ((l - s) & usize::from(src[s + 1] == b':')) << 9].2))
                 },
                 7 => {
                     // `bad`: run other
@@ -384,268 +385,113 @@ unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: u
 
 /// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's
 /// `TOKEN`): the token's row where the byte picks one, else 8 and its group's index, whose tests pick it; `u8::MAX`,
-/// none.
-static TOKEN: [(u8, u8, u8); 256] = [(7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (255, 0, 0), (255, 0, 0), (7, 0, 0), (255, 0, 0), (255, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (255, 0, 0), (6, 0, 19), (0, 4, 0), (3, 1, 0), (7, 0, 0), (6, 0, 30), (6, 0, 33), (7, 0, 0), (6, 0, 10), (6, 0, 11), (6, 0, 24), (6, 0, 28), (6, 0, 12), (6, 0, 27), (6, 0, 13), (12, 0, 29), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (5, 3, 0), (6, 0, 15), (6, 0, 14), (6, 0, 17), (6, 0, 16), (6, 0, 18), (7, 0, 0), (6, 0, 23), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (6, 0, 25), (7, 0, 0), (6, 0, 26), (6, 0, 32), (4, 5, 59), (15, 2, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (6, 0, 20), (6, 0, 22), (6, 0, 21), (6, 0, 31), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0), (7, 0, 0)];
+/// none. A pair's at `256 + c`, `c` its first byte, its code its word's (`+ 512` where its second byte picks it).
+static TOKEN: [(u8, u8, u8); 1024] = {
+    let mut t = [(7, 0, 0); 1024];
+    let mut c = 0x09 as usize;
+    while c <= b'\n' as usize {
+        t[c] = (255, 0, 0);
+        c += 1;
+    }
+    let mut c = 0x0c as usize;
+    while c <= 0x0d as usize {
+        t[c] = (255, 0, 0);
+        c += 1;
+    }
+    t[b' ' as usize] = (255, 0, 0);
+    t[b'!' as usize] = (6, 0, 19);
+    t[b'"' as usize] = (0, 4, 0);
+    t[b'#' as usize] = (3, 1, 0);
+    t[b'%' as usize] = (6, 0, 30);
+    t[b'&' as usize] = (6, 0, 33);
+    t[b'(' as usize] = (6, 0, 10);
+    t[b')' as usize] = (6, 0, 11);
+    t[b'*' as usize] = (6, 0, 24);
+    t[b'+' as usize] = (6, 0, 28);
+    t[b',' as usize] = (6, 0, 12);
+    t[b'-' as usize] = (6, 0, 27);
+    t[b'.' as usize] = (6, 0, 13);
+    t[b'/' as usize] = (12, 0, 29);
+    let mut c = b'0' as usize;
+    while c <= b'9' as usize {
+        t[c] = (5, 3, 0);
+        c += 1;
+    }
+    t[b':' as usize] = (6, 0, 15);
+    t[b';' as usize] = (6, 0, 14);
+    t[b'<' as usize] = (6, 0, 17);
+    t[b'=' as usize] = (6, 0, 16);
+    t[b'>' as usize] = (6, 0, 18);
+    t[b'@' as usize] = (6, 0, 23);
+    let mut c = b'A' as usize;
+    while c <= b'Z' as usize {
+        t[c] = (4, 5, 0);
+        c += 1;
+    }
+    t[b'[' as usize] = (6, 0, 25);
+    t[b']' as usize] = (6, 0, 26);
+    t[b'^' as usize] = (6, 0, 32);
+    t[b'_' as usize] = (4, 5, 59);
+    t[b'`' as usize] = (15, 2, 0);
+    let mut c = b'a' as usize;
+    while c <= b'z' as usize {
+        t[c] = (4, 5, 0);
+        c += 1;
+    }
+    t[b'{' as usize] = (6, 0, 20);
+    t[b'|' as usize] = (6, 0, 22);
+    t[b'}' as usize] = (6, 0, 21);
+    t[b'~' as usize] = (6, 0, 31);
+    t[256 + b'!' as usize] = (6, 0, 5);
+    t[256 + b'-' as usize] = (6, 0, 9);
+    t[256 + b':' as usize] = (6, 0, 3);
+    t[256 + b'<' as usize] = (6, 0, 6);
+    t[256 + b'=' as usize] = (6, 0, 4);
+    t[256 + b'>' as usize] = (6, 0, 7);
+    t[768 + b'<' as usize] = (6, 0, 8);
+    t
+};
+/// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.
+const WORD_LIST: [&[u8]; 71] = [
+    b"pragma", b"type", b":-", b"=>", b"!=", b"<=", b">=", b"<:", b"->", b"(", b")", b",",
+    b".", b";", b":", b"=", b"<", b">", b"!", b"{", b"}", b"|", b"@", b"*",
+    b"[", b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"#include", b"must", b"may",
+    b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options", b"by", b"sep", b"count", b"min",
+    b"max", b"sum", b"mean", b"join", b"policy", b"input", b"output", b"true", b"false", b"null", b"_", b"product",
+    b"at", b"test", b"exactly", b"uses", b"end", b"fixtures", b"decl", b"violation", b"edit", b"functor", b"lattice",
+];
+
+/// Up to 8 bytes as one word of memory: little-endian, zeros past them.
+const fn word_key(s: &[u8]) -> u64 {
+    let (mut v, mut i) = (0u64, 0);
+    while i < s.len() {
+        v |= (s[i] as u64) << (8 * i);
+        i += 1;
+    }
+    v
+}
+
+/// A word's slot in `WORDS`: its first 8 bytes and its length, hashed by a multiplier under which the 71 words take
+/// 71 slots, as the lean lexer's `word_slot`.
+const fn word_slot(k: u64, len: usize) -> usize {
+    ((k ^ len as u64).wrapping_mul(0x7a9f0944767a16e5) >> 56) as usize
+}
+
 /// Each slot's word (`word_at`): its first 8 bytes, the next 8, its length, its code (0: none), as the lean lexer's
 /// `WORDS`.
-static WORDS: [(u64, u64, u32, u32); 256] = [
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000005f, 0x0000000000000000, 1, 59),
-    (0x0000000000003e2d, 0x0000000000000000, 2, 9),
-    (0x000000000000002f, 0x0000000000000000, 1, 29),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000005d, 0x0000000000000000, 1, 26),
-    (0, 0, 0, 0),
-    (0x000000000000002d, 0x0000000000000000, 1, 27),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x00000065736c6166, 0x0000000000000000, 5, 57),
-    (0, 0, 0, 0),
-    (0x0000007475706e69, 0x0000000000000000, 5, 54),
-    (0, 0, 0, 0),
-    (0x0000616d67617270, 0x0000000000000000, 6, 1),
-    (0x000000000000005b, 0x0000000000000000, 1, 25),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000002b, 0x0000000000000000, 1, 28),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000000040, 0x0000000000000000, 1, 23),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000746e756f63, 0x0000000000000000, 5, 47),
-    (0x0000000000007962, 0x0000000000000000, 2, 45),
-    (0x0000000000000029, 0x0000000000000000, 1, 11),
-    (0x000000007473756d, 0x0000000000000000, 4, 35),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000003e, 0x0000000000000000, 1, 18),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000006c636564, 0x0000000000000000, 4, 67),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000003c, 0x0000000000000000, 1, 17),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000000025, 0x0000000000000000, 1, 30),
-    (0x000000006c6c756e, 0x0000000000000000, 4, 58),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000003a, 0x0000000000000000, 1, 15),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x00000000006d7573, 0x0000000000000000, 3, 50),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000078616d, 0x0000000000000000, 3, 49),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x00746375646f7270, 0x0000000000000000, 7, 60),
-    (0, 0, 0, 0),
-    (0x0000000000000021, 0x0000000000000000, 1, 19),
-    (0x000000000079616d, 0x0000000000000000, 3, 36),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x6564756c636e6923, 0x0000000000000000, 8, 34),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000007d, 0x0000000000000000, 1, 21),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000074696465, 0x0000000000000000, 4, 69),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x00726f74636e7566, 0x0000000000000000, 7, 70),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000007b, 0x0000000000000000, 1, 20),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000706573, 0x0000000000000000, 3, 46),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000007461, 0x0000000000000000, 2, 61),
-    (0, 0, 0, 0),
-    (0x00796c7463617865, 0x0000000000000000, 7, 63),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000005e, 0x0000000000000000, 1, 32),
-    (0, 0, 0, 0),
-    (0x000000000000002e, 0x0000000000000000, 1, 13),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000002c, 0x0000000000000000, 1, 12),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x006563697474616c, 0x0000000000000000, 7, 71),
-    (0x0000000074736574, 0x0000000000000000, 4, 62),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000006e69, 0x0000000000000000, 2, 38),
-    (0x0000000000003d3c, 0x0000000000000000, 2, 6),
-    (0x000000000000002a, 0x0000000000000000, 1, 24),
-    (0x000074757074756f, 0x0000000000000000, 6, 55),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000003d3e, 0x0000000000000000, 2, 7),
-    (0x0000000000000028, 0x0000000000000000, 1, 10),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000003d21, 0x0000000000000000, 2, 5),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000000026, 0x0000000000000000, 1, 33),
-    (0, 0, 0, 0),
-    (0x7373657270707573, 0x0000000000000000, 8, 42),
-    (0x0000000000003e3d, 0x0000000000000000, 2, 4),
-    (0, 0, 0, 0),
-    (0x000000007265766f, 0x0000000000000000, 4, 43),
-    (0x7365727574786966, 0x0000000000000000, 8, 66),
-    (0, 0, 0, 0),
-    (0x0000000065757274, 0x0000000000000000, 4, 56),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000003a3c, 0x0000000000000000, 2, 8),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000003d, 0x0000000000000000, 1, 16),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000002d3a, 0x0000000000000000, 2, 3),
-    (0x000000000000003b, 0x0000000000000000, 1, 14),
-    (0x00736e6f6974706f, 0x0000000000000000, 7, 44),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000646e65, 0x0000000000000000, 3, 65),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x000000000000007e, 0x0000000000000000, 1, 31),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x6f6974616c6f6976, 0x000000000000006e, 9, 68),
-    (0, 0, 0, 0),
-    (0x000000006e696f6a, 0x0000000000000000, 4, 52),
-    (0, 0, 0, 0),
-    (0x000000000000007c, 0x0000000000000000, 1, 22),
-    (0, 0, 0, 0),
-    (0x0000000065707974, 0x0000000000000000, 4, 2),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x00000000006e696d, 0x0000000000000000, 3, 48),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000065646f63, 0x0000000000000000, 4, 37),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000000786966, 0x0000000000000000, 3, 40),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000065666173, 0x0000000000000000, 4, 41),
-    (0x000000006e61656d, 0x0000000000000000, 4, 51),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-    (0x0000000073657375, 0x0000000000000000, 4, 64),
-    (0, 0, 0, 0),
-    (0x0000000000676174, 0x0000000000000000, 3, 39),
-    (0x00007963696c6f70, 0x0000000000000000, 6, 53),
-    (0, 0, 0, 0),
-    (0, 0, 0, 0),
-];
+static WORDS: [(u64, u64, u32, u32); 256] = {
+    let mut t = [(0, 0, 0, 0); 256];
+    let mut i = 0;
+    while i < WORD_LIST.len() {
+        let w = WORD_LIST[i];
+        let (head, tail) = w.split_at(if w.len() > 8 { 8 } else { w.len() });
+        let slot = word_slot(word_key(head), w.len());
+        assert!(t[slot].3 == 0, "two words in a slot");
+        t[slot] = (word_key(head), word_key(tail), w.len() as u32, i as u32 + 1);
+        i += 1;
+    }
+    t
+};
 
 /// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its
 /// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`; its bytes 8 to 16 masked
@@ -656,7 +502,7 @@ fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
     let rest = u64::from_le_bytes(src[s + 8..s + 16].try_into().expect("the padded source"));
     let k = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));
     let t = rest & u64::MAX.checked_shr(128 - 8 * len.clamp(8, 16) as u32).unwrap_or(0);
-    let (key, tail, l, code) = WORDS[((k ^ len as u64).wrapping_mul(0x7a9f0944767a16e5) >> 56) as usize];
+    let (key, tail, l, code) = WORDS[word_slot(k, len)];
     code & 0u32.wrapping_sub(u32::from((key == k) & (tail == t) & (l as usize == len)))
 }
 
@@ -671,27 +517,18 @@ pub const TESTED: u32 = 0x2001;
 
 /// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else
 /// one of its own. Its row by its first byte, its kind and whether it is an extra.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {
+fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {
     let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);
-    let _ = (l, kind);
     match b {
         // `float_after`
-        0 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], 0x30..=0x39) && { (s..=l).any(|i| (i < n && (src[i] == b'.'))) }),
+        0 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && { (s..=l).any(|i| (i < n && (src[i] == b'.'))) }),
         // `json_bad`
-        13 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], 0x22) && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && matches!(src[i], 0x00..=0x1f)) || (esc && (i < n && !(i < n && matches!(src[i], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u'))))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
-            || (after && extra && r.code >> 16 & 0x8000 == 0x8000 && matches!(src[s], 0x2f) && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })
-            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], 0x30..=0x39) && l + 1 - s >= 1 && (!((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9')))).then_some(s).is_none())
-            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], 0x21 | 0x25..=0x26 | 0x28..=0x2f | 0x3a..=0x3e | 0x40 | 0x5b | 0x5d..=0x5e | 0x7b..=0x7e) && l + 1 - s >= 1 && (!((src[s] == b'-') && !(s + 1 < n && matches!(src[s + 1], b'0'..=b'9')))).then_some(s).is_none()),
+        13 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && matches!(src[i], 0x00..=0x1f)) || (esc && (i < n && !(i < n && matches!(src[i], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u'))))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
+            || (after && extra && r.code >> 16 & 0x8000 == 0x8000 && (src[s] == b'/') && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })
+            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && ((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))))
+            || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'!' | b'%'..=b'&' | b'('..=b'/' | b':'..=b'>' | b'@' | b'[' | b']'..=b'^' | b'{'..=b'~') && ((src[s] == b'-') && !(s + 1 < n && matches!(src[s + 1], b'0'..=b'9')))),
         _ => false,
     }
-}
-
-rerail_simd8::dispatch! {
-    fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool = token_test_on, on token_test_on_best;
 }
 
 /// Whether a token test of mark `b` holds at grammar token `j` of `recs` (`recs.len()`: the file's end), as tier 1's loop
