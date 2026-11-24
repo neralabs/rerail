@@ -73,7 +73,13 @@ jobs inside that probe. Step 1's figures say how often a chunk's make is partial
   rows on the pool (0494's groups already make documents as one group; `ast_wave::matched` already runs on the pool).
 - If partial makes save work, keep them lazy, but a waiting thread runs the maker's own jobs, not any job.
 
-Check: the rows are unchanged. Measured: the per-file window's wall time and CPU, and the wait samples.
+t50 records two tries this step must not repeat ("The same run after the fixes", items 3 and 4). Making the
+documents in groups as probes asked for them cost +411 G instructions over the whole make. Making groups side by side
+(`complete`), with makers running pool jobs that read the batch, grew one run past 20 GB. So the phase makes the
+batch whole, once, before any join reads it: no join runs inside it, so no read nests a make.
+
+Check: the rows are unchanged, and the peak is no higher than before. Measured: the per-file window's wall time and
+CPU, and the wait samples.
 
 ### Step 3: one search for every relation, in its block
 
