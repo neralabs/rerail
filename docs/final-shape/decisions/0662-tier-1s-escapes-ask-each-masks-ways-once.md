@@ -57,6 +57,32 @@ Kotlin, spark1, `RERAIL_GPU=cpu`:
 Tier 1's Rust is the same bytes (its digest compared with the caches off and on, over every step), and the
 answers are the same bytes as `kotlin.answers`. The suite passes, 105 of 105.
 
-**What is left.** Of a cold compile's 20 s, 13 s is the prover (0654). Of tier 1's 6 s, the most is still
-`in_region_of` over `inside_shift`, hashing and comparing expressions as cache keys, and the B-tree maps of the
-ways; an interned expression (an index, not a tree to hash) and ways as flat arrays would take most of that.
+### Then: bytes as bits, expressions interned (the user, 2026-11-23: "please do that work")
+
+A profile of the 6 s left: `in_region_of`'s own code (each `&` masking two contexts of 9 sets of 256
+`bool`s), hashing and comparing whole expressions as the cache's keys, the ways' B-tree maps, and
+`regional` walking each expression again at each level.
+
+- **A byte set is 4 words** (`Bytes`): the ways, `Ctx`, `bytes_at`, `exact_bytes`, the openers' and the ends'
+  bytes. Meeting, narrowing and widening are word operations. Cold code that writes 256 `bool`s takes
+  `bools()`, and `b[i]` reads a byte as before.
+- **A way is a flat list** (`Way`): its offsets in order, each once, as the B-tree map was.
+- **Expressions are interned** (`Shape`, `Gen::intern`): a node of its operands' ids, hashed and compared a
+  node at a time. Interning is faithful (a call keeps its function and every argument), so one id is one
+  expression, and anything of the expression may be kept by id. The kept ways are a vector by id.
+- **`in_region_of` walks ids** (`region_of`): it interns its expression once, and takes its operands' ids
+  from the shape. `regional`, `is_end_name`, a definition's and an opener's ids are kept by id, forgotten
+  wherever a name changes.
+
+| | Before | After |
+|---|---|---|
+| tier 1 as Rust, warm | 5.9 s | 1.8 s |
+| a cold compile | 20.4 s | 16.7 s |
+| a warm compile | 7.3 s | 3.3 s |
+| the Kotlin and bitlex suite | 172 s | 101 s |
+
+`rust_is_current` passes (tier 1's Rust is the shipped `tier1.rs`, byte for byte), the answers are
+`kotlin.answers`'s bytes, and the suite passes, 105 of 105.
+
+**What is left.** Of tier 1's 1.8 s, most is `in_region_of` making its answers (expressions built and
+simplified): the work itself. Of a cold compile's 16.7 s, 13.4 s is the prover (0654).

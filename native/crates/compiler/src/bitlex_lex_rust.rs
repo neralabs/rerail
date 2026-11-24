@@ -147,8 +147,8 @@ struct End {
     k: usize,
     /// The closer's first byte, this many before the token's last (`-1`: after it).
     ext: i64,
-    after: Option<[bool; 256]>,
-    last: [[bool; 256]; 4],
+    after: Option<Bytes>,
+    last: [Bytes; 4],
 }
 
 /// A region token's last byte `l`, as one of its closers leaves it: the closer's first byte `c`
@@ -402,7 +402,138 @@ struct Picks {
 /// A class's nibble-table bit: the high nibbles and the low nibbles it holds (one bit a nibble).
 /// The ways a mask may hold (`Gen::cubes`): each the bytes it needs at offsets from where it
 /// holds; an offset not named, any byte.
-type Cubes = Vec<std::collections::BTreeMap<i64, [bool; 256]>>;
+type Cubes = Vec<Way>;
+
+/// A set of bytes, a bit each: what a mask's ways need at an offset (`Gen::cubes`), and the
+/// bytes about a byte (`Ctx`). `b[i]` reads byte `i`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct Bytes([u64; 4]);
+
+impl Bytes {
+    const ALL: Bytes = Bytes([!0; 4]);
+    const NONE: Bytes = Bytes([0; 4]);
+
+    fn of(b: &[bool; 256]) -> Bytes {
+        let mut w = [0u64; 4];
+        (0..256).filter(|&i| b[i]).for_each(|i| w[i >> 6] |= 1 << (i & 63));
+        Bytes(w)
+    }
+
+    fn has(&self, i: usize) -> bool {
+        self.0[i >> 6] >> (i & 63) & 1 != 0
+    }
+
+    fn bools(&self) -> [bool; 256] {
+        std::array::from_fn(|i| self.has(i))
+    }
+
+    fn and(self, o: Bytes) -> Bytes {
+        Bytes(std::array::from_fn(|k| self.0[k] & o.0[k]))
+    }
+
+    fn or(self, o: Bytes) -> Bytes {
+        Bytes(std::array::from_fn(|k| self.0[k] | o.0[k]))
+    }
+
+    fn not(self) -> Bytes {
+        Bytes(self.0.map(|w| !w))
+    }
+
+    fn any(&self) -> bool {
+        self.0.iter().any(|&w| w != 0)
+    }
+
+    /// Some byte of both.
+    fn meets(&self, o: &Bytes) -> bool {
+        (0..4).any(|k| self.0[k] & o.0[k] != 0)
+    }
+
+    /// Every byte of `self` one of `o`'s.
+    fn within(&self, o: &Bytes) -> bool {
+        (0..4).all(|k| self.0[k] & !o.0[k] == 0)
+    }
+}
+
+impl std::ops::Index<usize> for Bytes {
+    type Output = bool;
+    fn index(&self, i: usize) -> &bool {
+        if self.has(i) { &true } else { &false }
+    }
+}
+
+impl From<[bool; 256]> for Bytes {
+    fn from(b: [bool; 256]) -> Bytes {
+        Bytes::of(&b)
+    }
+}
+
+/// One way a mask may hold (`Cubes`): the bytes it needs at some offsets from where it holds,
+/// in the offsets' order, each offset once.
+#[derive(Clone, Debug, Default)]
+struct Way(Vec<(i64, Bytes)>);
+
+impl Way {
+    fn get(&self, d: &i64) -> Option<&Bytes> {
+        self.0.iter().find(|(o, _)| o == d).map(|(_, b)| b)
+    }
+
+    fn contains_key(&self, d: &i64) -> bool {
+        self.0.iter().any(|(o, _)| o == d)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&i64, &Bytes)> {
+        self.0.iter().map(|(d, b)| (d, b))
+    }
+
+    /// Its bytes at `d` narrowed to `b`'s: whether any are left.
+    fn and_at(&mut self, d: i64, b: &Bytes) -> bool {
+        match self.0.binary_search_by_key(&d, |(o, _)| *o) {
+            Ok(i) => {
+                self.0[i].1 = self.0[i].1.and(*b);
+                self.0[i].1.any()
+            }
+            Err(i) => {
+                self.0.insert(i, (d, *b));
+                b.any()
+            }
+        }
+    }
+}
+
+impl FromIterator<(i64, Bytes)> for Way {
+    fn from_iter<I: IntoIterator<Item = (i64, Bytes)>>(it: I) -> Way {
+        let mut v: Vec<(i64, Bytes)> = Vec::new();
+        for (d, b) in it {
+            match v.binary_search_by_key(&d, |(o, _)| *o) {
+                Ok(i) => v[i].1 = b,
+                Err(i) => v.insert(i, (d, b)),
+            }
+        }
+        Way(v)
+    }
+}
+
+/// An expression interned (`Gen::intern`), its operands by id: hashed and compared a node at a
+/// time, not as a tree. Two expressions have one id where they are the same.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Shape {
+    Empty,
+    Name(u32),
+    Not(u32),
+    And(u32, u32),
+    Or(u32, u32),
+    Xor(u32, u32),
+    /// A call: its function's name id, and its arguments.
+    Call(u32, std::rc::Rc<[ArgShape]>),
+    Test(std::rc::Rc<Expr>),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ArgShape {
+    E(u32),
+    N(u64),
+    S(std::rc::Rc<[u8]>),
+}
 /// The ways each name may hold, as `Gen::cubes` reads it.
 type ByteMemo = HashMap<String, std::rc::Rc<Cubes>>;
 
@@ -448,34 +579,34 @@ struct RegionCheck {
 /// The bytes a mask is read at and those about it (`in_region_of`): offset `o` from it, -4 to 4,
 /// is `self.0[o + 4]`, every byte beyond. It reads as its own byte's set.
 #[derive(Clone)]
-struct Ctx([[bool; 256]; 9]);
+struct Ctx([Bytes; 9]);
 
 impl Ctx {
     fn all() -> Ctx {
-        Ctx([[true; 256]; 9])
+        Ctx([Bytes::ALL; 9])
     }
 
-    fn of(b: [bool; 256]) -> Ctx {
+    fn of(b: impl Into<Bytes>) -> Ctx {
         let mut c = Ctx::all();
-        c.0[4] = b;
+        c.0[4] = b.into();
         c
     }
 
-    fn at(&self, o: i64) -> [bool; 256] {
-        usize::try_from(o + 4).ok().and_then(|i| self.0.get(i)).copied().unwrap_or([true; 256])
+    fn at(&self, o: i64) -> Bytes {
+        usize::try_from(o + 4).ok().and_then(|i| self.0.get(i)).copied().unwrap_or(Bytes::ALL)
     }
 
     /// Its byte's set narrowed to `b`'s.
-    fn and0(&self, b: &[bool; 256]) -> Ctx {
+    fn and0(&self, b: &Bytes) -> Ctx {
         let mut c = self.clone();
-        c.0[4] = std::array::from_fn(|i| c.0[4][i] && b[i]);
+        c.0[4] = c.0[4].and(*b);
         c
     }
 }
 
 impl std::ops::Deref for Ctx {
-    type Target = [bool; 256];
-    fn deref(&self) -> &[bool; 256] {
+    type Target = Bytes;
+    fn deref(&self) -> &Bytes {
         &self.0[4]
     }
 }
@@ -632,10 +763,10 @@ fn widen(v: Cubes) -> Cubes {
         return v;
     }
     let mut c = v[0].clone();
-    c.retain(|d, _| v.iter().all(|w| w.contains_key(d)));
+    c.0.retain(|(d, _)| v.iter().all(|w| w.contains_key(d)));
     for w in &v[1..] {
-        for (d, b) in c.iter_mut() {
-            (0..256).for_each(|i| b[i] |= w[d][i]);
+        for (d, b) in c.0.iter_mut() {
+            *b = b.or(w.get(d).copied().unwrap_or(Bytes::NONE));
         }
     }
     vec![c]
@@ -700,7 +831,7 @@ struct Gen<'a> {
     ends: Option<Vec<End>>,
     /// The fills shown to hold only in a body's bytes (`fill_kept`), by their key.
     fill_proofs: std::cell::RefCell<HashMap<String, bool>>,
-    opener_at: [[bool; 256]; 4],
+    opener_at: [Bytes; 4],
     /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
     start_checks: Vec<(String, Expr, [bool; 256])>,
     /// The escapes tested over each stretch of code between region tokens (`stretch_escape`):
@@ -712,25 +843,36 @@ struct Gen<'a> {
     /// tokens (`code_l`, `code_escape`): their masks' lines, then their tests.
     code_after: String,
     end_checks: Vec<(String, usize)>,
-    /// `cubes` of each name, kept across its calls: each call made its own memo again, and
-    /// Kotlin's escapes asked it of the same masks some millions of times. Only a name not
-    /// `tangled`: its ways are the same whichever call asks, a cycle's placeholder met only as its
-    /// own. Forgotten where a name it read changes (`forget_name`), or the regions (`forget_cubes`).
-    cube_cache: std::cell::RefCell<rustc_hash::FxHashMap<String, std::rc::Rc<Cubes>>>,
+    /// The expressions `cubes` has read, interned: each a `Shape` of interned operands, by id.
+    shapes: std::cell::RefCell<Vec<Shape>>,
+    shape_ids: std::cell::RefCell<rustc_hash::FxHashMap<Shape, u32>>,
+    /// `regional_id`'s answers by shape id: 0 not asked, 1 no, 2 yes.
+    regional_ids: std::cell::RefCell<Vec<u8>>,
+    /// `opener_id`'s and `def_id`'s answers.
+    opener_ids: std::cell::RefCell<Vec<u32>>,
+    def_ids: std::cell::RefCell<Vec<u32>>,
+    /// `is_end_name`'s answers by name id, likewise.
+    end_names: std::cell::RefCell<Vec<u8>>,
+    /// The names in `shapes`, by id.
+    name_strs: std::cell::RefCell<Vec<String>>,
+    name_ids: std::cell::RefCell<rustc_hash::FxHashMap<String, u32>>,
+    /// `cubes` of each shape, kept across its calls: each call made its own memo again, and
+    /// Kotlin's escapes asked it of the same masks some millions of times. A name only if not
+    /// `tangled` (or a class): its ways are the same whichever call asks, a cycle's placeholder
+    /// met only as its own; any other shape only if made from no tangled name, and not in a
+    /// name's definition (`cube_open`). Forgotten where a name it read changes (`forget_name`),
+    /// or the regions (`forget_cubes`).
+    kept: std::cell::RefCell<Vec<Option<std::rc::Rc<Cubes>>>>,
     /// The tangled names `cubes` has read (`tangled`): a value that read one is not kept.
     cube_tangled: std::cell::Cell<u64>,
-    /// The names whose definitions `cubes` is in (`shape_cache`).
+    /// The names whose definitions `cubes` is in.
     cube_open: std::cell::Cell<u32>,
-    /// The names `cubes` and `exact_bytes` have looked up (`forget_name`).
-    cube_read: std::cell::RefCell<rustc_hash::FxHashSet<String>>,
-    /// `tangled`'s names, made once (emptied with `cube_cache`).
-    tangles: std::cell::RefCell<Option<std::collections::HashSet<String>>>,
-    /// `cubes` of each expression not a name, kept by its structure on the same terms as
-    /// `cube_cache`: `in_region_of` asks `bytes_at` at every level of the expression it walks,
-    /// so each level's ways were made again from its whole subtree's.
-    shape_cache: std::cell::RefCell<rustc_hash::FxHashMap<Expr, std::rc::Rc<Cubes>>>,
-    /// `opener_bytes`' answers, by region and offset (emptied with `cube_cache`).
-    opener_cache: std::cell::RefCell<HashMap<(usize, i64), [bool; 256]>>,
+    /// The names (by id) `cubes` and `exact_bytes` have looked up (`forget_name`).
+    cube_read: std::cell::RefCell<Vec<bool>>,
+    /// `tangled`'s names by id, made once (emptied with `kept`).
+    tangles: std::cell::RefCell<Option<Vec<bool>>>,
+    /// `opener_bytes`' answers, by region and offset (emptied with `kept`).
+    opener_cache: std::cell::RefCell<HashMap<(usize, i64), Bytes>>,
 }
 
 impl Gen<'_> {
@@ -1389,9 +1531,12 @@ impl Gen<'_> {
     /// The bytes `e` holds at exactly (a class, or masks of classes), where it is so.
     /// The regions changed: every kept value of `cubes` is forgotten.
     fn forget_cubes(&self) {
-        self.cube_cache.borrow_mut().clear();
+        self.kept.borrow_mut().clear();
+        self.regional_ids.borrow_mut().clear();
+        self.end_names.borrow_mut().clear();
+        self.def_ids.borrow_mut().clear();
+        self.opener_ids.borrow_mut().clear();
         self.opener_cache.borrow_mut().clear();
-        self.shape_cache.borrow_mut().clear();
         *self.tangles.borrow_mut() = None;
     }
 
@@ -1400,7 +1545,12 @@ impl Gen<'_> {
     /// definition reads, changes none of them; else they are forgotten. The cycles are made again.
     fn forget_name(&self, n: &str) {
         *self.tangles.borrow_mut() = None;
-        let read = self.cube_read.borrow().contains(n) || self.defs.iter().any(|(m, d)| m != n && mentions(d, n));
+        self.regional_ids.borrow_mut().clear();
+        self.end_names.borrow_mut().clear();
+        self.def_ids.borrow_mut().clear();
+        self.opener_ids.borrow_mut().clear();
+        let id = self.name_ids.borrow().get(n).copied();
+        let read = id.is_some_and(|id| self.cube_read.borrow().get(id as usize).copied().unwrap_or(false)) || self.defs.iter().any(|(m, d)| m != n && mentions(d, n));
         if read {
             self.forget_cubes();
         }
@@ -1411,11 +1561,16 @@ impl Gen<'_> {
     /// placeholder), so in such a cycle a name's ways depend on which of the cycle's names was
     /// read first. A name that reads only itself (a carry) meets its placeholder at the same
     /// place wherever it is asked from, and is not tangled.
-    fn tangled(&self, n: &str) -> bool {
+    fn tangled(&self, n: u32) -> bool {
         if self.tangles.borrow().is_none() {
-            *self.tangles.borrow_mut() = Some(self.make_tangles());
+            let names = self.make_tangles();
+            let ids: Vec<u32> = names.iter().map(|m| self.name_id(m)).collect();
+            let mut t = vec![false; self.name_strs.borrow().len()];
+            ids.iter().for_each(|&i| t[i as usize] = true);
+            *self.tangles.borrow_mut() = Some(t);
         }
-        self.tangles.borrow().as_ref().is_some_and(|t| t.contains(n))
+        // A name not interned when they were made is in no definition, and no cycle.
+        self.tangles.borrow().as_ref().is_some_and(|t| t.get(n as usize).copied().unwrap_or(false))
     }
 
     /// `tangled`'s names: the strongly connected components of the names' reads.
@@ -1512,7 +1667,7 @@ impl Gen<'_> {
     /// The bytes region `k`'s opener may be at `d` bytes on from its first (`bytes_at`, with a
     /// memo of its own), kept: `shift_before`'s `near` asks it for each way and offset a mask may
     /// hold, and Kotlin's escapes some millions of times.
-    fn opener_bytes(&self, k: usize, d: i64) -> [bool; 256] {
+    fn opener_bytes(&self, k: usize, d: i64) -> Bytes {
         if let Some(b) = self.opener_cache.borrow().get(&(k, d)) {
             return *b;
         }
@@ -1522,29 +1677,183 @@ impl Gen<'_> {
     }
 
     /// `cubes` or `exact_bytes` looked up name `n` (`forget_name`).
-    fn note_read(&self, n: &str) {
-        if !self.cube_read.borrow().contains(n) {
-            self.cube_read.borrow_mut().insert(n.to_owned());
+    fn note_read(&self, n: u32) {
+        let mut r = self.cube_read.borrow_mut();
+        if r.len() <= n as usize {
+            r.resize(n as usize + 1, false);
         }
+        r[n as usize] = true;
     }
 
-    fn exact_bytes(&self, e: &Expr) -> Option<[bool; 256]> {
-        match e {
-            Expr::Empty => Some([false; 256]),
-            Expr::Name(n) => match { self.note_read(n); self.class_bytes.get(n) } {
-                Some(b) => Some(*b),
-                None if !self.regional.contains(n) => self.defs.get(n).and_then(|d| self.exact_bytes(d)),
-                None => None,
-            },
-            Expr::Not(a) => self.exact_bytes(a).map(|b| b.map(|x| !x)),
-            Expr::And(a, b) => {
-                let (x, y) = (self.exact_bytes(a)?, self.exact_bytes(b)?);
-                Some(std::array::from_fn(|i| x[i] && y[i]))
+    /// Name `n`'s id in `shapes`.
+    fn name_id(&self, n: &str) -> u32 {
+        if let Some(&i) = self.name_ids.borrow().get(n) {
+            return i;
+        }
+        let i = self.name_strs.borrow().len() as u32;
+        self.name_strs.borrow_mut().push(n.to_owned());
+        self.name_ids.borrow_mut().insert(n.to_owned(), i);
+        i
+    }
+
+    fn shape_id(&self, s: Shape) -> u32 {
+        if let Some(&i) = self.shape_ids.borrow().get(&s) {
+            return i;
+        }
+        let i = self.shapes.borrow().len() as u32;
+        self.shapes.borrow_mut().push(s.clone());
+        self.shape_ids.borrow_mut().insert(s, i);
+        i
+    }
+
+    /// `e`'s id: its shape's, its operands interned first.
+    fn intern(&self, e: &Expr) -> u32 {
+        let s = match e {
+            Expr::Empty => Shape::Empty,
+            Expr::Name(n) => Shape::Name(self.name_id(n)),
+            Expr::Not(a) => Shape::Not(self.intern(a)),
+            Expr::And(a, b) => Shape::And(self.intern(a), self.intern(b)),
+            Expr::Or(a, b) => Shape::Or(self.intern(a), self.intern(b)),
+            Expr::Xor(a, b) => Shape::Xor(self.intern(a), self.intern(b)),
+            Expr::Call(f, args) => Shape::Call(
+                self.name_id(f),
+                args.iter()
+                    .map(|a| match a {
+                        Arg::E(x) => ArgShape::E(self.intern(x)),
+                        Arg::N(k) => ArgShape::N(*k),
+                        Arg::S(t) => ArgShape::S(t.as_slice().into()),
+                    })
+                    .collect(),
+            ),
+            Expr::Test { .. } => Shape::Test(std::rc::Rc::new(e.clone())),
+        };
+        self.shape_id(s)
+    }
+
+    /// Region `k`'s opener, interned (emptied with `kept`).
+    fn opener_id(&self, k: usize) -> u32 {
+        if let Some(&i) = self.opener_ids.borrow().get(k) {
+            return i;
+        }
+        let ids: Vec<u32> = self.kinds.iter().map(|r| self.intern(&r.opener)).collect();
+        let i = ids[k];
+        *self.opener_ids.borrow_mut() = ids;
+        i
+    }
+
+    /// Name id `n`'s definition `d`, interned (emptied wherever a name changes).
+    fn def_id(&self, n: u32, d: &Expr) -> u32 {
+        if let Some(&i) = self.def_ids.borrow().get(n as usize)
+            && i != u32::MAX
+        {
+            return i;
+        }
+        let i = self.intern(d);
+        let mut v = self.def_ids.borrow_mut();
+        if v.len() <= n as usize {
+            v.resize(n as usize + 1, u32::MAX);
+        }
+        v[n as usize] = i;
+        i
+    }
+
+    /// `is_end_name` of name `name` (id `n`), kept (emptied wherever a name changes).
+    fn is_end_id(&self, n: u32, name: &str) -> bool {
+        if let Some(&r) = self.end_names.borrow().get(n as usize)
+            && r != 0
+        {
+            return r == 2;
+        }
+        let r = self.is_end_name(name);
+        let mut v = self.end_names.borrow_mut();
+        if v.len() <= n as usize {
+            v.resize(n as usize + 1, 0);
+        }
+        v[n as usize] = if r { 2 } else { 1 };
+        r
+    }
+
+    /// Shape `id`.
+    fn shape(&self, id: u32) -> Shape {
+        self.shapes.borrow()[id as usize].clone()
+    }
+
+    /// Whether name id `f` is `name`.
+    fn is_fn(&self, f: u32, name: &str) -> bool {
+        self.name_strs.borrow()[f as usize] == name
+    }
+
+    /// `prev`'s or `next`'s operand and its count (`prev` negative), where call `f` of `args` is
+    /// one: `exact`, the count a number or none.
+    fn shift_of(&self, f: u32, args: &[ArgShape]) -> Option<(u32, i64, bool)> {
+        let next = self.is_fn(f, "next");
+        if !next && !self.is_fn(f, "prev") {
+            return None;
+        }
+        let ArgShape::E(a) = args.first()? else { return None };
+        let (k, exact) = match args.get(1) {
+            None => (1, true),
+            Some(ArgShape::N(k)) => (*k as i64, true),
+            _ => (1, false),
+        };
+        Some((*a, if next { k } else { -k }, exact))
+    }
+
+    /// `regional` of interned expression `id`, kept (emptied wherever a name changes).
+    fn regional_id(&self, id: u32) -> bool {
+        if let Some(&r) = self.regional_ids.borrow().get(id as usize)
+            && r != 0
+        {
+            return r == 2;
+        }
+        let r = match self.shape(id) {
+            Shape::Name(n) => self.regional.contains(&self.name_strs.borrow()[n as usize]),
+            Shape::Empty | Shape::Test(_) => false,
+            Shape::Not(a) => self.regional_id(a),
+            Shape::And(a, b) | Shape::Or(a, b) | Shape::Xor(a, b) => self.regional_id(a) || self.regional_id(b),
+            Shape::Call(_, args) => args.iter().any(|a| matches!(a, ArgShape::E(x) if self.regional_id(*x))),
+        };
+        let mut v = self.regional_ids.borrow_mut();
+        if v.len() <= id as usize {
+            v.resize(id as usize + 1, 0);
+        }
+        v[id as usize] = if r { 2 } else { 1 };
+        r
+    }
+
+    fn kept_of(&self, id: u32) -> Option<std::rc::Rc<Cubes>> {
+        self.kept.borrow().get(id as usize).and_then(|c| c.clone())
+    }
+
+    fn keep(&self, id: u32, c: &std::rc::Rc<Cubes>) {
+        let mut k = self.kept.borrow_mut();
+        if k.len() <= id as usize {
+            k.resize(id as usize + 1, None);
+        }
+        k[id as usize] = Some(c.clone());
+    }
+
+    fn exact_bytes(&self, e: &Expr) -> Option<Bytes> {
+        self.exact_of(self.intern(e))
+    }
+
+    /// The bytes interned expression `id` holds at, where they are all it reads.
+    fn exact_of(&self, id: u32) -> Option<Bytes> {
+        let s = self.shapes.borrow()[id as usize].clone();
+        match s {
+            Shape::Empty => Some(Bytes::NONE),
+            Shape::Name(n) => {
+                self.note_read(n);
+                let name = self.name_strs.borrow()[n as usize].clone();
+                match self.class_bytes.get(&name) {
+                    Some(b) => Some(Bytes::of(b)),
+                    None if !self.regional.contains(&name) => self.defs.get(&name).and_then(|d| self.exact_bytes(d)),
+                    None => None,
+                }
             }
-            Expr::Or(a, b) => {
-                let (x, y) = (self.exact_bytes(a)?, self.exact_bytes(b)?);
-                Some(std::array::from_fn(|i| x[i] || y[i]))
-            }
+            Shape::Not(a) => self.exact_of(a).map(Bytes::not),
+            Shape::And(a, b) => Some(self.exact_of(a)?.and(self.exact_of(b)?)),
+            Shape::Or(a, b) => Some(self.exact_of(a)?.or(self.exact_of(b)?)),
             _ => None,
         }
     }
@@ -1552,12 +1861,13 @@ impl Gen<'_> {
     /// What a mask of stage 1 is at the bytes `at` of a token: none where it holds at none of
     /// them, every one where it holds exactly at all of them, else `test`.
     fn known_over(&self, e: &Expr, at: &[bool; 256], test: impl FnOnce() -> Option<String>) -> Option<Known> {
+        let at = Bytes::of(at);
         let b = self.bytes_at(e, 0, &mut HashMap::new());
-        if !(0..256).any(|i| at[i] && b[i]) {
+        if !at.meets(&b) {
             return Some(Known::No);
         }
         if let Some(x) = self.exact_bytes(e)
-            && (0..256).all(|i| !at[i] || x[i])
+            && at.within(&x)
         {
             return Some(Known::Yes);
         }
@@ -1777,7 +2087,7 @@ impl Gen<'_> {
         if z.as_ref().is_some_and(|z| self.regional(z)) {
             return Ok(false);
         }
-        let zb = z.as_ref().map_or([false; 256], |z| self.bytes_at(z, 0, &mut HashMap::new()));
+        let zb = z.as_ref().map_or(Bytes::NONE, |z| self.bytes_at(z, 0, &mut HashMap::new()));
         if (0..256).any(|b| zb[b] && self.skipped[b]) {
             return Ok(false);
         }
@@ -1907,8 +2217,8 @@ impl Gen<'_> {
     fn fits_opener(&self, e: &Expr, k: usize, q: i64) -> bool {
         let Some(r) = self.kinds.get(k) else { return true };
         let mut memo = HashMap::new();
-        let at: Vec<[bool; 256]> = (0..4).map(|d| self.bytes_at(&r.opener, d, &mut memo)).collect();
-        self.cubes(e, &mut memo).iter().any(|c| c.iter().all(|(o, b)| usize::try_from(q + o).ok().and_then(|d| at.get(d)).is_none_or(|x| (0..256).any(|i| x[i] && b[i]))))
+        let at: Vec<Bytes> = (0..4).map(|d| self.bytes_at(&r.opener, d, &mut memo)).collect();
+        self.cubes(e, &mut memo).iter().any(|c| c.iter().all(|(o, b)| usize::try_from(q + o).ok().and_then(|d| at.get(d)).is_none_or(|x| x.meets(b))))
     }
 
     /// Whether a way `e` may hold fits the bytes of region `k`'s closer, at its byte `rr`.
@@ -1924,8 +2234,8 @@ impl Gen<'_> {
             alts.push((c2.clone(), i64::from(*m)));
         }
         alts.iter().filter(|(_, n)| rr < (*n).max(1)).any(|(c, _)| {
-            let at: Vec<[bool; 256]> = (0..4).map(|d| self.bytes_at(c, d, &mut memo)).collect();
-            cubes.iter().any(|cube| cube.iter().all(|(o, b)| usize::try_from(rr + o).ok().and_then(|d| at.get(d)).is_none_or(|x| (0..256).any(|i| x[i] && b[i]))))
+            let at: Vec<Bytes> = (0..4).map(|d| self.bytes_at(c, d, &mut memo)).collect();
+            cubes.iter().any(|cube| cube.iter().all(|(o, b)| usize::try_from(rr + o).ok().and_then(|d| at.get(d)).is_none_or(|x| x.meets(b))))
         })
     }
 
@@ -2099,7 +2409,7 @@ impl Gen<'_> {
             }
             let e1 = self.in_region(stop, Some(k), 1).filter(|v| !self.regional(v))?;
             // The run's bytes.
-            let mut w = self.bytes_at(&s1, 0, &mut memo);
+            let mut w = self.bytes_at(&s1, 0, &mut memo).bools();
             loop {
                 let mut grew = false;
                 for &a in &atoms {
@@ -2126,7 +2436,7 @@ impl Gen<'_> {
             let cb = self.bytes_at(&r.closers(), 0, &mut memo);
             for (_, v) in self.closer_parts(stop, k)? {
                 let e2 = v.first()?;
-                if self.regional(e2) || !self.holds_after(e2, &w, &cb, &atoms)? {
+                if self.regional(e2) || !self.holds_after(e2, &w, &cb.bools(), &atoms)? {
                     return None;
                 }
             }
@@ -2168,20 +2478,26 @@ impl Gen<'_> {
     /// `in_region` where the byte is one of `ctx` (the bytes the rest of a `&` holds at): a mask
     /// that holds at none of them is none there.
     fn in_region_of(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
+        self.region_of(e, self.intern(e), k, part, ctx, memo)
+    }
+
+    /// `in_region_of` of `e`, interned as `id`: its operands walked by their ids.
+    fn region_of(&self, e: &Expr, id: u32, k: Option<usize>, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
         let all = || Expr::Not(Box::new(Expr::Empty));
         let opens = self.opens.as_ref()?;
         // A region's start is its opener's first byte.
         let start_ctx: Ctx;
         let ctx = match (k, part) {
             (Some(k), 0) if k < self.kinds.len() => {
-                let ob = self.bytes_at(&self.kinds[k].opener, 0, memo);
+                let ob = bytes_in(&self.cubes_id(self.opener_id(k), memo), 0);
                 start_ctx = ctx.and0(&ob);
                 &start_ctx
             }
             _ => ctx,
         };
-        let here = self.bytes_at(e, 0, memo);
-        if !(0..256).any(|i| here[i] && ctx[i]) {
+        let shape = self.shape(id);
+        let here = bytes_in(&self.cubes_id(id, memo), 0);
+        if !here.meets(ctx) {
             return Some(Expr::Empty);
         }
         // A fill the loop keeps, outside the regions: itself.
@@ -2191,7 +2507,7 @@ impl Gen<'_> {
         // Outside the regions, a shift or a fill of masks made of them: of their values outside,
         // where what is in a region before or after the byte can not change it.
         if k.is_none()
-            && self.regional(e)
+            && self.regional_id(id)
             && let Expr::Call(f, args) = e
             && (f == "prev" || f == "next" || f == "fill")
         {
@@ -2205,7 +2521,7 @@ impl Gen<'_> {
         }
         // In a region's part, likewise, of the masks' values in its parts.
         if let Some(kk) = k
-            && self.regional(e)
+            && self.regional_id(id)
             && let Expr::Call(f, args) = e
             && (f == "prev" || f == "next" || f == "fill")
         {
@@ -2213,21 +2529,22 @@ impl Gen<'_> {
         }
         Some(match e {
             // Assumed at a region token's last byte: none outside one, nor before its closer.
-            Expr::Name(n) if self.is_end_name(n) => {
+            Expr::Name(n) if matches!(shape, Shape::Name(m) if self.is_end_id(m, n)) => {
                 if k.is_none() || !is_closer(part) {
                     Expr::Empty
                 } else {
                     return None;
                 }
             }
-            Expr::Name(n) if self.regional.contains(n) => {
+            Expr::Name(n) if self.regional_id(id) => {
                 let kind = |p: &str| opens.iter().position(|(q, _, _)| n.strip_prefix(p).and_then(|r| r.strip_prefix('_')) == Some(q.as_str()));
                 let holds = if let Some(q) = kind("o") {
                     k == Some(q) && part == 0
                 } else if let Some(q) = kind("f") {
                     k == Some(q) && !is_closer(part)
                 } else if let Some(d) = self.defs.get(n) {
-                    return self.in_region_of(d, k, part, ctx, memo);
+                    let Shape::Name(m) = shape else { unreachable!("a name's shape") };
+                    return self.region_of(d, self.def_id(m, d), k, part, ctx, memo);
                 } else {
                     // The hidden bytes.
                     k.is_some() && part > 0
@@ -2235,28 +2552,35 @@ impl Gen<'_> {
                 if holds { all() } else { Expr::Empty }
             }
             Expr::Name(_) | Expr::Empty => e.clone(),
-            Expr::Not(a) => simplify(Expr::Not(Box::new(self.in_region_of(a, k, part, ctx, memo)?))),
+            Expr::Not(a) => {
+                let Shape::Not(ia) = shape else { unreachable!("a `~`'s shape") };
+                simplify(Expr::Not(Box::new(self.region_of(a, ia, k, part, ctx, memo)?)))
+            }
             Expr::And(a, b) => {
+                let Shape::And(ia, ib) = shape else { unreachable!("a `&`'s shape") };
                 // Each side read where the other holds, at the byte and those about it.
                 let mut ca = ctx.clone();
                 let mut cb = ctx.clone();
-                let (wa, wb) = (self.cubes(a, memo), self.cubes(b, memo));
+                let (wa, wb) = (self.cubes_id(ia, memo), self.cubes_id(ib, memo));
                 for o in -4..=4i64 {
                     let (x, y) = (bytes_in(&wa, o), bytes_in(&wb, o));
                     let i = (o + 4) as usize;
-                    ca.0[i] = std::array::from_fn(|c| ca.0[i][c] && y[c]);
-                    cb.0[i] = std::array::from_fn(|c| cb.0[i][c] && x[c]);
+                    ca.0[i] = ca.0[i].and(y);
+                    cb.0[i] = cb.0[i].and(x);
                 }
                 // A side that is none there: none, whatever the other.
-                match (self.in_region_of(a, k, part, &ca, memo), self.in_region_of(b, k, part, &cb, memo)) {
+                match (self.region_of(a, ia, k, part, &ca, memo), self.region_of(b, ib, k, part, &cb, memo)) {
                     (Some(Expr::Empty), _) | (_, Some(Expr::Empty)) => Expr::Empty,
                     (Some(x), Some(y)) => simplify(Expr::And(Box::new(x), Box::new(y))),
                     _ => return None,
                 }
             }
-            Expr::Or(a, b) => simplify(Expr::Or(Box::new(self.in_region_of(a, k, part, ctx, memo)?), Box::new(self.in_region_of(b, k, part, ctx, memo)?))),
-            Expr::Xor(a, b) => simplify(Expr::Xor(Box::new(self.in_region_of(a, k, part, ctx, memo)?), Box::new(self.in_region_of(b, k, part, ctx, memo)?))),
-            Expr::Call(..) if !self.regional(e) => e.clone(),
+            Expr::Or(a, b) | Expr::Xor(a, b) => {
+                let (Shape::Or(ia, ib) | Shape::Xor(ia, ib)) = shape else { unreachable!("a `|`'s shape") };
+                let (x, y) = (Box::new(self.region_of(a, ia, k, part, ctx, memo)?), Box::new(self.region_of(b, ib, k, part, ctx, memo)?));
+                simplify(if matches!(e, Expr::Or(..)) { Expr::Or(x, y) } else { Expr::Xor(x, y) })
+            }
+            Expr::Call(..) if !self.regional_id(id) => e.clone(),
             Expr::Call(..) | Expr::Test { .. } => return None,
         })
     }
@@ -2267,26 +2591,22 @@ impl Gen<'_> {
     /// out; `next(a, j)` likewise at a region token's start; `fill(s, e)` where `e` stops it at
     /// a region token's last byte (or at its closer after it), and `s` does not start it there.
     fn outside_shift(&self, f: &str, args: &[Arg], ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
-        self.shift_before(f, args, ctx, &|_| [true; 256], memo)
+        self.shift_before(f, args, ctx, &|_| Bytes::ALL, memo)
     }
 
     /// `outside_shift`, where the bytes `o` on from the byte are `near(o)`'s.
-    fn shift_before(&self, f: &str, args: &[Arg], ctx: &Ctx, near: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo) -> Option<Expr> {
+    fn shift_before(&self, f: &str, args: &[Arg], ctx: &Ctx, near: &dyn Fn(i64) -> Bytes, memo: &mut ByteMemo) -> Option<Expr> {
         let ends = self.ends.as_ref()?;
-        let all = [true; 256];
-        let meets = |x: &[bool; 256], y: &[bool; 256]| (0..256).any(|i| x[i] && y[i]);
+        let all = Bytes::ALL;
+        let meets = |x: &Bytes, y: &Bytes| x.meets(y);
         // Whether some way `e` may hold at a byte of `ctx` fits the bytes `at(o)` the place
         // leaves `o` bytes on.
-        let fits = |e: &Expr, at: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo| {
+        let fits = |e: &Expr, at: &dyn Fn(i64) -> Bytes, memo: &mut ByteMemo| {
             self.cubes(e, memo).iter().any(|c| {
-                let here = c.get(&0).copied().unwrap_or(all);
-                let here: [bool; 256] = std::array::from_fn(|i| here[i] && ctx[i]);
-                let at = |o: i64| {
-                    let (x, y, z) = (at(o), near(o), ctx.at(o));
-                    std::array::from_fn::<bool, 256, _>(|i| x[i] && y[i] && z[i])
-                };
+                let here = c.get(&0).copied().unwrap_or(all).and(**ctx);
+                let at = |o: i64| at(o).and(near(o)).and(ctx.at(o));
                 // The place fits the bytes about the byte too.
-                meets(&here, &at(0)) && (-4..=4).all(|o| meets(&[true; 256], &at(o))) && c.iter().all(|(o, b)| meets(b, &at(*o)))
+                meets(&here, &at(0)) && (-4..=4).all(|o| at(o).any()) && c.iter().all(|(o, b)| meets(b, &at(*o)))
             })
         };
         match (f, args) {
@@ -2348,8 +2668,8 @@ impl Gen<'_> {
                 if self.regional(&s0) || self.regional(&e0) {
                     return None;
                 }
-                let stops = |s: &Expr, e: &Expr, yb: &[bool; 256], memo: &mut ByteMemo| {
-                    !meets(&self.bytes_at(s, 0, memo), yb) && self.exact_bytes(e).is_some_and(|x| (0..256).all(|i| !yb[i] || x[i]))
+                let stops = |s: &Expr, e: &Expr, yb: &Bytes, memo: &mut ByteMemo| {
+                    !meets(&self.bytes_at(s, 0, memo), yb) && self.exact_bytes(e).is_some_and(|x| yb.within(&x))
                 };
                 for end in ends {
                     // `s` (anywhere) does not start it there.
@@ -2380,17 +2700,13 @@ impl Gen<'_> {
     fn inside_shift(&self, f: &str, args: &[Arg], k: usize, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
         let r = self.kinds.get(k)?;
         let (opener, closers) = (r.opener.clone(), r.closers());
-        let all = [true; 256];
-        let meets = |x: &[bool; 256], y: &[bool; 256]| (0..256).any(|i| x[i] && y[i]);
-        let fits = |e: &Expr, at: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo| {
+        let all = Bytes::ALL;
+        let meets = |x: &Bytes, y: &Bytes| x.meets(y);
+        let fits = |e: &Expr, at: &dyn Fn(i64) -> Bytes, memo: &mut ByteMemo| {
             self.cubes(e, memo).iter().any(|c| {
-                let here = c.get(&0).copied().unwrap_or(all);
-                let here: [bool; 256] = std::array::from_fn(|i| here[i] && ctx[i]);
-                let at = |o: i64| {
-                    let (x, z) = (at(o), ctx.at(o));
-                    std::array::from_fn::<bool, 256, _>(|i| x[i] && z[i])
-                };
-                meets(&here, &at(0)) && (-4..=4).all(|o| meets(&[true; 256], &at(o))) && c.iter().all(|(o, b)| meets(b, &at(*o)))
+                let here = c.get(&0).copied().unwrap_or(all).and(**ctx);
+                let at = |o: i64| at(o).and(ctx.at(o));
+                meets(&here, &at(0)) && (-4..=4).all(|o| at(o).any()) && c.iter().all(|(o, b)| meets(b, &at(*o)))
             })
         };
         // The bytes `d` on from the token's first byte, or from its closer's first.
@@ -2409,7 +2725,7 @@ impl Gen<'_> {
                 let e = shifted(a);
                 // A place where the shift reads another part (`there`, none: out of the token)
                 // than `v`'s: the same value there, or no way it holds fits it.
-                let safe = |v: &Expr, there: Option<Expr>, at: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo| same(&there, v) || (!fits(&e, at, memo) && !fits(&shifted(v), at, memo));
+                let safe = |v: &Expr, there: Option<Expr>, at: &dyn Fn(i64) -> Bytes, memo: &mut ByteMemo| same(&there, v) || (!fits(&e, at, memo) && !fits(&shifted(v), at, memo));
                 if part == 0 {
                     // The token's first byte (its opener's): before it is as before a byte outside.
                     if f != "prev" {
@@ -2512,7 +2828,7 @@ impl Gen<'_> {
                 let v0 = val(a, 0, memo);
                 if f == "prev" {
                     // From the token's first byte `q` on: `j - q` before it, out of it; at it, part 0.
-                    let at_open: Vec<[bool; 256]> = (0..8).map(|d| from_open(d - 4, memo)).collect();
+                    let at_open: Vec<Bytes> = (0..8).map(|d| from_open(d - 4, memo)).collect();
                     for q in 1..=j {
                         let at = |o: i64| at_open.get((q + o + 4) as usize).copied().unwrap_or(all);
                         if !safe(&v, if q == j { v0.clone() } else { None }, &at, memo) {
@@ -2522,7 +2838,7 @@ impl Gen<'_> {
                     if part == 2 {
                         // From the closer's first byte `r` on, `j` or more: in the closer.
                         let v2 = val(a, 2, memo);
-                        let at_close: Vec<[bool; 256]> = (0..8).map(|d| from_close(d - 4, memo)).collect();
+                        let at_close: Vec<Bytes> = (0..8).map(|d| from_close(d - 4, memo)).collect();
                         for rr in j..i64::from(r.bytes) {
                             let at = |o: i64| at_close.get((rr + o + 4) as usize).copied().unwrap_or(all);
                             if !safe(&v, v2.clone(), &at, memo) {
@@ -2536,7 +2852,7 @@ impl Gen<'_> {
                     }
                     // `q` before the closer's first byte: `j - q` on, in the closer.
                     let v2 = val(a, 2, memo);
-                    let at_close: Vec<[bool; 256]> = (0..8).map(|d| from_close(d - 4, memo)).collect();
+                    let at_close: Vec<Bytes> = (0..8).map(|d| from_close(d - 4, memo)).collect();
                     for q in 1..=j {
                         let at = |o: i64| at_close.get((o - q + 4) as usize).copied().unwrap_or(all);
                         let there = if j - q < i64::from(r.bytes) && !r.outside { v2.clone() } else { None };
@@ -2562,15 +2878,15 @@ impl Gen<'_> {
                 // At the token's first byte `e` stops it and `s` does not start it, in its value
                 // there and in the body's; in the body, of the body's values.
                 let ob = self.bytes_at(&opener, 0, memo);
-                let stops = |s: &Expr, e: &Expr, memo: &mut ByteMemo| !meets(&self.bytes_at(s, 0, memo), &ob) && self.exact_bytes(e).is_some_and(|x| (0..256).all(|i| !ob[i] || x[i]));
+                let stops = |s: &Expr, e: &Expr, memo: &mut ByteMemo| !meets(&self.bytes_at(s, 0, memo), &ob) && self.exact_bytes(e).is_some_and(|x| ob.within(&x));
                 let (s0, e0) = (val(st, 0, memo)?, val(stop, 0, memo)?);
                 // Started in no part, and stopped at the token's first byte: none in it.
                 let none = |v: Option<Expr>| matches!(v, Some(Expr::Empty));
-                if none(Some(s0.clone())) && none(val(st, 1, memo)) && none(val(st, 2, memo)) && self.exact_bytes(&e0).is_some_and(|x| (0..256).all(|i| !ob[i] || x[i])) {
+                if none(Some(s0.clone())) && none(val(st, 1, memo)) && none(val(st, 2, memo)) && self.exact_bytes(&e0).is_some_and(|x| ob.within(&x)) {
                     return Some(Expr::Empty);
                 }
                 if part == 0 {
-                    return self.exact_bytes(&e0).is_some_and(|x| (0..256).all(|i| !ob[i] || x[i])).then_some(s0);
+                    return self.exact_bytes(&e0).is_some_and(|x| ob.within(&x)).then_some(s0);
                 }
                 if is_closer(part) {
                     return None;
@@ -2617,11 +2933,10 @@ impl Gen<'_> {
             return Ok(());
         }
         let mut memo = HashMap::new();
-        let mut opener_at = [[false; 256]; 4];
+        let mut opener_at = [Bytes::NONE; 4];
         for r in &self.kinds {
             for (m, at) in opener_at.iter_mut().enumerate() {
-                let b = self.bytes_at(&r.opener, m as i64, &mut memo);
-                (0..256).for_each(|i| at[i] |= b[i]);
+                *at = at.or(self.bytes_at(&r.opener, m as i64, &mut memo));
             }
         }
         self.opener_at = opener_at;
@@ -2647,10 +2962,10 @@ impl Gen<'_> {
         let mut memo = HashMap::new();
         let mut arm_bytes: Vec<([bool; 256], Option<[bool; 256]>)> = Vec::new();
         for (_, o, _) in &opens {
-            arm_bytes.push((self.bytes_at(o, 0, &mut memo), if self.regional(o) { None } else { self.exact_bytes(o) }));
+            arm_bytes.push((self.bytes_at(o, 0, &mut memo).bools(), if self.regional(o) { None } else { self.exact_bytes(o).map(|b| b.bools()) }));
         }
         for r in rows {
-            arm_bytes.push((self.bytes_at(&r.start, 0, &mut memo), if self.regional(&r.start) { None } else { self.exact_bytes(&r.start) }));
+            arm_bytes.push((self.bytes_at(&r.start, 0, &mut memo).bools(), if self.regional(&r.start) { None } else { self.exact_bytes(&r.start).map(|b| b.bools()) }));
         }
         // The groups: the bytes alike in each arm.
         let mut groups: Vec<(Vec<u8>, [bool; 256])> = Vec::new();
@@ -2837,14 +3152,11 @@ impl Gen<'_> {
     /// (`cubes`) needs only bytes `ctx` allows at each offset.
     fn may_hold(&self, e: &Expr, ctx: &Ctx) -> bool {
         self.cubes(e, &mut HashMap::new()).iter().any(|c| {
-            c.iter().all(|(&o, b)| {
-                let a = ctx.at(o);
-                (0..256).any(|i| b[i] && a[i])
-            })
+            c.iter().all(|(&o, b)| b.meets(&ctx.at(o)))
         })
     }
 
-    fn bytes_at(&self, e: &Expr, d: i64, memo: &mut ByteMemo) -> [bool; 256] {
+    fn bytes_at(&self, e: &Expr, d: i64, memo: &mut ByteMemo) -> Bytes {
         bytes_in(&self.cubes(e, memo), d)
     }
 
@@ -2853,106 +3165,110 @@ impl Gen<'_> {
     /// at once (a way whose bytes at an offset are none cannot be); either of a `|`. So `a & b`
     /// where `a` needs a digit after it and `b` a sign there is none.
     fn cubes(&self, e: &Expr, memo: &mut ByteMemo) -> std::rc::Rc<Cubes> {
-        if matches!(e, Expr::Empty | Expr::Name(_)) {
-            return self.cubes_of(e, memo);
+        self.cubes_id(self.intern(e), memo)
+    }
+
+    /// `cubes` of interned expression `id`.
+    fn cubes_id(&self, id: u32, memo: &mut ByteMemo) -> std::rc::Rc<Cubes> {
+        let s = self.shapes.borrow()[id as usize].clone();
+        match s {
+            Shape::Empty => std::rc::Rc::new(Vec::new()),
+            Shape::Name(n) => self.name_cubes(n, id, memo),
+            s => {
+                // In a name's definition, a value may read the name's placeholder: made, not kept.
+                if self.cube_open.get() > 0 {
+                    return self.cubes_made(&s, memo);
+                }
+                if let Some(r) = self.kept_of(id) {
+                    return r;
+                }
+                let before = self.cube_tangled.get();
+                let r = self.cubes_made(&s, memo);
+                if self.cube_tangled.get() == before {
+                    self.keep(id, &r);
+                }
+                r
+            }
         }
-        // In a name's definition, a value may read the name's placeholder: made, not kept.
-        if self.cube_open.get() > 0 {
-            return self.cubes_of(e, memo);
+    }
+
+    /// `cubes` of name `n` (shape `id`).
+    fn name_cubes(&self, n: u32, id: u32, memo: &mut ByteMemo) -> std::rc::Rc<Cubes> {
+        let all = || std::rc::Rc::new(vec![Way::default()]);
+        self.note_read(n);
+        if let Some(r) = self.kept_of(id) {
+            return r;
         }
-        if let Some(r) = self.shape_cache.borrow().get(e) {
+        let name = self.name_strs.borrow()[n as usize].clone();
+        if let Some(set) = self.class_bytes.get(&name) {
+            let r = std::rc::Rc::new(vec![Way(vec![(0, Bytes::of(set))])]);
+            self.keep(id, &r);
+            return r;
+        }
+        let tangled = self.tangled(n);
+        if tangled {
+            self.cube_tangled.set(self.cube_tangled.get() + 1);
+        }
+        if let Some(r) = memo.get(&name) {
             return r.clone();
         }
-        let before = self.cube_tangled.get();
-        let r = self.cubes_of(e, memo);
-        if self.cube_tangled.get() == before {
-            self.shape_cache.borrow_mut().insert(e.clone(), r.clone());
+        // A region's opener mark holds where its opener does.
+        if let Some(r) = name.strip_prefix("o_").and_then(|kind| self.kinds.iter().find(|r| r.kind == kind)) {
+            let opener = r.opener.clone();
+            return self.cubes(&opener, memo);
+        }
+        // A name being read (a cycle) says nothing.
+        memo.insert(name.clone(), all());
+        self.cube_open.set(self.cube_open.get() + 1);
+        let r = match self.defs.get(&name) {
+            Some(def) => self.cubes(def, memo),
+            None => all(),
+        };
+        self.cube_open.set(self.cube_open.get() - 1);
+        memo.insert(name, r.clone());
+        if !tangled {
+            self.keep(id, &r);
         }
         r
     }
 
-    /// `cubes`, made.
-    fn cubes_of(&self, e: &Expr, memo: &mut ByteMemo) -> std::rc::Rc<Cubes> {
-        let one = |d: i64, b: [bool; 256]| std::rc::Rc::new(vec![std::collections::BTreeMap::from([(d, b)])]);
-        let all = || std::rc::Rc::new(vec![std::collections::BTreeMap::new()]);
+    /// `cubes` of a shape not a name, made.
+    fn cubes_made(&self, s: &Shape, memo: &mut ByteMemo) -> std::rc::Rc<Cubes> {
+        let one = |d: i64, b: Bytes| std::rc::Rc::new(vec![Way(vec![(d, b)])]);
+        let all = || std::rc::Rc::new(vec![Way::default()]);
         let made = std::rc::Rc::new;
-        match e {
-            Expr::Empty => made(Vec::new()),
-            Expr::Name(n) => {
-                self.note_read(n);
-                if let Some(set) = self.class_bytes.get(n) {
-                    return one(0, *set);
-                }
-                let tangled = self.tangled(n);
-                if tangled {
-                    self.cube_tangled.set(self.cube_tangled.get() + 1);
-                }
-                if let Some(r) = memo.get(n) {
-                    return r.clone();
-                }
-                let keep = !tangled;
-                if keep && let Some(r) = self.cube_cache.borrow().get(n) {
-                    return r.clone();
-                }
-                // A region's opener mark holds where its opener does.
-                if let Some(r) = n.strip_prefix("o_").and_then(|kind| self.kinds.iter().find(|r| r.kind == kind)) {
-                    let opener = r.opener.clone();
-                    return self.cubes(&opener, memo);
-                }
-                // A name being read (a cycle) says nothing.
-                memo.insert(n.clone(), all());
-                self.cube_open.set(self.cube_open.get() + 1);
-                let r = match self.defs.get(n) {
-                    Some(def) => self.cubes(def, memo),
-                    None => all(),
-                };
-                self.cube_open.set(self.cube_open.get() - 1);
-                memo.insert(n.clone(), r.clone());
-                if keep {
-                    self.cube_cache.borrow_mut().insert(n.clone(), r.clone());
-                }
-                r
-            }
+        match s {
+            Shape::Empty => made(Vec::new()),
+            Shape::Name(_) => unreachable!("names are `name_cubes`'"),
             // A class's complement, at its own byte, or shifted at the byte it reads (where the
             // class's bytes are exact); `~~a`, `a`'s; else nothing known.
-            Expr::Not(a) => match &**a {
-                Expr::Name(n) if self.class_bytes.contains_key(n) => one(0, self.class_bytes[n].map(|b| !b)),
-                Expr::Not(b) => self.cubes(b, memo),
-                Expr::Call(f, args) if f == "prev" || f == "next" => {
-                    let k = match args.get(1) {
-                        None => 1,
-                        Some(Arg::N(k)) => *k as i64,
-                        _ => return all(),
-                    };
-                    match args.first() {
-                        Some(Arg::E(x)) => match self.exact_bytes(x) {
-                            Some(b) => one(if f == "next" { k } else { -k }, b.map(|t| !t)),
-                            None => all(),
-                        },
-                        _ => all(),
+            Shape::Not(a) => match self.shape(*a) {
+                Shape::Name(n) => {
+                    self.note_read(n);
+                    let name = self.name_strs.borrow()[n as usize].clone();
+                    match self.class_bytes.get(&name) {
+                        Some(set) => one(0, Bytes::of(set).not()),
+                        None => all(),
                     }
                 }
+                Shape::Not(b) => self.cubes_id(b, memo),
+                Shape::Call(f, args) => match self.shift_of(f, &args) {
+                    Some((x, k, true)) => match self.exact_of(x) {
+                        Some(b) => one(k, b.not()),
+                        None => all(),
+                    },
+                    _ => all(),
+                },
                 _ => all(),
             },
-            // A fill holds at its start, or at a byte its stop is not at.
-            Expr::Call(f, args) if f == "fill" => match args.as_slice() {
-                [Arg::E(a), Arg::E(e)] => {
-                    let mut v = (*self.cubes(a, memo)).clone();
-                    v.extend(self.cubes(&Expr::Not(Box::new(e.clone())), memo).iter().map(|c| c.iter().filter(|(d, _)| **d == 0).map(|(d, b)| (*d, *b)).collect()));
-                    made(widen(v))
-                }
-                _ => all(),
-            },
-            Expr::And(a, b) => {
-                let (x, y) = (self.cubes(a, memo), self.cubes(b, memo));
+            Shape::And(a, b) => {
+                let (x, y) = (self.cubes_id(*a, memo), self.cubes_id(*b, memo));
                 let mut v = Vec::new();
                 for p in x.iter() {
                     'q: for q in y.iter() {
                         let mut c = p.clone();
-                        for (d, b) in q {
-                            let m = c.entry(*d).or_insert([true; 256]);
-                            (0..256).for_each(|i| m[i] &= b[i]);
-                            if !m.iter().any(|&t| t) {
+                        for (d, b) in q.iter() {
+                            if !c.and_at(*d, b) {
                                 continue 'q;
                             }
                         }
@@ -2961,26 +3277,34 @@ impl Gen<'_> {
                 }
                 made(widen(v))
             }
-            Expr::Or(a, b) | Expr::Xor(a, b) => {
-                let mut v = (*self.cubes(a, memo)).clone();
-                v.extend(self.cubes(b, memo).iter().cloned());
+            Shape::Or(a, b) | Shape::Xor(a, b) => {
+                let mut v = (*self.cubes_id(*a, memo)).clone();
+                v.extend(self.cubes_id(*b, memo).iter().cloned());
                 made(widen(v))
             }
-            Expr::Call(f, args) if (f == "prev" || f == "next") => {
-                let Some(Arg::E(a)) = args.first() else { return all() };
-                let k = match args.get(1) {
-                    Some(Arg::N(k)) => *k as i64,
-                    _ => 1,
-                };
+            Shape::Call(f, args) => {
+                // A fill holds at its start, or at a byte its stop is not at.
+                if self.is_fn(*f, "fill") {
+                    return match **args {
+                        [ArgShape::E(a), ArgShape::E(e)] => {
+                            let mut v = (*self.cubes_id(a, memo)).clone();
+                            let not_e = self.shape_id(Shape::Not(e));
+                            v.extend(self.cubes_id(not_e, memo).iter().map(|c| c.iter().filter(|(d, _)| **d == 0).map(|(d, b)| (*d, *b)).collect()));
+                            made(widen(v))
+                        }
+                        _ => all(),
+                    };
+                }
                 // `prev(a, k)` holds `k` bytes after `a`: `a`'s byte `d` is its `d - k`.
-                let k = if f == "next" { k } else { -k };
-                made(self.cubes(a, memo).iter().map(|c| c.iter().map(|(d, b)| (d + k, *b)).collect()).collect())
+                if let Some((a, k, _)) = self.shift_of(*f, args) {
+                    return made(self.cubes_id(a, memo).iter().map(|c| c.iter().map(|(d, b)| (d + k, *b)).collect()).collect());
+                }
+                match args.first() {
+                    Some(ArgShape::S(t)) if self.is_fn(*f, "text") && !t.is_empty() => made(vec![t.iter().enumerate().map(|(i, &c)| (i as i64, Bytes::of(&std::array::from_fn(|j| j == usize::from(c))))).collect()]),
+                    _ => all(),
+                }
             }
-            Expr::Call(f, args) if f == "text" => match args.first() {
-                Some(Arg::S(t)) if !t.is_empty() => made(vec![t.iter().enumerate().map(|(i, &c)| (i as i64, std::array::from_fn(|j| j == usize::from(c)))).collect()]),
-                _ => all(),
-            },
-            Expr::Call(..) | Expr::Test { .. } => all(),
+            Shape::Test(_) => all(),
         }
     }
 
@@ -3014,7 +3338,7 @@ impl Gen<'_> {
             Some(TokenRule::Run(r)) => {
                 let these: Vec<(&str, &Expr)> = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
                 let read = if these.is_empty() { r.clone() } else { substitute(r, &these, &self.defs) };
-                self.bytes_at(&read, 0, &mut memo)
+                self.bytes_at(&read, 0, &mut memo).bools()
             }
             None if last.is_none() => [false; 256],
             _ => [true; 256],
@@ -3174,7 +3498,7 @@ impl Gen<'_> {
         let mut memo = HashMap::new();
         for (_, e, n) in closes {
             let v = self.val(e)?;
-            let mine = self.bytes_at(e, 0, &mut memo);
+            let mine = self.bytes_at(e, 0, &mut memo).bools();
             let h = match &r.or {
                 Some((c2, m)) => {
                     let mut memo = HashMap::new();
@@ -3212,14 +3536,14 @@ impl Gen<'_> {
                 let v = self.val(c2)?;
                 // A closer a part's takes first: none of its own.
                 if !closes.iter().any(|(_, e, _)| format!("{e:?}") == format!("{c2:?}")) {
-                    let mine = self.bytes_at(c2, 0, &mut memo);
+                    let mine = self.bytes_at(c2, 0, &mut memo).bools();
                     alts.push((test(&before, &mine, format!("bit(&{v}, close)")), Geo { k, ext: i64::from(*m) - 1, h: i64::from(*m), closer: c2.clone(), body }));
                 }
-                let mine = self.bytes_at(&own, 0, &mut memo);
+                let mine = self.bytes_at(&own, 0, &mut memo).bools();
                 alts.push((test(&before, &mine, format!("!bit(&{v}, close)")), Geo { k, ext: i64::from(r.bytes) - 1, h: i64::from(r.bytes), closer: own.clone(), body }));
             }
             None => {
-                let mine = self.bytes_at(&own, 0, &mut memo);
+                let mine = self.bytes_at(&own, 0, &mut memo).bools();
                 let t = before.iter().filter(|(_, b)| (0..256).any(|i| b[i] && mine[i])).map(|(t, _)| t.clone()).collect::<Vec<_>>().join(" && ");
                 let t = if t.is_empty() { "true".to_owned() } else { t };
                 alts.push((t, Geo { k, ext: i64::from(r.bytes) - 1, h: i64::from(r.bytes), closer: own.clone(), body }));
@@ -3325,7 +3649,7 @@ impl Gen<'_> {
             let stop = sp.e.clone();
             let mut memo = HashMap::new();
             let at_stop = self.bytes_at(&stop, 0, &mut memo);
-            let skipped = skip.map(|k| self.bytes_at(k, 0, &mut memo)).unwrap_or([false; 256]);
+            let skipped = skip.map(|k| self.bytes_at(k, 0, &mut memo)).unwrap_or(Bytes::NONE);
             if (0..256).any(|b| at_stop[b] && skipped[b]) {
                 continue;
             }
@@ -3412,7 +3736,7 @@ impl Gen<'_> {
         }
         let n = self.opens.as_ref().map_or(0, Vec::len);
         let Some(v) = self.in_region(e, None, 0) else { return Ok(false) };
-        let at = self.bytes_at(&self.fills_as_all(&v), 0, &mut HashMap::new());
+        let at = self.bytes_at(&self.fills_as_all(&v), 0, &mut HashMap::new()).bools();
         if (0..256).any(|i| at[i] && self.skipped[i]) {
             return Ok(false);
         }
@@ -3648,7 +3972,7 @@ impl Gen<'_> {
             Some(Expr::Empty) => None,
             Some(v) if !self.regional(&v) => {
                 let at = self.bytes_at(&v, 0, &mut HashMap::new());
-                let skipped = skip.map(|k| self.bytes_at(k, 0, &mut HashMap::new())).unwrap_or([false; 256]);
+                let skipped = skip.map(|k| self.bytes_at(k, 0, &mut HashMap::new())).unwrap_or(Bytes::NONE);
                 // A skipped byte it may hold at: not one test a token.
                 if (0..256).any(|i| at[i] && skipped[i]) {
                     return Ok(false);
@@ -4378,7 +4702,7 @@ impl Gen<'_> {
         // The fills the loop keeps (`LoopFill`): the masks and the escapes' fills.
         if self.opens.is_some() {
             self.skipped = match &skip {
-                Some(k) => self.bytes_at(k, 0, &mut HashMap::new()),
+                Some(k) => self.bytes_at(k, 0, &mut HashMap::new()).bools(),
                 None => [false; 256],
             };
             let mut exprs: Vec<(Option<String>, Expr)> = Vec::new();
@@ -4477,7 +4801,7 @@ impl Gen<'_> {
         // The fills the loop keeps whose value over the gap a gap mask reads.
         let mut fill_used: std::collections::BTreeSet<usize> = Default::default();
         let skipped = match &skip {
-            Some(k) => self.bytes_at(k, 0, &mut HashMap::new()),
+            Some(k) => self.bytes_at(k, 0, &mut HashMap::new()).bools(),
             None => [false; 256],
         };
         self.skipped = skipped;
@@ -4833,7 +5157,7 @@ impl Gen<'_> {
                 let tb = self.row_tail_bytes(kind, rule, last);
                 let in_token: [bool; 256] = std::array::from_fn(|i| sb[i] || tb[i]);
                 let mut at_tail = Ctx::of(tb);
-                at_tail.0[3] = in_token;
+                at_tail.0[3] = in_token.into();
                 for (why, v, e) in &self.code_checks {
                     let first = self.may_hold(e, &Ctx::of(sb));
                     let after = (0..256).any(|i| tb[i]) && self.may_hold(e, &at_tail);
@@ -5951,7 +6275,7 @@ fn set(v: &mut [u64], a: usize, b: usize) {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), cube_cache: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), shape_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source()
 }
 
 /// Whether `e` names `n`.
@@ -5967,12 +6291,12 @@ fn mentions(e: &Expr, n: &str) -> bool {
 }
 
 /// The bytes some way of `cubes` may be at `d` bytes on (`Gen::bytes_at`).
-fn bytes_in(cubes: &Cubes, d: i64) -> [bool; 256] {
-    let mut v = [false; 256];
+fn bytes_in(cubes: &Cubes, d: i64) -> Bytes {
+    let mut v = Bytes::NONE;
     for c in cubes {
         match c.get(&d) {
-            Some(b) => (0..256).for_each(|i| v[i] |= b[i]),
-            None => return [true; 256],
+            Some(b) => v = v.or(*b),
+            None => return Bytes::ALL,
         }
     }
     v
