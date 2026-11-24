@@ -480,6 +480,10 @@ mod tests {
     fn a_template_is_published_and_copied_with_its_memo_packs() {
         use crate::content_store::{ContentStore, MemoPut};
         let dir = tempfile::tempdir().unwrap();
+        // The template's folder is the user's alone, as a store's must be (decision 0574): a temporary folder's mode
+        // is the umask's (a host's 002 left it 775, and the template's open refused it).
+        #[cfg(unix)]
+        std::fs::set_permissions(dir.path(), std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
         let space = crate::content_store::local_space(&[7u8; 32]);
         let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
         let template = dir.path().join("template.sqlite");

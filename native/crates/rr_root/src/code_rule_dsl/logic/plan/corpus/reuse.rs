@@ -410,7 +410,7 @@ pub fn record(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path,
     read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
     reads.extend(read);
     reads.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
-    let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode() else {
+    let Some(summary) = super::Summary::of(programs, &given.files, &given.graphs, given.read, root, options)?.encode() else {
         miss("not recorded: the program's summary does not encode");
         return Ok(());
     };

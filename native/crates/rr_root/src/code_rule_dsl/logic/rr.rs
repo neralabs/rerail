@@ -46,12 +46,31 @@ use from_tape::{RrFile, S, Statements, Stmt};
 /// text a program's keys are made of (`corpus::texts_digest`). Lowering reads a message's placeholders alone, and the
 /// writer puts its texts in (decision 0225 §3), so an edit of a message's words is no edit of the program.
 pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
+    message_masked_of(src, None)
+}
+
+/// The parse `file` gives, when it is of `src` (the run's, `base::Texts::files`): a text is parsed once a run, where
+/// masking it, and reading its templates and its seed, each parsed it again.
+fn parse_of<'f>(src: &str, file: Option<&'f std::sync::Arc<RrFile>>) -> Option<&'f std::sync::Arc<RrFile>> {
+    file.filter(|f| f.src() == src)
+}
+
+/// `message_masked`, off `file` when it is `src`'s parse.
+pub fn message_masked_of<'s>(src: &'s str, file: Option<&std::sync::Arc<RrFile>>) -> std::borrow::Cow<'s, str> {
     if !src.contains(".violation") {
         return std::borrow::Cow::Borrowed(src);
     }
     let message = tape::Field::Message as u16;
     // The messages' spans, read off the file's tape in place.
-    let Ok(file) = RrFile::parsed(src) else { return std::borrow::Cow::Borrowed(src) };
+    let parsed;
+    let file: &RrFile = match parse_of(src, file) {
+        Some(f) => f,
+        None => {
+            let Ok(f) = RrFile::parsed(src) else { return std::borrow::Cow::Borrowed(src) };
+            parsed = f;
+            &parsed
+        }
+    };
     let t = file.tape();
     let mut spans: Vec<(usize, usize)> = (0..t.len()).filter(|&i| t.field(i) == message && t.kind(i) != tape::ERROR).map(|i| (t.start(i), t.end(i))).collect();
     spans.sort();
@@ -72,10 +91,21 @@ pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
 /// settings a printed program keeps them in (`lower::findings::MESSAGE`). The policy is the `.policy` setting's name,
 /// as lowering names it in each finding.
 pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
+    message_templates_of(src, None)
+}
+
+/// `message_templates`, off `file` when it is `src`'s parse.
+pub fn message_templates_of(src: &str, file: Option<&std::sync::Arc<RrFile>>) -> Vec<(String, String, String)> {
     if !src.contains(".violation") && !src.contains(".message") {
         return Vec::new();
     }
-    let Ok(file) = RrFile::read(src) else { return Vec::new() };
+    let file = match parse_of(src, file) {
+        Some(f) => std::sync::Arc::clone(f),
+        None => match RrFile::read(src) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        },
+    };
     let statements = file.statements();
     let policy = policy_settings(&statements).next().unwrap_or_default();
     statements
@@ -1526,8 +1556,16 @@ pub struct TextNames {
 
 /// `src` parsed, and its seed (`TextRead`).
 pub fn read_seed(src: &str) -> Result<TextRead, Error> {
+    read_seed_of(src, None)
+}
+
+/// `read_seed`, off `file` when it is `src`'s parse (the text's read made it, `text_seed_read`).
+pub fn read_seed_of(src: &str, file: Option<&std::sync::Arc<RrFile>>) -> Result<TextRead, Error> {
     use super::plan::corpus::phase0;
-    let statements = RrFile::read(src)?.statements();
+    let statements = match parse_of(src, file) {
+        Some(f) => f.statements(),
+        None => RrFile::read(src)?.statements(),
+    };
     let includes: Vec<(i64, String)> = include_names(&statements).into_iter().enumerate().map(|(k, (n, _))| (k as i64, n)).collect();
     let seed = (!includes.is_empty() && !phase0::active()).then(|| {
         phase0::Seed::Text { t_shape: t_shape(&statements), includes, phases: phases_named(&statements) }
@@ -1536,6 +1574,11 @@ pub fn read_seed(src: &str) -> Result<TextRead, Error> {
 }
 
 impl TextRead {
+    /// The text's parse: what its masking and its templates read (`message_masked_of`), `None` for an empty text.
+    pub fn file(&self) -> Option<std::sync::Arc<RrFile>> {
+        self.statements.first_file().cloned()
+    }
+
     /// The text's library files, names and phase, its includes resolved in the graph phase 0 derived for its seed.
     pub fn resolved(self) -> Result<TextNames, Error> {
         let (files, own) = if self.statements.iter().any(|s| is_include(&s)) { resolve(self.statements)? } else { (Vec::new(), self.statements) };
@@ -1755,30 +1798,37 @@ pub fn engine_files() -> Vec<PathBuf> {
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+    Ok(text_seed_read(src)?.0)
+}
+
+/// `text_seed`, and the text's parse where it made one: the run's read of the text takes it (`read_seed_of`), as its
+/// masking and its templates do (`message_masked_of`), where each parsed the text again.
+pub fn text_seed_read(src: &str) -> Result<(Option<super::plan::corpus::phase0::Seed>, Option<std::sync::Arc<RrFile>>), Error> {
     use super::plan::corpus::phase0;
     // An include is the lexer's `#include` (`syntax::Tok::Hash`): a text without those letters includes nothing.
     // A printed program, its includes resolved, is not read for it; its parse errors are its parse's to report.
     if phase0::active() || !src.contains("#include") {
-        return Ok(None);
+        return Ok((None, None));
     }
     // Read once a run: the run hands its texts' graph digests to its combines (`corpus::run_handed`).
     read_text_seed(src)
 }
 
-fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+fn read_text_seed(src: &str) -> Result<(Option<super::plan::corpus::phase0::Seed>, Option<std::sync::Arc<RrFile>>), Error> {
     use super::plan::corpus::phase0;
     // The letters may stand in a string, a pattern or a comment, which are not directives: the lexer's tokens say,
     // before another syntax tree is made for a program without includes.
     let lexed = syntax::lex(src);
     if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
-        return Ok(None);
+        return Ok((None, None));
     }
-    let statements = RrFile::read(src)?.statements();
+    let file = RrFile::read(src)?;
+    let statements = file.statements();
     let names: Vec<(i64, String)> = include_names(&statements).into_iter().enumerate().map(|(k, (n, _))| (k as i64, n)).collect();
     if names.is_empty() || phase0::active() {
-        return Ok(None);
+        return Ok((None, Some(file)));
     }
-    Ok(Some(phase0::Seed::Text { t_shape: t_shape(&statements), includes: names, phases: phases_named(&statements) }))
+    Ok((Some(phase0::Seed::Text { t_shape: t_shape(&statements), includes: names, phases: phases_named(&statements) }), Some(file)))
 }
 
 /// A program file's names, each with its place as `bootstrap.rerail` gives a loaded file's (`p0_names`: the include's

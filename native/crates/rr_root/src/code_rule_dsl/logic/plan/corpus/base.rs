@@ -14,7 +14,7 @@ use rerail_blocks::vector::Vector;
 pub trait Runner: Send + Sync {
     /// `programs`' run over `root` (`corpus::run_handed`): its report, and its outputs' image into `image`.
     #[allow(clippy::too_many_arguments)]
-    fn run_handed(&self, programs: &[&str], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report>;
+    fn run_handed(&self, programs: &[&str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report>;
 }
 
 /// The registered corpus runner (`Runner`).
@@ -23,8 +23,14 @@ pub static RUNNER: rerail_registry::Slot<&'static dyn Runner> = rerail_registry:
 /// `programs`' run through the registered runner (`RUNNER`).
 #[allow(clippy::too_many_arguments)]
 pub fn run_handed(programs: &[&str], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report> {
+    run_handed_parsed(programs, &[], read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
+}
+
+/// `run_handed`, each text's parse in `parsed` where its read made one (`settings::program_texts_parsed`).
+#[allow(clippy::too_many_arguments)]
+pub fn run_handed_parsed(programs: &[&str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report> {
     let runner = RUNNER.get().unwrap_or_else(|missing| panic!("{missing}: no program registered the corpus runner"));
-    runner.run_handed(programs, read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
+    runner.run_handed(programs, parsed, read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
 }
 
 /// The switches that change the combined program (`combine_tail`, with the `.rerail` lowering its `rr::parse` runs): its
@@ -200,8 +206,9 @@ pub struct Summary {
 
 impl Summary {
     /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
-    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
-        Ok(Self::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?))
+    /// `files`: the texts' parses, the run's (`Texts::files`), or none.
+    pub(crate) fn of(programs: &[&str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
+        Ok(Self::from_fields(&*combined_with_settings(programs, files, graphs, read, root, options)?))
     }
 
     fn from_fields(p: &crate::code_rule_dsl::logic::program_image::Version) -> Summary {
@@ -330,12 +337,12 @@ pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32
 /// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
 /// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
 /// (`texts_digest`, decision 0225 §3).
-pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+pub fn combined_with_settings(programs: &[&str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     // As the run reads them: a snapshot's settings file that does not read is none, for a program that reads Git's
     // metadata alone (any other's run fails on it).
     let (settings, _) = crate::code_rule_dsl::logic::settings::settings_as_read(root, &flags).map_err(Error::Plan)?;
-    let masked = masked(programs);
+    let masked = masked_of(programs, files);
     Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
@@ -354,7 +361,7 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
     }
     let prog = match summary {
         Some(summary) => summary,
-        None => Summary::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?),
+        None => Summary::from_fields(&*combined_with_settings(programs, &[], graphs, read, root, options)?),
     };
     let metadata_only = prog.git_metadata_only;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
@@ -418,6 +425,9 @@ pub struct Texts<'a> {
     pub sources: Option<&'a texts::Sources>,
     pub phase: FactPhase<'a>,
     pub reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
+    /// Each text's parse, kept past `names` (which takes the reads): what its masking and its message templates read,
+    /// each of which parsed every text again (`rr::message_masked_of`). Empty for a program handed already read.
+    pub files: Vec<Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>>,
     pub names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
 
@@ -427,17 +437,23 @@ impl<'a> Texts<'a> {
     pub fn of_read(key: &'a [&'a str], read: &'a Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         let names = std::cell::OnceCell::new();
         let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(&**read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, phase: Default::default(), reads: std::cell::RefCell::new(Vec::new()), names }
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, phase: Default::default(), reads: std::cell::RefCell::new(Vec::new()), files: Vec::new(), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
     pub fn of(programs: &'a [&'a str]) -> Result<Self> {
-        let reads: Vec<crate::code_rule_dsl::logic::rr::TextRead> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::read_seed(t)).collect::<std::result::Result<_, _>>()?;
+        Self::of_parsed(programs, &[])
+    }
+
+    /// `of`, off each text's parse in `parsed` where it has one (`settings::program_texts_parsed`).
+    pub fn of_parsed(programs: &'a [&'a str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed]) -> Result<Self> {
+        let reads: Vec<crate::code_rule_dsl::logic::rr::TextRead> = programs.iter().enumerate().map(|(i, t)| crate::code_rule_dsl::logic::rr::read_seed_of(t, parsed.get(i).and_then(Option::as_ref))).collect::<std::result::Result<_, _>>()?;
         let seeds: Vec<phase0::Seed> = reads.iter().filter_map(|r| r.seed.clone()).collect();
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, sources: None, phase: Default::default(), reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        let files = reads.iter().map(crate::code_rule_dsl::logic::rr::TextRead::file).collect();
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, phase: Default::default(), reads: std::cell::RefCell::new(reads), files, names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -1979,7 +1995,12 @@ pub fn runs_under_way() -> usize {
 
 /// `programs` with their messages masked (`rr::message_masked`), as the keys read them.
 pub fn masked<'a>(programs: &[&'a str]) -> Vec<std::borrow::Cow<'a, str>> {
-    programs.iter().map(|t| crate::code_rule_dsl::logic::rr::message_masked(t)).collect()
+    masked_of(programs, &[])
+}
+
+/// `masked`, off each text's parse in `files` (`Texts::files`) where it has one.
+pub fn masked_of<'a>(programs: &[&'a str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>]) -> Vec<std::borrow::Cow<'a, str>> {
+    programs.iter().enumerate().map(|(i, t)| crate::code_rule_dsl::logic::rr::message_masked_of(t, files.get(i).and_then(Option::as_ref))).collect()
 }
 
 /// A corpus's files by language: Python's, Rust's and `.rerail` rule files, and the text-only documents.
@@ -2156,9 +2177,27 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    run_with_parsed(programs, &[], root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+}
+
+/// `run_with_options`, each text's parse in `parsed` where its read made one (`settings::program_texts_parsed`): the
+/// run reads, masks and takes the templates of each text off it.
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_parsed(
+    programs: &[&str],
+    parsed: &[crate::code_rule_dsl::logic::settings::Parsed],
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
     // The run's options as it is first given them: a `toolCalls` option not of its shape is an error here (`added`).
     added::check_tool_calls(options).map_err(Error::Plan)?;
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
+    run_handed_parsed(programs, parsed, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
 pub fn install_git_inventory() {
