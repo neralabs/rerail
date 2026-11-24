@@ -6895,6 +6895,30 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
     Some(t as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)
 }
 
+/// t50 step 7: a split whose second part a later step requires to hold no "." (`split_dot`'s `!contains(x, ".")`),
+/// and which nothing else reads, is the split at the last "." (`Step::Split::last`): one split a row in place of one
+/// at every ".", and the test, true by construction, is unused. Where the part is read nowhere else it is not interned
+/// either, so a walk up a dotted name's prefixes makes no symbol a step but the prefix its row holds.
+fn last_splits(steps: &mut [Step], head: &[Term], is_dot: impl Fn(i64) -> bool) {
+    let in_head = |s: usize| head.iter().any(|t| matches!(t, Term::Slot(x) if *x == s) || matches!(t, Term::Cat(a, b) if *a == s || *b == s));
+    for i in 0..steps.len() {
+        let Step::Split { b: Some(sb), last: false, .. } = steps[i] else { continue };
+        if in_head(sb) {
+            continue;
+        }
+        let readers: Vec<usize> = (i + 1..steps.len()).filter(|&j| steps[j].observes(sb)).collect();
+        let [j] = readers[..] else { continue };
+        let Step::Test { op: "contains", s: Key::Slot(s), p: Key::Const(dot), want: false, .. } = steps[j] else { continue };
+        if s != sb || !is_dot(dot) {
+            continue;
+        }
+        if let Step::Split { last, .. } = &mut steps[i] {
+            *last = true;
+        }
+        steps[j] = Step::Unused { proof: crate::code_rule_dsl::logic::analysis::Decision::new(true, "a split at its last \".\" leaves none in its second part") };
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Key { Slot(usize), Const(i64) }
 #[derive(Clone)]
@@ -6907,8 +6931,10 @@ pub enum Step {
     Atom { src: Src, neg: bool, keys: Vec<(usize, Key)>, binds: Vec<(usize, usize)>, tests: Vec<(usize, usize)> },
     Cat { out: usize, a: Key, b: Key, bind: bool },
     /// `whole` split as `@dot` makes it into `a` and `b` (`""` and the whole, or at each "." with a part before it);
-    /// `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
-    Split { whole: Key, a: Option<usize>, b: Option<usize>, ka: Key, kb: Key },
+    /// `Some` slots bind, `None` parts (`ka`/`kb`) are tested. `last`: only the split whose second part holds no "."
+    /// (`last_splits`): at the last "." with a part before it, or `""` and a whole with none. That is a dotted name's
+    /// parent in the forest of names, one split a row (t50 step 7).
+    Split { whole: Key, a: Option<usize>, b: Option<usize>, ka: Key, kb: Key, last: bool },
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     /// Direct non-null scalar. The shared logical proof selects a bag; the source owns versioned summaries.
@@ -7407,7 +7433,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                         _ => None,
                     };
                     let (sa, sb) = (part(&mut bound, a), part(&mut bound, b));
-                    steps.push(Step::Split { whole: Key::Slot(o), a: sa, b: sb, ka: a, kb: b });
+                    steps.push(Step::Split { whole: Key::Slot(o), a: sa, b: sb, ka: a, kb: b, last: false });
                     continue;
                 }
                 let bind = !is_bound(&bound, Key::Slot(o));
@@ -7513,6 +7539,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
     if out.iter().any(|t| match t { Term::Slot(s) => unbound(*s), Term::Cat(a, b) => unbound(*a) || unbound(*b), Term::Const(_) => false }) {
         return Err(err(format!("a head reads a slot its body does not bind: {}", spec.to_text())));
     }
+    last_splits(&mut steps, &out, |c| syms.name(c) == ".");
     liveness::sums(&mut steps,&out);
     scalars::plan(&mut steps);
     let counts = steps.iter().map(|_| Default::default()).collect();
@@ -8242,14 +8269,24 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
             }
-            Step::Split { whole, a, b, ka, kb } => {
-                // As `cat` makes it: `"" . w`, or at each "." with a part before it.
+            Step::Split { whole, a, b, ka, kb, last } => {
+                // As `cat` makes it: `"" . w`, or at each "." with a part before it; with `last`, only the split whose
+                // second part holds no ".".
                 let probe = j.probes[i];
                 // The whole's text, and each part's atom where the part is only looked up (`PROBE_A`, `PROBE_B`), read
                 // under one read of the arena. `Err`: not known in memory, looked up after (`held`). A part not in
                 // memory where a miss is final has no atom (`Atoms::misses_are_final`).
                 type Part = Result<Option<i64>, ()>;
-                let at = |w: &str| std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))).collect::<Vec<_>>();
+                let at = |w: &str| -> Vec<Option<usize>> {
+                    if *last {
+                        return match w.rfind('.') {
+                            None => vec![None],
+                            Some(0) => Vec::new(),
+                            Some(p) => vec![Some(p)],
+                        };
+                    }
+                    std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))).collect()
+                };
                 let (pa, pb) = (a.is_some() && probe & PROBE_A != 0 && probe & UNREAD_A == 0, b.is_some() && probe & PROBE_B != 0 && probe & UNREAD_B == 0);
                 let fin = cx.syms.atoms.misses_are_final();
                 let read = crate::content_store::atoms::Sym::try_from(val(slots, *whole)).ok().and_then(|id| cx.syms.atoms.in_memory(|m| {
@@ -9486,7 +9523,7 @@ pub mod probe_tests {
     #[test]
     fn a_tested_result_reads_its_slot() {
         // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
-        let split = Step::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2) };
+        let split = Step::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
         let tested = |out| Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None, kept: None };
         let made = Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true, texts: None, kept: None };
         assert!(tested(2).mentions(2) && !made.mentions(2));
@@ -9497,6 +9534,33 @@ pub mod probe_tests {
         assert_eq!(p[0] & UNREAD_A, UNREAD_A, "the part nothing reads is unread");
         let p = probes(&[split, cat(false)], &[]);
         assert_eq!(p[0] & (UNREAD_B | PROBE_B), 0, "the part a `@cat` tests");
+    }
+
+    /// t50 step 7: `split_dot(p, m, _)`'s split, whose second part only its no-"." test reads, splits at the last "."
+    /// alone, its test unused and its part unread (no atom made for it). A part the head holds, or another step reads,
+    /// or a test of another text, leaves the split at every ".".
+    #[test]
+    fn a_split_whose_second_part_holds_no_dot_is_the_last_split() {
+        const DOT: i64 = 7;
+        let split = || Step::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
+        let test = |p: i64| Step::Test { op: "contains", s: Key::Slot(2), p: Key::Const(p), matcher: None, test: None, want: false };
+        let last = |steps: &[Step]| matches!(steps[0], Step::Split { last: true, .. });
+        let mut steps = vec![split(), test(DOT)];
+        last_splits(&mut steps, &[Term::Slot(0), Term::Slot(1)], |c| c == DOT);
+        assert!(last(&steps) && matches!(steps[1], Step::Unused { .. }));
+        assert_eq!(probes(&steps, &[Term::Slot(0), Term::Slot(1)])[0] & UNREAD_B, UNREAD_B, "the second part is unread");
+        // Held by the head.
+        let mut steps = vec![split(), test(DOT)];
+        last_splits(&mut steps, &[Term::Slot(2)], |c| c == DOT);
+        assert!(!last(&steps) && matches!(steps[1], Step::Test { .. }));
+        // Read again by another step.
+        let mut steps = vec![split(), test(DOT), Step::Eq { a: Key::Slot(2), b: Key::Slot(1) }];
+        last_splits(&mut steps, &[], |c| c == DOT);
+        assert!(!last(&steps));
+        // A test of another text.
+        let mut steps = vec![split(), test(8)];
+        last_splits(&mut steps, &[], |c| c == DOT);
+        assert!(!last(&steps));
     }
 }
 

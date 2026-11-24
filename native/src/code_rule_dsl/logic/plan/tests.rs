@@ -1559,6 +1559,60 @@ PIN(s) :- spot(_, s).
 
 // ---- tree axes and node sets ----
 
+/// t50 step 7: a walk up a dotted name's prefixes until one is bound (`references.rerail`'s `rf_walk`), its step a
+/// `split_dot` that keeps only the prefix, takes the split at the last "." alone. Its rows are the walk's at every ".":
+/// names with a leading ".", a doubled ".", a trailing ".", none, and several levels; and `split_dot`'s other uses
+/// split as before.
+#[test]
+fn a_prefix_walk_splits_at_the_last_dot() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prefix-walk");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl want(q: symbol)
+want("a.b.c.d"). want("a.x"). want("p.q.r"). want(".lead.z"). want("a..b"). want("tail."). want("solo"). want("m.n.o.p.q").
+.decl binder(p: symbol)
+binder("a.b"). binder("a"). binder("p.q.r"). binder("a."). binder("tail"). binder("m").
+.decl walk(q: symbol, p: symbol)
+walk(q, p) :- want(q), split_dot(q, p, _).
+walk(q, p2) :- walk(q, p), !binder(p), split_dot(p, p2, _).
+.decl hit(q: symbol, p: symbol)
+hit(q, p) :- walk(q, p), binder(p).
+.decl parts(m: symbol, x: symbol)
+parts(m, x) :- want(q), split_dot(q, m, x).
+.output walk, hit, parts
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+    let rows = |r: &[[&str; 2]]| -> Vec<Vec<String>> {
+        let mut v: Vec<Vec<String>> = r.iter().map(|x| x.iter().map(|s| (*s).to_owned()).collect()).collect();
+        v.sort();
+        v
+    };
+    let sorted = |mut v: Vec<Vec<String>>| {
+        v.sort();
+        v
+    };
+    // A name's parent is its text before its last "." (none before a leading one); a name with no "." has "" as its.
+    assert_eq!(sorted(read("walk")), rows(&[
+        ["a.b.c.d", "a.b.c"], ["a.b.c.d", "a.b"],
+        ["a.x", "a"],
+        ["p.q.r", "p.q"], ["p.q.r", "p"], ["p.q.r", ""],
+        [".lead.z", ".lead"],
+        ["a..b", "a."],
+        ["tail.", "tail"],
+        ["solo", ""],
+        ["m.n.o.p.q", "m.n.o.p"], ["m.n.o.p.q", "m.n.o"], ["m.n.o.p.q", "m.n"], ["m.n.o.p.q", "m"],
+    ]));
+    assert_eq!(sorted(read("hit")), rows(&[["a.b.c.d", "a.b"], ["a.x", "a"], ["a..b", "a."], ["tail.", "tail"], ["m.n.o.p.q", "m"]]));
+    assert_eq!(sorted(read("parts")), rows(&[
+        ["a.b.c", "d"], ["a", "x"], ["p.q", "r"], [".lead", "z"], ["a.", "b"], ["tail", ""], ["", "solo"], ["m.n.o.p", "q"],
+    ]));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+
 /// The axes over a set of nodes (`fnode`) or of kinds rules derive (`fk`), read as rules; `!nearest` with the
 /// ancestor named, `!within_stop`, `!earlier` and `!split_dot`; `precedes_stop` and `next_sibling` over `child`.
 #[test]

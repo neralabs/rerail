@@ -782,6 +782,27 @@ strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next b
   steps 1–4. The cross part's cost is spread thin: no stratum over 1.5 s (`rf_named` 1.5, `rf_ref` 1.2, `rf_target`
   0.57).
 
+### Step 7, built: a name's parent is its split at the last "." (2026-11-23)
+
+The prefix walk climbs a dotted name one segment at a time (`rf_walk(q, p2, h) :- rf_walk(q, p, h), !rf_binder(p),
+split_dot(p, p2, _)`) until a prefix is bound (`rf_hit`). It already ran as one wave (decision 0570), so the plan's
+keyed nearest over the name forest was in place but for the step itself. `split_dot(p, m, x)` lowers to
+`p = @cat(m, x), @contains(x, ".") = 0`, and the `Split` step ran the `@cat` backward at every "." of `p`, interning
+both parts of each split, before the test kept the one at the last ".". So a walk up a name of k segments made about
+k² symbols, where the forest's parent edge is one split, a function of the name.
+
+`last_splits` (setfix) finds a split whose second part only a later no-"." test reads, and runs it at the last "."
+alone (`Step::Split::last`). The test is true by construction and is left `Unused`. The part nothing else reads is
+unread, so no atom is made for it. Only the prefix the row carries is interned, which the forest's table would hold.
+The rule needs no annotation: the shape is the step's own. Tests: `a_split_whose_second_part_holds_no_dot_is_the_last_split`
+(the pass, and the three cases it must leave), `a_prefix_walk_splits_at_the_last_dot` (a walk over names with a
+leading, doubled and trailing ".", none, and five levels, against rows written by hand; `split_dot`'s other uses as
+before).
+
+On `all` (M3, CPU), every export's rows are the same. In `rf_walk`'s recursive rule the split now gives 5,024 rows
+for 5,024 in, and the test passes each at 4 ns. The stratum: 0.266 → 0.255 s. That is the size step 7 had left after
+steps 1–5 (3.7 s when t50 was written); the change is the shape the plan named.
+
 ### The strata against 0483's, and a round's tape values admitted together (2026-11-23)
 
 0483's rules run again on m1max (`tmp/refs/three/r0483.sh`: 152.6 s CPU, load 6), their spans' own CPU beside the

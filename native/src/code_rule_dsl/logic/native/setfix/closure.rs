@@ -255,7 +255,7 @@ fn step_slots(s: &Step, out: &mut Vec<usize>) {
             keys.extend([*a, *b]);
             out.push(*o);
         }
-        Step::Split { whole, a, b, ka, kb } => {
+        Step::Split { whole, a, b, ka, kb, .. } => {
             keys.extend([*whole, *ka, *kb]);
             out.extend(a.iter().chain(b.iter()).copied());
         }
