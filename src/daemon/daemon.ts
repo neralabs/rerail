@@ -1340,7 +1340,9 @@ type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "updateCh
  * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
  * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
  * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
- * for the lock for a second.
+ * for the lock for a second. From the lock to the end of its start, the record beside the lock says it is starting
+ * (`homeDaemonStarting`), so a start that finds it then waits for it rather than taking it for a daemon that does not
+ * answer or launching a second one.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
@@ -1348,6 +1350,9 @@ export async function runHomeDaemon(argv: readonly string[], services: Omit<Rera
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
   await serveRerailDaemon(argv, { ...services, recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() } });
+  // Its start is over: it has recorded itself, said where it listens, and its one thread is free to answer. Until now
+  // its record beside the lock said it was starting, and a start that found it waited for this.
+  homeLock.started();
 }
 
 /**
