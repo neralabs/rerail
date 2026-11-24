@@ -598,7 +598,9 @@ impl CoreRows {
     /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_these = s.comment && s.name && s.literal_rows
+        // A literal's value (`rr_value_lit`, `value`'s eager half) is made at every node too: where `name` and
+        // `comment` are node reads (decision 0353 row 7) and only it is made, a walk of no node made none.
+        let only_these = s.comment && s.name && s.literal_rows && s.literal_value
             && !(wants_parts || wants_part_starts || wants_words);
         if !only_these || wants_text && self.text_nodes.is_none() {
             return Visits::All;

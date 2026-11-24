@@ -2880,8 +2880,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // The seeds' rows, into their relation (the walk's; a reader has none, decision 0561), pending (`pend`) as
         // a push puts them, where they were written: the closure's dedup tests find them before any index has them.
+        // A lattice relation of the stratum folds its rows by its key map (`push_fresh_rows`), its own dedup: none
+        // pending.
         for (r, f) in fresh.iter_mut().enumerate() {
-            store.rels[r].push_fresh(std::mem::take(f), true);
+            let rel = &mut store.rels[r];
+            let pend = rel.lat.is_none();
+            rel.push_fresh(std::mem::take(f), pend);
         }
         let prep = closure::prepare(&cl, store, syms);
         match prep {

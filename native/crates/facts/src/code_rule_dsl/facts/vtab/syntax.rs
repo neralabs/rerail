@@ -3815,8 +3815,10 @@ impl Batch {
         let mut tree = tree::Tree::new(reads);
         // `core.rerail`'s (decision 0046).
         let mut c = core_rows_for(projection);
-        // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","op_t","intval","str_part","str_part_start","str_part_word"]
+        // Node identity/ancestry and line views do not require scalar rows or text interning. `rr_value_lit` is
+        // `value`'s eager half (`lower::ON_REQUEST`): with `name` and `comment` node reads (decision 0353 row 7), a
+        // program may read no other relation of the walk's.
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","rr_value_lit","comment","op_t","intval","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         let core_nodes = core && scalar_nodes;
