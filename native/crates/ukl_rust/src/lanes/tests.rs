@@ -2,26 +2,13 @@
 //! relation of many chunks: a frozen base, and a frozen delta over it with some of its rows dead, an 8-byte column and
 //! a 4-byte one, each row's key's index group, and a bloom filter's verdicts.
 use super::*;
+use rerail_simd::{LaneCount, SupportedLaneCount};
 use rerail_blocks::block::{Block, kind};
 use rerail_blocks::relation::{RelW, Relation, Spec, freeze};
 use std::sync::Mutex;
 
-unsafe fn u(a: [u32; 4]) -> U {
-    vld1q_u32(a.as_ptr())
-}
-unsafe fn lanes32(v: U) -> [u32; 4] {
-    let mut a = [0u32; 4];
-    vst1q_u32(a.as_mut_ptr(), v);
-    a
-}
-unsafe fn lanes64(v: W) -> [u64; 4] {
-    let mut a = [0u64; 4];
-    v.store(a.as_mut_ptr());
-    a
-}
-
 #[test]
-fn the_four_lane_reads_are_the_compiled_reads() {
+fn the_lane_reads_are_the_compiled_reads() {
     let reads = rerail_clif::jit::Reads::new();
     type Two = extern "C" fn(*const u8, u32, u32) -> u64;
     type One = extern "C" fn(*const u8, u32) -> u32;
@@ -63,50 +50,29 @@ fn the_four_lane_reads_are_the_compiled_reads() {
     w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
     freeze(&top_block, top, &spec, Some(base));
 
+    let one = Compiled { rel_get: rel_get_1, rel_dead: rel_dead_1, rel_group: rel_group_1, group_row: group_row_1, mix: mix_1 };
+    // A frozen relation, and a delta's own rows (`base_rows` on): its keys' groups, its dead rows.
     for rel in [base, top] {
         let d = std::ptr::from_ref(rel).cast::<u8>();
-        let n = rel.base_rows + rel.rows.len();
-        // Four rows a step, from far apart (a delta's lanes in different blocks).
-        for i in 0..n {
-            let r = [i, (i * 7 + 3) % n, n - 1 - i, (i * 131) % n];
-            unsafe {
-                let rv = u(r);
-                for c in 0..2u32 {
-                    let got = lanes64(rel_get(d, rv, c));
-                    for l in 0..4 {
-                        assert_eq!(got[l], rel_get_1(d, r[l], c), "rel_get row {} column {c}", r[l]);
-                    }
-                }
-                let own = rel.rows.len();
-                let o = r.map(|x| x % own);
-                let dead = lanes32(rel_dead(d, u(o)));
-                for l in 0..4 {
-                    assert_eq!(dead[l] != 0, rel_dead_1(d, o[l]) != 0, "rel_dead row {}", o[l]);
-                }
-                let h = r.map(|x| rerail_blocks::key_hash(&[rel_get_1(d, x, 1) as i64]));
-                let hv = W::load(h.as_ptr());
-                let (start, len) = rel_group(d, 0, hv);
-                let (start, len) = (lanes32(start), lanes32(len));
-                for l in 0..4 {
-                    let g = rel_group_1(d, 0, h[l]);
-                    assert_eq!(((start[l] as u64) << 32) | len[l] as u64, g, "rel_group of row {}'s key", r[l]);
-                }
-                let rows = lanes32(rel_group_row(d, 0, u(start)));
-                for l in 0..4 {
-                    assert_eq!(rows[l], group_row_1(d, 0, start[l]), "rel_group_row {}", start[l]);
-                }
-                let v = r.map(|x| rel_get_1(d, x, 0));
-                let mixed = lanes64(key_mix(W::load(h.as_ptr()), W::load(v.as_ptr())));
-                for l in 0..4 {
-                    assert_eq!(mixed[l], mix_1(std::ptr::null(), h[l], v[l]), "key_mix");
-                }
-            }
-        }
+        let (lo, n, own) = (rel.base_rows, rel.base_rows + rel.rows.len(), rel.rows.len());
+        relation_lanes::<4>(d, lo, n, own, &one, true);
+        relation_lanes::<8>(d, lo, n, own, &one, true);
+        relation_lanes::<16>(d, lo, n, own, &one, true);
     }
+    // A chain of continuations (`try_continue`: a fork of a fork): every id read down the chain, each lane walking
+    // to its own row's relation.
+    let c1 = Relation::try_continue(&base_block, &spec, base, 3_000).unwrap();
+    RelW { block: &base_block, rel: c1, lock: &lock }.extend(&(0..900i64).flat_map(|i| [i * 3 + 1, i % 11]).collect::<Vec<_>>());
+    let c2 = Relation::try_continue(&base_block, &spec, c1, 3_500).unwrap();
+    RelW { block: &base_block, rel: c2, lock: &lock }.extend(&(0..1_300i64).flat_map(|i| [-(i << 20), 7 + i % 3]).collect::<Vec<_>>());
+    let d = std::ptr::from_ref(c2).cast::<u8>();
+    let n = c2.base_rows + c2.rows.len();
+    relation_lanes::<4>(d, 0, n, c2.rows.len(), &one, false);
+    relation_lanes::<8>(d, 0, n, c2.rows.len(), &one, false);
 
     // A bloom filter's hashes and verdicts, for keys it holds and keys it does not.
     use rerail_blocks::bloom::{self, Bloom};
-    let keys: Vec<u64> = (0..3_000u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i << 7)).collect();
+    let keys: Vec<u64> = (0..3_000u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i << 7)).chain([1, 2, 3, u64::MAX]).collect();
     let block = Block::anon(kind::FACTS, 1 << 20);
     // SAFETY: the filter just made in the block.
     let f: &Bloom = unsafe { &*block.ptr::<Bloom>(Bloom::try_create(&block, 64).unwrap()) };
@@ -114,19 +80,95 @@ fn the_four_lane_reads_are_the_compiled_reads() {
         f.add_hashed(bloom::hash(k as i64));
     }
     let fd = std::ptr::from_ref(f).cast::<u8>();
-    for k in keys.chunks_exact(4).chain(std::iter::once(&[1u64, 2, 3, u64::MAX][..])) {
-        let k: [u64; 4] = k.try_into().unwrap();
-        let probes: [u64; 4] = k.map(|x| x.wrapping_add(17));
-        for keys4 in [k, probes] {
-            unsafe {
-                let (lo, hi) = bloom_hash(W::load(keys4.as_ptr()));
-                let h = lanes64(W::join(lo, hi));
-                let may = lanes32(bloom_may(fd, lo, hi));
-                for l in 0..4 {
-                    assert_eq!(h[l], hash_1(std::ptr::null(), keys4[l]), "bloom_hash of {:#x}", keys4[l]);
-                    assert_eq!(may[l] != 0, may_1(fd, h[l]) != 0, "bloom_may of {:#x}", keys4[l]);
+    let probes: Vec<u64> = keys.iter().map(|x| x.wrapping_add(17)).collect();
+    for ks in [&keys, &probes] {
+        bloom_lanes::<4>(fd, ks, hash_1, may_1);
+        bloom_lanes::<8>(fd, ks, hash_1, may_1);
+    }
+}
+
+struct Compiled {
+    rel_get: extern "C" fn(*const u8, u32, u32) -> u64,
+    rel_dead: extern "C" fn(*const u8, u32) -> u32,
+    rel_group: extern "C" fn(*const u8, u32, u64) -> u64,
+    group_row: extern "C" fn(*const u8, u32, u32) -> u32,
+    mix: extern "C" fn(*const u8, u64, u64) -> u64,
+}
+
+/// Every id `lo..n` of relation `d` (`own` rows of its own), `N` a step from far apart (a chain's lanes in different
+/// relations), each read at `N` lanes against the compiled read on each lane; its keys' groups where it has its
+/// index (`group`).
+fn relation_lanes<const N: usize>(d: *const u8, lo: u32, n: u32, own: u32, one: &Compiled, group: bool)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let m = n - lo;
+    for i in 0..m {
+        let r: [u32; N] = core::array::from_fn(|l| lo + (i + (l as u32) * (m / N as u32 + 7)) % m);
+        let rv = Simd::from_array(r);
+        unsafe {
+            for c in 0..2u32 {
+                let got = rel_get(d, rv, c).to_array();
+                for l in 0..N {
+                    assert_eq!(got[l], (one.rel_get)(d, r[l], c), "rel_get row {} column {c} at {N} lanes", r[l]);
                 }
             }
+            let o = r.map(|x| x % own);
+            let dead = rel_dead(d, Simd::from_array(o)).to_array();
+            for l in 0..N {
+                assert_eq!(dead[l], (one.rel_dead)(d, o[l]) != 0, "rel_dead row {}", o[l]);
+            }
+            if !group {
+                continue;
+            }
+            let h = r.map(|x| rerail_blocks::key_hash(&[(one.rel_get)(d, x, 1) as i64]));
+            let (start, len) = rel_group(d, 0, Simd::from_array(h));
+            let (start, len) = (start.to_array(), len.to_array());
+            for l in 0..N {
+                assert_eq!(((start[l] as u64) << 32) | len[l] as u64, (one.rel_group)(d, 0, h[l]), "rel_group of row {}'s key", r[l]);
+            }
+            let rows = rel_group_row(d, 0, Simd::from_array(start)).to_array();
+            for l in 0..N {
+                assert_eq!(rows[l], (one.group_row)(d, 0, start[l]), "rel_group_row {}", start[l]);
+            }
+            let v = r.map(|x| (one.rel_get)(d, x, 0));
+            let mixed = key_mix(Simd::from_array(h), Simd::from_array(v)).to_array();
+            for l in 0..N {
+                assert_eq!(mixed[l], (one.mix)(std::ptr::null(), h[l], v[l]), "key_mix");
+            }
+        }
+    }
+}
+
+fn bloom_lanes<const N: usize>(fd: *const u8, keys: &[u64], hash_1: extern "C" fn(*const u8, u64) -> u64, may_1: extern "C" fn(*const u8, u64) -> u32)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    for k in keys.as_chunks::<N>().0 {
+        let (lo, hi) = bloom_hash(Simd::<u64, N>::from_array(*k));
+        let h = joined(lo, hi).to_array();
+        // SAFETY: the filter.
+        let may = unsafe { bloom_may(fd, lo, hi) }.to_array();
+        for l in 0..N {
+            assert_eq!(h[l], hash_1(std::ptr::null(), k[l]), "bloom_hash of {:#x}", k[l]);
+            assert_eq!(may[l], may_1(fd, h[l]) != 0, "bloom_may of {:#x}", k[l]);
+        }
+    }
+}
+
+/// `chunk` is `clif_col_at`'s arithmetic, lane for lane.
+#[test]
+fn a_rows_chunk_is_col_ats() {
+    for shift in [0u32, 1, 4, 6] {
+        for i in (0..70_000u32).step_by(7) {
+            let k = ((i as u64) >> shift) + 1;
+            let s = 63 - k.leading_zeros() as u64;
+            let off = i as u64 - (((1u64 << s) - 1) << shift);
+            let e = (shift as u64 + s).wrapping_sub(2);
+            let seg = (s << 2) + (off >> (e & 63));
+            let within = off & ((1u64 << (e & 63)) - 1);
+            let (sv, wv) = chunk::<4>(Simd::splat(i), Simd::splat(shift));
+            assert_eq!((sv[0] as u64, wv[0] as u64), (seg, within), "row {i} from {shift}");
         }
     }
 }

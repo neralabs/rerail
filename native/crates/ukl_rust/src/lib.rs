@@ -10,7 +10,6 @@ pub mod label_parents_w8;
 pub mod label_leaves_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod join_run;
-#[cfg(target_arch = "aarch64")]
 pub mod lanes;
 mod sources;
 

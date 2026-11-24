@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 description = "UKL kernels the engine runs as Rust (decision 0567 step 3): rerail-ukl-vec's Rust of a kernel's vector tape, checked in with the digest of the source it was written from, which the CPU device runs in place of its compiler's build of that source."
 
+[dependencies]
+# std::simd's interface on stable (`lanes`): replaced by std::simd once it is.
+rerail-simd = { path = "../simd" }
 
 [dev-dependencies]
 # The reads' order (`READS`), which the join program's Rust calls them by.

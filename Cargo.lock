@@ -6222,6 +6222,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-simd"
+version = "0.1.0"
+
+[[package]]
 name = "rerail-simd8"
 version = "0.1.0"
 
@@ -8559,7 +8563,9 @@ dependencies = [
 name = "rerail-ukl-rust"
 version = "0.1.0"
 dependencies = [
+ "rerail-blocks",
  "rerail-clif",
+ "rerail-simd",
 ]
 
 [[package]]
