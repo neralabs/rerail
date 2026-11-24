@@ -1478,7 +1478,7 @@ impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
         self.binding.current().write(Some(arg.as_i64()?),None,None,false,false).map(|_|())
     }
     fn insert(&mut self,args:&rusqlite::vtab::Inserts<'_>)->Result<i64> {
-        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Insert,1);
+        crate::code_rule_dsl::sql_frame::frame(crate::code_rule_dsl::sql_frame::FrameEvent::Insert,1);
         use rusqlite::vtab::ConflictMode;
         let conflict=unsafe {args.on_conflict(self.connection)};
         let values=(2..args.len()).map(|i|args.get::<Option<i64>>(i)).collect::<Result<Vec<_>>>()?;
@@ -1494,7 +1494,7 @@ impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, index: c_int, list: Option<&str>, args: &Filters<'_>) -> Result<()> {
-        use crate::code_rule_dsl::sql_profile::{frame,FrameEvent};
+        use crate::code_rule_dsl::sql_frame::{frame,FrameEvent};
         frame(if index==0 {FrameEvent::Scan} else {FrameEvent::Lookup},1);
         let stats = &self.binding.stats;
         stats.scans.fetch_add(1, Ordering::Relaxed);
@@ -1647,7 +1647,7 @@ unsafe impl VTabCursor for Cursor {
     }
     fn next(&mut self) -> Result<()> {
         if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
-        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Next,1);
+        crate::code_rule_dsl::sql_frame::frame(crate::code_rule_dsl::sql_frame::FrameEvent::Next,1);
         if self.selected.is_some()||self.direct.is_some() {
             self.position += 1;
         } else {
@@ -1660,7 +1660,7 @@ unsafe impl VTabCursor for Cursor {
         self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.is_empty(), |r| self.position >= r.len()),|r|self.position>=r.len())
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
-        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Column,1);
+        crate::code_rule_dsl::sql_frame::frame(crate::code_rule_dsl::sql_frame::FrameEvent::Column,1);
         self.binding.stats.columns.fetch_add(1, Ordering::Relaxed);
         let value=if let Some(row)=&self.stream_row {row.cells.cell(col as usize)} else if let Some(rows)=&self.direct {rows[self.position].cells.cell(col as usize)} else if self.cache_rows {self.with_cells(|_,cells|cells.cell(col as usize))} else {self.source.cell(self.row(),col as usize)};
         ctx.set_result(&value)

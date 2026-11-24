@@ -87,7 +87,7 @@ pub fn label_tag(label: &str) -> Option<i64> {
 
 /// Whether this process has queued the tape of a text whose SHA-256 is `digest` in the grammar `file` names, for the
 /// store (`build_in_wave_with_tape` then reads it, not parses it): decision 0431 R6's count of the texts parsed.
-pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32], fragment: Option<Fragment>) -> bool {
+pub fn tape_queued(cache: &dyn crate::content_store::FactStore, file: &dyn SourceFile, digest: &[u8; 32], fragment: Option<Fragment>) -> bool {
     use crate::code_rule_dsl::build_ids::grammar_version;
     let tag = match fragment {
         Some(f) => Some(i64::from(f.tag)),
@@ -339,12 +339,12 @@ fn facts_of_image(file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tap
 /// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
 /// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
 /// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
-pub fn build_cached(file: &dyn SourceFile, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+pub fn build_cached(file: &dyn SourceFile, cache: &dyn crate::content_store::FactStore) -> Result<Built, String> {
     build_cached_as(file, cache, None)
 }
 
 /// [`build_cached`] for a caller that has already stored the file's source as `known`: it is not hashed or looked up again.
-pub(crate) fn build_cached_as(file: &dyn SourceFile, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
+pub(crate) fn build_cached_as(file: &dyn SourceFile, cache: &dyn crate::content_store::FactStore, known: Option<crate::content_store::SourceId>) -> Result<Built, String> {
     build_cached_source(file, cache, known).map(|(built, _)| built)
 }
 
@@ -395,7 +395,7 @@ fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crat
 }
 
 /// Restore a tape already built by the source phase, including tapes awaiting publication.
-pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::ContentStore, digest: [u8; 32]) -> crate::content_store::StoreResult<Option<TapeDoc>> {
+pub fn restore_tape(file: &dyn SourceFile, cache: &dyn crate::content_store::FactStore, digest: [u8; 32]) -> crate::content_store::StoreResult<Option<TapeDoc>> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage, formats}};
     use crate::content_store::{HashKey, StoreError};
     let language = file_language(file).ok_or_else(|| StoreError::Invalid(format!("{} has no grammar", file.language())))?;
@@ -423,7 +423,7 @@ pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::Content
 /// SHA-256, when the caller has it.
 pub fn build_in_wave(
     file: &dyn SourceFile,
-    cache: &crate::content_store::ContentStore,
+    cache: &dyn crate::content_store::FactStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
@@ -435,7 +435,7 @@ pub fn build_in_wave(
 /// 0106).
 pub fn build_in_wave_with_tape(
     file: &dyn SourceFile,
-    cache: &crate::content_store::ContentStore,
+    cache: &dyn crate::content_store::FactStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
@@ -454,7 +454,7 @@ pub fn build_with_frame(file: &dyn SourceFile, found: &crate::content_store::Tap
 pub fn build_fragment_in_wave(
     file: &dyn SourceFile,
     fragment: Fragment,
-    cache: &crate::content_store::ContentStore,
+    cache: &dyn crate::content_store::FactStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
@@ -467,7 +467,7 @@ pub fn build_fragment_in_wave(
 fn build_in_wave_as(
     file: &dyn SourceFile,
     fragment: Option<Fragment>,
-    cache: Option<&crate::content_store::ContentStore>,
+    cache: Option<&dyn crate::content_store::FactStore>,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
@@ -607,14 +607,14 @@ fn queued_programs(built: &Built) -> Result<Option<Arc<[crate::content_store::Qu
 /// [`build_cached_as`], with the source's id as the store holds it after the build. A parsed tape is stored with its
 /// source in one transaction (O95), so a source collected since the caller resolved `known` is stored again, under a
 /// new id; `None` when the file did not parse and its source is not known.
-pub(crate) fn build_cached_source(file: &dyn SourceFile, cache: &crate::content_store::ContentStore, known: Option<crate::content_store::SourceId>) -> Result<(Built, Option<crate::content_store::SourceId>), String> {
+pub(crate) fn build_cached_source(file: &dyn SourceFile, cache: &dyn crate::content_store::FactStore, known: Option<crate::content_store::SourceId>) -> Result<(Built, Option<crate::content_store::SourceId>), String> {
     build_cached_with_tape(file, cache, known, false).map(|(built, id, _)| (built, id))
 }
 
 /// [`build_cached_source`], with the tape the facts were read off (decision 0106).
 pub fn build_cached_with_tape(
     file: &dyn SourceFile,
-    cache: &crate::content_store::ContentStore,
+    cache: &dyn crate::content_store::FactStore,
     known: Option<crate::content_store::SourceId>,
     keep: bool,
 ) -> Result<(Built, Option<crate::content_store::SourceId>, Option<TapeDoc>), String> {

@@ -17,16 +17,20 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+/// The store's records and interface (rerail-store-base, through observe), and its atoms (rerail-atoms).
+pub mod content_store {
+    pub use rerail_atoms as atoms;
+    pub use rerail_observe::content_store::*;
+}
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_run;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
     pub use rerail_lang::code_rule_dsl::embed;
-    pub use rerail_facts::code_rule_dsl::facts;
+    pub use rerail_facts_base::code_rule_dsl::facts;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
     pub use rerail_lang::code_rule_dsl::json;
@@ -36,11 +40,13 @@ pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
         // The lower crates' modules of the logic language, under its paths.
-        pub use rerail_rr::code_rule_dsl::logic::front;
+        pub use rerail_rr_syntax::code_rule_dsl::logic::front;
         pub use rerail_prof::code_rule_dsl::logic::profile;
         pub use rerail_program_image::code_rule_dsl::logic::{program_facts, program_image};
-        pub use rerail_facts::code_rule_dsl::logic::strings;
-        pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, costs, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
+        pub use rerail_facts_base::code_rule_dsl::logic::strings;
+        pub use rerail_facts_base::code_rule_dsl::logic::sql_names;
+        // The cost statistics the lanes start (rerail-costs).
+        pub use rerail_costs::code_rule_dsl::logic::costs;
         pub mod device;
         pub mod lanes;
         pub mod native;
@@ -49,20 +55,18 @@ pub mod code_rule_dsl {
         /// The planner's modules setfix reads, under the planner's paths.
         #[path = "plan"]
         pub mod plan {
-            pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
+            pub use rerail_facts_base::code_rule_dsl::logic::plan::sketch;
             pub mod statkeep;
         }
     }
     pub use rerail_lang::code_rule_dsl::module_path;
     pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub use rerail_facts::code_rule_dsl::producers;
+    pub use rerail_facts_base::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
-    pub use rerail_facts::code_rule_dsl::search_index;
+    pub use rerail_facts_base::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats {
-        pub use rerail_facts::code_rule_dsl::stats::identity;
+        pub use rerail_facts_base::code_rule_dsl::stats::identity;
     }
     pub mod suppress {
         pub use rerail_lang::code_rule_dsl::suppress::kinds;
@@ -72,7 +76,7 @@ pub mod code_rule_dsl {
         pub(crate) use crate::code_rule_dsl::suppress::kinds::*;
     }
     pub use rerail_lang::code_rule_dsl::tape;
-    pub use rerail_facts::code_rule_dsl::text;
+    pub use rerail_facts_base::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;

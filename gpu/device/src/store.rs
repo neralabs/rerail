@@ -12,7 +12,7 @@
 //! keyed by the source, the architecture, the options and the NVRTC and driver versions; OpenCL the program's
 //! binary (`opencl/<key>.bin`), keyed by the source, the options and the device's name, version and driver; the
 //! CPU the shared object the compiler made (`cpu/<key>.so`), keyed by the source, the options and the compiler's
-//! version. Metal's pipelines are in the engine's archive store (`rerail_accel::gpu::kernels`) until the engine's
+//! version. Metal's pipelines are in the engine's archive store (`rerail_accel_gpu::gpu::kernels`) until the engine's
 //! kernels are on the device layer (0440 step C).
 //!
 //! A form that does not load (damaged, or of another build the key missed) is compiled again and replaced. A store
@@ -64,7 +64,7 @@ pub fn key(parts: &[&[u8]]) -> String {
 
 /// The kernels shipped with the engine (`rerail-engine kernels ship`): read-only. Each kernel compiled ahead of time
 /// for a target under `<dir>/gpu/<target>/` (decision 0645, `rerail_gpu::kernels::shipped_path`); Metal's AIR and
-/// archives (`rerail_accel::gpu::kernels`); and decision 0395's forms by the store's own keys under
+/// archives (`rerail_accel_gpu::gpu::kernels`); and decision 0395's forms by the store's own keys under
 /// `<dir>/<backend>/`, used only where every part of the key is this machine's. `RERAIL_SHIPPED_KERNELS=<dir>|off`,
 /// else `rerail-kernels/` beside the program, or beside the library the engine was loaded from (the Node addon in
 /// the package's `native/`: `os::own_image`).

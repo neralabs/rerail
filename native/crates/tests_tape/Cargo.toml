@@ -230,6 +230,8 @@ rerail-device-metal = { path = "../device_metal", default-features = false }
 # The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 
 [dev-dependencies]
+# The `.rerail` parser, which the tape's tests measure beside the engine's.
+rerail-rr-parser = { path = "../rr_parser", features = ["test-hooks"] }
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "../simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

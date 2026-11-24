@@ -70,9 +70,9 @@ pub enum Parse {
 }
 
 impl Parse {
-    /// A program's text read in `dialect`: by the dialect's lean parser where it has one and that
-    /// parser reads the text, else by tree-sitter (one behavior: tree-sitter's tape, or a
-    /// refusal). `None` where tree-sitter has no grammar for the dialect.
+    /// A program's text read in `dialect`: by the dialect's own parser where the engine registered one
+    /// (`tape::tree_parser`: a lean parser, rerail-lean-tapes') and it reads the text, else by tree-sitter (one
+    /// behavior: tree-sitter's tape, or a refusal). `None` where tree-sitter has no grammar for the dialect.
     pub fn read(dialect: GrammarDialect, text: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
         Self::read_omitting(dialect, text, rerail_blocks::vector::Vector::new(), budget)
     }
@@ -85,22 +85,14 @@ impl Parse {
     }
 
     fn read_omitting(dialect: GrammarDialect, text: &str, omit: rerail_blocks::vector::Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Self> {
-        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, html_lean, php_lean};
-        let ecma = |lean| Grammar::embedded(dialect).ok().and_then(|grammar| ecma_lean::encode_omitting(lean, &grammar, text, "program", omit.clone(), budget).expect("a program is a start").ok());
-        let lean = match dialect {
-            GrammarDialect::JavaScript => ecma(rerail_ecma_lean::Dialect::JavaScript),
-            GrammarDialect::TypeScript => ecma(rerail_ecma_lean::Dialect::TypeScript),
-            GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
-            GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, omit.clone(), budget).ok()),
-            GrammarDialect::Html => Grammar::embedded(dialect).ok().and_then(|grammar| html_lean::encode_omitting(&grammar, text, "document", omit.clone(), budget).expect("a document is a start").ok()),
-            // A literal grammar's dialect (decision 0495 §2): tree-sitter has none, and its registered parser reads it.
-            // Its programs omit nothing (`match_regex`'s segments are copies).
-            GrammarDialect::Regex if omit.is_empty() => {
-                let grammar = Grammar::embedded(dialect).ok()?;
-                return crate::code_rule_dsl::tape::TapeImage::parse(&grammar, text, &budget)?.ok().map(|image| Self::Tape(image.primary));
-            }
-            _ => None,
-        };
+        use crate::code_rule_dsl::tape::{Grammar, tree_parser};
+        // A literal grammar's dialect (decision 0495 §2): tree-sitter has none, and its registered parser reads it.
+        // Its programs omit nothing (`match_regex`'s segments are copies).
+        if dialect == GrammarDialect::Regex && omit.is_empty() {
+            let grammar = Grammar::embedded(dialect).ok()?;
+            return crate::code_rule_dsl::tape::TapeImage::parse(&grammar, text, &budget)?.ok().map(|image| Self::Tape(image.primary));
+        }
+        let lean = tree_parser(dialect).and_then(|parser| Grammar::embedded(dialect).ok().and_then(|grammar| parser.program(&grammar, text, omit, budget)));
         if let Some(tape) = lean.and_then(Result::ok) {
             return Some(Self::Tape(tape));
         }

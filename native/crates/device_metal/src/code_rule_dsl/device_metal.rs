@@ -32,7 +32,7 @@ mod test_load {
     extern "C" fn load() {
         crate::code_rule_dsl::facts::rows::install_run_room();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
-        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
         super::register();
         // The compiled CPU, which the device's tests compare it with, as boot registers it (`install_devices`).

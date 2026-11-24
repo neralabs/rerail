@@ -11203,3 +11203,33 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - tests-tape: every test passes, two of them alone (`json_tapes_from_simdjson_are_tree_sitters` takes 96 s alone; with four threads the run passed the memory cap);
   - tests-corpus: five tape-value tests (`the_run_after_a_cold_one_with_tape_values_writes_nothing` alone, 39 s).
 - Not green, and not from this merge: rerail-kotlin-parser's tests abort under Relax in a `Vec` drop inside bitlex's `Gen::source` (`bitlex_lex_rust.rs:5208`), at O3 and at baseline. This merge changes no code on that path; it goes to the green pass.
+
+### Q539. Roll-up 112 (engine-crating 8190dad445 onto Pulling-it-all-together): what the merge chose
+
+- engine-crating (13 commits past its hub merge), crate splits 10b–10e:
+  - the store's calls are a trait below it (`FactStore`, rerail-store-base); the atoms are rerail-atoms;
+  - the SQL profiler is rerail-sql-profile; the facts' overlay and runs are rerail-overlay;
+  - the GPU lane and the learned models' forests are rerail-accel-gpu; the slabs are rerail-slabs;
+  - the cost statistics are rerail-costs; the lean parsers' adapters are rerail-lean-tapes, registered in the parser router (`TreeParser`);
+  - the crate chain from the compiler's resolution (cratify).
+- The hub's work since the branch's merge, carried into the moved code, one mechanism each:
+  - `Vector` for the test workloads (`rerail_accel::workloads`), the interned atoms (`FactStore::intern_atoms`, `AtomTable::intern_all`) and the counts' values;
+  - the price bench's `RERAIL_PRICE_ONLY` and the submission's forms without joins (now in accel-gpu's `gpu/bench.rs`);
+  - the closure's work queue, the joins' `residents` and `max_threads_per_group` check, and the tiles' `Vector` rows (rerail-accel-gpu's `gpu`, on `rerail_accel::` paths);
+  - upkeep's stop between a model's forests: the models' interface carries it (`Models::compare_cost` and `train_cost` take `stop` and answer `None`, over the forest's `compare_unless` and `train_unless`); `cost_model::train_until` gives up as the hub's did;
+  - an embedded program's omitted placeholders: `TreeParser::program` takes `omit`, and the lean adapters write the tape without them (`ecma_lean::encode_omitting`, `html_lean::encode_omitting`, `php_lean::encode_program`); `embed::Parse::read_program` reads through the router;
+  - the source as `Text` (0353 step 7) in `FactStore::queue_source_and_tape`;
+  - `placed::read_text` reads through the observer's `read_placed`: rerail-lang takes rerail-observe (below it in the chain) in place of the store it left;
+  - the index hand-off (`InFlight`): the branch's `Flushed` below the lane and `Submitted::watching`, with the hub's `whole`;
+  - the hub's removals stay removed: lmap, `SESSION_MEMO`, the stratum uploads (0353 step 6), the view gating of `device_view`;
+  - `fixtures::open`, gone with lang's store, is `ContentStore::open` at the hub's new callers, as the branch did at its own.
+- Manifests: both sides' entries; feature entries that name crates no longer depended on are removed; `check_dev_features` and `check_crate_dag` pass. `global-state.txt` is rewritten by its checker for the moved files; two of the hub's statics it had not listed (`lang_sql`'s `LOAD`, `os_warning`'s `ONCE`) are listed.
+- Red test fixed on the way: rerail-accel's pool tests took two different locks named `big_leases` (one in `tests` shadowed the module's), so the budget test counted another test's lease (`a_deferrable_journal_is_handed_off_and_its_file_reused`, 64 KB over); one lock now.
+- Checked with Relax, RERAIL_GPU=cpu: 40 crates, 0 errors but one, which is Relax's: `sessions_base`'s `rr` re-exports rr's `translate` module beside its crate-restricted `translate` function, which Relax counts as imported. rustc accepts the shape. Tests:
+  - accel 81 (twice, four threads); atoms 1; overlay 11; lang-ecma 33; facts-base 83; store 229 (one thread); lang embed 2;
+  - setfix inputs and refusals 3; tests-lang syntax 85; tests-rr `running_a_files_tests_again_adds_no_root_to_the_store`.
+- Not green, and not from this merge (to the green pass):
+  - rerail-accel-gpu's `concurrent_levels_staged_probes_are_the_hosts_joins` passes 15 GB on the CPU device;
+  - rerail-store's suite passes the memory cap with four threads;
+  - tests-corpus: the test stores' template holds no library under Relax (`core.rerail: in no module of phase 0's plan`), as at roll-up 111, and `a_second_run_in_one_process_records_the_first_runs_manifest` passes the cap;
+  - rerail-engine's check: napi-derive's constructor registry fires twice under Relax.

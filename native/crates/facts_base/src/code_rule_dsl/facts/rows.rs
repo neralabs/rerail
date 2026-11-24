@@ -88,7 +88,8 @@ pub const AXIS_KEYS: usize = 4;
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
-    pub done: rerail_accel::gpu::join::Submitted,
+    /// Its builder's committed work (the lane's `Submitted::flushed`): a taker waits on it.
+    pub done: std::sync::Arc<rerail_accel::gpu::shared::Flushed>,
     /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
     pub lent: bool,
     /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
@@ -638,12 +639,13 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 
 /// The batches' relations held now, the most bytes first (`syntax::made::sources_held`, above this crate, installed by
 /// `install_sources_held`): (bytes in their blocks, name, documents made, the batch's documents, the span of its first
-/// group, of its latest). None until one is installed.
-static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> = rerail_registry::Slot::new("what lists the batches' relations held (facts::rows::SOURCES_HELD)");
+/// group, of its latest). None until boot registers it.
+pub static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> =
+    rerail_registry::Slot::new("the batches' relations held (facts::rows::SOURCES_HELD)");
 
-/// Installs what lists the batches' relations held (`syntax::made::sources_held`): once, at load.
+/// Registers what lists the batches' relations held (`syntax::made::sources_held`), once, by boot.
 pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32, u32)>) {
-    SOURCES_HELD.register("boot", held);
+    SOURCES_HELD.register("rerail-boot", held);
 }
 
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's

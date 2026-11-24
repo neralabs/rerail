@@ -19,6 +19,22 @@ impl Store for Provider {
     fn own_recorded_manifests(&self, path: &Path, root: &str, plans: &[[u8; 32]], owner: &AnalysisOwner, now: i64) -> StoreResult<usize> {
         ContentStore::open(path)?.own_recorded_manifests(root, plans, owner, now)
     }
+
+    fn file_read(&self, db: &rusqlite::Connection, path: &Path, space: &[u8; 32], f: &mut dyn FnMut(Option<&dyn KeptRead>)) -> StoreResult<()> {
+        let rows = super::kept_facts::chain_rows(db, space)?;
+        if rows.is_empty() {
+            f(None);
+            return Ok(());
+        }
+        let kept = super::kept_facts::KeptSpace::open(path, space, &rows)?;
+        let chain = kept.view();
+        f(Some(&chain));
+        Ok(())
+    }
+
+    fn file_write(&self, t: &rusqlite::Connection, path: &Path, space: &[u8; 32], puts: Vec<KeptPut>) -> StoreResult<()> {
+        super::kept_facts::write_space(path, t, space, puts, None).map(drop)
+    }
 }
 
 impl Kept for ContentStore {

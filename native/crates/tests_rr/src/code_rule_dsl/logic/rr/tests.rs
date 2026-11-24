@@ -3814,7 +3814,7 @@ Call(c) :- kind(c, "call").
     let roots = || -> std::collections::BTreeSet<String> {
         let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
         let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        crate::content_store::atoms::install_kept_tables(&c).unwrap();
+        crate::content_store::install_kept_tables(&c).unwrap();
         let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
         st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
     };

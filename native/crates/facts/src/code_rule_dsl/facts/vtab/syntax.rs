@@ -33,7 +33,7 @@ use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::core::{Facts, NONE, TEXT, kind_atom, kind_code};
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
-use crate::content_store::{ContentStore, StoreError, StoreResult};
+use crate::content_store::{FactStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
 use std::collections::{BTreeSet, HashMap};
@@ -2259,7 +2259,7 @@ pub struct Batch {
     matches: Vec<Arc<regex::Regex>>,
     markers: Vec<String>,
     metal: bool,
-    atoms: Arc<crate::content_store::atoms::Atoms>,
+    atoms: Arc<dyn crate::content_store::AtomTable>,
     wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
     /// The rows made, by group (decision 0494).
     rows: made::Rows,
@@ -2324,7 +2324,7 @@ fn meet(vocabulary: &mut Vec<u32>, met: &mut Vec<u64>, a: u32) {
 }
 
 /// The texts of `atoms`, read from the atoms directory, with the atoms: the text tests' input.
-fn texts_of(atoms_dir: &crate::content_store::atoms::Atoms, atoms: &[u32]) -> StoreResult<(Vec<String>, Vec<u32>)> {
+fn texts_of(atoms_dir: &dyn crate::content_store::AtomTable, atoms: &[u32]) -> StoreResult<(Vec<String>, Vec<u32>)> {
     let mut texts = Vec::with_capacity(atoms.len());
     for &a in atoms {
         texts.push(atoms_dir.value(a)?.unwrap_or_default());
@@ -3318,7 +3318,7 @@ impl Batch {
     /// space is counted from where given; a document made whose counts differ fails, named.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<impl Into<Input>>,
         projection: &Projection,
         matches: &[Arc<regex::Regex>],
@@ -3334,7 +3334,7 @@ impl Batch {
     /// relations apart, and the batch's distinct strings and their symbols (`make_rows`).
     #[allow(clippy::type_complexity)]
     pub fn build(
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<impl Into<Input>>,
         projection: &Projection,
         matches: &[Arc<regex::Regex>],
@@ -3459,7 +3459,7 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     fn add(
         grown: &mut Growth,
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<Input>,
         projection: &Projection,
         matches: &[Arc<regex::Regex>],
@@ -4075,7 +4075,7 @@ impl Batch {
                     held.iter().map(|&i| self.docs.input(i)).filter_map(|d| Some((Arc::clone(&d.facts), in_batch(&d.tape.as_ref()?.0, self.docs.cache()), d.path.clone()))).collect();
                 let at: Vec<Option<&Projected>> = held.iter().map(|&i| Some(&self.docs[i])).collect();
                 match &matchers.0 {
-                    Some(wave) => wave.matched(&tapes, &at, *binding, &self.atoms)?,
+                    Some(wave) => wave.matched(&tapes, &at, *binding, &*self.atoms)?,
                     None => Vec::new(),
                 }
             }
@@ -4098,7 +4098,7 @@ impl Batch {
     /// A batch of `documents` that keeps its groups' strings, renewed from `held` where it can be (decision 0616), as
     /// a session's corpus batch is (`with_matchers_renewed`), with no matchers.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn renewed(store: &ContentStore, documents: Vec<impl Into<Input>>, projection: &Projection, held: Option<Arc<Batch>>) -> StoreResult<Arc<Self>> {
+    pub fn renewed(store: &dyn FactStore, documents: Vec<impl Into<Input>>, projection: &Projection, held: Option<Arc<Batch>>) -> StoreResult<Arc<Self>> {
         let mut growth = Growth { renew: held, keeps_strings: true, ..Growth::default() };
         Self::add(&mut growth, store, inputs(documents), projection, &[], &[], false, None, &HashMap::new(), false).map(|(batch, _)| batch)
     }
@@ -4486,7 +4486,7 @@ impl Source for Viewed {
         let loc = matches!(self.view, View::Loc(_));
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
         // none where its buffers have none (`views_in_place`).
-        rerail_accel::gpu::join::device().ok()?;
+        rerail_accel::gpu::shared::device().ok()?;
         let in_place = device_chunk::views_in_place(&self.batch)
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
             .and_then(|v| {
@@ -5463,12 +5463,12 @@ pub fn definitions(key: u32, facts: &Arc<Facts>, core: bool) -> StoreResult<Hash
 }
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
-pub fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
+pub fn sources(store: &dyn FactStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     shaped(store, documents, &Projection::default())
 }
 
 /// The base relations over `documents` in `projection`'s shape, and the `py.*` families, by table name.
-pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
+pub fn shaped(store: &dyn FactStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     let batch = Batch::new(store, documents, projection, &[], &[], false, None, &HashMap::new())?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
@@ -5572,7 +5572,7 @@ impl Batch {
 /// (`within::Axis`), or for the whole batch by the transducer's file-local FIX (`typing::file_local::nearest`, bound
 /// `binding`) where the planner expects more lookups than that costs (decision 0143).
 pub fn with_nearest(
-    store: &ContentStore,
+    store: &dyn FactStore,
     documents: Vec<Document>,
     sets: &[(String, Vector<i64>)],
     tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
@@ -5595,7 +5595,7 @@ pub trait AstWave: Send + Sync {
         tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
         at: &[Option<&Projected>],
         binding: crate::code_rule_dsl::facts::nearest::Binding,
-        atoms: &crate::content_store::atoms::Atoms,
+        atoms: &dyn crate::content_store::AtomTable,
     ) -> StoreResult<Vec<(String, Relation)>>;
     /// Each matcher's relation and its columns past `n` that hold a node of the row's own document (its node
     /// captures, not a `transform`'s text): a probe of one makes the documents its values name (decision 0494).
@@ -5656,7 +5656,7 @@ fn inputs(documents: Vec<impl Into<Input>>) -> Vec<Input> {
 
 /// [`with_nearest`], with each of `matchers`' relations over the documents' tapes (decision 0106).
 pub fn with_matchers(
-    store: &ContentStore,
+    store: &dyn FactStore,
     documents: Vec<impl Into<Input>>,
     sets: &[(String, Vector<i64>)],
     matchers: &Matchers,
@@ -5672,7 +5672,7 @@ pub fn with_matchers(
 /// batch) where it can be, its groups keeping their strings for the next run's.
 #[allow(clippy::too_many_arguments)]
 pub fn with_matchers_renewed(
-    store: &ContentStore,
+    store: &dyn FactStore,
     documents: Vec<impl Into<Input>>,
     sets: &[(String, Vector<i64>)],
     matchers: &Matchers,
@@ -5716,7 +5716,7 @@ impl Grower {
     /// [`with_matchers`]'s sources, and the grower that adds a round's documents to them.
     #[allow(clippy::too_many_arguments)]
     pub fn start(
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<impl Into<Input>>,
         sets: &[(String, Vector<i64>)],
         matchers: &Matchers,
@@ -5733,7 +5733,7 @@ impl Grower {
     /// The sources with `documents` added: a round's, past every document the batch holds.
     pub fn grow(
         &mut self,
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<impl Into<Input>>,
         sets: &[(String, Vector<i64>)],
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
@@ -5752,7 +5752,7 @@ impl Grower {
     /// values made 40 GB of the run's peak and 55 s of its CPU.
     pub fn admit(
         &mut self,
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<Document>,
         sets: &[(String, Vector<i64>)],
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
@@ -5788,7 +5788,7 @@ impl Grower {
     #[allow(clippy::too_many_arguments)]
     fn sources_of(
         &mut self,
-        store: &ContentStore,
+        store: &dyn FactStore,
         documents: Vec<Input>,
         matchers: Option<&Matchers>,
         tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,

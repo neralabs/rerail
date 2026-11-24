@@ -19,7 +19,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -148,7 +148,7 @@ use rerail_blocks::vector::Vector;
     /// CPU's.
     fn closure(sizes: &[(&str, &str)]) -> super::Report {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -259,7 +259,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -341,7 +341,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -419,7 +419,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -490,7 +490,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -623,7 +623,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -776,7 +776,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -885,7 +885,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -924,7 +924,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -995,7 +995,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1034,7 +1034,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1107,7 +1107,7 @@ use rerail_blocks::vector::Vector;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1247,7 +1247,7 @@ use rerail_blocks::vector::Vector;
     /// A store with `temp.n` of `rows` rows (`s<k % 37>`, k), the native module registered: the wave tests' input.
     fn wave_db(rows: i64) -> Connection {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1280,7 +1280,7 @@ use rerail_blocks::vector::Vector;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1348,7 +1348,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1597,7 +1597,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1713,7 +1713,7 @@ use rerail_blocks::vector::Vector;
         use crate::code_rule_dsl::model::FileInput;
         use crate::code_rule_dsl::transducer::packed::metal_join as mj;
         use std::sync::Arc;
-        if !mj::available() || !rerail_accel::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
+        if !mj::available() || !rerail_accel_gpu::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
             return;
         }
         crate::test_languages();
@@ -1825,7 +1825,7 @@ use rerail_blocks::vector::Vector;
         let store_path = std::env::temp_dir().join(format!("rerail-chunk-views-{}-{nonce}.sqlite", std::process::id()));
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
-        let device = rerail_accel::gpu::join::device().expect("the device");
+        let device = rerail_accel_gpu::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
         // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
@@ -2119,7 +2119,7 @@ use rerail_blocks::vector::Vector;
             rows
         };
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2207,7 +2207,7 @@ use rerail_blocks::vector::Vector;
         want.sort_unstable();
         assert!(want.iter().filter(|r| r.0 >> 32 == 5).count() > 5, "the value's children: {want:x?}");
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2274,7 +2274,7 @@ use rerail_blocks::vector::Vector;
         want.sort_unstable();
         assert!(want.len() > 20 && want.len() < child.len(), "{} of {} rows", want.len(), child.len());
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2360,7 +2360,7 @@ use rerail_blocks::vector::Vector;
         }
         let runs: usize = std::env::var("RERAIL_MEASURE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

@@ -9,5 +9,5 @@ pub fn library() -> PathBuf {
         .map(PathBuf::from)
         // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
         // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(rerail_store::source_tree::rule_library)
+        .unwrap_or_else(rerail_observe::source_tree::rule_library)
 }

@@ -2332,7 +2332,7 @@ fn an_axis_probes_cost() {
     use crate::code_rule_dsl::logic::native::{self as native, component as c};
     let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = rusqlite::Connection::open(path).unwrap();
     native::register(&db).unwrap();
     c::hold_source(&db, "ax", Arc::new(source), b"ii".to_vec());
@@ -3481,7 +3481,7 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
             tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
             _: &[Option<&Projected>],
             _: crate::code_rule_dsl::facts::nearest::Binding,
-            _: &crate::content_store::atoms::Atoms,
+            _: &dyn crate::content_store::AtomTable,
         ) -> StoreResult<Vec<(String, Relation)>> {
             self.0.lock().unwrap().extend(tapes.iter().map(|(_, _, path)| path.clone()));
             // A node of each document matched: its key (the test's path `m{key}.py`) above its local id.

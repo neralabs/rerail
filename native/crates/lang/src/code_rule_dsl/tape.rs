@@ -51,40 +51,9 @@ pub mod validated;
 pub mod formats;
 pub mod placed;
 pub mod token_census;
-/// Python's tape from the lean parser (`rerail_python_lean`).
-pub mod python_lean;
-/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
-pub mod ecma_lean;
-/// Rust's tape from the lean parser (`rerail_rust_lean`).
-pub mod rust_lean;
-/// Java's tape from the lean parser (`rerail_java_lean`).
-pub mod java_lean;
-/// Go's tape from the lean parser (`rerail_go_lean`).
-pub mod go_lean;
-/// C's and C++'s tapes from the lean parser (`rerail_c_lean`).
-pub mod c_lean;
-/// C#'s tape from the lean parser (`rerail_csharp_lean`).
-pub mod csharp_lean;
-/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
-pub mod kotlin_lean;
-/// Swift's tape from the lean parser (`rerail_swift_lean`).
-pub mod swift_lean;
-/// Scala's tape from the lean parser (`rerail_scala_lean`).
-pub mod scala_lean;
-/// PHP's tape from the lean parser (`rerail_php_lean`).
-pub mod php_lean;
-/// HTML's tape from the lean parser (`rerail_html_lean`).
-pub mod html_lean;
-/// CSS's tape from the lean parser (`rerail_css_lean`).
-pub mod css_lean;
-/// Markdown's tape from the lean parser (`rerail_markdown_lean`).
-pub mod markdown_lean;
-/// Markdown's inline texts' tapes from the lean parser (`rerail_markdown_inline_lean`).
-pub mod markdown_inline_lean;
-/// SQL's tape from the lean parser (`rerail_sql_lean`).
-pub mod sql_lean;
-/// Vue's tape from the lean parser (`rerail_vue_lean`).
-pub mod vue_lean;
+// The lean parsers' adapters (`tape::<language>_lean`) are rerail-lean-tapes', above this crate: the engine reads a
+// dialect through the parser it registers in the router (`install_parsers`), a file (`TreeParser::parse`), a fragment
+// (`parse_from`) or an embedded program (`program`).
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -290,6 +259,14 @@ pub trait TreeParser: Send + Sync {
     /// it: `None` where the parser refuses the text (there is no tree-sitter fallback for a fragment), `Some(Err)`
     /// where the tape cannot be made.
     fn parse_from(&self, _grammar: &Grammar, _source: &str, _start: &str, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        None
+    }
+
+    /// A program's text as an embedder hands it (`embed::Parse::read`): its tape, as tree-sitter's tree of it encodes
+    /// to (decision 0198), without the placeholders `omit` spans (`embed::Parse::read_program`): the parse leaves them
+    /// out as it writes the tape (`Writer::omitting`). `None` where the parser refuses the text or reads no program
+    /// (tree-sitter reads it then), `Some(Err)` where the tape cannot be made.
+    fn program(&self, _grammar: &Grammar, _text: &str, _omit: rerail_blocks::vector::Vector<[u32; 2]>, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
         None
     }
 

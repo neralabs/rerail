@@ -155,7 +155,7 @@ impl AstWave for Wave {
         tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
         at: &[Option<&Projected>],
         binding: crate::code_rule_dsl::typing::file_local::Binding,
-        atoms: &crate::content_store::atoms::Atoms,
+        atoms: &dyn crate::content_store::AtomTable,
     ) -> StoreResult<Vec<(String, Relation)>> {
         matched(tapes, at, self, binding, atoms)
     }
@@ -294,7 +294,7 @@ fn matched(
     at: &[Option<&Projected>],
     matchers: &Wave,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
-    atoms: &crate::content_store::atoms::Atoms,
+    atoms: &dyn crate::content_store::AtomTable,
 ) -> StoreResult<Vec<(String, Relation)>> {
     use crate::code_rule_dsl::logic::profile;
     let _span = profile::span(|| "ast matchers on the transducer".into());
@@ -462,7 +462,7 @@ fn captured_rows(
     found: &[BTreeSet<u32>],
     at: &[Option<&Projected>],
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
-    atoms: &crate::content_store::atoms::Atoms,
+    atoms: &dyn crate::content_store::AtomTable,
     w_key: Option<String>,
 ) -> StoreResult<(Vec<Vector<i64>>, usize, u128)> {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;

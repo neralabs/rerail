@@ -5710,7 +5710,7 @@ fn run_observed_within(
         if in_memory {
             crate::content_store::atoms::Atoms::share_memory(&wdb, store.atoms_handle())?;
         }
-        crate::content_store::atoms::Atoms::install(&mut wdb)?;
+        crate::content_store::install_atoms(&mut wdb)?;
         crate::code_rule_dsl::facts::vtab::defer_setup(&wdb, "PRAGMA synchronous=OFF;");
         super::ready_native(&wdb)?;
         if by_shift {

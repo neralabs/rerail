@@ -48,7 +48,7 @@ pub mod content_store {
         pub mod base;
         pub use base::*;
     }
-    pub use prefilter::TapePrefilter;
+    pub use prefilter::{TapePrefilter, VOCABULARY_REGEX, VOCABULARY_TEXT, VocabularyTest};
     /// A tape's positional search index and its lookups.
     pub mod positional_search {
         pub mod base;
@@ -56,6 +56,14 @@ pub mod content_store {
     }
     /// The name a queued write goes by.
     pub mod write_back {
+        pub mod base;
+        pub use base::*;
+    }
+    /// The content store as the facts reach it (`FactStore`), which the store implements.
+    pub mod fact_store;
+    pub use fact_store::{AtomTable, FactStore};
+    /// A SQLite file's upkeep job (`SqliteFile`).
+    pub mod upkeep {
         pub mod base;
         pub use base::*;
     }

@@ -45,9 +45,12 @@ metal-tests = []
 # The test-only dialects (`grammar_dialect!` in `language.rs`) are in `GrammarDialect::ALL` with the hooks on, so
 # their ast-grep grammars are too: without them a build with the hooks and no dev-dependencies (the CLI's
 # `--features test-hooks`) panicked loading the grammars.
-test-hooks = ["rerail-vue-lean/test-hooks", "rerail-swift-lean/test-hooks", "rerail-sql-lean/test-hooks", "rerail-scala-lean/test-hooks", "rerail-rust-lean/test-hooks", "rerail-python-lean/test-hooks", "rerail-php-lean/test-hooks", "rerail-markdown-lean/test-hooks", "rerail-markdown-inline-lean/test-hooks", "rerail-kotlin-lean/test-hooks", "rerail-java-lean/test-hooks", "rerail-html-lean/test-hooks", "rerail-go-lean/test-hooks", "rerail-ecma-lean/test-hooks", "rerail-css-lean/test-hooks", "rerail-csharp-lean/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-store/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "ast-grep-language/tree-sitter-bash", "ast-grep-language/tree-sitter-c", "ast-grep-language/tree-sitter-cpp", "ast-grep-language/tree-sitter-go", "ast-grep-language/tree-sitter-html", "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala", "ast-grep-language/tree-sitter-swift", "rerail-metal/test-hooks", "rerail-blocks/test-hooks"]
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "ast-grep-language/tree-sitter-bash", "ast-grep-language/tree-sitter-c", "ast-grep-language/tree-sitter-cpp", "ast-grep-language/tree-sitter-go", "ast-grep-language/tree-sitter-html", "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala", "ast-grep-language/tree-sitter-swift", "rerail-blocks/test-hooks", "rerail-store-base/test-hooks", "rerail-slabs/test-hooks", "rerail-observe/test-hooks"]
 
 [dependencies]
+# The observer's reads of a source into its home (`placed::read_text`), and its digest, which the registry's
+# version is checked against (`language` tests).
+rerail-observe = { path = "../observe" }
 # The tape's label sets and the language layer's structures lie in blocks (`rerail_blocks::vector::Vector`).
 rerail-blocks = { path = "../blocks" }
 rerail-section = { path = "../section" }
@@ -101,42 +104,8 @@ rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-tape-format = { path = "../tape_format", features = ["ast-grep"] }
 # The view the tape's reads take a document by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }
-# Python's lean parser: tree-sitter-python's tape, written as the parse goes (`tape::python_lean`).
-rerail-python-lean = { path = "../python_lean" }
-# JavaScript's, TypeScript's and TSX's lean parser: their tree-sitter tapes, written as the parse
-# goes (`tape::ecma_lean`).
-rerail-ecma-lean = { path = "../ecma_lean" }
-# Rust's lean parser: tree-sitter-rust's tape, written as the parse goes (`tape::rust_lean`).
-rerail-rust-lean = { path = "../rust_lean" }
-# Java's lean parser: tree-sitter-java's tape, written as the parse goes (`tape::java_lean`).
-rerail-java-lean = { path = "../java_lean" }
-# Go's lean parser: tree-sitter-go's tape, written as the parse goes (`tape::go_lean`).
-rerail-go-lean = { path = "../go_lean" }
-# C's and C++'s lean parser: tree-sitter-c's and tree-sitter-cpp's tapes, written as the parse goes (`tape::c_lean`).
-rerail-c-lean = { path = "../c_lean" }
-# C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
-rerail-csharp-lean = { path = "../csharp_lean" }
-# Kotlin's, Swift's and Scala's lean parsers: their tree-sitter tapes, written as the parse goes
-# (`tape::kotlin_lean`, `tape::swift_lean`, `tape::scala_lean`).
-rerail-kotlin-lean = { path = "../kotlin_lean" }
-rerail-swift-lean = { path = "../swift_lean" }
-rerail-scala-lean = { path = "../scala_lean" }
-# PHP's lean parser: tree-sitter-php's tape, written as the parse goes (`tape::php_lean`).
-rerail-php-lean = { path = "../php_lean" }
-# HTML's lean parser: tree-sitter-html's tape, written as the parse goes (`tape::html_lean`).
-rerail-html-lean = { path = "../html_lean" }
-# CSS's lean parser: tree-sitter-css's tape, written as the parse goes (`tape::css_lean`).
-rerail-css-lean = { path = "../css_lean" }
-# Markdown's lean parser: tree-sitter-md's block tape, written as the parse goes (`tape::markdown_lean`).
-rerail-markdown-lean = { path = "../markdown_lean" }
-# Markdown's inline grammar's lean parser: tree-sitter-md-inline's tape (`tape::markdown_inline_lean`).
-rerail-markdown-inline-lean = { path = "../markdown_inline_lean" }
-# SQL's lean parser: tree-sitter-sql's tape, written as the parse goes (`tape::sql_lean`).
-rerail-sql-lean = { path = "../sql_lean" }
-# Vue's lean parser: tree-sitter-vue's tape, written as the parse goes (`tape::vue_lean`).
-rerail-vue-lean = { path = "../vue_lean" }
-rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
+rerail-store-base = { path = "../store_base" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
@@ -181,5 +150,6 @@ flate2 = "=1.1.11"
 
 # The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
-# A loaded tape's home, a residency slab (decision 0353 step 4a).
-rerail-metal = { path = "../metal" }
+# A loaded tape's home, a residency slab (decision 0353 step 4a), and the device the slabs are on.
+rerail-slabs = { path = "../slabs" }
+rerail-device = { path = "../../../gpu/device" }
