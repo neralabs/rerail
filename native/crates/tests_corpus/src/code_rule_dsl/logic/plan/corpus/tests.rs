@@ -1853,8 +1853,13 @@ y = x{i} + 2
         }
         let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
+        let mut fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
+        if fault.is_empty() {
+            // Another failure: its last lines.
+            let lines: Vec<&str> = stderr.lines().collect();
+            fault = lines[lines.len().saturating_sub(30)..].to_vec();
+        }
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join("\n"));
     };
     run(&before, false);
     run(&edited, true);

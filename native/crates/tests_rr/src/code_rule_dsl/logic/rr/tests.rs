@@ -1143,7 +1143,17 @@ fn sum_and_join_lower() {
     assert!(lit.contains(" = sum $") && over.starts_with("rr_val"), "{lit}");
     let cols = p.columns_of(&rel).unwrap();
     assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
-    assert!(cols.contains(&(over.clone(), "int".into())), "{cols:?}");
+    // The value's column, at its variable's place in the atom: a helper named by its content names its columns by
+    // their places (decision 0639 §3), not by the walk's variables.
+    let r = rules_of(&p, |h| h == "g")[0];
+    let at = r
+        .body()
+        .find_map(|l| match l.view() {
+            Lit::Agg { atom, .. } => atom.args().position(|t| matches!(t, TermRef::Var(x) if p.text(r.var(x)) == over)),
+            _ => None,
+        })
+        .expect("the value's place in the aggregate's atom");
+    assert_eq!(cols[at].1, "int", "the value, typed by what computes it: {cols:?}");
     let (_, _, _, rel) = agg(&p, "r");
     assert_ne!(rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
     let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";

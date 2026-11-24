@@ -48,19 +48,20 @@ fn a_refused_seeds_count_reads_its_inputs_index() {
     drop(crate::code_rule_dsl::fixtures::open(&path));
     let db = Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
-    hold_rows(&db, "t", vec![b'i', b'i'], vec![1, 10, 2, 20], 2);
-    hold_rows(&db, "r", vec![b'i', b'i'], vec![1, 10, 1, 10, 2, 20, 2, 21], 4);
+    hold_rows(&db, "t", vec![b'i', b'i'], rerail_blocks::vector![1, 10, 2, 20], 2);
+    hold_rows(&db, "r", vec![b'i', b'i'], rerail_blocks::vector![1, 10, 1, 10, 2, 20, 2, 21], 4);
     let r_rel = on(&db).derived.lock().get("r").cloned().expect("r held");
     // Another join made `r`'s index by its columns in the other order first: a probe reads its key in that order.
     let first = r_rel.index(&[1, 0]);
     let (t, r) = (format!("r:{}", hex("t")), format!("r:{}", hex("r")));
-    let spec = JoinSpec::parse(&format!("pos {t} v0 v1\ncount {r} v0 v1 v2\nhead v0 v2")).unwrap();
+    let spec = JoinSpec::parse(&format!("pos {t} v0 v1\ncount {r} v0 v1 v2\nhead v0 v2")).unwrap().encode();
     let shared = symbols(&db).unwrap();
     let mut syms = Interner::for_loading(&shared);
     let mut j = join_rule_with(&db, &spec, &mut syms, false).unwrap();
     j.indexed();
     let store = Store { rels: Vec::new(), syms: shared };
     let Step::Scalar { src: src @ Src::In(rel, ix), keys, kind: ScalarKind::Count, .. } = &j.steps[1] else { panic!("a count of an input") };
+    let (rel, ix) = j.src_in(rel, ix);
     assert!(Arc::ptr_eq(rel, &r_rel));
     assert!(Arc::ptr_eq(ix, &first), "the count has the relation's index of its key");
     assert_eq!(keys.iter().map(|&(c, _)| c).collect::<Vec<_>>(), ix.cols, "its keys in the index's column order");
@@ -70,7 +71,7 @@ fn a_refused_seeds_count_reads_its_inputs_index() {
         for (at, &(c, _)) in keys.iter().enumerate() {
             probe[at] = key[c];
         }
-        let (rows, cands) = cands::candidates(src, &store, &probe, keys, &mut [0; runs::HINTS], &mut None, 0, None, false);
+        let (rows, cands) = cands::candidates(&j, src, &store, &probe, keys, &mut [0; runs::HINTS], &mut LastProbe::default(), 0, None, false);
         let mut n = 0;
         cands.any(|id| {
             let row = rows.row(id);

@@ -961,6 +961,9 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
         return Ok(digest);
     }
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
+    if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
+        eprintln!("rerail: phase 0 lowers module {key}: {}", files.lines().collect::<Vec<_>>().join(", "));
+    }
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
     let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
     // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
@@ -1587,7 +1590,12 @@ fn resolve_shared(statements: Statements) -> Result<(SharedFiles, Statements, Ve
     // The plan holds every file the text reads, each in one module.
     let planned: BTreeSet<&Path> = plan.iter().flat_map(|m| m.files.lines().map(Path::new)).collect();
     if let Some((path, _, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
-        return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1)", path.display())));
+        let modules: Vec<String> = g.plan.iter().map(|(name, m)| format!("{name} (rank {})", m.rank)).collect();
+        return Err(Error::Syntax(format!(
+            "{}: in no module of phase 0's plan (decision 0639 §1): its modules {modules:?}, their files {planned:?}, the graph's digests of {:?}",
+            path.display(),
+            g.digests.keys().collect::<Vec<_>>()
+        )));
     }
     Ok((files, own, plan))
 }
