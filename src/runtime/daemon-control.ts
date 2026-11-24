@@ -1520,16 +1520,27 @@ export async function startDaemonForPackage(
   return await startBesideStarting(control, machine, async () => {
     const lookup = await startLookup(control.home, machine);
     if (lookup.status === "coming-up") return lookup;
-    if (foundRunning(lookup)) {
-      if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
-        return { started: false, daemon: { state: lookup.state, health: lookup.health } };
-      }
-      await stopFoundDaemon(control.home, lookup, machine);
-      return await spawnDaemon(control, options, machine);
-    }
+    if (foundRunning(lookup)) return await keptOrReplaced(control, options, lookup, machine);
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
   });
+}
+
+/**
+ * The daemon a hook's start found running (`found`), kept when it was launched from the hook's package, else ended and
+ * replaced by one launched from it: always for a daemon of a release before the engine's proof ({@link OlderDaemon}).
+ */
+async function keptOrReplaced(
+  control: DaemonControl,
+  options: DaemonLaunchOptions,
+  found: FoundRunning,
+  machine: DaemonMachine,
+): Promise<StartDaemonResult | ComingUp> {
+  if (found.status === "running" && await daemonUsesPackageRoot(found.state, control.packageRoot)) {
+    return { started: false, daemon: { state: found.state, health: found.health } };
+  }
+  await stopFoundDaemon(control.home, found, machine);
+  return await spawnDaemon(control, options, machine);
 }
 
 /**
