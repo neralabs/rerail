@@ -708,9 +708,10 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSP
         if ((offsets[t + 1] - o0) > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    // A join's finds (`stage_count_one`'s): its rows out, each found once, none walked again.
-    uint64_t found = (uint64_t)V[t];
-    if (s->mode == 0 && (uint32_t)found != NONE) {
+    // A join's finds (`stage_count_one`'s): its rows out, each found once, none walked again. Only a join has them
+    // (`V` is no other mode's, and null in a job that has none).
+    uint64_t found = s->mode == 0 ? (uint64_t)V[t] : (uint64_t)NONE;
+    if ((uint32_t)found != NONE) {
         uint32_t first = (uint32_t)found, bits = (uint32_t)(found >> 32);
         for (; bits != 0u && at < s->cap_out; bits &= bits - 1u) {
             uint32_t q = first + ukl_ctz32(bits);
@@ -2250,6 +2251,61 @@ UKL_INLINE uint32_t phase_next(UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32
     return phase_groups(phases, target, next - 1u);
 }
 
+// A finisher runs its next phase itself where that is one group (decision 0674: a phase of one item is no dispatch),
+// at most this many a dispatch.
+#define JOIN_INLINE 256u
+
+// Lane 0 of a group whose item `item` of phase `p` ran (`whole`: not a size script parked; `back`: an item put back):
+// the item counted, and where it finishes its phase, the next phase reset and its groups. Those the next dispatch's
+// (`slot` of dispatch `d + 1`), or, where they are one group and `inline` allows, none written: the phase and one, for
+// this group to run itself (its item 0). 0 where the group is done: not the finisher, a park, the program's end, or
+// the next dispatch's.
+UKL_INLINE uint32_t prog_finish(UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const Item* items, UKL_GLOBAL const uint32_t* phases, UKL_GLOBAL const Seg* segs,
+                                UKL_GLOBAL uint32_t* done, UKL_GLOBAL uint32_t* target, UKL_GLOBAL uint32_t* slot, uint32_t p, uint32_t item,
+                                bool whole, uint32_t back, uint32_t d, uint32_t nphases, bool inline_ok)
+{
+    if (back != 0u) ukl_atomic_store(&ctl[2], 0u);
+    // A parked one is not counted: the phase has no finisher, the chain ends, and the host puts the item back once it
+    // mapped the arena's pages.
+    if (!whole) {
+        ukl_atomic_store(&ctl[9], item + 1u);
+        ukl_fence_device();
+        ukl_atomic_or(&ctl[6], 32u);
+        return 0u;
+    }
+    uint32_t want = ukl_atomic_poll(&target[p]);
+    if (!ukl_chain_finish(&done[p], want != 0u ? want : phases[4u * p + 1u])) return 0u;
+    ukl_atomic_add(&ctl[8], 1u);
+    uint32_t flags = ukl_atomic_poll(&ctl[6]), n = 0u;
+    // A gate's room mapped past (flag 128): where no check stopped the program, it parks after the gate's phase
+    // (`ctl[9]`: the phase, its top two bits), and the host maps the rooms and releases it (bit 29).
+    if ((flags & 128u) != 0u) ukl_atomic_and(&ctl[6], ~128u);
+    if ((flags & 128u) != 0u && (flags & 2u) == 0u) {
+        ukl_atomic_store(&ctl[9], 0xC0000000u | p);
+        ukl_fence_device();
+        ukl_atomic_or(&ctl[6], 32u);
+    } else if ((flags & 64u) != 0u) {
+        // Its texts found the text arena full (`row_text`'s flag 64): the phase parks (`ctl[9]`'s top bit), and the
+        // host maps the arena further and launches the program again, whose start runs its texts again. Its rows are
+        // each written again whole, so the phase runs again as it ran.
+        ukl_atomic_and(&ctl[6], ~64u);
+        ukl_atomic_store(&ctl[9], 0x80000000u | p);
+        ukl_fence_device();
+        ukl_atomic_or(&ctl[6], 32u);
+    } else {
+        n = phase_next(ctl, phases, segs, done, target, p, nphases);
+    }
+    if (n == 1u && inline_ok) {
+        ukl_fence_device();
+        return ukl_atomic_poll(&ctl[0]) + 1u;
+    }
+    ukl_atomic_store(&ctl[4], n);
+    ukl_chain_set(slot + 4u * (d + 1u), n);
+    ukl_atomic_store(&ctl[1], d + 1u);
+    ukl_fence_device();
+    return 0u;
+}
+
 // The program (decisions 0603, 0674): a chain of dispatches, a phase's items a dispatch, a group of `JOIN_TG` threads
 // an item. Dispatch `d`'s groups are the counts at `ctl[10 + 2 phases + 4 d]`, which the dispatch before wrote: its
 // finisher, the group that finishes its phase's last item, resets the next phase and writes its groups there. No group
@@ -2340,45 +2396,25 @@ DEFINE_KERNEL2(join, join_run,
         return;
     }
     uint32_t item = back != 0u ? back - 1u : phase_item(items, phases, segs, p, g, mode & 1u, (mode & 2u) != 0u);
-    bool whole = true;
-    if (item != 0xFFFFFFFFu) whole = prog_item(jobs, scans, sorts, segs, script, (JSPACE uint32_t*)counts, ctl, items[item], l, m __UKL_ARGS);
-    // The group's writes, then the item counted: the one that brings its phase's count to its items sizes the next
-    // dispatch. A parked one is not counted (lane 0's `whole`, a size script's): the phase has no finisher, the chain
-    // ends, and the host puts the item back once it mapped the arena's pages.
-    ukl_tg_barrier_device();
-    if (l != 0u) return;
-    if (back != 0u) ukl_atomic_store(&ctl[2], 0u);
-    if (!whole) {
-        ukl_atomic_store(&ctl[9], item + 1u);
-        ukl_fence_device();
-        ukl_atomic_or(&ctl[6], 32u);
-        return;
+    // The group's item, then whether it finishes its phase; a finisher whose next phase is one group runs it itself,
+    // and on (`prog_finish`), at most `JOIN_INLINE` phases, its lane 0 deciding and the group following.
+    for (uint32_t k = 0u; k < JOIN_INLINE; k++) {
+        bool whole = true;
+        if (item != 0xFFFFFFFFu) whole = prog_item(jobs, scans, sorts, segs, script, (JSPACE uint32_t*)counts, ctl, items[item], l, m __UKL_ARGS);
+        // The group's writes, then the item counted (`prog_finish`, lane 0's `whole`, a size script's).
+        ukl_tg_barrier_device();
+        if (l == 0u) {
+            uint32_t q = prog_finish(ctl, items, phases, segs, done, target, slot, p, item, whole, back, d, a.phases, k + 1u < JOIN_INLINE);
+            took[0] = q;
+            took[1] = q == 0u ? 0u : phase_item(items, phases, segs, q - 1u, 0u, ukl_atomic_poll(&ctl[3]) & 1u, false);
+        }
+        ukl_tg_barrier_device();
+        uint32_t q = took[0];
+        item = took[1];
+        ukl_tg_barrier();
+        if (q == 0u) return;
+        p = q - 1u;
+        back = 0u;
     }
-    uint32_t want = ukl_atomic_poll(&target[p]);
-    if (!ukl_chain_finish(&done[p], want != 0u ? want : phases[4u * p + 1u])) return;
-    ukl_atomic_add(&ctl[8], 1u);
-    uint32_t flags = ukl_atomic_poll(&ctl[6]), n = 0u;
-    // A gate's room mapped past (flag 128): where no check stopped the program, it parks after the gate's phase
-    // (`ctl[9]`: the phase, its top two bits), and the host maps the rooms and releases it (bit 29).
-    if ((flags & 128u) != 0u) ukl_atomic_and(&ctl[6], ~128u);
-    if ((flags & 128u) != 0u && (flags & 2u) == 0u) {
-        ukl_atomic_store(&ctl[9], 0xC0000000u | p);
-        ukl_fence_device();
-        ukl_atomic_or(&ctl[6], 32u);
-    } else if ((flags & 64u) != 0u) {
-        // Its texts found the text arena full (`row_text`'s flag 64): the phase parks (`ctl[9]`'s top bit), and the
-        // host maps the arena further and launches the program again, whose start runs its texts again. Its rows are
-        // each written again whole, so the phase runs again as it ran.
-        ukl_atomic_and(&ctl[6], ~64u);
-        ukl_atomic_store(&ctl[9], 0x80000000u | p);
-        ukl_fence_device();
-        ukl_atomic_or(&ctl[6], 32u);
-    } else {
-        n = phase_next(ctl, phases, segs, done, target, p, a.phases);
-    }
-    ukl_atomic_store(&ctl[4], n);
-    ukl_chain_set(slot + 4u * (d + 1u), n);
-    ukl_atomic_store(&ctl[1], d + 1u);
-    ukl_fence_device();
 }
 #endif

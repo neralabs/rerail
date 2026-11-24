@@ -892,7 +892,8 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let more: Vec<&String> = args.iter().skip(to.pointers()).collect();
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
-                (Family::View, Family::Lines) => "ll,0".to_owned(),
+                // The lines lie at any 4-byte offset in their tape (decision 0612): read from the word below them.
+                (Family::View, Family::Lines) => "ll-UKL_PTR_LOW3(ll),UKL_PTR_LOW3(ll)".to_owned(),
                 (Family::Lines, Family::Lines) => "t,a0".to_owned(),
                 (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),

@@ -146,4 +146,17 @@ What each part of `join_run`'s queue (0603) becomes:
    passed `join_run` under 255 and the hang stayed. The queue's program hung on the mini's Metal the same way
    (decision 0671). Not run on the M3 (unreachable then).
 3. Its phases folded: size scripts into finishers, a scan one phase.
+   - **Done: a phase of one group runs in the finisher before it.** The finisher of a phase whose next phase is one
+     group (a size script, a sum, a gate, a round's end, a scan's top) does not end its dispatch: its group runs that
+     phase's item itself, and goes on so while the next is one group, at most `JOIN_INLINE` (256) phases a dispatch
+     (`prog_finish`, the Rust's `finish`). A park, a gate's room or full texts end the dispatch as before. Measured
+     on the GB10's CUDA (re-dispatched, a phase a launch of `CHAIN_GROUPS`): the closure's program 156 ms before,
+     130 ms after; the keyed join's 42.5 ms.
+   - Found on the way, as the stratum tests first ran on CUDA (red there before this decision, under the queue too):
+     a join stage's scatter read its finds (`V`) in every mode, where only a join has them (a null pointer in the
+     others; Metal's loads read it without a fault, the CPU's Rust read it only in a join); and a view's reads of its
+     lines took the lines' own address as their base, a 4-byte offset in the tape (decision 0612), where `memory.h`'s
+     words need an 8-byte-aligned one (CUDA faults on a misaligned 8-byte load): the base is now the word below them
+     (`UKL_PTR_LOW3`, 0 on Metal). The stratum tests pass on CUDA (GB10), 27 of 27.
+   - Next: a scan one phase.
 4. Measured: the keyed join and the closure, per phase and whole, Metal against the CPU executor.

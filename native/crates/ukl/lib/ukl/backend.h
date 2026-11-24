@@ -60,6 +60,8 @@ typedef uint32_t ukl_mask_t;
 #define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
+// A pointer's bytes past its 8-byte word (`memory.h`): none needed, Apple's GPUs load at any alignment.
+#define UKL_PTR_LOW3(p) 0u
 #define UKL_LOCAL threadgroup
 #define UKL_PRIVATE thread
 // A table at file scope (`UKL_TABLE uint32_t t[2]={1u,2u};`: read-only on every backend, the macro its qualifiers) and a

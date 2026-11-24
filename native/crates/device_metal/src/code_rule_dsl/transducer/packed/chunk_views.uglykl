@@ -45,8 +45,9 @@ UKL_INLINE int64_t loc_global(DocP d, uint32_t l) {
 
 // The 1-based line holding byte `at` (`Facts::start_line`: `LineTable::line` + 1), and line `k`'s (from 0) first
 // byte, read off the facts' line index in the chunk (`fill_lines`) by the lines' reads (decision 0612).
-UKL_INLINE uint32_t fline_of(DocP d, uint32_t at) { return clif_lines_line(ITEMS(uint8_t, d->flines), 0u, at); }
-UKL_INLINE uint32_t fline_start(DocP d, uint32_t k) { return clif_lines_start(ITEMS(uint8_t, d->flines), 0u, k); }
+// The facts' lines from the word below them (`UKL_PTR_LOW3`: a span's start is any 4-byte offset).
+UKL_INLINE uint32_t fline_of(DocP d, uint32_t at) { UKL_GLOBAL const uint8_t* l = ITEMS(uint8_t, d->flines); return clif_lines_line(l - UKL_PTR_LOW3(l), UKL_PTR_LOW3(l), at); }
+UKL_INLINE uint32_t fline_start(DocP d, uint32_t k) { UKL_GLOBAL const uint8_t* l = ITEMS(uint8_t, d->flines); return clif_lines_start(l - UKL_PTR_LOW3(l), UKL_PTR_LOW3(l), k); }
 
 // The document holding node row `row` (of `node`): the last whose rows start at or before it.
 UKL_INLINE uint32_t doc_of_node(DocP docs, uint32_t ndocs, uint32_t row) {

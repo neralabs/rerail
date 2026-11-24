@@ -24,6 +24,13 @@
 #pragma once
 #include <ukl/bits.h>
 
+// A buffer handed on by its own address where that is not 8-byte aligned (a document's lines in its tape, at a 4-byte
+// offset, decision 0612) is read from the word below it: the base `p - UKL_PTR_LOW3(p)`, its offsets `UKL_PTR_LOW3(p)`
+// further. A backend whose loads take any alignment defines it 0 (Metal, `backend.h`).
+#ifndef UKL_PTR_LOW3
+#define UKL_PTR_LOW3(p) ((uint32_t)(uint64_t)(p) & 7u)
+#endif
+
 #if defined(UKL_COHERENT_LOAD64)
 #define __UKL_STC_DIRECT 0
 #define __UKL_STC_BITS(w, m, x) UKL_COHERENT_STORE_BITS64(w, m, x)

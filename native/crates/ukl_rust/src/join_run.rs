@@ -20,6 +20,8 @@ use core::arch::aarch64::*;
 use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
+/// A finisher's phases run itself at most, a dispatch (`JOIN_INLINE`, decision 0674).
+const JOIN_INLINE: u32 = 256;
 /// A group's threads (`JOIN_TG`).
 const TG: u32 = 256;
 /// A text row's SIMD group (`SGW`): its rows and their counts are laid out by it.
@@ -3107,20 +3109,36 @@ impl Prog {
             self.chain_set(1, n);
             return;
         }
-        let item = if back != 0 { back - 1 } else { self.phase_item(p, g, mode & 1, mode & 2 != 0) };
-        let whole = item == NONE || self.item(*self.items.add(item as usize));
+        let (mut p, mut back) = (p, back);
+        let mut item = if back != 0 { back - 1 } else { self.phase_item(p, g, mode & 1, mode & 2 != 0) };
+        // Its item, then whether it finishes its phase; a finisher whose next phase is one group runs it itself.
+        for k in 0..JOIN_INLINE {
+            let whole = item == NONE || self.item(*self.items.add(item as usize));
+            let q = self.finish(p, item, whole, back, d, k + 1 < JOIN_INLINE);
+            if q == 0 {
+                return;
+            }
+            (p, back) = (q - 1, 0);
+            item = self.phase_item(p, 0, self.ctl(3).load(SeqCst) & 1, false);
+        }
+    }
+
+    /// The group's item `item` of phase `p` counted (`prog_finish`): where it finishes its phase, the next reset and
+    /// its groups, the next dispatch's, or the phase and one where it is one group and `inline_ok` (this group runs
+    /// it); 0 where the group is done.
+    unsafe fn finish(&self, p: u32, item: u32, whole: bool, back: u32, d: u32, inline_ok: bool) -> u32 {
         if back != 0 {
             self.ctl(2).store(0, SeqCst);
         }
         if !whole {
             self.ctl(9).store(item + 1, SeqCst);
             self.ctl(6).fetch_or(32, SeqCst);
-            return;
+            return 0;
         }
         let want = self.ctl(10 + (self.a.phases + p) as usize).load(SeqCst);
         let want = if want != 0 { want } else { self.phase(p)[1] };
         if self.ctl(10 + p as usize).fetch_add(1, SeqCst) + 1 != want {
-            return;
+            return 0;
         }
         self.ctl(8).fetch_add(1, SeqCst);
         let flags = self.ctl(6).load(SeqCst);
@@ -3141,7 +3159,11 @@ impl Prog {
         } else {
             self.phase_next(p)
         };
+        if n == 1 && inline_ok {
+            return self.ctl(0).load(SeqCst) + 1;
+        }
         self.chain_set(d + 1, n);
+        0
     }
 }
 
