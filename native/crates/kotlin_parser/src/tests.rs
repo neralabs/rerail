@@ -2026,7 +2026,7 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
 /// them again, from a cold compile's and the Rust's compile's from those).
 #[test]
 fn the_shipped_answers_answer_the_grammar() {
-    let path = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("kotlin.answers");
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("kotlin.answers");
     rerail_compiler::answers::check_shipped(&path, crate::ANSWERS, |known| {
         let c = crate::compile_timed(GRAMMAR, known.clone(), &mut |_, _| {})?;
         let mut given = known;

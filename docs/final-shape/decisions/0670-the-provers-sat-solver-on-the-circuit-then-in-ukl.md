@@ -96,3 +96,13 @@ lifted:
   Pigeons in holes up to 6. The quick tiers of the compiler, the parsers and `rerail-parser-tests`: 387 tests pass.
 - **Removed**: `Clauses::normalized` and `Solver::place_all`, which only loaded the windows' clauses (0663). The
   decisions' heap is one, `bitlex_sat::Order`, for both solvers.
+
+**Before step 2: where a cold compile's time is now** (Kotlin, the budget lifted, `RERAIL_GPU=cpu`).
+- **The prover's CPU** (a sample on an M1 Max, every thread): 54% the enumeration before a solve
+  (`never_in_before_solve`, `Proof::eval`), 20% the solver's search (its gates' checks 8%, the decisions' heap 5%),
+  10% the rest of a solve, 9% building windows, 2% loading a solve.
+- **The enumeration is not waste.** Skipped (a DGX Spark): the same answers, byte for byte, and the same time: 49.5 s
+  of CPU against 50 s for the whole test, 6.3 s against 6.5 s to the end of proving. The questions it proves, the
+  solver then proves at about the same cost.
+- **The wall is the questions' order, not the solver's throughput.** The test keeps about 4 of the Spark's 20 threads
+  busy on average. A faster or wider solver cuts the wall only on the questions a round asks together.
