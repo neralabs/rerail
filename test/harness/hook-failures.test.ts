@@ -650,6 +650,29 @@ describe("a hook beside a daemon that runs but does not read", () => {
     }
   });
 
+  // Off Windows a socket named outright gets the event as named: only on Windows is the pipe first shown to be the home's
+  // daemon, and a pipe that is not gets nothing.
+  it.runIf(process.platform === "win32")("loses its event, and says why, when the pipe RERAIL_ENGINE_SOCKET names is not this home's daemon: it leaves nothing for the daemon", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    // Another listener's pipe, whose engine proves another capability than the one daemon.json records.
+    const notHome = `\\\\.\\pipe\\rerail-not-home-${process.pid}-${Date.now()}`;
+    const closeNotHome = await listenAsEngine(notHome, "another-capability");
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", notHome);
+      const handle = vi.fn(async () => ({}));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 2_000, arrivedAt: 2_000 };
+      const refused = `${notHome} is not this Rerail home's daemon`;
+      await expect(runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).rejects.toThrow(refused);
+      expect(handle).not.toHaveBeenCalled();
+      expect(untaken(rerailHome)).toEqual(["first"]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({ event: "UserPromptSubmit", reason: expect.stringContaining(refused) })]);
+    } finally {
+      await Promise.all([closeNotHome(), closeEngine()]);
+    }
+  });
+
   it("skips no wait for an event left in a folder the daemon does not watch: the one it watched was moved", async () => {
     const rerailHome = await home();
     const closeEngine = await recordedDaemon(rerailHome, await closedPort());
