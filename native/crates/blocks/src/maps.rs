@@ -65,18 +65,34 @@ impl Room for InBlock {
 }
 
 /// A run's room for the structures no life places (`default_room`): blocks of its own, each with a free list, the
-/// next leased when one is full; a block goes when its last region does.
+/// next leased when one is full; a block goes when its last region does. A shard's block a thread at a time: each
+/// thread takes its regions from its own shard's (`shard`), as an allocator's arenas are. With one block for the run,
+/// its every small array (a plan's steps, a body's variable sets, a section's lists) waited on one lock, and the run's
+/// stream workers spent most of an edit's time there.
 #[derive(Default)]
 pub struct AnonRoom {
-    open: std::sync::Mutex<Option<Arc<Block>>>,
+    open: [std::sync::Mutex<Option<Arc<Block>>>; ANON_SHARDS],
 }
 
 /// The bytes an anonymous room's block reserves (address space; pages are touched as used).
 const ANON_BLOCK: usize = 64 << 20;
 
+/// An anonymous room's shards: a block each, reserved when a thread first takes a region there.
+const ANON_SHARDS: usize = 16;
+
+/// The calling thread's shard of an anonymous room: threads take the shards in turn as each first asks.
+fn shard() -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static SHARD: usize = NEXT.fetch_add(1, Ordering::Relaxed) % ANON_SHARDS;
+    }
+    SHARD.with(|s| *s)
+}
+
 impl Room for AnonRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region {
-        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        let mut open = self.open[shard()].lock().unwrap_or_else(|e| e.into_inner());
         if let Some(b) = &*open
             && let Some(r) = Mutable::alloc_aligned(b, bytes, align, name)
         {
