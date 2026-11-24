@@ -75,27 +75,40 @@ impl RulesProgram {
 
     /// The program run over `inputs` (each bound by its relation's name): the live rows of each of `outputs`.
     pub fn run(&self, inputs: Vec<(&str, Arc<dyn Source>)>, outputs: &[&str]) -> Result<OutputRows, String> {
+        use crate::code_rule_dsl::logic::profile::span;
         let p = self.planned()?;
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "a rules pass run".into());
+        let _s = span(|| "a rules pass run".into());
         ENGINE.with(|engine| {
             let mut engine = engine.borrow_mut();
             if engine.is_none() {
+                let _s = span(|| "the thread's engine opened".into());
                 let db = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
                 crate::code_rule_dsl::logic::native::register(&db).map_err(|e| e.to_string())?;
                 *engine = Some((Modules::default(), db));
             }
             let Some((modules, db)) = engine.as_ref() else { unreachable!() };
             // Each input's statistics, measured from its rows as a source bound at run time is (`syntax::statistics`).
-            let mut stats = plan::Stats::empty_of_lowered(&p.lowered).map_err(|e| e.to_string())?;
+            let mut stats = {
+                let _s = span(|| "statistics: the program's empty".into());
+                plan::Stats::empty_of_lowered(&p.lowered).map_err(|e| e.to_string())?
+            };
             let mut bound: Vec<(&str, Vec<String>)> = Vec::with_capacity(inputs.len());
             for (name, source) in inputs {
                 bound.push((name, source.columns()));
-                let measured = crate::code_rule_dsl::facts::vtab::syntax::statistics(source.as_ref());
-                stats.measured(name, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                {
+                    let _s = span(|| "statistics: an input's measured".into());
+                    let measured = crate::code_rule_dsl::facts::vtab::syntax::statistics(source.as_ref());
+                    stats.measured(name, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                }
+                let _s = span(|| "an input bound".into());
                 modules.bind(db, name, source).map_err(|e| e.to_string())?;
             }
             let kept: BTreeSet<String> = outputs.iter().map(|o| (*o).to_owned()).collect();
-            let ran = plan::run_atoms_native_over(&p.lowered, db, "main", stats, kept, "program").map_err(|e| e.to_string());
+            let ran = {
+                let _s = span(|| "the engine's run".into());
+                plan::run_atoms_native_over(&p.lowered, db, "main", stats, kept, "program").map_err(|e| e.to_string())
+            };
+            let _s = span(|| "outputs read, the run forgotten".into());
             let read = ran.map(|_| {
                 outputs
                     .iter()

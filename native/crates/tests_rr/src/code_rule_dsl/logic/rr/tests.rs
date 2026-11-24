@@ -6959,6 +6959,54 @@ fn kind_sets_take_out_by_rules_what_the_fixed_point_took_out() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Spike for decision 0662 §5.1 (T16's fixed cost): `KindSets`'s rules run over the packs named
+/// (`RERAIL_SPIKE_PACKS`, default `sql`), `RERAIL_SPIKE_N` runs each (default 200), timed bare and then profiled,
+/// each span's own CPU a run (its time less the spans inside it, as t56 step 1 charges a walk's step: a lazy make
+/// or a wait inside it is its own span's).
+#[test]
+#[ignore = "spike for decision 0662 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0662_a_rules_pass_run_profiled() {
+    use crate::code_rule_dsl::logic::profile;
+    use crate::code_rule_dsl::logic::program_image::{AtomId, view};
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let asked = std::env::var("RERAIL_SPIKE_PACKS").unwrap_or_else(|_| "sql".into());
+    let runs: u32 = std::env::var("RERAIL_SPIKE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
+    let rules = super::kind_set_rules();
+    let outputs = ["img_kindset_out", "img_undeclare", "img_drop_facts"];
+    for (pack, input, _) in libraries_before_kind_sets().into_iter().filter(|(p, _, _)| asked.split(',').any(|a| a == p)) {
+        let kindsets: BTreeSet<String> = input.kindset_map().unwrap().into_keys().collect();
+        let given: Vec<AtomId> = kindsets.iter().filter_map(|s| input.find(s)).collect();
+        let what = [rules.constant("atom").unwrap(), rules.constant("agg").unwrap()];
+        // Warm: the program lowered, the thread's engine opened.
+        rules.run(view::sources(&input, &given, what), &outputs).unwrap();
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            rules.run(view::sources(&input, &given, what), &outputs).unwrap();
+        }
+        let bare = t.elapsed().as_secs_f64() * 1e6 / f64::from(runs);
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        profile::reset();
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            let sources = {
+                let _s = profile::span(|| "the view's sources made".into());
+                view::sources(&input, &given, what)
+            };
+            rules.run(sources, &outputs).unwrap();
+        }
+        let profiled = t.elapsed().as_secs_f64() * 1e6 / f64::from(runs);
+        let mut spans: Vec<(String, profile::SpanTotal)> = profile::spans().into_iter().collect();
+        profile::set(false);
+        spans.sort_by(|a, b| b.1.own.total_cmp(&a.1.own));
+        let own: f64 = spans.iter().map(|(_, t)| t.own).sum::<f64>() * 1e6 / f64::from(runs);
+        println!("P1 {pack}: {} rules, {} inputs given; µs a run: bare {bare:.1}, profiled {profiled:.1}, the spans' own CPU {own:.1}", input.rules().count(), given.len());
+        for (path, t) in spans.iter().take(40) {
+            println!("P1 {pack}:   {:>8.1} µs own {:>8.1} µs in all {:>7.2} calls a run  {path}", t.own * 1e6 / f64::from(runs), t.total * 1e6 / f64::from(runs), t.calls as f64 / f64::from(runs));
+        }
+    }
+}
+
 /// Each module of `plan` tailed in plan order (`rr::tail_module`), each over its scope's tails.
 fn tailed_modules(plan: &[super::PlannedModule]) -> Vec<lower::Module> {
     let at: std::collections::HashMap<&str, usize> = plan.iter().enumerate().map(|(i, m)| (m.key.as_str(), i)).collect();
