@@ -200,6 +200,15 @@ export class SqliteAuditControlStore {
   constructor(databasePath: string, database?: RerailDatabase) { this.path = databasePath; this.#database = database ?? openRerailDatabase(databasePath); }
 
   /**
+   * `work` in one transaction, which no lock wait of this thread's takes the lock during (`apartFromLockWaits`): each
+   * transaction here reads before it writes, so SQLite fails its write at once against a holder rather than wait, and
+   * a lock wait takes the lock to learn it is free.
+   */
+  #transactionApart<T>(work: () => T): T {
+    return apartFromLockWaits(this.path, () => this.#database.transaction(work));
+  }
+
+  /**
    * SQLite's `PRAGMA data_version` on this store's connection: it changes when any other connection commits to the
    * database, and stays put otherwise, so a poller can tell that nothing it reads here changed without reading it.
    */
@@ -319,7 +328,7 @@ export class SqliteAuditControlStore {
   }
   updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    this.#database.transaction(() => {
+    this.#transactionApart(() => {
       const session = requireSession(this.#database, sessionId);
       this.#saveSettings(canonicalWorkspace(session.cwd), parsed, session);
     });
@@ -331,7 +340,7 @@ export class SqliteAuditControlStore {
    */
   updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }));
+    return this.#transactionApart(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }));
   }
   /**
    * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
@@ -358,7 +367,7 @@ export class SqliteAuditControlStore {
    * never a turn.
    */
   claimRepositoryAudit(sessionId: string, checkoutRoot: string, catalogRevision?: string): boolean {
-    return this.#database.transaction(() => {
+    return this.#transactionApart(() => {
       requireSession(this.#database, sessionId);
       const workspaceRoot = canonicalWorkspace(checkoutRoot);
       const repositoryAudit = {
@@ -433,9 +442,7 @@ export class SqliteAuditControlStore {
     // The session's row, just opened, may still wait in this process's record writer behind a holder of a moment; and the
     // claim's reopen of the row must not commit ahead of a waiting close of it, so the claim fails as the lock does.
     requireRecordWritesMade(this.path);
-    // The transaction reads before it writes, so SQLite fails its write at once against a holder rather than wait: no
-    // lock wait of this thread's, which takes the lock to learn it is free, takes it meanwhile.
-    apartFromLockWaits(this.path, () => this.#database.transaction(() => {
+    this.#transactionApart(() => {
       requireSession(this.#database, sessionId);
       const owner = this.#owner(sessionId);
       if (owner?.active) throw new Error(`Rerail session ${sessionId} is already owned by a live runtime`);
@@ -445,7 +452,7 @@ export class SqliteAuditControlStore {
       // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
       // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
       this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
-    }));
+    });
     if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
   }
@@ -482,7 +489,7 @@ export class SqliteAuditControlStore {
    * returns how many sessions it ended.
    */
   endSessionsOfEndedOwners(idleMs: number, now: number): number {
-    return this.#database.transaction(() => {
+    return this.#transactionApart(() => {
       const open = this.#database.all<OwnedOpenSession>(sql`
         SELECT ${sessions.sessionId} AS sessionId, ${policySessionOwners.processId} AS processId,
           ${policySessionOwners.token} AS token,
@@ -578,7 +585,7 @@ export class SqliteAuditControlStore {
   }
   /** Atomically claims one queued request for the owning live runtime. */
   claim(sessionId: string, claim: PolicyOwnerClaim): AuditRequest | undefined {
-    return this.#database.transaction(() => {
+    return this.#transactionApart(() => {
       const owner = this.#owner(sessionId);
       if (owner?.active !== true || owner.token !== claim.token || owner.processId !== process.pid) return undefined;
       const queued = this.#database.select().from(auditRequests).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued"))).orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).limit(1).get();
