@@ -162,7 +162,8 @@ format 16's reads alone.
    wrong. A device's gap is UKL's to work around, per backend: `ukl/backend.h` defines `UKL_SHARED` (a small read
    many places reach: the `tape_*` and `Node_*` reads, a relation's column) and `UKL_LARGE` (a large body many reach:
    the steps, the evaluators, the task, the join stages' row writers, the label walks' scans, 16z's block lookup) as
-   `UKL_INLINE` on Metal and the CPU, as these bodies were before §9; and as calls on CUDA and OpenCL, whose compilers
+   `UKL_INLINE` on Metal (but on the Apple G13, where they are calls: decision 0672) and the CPU, as these bodies were
+   before §9; and as calls on CUDA and OpenCL, whose compilers
    (NVRTC, IGC) compile each inlined copy apart. On CUDA the transducer's tests' interpreter and JIT kernels
    (`all_backends_execute_every_verified_instruction_and_mode`, `wildcard_and_missing_flags_…`) compiled in 40 s and
    26 s with both called, 187 s and 131 s with the reads inlined and the large bodies called, and over 240 s with

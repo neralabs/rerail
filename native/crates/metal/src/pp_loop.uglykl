@@ -437,27 +437,33 @@ UKL_INLINE bool lp_rq_owns(UKL_LOCAL const LpRun* r, Ar a, uint32_t x, uint32_t 
 UKL_INLINE void lp_spare(UKL_LOCAL LpRun* r, uint32_t base, uint32_t cap) {
     if (cap > r->sp_cap) { r->sp_base = base; r->sp_cap = cap; }
 }
+// Region `x` moved to one twice as large, with room for `n` more tokens: false where the store has none (the
+// run stops, refused for room). A rare case's body, called (`UKL_RARE`): inlined at `lp_alloc`'s sites (34 in
+// `lp_piece`), its copy loop's exits counted past 255 there on the M1 (decision 0672).
+UKL_RARE bool lp_grow(UKL_LOCAL LpRun* r, Ar a, uint32_t x, uint32_t n) {
+    UKL_LOCAL LpMem* m = &r->mem[LP_RG(x)];
+    uint32_t cap = ukl_max(ukl_max(2u * m->cap, m->top + n), LP_REGION_MIN), nb;
+    bool rq = r->rq != LP_NONE;
+    if (rq && r->sp_cap >= cap) {
+        nb = r->sp_base; cap = r->sp_cap; r->sp_cap = 0u;
+    } else {
+        // A request's run claims a chunk at least: its room past what it keeps is its group's next ones'.
+        if (rq) cap = ukl_max(cap, LP_RQ_CHUNK);
+        nb = ukl_atomic_add(&a.ctl[0], cap);
+        if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return false; }
+    }
+    for (uint32_t k = 0u; k < m->top; k++) {
+        a.psrc[nb + k] = a.psrc[m->base + k]; a.pst[nb + k] = a.pst[m->base + k]; a.pn[nb + k] = a.pn[m->base + k]; a.pexp[nb + k] = a.pexp[m->base + k]; a.pxp[nb + k] = a.pxp[m->base + k];
+    }
+    if (rq && lp_rq_owns(r, a, x, m->base)) lp_spare(r, m->base, m->cap);
+    m->base = nb; m->cap = cap;
+    return true;
+}
 // `n` tokens of region `x`: their offset there, or `LP_NONE` where the store has no room (the run
-// stops, refused for room). A region past its room moves to one twice as large.
+// stops, refused for room). A region past its room moves to one twice as large (`lp_grow`).
 UKL_INLINE uint32_t lp_alloc(UKL_LOCAL LpRun* r, Ar a, uint32_t x, uint32_t n) {
     UKL_LOCAL LpMem* m = &r->mem[LP_RG(x)];
-    if (m->top + n > m->cap) {
-        uint32_t cap = ukl_max(ukl_max(2u * m->cap, m->top + n), LP_REGION_MIN), nb;
-        bool rq = r->rq != LP_NONE;
-        if (rq && r->sp_cap >= cap) {
-            nb = r->sp_base; cap = r->sp_cap; r->sp_cap = 0u;
-        } else {
-            // A request's run claims a chunk at least: its room past what it keeps is its group's next ones'.
-            if (rq) cap = ukl_max(cap, LP_RQ_CHUNK);
-            nb = ukl_atomic_add(&a.ctl[0], cap);
-            if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return LP_NONE; }
-        }
-        for (uint32_t k = 0u; k < m->top; k++) {
-            a.psrc[nb + k] = a.psrc[m->base + k]; a.pst[nb + k] = a.pst[m->base + k]; a.pn[nb + k] = a.pn[m->base + k]; a.pexp[nb + k] = a.pexp[m->base + k]; a.pxp[nb + k] = a.pxp[m->base + k];
-        }
-        if (rq && lp_rq_owns(r, a, x, m->base)) lp_spare(r, m->base, m->cap);
-        m->base = nb; m->cap = cap;
-    }
+    if (m->top + n > m->cap && !lp_grow(r, a, x, n)) return LP_NONE;
     uint32_t at = m->top;
     m->top += n;
     return at;
@@ -1124,7 +1130,9 @@ UKL_INLINE LpTok lp_stringize(UKL_LOCAL LpRun* r, Ux u, Ar a, LpCall c, uint32_t
 // argument expanded, an empty one a placemarker; GNU's `, ## __VA_ARGS__`; then the pastes left to
 // right, the placemarkers dropped, and the first token takes the name's space (`name_sp`). A list
 // read next with its macro disabled.
-UKL_INLINE void lp_substitute(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t name_sp) {
+// Compiled once and called (`UKL_ONCE`): inlined at its three sites, its loop exits (each paste's) counted past
+// 255 in its callers, which the M1's back end miscompiles (decision 0672).
+UKL_ONCE void lp_substitute(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t name_sp) {
     LpCall c = r->calls[(r->nc - 1u) & (LP_CALLS - 1u)];
     PpDef d = u.defs[c.def];
     bool fn = (d.flags & D_FNLIKE) != 0u;
@@ -1646,7 +1654,9 @@ UKL_INLINE bool lp_arg_occ(UKL_LOCAL LpRun* r, Ar a, LpCall c, uint32_t q, uint3
 // The call on top's next argument expanded, or its substitution (`_Pragma`'s: its operand read). Its arguments
 // are posted at its first (`lp_args_post`); at its turn, one done is the table's, one not claimed yet is read here,
 // and one another group is reading is read here too (`LP_BI_DUP`).
-UKL_INLINE void lp_call_next(UKL_LOCAL LpRun* r, Ux u, Ar a) {
+// Compiled once and called (`UKL_ONCE`): inlined at its three sites, its loop exits counted past 255 in its
+// callers (decision 0672).
+UKL_ONCE void lp_call_next(UKL_LOCAL LpRun* r, Ux u, Ar a) {
     UKL_LOCAL LpCall* c = &r->calls[(r->nc - 1u) & (LP_CALLS - 1u)];
     if (c->def == L_PRAGMA) { lp_pragma_done(r, u, a); return; }
     if ((c->bi & LP_BI_POSTED) == 0u) {

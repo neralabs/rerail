@@ -233,8 +233,9 @@ fn the_setup_is_a_program_on_a_queue() {
     assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit");
 }
 
-/// The setup's Metal source splits one unit a barriered phase function (decision 0571): the program's phases
-/// (`pp_step`, decision 0653), the stages it calls and `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
+/// The setup's Metal source splits one unit a barriered phase function (decision 0571), and one a large body called at
+/// several sites (decision 0672): the program's phases (`pp_step`, decision 0653), the stages it calls and
+/// `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
 /// 16z's block (`clif_z_block`; decision 0576 checks 16z in the public read, with no `_z` read between); the small
 /// tape reads stay in their callers. The loop's look for a `(` (`lp_next_is_lparen`) is called, never inlined
 /// (inlined, it crashed the M3's back end); small, it is kept in its callers' units.
@@ -253,10 +254,20 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen") || split.local.iter().any(|n| n == "lp_next_is_lparen"), "the look for a `(` is called");
     // The loop's phase is a unit of its own (`lp_loop_run`): inlined into `pp_step`, the M3's back end miscompiled it.
     assert!(split.units.iter().any(|u| u.name == "lp_loop_run"), "the loop's phase is a unit");
-    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase,
-    // `pp_step` and `pp_advance`, which runs the afters.
-    assert_eq!(split.units.len(), 14);
-    assert_eq!(split.depth, 6);
+    // Compiled once and called, each its own unit (decision 0672): inlined at their several sites, their loop exits
+    // counted past 255 in `lp_piece` and `pp_step`, which the M1's back end miscompiles. The rare cases those
+    // reached inlined (a region's growth, a line splice's end) are calls kept in their callers' units.
+    for once in ["lp_substitute", "lp_call_next", "p1_if_line", "p1_find_header"] {
+        assert!(split.units.iter().any(|u| u.name == once), "{once} is a unit");
+    }
+    for rare in ["lp_grow", "splice_end"] {
+        assert!(split.local.iter().any(|n| n == rare), "{rare} is called in its callers' units");
+    }
+    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase and the
+    // four above, `pp_step` and `pp_advance`, which runs the afters: `pp_advance`, `pp_step`, `lp_loop_run`,
+    // `lp_call_next`, `lp_substitute` and its stage calls 7 deep.
+    assert_eq!(split.units.len(), 18);
+    assert_eq!(split.depth, 7);
     assert!(split.kernel.contains("kernel void pp_run") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 
