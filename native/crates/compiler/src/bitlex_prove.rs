@@ -39,8 +39,17 @@ const BEFORE: u16 = 256;
 /// The tries per byte of the position.
 const BUDGET: u32 = 1 << 12;
 
+/// The evaluations a step of the search is (decision 0663): about a solver's step's time.
+const EVALS_A_STEP: u64 = 32;
+
+/// The evaluations the search takes of a question a solve is asked after (decision 0663): past
+/// them it stops, not proved, and the solve answers. Of Kotlin's, the search proved none the
+/// solver did not; it proved the cheap ones faster, and spent most of its time on those it then
+/// failed, at 2^21 to 2^23 evaluations each.
+const EVALS_BEFORE_SOLVE: u64 = 1 << 16;
+
 /// The provers' work left to a compile, shared by every prover it makes (decision 0646): a
-/// count of steps (a search's try, a solver's conflict, a window's variable), so a compile's
+/// count of steps (32 of a search's evaluations, a solver's conflict, a window's variable), so a compile's
 /// answers are the same on any machine and under any load, sized to about a second of proving.
 /// Spent, a prover stops with its sound answer (not proved), as past its own limits.
 ///
@@ -135,7 +144,7 @@ struct Proof<'a> {
     /// The lag of the position's own byte, and that byte.
     d: u32,
     b: u8,
-    bytes: HashMap<u32, u16>,
+    bytes: Bytes,
     vals: HashMap<(u16, u32), bool>,
     /// The carried values that may be chosen.
     cone: HashSet<(u16, u32)>,
@@ -148,16 +157,21 @@ struct Proof<'a> {
     /// Each `(op, lag)`'s value under the values chosen now, and the first unchosen one it
     /// turned on: a program shares its values, and a walk as a tree reads each again for every
     /// reader. Cleared whenever a value is chosen (`zero`).
-    memo: std::cell::RefCell<HashMap<(u16, u32), (Option<bool>, Option<Var>)>>,
+    memo: std::cell::RefCell<Memo>,
     work: Budget,
+    /// The evaluations made (`eval_op`), those spent as steps, and the most it may make.
+    evals: std::cell::Cell<u64>,
+    charged: u64,
+    cap: u64,
 }
 
 impl<'a> Proof<'a> {
     fn of(ops: &'a [BlockOp], tables: &'a [ClassTable], v: u16, d: u8, work: &Budget) -> Proof<'a> {
-        let (cone, readers) = cone(ops, v);
+        let (cone, readers, seen) = cone_walked(ops, v);
         let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
         let own = classes(tables, readers.get(&u32::from(d)));
-        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::default(), vals: HashMap::default(), cone, groups, budget: 0, own, memo: Default::default(), work: work.clone() }
+        let memo = std::cell::RefCell::new(Memo::of(ops, &seen));
+        Proof { ops, tables, d: u32::from(d), b: 0, bytes: Bytes::default(), vals: HashMap::default(), cone, groups, budget: 0, own, memo, work: work.clone(), evals: std::cell::Cell::new(0), charged: 0, cap: u64::MAX }
     }
 
     /// Whether the value is zero with the position's byte `b`.
@@ -171,8 +185,8 @@ impl<'a> Proof<'a> {
         if lag == self.d {
             return Some(u16::from(self.b));
         }
-        match self.bytes.get(&lag) {
-            Some(&x) => Some(x),
+        match self.bytes.get(lag) {
+            Some(x) => Some(x),
             None => {
                 open.get_or_insert(Var::Byte(lag));
                 None
@@ -208,7 +222,7 @@ impl<'a> Proof<'a> {
     }
 
     fn eval(&self, at: u16, lag: u32, open: &mut Option<Var>) -> Option<bool> {
-        if let Some(&(r, first)) = self.memo.borrow().get(&(at, lag)) {
+        if let Some((r, first)) = self.memo.borrow().get(at, lag) {
             if let Some(v) = first {
                 open.get_or_insert(v);
             }
@@ -216,7 +230,7 @@ impl<'a> Proof<'a> {
         }
         let mut first = None;
         let r = self.eval_op(at, lag, &mut first);
-        self.memo.borrow_mut().insert((at, lag), (r, first));
+        self.memo.borrow_mut().set(at, lag, (r, first));
         if let Some(v) = first {
             open.get_or_insert(v);
         }
@@ -224,6 +238,7 @@ impl<'a> Proof<'a> {
     }
 
     fn eval_op(&self, at: u16, lag: u32, open: &mut Option<Var>) -> Option<bool> {
+        self.evals.set(self.evals.get() + 1);
         match self.ops[usize::from(at)] {
             BlockOp::Eq(c) => self.byte(lag, open).map(|x| self.member(Reader::Eq(c), x)),
             BlockOp::Class { table, bits } => self.byte(lag, open).map(|x| self.member(Reader::Class(table, bits), x)),
@@ -328,8 +343,15 @@ impl<'a> Proof<'a> {
 
     /// Whether the value `v` is zero under every way of the values not chosen yet.
     fn zero(&mut self, v: u16) -> bool {
-        // Past the compile's budget: not proved.
-        if !self.work.spend(1) {
+        // Past the compile's budget, or its own evaluations: not proved. Its steps are its
+        // evaluations (decision 0663): a split of a large cone costs as much more as it reads.
+        let e = self.evals.get();
+        if e > self.cap {
+            return false;
+        }
+        let steps = (e - self.charged) / EVALS_A_STEP;
+        self.charged += steps * EVALS_A_STEP;
+        if !self.work.spend(steps) {
             return false;
         }
         self.memo.get_mut().clear();
@@ -362,8 +384,8 @@ impl<'a> Proof<'a> {
             Var::Byte(lag) => {
                 // Before the stream: a byte before the position's own, with none chosen before it
                 // in the stream; and it must be when one chosen after it is.
-                let before_ok = lag > self.d && self.bytes.iter().all(|(&l, &x)| l < lag || x == BEFORE);
-                let after_before = self.bytes.iter().any(|(&l, &x)| l < lag && x == BEFORE);
+                let before_ok = lag > self.d && self.bytes.iter().all(|(l, x)| l < lag || x == BEFORE);
+                let after_before = self.bytes.iter().any(|(l, x)| l < lag && x == BEFORE);
                 let mut ways: Vec<u16> = Vec::new();
                 if !after_before {
                     // No class reads it: one byte stands for every one.
@@ -373,14 +395,118 @@ impl<'a> Proof<'a> {
                     ways.push(BEFORE);
                 }
                 ways.into_iter().all(|x| {
-                    self.bytes.insert(lag, x);
+                    self.bytes.set(lag, x);
                     let z = self.zero(v);
-                    self.bytes.remove(&lag);
+                    self.bytes.unset(lag);
                     z
                 })
             }
         }
     }
+}
+
+/// The bytes a proof has chosen, by lag: `UNSET` where none is.
+#[derive(Default)]
+struct Bytes(Vec<u16>);
+
+const UNSET: u16 = u16::MAX;
+
+impl Bytes {
+    fn get(&self, lag: u32) -> Option<u16> {
+        self.0.get(lag as usize).copied().filter(|&x| x != UNSET)
+    }
+
+    fn set(&mut self, lag: u32, x: u16) {
+        let i = lag as usize;
+        if i >= self.0.len() {
+            self.0.resize(i + 1, UNSET);
+        }
+        self.0[i] = x;
+    }
+
+    fn unset(&mut self, lag: u32) {
+        self.0[lag as usize] = UNSET;
+    }
+
+    /// Each lag chosen and its byte.
+    fn iter(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
+        self.0.iter().enumerate().filter(|&(_, &x)| x != UNSET).map(|(l, &x)| (l as u32, x))
+    }
+}
+
+/// A memo entry: a value, and the first unchosen value it turned on.
+type Memoed = (Option<bool>, Option<Var>);
+
+/// `Proof`'s memo (decision 0663): a slot for each operation and lag of the cone's walk (each
+/// operation its run of lags), valid while its stamp is the memo's, so clearing it is one
+/// increment; any other is kept in `spill`.
+struct Memo {
+    stamp: u32,
+    /// Each operation's first slot, first lag and lags (0: none).
+    at: Vec<(u32, u32, u32)>,
+    slots: Vec<(u32, Memoed)>,
+    spill: HashMap<(u16, u32), Memoed>,
+}
+
+impl Memo {
+    fn of(ops: &[BlockOp], seen: &HashSet<(u16, u32)>) -> Memo {
+        let n = seen.iter().map(|&(at, _)| usize::from(at) + 1).max().unwrap_or(0);
+        let mut range = vec![(u32::MAX, 0u32); n];
+        for &(at, lag) in seen {
+            let r = &mut range[usize::from(at)];
+            // A carried value is read a byte back too (its equation).
+            let top = if carried_op(&ops[usize::from(at)]) { lag + 1 } else { lag };
+            *r = (r.0.min(lag), r.1.max(top));
+        }
+        let mut at = Vec::with_capacity(n);
+        let mut total = 0u32;
+        for (lo, hi) in range {
+            if lo == u32::MAX {
+                at.push((0, 0, 0));
+            } else {
+                at.push((total, lo, hi - lo + 1));
+                total += hi - lo + 1;
+            }
+        }
+        Memo { stamp: 1, at, slots: vec![(0, (None, None)); total as usize], spill: HashMap::default() }
+    }
+
+    fn slot(&self, at: u16, lag: u32) -> Option<usize> {
+        let &(base, lo, w) = self.at.get(usize::from(at))?;
+        let k = lag.wrapping_sub(lo);
+        (k < w).then_some((base + k) as usize)
+    }
+
+    fn get(&self, at: u16, lag: u32) -> Option<Memoed> {
+        match self.slot(at, lag) {
+            Some(i) => {
+                let (stamp, m) = self.slots[i];
+                (stamp == self.stamp).then_some(m)
+            }
+            None => self.spill.get(&(at, lag)).copied(),
+        }
+    }
+
+    fn set(&mut self, at: u16, lag: u32, m: Memoed) {
+        match self.slot(at, lag) {
+            Some(i) => self.slots[i] = (self.stamp, m),
+            None => {
+                self.spill.insert((at, lag), m);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.stamp += 1;
+        if !self.spill.is_empty() {
+            self.spill.clear();
+        }
+    }
+}
+
+/// Whether an operation is a carried value (`Escaped`, `Toggle`, `Fill`), read a byte back by its equation.
+fn carried_op(op: &BlockOp) -> bool {
+    matches!(op, BlockOp::Escaped(_) | BlockOp::Toggle(_) | BlockOp::Fill(..))
 }
 
 /// The carried values `v` reads (`cone`), each once, in order.
@@ -394,6 +520,12 @@ pub fn carried_in(ops: &[BlockOp], v: u16) -> Vec<u16> {
 /// The carried values `v` reads, closed under their equations' operands, and the readers of
 /// each lag's byte.
 fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<Reader>>) {
+    let (cone, readers, _) = cone_walked(ops, v);
+    (cone, readers)
+}
+
+/// `cone`, and every operation and lag its walk reached.
+fn cone_walked(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<Reader>>, HashSet<(u16, u32)>) {
     let mut cone = HashSet::default();
     let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::default();
     let mut seen = HashSet::default();
@@ -438,7 +570,7 @@ fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<R
             }
         }
     }
-    (cone, readers)
+    (cone, readers, seen)
 }
 
 /// A byte of each group the readers tell apart.
@@ -479,19 +611,38 @@ fn group_of(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> [u8; 25
     let Some(readers) = readers else {
         return of;
     };
-    let readers: Vec<Reader> = readers.iter().copied().collect();
-    let sig = |x: u8| -> Vec<bool> {
-        readers
-            .iter()
-            .map(|&r| match r {
+    // One class of every byte, split by each reader in turn: two bytes stay in one class where
+    // every reader takes both or neither. Classes numbered in the order of their first bytes.
+    let mut class = [0u16; 256];
+    let mut classes = 1usize;
+    let mut renumber = vec![u16::MAX; 512];
+    for &r in readers {
+        renumber[..2 * classes].fill(u16::MAX);
+        let mut next = 0u16;
+        for x in 0..=255u8 {
+            let member = match r {
                 Reader::Eq(c) => x == c,
                 Reader::Class(t, bits) => tables[usize::from(t)].member(x, bits),
-            })
-            .collect()
-    };
-    let mut first: HashMap<Vec<bool>, u8> = HashMap::default();
+            };
+            let k = 2 * usize::from(class[usize::from(x)]) + usize::from(member);
+            if renumber[k] == u16::MAX {
+                renumber[k] = next;
+                next += 1;
+            }
+            class[usize::from(x)] = renumber[k];
+        }
+        classes = usize::from(next);
+    }
+    // A class's first byte: its number is the classes before it, so the first bytes come in order.
+    let mut first = [0u8; 256];
+    let mut seen = 0usize;
     for x in 0..=255u8 {
-        of[usize::from(x)] = *first.entry(sig(x)).or_insert(x);
+        let c = usize::from(class[usize::from(x)]);
+        if c == seen {
+            first[c] = x;
+            seen += 1;
+        }
+        of[usize::from(x)] = first[c];
     }
     of
 }
@@ -580,6 +731,14 @@ pub fn never_in(work: &Budget, ops: &[BlockOp], tables: &[ClassTable], v: u16, d
     std::mem::take(&mut p.own).into_iter().all(|(b, _)| p.zero_at(v, b))
 }
 
+/// [`never_in`] of a question a solve is asked after where it is not proved: within
+/// `EVALS_BEFORE_SOLVE` evaluations (decision 0663).
+pub fn never_in_before_solve(work: &Budget, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+    let mut p = Proof::of(ops, tables, v, d, work);
+    p.cap = EVALS_BEFORE_SOLVE;
+    std::mem::take(&mut p.own).into_iter().all(|(b, _)| p.zero_at(v, b))
+}
+
 /// Whether a value is zero at every byte of every stream, proved by a SAT solver over a window
 /// of bytes (`Unrolled`), as `Induction::never`.
 pub fn never_unrolled(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, horizon: u32, conflicts: u32) -> bool {
@@ -625,7 +784,10 @@ pub struct Induction {
     /// The windows made for the question being asked, by value, delay and the operations the
     /// question added up to the value (`question`: the first of them), and whether the root's
     /// hypothesis is made at every lag (`whole_hypothesis`).
-    windows: HashMap<(u16, u8, bool, Vec<BlockOp>), Window>,
+    windows: HashMap<(u16, u8, bool, u64), Vec<usize>>,
+    /// Those windows, each with the operations it was made of (`windows` finds it by their
+    /// hash, with no copy of them).
+    window_list: Vec<(Vec<BlockOp>, Window)>,
     question: usize,
     /// The solver, reset for each solve (its memory kept).
     solver: Solver,
@@ -667,7 +829,7 @@ pub enum Round {
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 2;
+pub const PROOFS_VERSION: u32 = 3;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1048,7 +1210,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1252,6 +1414,7 @@ impl Induction {
         // Asked again in rounds (`never_round`): its windows are the same.
         if self.replay.is_empty() {
             self.windows.clear();
+            self.window_list.clear();
         }
         self.question = ops.len();
     }
@@ -1285,8 +1448,17 @@ impl Induction {
         let end = ops.len().min(usize::from(v) + 1);
         // The root's hypothesis at every lag (`whole_hypothesis`), where it is the root's own.
         let whole = hypothesis.filter(|h| self.whole_hypothesis && h.iter().any(|&(at, _, _)| at == v));
-        let key = (v, d, whole.is_some(), ops[self.question.min(end)..end].to_vec());
-        if !self.windows.contains_key(&key) {
+        let made_of = &ops[self.question.min(end)..end];
+        let key = (v, d, whole.is_some(), {
+            use std::hash::{BuildHasher as _, Hash as _, Hasher as _};
+            let mut h = rustc_hash::FxBuildHasher.build_hasher();
+            made_of.hash(&mut h);
+            h.finish()
+        });
+        let found = self.windows.get(&key).and_then(|js| js.iter().copied().find(|&j| self.window_list[j].0 == made_of));
+        let j = match found {
+            Some(j) => j,
+            None => {
             let window = {
                 let (_, plain) = cone(ops, v);
                 let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
@@ -1297,7 +1469,7 @@ impl Induction {
                     roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
                 let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
-                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
+                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default(), memo_added: Vec::new(), readers_added: Vec::new() };
                 // A literal that is true.
                 u.clauses.push(&[1]);
                 // Before the stream: from some lag past the position's on.
@@ -1344,11 +1516,17 @@ impl Induction {
                 let at_position: Vec<Reader> = readers.get(&u32::from(d)).map(|r| r.iter().copied().collect()).unwrap_or_default();
                 u.detach(far, at_position)
             };
-            self.windows.insert(key.clone(), window);
-        }
-        let window = self.windows[&key].clone();
-        let (far, reach, at_position) = (window.far, window.reach, window.at_position.clone());
+            self.window_list.push((made_of.to_vec(), window));
+            let j = self.window_list.len() - 1;
+            self.windows.entry(key).or_default().push(j);
+            j
+            }
+        };
+        let window = &mut self.window_list[j].1;
         let mut u = window.attach(ops, tables, nexts);
+        let out = 'solve: {
+        let Window { far, reach, at_position, held, normal, base, .. } = &*window;
+        let (far, reach, base) = (*far, *reach, *base);
         if bounded && let Some(&b) = u.before.get(&(reach + 1)) {
             u.clauses.push(&[b]);
         }
@@ -1359,7 +1537,7 @@ impl Induction {
         let position: Vec<(u8, Lit)> = u.groups.get(&pos).cloned().unwrap_or_default();
         if *exclude != [0; 4] {
             if position.is_empty() {
-                return Outcome::Unknown;
+                break 'solve Outcome::Unknown;
             }
             for &(b, l) in &position {
                 if has(exclude, b) {
@@ -1377,12 +1555,19 @@ impl Induction {
             }
         }
         // The lemmas, at each lag of the window whose values they read are in it.
-        let mut held: Vec<(u16, u32)> = u.memo.keys().copied().collect();
-        held.sort_unstable();
+        // The window's values and those the hypothesis made: sorted, so a value's lags are a run.
+        let held: std::borrow::Cow<'_, [(u16, u32)]> = if u.memo_added.is_empty() {
+            std::borrow::Cow::Borrowed(held.as_slice())
+        } else {
+            let mut all: Vec<(u16, u32)> = held.iter().copied().chain(u.memo_added.iter().copied()).collect();
+            all.sort_unstable();
+            std::borrow::Cow::Owned(all)
+        };
         let lemmas = self.lemmas.iter().chain(&self.given).map(|l| (l, 0)).chain(hypothesis.map(|l| (l, 1)));
         for (lemma, from) in lemmas {
             let Some(&(a0, l0, _)) = lemma.iter().find(|&&(at, _, _)| at != STREAM) else { continue };
-            for &(_, lag) in held.iter().filter(|&&(at, _)| at == a0) {
+            let from_a0 = held.partition_point(|&(at, _)| at < a0);
+            for &(_, lag) in held[from_a0..].iter().take_while(|&&(at, _)| at == a0) {
                 let Some(base) = lag.checked_sub(l0) else { continue };
                 if base < from {
                     continue;
@@ -1403,20 +1588,24 @@ impl Induction {
         // are its steps.
         let spent = matches!(self.replay.get(i), Some(Replayed::Cpu));
         if !spent && !self.work.spend(u.vars.unsigned_abs().into()) {
-            return Outcome::Unknown;
+            break 'solve Outcome::Unknown;
         }
         // In rounds, a new solve: its formula, for the batch (`never_round`).
         if self.capture && i == self.replay.len() {
             self.captured = Some((u.vars.unsigned_abs(), u.clauses.clone()));
-            return Outcome::Unknown;
+            break 'solve Outcome::Unknown;
         }
         let s = &mut self.solver;
+        // The window's clauses as normalized once, then the solve's: as `add_all` of them all.
         s.reset(u.vars as usize);
-        s.add_all(&u.clauses);
+        s.place_all(normal);
+        for c in (base..u.clauses.len()).map(|k| u.clauses.get(k)) {
+            s.add(c);
+        }
         let before = s.conflicts;
         let answer = s.solve(self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
         self.work.spend(s.conflicts - before);
-        match answer {
+        let answer = match answer {
             Sat::Unsat => Outcome::Proved,
             Sat::Unknown => Outcome::Unknown,
             Sat::Sat => {
@@ -1431,7 +1620,7 @@ impl Induction {
                 let group = match position.iter().find(|&&(_, l)| holds(l)) {
                     None => [!0; 4],
                     Some(&(b, _)) => {
-                        let readers = &at_position;
+                        let readers = at_position;
                         let sig = |x: u8| readers.iter().map(|&r| match r {
                             Reader::Eq(c) => x == c,
                             Reader::Class(t, bits) => tables[usize::from(t)].member(x, bits),
@@ -1447,7 +1636,7 @@ impl Induction {
                     }
                 };
                 if edge.is_empty() {
-                    return Outcome::Way(Vec::new(), group);
+                    break 'solve Outcome::Way(Vec::new(), group);
                 }
                 // And where the stream begins, past the horizon.
                 let m = reach + 1;
@@ -1455,7 +1644,11 @@ impl Induction {
                 way.extend((m..=far).map(|lag| (STREAM, lag - m, inside(lag))));
                 Outcome::Way(way, group)
             }
-        }
+        };
+        answer
+        };
+        window.give_back(u);
+        out
     }
 }
 
@@ -1553,17 +1746,33 @@ struct Unrolled<'a> {
     /// Each read lag's groups: a byte of each, and its literal.
     groups: HashMap<u32, Vec<(u8, Lit)>>,
     readers: HashMap<(Reader, u32, bool), Lit>,
+    /// The `memo` and `readers` keys made since the window was lent (`Window::give_back`).
+    memo_added: Vec<(u16, u32)>,
+    readers_added: Vec<(Reader, u32, bool)>,
 }
 
 /// A window's clauses and literals, apart from the operations they were made of (`Unrolled`
 /// again, by `attach`): a question's solves differ only in the clauses they add to it.
-#[derive(Clone)]
+/// A solve borrows its parts (`Window::attach`) and gives them back with what it added undone
+/// (`Window::give_back`): no copy of them a solve.
 struct Window {
-    d: u32,
     reach: u32,
     far: u32,
     /// The readers of the position's byte, in the order its group is told by.
     at_position: Vec<Reader>,
+    /// The values the window's operations make, at their lags, sorted.
+    held: Vec<(u16, u32)>,
+    /// Its clauses as the solver takes them (`Clauses::normalized`): placed with no sorting.
+    normal: Clauses,
+    /// Its own clauses and variables: past them, a solve's.
+    base: usize,
+    base_vars: i32,
+    parts: Parts,
+}
+
+/// A window's clauses and literals.
+struct Parts {
+    d: u32,
     clauses: Clauses,
     vars: i32,
     memo: HashMap<(u16, u32), Lit>,
@@ -1574,16 +1783,49 @@ struct Window {
 }
 
 impl Window {
-    fn attach<'a>(self, ops: &'a [BlockOp], tables: &'a [ClassTable], nexts: &'a HashMap<u16, u16>) -> Unrolled<'a> {
-        let Window { d, reach, far: _, at_position: _, clauses, vars, memo, before, past, groups, readers } = self;
-        Unrolled { ops, tables, nexts, d, reach, clauses, vars, memo, before, past, groups, readers }
+    /// The window as an `Unrolled`, for one solve: its parts lent, given back by `give_back`.
+    fn attach<'a>(&mut self, ops: &'a [BlockOp], tables: &'a [ClassTable], nexts: &'a HashMap<u16, u16>) -> Unrolled<'a> {
+        let p = &mut self.parts;
+        Unrolled {
+            ops,
+            tables,
+            nexts,
+            d: p.d,
+            reach: self.reach,
+            clauses: std::mem::take(&mut p.clauses),
+            vars: p.vars,
+            memo: std::mem::take(&mut p.memo),
+            before: std::mem::take(&mut p.before),
+            past: std::mem::take(&mut p.past),
+            groups: std::mem::take(&mut p.groups),
+            readers: std::mem::take(&mut p.readers),
+            memo_added: Vec::new(),
+            readers_added: Vec::new(),
+        }
+    }
+
+    /// A solve's `Unrolled` back: its clauses, variables and literals undone, the window's own.
+    fn give_back(&mut self, u: Unrolled<'_>) {
+        let Unrolled { mut clauses, mut memo, before, past, groups, mut readers, memo_added, readers_added, .. } = u;
+        clauses.truncate(self.base);
+        for k in memo_added {
+            memo.remove(&k);
+        }
+        for k in readers_added {
+            readers.remove(&k);
+        }
+        let p = &mut self.parts;
+        (p.clauses, p.vars, p.memo, p.before, p.past, p.groups, p.readers) = (clauses, self.base_vars, memo, before, past, groups, readers);
     }
 }
 
 impl<'a> Unrolled<'a> {
     fn detach(self, far: u32, at_position: Vec<Reader>) -> Window {
         let Unrolled { d, reach, clauses, vars, memo, before, past, groups, readers, .. } = self;
-        Window { d, reach, far, at_position, clauses, vars, memo, before, past, groups, readers }
+        let mut held: Vec<(u16, u32)> = memo.keys().copied().collect();
+        held.sort_unstable();
+        let (normal, base) = (clauses.normalized(), clauses.len());
+        Window { reach, far, at_position, held, normal, base, base_vars: vars, parts: Parts { d, clauses, vars, memo, before, past, groups, readers } }
     }
 }
 
@@ -1666,6 +1908,7 @@ impl Unrolled<'_> {
             self.clauses.push(&[x, -y]);
         }
         self.readers.insert((r, lag, zero_before), x);
+        self.readers_added.push((r, lag, zero_before));
         x
     }
 
@@ -1687,6 +1930,7 @@ impl Unrolled<'_> {
             // A variable first: its equation reads it a byte earlier.
             let x = self.fresh();
             self.memo.insert((at, lag), x);
+            self.memo_added.push((at, lag));
             if lag <= self.reach {
                 let want = match self.ops[usize::from(at)] {
                     BlockOp::Toggle(t) => {
@@ -1749,6 +1993,7 @@ impl Unrolled<'_> {
             _ => self.fresh(),
         };
         self.memo.insert((at, lag), x);
+        self.memo_added.push((at, lag));
         x
     }
 }

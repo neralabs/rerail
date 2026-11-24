@@ -1822,7 +1822,107 @@ impl Lowering {
         let mut prover = bitlex_prove::Induction::new(&[], horizon, conflicts).within(&self.proofs.work);
         let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("plain or never"));
         let work = self.proofs.work.clone();
-        self.proofs.never(key, || bitlex_prove::never_in(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d))
+        self.proofs.never(key, || bitlex_prove::never_in_before_solve(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d))
+    }
+
+    /// The first of `n` items that holds, where item `i` (made by `make`) holds when each of its
+    /// values is proved zero everywhere as `ask` proves it, the values after one not proved not
+    /// asked: as a walk over the items asking each in turn finds it, and with its questions and
+    /// answers (decision 0663). The items are taken a chunk at a time, a thread's each: a chunk's
+    /// questions proved ahead together, each within its share of the budget, and kept in the
+    /// walk's order up to the item that holds; the rest are not kept, nor their steps spent.
+    pub fn first_proved(&mut self, n: usize, mut make: impl FnMut(&mut Lowering, usize) -> Result<Vec<Val>, String>, ask: Ask) -> Result<Option<usize>, String> {
+        use rayon::prelude::*;
+        let chunk = rayon::current_num_threads().max(1);
+        let mut i = 0;
+        while i < n {
+            let items: Vec<Vec<Val>> = (i..n.min(i + chunk)).map(|k| make(self, k)).collect::<Result<_, _>>()?;
+            let ops = proof_ops(&self.program, &self.prefix);
+            let tables = &self.program.tables;
+            let rounds = &self.program.rounds;
+            let (known, work) = (&self.proofs.known, &self.proofs.work);
+            // Each item's values as the walk reaches them, each its questions as it asks them:
+            // each its text, and its answer and the budget it took where it was proved (none,
+            // where it is known).
+            type Asked = Vec<(Vec<u8>, Option<(bool, bitlex_prove::Budget)>)>;
+            let ahead: Vec<Vec<Asked>> = items
+                .par_iter()
+                .map(|xs| {
+                    let mut values = Vec::new();
+                    for x in xs {
+                        let mut asked: Asked = Vec::new();
+                        let mut holds = false;
+                        for (q, text) in ask.texts(&ops, tables, rounds, *x).into_iter().enumerate() {
+                            let a = match known.get(&bitlex_prove::key_of(&text)) {
+                                Some(&bitlex_prove::Answer::Never(b)) => {
+                                    asked.push((text, None));
+                                    b
+                                }
+                                _ => {
+                                    let w = work.child();
+                                    let a = w.left() > 0 && ask.prove(&w, &ops, tables, *x, q);
+                                    asked.push((text, Some((a, w))));
+                                    a
+                                }
+                            };
+                            if a {
+                                holds = true;
+                                break;
+                            }
+                        }
+                        values.push(asked);
+                        if !holds {
+                            break;
+                        }
+                    }
+                    values
+                })
+                .collect();
+            for (k, (xs, values)) in items.iter().zip(ahead).enumerate() {
+                // Kept as the walk keeps them; a question the walk asks that was not proved ahead
+                // (an answer known since, that differs), proved here as the walk proves it.
+                let mut all = true;
+                for (vi, x) in xs.iter().enumerate() {
+                    let mut holds = false;
+                    for q in 0..ask.questions() {
+                        let pre = values.get(vi).and_then(|v| v.get(q)).cloned();
+                        let ops = proof_ops(&self.program, &self.prefix);
+                        let (text, found) = match pre {
+                            Some(p) => p,
+                            None => (ask.texts(&ops, &self.program.tables, &self.program.rounds, *x).swap_remove(q), None),
+                        };
+                        let fresh = !self.proofs.known.contains_key(&bitlex_prove::key_of(&text));
+                        let a = match &found {
+                            Some((a, w)) => {
+                                let a = self.proofs.never(text, || *a);
+                                if fresh {
+                                    self.proofs.work.spend(w.spent());
+                                }
+                                a
+                            }
+                            None => {
+                                let w = self.proofs.work.clone();
+                                let tables = &self.program.tables;
+                                self.proofs.never(text, || ask.prove(&w, &ops, tables, *x, q))
+                            }
+                        };
+                        if a {
+                            holds = true;
+                            break;
+                        }
+                    }
+                    if !holds {
+                        all = false;
+                        break;
+                    }
+                }
+                if all {
+                    return Ok(Some(i + k));
+                }
+            }
+            i += chunk;
+        }
+        Ok(None)
     }
 
     /// The bytes `x` can be at, by the plain search (`bitlex_prove::first_bytes`).
@@ -1879,7 +1979,7 @@ impl Lowering {
         let tables = &self.program.tables;
         let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
         let work = self.proofs.work.clone();
-        self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
+        self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in_before_solve(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
     }
 
     /// Each of `xs` as `either_never` answers it (decision 0654): the questions not answered
@@ -1942,7 +2042,7 @@ impl Lowering {
                 .zip(&budgets)
                 .map(|(x, work)| {
                     let mut p = prover.fork(work);
-                    let a = work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(work, &ops, tables, x.v, x.d) || p.never(&ops, tables, x.v, x.d));
+                    let a = work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in_before_solve(work, &ops, tables, x.v, x.d) || p.never(&ops, tables, x.v, x.d));
                     (a, p.found().to_vec())
                 })
                 .unzip()
@@ -3445,39 +3545,76 @@ fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], 
     keywords.iter().any(|(_, words, _)| words.iter().any(|(w, alias)| alias.as_deref().map_or(w.as_slice() == name.as_bytes(), |a| a == name)))
 }
 
+/// How `Lowering::first_proved` proves a value zero everywhere: as `never_within` of a horizon and
+/// conflicts (one question), or as the plain search and else an induction of 4 bytes and 1,000
+/// conflicts, `settled_never`'s (two questions, the second where the first is not proved).
+#[derive(Clone, Copy)]
+pub enum Ask {
+    Within(u32, u32),
+    Proved,
+}
+
+impl Ask {
+    /// The questions a value is asked, in turn until one is proved.
+    fn questions(&self) -> usize {
+        match self {
+            Ask::Within(..) => 1,
+            Ask::Proved => 2,
+        }
+    }
+
+    /// Their texts, as `never_within`, `never` and `settled_never` make them.
+    fn texts(&self, ops: &[BlockOp], tables: &[crate::block::ClassTable], rounds: &[Vec<(u16, u16)>], x: Val) -> Vec<Vec<u8>> {
+        match *self {
+            Ask::Within(h, c) => vec![bitlex_prove::question(ops, tables, rounds, x.v, x.d, &bitlex_prove::Induction::new(&[], h, c).asker("plain or never"))],
+            Ask::Proved => {
+                let p = bitlex_prove::Induction::new(&[], 4, 1000);
+                vec![bitlex_prove::question(ops, tables, rounds, x.v, x.d, "plain never"), bitlex_prove::question_given(ops, tables, rounds, x.v, x.d, &p.asker("never"), p.given())]
+            }
+        }
+    }
+
+    /// Question `q` of `x`'s proved, within `work`.
+    fn prove(&self, work: &bitlex_prove::Budget, ops: &[BlockOp], tables: &[crate::block::ClassTable], x: Val, q: usize) -> bool {
+        match (*self, q) {
+            (Ask::Within(h, c), _) => bitlex_prove::never_in_before_solve(work, ops, tables, x.v, x.d) || bitlex_prove::Induction::new(&[], h, c).within(work).never(ops, tables, x.v, x.d),
+            (Ask::Proved, 0) => bitlex_prove::never_in(work, ops, tables, x.v, x.d),
+            (Ask::Proved, _) => bitlex_prove::Induction::new(&[], 4, 1000).within(work).never(ops, tables, x.v, x.d),
+        }
+    }
+}
+
 /// The row whose tokens hold every bit of `a`, proved: `a` at its starts, or inside a
 /// `fill(s, e)` whose runs are its tokens (its start `s`, its last the run's next byte).
 fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
-    let proved = |low: &mut Lowering, x: Val| low.never(x) || low.settled_never(&mut bitlex_prove::Induction::new(&[], 4, 1000).within(&low.proofs.work), x);
+    // Each value proved as `never` and else `settled_never` of 4 bytes and 1,000 conflicts,
+    // proved ahead on the machine's threads (`Lowering::first_proved`).
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     // At the row's first bytes, or at its last (a check reads `A` from a token's start to its
     // end: an escape's `u`, its last byte, decision 0399).
-    for &r in &grammar_rows {
-        for edge in [token_rows[r].1, token_rows[r].2] {
-            let off = low.andnot(a, edge)?;
-            if proved(low, off) {
-                return Ok(Some(r));
-            }
-        }
+    let edges: Vec<(usize, Val)> = grammar_rows.iter().flat_map(|&r| [(r, token_rows[r].1), (r, token_rows[r].2)]).collect();
+    if let Some(i) = low.first_proved(edges.len(), |low, i| Ok(vec![low.andnot(a, edges[i].1)?]), Ask::Proved)? {
+        return Ok(Some(edges[i].0));
     }
     let mut fills: Vec<Val> = low.names.values().copied().filter(|x| matches!(low.program.ops[usize::from(x.v)], BlockOp::Fill(..))).collect();
     fills.sort_by_key(|x| x.v);
     fills.dedup_by_key(|x| x.v);
-    for fv in fills {
-        let BlockOp::Fill(s, _) = low.program.ops[usize::from(fv.v)] else { continue };
-        let inside = low.andnot(a, fv)?;
-        if !proved(low, inside) {
-            continue;
-        }
+    // The fills `a` lies inside, in turn: of each, the row whose tokens are its runs.
+    let mut from = 0;
+    while let Some(j) = low.first_proved(fills.len() - from, |low, i| Ok(vec![low.andnot(a, fills[from + i])?]), Ask::Proved)? {
+        let fv = fills[from + j];
+        let BlockOp::Fill(s, _) = low.program.ops[usize::from(fv.v)] else { unreachable!("a fill") };
         let sv = Val { v: s, d: fv.d, dirty: true, set: None };
         let pf = low.prev(fv, 1)?;
         let run_last = low.andnot(pf, fv)?;
-        for &r in &grammar_rows {
-            let (xs, xl) = (low.xor(token_rows[r].1, sv)?, low.xor(token_rows[r].2, run_last)?);
-            if proved(low, xs) && proved(low, xl) {
-                return Ok(Some(r));
-            }
+        let runs = |low: &mut Lowering, i: usize| -> Result<Vec<Val>, String> {
+            let r = grammar_rows[i];
+            Ok(vec![low.xor(token_rows[r].1, sv)?, low.xor(token_rows[r].2, run_last)?])
+        };
+        if let Some(i) = low.first_proved(grammar_rows.len(), runs, Ask::Proved)? {
+            return Ok(Some(grammar_rows[i]));
         }
+        from += j + 1;
     }
     Ok(None)
 }
@@ -3513,7 +3650,7 @@ fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[
             let mut q = Q { p: prover.fork(work), x, answer: None, formula: None };
             if work.left() == 0 || q.p.refutes(ops, tables, x.v, x.d) {
                 q.answer = Some(false);
-            } else if bitlex_prove::never_in(work, ops, tables, x.v, x.d) {
+            } else if bitlex_prove::never_in_before_solve(work, ops, tables, x.v, x.d) {
                 q.answer = Some(true);
             } else {
                 let r = q.p.never_round(ops, tables, x.v, x.d, true);
@@ -3712,12 +3849,12 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
     let settled = RefCell::new(prover);
     let never = |low: &Lowering, x: Val| {
         let ops = low.proof_ops();
-        bitlex_prove::never_in(&low.proofs.work, &ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never_inductive(&ops, &low.program.tables, x.v, x.d)
+        bitlex_prove::never_in_before_solve(&low.proofs.work, &ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never_inductive(&ops, &low.program.tables, x.v, x.d)
     };
     let mut left: Vec<Val> = Vec::new();
     for &c in claims {
         let ops = low.proof_ops();
-        if bitlex_prove::never_in(&low.proofs.work, &ops, &low.program.tables, c.v, c.d) || settled.borrow_mut().never(&ops, &low.program.tables, c.v, c.d) {
+        if bitlex_prove::never_in_before_solve(&low.proofs.work, &ops, &low.program.tables, c.v, c.d) || settled.borrow_mut().never(&ops, &low.program.tables, c.v, c.d) {
             continue;
         }
         // A real stream has a bit of it (the bounded solve's, `Witnesses`): no lemma or
@@ -3772,13 +3909,8 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
 /// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it.
 fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
-    for r in grammar_rows {
-        let off = low.andnot(a, token_rows[r].2)?;
-        if low.never_within(off, 4, 1000) {
-            return Ok(Some(r));
-        }
-    }
-    Ok(None)
+    let found = low.first_proved(grammar_rows.len(), |low, i| Ok(vec![low.andnot(a, token_rows[grammar_rows[i]].2)?]), Ask::Within(4, 1000))?;
+    Ok(found.map(|i| grammar_rows[i]))
 }
 
 /// The token kinds a row's tokens are taken as: its own, its keywords', its soft keywords'.

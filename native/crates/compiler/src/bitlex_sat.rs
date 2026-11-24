@@ -68,6 +68,53 @@ impl Clauses {
     pub fn ends(&self) -> &[u32] {
         &self.ends
     }
+
+    /// The first `n` clauses kept, the rest dropped.
+    pub fn truncate(&mut self, n: usize) {
+        if n < self.ends.len() {
+            self.ends.truncate(n);
+            self.lits.truncate(self.ends.last().map_or(0, |&e| e as usize));
+        }
+    }
+
+    /// Each clause as `Solver::add` takes it, end to end: sorted, without repeats, a tautology
+    /// left out. `Solver::place_all` of these is `Solver::add_all` of the clauses as they were,
+    /// without sorting them again: a prover's window, normalized once for its solves.
+    pub fn normalized(&self) -> Clauses {
+        let mut out = Clauses { lits: Vec::with_capacity(self.lits.len()), ends: Vec::with_capacity(self.ends.len()) };
+        let mut c = Vec::new();
+        for lits in self.iter() {
+            if let Some(n) = normal(lits, &mut c) {
+                out.push(&c[..n]);
+            }
+        }
+        out
+    }
+}
+
+/// `lits` sorted, without repeats, into `c`: its length, or none where it is a tautology (a
+/// literal and its negation), as `Solver::add` takes a clause. A short clause (a window's are
+/// two or three literals) sorted in place, a longer one by `sort_unstable`: the same order.
+fn normal(lits: &[Lit], c: &mut Vec<Lit>) -> Option<usize> {
+    c.clear();
+    c.extend_from_slice(lits);
+    if c.len() <= 8 {
+        for i in 1..c.len() {
+            let x = c[i];
+            let mut j = i;
+            while j > 0 && c[j - 1] > x {
+                c[j] = c[j - 1];
+                j -= 1;
+            }
+            c[j] = x;
+        }
+    } else {
+        c.sort_unstable();
+    }
+    c.dedup();
+    // Sorted: a literal's negation, if there, by a search (a scan, for a short one).
+    let taut = if c.len() <= 8 { c.iter().any(|&a| c.contains(&-a)) } else { c.iter().any(|&a| c.binary_search(&-a).is_ok()) };
+    (!taut).then_some(c.len())
 }
 
 /// Not in the heap (`Solver::at`).
@@ -262,13 +309,9 @@ impl Solver {
     /// A clause, before the search: duplicates dropped, a tautology ignored.
     pub fn add(&mut self, lits: &[Lit]) {
         let mut c = std::mem::take(&mut self.scratch);
-        c.clear();
-        c.extend_from_slice(lits);
-        c.sort_unstable();
-        c.dedup();
-        // A tautology (a literal and its negation; sorted, so by a search) is ignored.
-        if !c.iter().any(|&a| c.binary_search(&-a).is_ok()) {
-            self.place(&c);
+        // A tautology (a literal and its negation) is ignored.
+        if let Some(n) = normal(lits, &mut c) {
+            self.place(&c[..n]);
         }
         self.scratch = c;
     }
@@ -295,6 +338,16 @@ impl Solver {
     pub fn add_all(&mut self, clauses: &Clauses) {
         for c in clauses.iter() {
             self.add(c);
+        }
+    }
+
+    /// Each of `clauses`, already as `add` takes them (`Clauses::normalized`): the solver as
+    /// `add_all` of the clauses they were made of leaves it.
+    pub fn place_all(&mut self, clauses: &Clauses) {
+        self.clauses.lits.reserve(clauses.lits.len());
+        self.clauses.ends.reserve(clauses.len());
+        for c in clauses.iter() {
+            self.place(c);
         }
     }
 
