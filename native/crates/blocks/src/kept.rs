@@ -779,6 +779,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// A kept relation's columns resolved once (`Read::column`) and its fills of several columns (`Read::fill`, a run
+    /// of `FILL` rows at a time) read what its cells read, across a fill's runs and from any row.
+    #[test]
+    fn a_kept_relations_columns_and_fills_read_what_cells_read() {
+        use crate::bistate::{ColumnRead, Read};
+        use crate::ids::{ColumnIndex, RowId};
+        let d = dir("fills");
+        let data: Vec<(i64, i64)> = (0..600).map(|i| (i * 3, (i * 7919) % 601 - 300)).collect();
+        let mut w = KeptW::create(&d.join("c1.blk"), 11, 16 << 20).unwrap();
+        put(&mut w, meta(FactKey { rel: "r", ident: &A, part: 0 }, 1), &data, None);
+        w.finish(Flush::Synced).unwrap();
+        let files = [KeptFacts::open(&d.join("c1.blk"), 11).unwrap()];
+        let chain = KeptChain { files: &files };
+        let got = chain.get(&FactKey { rel: "r", ident: &A, part: 0 }).unwrap();
+        let cols = [ColumnIndex::new(1), ColumnIndex::new(0)];
+        let c = got.column(cols[0]);
+        for id in (0..600).rev().map(RowId::new) {
+            assert_eq!(c.get(id), Read::get(&got, id, cols[0]), "row {id}");
+        }
+        let (from, n) = (37u32, 563usize);
+        let mut out = vec![0i64; 2 * n];
+        got.fill(&cols, RowId::new(from), &mut out);
+        for i in 0..n {
+            let id = RowId::new(from + i as u32);
+            assert_eq!([out[i], out[n + i]], [Read::get(&got, id, cols[0]), Read::get(&got, id, cols[1])], "row {id} of the fill");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// An entry records the greatest atom its rows hold, as their packing found it: of its atom columns (`s`) only,
     /// none where it has no atom column or no rows, the same through a reads-only entry and a roll-up's copy.
     #[test]

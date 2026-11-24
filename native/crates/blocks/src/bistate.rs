@@ -25,8 +25,23 @@
 pub use crate::ids::{ColumnIndex, RowId, WordIndex};
 use crate::relation::View;
 
+/// One column of a state, resolved once (`Read::column`): a row's value is the column's own read, with no lookup of
+/// the column again.
+pub trait ColumnRead {
+    fn get(&self, id: RowId) -> i64;
+}
+
 /// A relation at one state, read where it lies.
+///
+/// Three grains of read: a cell (`get`), a column resolved once and read for many rows (`column`), and a chunk of
+/// rows for a set of columns, a column at a time (`fill`). Readers use the last two; `get` is what they are built
+/// from by default, and each state gives its own faster form.
 pub trait Read {
+    /// A column of it resolved for reads.
+    type Column<'s>: ColumnRead
+    where
+        Self: 's;
+
     /// Its columns.
     fn arity(&self) -> usize;
     /// The id past its last: its ids, live or not, are `0 .. end`.
@@ -36,6 +51,22 @@ pub trait Read {
     fn live_word(&self, w: WordIndex) -> u64;
     /// Row `id`'s value in column `c`.
     fn get(&self, id: RowId, c: ColumnIndex) -> i64;
+    /// Column `c`, resolved once.
+    fn column(&self, c: ColumnIndex) -> Self::Column<'_>;
+
+    /// Rows `from .. from + n` of columns `cols`, into `out` (`n` = `out.len() / cols.len()`), a column at a time:
+    /// `out[j * n + i]` is row `from + i`'s value in `cols[j]`. Dead rows are filled too (`live` says which). Rows
+    /// past `end` are refused. `out` is a chunk the reader reuses as it goes (a cache line's worth to `FILL`'s), not
+    /// a second store of the relation.
+    fn fill(&self, cols: &[ColumnIndex], from: RowId, out: &mut [i64]) {
+        let n = fill_rows(cols, from, out, self.end());
+        for (j, &c) in cols.iter().enumerate() {
+            let col = self.column(c);
+            for (i, o) in out[j * n..(j + 1) * n].iter_mut().enumerate() {
+                *o = col.get(RowId::new(from.get() + i as u32));
+            }
+        }
+    }
 
     #[inline]
     fn live(&self, id: RowId) -> bool {
@@ -48,6 +79,37 @@ pub trait Read {
         Self: Sized,
     {
         Bits::new(self.end(), move |w| self.live_word(w))
+    }
+}
+
+/// The rows a `fill` of `out` for `cols` from `from` reads, checked against the state's `end`.
+#[inline]
+pub fn fill_rows(cols: &[ColumnIndex], from: RowId, out: &[i64], end: RowId) -> usize {
+    if cols.is_empty() {
+        return 0;
+    }
+    let n = out.len() / cols.len();
+    assert_eq!(n * cols.len(), out.len(), "a fill's buffer holds whole rows of its columns");
+    assert!(u64::from(from.get()) + n as u64 <= u64::from(end.get()), "a fill within the state's rows");
+    n
+}
+
+/// A column read a cell at a time through its state's `get`: the default column of a state with no faster one.
+pub struct Cells<'s, R: ?Sized> {
+    state: &'s R,
+    c: ColumnIndex,
+}
+
+impl<'s, R: ?Sized> Cells<'s, R> {
+    pub fn new(state: &'s R, c: ColumnIndex) -> Self {
+        Cells { state, c }
+    }
+}
+
+impl<R: Read + ?Sized> ColumnRead for Cells<'_, R> {
+    #[inline]
+    fn get(&self, id: RowId) -> i64 {
+        self.state.get(id, self.c)
     }
 }
 
@@ -195,8 +257,29 @@ pub fn is_least<S: Read>(s: &Bistate<S>) -> bool {
     s.gone().all(|g| s.added().all(|a| ColumnIndex::all(cols).any(|c| before.get(g, c) != s.after.get(a, c))))
 }
 
+/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`).
+#[derive(Clone, Copy)]
+pub struct ViewColumn {
+    base: Option<crate::rows::ColRead>,
+    top: crate::rows::ColRead,
+    base_rows: u32,
+}
+
+impl ColumnRead for ViewColumn {
+    #[inline]
+    fn get(&self, id: RowId) -> i64 {
+        let id = id.get();
+        if id < self.base_rows { self.base.expect("a delta's base").get(id) } else { self.top.get(id - self.base_rows) }
+    }
+}
+
 /// A relation read alone: its own rows, less its dead bits.
 impl Read for View<'_> {
+    type Column<'s>
+        = ViewColumn
+    where
+        Self: 's;
+
     fn arity(&self) -> usize {
         self.top.arity as usize
     }
@@ -218,6 +301,10 @@ impl Read for View<'_> {
     fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
         View::get(self, id.get(), c.get())
     }
+
+    fn column(&self, c: ColumnIndex) -> ViewColumn {
+        ViewColumn { base: self.base.map(|b| b.rows.reader(c.get())), top: self.top.rows.reader(c.get()), base_rows: self.top.base_rows }
+    }
 }
 
 impl<'a> View<'a> {
@@ -231,8 +318,24 @@ impl<'a> View<'a> {
     }
 }
 
+/// A kept relation's column: its packed parts, resolved once (`packed::ColDec`).
+#[derive(Clone, Copy)]
+pub struct KeptColumn<'b>(crate::packed::ColDec<'b>);
+
+impl ColumnRead for KeptColumn<'_> {
+    #[inline]
+    fn get(&self, id: RowId) -> i64 {
+        self.0.get(id.get() as usize)
+    }
+}
+
 /// A kept relation: its packed rows, every one live.
-impl Read for crate::kept::Kept<'_> {
+impl<'b> Read for crate::kept::Kept<'b> {
+    type Column<'s>
+        = KeptColumn<'b>
+    where
+        Self: 's;
+
     fn arity(&self) -> usize {
         self.rows.arity as usize
     }
@@ -248,6 +351,24 @@ impl Read for crate::kept::Kept<'_> {
     fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
         self.rows.get(id.get() as usize, c.get())
     }
+
+    fn column(&self, c: ColumnIndex) -> KeptColumn<'b> {
+        KeptColumn(self.rows.col(c.get()).dec())
+    }
+
+    /// Each column's parts decoded a run of `FILL` rows at a time (`ColDec::fill`), as `Kept::each_row` reads them.
+    fn fill(&self, cols: &[ColumnIndex], from: RowId, out: &mut [i64]) {
+        use crate::packed::FILL;
+        let n = fill_rows(cols, from, out, Read::end(self));
+        for (j, &c) in cols.iter().enumerate() {
+            let dec = self.rows.col(c.get()).dec();
+            let col = &mut out[j * n..(j + 1) * n];
+            for at in (0..n).step_by(FILL) {
+                let m = (n - at).min(FILL);
+                dec.fill(from.get() as usize + at, &mut col[at..at + m]);
+            }
+        }
+    }
 }
 
 /// A run of rows at one state, read through a function: its ids `0 .. end`, less those `dead` marks (bit `id`). The
@@ -260,6 +381,11 @@ pub struct Marked<'a, G: Fn(RowId, ColumnIndex) -> i64> {
 }
 
 impl<G: Fn(RowId, ColumnIndex) -> i64> Read for Marked<'_, G> {
+    type Column<'s>
+        = Cells<'s, Self>
+    where
+        Self: 's;
+
     fn arity(&self) -> usize {
         self.arity
     }
@@ -275,6 +401,11 @@ impl<G: Fn(RowId, ColumnIndex) -> i64> Read for Marked<'_, G> {
 
     fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
         (self.get)(id, c)
+    }
+
+    /// Its cells come through `get`, a cell at a time: it has no column of its own to resolve.
+    fn column(&self, c: ColumnIndex) -> Cells<'_, Self> {
+        Cells::new(self, c)
     }
 }
 
@@ -332,6 +463,28 @@ mod tests {
             assert!(!s.is_identity());
             // Freeze drops a delta's rows its base holds live, so its change is the least one.
             assert!(is_least(&s));
+        });
+    }
+
+    /// A view's columns resolved once and its fills read what its cells read, on both sides of the base's end.
+    #[test]
+    fn a_views_columns_and_fills_read_what_cells_read() {
+        let base: Vec<[i64; 2]> = (0..40).map(|i| [i * 2, 100 - i]).collect();
+        let added: Vec<[i64; 2]> = (0..30).map(|i| [i * 2 + 1, -i]).collect();
+        with_delta(&base, &added, &[3, 7], |v| {
+            let cols = [ColumnIndex::new(1), ColumnIndex::new(0)];
+            let end = Read::end(&v).get();
+            let c = v.column(cols[0]);
+            for id in (0..end).rev().map(RowId::new) {
+                assert_eq!(c.get(id), Read::get(&v, id, cols[0]), "row {id}");
+            }
+            let (from, n) = (5u32, end as usize - 5);
+            let mut out = vec![0i64; 2 * n];
+            v.fill(&cols, RowId::new(from), &mut out);
+            for i in 0..n {
+                let id = RowId::new(from + i as u32);
+                assert_eq!([out[i], out[n + i]], [Read::get(&v, id, cols[0]), Read::get(&v, id, cols[1])], "row {id}");
+            }
         });
     }
 

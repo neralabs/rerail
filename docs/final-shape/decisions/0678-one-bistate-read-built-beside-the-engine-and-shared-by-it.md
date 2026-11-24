@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Step 1 done. The user, 2026-11-24: "I want to work on this in parallel with the current
+Status: in progress. Step 1 done; step 2's trace, versions and reads done, its adapters of today's types next. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
 
@@ -40,10 +40,11 @@ made step by step.
   bits), each its integer underneath (`repr(transparent)`), so one is never passed where another is meant (the user,
   2026-11-24: "Please brand the id types").
 - **`Read`**: a relation at one state, read where it lies. Its methods are `arity`, `end` (the `RowId` past its last
-  id), `live_word(w: WordIndex)` (the liveness of 64 rows at a time) and `get(id: RowId, c: ColumnIndex)`.
+  id), `live_word(w: WordIndex)` (the liveness of 64 rows at a time) and `get(id: RowId, c: ColumnIndex)`. Step 2
+  adds a column resolved once and a fill of several columns.
 - **`Bistate<S>`**: two states of the same rows, both of type `S: Read`, where ids below `before.end()` are the same
   rows in both. One type serves both states: the after state reads every row the before state reads, so no pair
-  needs two types, and step 2 makes a bistate two frontiers of one trace (`Bistate<'t>`, no type parameter). It
+  needs two types, and a trace's bistate is two versions of it (`Bistate<Version<'b>>`, step 2). It
   reads `added`, `gone`, `counts` and `is_identity` from the two states' liveness words. It is `cold(after)` when
   there is no before.
 - **`check`** and **`is_least`** (tests only): the law, and whether the change is the least one by value. Both
@@ -58,8 +59,8 @@ the stack: references into blocks, an end, and for `Marked` the function that re
 
 **State that is not yet in a block.** A frontier is state. `View`'s two frontiers come from the facts block's root
 (its relations' pointers), but `InRel`'s start is a Rust value: `Origin::Based { n, dead }`, its row count in the
-struct and its dead bits a `Vector` in the run's room. Step 2 stores a trace's frontiers in its block (its header's layer count and each layer's ends), so a
-`Bistate` is made from what the block holds.
+struct and its dead bits a `Vector` in the run's room. A trace (step 2) holds its frontiers in its block: its
+directory's layer count and each layer's end. `InRel`'s start moves there when its relation is read as a trace.
 
 Today's types that are states already:
 
@@ -90,15 +91,72 @@ On the way, the roll-up 116 merge left `rerail-facts` uncompiled. One side passe
 other's functions now take `&dyn AtomTable`, and an unsizing coercion does not deref. Six call sites now pass
 `&*`.
 
+## Step 2 (in progress): a trace of layers, its versions, and reads of a column and of a chunk
+
+### Three grains of read
+
+How a reader reads decides `Read`'s shape. A join step reads the few columns its literal binds, for each row it
+visits. A probe reads a key's columns. A scan of a kept relation decodes a chunk of rows, a column at a time. Only
+the checks read single cells. Every fast path resolves a column once and then reads many rows through it. So `Read`
+has three grains:
+
+- **`get(id, c)`**: one cell. Every other read is built from it by default.
+- **`column(c) -> Self::Column<'_>`**: the column resolved once, a `ColumnRead` whose `get(id)` is the column's
+  own read. `View`'s is the base's and the delta's `Rows::reader`. `Kept`'s is its packed column's `ColDec`.
+  `Version`'s is the reader of the layer it last read, found again only when a read leaves that layer. `Marked`
+  has no column of its own and reads through its `get` (`Cells`).
+- **`fill(cols, from, out)`**: rows `from .. from + n` of several columns into `out`, a column at a time
+  (`out[j * n + i]`). The default reads each column through `column`. `Kept`'s decodes each column's parts `FILL`
+  rows at a time (`ColDec::fill`), as `Kept::each_row` does. `out` is the reader's chunk, reused as it goes, not a
+  second store of the relation.
+
+### `blocks::trace`
+
+A `Trace` is one relation's history as layers, oldest first. All of its state lies in one block:
+
+- **Its directory** (`TraceDir`): its arity, the room for layers, the layers committed (its latest frontier,
+  written last on a commit), and each layer's record (`LayerRec`: its relation and the id past its last row).
+- **Its rows**: each layer is a `relation::Relation` that continues the layer before's (`Relation::try_continue`,
+  0384 step 7). A row's id is the same in every layer, and a layer's own rows are the ids from the layer before's
+  end to its own. The trace adds no storage of rows: a layer is today's continuation.
+- **Each row's death** (`died`): a 4-byte column by id, 0 while the row is live, else the first frontier at which
+  it is dead. It is the layers' kills indexed by id, written once per kill, beside them in the block. Each layer
+  also records its kills in its relation's `killed` rows, for step 3.
+
+A **`Frontier`** is a count of committed layers. `Trace::at(f)` is a **`Version`**: the rows of layers `..f` whose
+death is 0 or past `f`. A committed frontier's rows and deaths are never written again (a kill in the open layer
+marks the row dead from the next frontier), so a version reads the same rows however far the trace has gone on.
+`Trace::between(a, b)` is a `Bistate<Version>`, cold when `a` is `None`. `Trace::open` makes the next layer
+(`LayerW`: `push`, `kill` of a row of any layer, `commit`), one at a time. A trace is found again from its
+directory's offset in its block (`Trace::at_offset`), which a block's root records.
+
+Tests (`trace::tests`):
+
+- three layers, each frontier reading its layers' rows less their kills, and a kill in an open layer changing no
+  committed frontier;
+- a chain of frontiers: each step's bistate keeps L1, and folding the steps' gone and added ids from nothing gives
+  the cold run's liveness (L3), walked id by id in place;
+- a version's columns and fills reading what its cells read, across layers' boundaries;
+- the trace found again from its block.
+
+`bistate::tests` and `kept::tests` each gain a test that a column and a fill read what the cells read: a view on
+both sides of its base's end, and a kept relation's fill across `FILL`'s runs.
+
+Cost: a version's `live_word` reads 64 deaths a word. That is O(rows), as step 1's arithmetic is. Step 3 reads a
+change from the layers' kills and own rows instead.
+
+### Left in step 2: today's types read as traces
+
+`View` (two layers), a continuation chain, `facts::FrozenFacts` (a full block and its cumulative delta) and
+`kept::KeptChain` (files newest first) each get a `trace()` reading the layers they already hold. A continuation
+chain's layers are already a trace's. Its directory and death column are what it lacks. `View`'s base and delta,
+and `KeptChain`'s files, are layers of another form (a delta of kills by dead bits, a kept file), so `Version`
+reads a layer through `Read` and not only as a continuation.
+
 ## The next steps
 
 Each adds to `blocks`, makes an existing type share it, and keeps the old path.
 
-2. **A trace of layers, with frontiers.** A `Trace` holds a relation's layers in order, and a frontier is a count of
-   them. `Version` is the trace read at a frontier, and `between(a, b)` is a `Bistate`. Shared by: `View`
-   (two layers), a continuation chain (`Relation::try_continue`, 0384 step 7), `facts::FrozenFacts` (a full
-   block and its cumulative delta) and `kept::KeptChain` (files newest first). Each gets a `trace()` reading what
-   it already holds.
 3. **Kills recorded per layer, so a change costs its size (P1).** A delta's `killed` rows and its own new rows
    are its change. `Bistate::gone` and `added` over a trace read those, not the liveness words, and a test doubles
    the relation and checks that the work counters stay the same.
