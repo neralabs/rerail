@@ -17,7 +17,7 @@
 //! times what 384 did.) Each launch runs a slot `STEPS` steps at most, the GPU's time a launch bounded.
 
 pub use crate::bitlex_csat_lanes::{Answer, Formula, Solved};
-use crate::bitlex_csat_lanes::{arena, learned};
+use crate::bitlex_csat_lanes::{arena, carry_vars, learned, CARRY_ROOM};
 use crate::bitlex_grown::{FormulaBlock, Grown};
 use rerail_gpu::device::ComputeQueue;
 use rerail_gpu::kernels::{alloc, alloc_working, launch, program, read};
@@ -30,7 +30,7 @@ pub fn enabled() -> bool {
 }
 
 /// A descriptor's words (the kernel's `DESC`).
-const DESC: usize = 20;
+const DESC: usize = 32;
 /// A formula's lanes: one SIMD group.
 const LANES: u64 = 32;
 /// The steps a launch runs a slot at most (a round of propagation, a conflict, a decision).
@@ -61,7 +61,8 @@ struct Args {
 // SAFETY: eight u32s, no padding.
 unsafe impl rerail_gpu::Pod for Args {}
 
-/// A formula's state, in words (the kernel's layout, `cs_setup`), its widest gate `wide - 2` wide.
+/// A formula's state, in words (the kernel's layout, `cs_setup`), its widest gate `wide - 2` wide, its plain
+/// clauses (and carried ones) `clauses`.
 fn state_words(vars: usize, clauses: usize, wide: usize) -> usize {
     let (n, l, a) = (vars + 1, learned(vars) as usize, arena(vars) as usize);
     HEADER + 11 * n + 2 * wide + LANES as usize + l + (l + 1) + 4 * (clauses + l) + a
@@ -88,6 +89,51 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
 
 /// `solve`, with the slots' states in `state_bytes` at most (one slot at least).
 pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>, String> {
+    Ok(solve_until(formulas, state_bytes, None)?.into_iter().map(|x| x.expect("every formula the device's")).collect())
+}
+
+/// Each formula solved on the device and on this machine's CPUs at once (`bitlex_csat_lanes::solve`: the same
+/// search, so the same result): the device takes the batch from its first formula on, the CPUs from its last back,
+/// and each formula's result is the first either finishes. A search alone is slow on the device (its reads one after
+/// another; decision 0670) and many at once fast, so a batch's many quick searches are the device's and the few
+/// hard ones at its tail the CPUs', and a batch waits for neither alone.
+pub fn solve_racing(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let n = formulas.len();
+    let done: Vec<AtomicBool> = (0..n).map(|_| AtomicBool::new(false)).collect();
+    let here: Vec<std::sync::Mutex<Option<Solved>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();
+    let taken = AtomicUsize::new(0);
+    let device = std::thread::scope(|scope| {
+        let device = scope.spawn(|| solve_until(formulas, STATE_BYTES, Some(&done)));
+        rayon::scope(|r| {
+            for _ in 0..rayon::current_num_threads() {
+                r.spawn(|_| {
+                    // From the batch's end back, each formula the device has not finished.
+                    loop {
+                        let t = taken.fetch_add(1, Ordering::AcqRel);
+                        if t >= n {
+                            break;
+                        }
+                        let i = n - 1 - t;
+                        if done[i].load(Ordering::Acquire) {
+                            continue;
+                        }
+                        let x = crate::bitlex_csat_lanes::solve(&formulas[i]);
+                        *here[i].lock().expect("one writer") = Some(x);
+                        done[i].store(true, Ordering::Release);
+                    }
+                });
+            }
+        });
+        device.join().map_err(|_| "the prover's GPU: its thread panicked".to_string())?
+    })?;
+    Ok(device.into_iter().zip(here).map(|(d, h)| h.into_inner().expect("one writer").or(d).expect("every formula solved")).collect())
+}
+
+/// `solve_in`, stopping where every formula is `done` (by the device, which marks it, or by another solver): the
+/// device's results, `None` for a formula it did not finish.
+fn solve_until(formulas: &[Formula], state_bytes: usize, done: Option<&[std::sync::atomic::AtomicBool]>) -> Result<Vec<Option<Solved>>, String> {
+    use std::sync::atomic::Ordering;
     if formulas.is_empty() {
         return Ok(Vec::new());
     }
@@ -96,8 +142,9 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
     let elsewhere = || "the prover's GPU: a formula not in the batch's block".to_string();
     let block: FormulaBlock = formulas[0].gates.placed().ok_or_else(elsewhere)?.0.clone();
     let mut table = Grown::<u32>::in_block(&block);
-    let (mut slot_words, mut model_words) = (0usize, 0usize);
+    let (mut slot_words, mut model_words, mut carry_words) = (0usize, 0usize, 0usize);
     let mut at = Vec::with_capacity(formulas.len());
+    let mut carry_at = Vec::with_capacity(formulas.len());
     for f in formulas {
         let (b, rec, args) = f.gates.placed().ok_or_else(elsewhere)?;
         let (b2, lits, ends) = f.clauses.placed().ok_or_else(elsewhere)?;
@@ -114,6 +161,46 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
         };
         let wide = wide(f.gates);
         let model = u32::try_from(model_words).map_err(|_| "the prover's GPU: a batch's models past 16 GiB".to_string())?;
+        // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
+        let none = u32::MAX;
+        let mut r = [0u32, none, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, none];
+        let carried = match f.resume {
+            Some(x) => {
+                let (bs, set) = x.start.set.placed().map_or((None, 0), |(b, a)| (Some(b), a));
+                let (bc, conflict) = x.start.conflict.placed().map_or((None, 0), |(b, a)| (Some(b), a));
+                let (bl, clits, cends) = x.carried.placed().map_or((None, 0, 0), |(b, l, e)| (Some(b), l, e));
+                // An empty one may be on the heap: nothing is read from it.
+                let off = |b: Option<&FormulaBlock>, n: usize| b.is_some_and(|b| b.same(&block)) || n == 0;
+                if !off(bs, x.start.set.len()) || !off(bc, x.start.conflict.len()) || !off(bl, x.carried.len()) {
+                    return Err(elsewhere());
+                }
+                let cv = carry_vars(f);
+                r = [
+                    1,
+                    if x.assume != 0 { x.window_clauses as u32 } else { none },
+                    x.assume as u32,
+                    cv as u32,
+                    if bs.is_some() { words(set)? } else { 0 },
+                    (x.start.set.len() / 3) as u32,
+                    if bc.is_some() { words(conflict)? } else { 0 },
+                    x.start.conflict.len() as u32,
+                    u32::from(x.start.broken),
+                    if bl.is_some() { words(clits)? } else { 0 },
+                    if bl.is_some() { words(cends)? } else { 0 },
+                    x.carried.len() as u32,
+                    if cv != 0 { carry_words as u32 } else { none },
+                ];
+                carry_at.push((cv != 0).then_some(carry_words));
+                if cv != 0 {
+                    carry_words += 1 + CARRY_ROOM;
+                }
+                x.carried.len()
+            }
+            None => {
+                carry_at.push(None);
+                0
+            }
+        };
         let d: [u32; DESC] = [
             f.vars as u32,
             f.base as u32,
@@ -133,13 +220,25 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             f.conflicts,
             f.fan.vars() as u32,
             wide as u32,
-            0,
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            r[4],
+            r[5],
+            r[6],
+            r[7],
+            r[8],
+            r[9],
+            r[10],
+            r[11],
+            r[12],
             0,
         ];
         table.extend_from_slice(&d);
         at.push(model_words);
         model_words += (f.vars + 1).div_ceil(32);
-        slot_words = slot_words.max(state_words(f.vars, f.clauses.len(), wide));
+        slot_words = slot_words.max(state_words(f.vars, f.clauses.len() + carried, wide));
     }
     let n = formulas.len();
     let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(n);
@@ -152,6 +251,7 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
     let state = alloc_working::<u32>(slots * slot_words)?;
     let out = alloc::<u32>(n * OUT)?;
     let models = alloc::<u32>(model_words.max(1))?;
+    let carry = alloc::<u32>(carry_words.max(1))?;
     let queue = alloc::<u32>(1 + slots)?;
     let mut q = ComputeQueue::new(&shared.queue);
     let run = |q: &mut ComputeQueue, init: u32| -> Result<(), String> {
@@ -163,6 +263,7 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             .buffer("state", &state)
             .buffer("out", &out)
             .buffer("models", &models)
+            .buffer("carry", &carry)
             .buffer("queue", &queue)
             .run(&[slots as u64], &[LANES])?;
         q.flush().await_()
@@ -177,21 +278,42 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
         }
         run(&mut q, 0)?;
         got = read::<u32>(&out, n * OUT);
-        if got.chunks(OUT).all(|o| o[0] != 0) {
+        if let Some(d) = done {
+            for (o, d) in got.chunks(OUT).zip(d) {
+                if o[0] != 0 {
+                    d.store(true, Ordering::Release);
+                }
+            }
+        }
+        if got.chunks(OUT).all(|o| o[0] != 0) || done.is_some_and(|d| d.iter().all(|d| d.load(Ordering::Acquire))) {
             break;
         }
     }
     if let Some(i) = got.chunks(OUT).position(|o| o[0] == BROKEN) {
         return Err(format!("the device's solver broke on formula {i}: a loop past its bound"));
     }
-    let any_sat = got.chunks(OUT).any(|o| o[0] == SAT);
-    let words = if any_sat { read::<u32>(&models, model_words) } else { Vec::new() };
+    // The models, and a refuted window's solve's core, where they are.
+    let any = got.chunks(OUT).zip(formulas).any(|(o, f)| o[0] == SAT || (o[0] == UNSAT && f.resume.is_some()));
+    let words = if any { read::<u32>(&models, model_words) } else { Vec::new() };
+    let carried = if carry_words > 0 { read::<u32>(&carry, carry_words) } else { Vec::new() };
+    let carry_of = |c: Option<usize>| -> Vec<Vec<crate::bitlex_sat::Lit>> {
+        let Some(c) = c else { return Vec::new() };
+        let (n, mut k, mut out) = (carried[c] as usize, 0usize, Vec::new());
+        while k < n {
+            let len = carried[c + 1 + k] as usize;
+            out.push(carried[c + 2 + k..c + 2 + k + len].iter().map(|&l| l as i32).collect());
+            k += 1 + len;
+        }
+        out
+    };
     drop(table);
     Ok(got
         .chunks(OUT)
         .zip(formulas)
         .zip(at)
-        .map(|((o, f), m)| Solved {
+        .zip(carry_at)
+        .map(|(((o, f), m), c)| {
+            (o[0] != 0).then(|| Solved {
             answer: match o[0] {
                 SAT => Answer::Sat((0..=f.vars).map(|v| words[m + v / 32] >> (v % 32) & 1 != 0).collect()),
                 UNSAT => Answer::Unsat,
@@ -206,9 +328,10 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             visits: o[6],
             items: o[7],
             reductions: o[8],
-            carry: Vec::new(),
-            used: None,
+            carry: carry_of(c),
+            used: (o[0] == UNSAT && f.resume.is_some()).then(|| (0..=f.vars).map(|v| words[m + v / 32] >> (v % 32) & 1 != 0).collect()),
             cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
+            })
         })
         .collect())
 }
@@ -271,6 +394,102 @@ mod tests {
         }
         eprintln!("{sat} satisfiable, {unsat} unsatisfiable, {searched} with conflicts");
         assert!(sat >= 40 && unsat >= 40 && searched >= 40, "{sat} sat, {unsat} unsat, {searched} searched");
+    }
+
+    /// Windows' solves resumed on the device (`Resume`), a batch of each window's next solve, what each carries out
+    /// carried to the window's next: the device's search is the CPU copy's, its answers, counts, what it carries and
+    /// its core.
+    #[test]
+    fn a_resumed_window_on_the_device_is_the_cpus() {
+        use crate::bitlex_csat::Kind;
+        use crate::bitlex_csat_lanes::{start, Resume, Start};
+        let lvar_of = |l: i32| l.unsigned_abs() as usize;
+        if rerail_gpu::shared::get().is_none() {
+            eprintln!("no device: the prover's GPU solver test did not run");
+            return;
+        }
+        let block = FormulaBlock::new();
+        let mut rng = Rng(0x6a09e667f3bcc908);
+        struct W {
+            g: crate::bitlex_csat::Gates,
+            vars: usize,
+            base: usize,
+            wvars: usize,
+            window: Vec<Vec<i32>>,
+            rest: Vec<Vec<i32>>,
+            fan: Fanout,
+            own: Fanout,
+            learned: Clauses,
+            start: Option<Start>,
+        }
+        let mut ws: Vec<W> = (0..300usize)
+            .map(|_| {
+                let inputs = 4 + rng.below(30) as usize;
+                let (gn, cn) = (rng.below(100) as usize, rng.below(2 * inputs as u64 + 4) as usize);
+                let own_gates = rng.below(6) as usize;
+                let (g, c, vars, base) = circuit(&mut rng, &block, inputs, gn, cn, own_gates);
+                let wvars = (0..base).filter(|&i| g.kind(i) != Kind::One).map(|i| lvar_of(g.out(i))).chain((0..base).flat_map(|i| g.args(i).iter().map(|&a| lvar_of(a)))).max().unwrap_or(1).max(1);
+                let (mut window, mut rest) = (Vec::new(), Vec::new());
+                for cl in c.iter() {
+                    if cl.iter().all(|&l| lvar_of(l) <= wvars) { window.push(cl.to_vec()) } else { rest.push(cl.to_vec()) }
+                }
+                let (fan, own) = (Fanout::of(&g, base, wvars), Fanout::of_range(&g, base..g.len(), vars + 1));
+                W { g, vars, base, wvars, window, rest, fan, own, learned: Clauses::in_block(&block), start: None }
+            })
+            .collect();
+        let (mut sat, mut unsat, mut carried, mut searched) = (0, 0, 0, 0);
+        for k in 0..4 {
+            let mut alls = Vec::new();
+            for w in &mut ws {
+                let mut all = Clauses::in_block(&block);
+                for cl in &w.window {
+                    all.push(cl);
+                }
+                for cl in &w.rest {
+                    all.push(cl);
+                }
+                for _ in 0..rng.below(6) {
+                    all.push(&[((rng.below(w.vars as u64) + 1) as i32) * if rng.below(2) == 0 { 1 } else { -1 }]);
+                }
+                if w.start.is_none() {
+                    w.start = Some(start(w.wvars, &w.g, w.base, &w.fan, &all, w.window.len()));
+                }
+                alls.push(all);
+            }
+            let formulas: Vec<Formula> = ws
+                .iter()
+                .zip(&alls)
+                .map(|(w, all)| {
+                    let r = Resume { start: w.start.as_ref().expect("made"), window_clauses: w.window.len(), carried: &w.learned, assume: (w.vars + 1) as i32, carry_vars: w.wvars };
+                    Formula { resume: Some(r), ..Formula::new(w.vars + 1, &w.g, w.base, &w.fan, (w.base < w.g.len()).then_some(&w.own), all, 100_000) }
+                })
+                .collect();
+            let got = solve_in(&formulas, 1 << 20).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+            let here: Vec<Solved> = formulas.iter().map(crate::bitlex_csat_lanes::solve).collect();
+            // Raced with the CPUs: each the same, whichever finished it.
+            let raced = solve_racing(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+            for (i, (x, h)) in raced.iter().zip(&here).enumerate() {
+                same_search(1000 * k + i, x, h);
+            }
+            drop(formulas);
+            for (i, (x, h)) in got.iter().zip(&here).enumerate() {
+                same_search(1000 * k + i, x, h);
+                match x.answer {
+                    Answer::Sat(_) => sat += 1,
+                    Answer::Unsat => unsat += 1,
+                    Answer::Unknown => {}
+                }
+                searched += usize::from(x.conflicts > 0);
+            }
+            for (w, x) in ws.iter_mut().zip(&got) {
+                for c in &x.carry {
+                    w.learned.push(c);
+                    carried += 1;
+                }
+            }
+        }
+        eprintln!("{sat} satisfiable, {unsat} unsatisfiable, {searched} with conflicts, {carried} clauses carried");
+        assert!(sat >= 100 && unsat >= 100 && searched >= 40 && carried >= 50, "{sat} sat, {unsat} unsat, {searched} searched, {carried} carried");
     }
 
     /// With no conflict to spend, the device is unsatisfiable exactly where the CPU's solver is with none spent (a

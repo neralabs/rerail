@@ -3722,16 +3722,16 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
     Ok(None)
 }
 
-/// The rounds a batch's solves are propagated on the GPU before the rest are the CPU's.
+/// The rounds a batch's solves are searched on the GPU before the rest are the CPU's.
 #[cfg(not(target_family = "wasm"))]
 const GPU_ROUNDS: usize = 8;
 
 /// `either_never_many`'s answers with the solves in rounds (decision 0654, step 5): each
 /// question, on its thread, asked to its next new solve (`Induction::never_round`); the
-/// round's formulas propagated on the GPU together (`bitlex_csat_gpu::solve` with no conflict to
-/// spend, read where the questions built them, decision 0670), a conflict at level 0 deciding its
-/// solve as the CPU's solver would; the questions asked again. The answers are those of
-/// `either_never_many` on the CPU.
+/// round's formulas searched on the GPU together (`bitlex_csat_gpu::solve`, read where the
+/// questions built them, each resumed from its window as the CPU resumes it, decision 0670), each
+/// search taken by its question there; the questions asked again. The answers are those of
+/// `either_never_many` on the CPU: the device's search is the CPU's (`bitlex_csat_lanes`).
 #[cfg(not(target_family = "wasm"))]
 fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
     use bitlex_prove::Round;
@@ -3769,16 +3769,17 @@ fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[
             break;
         }
         let t = std::time::Instant::now();
-        let formulas: Vec<crate::bitlex_csat_gpu::Formula> = waiting.iter().map(|&i| qs[i].p.formula(0).expect("a captured solve")).collect();
+        let formulas: Vec<crate::bitlex_csat_gpu::Formula> = waiting.iter().map(|&i| qs[i].p.formula().expect("a captured solve")).collect();
         let gates: usize = formulas.iter().map(|f| f.gates.len()).sum();
-        let solved = crate::bitlex_csat_gpu::solve(&formulas).unwrap_or_else(|e| panic!("the prover's GPU ({}): {e}", rerail_gpu::device::backend()));
+        let solved = crate::bitlex_csat_gpu::solve_racing(&formulas).unwrap_or_else(|e| panic!("the prover's GPU ({}): {e}", rerail_gpu::device::backend()));
         drop(formulas);
-        let conflicts: Vec<bool> = solved.iter().map(|s| s.answer == crate::bitlex_csat_gpu::Answer::Unsat && s.conflicts == 0).collect();
         if trace {
-            eprintln!("gpu round {round}: {} formulas, {gates} gates, {} conflicts, {:.1} ms", waiting.len(), conflicts.iter().filter(|&&c| c).count(), t.elapsed().as_secs_f64() * 1e3);
+            let conflicts: u64 = solved.iter().map(|s| u64::from(s.conflicts)).sum();
+            let level0 = solved.iter().filter(|s| s.answer == crate::bitlex_csat_gpu::Answer::Unsat && s.conflicts == 0).count();
+            eprintln!("gpu round {round}: {} formulas, {gates} gates, {level0} refuted at level 0, {conflicts} conflicts, {:.1} ms", waiting.len(), t.elapsed().as_secs_f64() * 1e3);
         }
-        for (&i, c) in waiting.iter().zip(conflicts) {
-            qs[i].p.decided(c);
+        for (&i, x) in waiting.iter().zip(solved) {
+            qs[i].p.solved(x);
             qs[i].formula = false;
         }
         let last = round + 1 == GPU_ROUNDS;

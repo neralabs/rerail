@@ -356,7 +356,28 @@ formula").
     8.1 s and 53.3 s with the device's search on the CPU. 8,763 answers made, 948 known, as before; every grammar's
     shipped answers blessed again. (The C directives' answers check fails with "`ellipsis`: no byte left that no
     token begins with" before and after this change: not the solver's.)
-- **The kernel does not resume yet**: `csat_solve` solves a formula whole. The Start, the carried clauses, the
-  assumption, and what a solve keeps and its core written out are the CPU copy's only, and the prover's rounds
-  (`never_in_rounds`) still send the device propagation alone.
+- **The kernel resumes a window's solve** (`cs_resume`), as the CPU copy does, everything read in the block: the
+  window's `Start` (made there once, three words a value), the carried clauses (the window's `learned`, in its
+  block), the solve's own clauses with `-assume` read one past their end. Its values set a lane each in trail order;
+  the clauses watched in order by lane 0 (a watch list's order is the search's). The assumption decided first; a
+  conflict at its level refutes. A level-0 value analysis leaves out, or a dropped learned reason's literal, is
+  marked `RESTED` in its value word (the level's mask now 28 bits). Reported, besides the counts: a refuted solve's
+  core in the model's words (`cs_used`: lane 0 back along the trail through reasons, as `Search::used`), and what it
+  carries out (`cs_carry`, a lane a clause, each placed in lane order where it fits in `CARRY_ROOM`, 4,096 words;
+  the CPU copy keeps the same room).
+  - Test `a_resumed_window_on_the_device_is_the_cpus`: 300 windows, 4 solves each in batches, what each carries out
+    carried to its next: the device's answers, counts, carried clauses and cores the CPU copy's (CUDA, a DGX
+    Spark). Not run on Metal: Metal runs are held until further notice.
+- **The prover's rounds search on the device** (`never_in_rounds`): a captured solve's formula is the search the CPU
+  would run at that point (its window's `Start` made before the capture, its budget the one the CPU would have);
+  the device's result (`Replayed::Device`) is taken in place of the search when the question reaches the solve
+  again, and what it carries is kept as there. Cold Kotlin with `RERAIL_PROVER_GPU=1` on a DGX Spark blesses the
+  shipped answers' bytes; every grammar blessed on the CPU on Linux gives the bytes blessed on an M3.
+- **A round raced** (`solve_racing`): the device takes the batch from its first formula, the CPU's threads from its
+  last back (the same search, the same result), each formula's result the first finished. A round's few hard
+  searches, seconds each alone on the device, had set its time: 34 rounds of 6,370 formulas took 29.4 s on the
+  device alone, 3.2 s raced.
+- Cold Kotlin on the Spark: 8.7 s and 52.9 s of CPU on the CPU; 10.8 s and 59.6 s with the rounds on the device.
+  The device does not yet make it faster: the rounds stop every question at its next solve and wait for the round's
+  slowest (the row modes phase 3.1 s to 4.7 s), where on the CPU alone the threads go on with other questions.
 

@@ -813,28 +813,28 @@ pub struct Induction {
     /// Asked in rounds: the first solve past `replay` stops the question with its formula.
     capture: bool,
     captured: Option<Captured>,
-    /// The solve the last round stopped at had a hypothesis, whose core it tells (`decided`).
-    captured_core: bool,
     /// The core of the solve that proved the last `prove` (`Outcome::Proved`).
     core: Option<Vec<bool>>,
 }
 
 /// The solve a round stopped at (decision 0654), as the device reads it (decision 0670, step 3): its window, whose
-/// gates and clauses hold the solve's own past the window's until the next round attaches it (`Window::kept`), its
-/// variables, and its own gates' fanout, in the formula block.
+/// gates and clauses hold the solve's own past the window's until the next round attaches it (`Window::kept`), and
+/// whose level 0 (`Start`) and carried clauses it resumes from; its variables (its assumption the last), its own
+/// gates' fanout, in the formula block; and its budget of conflicts.
 struct Captured {
     window: usize,
     vars: usize,
     own: Option<Fanout>,
+    conflicts: u32,
 }
 
 /// A solve's outcome in a question asked in rounds (decision 0654).
 #[derive(Clone)]
 enum Replayed {
     Known(Outcome),
-    /// Its formula met no conflict on the GPU: solved on the CPU when the question reaches it
-    /// again (its variables already spent).
-    Cpu,
+    /// Its search, the device's (decision 0670): taken as the search when the question reaches the solve again (its
+    /// variables already spent), what it carries kept for the window's next solves as there.
+    Device(Box<lanes::Solved>),
 }
 
 /// A round of a question (`Induction::never_round`).
@@ -1229,7 +1229,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, captured_core: false, core: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, core: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1281,21 +1281,20 @@ impl Induction {
         }
     }
 
-    /// The formula of the solve the last round stopped at (`Round::Formula`), as the device's solver reads it, with
-    /// a budget of `conflicts`.
+    /// The formula of the solve the last round stopped at (`Round::Formula`), as the device's solver reads it: the
+    /// search the CPU would run there (`solve_now`), resumed from its window.
     #[cfg(not(target_family = "wasm"))]
-    pub fn formula(&self, conflicts: u32) -> Option<crate::bitlex_csat_gpu::Formula<'_>> {
+    pub fn formula(&self) -> Option<crate::bitlex_csat_gpu::Formula<'_>> {
         let c = self.captured.as_ref()?;
         let w = &self.window_list[c.window].1;
-        let gates = &w.parts.gates;
-        Some(crate::bitlex_csat_gpu::Formula::new(c.vars, gates, w.base_gates, &w.fan, c.own.as_ref(), &w.parts.clauses, conflicts))
+        let start = w.start.as_ref()?;
+        let resume = lanes::Resume { start, window_clauses: w.base, carried: &w.learned, assume: c.vars as Lit, carry_vars: w.base_vars.unsigned_abs() as usize };
+        Some(lanes::Formula { resume: Some(resume), ..lanes::Formula::new(c.vars, &w.parts.gates, w.base_gates, &w.fan, c.own.as_ref(), &w.parts.clauses, c.conflicts) })
     }
 
-    /// The outcome of the solve the last round stopped at: unsatisfiable by propagation alone
-    /// (`conflict`, as the CPU's solver finds it with no conflict spent), else the CPU's to solve.
-    pub fn decided(&mut self, conflict: bool) {
-        // A solve that tells its core is the CPU's: the device's conflict does not say what it read (decision 0670).
-        self.replay.push(if conflict && !self.captured_core { Replayed::Known(Outcome::Proved(None)) } else { Replayed::Cpu });
+    /// The device's search of the solve the last round stopped at: the question takes it there when asked again.
+    pub fn solved(&mut self, x: lanes::Solved) {
+        self.replay.push(Replayed::Device(Box::new(x)));
     }
 
     /// The streams this prover's solves found (`Streams`).
@@ -1650,17 +1649,14 @@ impl Induction {
         }
         // Past the compile's budget: not proved. A window's variables and the solve's conflicts
         // are its steps.
-        let spent = matches!(self.replay.get(i), Some(Replayed::Cpu));
-        if !spent && !self.work.spend(u.vars.unsigned_abs().into()) {
-            break 'solve Outcome::Unknown;
-        }
-        // In rounds, a new solve: its formula, for the batch (`never_round`), where it was built: the window keeps
-        // the solve's own gates and clauses until it is attached again.
-        if self.capture && i == self.replay.len() {
-            let vars = u.vars.unsigned_abs() as usize;
-            self.captured = Some(Captured { window: j, vars, own: (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), vars)) });
-            self.captured_core = hypothesis.is_some();
-            keep = true;
+        let device = match self.replay.get_mut(i) {
+            Some(r @ Replayed::Device(_)) => match std::mem::replace(r, Replayed::Known(Outcome::Unknown)) {
+                Replayed::Device(x) => Some(*x),
+                Replayed::Known(_) => None,
+            },
+            _ => None,
+        };
+        if device.is_none() && !self.work.spend(u.vars.unsigned_abs().into()) {
             break 'solve Outcome::Unknown;
         }
         // The device's search (`bitlex_csat_lanes`, decision 0670): the window at level 0, propagated once (`Start`);
@@ -1668,14 +1664,22 @@ impl Induction {
         // past the solve's, assumed. The same answers on the device and here.
         let start = start.get_or_insert_with(|| lanes::start(base_vars, &u.gates, base_gates, fan, &u.clauses, window_base));
         let sel = u.vars + 1;
-        let own_fan = (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), sel.unsigned_abs() as usize));
+        let vars = sel.unsigned_abs() as usize;
+        let own_fan = (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), vars));
         let budget = self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX));
+        // In rounds, a new solve: its formula, for the batch (`never_round`), where it was built: the window keeps
+        // the solve's own gates and clauses until it is attached again.
+        if self.capture && i == self.replay.len() {
+            self.captured = Some(Captured { window: j, vars, own: own_fan, conflicts: budget });
+            keep = true;
+            break 'solve Outcome::Unknown;
+        }
         let t_dump = std::time::Instant::now();
-        let x = {
+        let x = device.unwrap_or_else(|| {
             let resume = lanes::Resume { start, window_clauses: window_base, carried: learned, assume: sel, carry_vars: base_vars };
-            let f = lanes::Formula { resume: Some(resume), ..lanes::Formula::new(sel.unsigned_abs() as usize, &u.gates, base_gates, fan, own_fan.as_ref(), &u.clauses, budget) };
+            let f = lanes::Formula { resume: Some(resume), ..lanes::Formula::new(vars, &u.gates, base_gates, fan, own_fan.as_ref(), &u.clauses, budget) };
             lanes::solve(&f)
-        };
+        });
         // What holds for every solve of the window, kept for its next ones (`LEARNED_KEPT` literals at most).
         for c in &x.carry {
             if learned.lits().len() + c.len() <= LEARNED_KEPT {
