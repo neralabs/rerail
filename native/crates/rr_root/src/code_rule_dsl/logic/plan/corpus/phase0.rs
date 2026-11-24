@@ -23,7 +23,7 @@ use rerail_store::Canonical as _;
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 // Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
@@ -60,6 +60,16 @@ fn host_spelling(s: &str) -> String {
 
 fn candidate_path(dir: &str, name: &str) -> PathBuf {
     PathBuf::from(host_spelling(&format!("{}/{name}", bootstrap_spelling(dir))))
+}
+
+/// The directory of the file a text's `#include` names from library `lib` (canonical), where that file is outside
+/// the library: a pack's own library, named by its path from the library (`settings::module_text`).
+fn outside_library(lib: &Path, name: &str) -> Option<PathBuf> {
+    if !name.starts_with("..") {
+        return None;
+    }
+    let file = dunce::canonicalize(candidate_path(&lib.to_string_lossy(), name)).ok()?;
+    (!file.starts_with(lib)).then(|| file.parent().map(Path::to_path_buf)).flatten()
 }
 
 /// The include graph phase 0 derived.
@@ -508,6 +518,10 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     let mut files: Vec<Seed> = Vec::new();
     let mut absent: Vec<PathBuf> = Vec::new();
     for (at, name) in names {
+        // A name outside the library (a pack's own library) is a file of no library graph: the run's to resolve.
+        if outside_library(&dirs.lib, &name).is_some() {
+            return Ok(None);
+        }
         let path = candidate_path(&lib, &name);
         if super::observe(|o| o.kind(&path)) != Kind::File {
             return Ok(None);
@@ -1087,6 +1101,11 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
                 }
                 for (at, name) in includes {
                     text.push_str(&format!("p0_ask({t}, {at}, {}).\n", quote(name)));
+                    // A name that leaves the library (a pack's own library, named from it: `settings::module_text`):
+                    // its file's directory is a root the loader may read, as a program file's own is.
+                    if let Some(dir) = outside_library(&lib, name) {
+                        dirs.insert(dir);
+                    }
                 }
             }
             Seed::File(path) => {

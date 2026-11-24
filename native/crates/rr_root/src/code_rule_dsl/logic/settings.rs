@@ -71,10 +71,11 @@ pub fn program_texts_read(paths: &[&std::path::Path], given: Vec<Option<String>>
         }
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
-        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rerail`.
+        // run however many of its programs include them; a file beside it is named from the library, a module too
+        // (`module_text`). A policy reads `core.rerail`.
         let canonical = canonicals.next().expect("a canonical path per seed");
         let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
-        let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
+        let own = module_text(&canonical, &text, &graph, library)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rerail\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
         if let (Ok(Some(seed)), Some(dirs)) = (crate::code_rule_dsl::logic::rr::text_seed(&own), &dirs) {
@@ -137,16 +138,12 @@ pub fn process_counters() -> Option<(u64, u64)> {
     None
 }
 
-/// `text` (the file `path`'s) with each `#include` phase 0 resolved to a file outside the library written in, each
-/// once.
-fn module_text(
-    path: &std::path::Path,
-    text: &str,
-    graph: &crate::code_rule_dsl::logic::plan::corpus::phase0::Graph,
-    library: &std::path::Path,
-    seen: &mut Vec<std::path::PathBuf>,
-    read: &dyn Fn(&std::path::Path) -> Result<String, String>,
-) -> Result<String, String> {
+/// `text` (the file `path`'s) with each `#include` phase 0 resolved to a file outside the library named by its path
+/// from the library (`../../packs/django/rules/lib/django.rerail`), which phase 0 resolves for a text as for a file:
+/// the file is a module of the program's library (decision 0639 §1), planned, lowered and kept once however many
+/// programs include it. (It was written into each program's text, which lowered it again with every program: a
+/// pack's own library, Django's `lib/django.rerail`, was no module.)
+fn module_text(path: &std::path::Path, text: &str, graph: &crate::code_rule_dsl::logic::plan::corpus::phase0::Graph, library: &std::path::Path) -> Result<String, String> {
     let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
@@ -159,10 +156,8 @@ fn module_text(
                 };
                 if found.starts_with(library) {
                     out.push_str(line);
-                } else if !seen.contains(&found) {
-                    seen.push(found.clone());
-                    let inner = read(&found)?;
-                    out.push_str(&module_text(&found, &inner, graph, library, seen, read)?);
+                } else {
+                    out.push_str(&format!("#include \"{}\"", from_library(&found, library)));
                 }
             }
             None => out.push_str(line),
@@ -170,4 +165,14 @@ fn module_text(
         out.push('\n');
     }
     Ok(out)
+}
+
+/// File `path`'s name from the library directory `library` (both canonical): `..` up to their common directory,
+/// then down to the file, with `/` between, as a text's `#include` names it on every host.
+fn from_library(path: &std::path::Path, library: &std::path::Path) -> String {
+    let (p, l): (Vec<_>, Vec<_>) = (path.components().collect(), library.components().collect());
+    let common = p.iter().zip(&l).take_while(|(a, b)| a == b).count();
+    let up = std::iter::repeat_n("..".to_owned(), l.len() - common);
+    let down = p[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned());
+    up.chain(down).collect::<Vec<_>>().join("/")
 }

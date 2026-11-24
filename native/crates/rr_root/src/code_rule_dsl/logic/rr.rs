@@ -700,8 +700,11 @@ fn declared_in(statements: &Statements) -> impl Iterator<Item = (String, bool)> 
 /// file declaring each and whether it is extensible.
 fn closed_heads(file: &str, statements: &Statements, open: &std::collections::HashMap<String, (&Path, bool)>) -> Result<(), Error> {
     let own: BTreeSet<String> = declared_in(statements).map(|(n, _)| n).collect();
+    // A relation `core.rerail` declares that one library file derives (`DERIVED_BY`, decision 0483:
+    // `python/references.rerail`'s `reference_edge`) is that file's to derive, as `check_names` allows it.
+    let derives = |h: &str| DERIVED_BY.iter().any(|(rel, by)| *rel == h && library().join(by).canonical().is_ok_and(|by| by == Path::new(file)));
     for s in statements {
-        for h in s.heads().into_iter().filter(|h| !own.contains(*h)) {
+        for h in s.heads().into_iter().filter(|h| !own.contains(*h) && !derives(h)) {
             if let Some((home, false)) = open.get(h) {
                 return Err(Error::Syntax(format!(
                     "{file}:{}: `{h}` is declared in {}, and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)",
@@ -1040,6 +1043,26 @@ fn image_held(k: crate::content_store::HashKey) -> bool {
     images::read_image(image_store().as_deref(), k).is_some()
 }
 
+/// The statements of a module's files (`files`, paths one a line), their includes left out, each file checked to add to
+/// no relation of the files its scope reaches (`reached`, one a line) but their `extensible` ones (decision 0263);
+/// files that include each other are one module, and write each other's relations. `lower_planned_module`'s.
+pub fn module_statements(files: &str, reached: &str) -> Result<Statements, Error> {
+    let mut open = std::collections::HashMap::new();
+    let reached: Vec<(PathBuf, Statements)> = reached.lines().filter(|f| !f.is_empty()).map(|f| Ok((PathBuf::from(f), read(Path::new(f))?.0))).collect::<Result<_, Error>>()?;
+    for (path, statements) in &reached {
+        for (rel, ext) in declared_in(statements) {
+            open.entry(rel).or_insert((path.as_path(), ext));
+        }
+    }
+    let mut own = Statements::default();
+    for f in files.lines() {
+        let statements = read(Path::new(f))?.0;
+        closed_heads(f, &statements, &open)?;
+        own.extend(statements.into_iter().filter(|s| !is_include(s)));
+    }
+    Ok(own)
+}
+
 /// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
 /// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
 /// kept under its key; or found held by the process, or among the images the store held before the run
@@ -1055,21 +1078,7 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
     let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| planned_key(s).and_then(made_module).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
-    // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
-    // each other are one module, and write each other's relations.
-    let mut open = std::collections::HashMap::new();
-    let reached: Vec<(PathBuf, Statements)> = reached.lines().filter(|f| !f.is_empty()).map(|f| Ok((PathBuf::from(f), read(Path::new(f))?.0))).collect::<Result<_, Error>>()?;
-    for (path, statements) in &reached {
-        for (rel, ext) in declared_in(statements) {
-            open.entry(rel).or_insert((path.as_path(), ext));
-        }
-    }
-    let mut own = Statements::default();
-    for f in files.lines() {
-        let statements = read(Path::new(f))?.0;
-        closed_heads(f, &statements, &open)?;
-        own.extend(statements.into_iter().filter(|s| !is_include(s)));
-    }
+    let own = module_statements(files, reached)?;
     let refs: Vec<&lower::Module> = scope.iter().collect();
     let m = lower::lower_module_in_written(own, &refs).map_err(|e| match e {
         Error::Syntax(m) => Error::Syntax(format!("{}: {m}", files.lines().next().unwrap_or_default())),
@@ -1653,6 +1662,8 @@ pub fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, decla
     // A program's relations its checks are of: its own module's, then each step's changes (`changed_since`).
     let mut touched: Option<std::collections::BTreeSet<String>> = own.cloned();
     let link = std::sync::Arc::clone(&start);
+    // Onto the link, the version the steps' changes since are read from: the link, or the last fold or derivation of it.
+    let mut since = std::sync::Arc::clone(&link);
     let last_down = own.and_then(|_| steps.iter().rposition(|s| s.place() == Place::Downward));
     // Once the steps run onto the link: the relations the program's checks are of before, and each stage since with
     // whether its input was an edit of the link.
@@ -1763,27 +1774,37 @@ pub fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, decla
                 }
             }
         }
-        // A step's changes: read off the overlays and views it made, or off the one derivation it made of its input
-        // (`derived_changes`). A fold, or a derivation among several passes, leaves them unread: the program is
-        // checked whole.
-        // Onto the link, every step's output is an edit of it: what changed since is read off the one layer.
+        // A step's changes: read off the overlays and views it made, or, where it made one fold or one derivation of
+        // its input, off that version's rules' sources (`derived_changes`): a fold records them as a derivation does
+        // (`Builder::folding_edit`), and which of the two a step's edit is depends only on its size against its input's
+        // (an edit of a small program's own module, more than half its size, folds). Several passes' derivations or
+        // folds leave them unread: the program is checked whole.
+        // Onto the link, every step's output is an edit of it: what changed since is read off the one layer, or since
+        // the last fold or derivation a step made of it, which the later steps' edits are of.
         if let Some((_, on)) = &mut onto {
             on.resize(on.len() + p.stages().len() - stages, on_link);
         }
         if let Some(before) = before {
-            let one_derivation = p.stages().len() == stages + 1 && p.stages().last().is_some_and(|s| s.form == super::program_image::manager::Form::Derived);
+            use super::program_image::manager::Form;
+            let one_copy = p.stages().len() == stages + 1 && p.stages().last().is_some_and(|s| matches!(s.form, Form::Derived | Form::Folded));
             let now = p.current().map_err(Error::Syntax)?;
-            touched = match &onto {
-                Some((was, _)) => was.clone().zip(changed_since(&link, now)).map(|(mut t, c)| {
+            let extend = |t: Option<std::collections::BTreeSet<String>>, c: Option<std::collections::BTreeSet<String>>| {
+                t.zip(c).map(|(mut t, c)| {
                     t.extend(c);
                     t
-                }),
-                None => changed_since(&before, now).or_else(|| one_derivation.then(|| derived_changes(&before, now)).flatten()).and_then(|c| {
-                    touched.map(|mut t| {
-                        t.extend(c);
+                })
+            };
+            touched = match &mut onto {
+                Some((was, _)) => match changed_since(&since, now) {
+                    Some(c) => extend(was.clone(), Some(c)),
+                    None => {
+                        let t = extend(touched, one_copy.then(|| derived_changes(&before, now)).flatten());
+                        since = std::sync::Arc::clone(now);
+                        was.clone_from(&t);
                         t
-                    })
-                }),
+                    }
+                },
+                None => extend(touched, changed_since(&before, now).or_else(|| one_copy.then(|| derived_changes(&before, now)).flatten())),
             };
         }
         if Some(at) == last_down {
@@ -2811,7 +2832,7 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
         .filter(|(file, _)| *file == core)
         .flat_map(|(_, statements)| statements)
         .filter_map(|s| if let Some(S::Decl(name)) = s.what() { Some(name.to_owned()) } else { None })
-        .chain(core_names().iter().cloned().filter(|_| core_unlisted && !listed))
+        .chain(core_names().iter().filter(|_| core_unlisted && !listed).cloned())
         .filter(|name| !LIBRARY_DERIVED.contains(&name.as_str()))
         .collect();
     for (file, statements) in statements.iter().filter(|(file, _)| *file != core) {

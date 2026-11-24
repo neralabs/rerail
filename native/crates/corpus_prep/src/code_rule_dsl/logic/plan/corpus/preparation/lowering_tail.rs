@@ -1150,8 +1150,9 @@ impl ProgramPass for KindSets {
         use crate::code_rule_dsl::logic::front::{Error, axis};
         let input = std::sync::Arc::clone(w.input());
         let v: &Version = &input;
-        // The fields' edit, staged (read through as it goes) and stated on the derivation at the end.
-        let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
+        // The step's edit, written as it goes and read through: its fields are stated on it directly. (They were
+        // staged on an edit of their own and copied onto it, row by row: python's library 87 µs a program.)
+        let b = w.on()?;
         let mut kindsets = v.kindset_map()?;
         let was_kindsets = kindsets.clone();
         let library = self.library.clone();
@@ -1164,9 +1165,9 @@ impl ProgramPass for KindSets {
                 continue;
             }
             // `members`.
-            match kinds_of(v, &head, library, &gone, &set, &mut BTreeSet::new()) {
+            match kinds_of(v, &b.fields(), library, &gone, &set, &mut BTreeSet::new()) {
                 Some(kinds) => drop(kindsets.insert(set, kinds)),
-                None if matches!(head.columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                None if matches!(b.fields().columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
             }
         }
@@ -1174,16 +1175,16 @@ impl ProgramPass for KindSets {
         // `rr/kind-sets.rerail` over the image's view (decision 0662 §5.1). A program that holds no kind set as a
         // relation has none to take out and runs no rules, as the rules' own program does when it is lowered.
         let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
-        if kindsets.keys().any(|set| head.declares(set) || head.states_facts(set) || heads_of(&gone, set)) {
+        if kindsets.keys().any(|set| b.fields().declares(set) || b.fields().states_facts(set) || heads_of(&gone, set)) {
             let rules = (self.rules)();
             let sets: Vec<AtomId> = kindsets.keys().filter_map(|s| v.find(s)).collect();
             let out = rules.run_on(&input, &sets, &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
             let name = |row: &Vec<i64>| v.text(AtomId(row[0] as u32)).to_owned();
             for row in &out[1] {
-                head.b.fields().undeclare(&name(row));
+                b.fields().undeclare(&name(row));
             }
             for row in &out[2] {
-                head.b.fields().drop_facts(&name(row));
+                b.fields().drop_facts(&name(row));
             }
             gone.extend(out[0].iter().map(name));
         }
@@ -1222,7 +1223,7 @@ impl ProgramPass for KindSets {
         // `base_relation_derived` for `child` and `node`, the rules gone left out.
         if !need.is_empty() {
             for rel in ["child", "node"] {
-                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head.b.fields(), rel, heads_of(&gone, rel));
+                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut b.fields(), rel, heads_of(&gone, rel));
             }
         }
         // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
@@ -1230,8 +1231,8 @@ impl ProgramPass for KindSets {
         let mut made: Vec<(String, Vec<&'static str>, Body)> = Vec::new();
         for (set, helper) in &need {
             let member = format!("rr_in_{set}");
-            if !head.declares(&member) {
-                head.b.fields().declare(&member, &[("x", "node")]);
+            if !b.fields().declares(&member) {
+                b.fields().declare(&member, &[("x", "node")]);
                 made.push((member.clone(), vec!["x"], vec![("node".to_owned(), vec!["_", "x", "k", "_", "_"], false), (set.clone(), vec!["k"], false)]));
             }
             let rel = format!("rr_{helper}_{set}");
@@ -1246,22 +1247,20 @@ impl ProgramPass for KindSets {
                 _ => (vec!["a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["p"]), child("a", "p")]]),
             };
             let pairs: Vec<(&str, &str)> = cols.iter().map(|c| (*c, "node")).collect();
-            head.b.fields().declare(&rel, &pairs);
+            b.fields().declare(&rel, &pairs);
             for body in bodies {
                 made.push((rel.clone(), cols.clone(), body));
             }
         }
         if kindsets != was_kindsets {
-            head.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
         }
-        if gone.is_empty() && axes.is_empty() && made.is_empty() && head.b.is_empty() {
+        if gone.is_empty() && axes.is_empty() && made.is_empty() && b.is_empty() {
             return Ok(());
         }
         // An edit of the input, of what changed alone: the sets' rules taken out, each rule with an axis over a derived
         // set written again in its place's stead, and the helpers' rules added. (A derivation copied every rule,
         // declaration and fact of the program to take a few sets out: on python's library, 4.2 of the step's 10.2 ms.)
-        let b = w.on()?;
-        b.fields().state_fields_of(&head.b);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for set in &gone {
             for r in input.rel(set).into_iter().flat_map(|rel| input.heads(rel)) {

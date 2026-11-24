@@ -4667,6 +4667,40 @@ fn rule_packs(phases: bool) -> Vec<(String, Vec<PathBuf>)> {
     packs
 }
 
+/// A pack's programs' texts as a run reads them (`settings::program_texts`, one run of phase 0 for them all): the
+/// library files each includes stay includes, and a file beside it, a pack's own library (Django's
+/// `lib/django.rerail`), is named from the library, a module of its library too. A file's own text names that file
+/// beside it, which a text alone cannot resolve. A program whose text does not read is left out, as an unreadable
+/// file was (each read alone, where the pack's together failed).
+fn program_srcs(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
+    use crate::code_rule_dsl::logic::settings::{program_text, program_texts};
+    let refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    match program_texts(&refs) {
+        Ok(texts) => paths.into_iter().zip(texts).collect(),
+        Err(_) => paths.into_iter().filter_map(|p| program_text(&p).ok().map(|t| (p, t))).collect(),
+    }
+}
+
+/// Decision 0263 against decision 0483: `python/references.rerail` derives `core.rerail`'s `reference_edge`
+/// (`DERIVED_BY`), so its module passes the check phase 0's lowering of a module makes against the files its scope
+/// reaches (`module_statements`, `lower_planned_module`'s). It was refused there, while the whole program's check
+/// (`check_names`) allowed it: a run of a program file reading the reference graph (`all`'s) failed before it began.
+/// Another file deriving it is still refused.
+#[test]
+fn a_module_derives_the_core_relation_its_file_is_named_for() {
+    let lib = super::library();
+    let path = |f: &str| lib.join(f).canonical().unwrap().to_string_lossy().into_owned();
+    let (references, core) = (path("python/references.rerail"), path("core.rerail"));
+    let checked = super::module_statements(&references, &core);
+    assert!(checked.is_ok(), "{:?}", checked.err());
+    let dir = tempfile::tempdir().unwrap();
+    let other = dir.path().join("other.rerail");
+    std::fs::write(&other, "reference_edge(a, a, \"x\") :- kind(a, \"call\").\n").unwrap();
+    let other = other.canonical().unwrap().to_string_lossy().into_owned();
+    let refused = super::module_statements(&other, &core).map(|_| ()).expect_err("another file derives no reference_edge");
+    assert!(refused.to_string().contains("`reference_edge` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+}
+
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
 /// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rerail`).
 #[test]
@@ -6553,11 +6587,10 @@ fn a_program_linked_from_its_modules_is_its_whole_lowering() {
     let mut compared = 0;
     for (_, programs) in rule_packs(true) {
         let mut taken = 0;
-        for path in programs {
+        for (path, src) in program_srcs(programs) {
             if taken == per {
                 break;
             }
-            let Ok(src) = std::fs::read_to_string(&path) else { continue };
             let Ok(Some(m)) = super::modules(&src) else { continue };
             // A program the whole lowering refuses is not compared (the spike's seven, open items).
             let mut all: from_tape::Statements = m.files.iter().flat_map(|(p, _, _)| no_includes(read(p).unwrap().0)).collect();
@@ -6591,8 +6624,7 @@ fn programs_of_one_library_share_its_union() {
     let mut programs = walk_rr(&crate::code_rule_dsl::logic::rr::library().join("../packs/python"));
     programs.sort();
     let mut by_files: std::collections::BTreeMap<Vec<PathBuf>, Vec<String>> = Default::default();
-    for path in programs {
-        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+    for (_, src) in program_srcs(programs) {
         let Ok(Some(m)) = super::modules(&src) else { continue };
         by_files.entry(m.files.into_iter().map(|(p, _, _)| p).collect()).or_default().push(src);
     }
@@ -6613,8 +6645,7 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     // The library files every pack's programs include, planned once: a module shared by packs is lowered once.
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
     for (_, programs) in rule_packs(true) {
-        for path in programs {
-            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        for (_, src) in program_srcs(programs) {
             if let Ok(Some(m)) = super::modules(&src) {
                 paths.extend(m.files.into_iter().map(|(p, _, _)| p));
             }
@@ -6765,8 +6796,7 @@ fn tail_libraries() -> Vec<(String, Vec<super::PlannedModule>, Vec<(PathBuf, Str
     for (pack, programs) in rule_packs(true) {
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
         let mut texts = Vec::new();
-        for path in programs {
-            let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        for (path, src) in program_srcs(programs) {
             if let Ok(Some(m)) = super::modules(&src) {
                 let files: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
                 paths.extend(files.iter().cloned());
@@ -7249,12 +7279,14 @@ fn modules_tailed_at_module_time_unite_to_the_librarys_tail() {
             let linked = lower::link_library(modules).unwrap().with(None).unwrap();
             let whole = tail_lines(&super::tail_steps(linked.version, false, linked.lowered, None, &super::module_steps()).unwrap());
             let tailed = tailed_modules(plan);
-            // The union as a program reads it: core.rerail's declarations of what none of its modules declares made
-            // over it first (`program_steps`), which the modules' tails leave to it.
+            // The union as a program reads it: a pass's rows, one per module that made some of it, stated as one row
+            // (`PassesOnce`, as the whole library's tail makes the pass once over every module's contexts: Django's), and
+            // core.rerail's declarations of what none of its modules declares, made over it first (`program_steps`),
+            // which the modules' tails leave to it.
             let link = || lower::link_library(tailed.clone()).unwrap().with(None).unwrap();
             let united = {
                 let l = link();
-                super::tail_steps(l.version, false, l.lowered, None, &[super::TailStep::CoreDecls]).unwrap()
+                super::tail_steps(l.version, false, l.lowered, None, &[super::TailStep::PassesOnce, super::TailStep::CoreDecls]).unwrap()
             };
             let union = tail_lines(&united);
             let only_whole: Vec<&String> = whole.difference(&union).take(4).collect();
