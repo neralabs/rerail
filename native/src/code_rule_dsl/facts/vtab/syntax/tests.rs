@@ -2014,6 +2014,59 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
     }
 }
 
+/// A measurement (the reads, after t50): ns per call of `text`'s probe by node over a chunk's documents, bare (its
+/// batch's relation) and layered with a value admitted (a chunk with a parsed string's parts), against `node`'s.
+#[test]
+#[ignore]
+fn a_text_reads_cost() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    let store = ContentStore::open(&temp("text-cost")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let docs: Vec<Document> = documents().into_iter().take(8).collect();
+    let (sources, mut grower) = Grower::start(&store, docs, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    let value = document(900_001, "v.py", "python", "x = 1\n");
+    values.add(&[900_001], &[], grower.admit(&store, value, &[], &tests, Binding::Cpu, &projection).unwrap());
+    let find = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap().1);
+    let (text, node) = (find("text"), find("node"));
+    let layered = |name: &str, s: &Arc<dyn Source>| super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values));
+    let (text_l, node_l) = (layered("text", &text), layered("node", &node));
+    let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+    // Every document made (as a chunk's run reads them): `text`'s reads go to its batch's relation.
+    let _ = (text.len(), text.value(0, 0));
+    eprintln!("text: {} rows, its node column in order: {}", text.len(), text.sorted_range(0, ids[0]).is_some());
+    let reps = (2_000_000 / ids.len().max(1)).max(1);
+    let time = |what: &str, src: &dyn Source, column: usize, read: usize| {
+        let t = std::time::Instant::now();
+        let mut sum = 0i64;
+        for _ in 0..reps {
+            for &n in &ids {
+                src.lookup_read(column, n, &[read], &mut |_, v| sum = sum.wrapping_add(v[0]));
+            }
+        }
+        let ns = t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64;
+        eprintln!("{what:<32} {ns:7.1} ns a probe ({} probes, sum {sum})", reps * ids.len());
+    };
+    let split = |what: &str, f: &mut dyn FnMut(i64) -> i64| {
+        let t = std::time::Instant::now();
+        let mut sum = 0i64;
+        for _ in 0..reps {
+            for &n in &ids {
+                sum = sum.wrapping_add(f(n));
+            }
+        }
+        eprintln!("{what:<32} {:7.1} ns a probe (sum {sum})", t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64);
+    };
+    split("text, its search alone", &mut |n| text.sorted_range(0, n).map_or(0, |r| i64::from(r.start)));
+    split("text, its search and value", &mut |n| text.sorted_range(0, n).filter(|r| !r.is_empty()).map_or(0, |r| text.value(r.start as usize, 1)));
+    split("text, a value read", &mut |n| text.value((n & 0x3fff) as usize % text.len(), 1));
+    time("text, bare", &*text, 0, 1);
+    time("text, layered with a value", &text_l, 0, 1);
+    time("node, bare", &*node, 1, 2);
+    time("node, layered with a value", &node_l, 1, 2);
+}
+
 /// A measurement (t50, `wstart`'s nearest step at ~375 ns a probe): ns per call of a solved axis's probe by `n`, by
 /// its parts, over every node of a few documents.
 #[test]

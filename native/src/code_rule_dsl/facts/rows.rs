@@ -2526,6 +2526,26 @@ impl Rows {
         self.rows() as u32
     }
 
+    /// The first row from `start` whose value in column `c` is greater than `key`, every row before `start` being at
+    /// most `key` (the column sorted over every row): each part's own gallop over its resolved column
+    /// (`rerail_blocks::rows::Rows::upper_from`), from `start`'s part on. A gallop by `get` found the part, the chunk
+    /// and the chunk's encoding again for every row it read.
+    pub fn upper_from(&self, c: usize, start: u32, key: i64) -> u32 {
+        let parts = self.segs.iter().map(|(first, p)| (*first, p)).chain(self.tail.as_ref().map(|t| (self.from, t)));
+        for (first, p) in parts {
+            let n = p.len();
+            if first + n <= start {
+                continue;
+            }
+            let lo = start.saturating_sub(first);
+            let end = p.rel().rows.upper_from(c, lo, n, key);
+            if end < n {
+                return first + end;
+            }
+        }
+        self.rows() as u32
+    }
+
     /// The relation holding row `id`, and the row's place in it.
     // Hot: a read written once (decision 0310) is inlined into its reader, across crates too.
     #[inline(always)]

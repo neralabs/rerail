@@ -1718,7 +1718,7 @@ impl Relation {
     fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
         let n = self.len();
         let start = (self.cells().lower_bound(column, lo) as usize).min(n);
-        start..first_from(n, start, |m| self.value(m, column) <= hi).max(start)
+        start..(self.cells().upper_from(column, start as u32, hi) as usize).clamp(start, n)
     }
     /// The rows with values in `lo..=hi`, in value order.
     fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
