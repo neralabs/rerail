@@ -61,7 +61,11 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let ix = ix.to_array();
-    Simd::from_array(core::array::from_fn(|i| base.wrapping_add((ix[i] as usize) << s).cast::<u64>().read_unaligned()))
+    let mut v = [0u64; N];
+    for (v, &i) in v.iter_mut().zip(&ix) {
+        *v = base.wrapping_add((i as usize) << s).cast::<u64>().read_unaligned();
+    }
+    Simd::from_array(v)
 }
 /// The word at `base + (ix << s)` for each lane (`gather64_ix`).
 #[inline(always)]
@@ -70,7 +74,11 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let ix = ix.to_array();
-    Simd::from_array(core::array::from_fn(|i| base.wrapping_add((ix[i] as usize) << s).cast::<u32>().read_unaligned()))
+    let mut v = [0u32; N];
+    for (v, &i) in v.iter_mut().zip(&ix) {
+        *v = base.wrapping_add((i as usize) << s).cast::<u32>().read_unaligned();
+    }
+    Simd::from_array(v)
 }
 /// Each lane of `v` whose bit of `on` is set written at `base + (ix << s)`, in lane order; a lane off writes a place
 /// of its own (its address chosen as a value, no branch a lane).

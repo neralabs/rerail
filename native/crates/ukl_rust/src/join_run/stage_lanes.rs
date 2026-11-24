@@ -61,7 +61,11 @@ fn lane<const N: usize>() -> R<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    Simd::from_array(core::array::from_fn(|i| i as u32))
+    let mut v = [0u32; N];
+    for (i, v) in v.iter_mut().enumerate() {
+        *v = i as u32;
+    }
+    Simd::from_array(v)
 }
 
 /// Each lane's count of the set lanes of `bits` below it (an exclusive prefix sum of one bit a lane).
@@ -471,14 +475,13 @@ impl Lanes<'_> {
         }
     }
 
-    /// Each lane's row's slots and binds out at its place `a` of `o`, the lanes of `on`'s bits.
+    /// Each lane's row's slots and binds, each column's values given to `out` with the column.
     #[inline(always)]
-    unsafe fn write_rows<const N: usize>(&self, b: &BindAt<N>, row: &Row<N>, o: *mut i64, a: R<N>, on: u64)
+    unsafe fn write_rows<const N: usize>(&self, b: &BindAt<N>, row: &Row<N>, mut out: impl FnMut(I<N>, u32))
     where
         LaneCount<N>: SupportedLaneCount,
     {
         let s = self.st.s;
-        let out = |v: I<N>, c: u32| ln::scatter64_ix(v.cast::<u64>(), o.add(c as usize * s.cap_out as usize).cast::<u8>(), a, 3, on);
         for k in 0..s.nslots.min(16) {
             out(b.slot(k), k);
         }
@@ -609,6 +612,42 @@ where
 struct Scatter {
     o: *mut i64,
     run: u32,
+    /// The range's last place and the stage's room, the lesser: the places this range's rows may take.
+    end: u32,
+}
+
+/// For each 8 lanes' bits, the bytes of 8 64-bit lanes that move the lanes of the bits to the front, in their order
+/// (the rest, lane 0's): a stream compaction's table lookup (`swizzle_dyn`).
+const PACK64: [[u8; 64]; 256] = {
+    let mut t = [[0u8; 64]; 256];
+    let mut bits = 0;
+    while bits < 256 {
+        let (mut k, mut i) = (0, 0);
+        while i < 8 {
+            if bits >> i & 1 != 0 {
+                let mut b = 0;
+                while b < 8 {
+                    t[bits][8 * k + b] = (8 * i + b) as u8;
+                    b += 1;
+                }
+                k += 1;
+            }
+            i += 1;
+        }
+        bits += 1;
+    }
+    t
+};
+
+/// The 8 values of `v` (`N` is 8) of the lanes of `bits`, in their order, at `p`, and values past them up to `p + 8`
+/// (places a later row takes).
+#[inline(always)]
+unsafe fn pack8<const N: usize>(v: I<N>, ix: Simd<u8, 64>, p: *mut i64)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let b = Simd::<u8, 64>::from_array(core::mem::transmute_copy::<I<N>, [u8; 64]>(&v));
+    p.cast::<[u8; 64]>().write_unaligned(b.swizzle_dyn(ix).to_array());
 }
 
 impl<const N: usize> Visit<N> for Scatter
@@ -624,8 +663,17 @@ where
         if bits == 0 {
             return;
         }
-        let a = sr::<N>(self.run) + ranks::<N>(bits);
-        l.write_rows(b, row, self.o, a, (w & a.simd_lt(sr(l.st.s.cap_out)).cast::<i64>()).to_bitmask());
+        let (o, cap) = (self.o, l.st.s.cap_out as usize);
+        if N == 8 && self.run + 8 <= self.end {
+            // Room for all 8 in this range: each column's lanes packed to the front and stored, 8 places at once.
+            let ix = Simd::<u8, 64>::from_array(PACK64[bits as usize]);
+            let at = self.run as usize;
+            l.write_rows(b, row, |v, c| pack8(v, ix, o.add(c as usize * cap + at)));
+        } else {
+            let a = sr::<N>(self.run) + ranks::<N>(bits);
+            let on = (w & a.simd_lt(sr(l.st.s.cap_out)).cast::<i64>()).to_bitmask();
+            l.write_rows(b, row, |v, c| ln::scatter64_ix(v.cast::<u64>(), o.add(c as usize * cap).cast::<u8>(), a, 3, on));
+        }
         self.run += bits.count_ones();
     }
 }
@@ -638,6 +686,8 @@ where
 {
     let s = st.s;
     let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize) };
-    let mut v = Scatter { o, run: (*offsets.add(t0 as usize)).wrapping_sub(*offsets) };
+    let o0 = *offsets;
+    let end = (*offsets.add(t1 as usize)).wrapping_sub(o0).min(s.cap_out);
+    let mut v = Scatter { o, run: (*offsets.add(t0 as usize)).wrapping_sub(o0), end };
     l.walk::<N>(j.f, t0, t1, &mut v);
 }

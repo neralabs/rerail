@@ -1882,6 +1882,11 @@
             let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
             s(u.ru_utime) + s(u.ru_stime)
         };
+        let faults = || {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            u.ru_minflt as i64
+        };
         let store = crate::code_rule_dsl::fixtures::temp();
         drop(crate::code_rule_dsl::fixtures::open(&store));
         let db = Connection::open(&store).unwrap();
@@ -1937,6 +1942,7 @@
                 let mut best = (f64::MAX, f64::MAX);
                 // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
                 let mut prog = (f64::MAX, f64::MAX);
+                let mut faulted = i64::MAX;
                 for k in 0..repeat {
                     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
                     let mut spec = vec!["name timed".to_owned()];
@@ -1946,9 +1952,12 @@
                     spec.push("rel h0 ii empty".into());
                     spec.extend(rules.iter().cloned());
                     super::super::open(&db, &spec.join("\n")).unwrap();
-                    let (t, c) = (std::time::Instant::now(), cpu_seconds());
+                    let (t, c, f) = (std::time::Instant::now(), cpu_seconds(), faults());
                     super::super::run(&db, "timed", 0).unwrap();
                     let (wall, cpu) = (t.elapsed().as_secs_f64(), cpu_seconds() - c);
+                    if k > 0 {
+                        faulted = faulted.min(faults() - f);
+                    }
                     if device {
                         let r = super::take_report().filter(|r| r.refused.is_none());
                         assert!(r.is_some(), "{what}: run on the device");
@@ -1964,7 +1973,7 @@
                 }
                 let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
                 rows.push(n);
-                eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
+                eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU, {faulted} page faults", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
                 if device {
                     eprintln!("{what}: device: its program {:.1} ms (waited on), its encoding {:.1} ms CPU", prog.0 * 1e3, prog.1 * 1e3);
                 }

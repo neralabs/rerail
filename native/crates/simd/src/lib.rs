@@ -156,6 +156,20 @@ pub unsafe trait MaskElement: SimdElement<Mask = Self> + Sealed + PartialEq + De
     fn __test(self) -> bool;
 }
 
+/// `[f(0), ..., f(N - 1)]`: a loop the compiler unrolls in its caller (`core::array::from_fn`'s machinery stayed a
+/// call in a large caller, its array passed through memory).
+#[inline(always)]
+fn by_lane<T, const N: usize>(mut f: impl FnMut(usize) -> T) -> [T; N] {
+    let mut a = core::mem::MaybeUninit::<[T; N]>::uninit();
+    let p = a.as_mut_ptr().cast::<T>();
+    for i in 0..N {
+        // SAFETY: each of the `N` places written once.
+        unsafe { p.add(i).write(f(i)) };
+    }
+    // SAFETY: every place written.
+    unsafe { a.assume_init() }
+}
+
 /// A vector of `N` lanes of `T`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
@@ -213,7 +227,7 @@ where
     #[inline(always)]
     pub fn from_slice(slice: &[T]) -> Self {
         assert!(slice.len() >= N, "slice length must be at least the number of elements");
-        Simd(core::array::from_fn(|i| slice[i]))
+        Simd(by_lane(|i| slice[i]))
     }
     /// Writes the lanes to the first `N` elements of `slice`; panics if it is shorter.
     #[inline(always)]
@@ -232,12 +246,12 @@ where
     /// The elements of `slice` in the first lanes, the rest `or`'s.
     #[inline(always)]
     pub fn load_or(slice: &[T], or: Self) -> Self {
-        Simd(core::array::from_fn(|i| if i < slice.len() { slice[i] } else { or.0[i] }))
+        Simd(by_lane(|i| if i < slice.len() { slice[i] } else { or.0[i] }))
     }
     /// Lane `i` from `slice[idxs[i]]` where `enable` is set and the index is in bounds, else `or`'s.
     #[inline(always)]
     pub fn gather_select(slice: &[T], enable: Mask<isize, N>, idxs: Simd<usize, N>, or: Self) -> Self {
-        Simd(core::array::from_fn(|i| if enable.0[i].__test() && idxs.0[i] < slice.len() { slice[idxs.0[i]] } else { or.0[i] }))
+        Simd(by_lane(|i| if enable.0[i].__test() && idxs.0[i] < slice.len() { slice[idxs.0[i]] } else { or.0[i] }))
     }
     /// Lane `i` from `slice[idxs[i]]`, or `or`'s where the index is out of bounds.
     #[inline(always)]
@@ -250,7 +264,7 @@ where
     /// Each pointer is valid for a read of `T`, as `std::simd::Simd::gather_ptr`.
     #[inline(always)]
     pub unsafe fn gather_ptr(source: Simd<*const T, N>) -> Self {
-        Simd(core::array::from_fn(|i| unsafe { source.0[i].read() }))
+        Simd(by_lane(|i| unsafe { source.0[i].read() }))
     }
     /// Lane `i` read from `source[i]` where `enable` is set, else `or`'s.
     ///
@@ -260,7 +274,7 @@ where
     pub unsafe fn gather_select_ptr(source: Simd<*const T, N>, enable: Mask<isize, N>, or: Self) -> Self {
         // No branch a lane: a lane off reads its own `or`, its address chosen as a value (a `csel`), so no lane's
         // verdict is a prediction.
-        Simd(core::array::from_fn(|i| unsafe { core::hint::select_unpredictable(enable.0[i].__test(), source.0[i], &raw const or.0[i]).read() }))
+        Simd(by_lane(|i| unsafe { core::hint::select_unpredictable(enable.0[i].__test(), source.0[i], &raw const or.0[i]).read() }))
     }
     /// Writes lane `i` to `dest[i]` where `enable` is set, in lane order.
     ///
@@ -302,7 +316,40 @@ where
                 return Simd(o.assume_init());
             }
         }
-        Simd(core::array::from_fn(|i| U::__from_i128(self.0[i].__to_i128())))
+        Simd(by_lane(|i| U::__from_i128(self.0[i].__to_i128())))
+    }
+}
+
+impl<const N: usize> Simd<u8, N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    /// `std::simd`'s `swizzle_dyn`: lane `i` is lane `idxs[i]` of `self`, or 0 where `idxs[i]` is past the lanes. On
+    /// AArch64, for 16 to 64 lanes, a table lookup (`tbl`) of each 16 indices.
+    #[inline(always)]
+    pub fn swizzle_dyn(self, idxs: Self) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        if N.is_multiple_of(16) && (16..=64).contains(&N) {
+            use core::arch::aarch64::*;
+            let mut o = [0u8; N];
+            // SAFETY: `N` bytes, a multiple of 16: each 16 a register; the tables' registers past `N` are not read.
+            unsafe {
+                let t = self.0.as_ptr();
+                let q = |k: usize| vld1q_u8(t.add(16 * (k % (N / 16))));
+                for j in 0..N / 16 {
+                    let ix = vld1q_u8(idxs.0.as_ptr().add(16 * j));
+                    let r = match N / 16 {
+                        1 => vqtbl1q_u8(q(0), ix),
+                        2 => vqtbl2q_u8(uint8x16x2_t(q(0), q(1)), ix),
+                        3 => vqtbl3q_u8(uint8x16x3_t(q(0), q(1), q(2)), ix),
+                        _ => vqtbl4q_u8(uint8x16x4_t(q(0), q(1), q(2), q(3)), ix),
+                    };
+                    vst1q_u8(o.as_mut_ptr().add(16 * j), r);
+                }
+            }
+            return Simd(o);
+        }
+        Simd(by_lane(|i| if (idxs.0[i] as usize) < N { self.0[idxs.0[i] as usize] } else { 0 }))
     }
 }
 
@@ -420,11 +467,11 @@ where
     }
     #[inline(always)]
     pub fn from_array(array: [bool; N]) -> Self {
-        Mask(core::array::from_fn(|i| if array[i] { T::TRUE } else { T::FALSE }))
+        Mask(by_lane(|i| if array[i] { T::TRUE } else { T::FALSE }))
     }
     #[inline(always)]
     pub fn to_array(self) -> [bool; N] {
-        core::array::from_fn(|i| self.0[i].__test())
+        by_lane(|i| self.0[i].__test())
     }
     /// The mask of the lanes of `value` that are all ones; panics where a lane is neither all ones nor zero.
     #[inline(always)]
@@ -453,7 +500,7 @@ where
                 return Mask(o.assume_init());
             }
         }
-        Mask(core::array::from_fn(|i| if self.0[i].__test() { U::TRUE } else { U::FALSE }))
+        Mask(by_lane(|i| if self.0[i].__test() { U::TRUE } else { U::FALSE }))
     }
     #[inline(always)]
     pub fn test(&self, index: usize) -> bool {
@@ -495,7 +542,7 @@ where
     }
     #[inline(always)]
     pub fn from_bitmask(bitmask: u64) -> Self {
-        Mask(core::array::from_fn(|i| if bitmask >> i & 1 != 0 { T::TRUE } else { T::FALSE }))
+        Mask(by_lane(|i| if bitmask >> i & 1 != 0 { T::TRUE } else { T::FALSE }))
     }
     /// The first lane set, if any.
     #[inline(always)]
@@ -581,14 +628,14 @@ macro_rules! int_ops {
             /// Panics on a zero divisor (and on `MIN / -1`), as `std::simd`'s.
             #[inline(always)]
             fn div(self, o: Self) -> Self {
-                Simd(core::array::from_fn(|i| self.0[i] / o.0[i]))
+                Simd(by_lane(|i| self.0[i] / o.0[i]))
             }
         }
         impl<const N: usize> Rem for Simd<$t, N> where LaneCount<N>: SupportedLaneCount {
             type Output = Self;
             #[inline(always)]
             fn rem(self, o: Self) -> Self {
-                Simd(core::array::from_fn(|i| self.0[i] % o.0[i]))
+                Simd(by_lane(|i| self.0[i] % o.0[i]))
             }
         }
         impl<const N: usize> Not for Simd<$t, N> where LaneCount<N>: SupportedLaneCount {
@@ -639,7 +686,7 @@ macro_rules! neg_ops {
             type Output = Self;
             #[inline(always)]
             fn neg(self) -> Self {
-                Simd(core::array::from_fn(|i| self.0[i].wrapping_neg()))
+                Simd(by_lane(|i| self.0[i].wrapping_neg()))
             }
         }
     )*};
@@ -802,7 +849,7 @@ pub mod num {
 
     macro_rules! map {
         ($s:expr, |$x:ident| $e:expr) => {
-            Simd(core::array::from_fn(|i| {
+            Simd(by_lane(|i| {
                 let $x = $s.0[i];
                 $e
             }))
@@ -819,11 +866,11 @@ pub mod num {
                 #[inline(always)]
                 fn wrapping_neg(self) -> Self { map!(self, |x| x.wrapping_neg()) }
                 #[inline(always)]
-                fn saturating_add(self, o: Self) -> Self { Simd(core::array::from_fn(|i| self.0[i].saturating_add(o.0[i]))) }
+                fn saturating_add(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].saturating_add(o.0[i]))) }
                 #[inline(always)]
-                fn saturating_sub(self, o: Self) -> Self { Simd(core::array::from_fn(|i| self.0[i].saturating_sub(o.0[i]))) }
+                fn saturating_sub(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].saturating_sub(o.0[i]))) }
                 #[inline(always)]
-                fn abs_diff(self, o: Self) -> Self { Simd(core::array::from_fn(|i| self.0[i].abs_diff(o.0[i]))) }
+                fn abs_diff(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].abs_diff(o.0[i]))) }
                 #[inline(always)]
                 fn reduce_sum(self) -> $t { self.0.iter().fold(0, |a: $t, &x| a.wrapping_add(x)) }
                 #[inline(always)]
@@ -869,9 +916,9 @@ pub mod num {
                 #[inline(always)]
                 fn cast<T: SimdCast>(self) -> Simd<T, N> { Simd::cast(self) }
                 #[inline(always)]
-                fn saturating_add(self, o: Self) -> Self { Simd(core::array::from_fn(|i| self.0[i].saturating_add(o.0[i]))) }
+                fn saturating_add(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].saturating_add(o.0[i]))) }
                 #[inline(always)]
-                fn saturating_sub(self, o: Self) -> Self { Simd(core::array::from_fn(|i| self.0[i].saturating_sub(o.0[i]))) }
+                fn saturating_sub(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].saturating_sub(o.0[i]))) }
                 #[inline(always)]
                 fn abs(self) -> Self { map!(self, |x| x.wrapping_abs()) }
                 #[inline(always)]
@@ -879,9 +926,9 @@ pub mod num {
                 #[inline(always)]
                 fn saturating_neg(self) -> Self { map!(self, |x| x.saturating_neg()) }
                 #[inline(always)]
-                fn is_positive(self) -> Mask<$t, N> { Mask(core::array::from_fn(|i| if self.0[i] > 0 { -1 } else { 0 })) }
+                fn is_positive(self) -> Mask<$t, N> { Mask(by_lane(|i| if self.0[i] > 0 { -1 } else { 0 })) }
                 #[inline(always)]
-                fn is_negative(self) -> Mask<$t, N> { Mask(core::array::from_fn(|i| if self.0[i] < 0 { -1 } else { 0 })) }
+                fn is_negative(self) -> Mask<$t, N> { Mask(by_lane(|i| if self.0[i] < 0 { -1 } else { 0 })) }
                 #[inline(always)]
                 fn signum(self) -> Self { map!(self, |x| x.signum()) }
                 #[inline(always)]
@@ -966,23 +1013,23 @@ pub mod ptr {
                 type CastPtr<U> = Simd<*$p U, N>;
                 #[inline(always)]
                 fn is_null(self) -> Mask<isize, N> {
-                    Mask(core::array::from_fn(|i| if self.0[i].is_null() { -1 } else { 0 }))
+                    Mask(by_lane(|i| if self.0[i].is_null() { -1 } else { 0 }))
                 }
                 #[inline(always)]
                 fn cast<U>(self) -> Simd<*$p U, N> {
-                    Simd(core::array::from_fn(|i| self.0[i].cast::<U>()))
+                    Simd(by_lane(|i| self.0[i].cast::<U>()))
                 }
                 #[inline(always)]
                 fn addr(self) -> Simd<usize, N> {
-                    Simd(core::array::from_fn(|i| self.0[i].addr()))
+                    Simd(by_lane(|i| self.0[i].addr()))
                 }
                 #[inline(always)]
                 fn expose_provenance(self) -> Simd<usize, N> {
-                    Simd(core::array::from_fn(|i| self.0[i].expose_provenance()))
+                    Simd(by_lane(|i| self.0[i].expose_provenance()))
                 }
                 #[inline(always)]
                 fn with_exposed_provenance(addr: Simd<usize, N>) -> Self {
-                    Simd(core::array::from_fn(|i| core::ptr::$from(addr.0[i])))
+                    Simd(by_lane(|i| core::ptr::$from(addr.0[i])))
                 }
                 #[inline(always)]
                 fn wrapping_offset(self, offset: Simd<isize, N>) -> Self {

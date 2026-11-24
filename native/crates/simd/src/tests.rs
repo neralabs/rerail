@@ -88,3 +88,21 @@ fn the_wide_lanes_are_their_scalar_operations() {
 fn isizex4_from(a: [isize; 4]) -> Simd<isize, 4> {
     Simd::from_array(a)
 }
+
+#[test]
+fn a_dynamic_swizzle_is_each_lanes_index() {
+    let check = |n: usize| {
+        let v: [u8; 64] = core::array::from_fn(|i| 100 + i as u8);
+        let ix: [u8; 64] = core::array::from_fn(|i| ((i * 37 + 5) % (n + 9)) as u8);
+        let want = |i: usize| if (ix[i] as usize) < n { v[ix[i] as usize] } else { 0 };
+        match n {
+            16 => assert_eq!(Simd::<u8, 16>::from_slice(&v).swizzle_dyn(Simd::from_slice(&ix)).to_array(), core::array::from_fn(want)),
+            32 => assert_eq!(Simd::<u8, 32>::from_slice(&v).swizzle_dyn(Simd::from_slice(&ix)).to_array(), core::array::from_fn(want)),
+            64 => assert_eq!(Simd::<u8, 64>::from_slice(&v).swizzle_dyn(Simd::from_slice(&ix)).to_array(), core::array::from_fn(want)),
+            _ => assert_eq!(Simd::<u8, 8>::from_slice(&v).swizzle_dyn(Simd::from_slice(&ix)).to_array(), core::array::from_fn(want)),
+        }
+    };
+    for n in [8, 16, 32, 64] {
+        check(n);
+    }
+}

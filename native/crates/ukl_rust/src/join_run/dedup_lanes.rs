@@ -37,6 +37,19 @@ where
     Simd::from_array(a)
 }
 
+/// The lanes' numbers.
+#[inline(always)]
+fn iota<const N: usize>() -> R<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let mut v = [0u32; N];
+    for (i, v) in v.iter_mut().enumerate() {
+        *v = i as u32;
+    }
+    Simd::from_array(v)
+}
+
 /// The lanes `0..n`.
 fn first<const N: usize>(n: u32) -> W<N>
 where
@@ -117,7 +130,7 @@ where
     while x < x1 {
         let n = (x1 - x).min(N as u32);
         let rows = Rows::<N>::of(d, t, x, n);
-        let me = sr::<N>(x) + Simd::from_array(core::array::from_fn(|i| i as u32));
+        let me = sr::<N>(x) + iota::<N>();
         let (mut at, mut go, mut keep) = (rows.h & sr(mask), first::<N>(n), Mask::splat(false));
         for _ in 0..=mask {
             if !go.any() {
@@ -205,7 +218,7 @@ where
     while t < t1 {
         let n = (t1 - t).min(N as u32);
         // Lanes past the rows read the first one's: every read is of a row there is.
-        let row = first::<N>(n).select(sr(p.from.wrapping_add(t)) + Simd::from_array(core::array::from_fn(|i| i as u32)), sr(p.from.wrapping_add(t)));
+        let row = first::<N>(n).select(sr(p.from.wrapping_add(t)) + iota::<N>(), sr(p.from.wrapping_add(t)));
         let at = ln::rel_at(d, row);
         let mut h = U::splat(KEY_SEED);
         for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
