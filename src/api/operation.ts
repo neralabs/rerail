@@ -41,6 +41,11 @@ export interface RerailApiStores {
   /** Count a write made through these stores, for {@link dataVersion}. */
   markChanged(): void;
   /**
+   * Puts every commit made so far on the disk (`syncHistoryLog`), off the caller's thread: the store's commits do not
+   * wait for the disk, and a change an operation made must be there before its caller hears it succeeded.
+   */
+  syncToDisk(): Promise<void>;
+  /**
    * Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities; with
    * `spelling`, the folder as a Windows host spelt it, also what Rerail 0.1.4 saved under it.
    */
@@ -124,14 +129,20 @@ export function experimentalSummary(feature: ExperimentalFeature, description: s
   return `Experimental: answers 404 experimental-off unless the daemon runs with ${experimentVariable(feature)}=1. ${description}`;
 }
 
-/** Run one operation for one caller; a write that returns counts toward the stores' change token. */
+/**
+ * Run one operation for one caller; a write that returns counts toward the stores' change token, and is answered only
+ * once it is on the disk: a rule or setting change a person made, or any other write, must not roll back after a power
+ * cut once its caller heard it succeeded. The sync runs off the daemon's thread, so no hook waits for it.
+ */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   // Refused before anything runs, and before a write could count toward the change token.
   if (operation.experiment !== undefined && !operationAvailable(operation)) {
     throw new ApiError(404, "experimental-off", experimentOffMessage(operation.experiment, "start the Rerail daemon with"));
   }
   try {
-    return await operation.handler(stores, input as never, caller);
+    const result = await operation.handler(stores, input as never, caller);
+    if (operation.method !== "GET") await stores.syncToDisk();
+    return result;
   } catch (error) {
     if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);
     throw error;

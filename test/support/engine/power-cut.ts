@@ -3,6 +3,7 @@ import { endianness, tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { removeFolderSync } from "../platform/remove-folder.js";
+import { syncedLength } from "./log-syncs.js";
 
 // The state a power cut or an operating system crash leaves the Rerail database in when its writers commit with
 // `synchronous = NORMAL`: the database file as the last checkpoint wrote it, beside a write-ahead log whose tail the
@@ -10,7 +11,8 @@ import { removeFolderSync } from "../platform/remove-folder.js";
 // transaction up to the last commit frame it can read whole: what it gives back is the database as it stood at one
 // earlier commit. Cutting the log file at a commit frame's end is the same state, read by the same recovery: it is the
 // log the disk would hold had the operating system written back only that much of it. A checkpoint syncs the log
-// before it copies frames into the database file, so a cut is never earlier than the frames a checkpoint has copied.
+// before it copies frames into the database file, so a cut is never earlier than the frames a checkpoint has copied,
+// nor earlier than the log's end at a sync this process recorded (`recordLogSyncs`, `log-syncs.ts`).
 // The session's own files are never synced either: a test keeps them as they were, or cuts their last lines too.
 //
 // Call these with no connection open on the database, as after a power cut no process holds it: a writer that closes
@@ -47,12 +49,34 @@ function backfilledFrames(databasePath: string): number {
   return endianness() === "LE" ? index.readUInt32LE(BACKFILL_OFFSET) : index.readUInt32BE(BACKFILL_OFFSET);
 }
 
-/** The commits a power cut can cut the log at: each one at or after the frames a checkpoint copied into the file. */
-function cuttableCommits(databasePath: string): number[] {
+/**
+ * The commits a power cut can cut the log at: each one at or after the frames a checkpoint copied into the file, and
+ * at or after the log's end at the last sync recorded here or in `syncRecord` (a child process's record).
+ */
+function cuttableCommits(databasePath: string, syncRecord?: string): number[] {
   const log = readFileSync(`${databasePath}-wal`);
   const frameBytes = FRAME_HEADER_BYTES + log.readUInt32BE(8);
   const backfilled = backfilledFrames(databasePath);
-  return walCommits(databasePath).filter(length => (length - WAL_HEADER_BYTES) / frameBytes >= backfilled);
+  const synced = syncedLength(databasePath, syncRecord);
+  return walCommits(databasePath).filter(length => (length - WAL_HEADER_BYTES) / frameBytes >= backfilled && length >= synced);
+}
+
+/**
+ * A power cut now, in a copy, while writers may still hold the database: the file and its log copied to a folder of
+ * their own, the copy's log cut at the earliest commit a power cut can keep, so everything after the last checkpoint
+ * and the last recorded sync goes, and no WAL index, which the next open rebuilds. Returns the copy's path; the caller
+ * removes its folder.
+ */
+export function cutPowerInCopy(databasePath: string, syncRecord?: string): string {
+  const folder = mkdtempSync(join(tmpdir(), "rerail-power-cut-"));
+  const copy = join(folder, "rerail.sqlite");
+  copyFileSync(databasePath, copy);
+  if (existsSync(`${databasePath}-wal`)) {
+    const log = readFileSync(`${databasePath}-wal`);
+    const kept = cuttableCommits(databasePath, syncRecord)[0] ?? log.length;
+    writeFileSync(`${copy}-wal`, log.subarray(0, kept));
+  }
+  return copy;
 }
 
 /** What `read` finds in the database as recovery gives it back with its log cut at `length`, read from a copy. */

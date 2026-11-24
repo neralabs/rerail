@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import type { z } from "zod";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { syncHistoryLog } from "../engine/storage/log-sync.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -134,6 +135,10 @@ export class DatabaseApiStores implements RerailApiStores {
 
   markChanged(): void {
     this.#localRevision += 1;
+  }
+
+  async syncToDisk(): Promise<void> {
+    await syncHistoryLog(this.#path);
   }
 
   repositoryState(workspace: string, spelling?: string): RepositoryStartState {

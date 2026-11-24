@@ -49,31 +49,46 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   }
 }
 
+/** `synchronous` for every writer this process opens: NORMAL, or FULL once {@link commitEveryWriteDurably} ran. */
+let writerSynchronous: "NORMAL" | "FULL" = "NORMAL";
+
+/**
+ * Makes every commit of every writer this process opens from then on wait for the disk, as {@link commitDurably} makes
+ * one: for the `rerail` command, which runs no hook and no daemon, so each write it makes is a change a person asked for
+ * (a rule added, turned off or approved, a setting, a repository started or stopped, history reset) and is on the disk
+ * before the command says it is made.
+ */
+export function commitEveryWriteDurably(): void {
+  writerSynchronous = "FULL";
+}
+
 /**
  * What a writer owns: the file mode, WAL, and the connection's integrity settings. The file and every file named after
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
  * creates the database file's mode. `secure_delete` zeroes what a delete frees (cells and pages), so deleted history
  * does not linger in free space; it costs writes only on deletes.
  *
- * `synchronous = NORMAL`: a commit appends to the WAL and returns without waiting for the disk; the WAL is synced only
- * when a checkpoint copies it into the file. What it keeps: the file is never damaged, each transaction is kept whole or
- * not at all, and the commits kept are the earliest ones (WAL frames carry a running checksum, so recovery keeps a prefix
- * of them, in order); when only Rerail's own process ends (killed, out of memory, crashed), nothing committed is lost.
- * What it does not keep: after a power cut or an operating system crash, the last commits, those the operating system
- * had not written back yet (seconds of records). `FULL` kept those too by waiting for the disk at every commit, up to a
- * second at a time while another program kept the disk busy, inside the hook that wrote. What the next start and the
- * session's next open repair of such a loss: `endSessionsOfEndedOwners`, `keepEventNumbersPastRemotes` and the session's
- * `lostEvents`. What none repairs: the file holds rule configuration and settings too, and a change of either made in
- * those seconds (a rule added, turned off or approved, a setting changed) is gone with them, to be made again. Those
- * writers run in the CLI, the dashboard's API and a repository's start, not in a hook, so their commits could wait for
- * the disk (`commitDurably`) and no hook would; they do not yet. `docs/reference.md` (Rerail database) says the same,
- * and a test holds the two together.
+ * `synchronous = NORMAL`: a commit appends to the WAL and returns without waiting for the disk; the WAL reaches the disk
+ * when a checkpoint copies it into the file, when the daemon syncs it (`startHistorySync`, about every 5 s while commits
+ * wait), or when the operating system writes it back. What it keeps: the file is never damaged, each transaction is
+ * kept whole or not at all, and the commits kept are the earliest ones (WAL frames carry a running checksum, so recovery
+ * keeps a prefix of them, in order); when only Rerail's own process ends (killed, out of memory, crashed), nothing
+ * committed is lost. What it does not keep: after a power cut or an operating system crash, the commits the log held
+ * unsynced (about the last 5 s of history, more while the disk stalls a sync). `FULL` kept those too by waiting for the
+ * disk at every commit, up to a second at a time while another program kept the disk busy, inside the hook that wrote.
+ * What the next start and the session's next open repair of such a loss: `endSessionsOfEndedOwners`,
+ * `keepEventNumbersPastRemotes` and the session's `lostEvents`; they record the loss, and nothing brings back what it
+ * took. A change of rule configuration or of a setting is a person's decision, which must not roll back once Rerail
+ * said it was made, so it waits for the disk where no hook waits: the `rerail` command's writers commit with `FULL`
+ * ({@link commitEveryWriteDurably}), and the daemon's API answers a change only once the log is synced
+ * (`invokeOperation`, `syncHistoryLog`). `docs/reference.md` (Rerail database) says the same, and a test holds the two
+ * together.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);
   enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
   database.run(sql`PRAGMA foreign_keys = ON`);
-  database.run(sql`PRAGMA synchronous = NORMAL`);
+  database.run(sql.raw(`PRAGMA synchronous = ${writerSynchronous}`));
   database.run(sql`PRAGMA secure_delete = ON`);
 }
 

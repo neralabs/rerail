@@ -41,7 +41,7 @@ import {
   parsePublicHosts,
   type ParsedArguments,
 } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitEveryWriteDurably, defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
   BROWSER_OFF_NOTE,
@@ -988,6 +988,9 @@ for (const stream of [process.stdout, process.stderr]) {
   });
 }
 
+// Every write this command makes is a change a person asked for, and no hook waits on it: each commit is on the disk
+// before the command says it is made, so a power cut right after cannot roll it back.
+commitEveryWriteDurably();
 try {
   process.exitCode = await main();
 } catch (error) {
