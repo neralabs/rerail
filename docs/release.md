@@ -419,7 +419,8 @@ and core names all six as optional dependencies at that exact version.
   the six pins in and takes them out again ([Shrinkwrap](#shrinkwrap)).
 - **Loading.** Rerail loads the engine `RERAIL_ENGINE_PATH` names, else the one in the package root's `native/` (a
   checkout's own build, or `npm run engine:pull`), else its platform's engine package, and that only at Rerail's own
-  version. A checkout and CI's jobs build into `native/`, so they never resolve an engine package.
+  version. A checkout and CI's jobs build into `native/`, so they never resolve an engine package. A process finds and
+  loads the engine at its first call into it, and looks again only where `RERAIL_ENGINE_PATH` has changed since.
 - **Size.** Packed from 0.2.0's engines, an engine package is 35 to 42 MB and core about 12 MB. npm's registry refused
   0.2.0's single tarball of 248.5 MB, which is why the engines are packages of their own.
 
