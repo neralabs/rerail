@@ -6725,6 +6725,79 @@ fn line_relation(l: &str) -> String {
     l.split(['(', ' ', ',']).next().unwrap_or_default().trim().to_owned()
 }
 
+/// T10 (decision 0639 §6a, E10; decision 0662 §2): the kind set rules (`rr/kind-sets.rerail`, over the image's view
+/// `rr/view.rerail`) take out what `KindSets` takes out, every pack: the same sets, the same declarations undeclared
+/// and the same facts dropped. Each library is tailed to just before `KindSets`, its view stated from that image (its
+/// relations named by pack, so one run holds all packs) and the rules run once; the pass runs on the same image.
+#[test]
+fn kind_set_rules_take_out_what_the_pass_takes_out() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
+    // The test's store bound on its thread, which the tails on the pool's threads carry (T12).
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let libraries = tail_libraries();
+    let at = super::TAIL.iter().position(|s| *s == super::TailStep::KindSets).unwrap();
+    // Per pack: the view's facts of the image before the pass, and what the pass takes out (sets, undeclared, facts).
+    type Out = (Vec<String>, [BTreeSet<String>; 3]);
+    let per_pack: Vec<Out> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        use rayon::prelude::*;
+        libraries.par_iter().map(|(pack, plan, _)| {
+            let l = lower::link_library(plan.iter().map(|m| m.module().unwrap()).collect()).unwrap().with(None).unwrap();
+            let sets = l.lowered.sets.clone();
+            let input = super::tail_steps(l.version, false, l.lowered, None, &super::TAIL[..at]).unwrap_or_else(|e| panic!("{pack}: the tail before kind sets: {e}"));
+            let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("T10: kind sets", Arc::clone(&input));
+            p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets { sets, library: None });
+            let output = Arc::clone(p.current().unwrap_or_else(|e| panic!("{pack}: kind sets: {e}")));
+            let n = |rel: &str| format!("{:?}", format!("{pack}/{rel}"));
+            let sets = output.kindset_map().unwrap();
+            let mut facts: Vec<String> = sets.keys().map(|s| format!("img_kindset({}).", n(s))).collect();
+            for r in input.rules() {
+                let id = n(&format!("{:?}", r.id()));
+                facts.push(format!("img_rule({id}, {}).", n(input.rel_name(r.head().rel()))));
+                for (i, l) in r.body().enumerate() {
+                    let (what, a) = match l.view() {
+                        HL::Atom(a) => ("atom", a),
+                        HL::Agg { atom: a, .. } => ("agg", a),
+                        _ => continue,
+                    };
+                    facts.push(format!("img_lit({id}, {i}, {what:?}, {}, {}).", n(input.rel_name(a.rel())), u8::from(a.neg())));
+                }
+            }
+            for d in ProgramFields::declared_names(&*input) {
+                let cols = ProgramFields::columns_of(&*input, &d).unwrap_or_default().iter().map(|(c, t)| format!("{c}:{t}")).collect::<Vec<_>>().join(",");
+                facts.push(format!("img_decl({}, {cols:?}).", n(&d)));
+            }
+            facts.extend(ProgramFields::fact_names(&*input).into_iter().filter(|f| ProgramFields::states_facts(&*input, f)).map(|f| format!("img_facts({}).", n(&f))));
+            // What the pass took out of the kind sets: held as a relation before, not after.
+            let named = |s: &String| format!("{pack}/{s}");
+            let undeclared: BTreeSet<String> = sets.keys().filter(|s| ProgramFields::declares(&*input, s) && !ProgramFields::declares(&*output, s)).map(named).collect();
+            let dropped: BTreeSet<String> = sets.keys().filter(|s| ProgramFields::states_facts(&*input, s) && !ProgramFields::states_facts(&*output, s)).map(named).collect();
+            // A set taken out is undeclared and its facts dropped: stated before, not after.
+            let stated = |v: &Version, s: &str| ProgramFields::declares(v, s) || ProgramFields::states_facts(v, s);
+            let out: BTreeSet<String> = sets.keys().filter(|s| stated(&*input, s) && !stated(&*output, s)).map(named).collect();
+            (facts, [out, undeclared, dropped])
+        }).collect()
+    });
+    let facts: Vec<&String> = per_pack.iter().flat_map(|(f, _)| f).collect();
+    // The rules pass's program, its view's rows stated after it.
+    let program = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("rr/kind-sets.rerail")).unwrap();
+    let text = format!("{program}\n{}\n", facts.iter().map(|f| f.as_str()).collect::<Vec<_>>().join("\n"));
+    let rules: [BTreeSet<String>; 3] = guests_run_with("kindsets", &[("a.py", "x = 1\n")], &text, |o| {
+        ["img_kindset_out", "img_undeclare", "img_drop_facts"].map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[0].trim_matches('"').to_owned()).collect())
+    });
+    let mut failures = Vec::new();
+    for (i, what) in ["sets taken out", "declarations undeclared", "facts dropped"].iter().enumerate() {
+        let pass: BTreeSet<&String> = per_pack.iter().flat_map(|(_, o)| &o[i]).collect();
+        let by_rules: BTreeSet<&String> = rules[i].iter().collect();
+        if pass != by_rules {
+            failures.push(format!("{what}: only the pass {:?}; only the rules {:?}", pass.difference(&by_rules).take(8).collect::<Vec<_>>(), by_rules.difference(&pass).take(8).collect::<Vec<_>>()));
+        }
+    }
+    let taken: usize = per_pack.iter().map(|(_, o)| o[0].len()).sum();
+    assert!(taken > 0, "no pack's kind sets were taken out: the test compares nothing");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// Each module of `plan` tailed in plan order (`rr::tail_module`), each over its scope's tails.
 fn tailed_modules(plan: &[super::PlannedModule]) -> Vec<lower::Module> {
     let at: std::collections::HashMap<&str, usize> = plan.iter().enumerate().map(|(i, m)| (m.key.as_str(), i)).collect();

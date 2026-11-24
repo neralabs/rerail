@@ -40,9 +40,9 @@ a `HashMap` of reads, runs a worklist from the kept relations, and drops the rul
 reach. As rules over a view of the image it is two rules:
 
 ```
-live(r) :- rr_kept(r).
-live(s) :- live(r), rr_reads(r, s).
-rr_drop_rule(q) :- rr_rule(q, h), !live(h).
+live(r) :- img_kept(r).
+live(s) :- live(r), img_reads(r, s).
+img_drop_rule(q) :- img_rule(q, h), !live(h).
 ```
 
 The same holds for the E10 spike (decision 0639): `KindSets` is three rules over the program's reads, and they take
@@ -58,15 +58,17 @@ virtual tables).
 
 | Relation | Rows |
 |---|---|
-| `rr_rule(r, head)` | each rule, by its id, and its head's relation |
-| `rr_lit(r, i, what, rel, neg)` | each body literal: an atom, an aggregate's atom, a comparison, a functor equation |
-| `rr_arg(r, i, j, term)` | each literal's argument `j`: a variable slot, a constant, or a term id |
-| `rr_head_arg(r, j, term)` | the head's arguments |
-| `rr_decl(rel, cols)`, `rr_input(rel)`, `rr_output(rel)`, `rr_kindset(set, kind)` | the image's fields |
-| `rr_reads(h, b)` | derived: a rule of `h` reads `b` (positively or not) |
+| `img_rule(r, head)` | each rule, by its id, and its head's relation |
+| `img_lit(r, i, what, rel, neg)` | each body literal: an atom, an aggregate's atom, a comparison, a functor equation |
+| `img_arg(r, i, j, term)` | each literal's argument `j`: a variable slot, a constant, or a term id |
+| `img_head_arg(r, j, term)` | the head's arguments |
+| `img_decl(rel, cols)`, `img_facts(rel)`, `img_input(rel)`, `img_output(rel)`, `img_kindset(set)`, `img_kindset_kind(set, kind)` | the image's fields; a kind set by its name, so one of no kinds is a row |
+| `img_reads(h, b)`, `img_held(rel)` | derived: a rule of `h` reads `b` (positively or not); the image holds `rel` as a relation |
 
-`rr_reads` and the strongly connected components are rules in the view's library (`rr/view.rerail`), not Rust: the
-checks of decision 0639 §6a (components holding the own module's relations) read them.
+The names are `img_`, not `rr_`: `rr_` is the lowering's own, for the helpers it makes, and the tests set `rr_` names
+aside as helpers. `img_reads`, `img_held` and the strongly connected components are rules in the view's library
+(`rr/view.rerail`), not Rust: the checks of decision 0639 §6a (components holding the own module's relations) read
+them. The edits below are `img_` too.
 
 ### 2. Analyses as rules
 
@@ -74,10 +76,10 @@ An analysis pass is a `.rerail` program over the view that derives some of a fix
 
 | Edit | Applied as |
 |---|---|
-| `rr_drop_rule(r)` | the rule is not kept (`ProgramW::keep`) |
-| `rr_declare(rel, cols)`, `rr_undeclare(rel)`, `rr_set_input(rel)` | the header's fields |
-| `rr_refuse(message)` | the pass fails with the message (`Declared`, `GrammarNames`) |
-| `rr_merge(rel, into)` | `MergeIdentical`'s renaming |
+| `img_drop_rule(r)` | the rule is not kept (`ProgramW::keep`) |
+| `img_declare(rel, cols)`, `img_undeclare(rel)`, `img_set_input(rel)`, `img_drop_facts(rel)` | the header's fields |
+| `img_refuse(message)` | the pass fails with the message (`Declared`, `GrammarNames`) |
+| `img_merge(rel, into)` | `MergeIdentical`'s renaming |
 
 The Pipeline applies them as it applies a Rust pass's writes, so a rules pass and a Rust pass are steps of one list,
 with the same key, version and `again`. Their evaluation is the engine's, so the incremental case is the engine's
@@ -97,28 +99,28 @@ carries (`simplify.rs`):
 
 | Edit | `Subst`'s field |
 |---|---|
-| `rr_subst(r, var, term)` | `to` |
-| `rr_drop_lit(r, i)` | `drop` |
-| `rr_wild(r, i, var)` | `wild_atoms`, `wild` |
-| `rr_add_lit(r, template, args)` | a literal from a named template, for the rewrites that add one (`ConcatInverses`, `SpanContainment`) |
+| `img_subst(r, var, term)` | `to` |
+| `img_drop_lit(r, i)` | `drop` |
+| `img_wild(r, i, var)` | `wild_atoms`, `wild` |
+| `img_add_lit(r, template, args)` | a literal from a named template, for the rewrites that add one (`ConcatInverses`, `SpanContainment`) |
 
 `WildSingletons`, `FoldConstants` and `DropImplied` become:
 
 ```
 // A variable of a positive atom named nowhere else is `_`.
-rr_wild(r, i, v) :- rr_arg(r, i, _, v), rr_var(v), rr_lit(r, i, "atom", _, false), 1 = count : { rr_uses(r, v, _) }.
+img_wild(r, i, v) :- img_arg(r, i, _, v), img_var(v), img_lit(r, i, "atom", _, false), 1 = count : { img_uses(r, v, _) }.
 // A variable equal to a constant is the constant.
-rr_subst(r, v, c) :- rr_lit(r, i, "eq", _, false), rr_arg(r, i, 0, v), rr_var(v), rr_arg(r, i, 1, c), rr_const(c).
-rr_drop_lit(r, i) :- rr_subst(r, v, _), rr_lit(r, i, "eq", _, false), rr_arg(r, i, 0, v).
+img_subst(r, v, c) :- img_lit(r, i, "eq", _, false), img_arg(r, i, 0, v), img_var(v), img_arg(r, i, 1, c), img_const(c).
+img_drop_lit(r, i) :- img_subst(r, v, _), img_lit(r, i, "eq", _, false), img_arg(r, i, 0, v).
 // A literal equal to an earlier one drops.
-rr_drop_lit(r, j) :- rr_same_lit(r, i, j), i < j.
+img_drop_lit(r, j) :- img_same_lit(r, i, j), i < j.
 ```
 
 A rewrite pass's rules see the body as a set of literals, which is what a body is. Order-sensitive matching, as in a
 term-rewriting language, would have to try each permutation.
 
 Two rewrites of one rule in one round must not clash. A rule is rewritten once a round, from the edits derived on the
-round's input. A variable that two `rr_subst` rows send to two terms is `rr_refuse`d (a rewrite conflict, like 0639's
+round's input. A variable that two `img_subst` rows send to two terms is `img_refuse`d (a rewrite conflict, like 0639's
 `helper_conflict`). The Pipeline runs a rewrite pass to its fixpoint as `InOrder` runs a rule pass today.
 
 ### 4. Generators stay Rust, with declared places
@@ -183,5 +185,5 @@ language would need quotation of rules inside rules, and that is a second langua
   and the kind set rules' time per program is reported beside the pass's.
 - **T17.** Each analysis moved (§5 item 2) gives its Rust pass's edits on every pack program.
 - **T18.** Each rewrite moved (§5 item 3) gives its Rust pass's rule on every pack program, and a clash of two
-  `rr_subst` rows is refused.
+  `img_subst` rows is refused.
 - **T19.** Every pass declares `PLACE`, and the tail's steps that declare `Downward` are `rr::DOWNWARD`'s.
