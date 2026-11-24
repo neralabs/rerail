@@ -1942,6 +1942,7 @@
                 let mut best = (f64::MAX, f64::MAX);
                 // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
                 let mut prog = (f64::MAX, f64::MAX);
+                let mut held = 0i64;
                 let mut faulted = i64::MAX;
                 for k in 0..repeat {
                     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -1950,6 +1951,9 @@
                         spec.push("device".into());
                     }
                     spec.push("rel h0 ii empty".into());
+                    // As the planner opens a stratum (`nowrite`): its rows stay the engine's, held (`derived`) once
+                    // it closes, not inserted into a table, so the time is the run's, not a table's.
+                    spec.push("nowrite".into());
                     spec.extend(rules.iter().cloned());
                     super::super::open(&db, &spec.join("\n")).unwrap();
                     let (t, c, f) = (std::time::Instant::now(), cpu_seconds(), faults());
@@ -1966,12 +1970,16 @@
                         }
                     }
                     super::super::close(&db, "timed").unwrap();
+                    // Its rows where the engine holds them: those not dead.
+                    let src = super::super::derived(&db, "h0").expect("h0 held");
+                    let (_, n, dead, _) = super::super::held_rows(&*src).expect("its rows");
+                    held = (n - (0..n).filter(|&i| dead.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 != 0)).count()) as i64;
                     // The first run warms (compiles, sizes); the best of the others.
                     if k > 0 {
                         best = (best.0.min(wall), best.1.min(cpu));
                     }
                 }
-                let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
+                let n = held;
                 rows.push(n);
                 eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU, {faulted} page faults", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
                 if device {
