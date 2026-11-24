@@ -507,11 +507,11 @@ traces or transcripts you attach or paste from, for:
 - anything about research participants or the people whose prompts or sessions a study read.
 
 Replace each with a neutral description or a generic example (`/Users/me`, "a private web application"), keeping what
-a test case tests. `npm run check:internal-refs` fails on internal ticket IDs and on any `nera-` identifier outside
-its public list (`PUBLIC_NAMES` in `scripts/check/check-internal-refs.mjs`), in tracked paths and text. It sees only
-that hyphenated form: the same name written with an underscore, a slash or as a scoped package passes, and so do
-pull request text, links and personal details, so those are yours to check. A squash-merged commit message can't be
-changed afterwards.
+a test case tests. `npm run check:internal-refs` fails on internal ticket IDs (`NER-`, `RER-`, `RES-` or `TES-` and
+digits, any case) and on any `nera-` identifier outside its public list (`PUBLIC_NAMES` in
+`scripts/check/check-internal-refs.mjs`), in tracked paths and text. It sees only that hyphenated form: the same name
+written with an underscore, a slash or as a scoped package passes, and so do pull request text, links and personal
+details, so those are yours to check. A squash-merged commit message can't be changed afterwards.
 
 ## Reporting a bug
 

@@ -142,7 +142,7 @@ pub trait Doc: Clone + 'static {
   fn do_edit(&mut self, edit: &Edit<Self::Source>) -> Result<(), String>;
   fn root_node(&self) -> Self::Node<'_>;
   fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str>;
-  /// Rerail (RER-131): whether the tokens this document leaves out right after `parent`'s child
+  /// Rerail (decision 0161): whether the tokens this document leaves out right after `parent`'s child
   /// `child` (its index among `parent`'s children) begin with `tokens`. `None` where the document
   /// cannot say, as upstream's documents, which leave no token out.
   fn implied_after<'a>(&'a self, _parent: &Self::Node<'a>, _child: usize, _tokens: &[&str]) -> Option<bool> {

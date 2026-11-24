@@ -324,7 +324,7 @@ fn origins<'t>(
                 };
                 // Catalog fallback: last direct name of this text and the value at
                 // the same index. It intentionally includes set displays. The tape stores
-                // no `,` (RER-131): an element's index is its place among the elements.
+                // no `,` (decision 0161): an element's index is its place among the elements.
                 let elements = |list: &Node<'t, TapeDoc>| {
                     list.children().filter(|n| n.is_named() && !n.kind().ends_with("comment") && n.kind() != "line_continuation").collect::<Vec<_>>()
                 };

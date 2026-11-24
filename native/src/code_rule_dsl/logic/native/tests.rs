@@ -568,7 +568,7 @@ fn shortlex_min_orders_symbols_by_length_then_bytes() {
     let dir = std::env::temp_dir().join(format!("rerail-shortlex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let _ = std::fs::remove_file(dir.join("atoms.sqlite"));
-    // A store's atoms (RER-131: an arena belongs to a store of one identity).
+    // A store's atoms (decision 0161: an arena belongs to a store of one identity).
     let store = crate::content_store::ContentStore::open(&dir.join("atoms.sqlite")).unwrap();
     let atoms = store.atoms_handle();
     let s = atoms.intern_all(&["b.c", "zz", "ab", "é"]).unwrap();

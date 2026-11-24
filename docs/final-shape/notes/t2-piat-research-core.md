@@ -199,7 +199,7 @@ Normative §20 (Part E, :215-306) is already in t1. These notes cover the eviden
 - SQL (:140-144):
   - tapes are opaque to SQL;
   - contentless FTS5 over the kind stream (position = preorder ordinal, detail=full), values and source words;
-  - `tempo_matches` vtab with a batch token in xFilter, inputs from in-memory TapeDocs.
+  - `<predecessor>_matches` vtab with a batch token in xFilter, inputs from in-memory TapeDocs.
 
 ### Main at the time (Part B, :148-159; delegated survey, to verify in T7)
 - v7 store with the same schema shape, `content-v1.sqlite`, `cache_size=-1024`.
