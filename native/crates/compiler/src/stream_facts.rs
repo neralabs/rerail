@@ -161,7 +161,7 @@ pub fn word_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
         Op::Open { .. } | Op::Leaf { .. } if field_after(x, pc).is_some() => vec![pc + 2],
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => x.native.switches[usize::from(table)].all_targets().filter(|&t| t != REFUSE).map(usize::from).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } | Op::MadeIs { .. } => vec![pc + 1, pc + 2],
         Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
         Op::Return { .. } | Op::Accept | Op::Stop => vec![],
         _ => vec![pc + 1],
@@ -527,7 +527,7 @@ pub fn plain_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
     let v = match x.native.structural[pc].operation {
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => x.native.switches[usize::from(table)].all_targets().filter(|&t| t != REFUSE).map(usize::from).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } | Op::MadeIs { .. } => vec![pc + 1, pc + 2],
         // In one function (`OneFn`), only the places its rule's returns go back to.
         Op::Push { .. } if x.one.is_some() => x.one.as_ref().and_then(|o| o.after.get(&pc)).cloned().unwrap_or_default(),
         Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],

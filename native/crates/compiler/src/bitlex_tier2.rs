@@ -415,6 +415,27 @@ impl Emit<'_> {
 
     /// A call's field, set on the node it made where it returns to state `st`
     /// (`StateRow::returned_field`): on the node made last at the level, where it has none.
+    /// Where a level ends, after the closes inside it and before its own: its endings
+    /// (`StateRow::endings`), each a test of the node made last at it (`RETAG m=4`) before each
+    /// word. A relabel's words in the order that keeps the kind tested to the last.
+    fn endings(&mut self, st: &StateRow) {
+        for &(kind, moved, inner) in &st.endings {
+            if moved == 0 {
+                self.push("RETAG", 4, Arg::Kind(kind));
+                self.push("STOP", 0, Arg::None);
+                continue;
+            }
+            if inner != 0 {
+                self.push("RETAG", 4, Arg::Kind(kind));
+                self.push("NODE_FIELD", 3, Arg::Field(inner));
+            }
+            self.push("RETAG", 4, Arg::Kind(kind));
+            self.push("NODE_FIELD", 2, Arg::Field(0));
+            self.push("RETAG", 4, Arg::Kind(kind));
+            self.push("RETAG", 2, Arg::Kind(moved));
+        }
+    }
+
     fn returned_field(&mut self, st: &StateRow) {
         if st.returned_field != 0 {
             self.push("NODE_FIELD", 4, Arg::Field(st.returned_field));
@@ -1120,7 +1141,11 @@ impl Emit<'_> {
                 if mode == 0 {
                     self.marked[s] = self.pc();
                 }
-                for _ in 0..c + u8::from(st.own) {
+                for _ in 0..c {
+                    self.push("CLOSE", mode, Arg::None);
+                }
+                self.endings(&st);
+                if st.own {
                     self.push("CLOSE", mode, Arg::None);
                 }
                 // After a mark, the token is not taken: the caller switches on it again
@@ -1222,7 +1247,13 @@ impl Emit<'_> {
             None => REFUSE,
             Some(c) => {
                 let pc = self.pc();
-                for _ in 0..c + u8::from(nested && st.own) {
+                for _ in 0..c {
+                    self.push("CLOSE", 0, Arg::None);
+                }
+                if nested {
+                    self.endings(&st);
+                }
+                if nested && st.own {
                     self.push("CLOSE", 0, Arg::None);
                 }
                 self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested || self.padded), Arg::None);

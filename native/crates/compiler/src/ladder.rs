@@ -817,7 +817,11 @@ pub fn check_documents(
             }
             return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
         }
-        if interp != want || compiled != want {
+        // A statement recovered (`recover`, decision 0650): an ERROR leaf where the reference, which does not
+        // recover, refuses. There the compiled code's tree is the interpreter's; the lean parser's tape is the
+        // grammar's own tests'.
+        let recovered = want.is_none() && interp.as_ref().is_some_and(|n| n.iter().any(|x| x.0 == crate::stream_ir::ERROR_LEAF));
+        if if recovered { compiled != interp } else { interp != want || compiled != want } {
             let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
             let fell = run.totals.iter().any(|&t| t != 0);
             return Some(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));

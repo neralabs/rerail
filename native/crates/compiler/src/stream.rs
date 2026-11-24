@@ -59,7 +59,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
         // the nodes inside it, read by reading `operand` (`reread`).
-        RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
+        // `m=4`: a test, which skips the next word where the node made last at this level is
+        // not of kind `operand` (`ending`).
+        RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()) || (mode == 4 && operand != REMEMBERED),
         // `m=2` with none: `decide`, the node made last has no field of its own (its call's, where it returns).
         NODE_FIELD => mode <= 4 && (operand != 0 || mode == 2),
         // `m=1`: the open node's two leaves, one (`fold`).
@@ -198,6 +200,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             RETURN => returns.iter().map(|&p| p + usize::from(mode)).collect(),
             WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
             FLAG if mode == 2 => vec![pc + 1, pc + 2],
+            RETAG if mode == 4 => vec![pc + 1, pc + 2],
             MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         }
@@ -321,6 +324,7 @@ pub fn phases(program: &Words) -> Result<Vec<u8>, Error> {
             }
             WORD_IS if mode != 0 => work.extend([(pc + 1, after), (pc + 2, after)]),
             FLAG if mode == 2 => work.extend([(pc + 1, after), (pc + 2, after)]),
+            RETAG if mode == 4 => work.extend([(pc + 1, after), (pc + 2, after)]),
             MARK | ROW => work.extend([(pc + 1, after), (pc + 2, after)]),
             _ => work.push((pc + 1, after)),
         }
@@ -748,6 +752,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 if settled > 0 {
                     keep = nodes[first + settled - 1].end;
                     pending -= settled;
+                }
+            }
+            // The node made last at this level of kind `operand`: the next word; else the one after.
+            RETAG if mode == 4 => {
+                if !matches!(lasts_made.last(), Some(Some((r, _))) if nodes[*r].kind == operand) {
+                    pc += 1;
                 }
             }
             RETAG if mode == 1 => {
@@ -1482,6 +1492,7 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
             TOKEN => vec![pc + 1],
             WORD_IS if mode != 0 => vec![pc + 1, pc + 2],
             FLAG if mode == 2 => vec![pc + 1, pc + 2],
+            RETAG if mode == 4 => vec![pc + 1, pc + 2],
             MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         };

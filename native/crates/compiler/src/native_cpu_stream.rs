@@ -6402,6 +6402,20 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         }
                     }
                 }
+                // The next word where the node made last at the level is of `kind`; else the one
+                // after (`ending`).
+                Op::MadeIs { kind } => {
+                    let skip = goto(pc + 2);
+                    let last = mget(&mut f, Mem::LastMade);
+                    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
+                    let test = f.create_block();
+                    f.ins().brif(no_last, skip, &[], test, &[]);
+                    f.switch_to_block(test);
+                    let r = f.ins().iadd_imm(last, -1);
+                    let k = kind_c.get(&mut f, r);
+                    let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(kind));
+                    f.ins().brif(is, fall, &[], skip, &[]);
+                }
                 Op::Retag { kind, on: On::Moved } => {
                     let remembered = kind == REMEMBERED;
                     let k = f.ins().iconst(types::I64, i64::from(kind));
@@ -7917,7 +7931,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],
-        Op::Retag { on: On::Moved, .. } => vec![ROWS],
+        Op::Retag { on: On::Moved, .. } | Op::MadeIs { .. } => vec![ROWS],
         Op::Retag { on: On::Here, .. } => vec![OPEN, ROWS],
         Op::Merge { .. } => vec![OPEN, ROWS],
         Op::NodeField { on: On::Moved | On::Here, .. } => vec![ROWS],

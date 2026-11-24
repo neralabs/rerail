@@ -73,3 +73,49 @@ The calls form's writer (`bitlex_rust`'s `assemble`, not the loop form's) has a 
 
 rr's `tier2.rs` loses about 400 lines; Kotlin's is written by the same pass. All tests pass: rr 58, Kotlin 70,
 JSON 26, clippy.
+
+## Step 2: a literal is a term, then what follows it; a call alone an atom (`ending`) (done)
+
+`literal` is now lean's: `negation | group [group_term] | bare: term [literal_tail]`. The term is the one rule every
+term is read by; `aggregate_literal` and the first token's copies of `term`'s and `unsigned`'s alternatives are gone.
+What lean asks after the term (`is_call`, then `retag_atom`) is a new statement of the grammar:
+
+```text
+ending literal call as atom inner relation
+```
+
+Where `literal` ends, if the node made last at its level is a `call`, it becomes an `atom`, its first child's field
+`relation`, its own field none (the caller's, set where it returns, as `decide`'s). `ending R K refused` refuses
+instead (step 3). Each consumer of the grammar reads it in its own form:
+
+- The reference (`bitlex::tree`): where a rule's match ends, before its node closes, the node made last since the
+  rule began.
+- The state machine (`grammar.rs`): each level's endings, on its states (`StateRow::endings`, part of the merge key).
+  Its words (`bitlex_tier2`) put them between the closes inside the level and its own close: a new test word,
+  `RETAG m=4 K` (`MadeIs` in the IR), runs the next word where the node made last at the level is a `K`. A relabel
+  is three tested words, the inner field, the field and the kind, in that order so the kind is tested before it
+  changes. The interpreter, the JIT (`native_cpu_stream`) and the stream analyses take the word as they take
+  `FLAG m=2`.
+- The calls form (`bitlex_rust::rule`) writes it after the body, as lean's `literal` does:
+  `if self.made_is(k::CALL) { relabel_inner; relabel_field(0); relabel_kind(k::ATOM) }`. The loop form writes the
+  same at the level's end. JSON's one loop refuses an ending, since its grammar has none.
+
+A group and a term both start with `(`. The state machine took a rule's choice as LL(1) and refused two arms on one
+token. It now keeps the earlier arm where the later one enters a call, as the reference and the Rust writer's `decide`
+already do. A group a term turns out to be is still read again as one (`group_term`, the cover form kept above).
+Two arms on one token where neither enters a call are still refused.
+
+rr's `tier2.rs` is 4,438 lines, down from 4,893.
+
+Three of the rr parser_tests had been red since 0650 and 0655, and are fixed at their roots:
+
+- The ladder's reference does not recover, but the interpreters do (`recover`, decision 0650). Where a statement
+  recovered (an ERROR leaf, the reference refusing), the ladder now holds the compiled code's tree to the
+  interpreter's. rr_parser's tests hold both to the lean parser's.
+- The reference read a region left open at the file's end (`open bad`) as its own token's kind. Tier 1 reads it as
+  the `open` kind's, lean's `Bad`. The reference now does too (`TokenRule::open_ends`).
+- The engine refuses an integer past an `i64`, but the grammar reads it as written (0655 step 13). The ladder's
+  engine check now reads the text as lean does, through the same helper rr_parser's tests use, moved to
+  `rr_syntax::as_lean_reads`. The marks test names the grammar's `hidden` line as it is since 0655 step 9.
+
+Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.

@@ -110,6 +110,8 @@ struct G<'a> {
     /// `refuse M in L …`: each level's refused marks, their bits in a record's code: a token the level takes with one
     /// refuses the file (`P::refusing`).
     refusing: HashMap<String, u32>,
+    /// `ending R K …`: what rule `R` does where it ends, by the kind `K` of the node made last at its level.
+    endings: Vec<(&'a str, &'a str, &'a ::bitlex::syntax::Ending)>,
     /// The mark bits the code written so far reads of a record's code (`16 + bit`): tier 1 writes only these where its
     /// loop reads the bytes (decision 0623).
     reads: std::cell::Cell<u32>,
@@ -222,6 +224,7 @@ impl<'a> G<'a> {
         let mut readings = HashMap::new();
         let (mut remember, mut provisional, mut recover) = (Vec::new(), Vec::new(), None);
         let mut refusing: HashMap<String, u32> = HashMap::new();
+        let mut endings = Vec::new();
         for s in x.tree {
             match s {
                 Stmt::Node { kind, .. } => {
@@ -239,6 +242,7 @@ impl<'a> G<'a> {
                 Stmt::Remember(n) => remember.extend(n.iter().cloned()),
                 Stmt::Provisional(f) => provisional.extend(f.iter().cloned()),
                 Stmt::Recover { node, clauses } => recover = Some((node.as_str(), clauses.as_slice())),
+                Stmt::Ending { rule, kind, ending } => endings.push((rule.as_str(), kind.as_str(), ending)),
                 // A mark tier 1 gives no bit is refused nowhere here: `source` refuses the grammar.
                 Stmt::Refuse { mark, levels } => {
                     let bit = x.marks.iter().find(|m| &m.name == mark).and_then(|m| m.bit).map_or(0, |b| 1u32 << b);
@@ -250,7 +254,7 @@ impl<'a> G<'a> {
             }
         }
         let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
-        G { x, rules, order, flags, readings, remember, provisional, recover, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default() }
+        G { x, rules, order, flags, readings, remember, provisional, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -981,6 +985,29 @@ impl<'a> G<'a> {
         self.cond(&(t.clone(), None))
     }
 
+    /// Where rule `name` ends, after its body and before its node's close: its endings (`ending`), each a test of the
+    /// kind of the node made last at its level, as the lean parser's `literal` asks its term's after it (`retag_atom`).
+    fn ending_code(&self, name: &str, pad: &str) -> Result<String, String> {
+        let mut out = String::new();
+        for &(_, kind, ending) in self.endings.iter().filter(|e| e.0 == name) {
+            let _ = writeln!(out, "{pad}if self.made_is({}) {{", self.kind_const(kind)?);
+            match ending {
+                ::bitlex::syntax::Ending::Refused => {
+                    let _ = writeln!(out, "{pad}    return self.refuse();");
+                }
+                ::bitlex::syntax::Ending::Relabel { moved, inner } => {
+                    if let Some(g) = inner {
+                        let _ = writeln!(out, "{pad}    self.relabel_inner({})?;", self.field_const(g)?);
+                    }
+                    let _ = writeln!(out, "{pad}    self.relabel_field(0)?;");
+                    let _ = writeln!(out, "{pad}    self.relabel_kind({})?;", self.moved_kind(moved)?);
+                }
+            }
+            let _ = writeln!(out, "{pad}}}");
+        }
+        Ok(out)
+    }
+
     fn rule(&self, name: &str) -> Result<String, String> {
         let (body, node, nested, whole, padded) = match self.rules[name] {
             Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
@@ -1012,6 +1039,7 @@ impl<'a> G<'a> {
                 }
             }
             out.push_str(&self.code(body, &[], name, "        ")?);
+            out.push_str(&self.ending_code(name, "        ")?);
             if node {
                 out.push_str("        self.close()?;\n");
             }
@@ -2231,6 +2259,15 @@ fn leaf_fields(code: &str) -> String {
 /// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser
 /// whose rules call it.
 const MORE: &[(&str, &str)] = &[
+    (
+        "made_is",
+        r#"    /// `ending … K`: the node made last at this level is a `kind`.
+    fn made_is(&self, kind: u16) -> bool {
+        let at = self.top.1;
+        at != NONE && self.w.key(at as usize) & 0x3ff == u32::from(kind)
+    }
+"#,
+    ),
     (
         "relabel_inner",
         r#"    /// `relabel … inner G`: the node the node made last at this level, a wrap, holds first takes field `G`.

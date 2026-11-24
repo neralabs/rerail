@@ -1084,6 +1084,9 @@ impl Lp<'_, '_> {
         self.levels.borrow_mut().insert(rule.to_owned(), first);
         let root = self.at_root.replace(false);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
+        if self.g.endings.iter().any(|e| e.0 == rule) {
+            return self.err(format!("`{rule}`: an ending, which the one loop does not write"));
+        }
         // Bracketed, `O [M] C`: each call took `O C` as the level empty, so here `M` is there.
         let there;
         let body = match body {

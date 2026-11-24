@@ -162,7 +162,7 @@ impl<'a> Parser<'a> {
             self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0, leaf: false });
             self.open.push(me);
             self.nested += usize::from(nested);
-            let next = self.matches(body, at, follow);
+            let next = self.matches(body, at, follow).filter(|_| self.ended(name, me + 1));
             self.nested -= usize::from(nested);
             self.asked = caller_asked;
             self.open.pop();
@@ -190,7 +190,7 @@ impl<'a> Parser<'a> {
         } else if let Some((_, supertype, body)) = decl.choices.iter().find(|c| &c.0 == name) {
             let me = self.out.len();
             self.nested += usize::from(nested);
-            let next = self.matches(body, at, follow);
+            let next = self.matches(body, at, follow).filter(|_| self.ended(name, me));
             self.nested -= usize::from(nested);
             self.asked = caller_asked;
             let next = next?;
@@ -214,6 +214,38 @@ impl<'a> Parser<'a> {
         } else {
             self.token(name, at, follow)
         }
+    }
+
+    /// Rule `name`'s level ended (`ending`, decision 0668): the node made last at it, one the call made (from `from`),
+    /// where it is an ending's kind, relabelled, as the lean parser's `retag_atom` after its `term`; or the file refused,
+    /// as a negation's literal that was a comparison. Whether the way goes on.
+    fn ended(&mut self, name: &str, from: usize) -> bool {
+        let decl = self.decl;
+        for (rule, kind, ending) in &decl.endings {
+            let Some(c) = self.last_made().filter(|&c| c >= from) else { continue };
+            if rule != name || self.out[c].kind != *kind {
+                continue;
+            }
+            match ending {
+                crate::syntax::Ending::Refused => {
+                    let here = self.out[c].start;
+                    self.fatal.get_or_insert_with(|| format!("{name} ends at a {kind}, at byte {here}"));
+                    return false;
+                }
+                crate::syntax::Ending::Relabel { moved, inner } => {
+                    let Some(m) = self.kind_of(moved) else { return false };
+                    if let Some(g) = inner {
+                        if self.out[c].size < 2 {
+                            return false;
+                        }
+                        self.out[c + 1].field = Some(g.clone());
+                    }
+                    self.out[c].field = None;
+                    self.out[c].kind = m;
+                }
+            }
+        }
+        true
     }
 
     /// The end of a node over tokens `at..next`, its last real token `last`: that token's, or

@@ -328,43 +328,63 @@ impl TokenRule {
             }
             // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
-            TokenRule::Read(regions) => {
-                let name = |x: String| Expr::Name(x);
-                let f_open = |r: &Region| name(format!("f_{}", r.kind));
-                let prev = |e: Expr, k: u8| match k {
-                    0 => e,
-                    1 => call("prev", vec![e]),
-                    k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
-                };
-                let mut out: Option<Expr> = None;
-                for r in regions {
-                    let f = name(format!("f_{}", r.kind));
-                    let mut last = if r.outside {
-                        and(f.clone(), not(call("next", vec![f])))
-                    } else if r.or.is_some() {
-                        r.closer_last(and(prev(f.clone(), 1), not(f)))
-                    } else {
-                        and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
-                    };
-                    if let Some((e, m)) = &r.empty {
-                        last = or(last, prev(name(e.clone()), m - 1));
-                    }
-                    // `open K`: a region open at the file's end ends at its last byte.
-                    if r.open.is_some() {
-                        last = or(last, and(f_open(r), not(call("next", vec![not(Expr::Empty)]))));
-                    }
-                    out = Some(match out {
-                        Some(o) => or(o, last),
-                        None => last,
-                    });
-                }
-                out.unwrap_or(Expr::Empty)
-            }
+            TokenRule::Read(regions) => read_last(regions, true),
             // The opener, one byte; the closer and the parts are rows of their own (`Parts::rows`).
             TokenRule::ReadParts(..) => s.clone(),
             TokenRule::Inside(last, ..) => last.clone(),
         }
     }
+
+    /// A `read`'s regions with `open K` (`Region::open`): each `K`, and the byte where a token of the rule ends open
+    /// at the file's end: its region's fill at the file's last byte, which no region's closer ends at. There the
+    /// token is a `K`, as the lean lexer's `Bad`.
+    pub fn open_ends(&self) -> Vec<(String, Expr)> {
+        let TokenRule::Read(regions) = self else { return Vec::new() };
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let last_byte = not(Expr::Call("next".into(), vec![Arg::E(not(Expr::Empty))]));
+        let closed = read_last(regions, false);
+        regions.iter().filter_map(|r| r.open.as_ref().map(|k| (k.clone(), and(and(Expr::Name(format!("f_{}", r.kind)), last_byte.clone()), not(closed.clone()))))).collect()
+    }
+}
+
+/// A `read`'s last byte (`TokenRule::last`): each region's, from its fill (`Regions::body`); `open`: with a region's
+/// open at the file's end (`open K`).
+fn read_last(regions: &[Region], open: bool) -> Expr {
+    let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+    let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+    let not = |a: Expr| Expr::Not(Box::new(a));
+    let call = |f: &str, args: Vec<Expr>| Expr::Call(f.to_string(), args.into_iter().map(Arg::E).collect());
+    let name = |x: String| Expr::Name(x);
+    let f_open = |r: &Region| name(format!("f_{}", r.kind));
+    let prev = |e: Expr, k: u8| match k {
+        0 => e,
+        1 => call("prev", vec![e]),
+        k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+    };
+    let mut out: Option<Expr> = None;
+    for r in regions {
+        let f = name(format!("f_{}", r.kind));
+        let mut last = if r.outside {
+            and(f.clone(), not(call("next", vec![f])))
+        } else if r.or.is_some() {
+            r.closer_last(and(prev(f.clone(), 1), not(f)))
+        } else {
+            and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
+        };
+        if let Some((e, m)) = &r.empty {
+            last = or(last, prev(name(e.clone()), m - 1));
+        }
+        // `open K`: a region open at the file's end ends at its last byte.
+        if open && r.open.is_some() {
+            last = or(last, and(f_open(r), not(call("next", vec![not(Expr::Empty)]))));
+        }
+        out = Some(match out {
+            Some(o) => or(o, last),
+            None => last,
+        });
+    }
+    out.unwrap_or(Expr::Empty)
 }
 
 #[derive(Clone, Debug)]
@@ -871,6 +891,21 @@ pub enum Stmt {
     /// leaf, from that token to the resume point: the first token after it where an `at` pattern holds,
     /// or past the first where a `past` pattern holds (decision 0650).
     Recover { node: String, clauses: Vec<RecoverClause> },
+    /// `ending RULE K as M [inner G]`, `ending RULE K refused` (in a tree): where nested level `RULE` ends, the node
+    /// made last at it, where it is a `K`, becomes an `M`, with no field of its own (its call's, where it returns, as
+    /// `decide`'s), the node its wrap holds first taking field `G`; or the file is refused (`refused`). The lean
+    /// parser's question after a call: `literal`'s `retag_atom` where its `term` was a call alone, a negation's
+    /// failure where its operand was a comparison (decision 0668).
+    Ending { rule: String, kind: String, ending: Ending },
+}
+
+/// What `ending` does with the node made last where its level ends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ending {
+    /// `as M [inner G]`: the node becomes an `M`, its field its call's, and the node its wrap holds first takes `G`.
+    Relabel { moved: String, inner: Option<String> },
+    /// `refused`: the file is refused (a statement, where the grammar recovers).
+    Refused,
 }
 
 /// One of `recover`'s patterns: `at` (the resume point at its first token) or `past` (past it), its
@@ -2179,6 +2214,20 @@ impl P {
                 let kind = self.kind()?;
                 self.want_p("=")?;
                 Stmt::Check { kind, body: self.gram()? }
+            }
+            "ending" => {
+                let rule = self.ident()?;
+                let kind = self.kind()?;
+                let ending = if self.eat_kw("refused") {
+                    Ending::Refused
+                } else if self.eat_kw("as") {
+                    let moved = self.kind()?;
+                    let inner = if self.eat_kw("inner") { Some(self.ident()?) } else { None };
+                    Ending::Relabel { moved, inner }
+                } else {
+                    return self.err("ending RULE K as M [inner G] | ending RULE K refused");
+                };
+                Stmt::Ending { rule, kind, ending }
             }
             "refuse" => {
                 let mark = self.kind()?;

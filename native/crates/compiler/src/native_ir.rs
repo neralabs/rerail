@@ -142,6 +142,9 @@ pub enum StructuralOperation {
     /// The node made last at the innermost open node's level and the nodes inside it, read by
     /// reading `reading` (`RETAG m=3`, `reread`).
     Reread { reading: u16 },
+    /// A test: the node made last at the innermost open node's level is of `kind`: run the
+    /// next word; else skip it (`RETAG m=4`, `ending`).
+    MadeIs { kind: u16 },
     /// A node of `kind` around the node last made at this level, open: it takes that node's
     /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
     Wrap { kind: u16 },
@@ -244,6 +247,7 @@ impl StructuralOperation {
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
+            Self::MadeIs { kind } => (RETAG, 4, kind),
             Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
@@ -513,6 +517,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
+            RETAG if mode == 4 => StructuralOperation::MadeIs { kind: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
             WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },

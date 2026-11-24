@@ -374,7 +374,8 @@ impl Rl<'_, '_> {
             _ => unreachable!(),
         };
         let mut code = String::from(if nested { "self.deeper()?;\n" } else { "" });
-        let mut end = String::new();
+        // Its endings first (`ending`), as the rule's method has them before its close.
+        let mut end = self.g.ending_code(n, "")?;
         if node {
             code.push_str(&self.open(n)?);
             end.push_str("self.close()?;\n");
