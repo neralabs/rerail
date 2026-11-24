@@ -80,11 +80,11 @@ structure! {
     }
 }
 
-/// `Index::marks`' bit 0 (decision 0671): the place's key is its bucket's head's for its tag (the bucket's first place
-/// of its tag, among its first `MARK_REACH`). Clear where the head is past them or another key: the place's key is
-/// then compared itself.
+/// `Index::marks`' bit 0 (decision 0671): the place's key is its bucket's previous place of its tag's, that place
+/// among the `MARK_REACH` before it. Clear where there is none or it holds another key. A walk that met that place
+/// has its verdict; one that did not (its first place of the tag, wherever in the group the walk starts) compares.
 pub const MARK_SAME: u32 = 1;
-/// The places of a bucket a head is found among (decision 0671): a builder compares a place's tag with theirs.
+/// The places before one a builder looks back over for its tag (decision 0671).
 pub const MARK_REACH: usize = 8;
 
 /// A key's tag, from its hash (`key_hash`): its high 32 bits but bit 0, which is `MARK_SAME`'s. A bucket is the
@@ -101,8 +101,8 @@ pub fn index_rows_bytes(n: usize) -> usize {
 }
 
 /// The marks of an index's places (decision 0671): `tag(t)` of place `t`'s key, `same(t, u)` whether places `t` and
-/// `u` hold one key. Each place's tag, and `MARK_SAME` where its bucket's first `MARK_REACH` places hold its head (the
-/// first of its tag) and its key is the head's; a head has it. The device's builder writes them as these are.
+/// `u` hold one key. Each place's tag, and `MARK_SAME` where its bucket's previous place of the tag is among the
+/// `MARK_REACH` before it and holds its key. The device's builder writes them as these are.
 pub fn fill_marks(offs: &[u32], marks: &mut [u32], tag: &dyn Fn(usize) -> u32, same: &dyn Fn(usize, usize) -> bool) {
     for (t, m) in marks.iter_mut().enumerate() {
         *m = tag(t);
@@ -110,13 +110,8 @@ pub fn fill_marks(offs: &[u32], marks: &mut [u32], tag: &dyn Fn(usize) -> u32, s
     for b in 0..offs.len().saturating_sub(1) {
         let (lo, hi) = (offs[b] as usize, offs[b + 1] as usize);
         for t in lo..hi {
-            let reach = (lo + MARK_REACH).min(t);
-            let head = (lo..reach).find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME);
-            let set = match head {
-                None => t < lo + MARK_REACH,
-                Some(u) => same(u, t),
-            };
-            marks[t] |= u32::from(set);
+            let prev = (t.saturating_sub(MARK_REACH).max(lo)..t).rev().find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME);
+            marks[t] |= u32::from(prev.is_some_and(|u| same(u, t)));
         }
     }
 }
@@ -858,7 +853,7 @@ impl Relation {
 
     /// `build_index`, each row's key hash given (`hash(i)` for its row `i`: `SEED` mixed with its key's values, as
     /// `key_hash`): for a relation whose key values are read elsewhere (a view's home of no columns, decision 0478
-    /// step 5e). Its keys are not compared: a mark says `MARK_SAME` only at a head (decision 0671).
+    /// step 5e). Its keys are not compared: no mark says `MARK_SAME` (decision 0671).
     ///
     /// # Safety
     /// As `build_index`'s.
@@ -1695,25 +1690,25 @@ mod tests {
     use crate::block::kind;
     use std::collections::BTreeSet;
 
-    /// Decision 0671: a place's mark is its key's tag, with `MARK_SAME` where its bucket's head for the tag (its first
-    /// place of it, among its first `MARK_REACH`) holds its key; two keys of one tag, and a head past the reach, leave
-    /// it clear.
+    /// Decision 0671: a place's mark is its key's tag, with `MARK_SAME` where its bucket's previous place of the tag
+    /// (among the `MARK_REACH` before it) holds its key; another key of the tag there, or none, leaves it clear.
     #[test]
-    fn a_places_mark_says_whether_its_heads_key_is_its_own() {
-        // One bucket of 12 places: keys by place, tags by key (keys 1 and 2 share tag 6).
-        let keys = [1, 2, 1, 3, 2, 1, 4, 5, 6, 7, 8, 1];
+    fn a_places_mark_says_whether_its_previous_of_its_tag_holds_its_key() {
+        // One bucket of 13 places: keys by place, tags by key (keys 1 and 2 share tag 6).
+        let keys = [1, 1, 2, 2, 1, 3, 3, 4, 5, 6, 7, 8, 3];
         let tag = |k: i32| if k <= 2 { 6u32 } else { 10 * k as u32 };
         let offs = [0u32, keys.len() as u32];
-        let mut marks = [0u32; 12];
+        let mut marks = [0u32; 13];
         fill_marks(&offs, &mut marks, &|t| tag(keys[t]), &|t, u| keys[t] == keys[u]);
         let same: Vec<u32> = marks.iter().map(|m| m & MARK_SAME).collect();
-        // Place 0 heads tag 6 (key 1): key 1's places say so, key 2's (another key of its tag) do not. Places 3, 6, 7
-        // head their tags; key 1's place 11 is past the reach, its head (place 0) within it: known.
-        assert_eq!(same, [1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 1]);
+        // A place's previous of its tag: the same key (places 1, 3, 6), another key of the tag (2, 4), none (0, 5, the
+        // single keys); place 12's is place 6, 6 places back.
+        assert_eq!(same, [0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
         assert!(marks.iter().zip(keys).all(|(m, k)| m & !MARK_SAME == tag(k)), "each place's tag");
     }
 
-    /// A built index's marks: each place's tag its key's hash's, and each `MARK_SAME` place's key its bucket's head's.
+    /// A built index's marks: each place's tag its key's hash's, and each `MARK_SAME` place's key its previous place of
+    /// its tag's.
     #[test]
     fn a_built_indexs_marks_are_its_keys() {
         let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
@@ -1728,8 +1723,8 @@ mod tests {
                 r.rows.put(i, 1, i64::from(i));
             }
         }
-        // 64 buckets for 997 keys: many keys a bucket.
-        let room = unsafe { r.try_reserve_index_buckets(&block, &[0], n, 64) }.unwrap();
+        // 1024 buckets for 997 keys, about one key a bucket (as an index is sized), some two or more.
+        let room = unsafe { r.try_reserve_index_buckets(&block, &[0], n, 1024) }.unwrap();
         unsafe {
             r.build_index(&room);
             r.index_built(&room);
@@ -1742,14 +1737,15 @@ mod tests {
         for b in 0..offs.len() - 1 {
             for t in offs[b] as usize..offs[b + 1] as usize {
                 assert_eq!(marks[t] & !MARK_SAME, mark_tag(key_hash(&[key(t)])), "place {t}'s tag");
-                let head = (offs[b] as usize..t + 1).find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME).unwrap();
                 if marks[t] & MARK_SAME != 0 {
-                    assert_eq!(key(head), key(t), "place {t}: its head's key");
+                    let lo = (offs[b] as usize).max(t.saturating_sub(MARK_REACH));
+                    let prev = (lo..t).rev().find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME).unwrap();
+                    assert_eq!(key(prev), key(t), "place {t}: its previous of its tag's key");
                     known += 1;
                 }
             }
         }
-        assert!(known > n as usize / 2, "most places' keys known by their heads: {known}");
+        assert!(known > n as usize / 2, "most places' keys known by the place before of their tag: {known}");
     }
 
     /// Decision 0384 step 7: a continuation reads its ids below `base_rows` in its base (in the same block) and its

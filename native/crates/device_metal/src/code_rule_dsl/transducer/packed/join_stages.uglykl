@@ -403,25 +403,24 @@ UKL_SHARED bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t
     return row_live(s, R, r) && keys_are(s, R, r, kv) && row_passes(s, R, r);
 }
 
-// A walk of an index group's marks (decision 0671): its key's tag, and its head's key (the bucket's first place of
-// the tag): not met (0), the binding's (1), another's (2); 3 before its first candidate.
+// A walk of an index group's marks (decision 0671): its key's tag, and its last place of the tag's key: none met (0),
+// the binding's (1), another's (2); 3 before its first candidate.
 #define MARK_SAME 1u
 typedef struct Walked { uint32_t tag, head; } Walked;
 
 // `matches` of walk `how`'s candidate `q` (row `r`). An index group's (decision 0671): a place of another tag is not
-// the key, unread; the head's key is compared once; a place with `MARK_SAME` after it is the head's key; another is
-// compared.
+// the key, unread; one with `MARK_SAME` after the walk's last of the tag has that one's key (the walk meets the places
+// in order, so that is the place the mark names); another is compared.
 UKL_SHARED bool cand_matches(StageP s, Longs R, uint32_t how, uint32_t q, uint32_t r, UKL_PRIVATE const int64_t* kv,
                              UKL_PRIVATE Walked* w) {
     if (how != 1u) return matches(s, R, r, kv);
     if (w->head == 3u) { w->tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME; w->head = 0u; }
     uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R, s->r_at, s->r_index, q);
     if (((m ^ w->tag) & ~MARK_SAME) != 0u) return false;
-    bool key;
-    if (w->head == 0u) { w->head = keys_are(s, R, r, kv) ? 1u : 2u; key = w->head == 1u; }
-    else if ((m & MARK_SAME) != 0u) key = w->head == 1u;
-    else key = keys_are(s, R, r, kv);
-    return key && row_passes(s, R, r);
+    // Its verdict carried to the next place of the tag, a dead row's too (its key is the next one's all the same).
+    bool key = w->head != 0u && (m & MARK_SAME) != 0u ? w->head == 1u : keys_are(s, R, r, kv);
+    w->head = key ? 1u : 2u;
+    return key && row_live(s, R, r) && row_passes(s, R, r);
 }
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
@@ -1551,8 +1550,8 @@ UKL_INLINE void ix_place_one(JSPACE const uint8_t* B, JSPACE const uint32_t* key
 
 
 // The index's marks (decision 0671, `rerail_blocks::relation::fill_marks`), once its rows and buckets are placed: its
-// place `t`'s key's tag, and `MARK_SAME` where its bucket's first `MARK_REACH` places hold its head (the first place
-// of its tag) and its key is the head's (a head has it). Its marks lie after its rows' room, `n` of them.
+// place `t`'s key's tag, and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before
+// it, holds its key. Its marks lie after its rows' room, `n` of them.
 #define MARK_REACH 8u
 UKL_INLINE uint32_t ix_tag(JSPACE const uint8_t* B, JSPACE const IxP* p, uint32_t t) {
     return (uint32_t)(ix_hash(B, p, t) >> 32) & ~MARK_SAME;
@@ -1562,8 +1561,9 @@ UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys
 {
     if (t >= ix_rows(B, p)) return;
     uint32_t lo = offs[keys[eb + t] - kb], rt = rows[t] - p->from, tag = ix_tag(B, p, rt);
-    uint32_t same = t < lo + MARK_REACH ? 1u : 0u;
-    for (uint32_t u = lo; u < t && u < lo + MARK_REACH; u++) {
+    uint32_t same = 0u;
+    for (uint32_t u = t; u > lo && t - u < MARK_REACH;) {
+        u--;
         uint32_t ru = rows[u] - p->from;
         if (ix_tag(B, p, ru) != tag) continue;
         same = 1u;

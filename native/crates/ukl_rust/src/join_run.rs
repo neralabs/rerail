@@ -723,31 +723,28 @@ impl St<'_> {
     }
 
     /// The candidates of keys `kv`, in their walk's order: each one's row, place, and whether its keys are known to
-    /// be `kv`. An index group's (decision 0671): only the places whose mark's tag is the key's; the first of them
-    /// (the bucket's head for the tag) compared, once, and each with `MARK_SAME` after it known by it.
+    /// be `kv`. An index group's (decision 0671): only the places whose mark's tag is the key's, each one's key known
+    /// by the walk's previous place of the tag where its mark says `MARK_SAME` (that place is the walk's last of the
+    /// tag: it walks its places in order), else compared.
     unsafe fn each(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
         let mut q = w.lo;
-        // The head: not met (0), its key `kv` (1), another (2).
-        let mut head = 0u32;
+        // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
+        let mut last = 0u32;
         while q < w.hi {
             let mut key = false;
             if w.how == 1 {
                 let m = self.rd.rel_group_mark(self.r as *const u8, self.s.r_at, self.s.r_index, q);
-                let mine = (m ^ w.tag) & !MARK_SAME == 0;
-                // Another key's tag, or the head's key known not to be `kv`: not read.
-                if !mine || (head == 2 && m & MARK_SAME != 0) {
+                // Another key's tag: not read.
+                if (m ^ w.tag) & !MARK_SAME != 0 {
                     q = q.wrapping_add(1);
                     continue;
                 }
-                let at_head = head == 0;
-                if at_head {
-                    head = if self.keys_are(self.cand_row(1, q), kv) { 1 } else { 2 };
-                    if head == 2 {
-                        q = q.wrapping_add(1);
-                        continue;
-                    }
+                key = if last != 0 && m & MARK_SAME != 0 { last == 1 } else { self.keys_are(self.cand_row(1, q), kv) };
+                last = if key { 1 } else { 2 };
+                if !key {
+                    q = q.wrapping_add(1);
+                    continue;
                 }
-                key = head == 1 && (at_head || m & MARK_SAME != 0);
             }
             if !f(self.cand_row(w.how, q), q, key) {
                 return;
@@ -1684,11 +1681,11 @@ unsafe fn ix_hash(rd: Reads, bb: *const u8, p: &IxP, t: u32) -> u32 {
     (ix_hash64(rd, bb, p, t) & p.mask) as u32
 }
 
-/// `MARK_REACH` (decision 0671): the places of a bucket a head is found among.
+/// `MARK_REACH` (decision 0671): the places before one a builder looks back over for its tag.
 const MARK_REACH: u32 = 8;
 
-/// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag, and `MARK_SAME` where its bucket's first
-/// `MARK_REACH` places hold its head and its key is the head's. Its marks after its rows' room (`n`).
+/// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag, and `MARK_SAME` where its bucket's previous
+/// place of the tag, among the `MARK_REACH` before it, holds its key. Its marks after its rows' room (`n`).
 unsafe fn ix_mark_range(rd: Reads, bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(rd, bb, p));
     let tag = |t: u32| mark_tag(ix_hash64(rd, bb, p, t));
@@ -1696,8 +1693,8 @@ unsafe fn ix_mark_range(rd: Reads, bb: *const u8, keys: *const u32, offs: *const
         let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
         let rt = (*rows.add(t as usize)).wrapping_sub(p.from);
         let tg = tag(rt);
-        let mut same = t < lo.saturating_add(MARK_REACH);
-        for u in lo..t.min(lo.saturating_add(MARK_REACH)) {
+        let mut same = false;
+        for u in (lo.max(t.saturating_sub(MARK_REACH))..t).rev() {
             let ru = (*rows.add(u as usize)).wrapping_sub(p.from);
             if tag(ru) != tg {
                 continue;

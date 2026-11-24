@@ -204,60 +204,18 @@ where
     bit.simd_ne(s64(0)).cast::<i32>() & inside
 }
 
-/// A relation's descriptor's indexes (`Relation::indexes`), an index's size, and its fields: its mask, buckets, rows
-/// and marks (`rerail_blocks::relation::Index`; `tests` holds them to it).
+/// A relation's descriptor's indexes (`Relation::indexes`), an index's size, and its fields: its mask, buckets and
+/// rows (`rerail_blocks::relation::Index`; `tests` holds them to it).
 pub(crate) const REL_INDEXES: u64 = 136;
 pub(crate) const INDEX_SIZE: usize = 168;
 pub(crate) const INDEX_MASK: u64 = 24;
 pub(crate) const INDEX_OFFS: u64 = 32;
 pub(crate) const INDEX_ROWS: u64 = 48;
-pub(crate) const INDEX_MARKS: u64 = 64;
-/// A mark's `MARK_SAME` (decision 0671): its key is its bucket's head's for its tag.
-pub const MARK_SAME: u32 = 1;
 
 /// Index `index` of relation `d`: its descriptor.
 #[inline(always)]
 unsafe fn index_of(d: *const u8, index: u32) -> *const u8 {
     follow(d, REL_INDEXES).wrapping_add(index as usize * INDEX_SIZE)
-}
-
-/// A key's tag (`rerail_blocks::relation::mark_tag`) from its hashes: their high 32 bits but `MARK_SAME`'s.
-#[inline(always)]
-pub fn mark_tag<const N: usize>(h: V<N>) -> R<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    (h >> s64(32)).cast::<u32>() & s32(!MARK_SAME)
-}
-
-/// `clif_rel_group_mark` of relation `d`'s index `index`: the mark at each lane's place `q` (decision 0671).
-#[inline(always)]
-pub unsafe fn rel_group_mark<const N: usize>(d: *const u8, index: u32, q: R<N>) -> R<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    gather32_ix(follow(index_of(d, index), INDEX_MARKS), q, 2)
-}
-
-/// Relation `d`'s index `index`'s marks (decision 0671), as many as its rows (`rel_index_rows`).
-#[inline(always)]
-pub unsafe fn rel_marks(d: *const u8, index: u32) -> *const u32 {
-    follow(index_of(d, index), INDEX_MARKS).cast::<u32>()
-}
-
-/// Relation `d`'s index `index`'s rows' number: its places'.
-#[inline(always)]
-pub unsafe fn rel_index_rows(d: *const u8, index: u32) -> u64 {
-    r64(index_of(d, index), INDEX_ROWS + 8)
-}
-
-/// `rel_group_mark` of `N` consecutive places from `q` (all in its rows): one load.
-#[inline(always)]
-pub unsafe fn rel_group_marks<const N: usize>(d: *const u8, index: u32, q: u32) -> R<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    Simd::from_array((follow(index_of(d, index), INDEX_MARKS).wrapping_add(q as usize * 4) as *const [u32; N]).read_unaligned())
 }
 
 /// `clif_rel_group` of relation `d`'s index `index` for key hashes `h`: each lane's group's first place in the index's

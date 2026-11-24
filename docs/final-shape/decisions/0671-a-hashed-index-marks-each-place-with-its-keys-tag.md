@@ -23,15 +23,20 @@ are independent bits of the one hash), with bit 0 replaced by `SAME`:
 - **The tag** (bits 31..1). A place whose tag is not the probe's is not its key: rejected by its mark alone, read in
   order beside its row, with no read of the relation. 31 bits and the bucket's: another key passes it about once in
   2^31 of a bucket's other keys.
-- **`SAME`** (bit 0). The place's key is the key of its bucket's *head* for its tag: the bucket's first place with
-  its tag, found among the bucket's first `MARK_REACH` (8) places. A place whose head is past them, or whose key
-  differs from its head's (two keys of one tag in one bucket), has it clear. It says nothing at the head itself.
+- **`SAME`** (bit 0). The place's key is the key of its bucket's *previous place of its tag*, that place among the
+  `MARK_REACH` (8) places before it. Clear where there is none, or it holds another key (two keys of one tag in one
+  bucket).
 
-A reader of a key's candidates: the places of its bucket whose tag is its key's; the first of them is the head, and
-its key is read and compared once; each place after it with `SAME` is the key where the head was, with no read; one
-without `SAME` is compared itself, as every place was before. So a probe reads a key once a binding instead of once a
-candidate, and another key's places not at all. A reader that compares every place's key (the SQL probes, `View`'s
-merged probes) is as right as before and need not read the marks.
+A reader of a key's candidates walks a group's places in order: the places whose tag is not its key's are not read;
+the first place of the tag it meets is compared; each one after it with `SAME` has the verdict of the walk's last
+place of the tag (which is the place the mark names: the walk met every place between), with no read; one without
+`SAME` is compared. So a probe whose group holds one key reads it once, and another key's places not at all. A dead
+row's verdict is carried like any other (its key is still the next place's). A reader that compares every place's key
+(the SQL probes, `View`'s merged probes) is as right as before and need not read the marks.
+
+The mark names the place *before* it, not the bucket's first of the tag, so that it holds for a walk of any part of a
+group. A first version named the bucket's head; the GPU's walks split a long group among threads, and a thread that
+started past the head took its first place of the tag for the head and its `SAME` places as keys it never compared.
 
 Why this and not another hash table:
 
@@ -51,18 +56,42 @@ Why this and not another hash table:
 - **Room**: 4 bytes a row more (the rows' chunk twice as long): an index of `n` rows was `4 (2^log + 1) + 4 n`
   bytes, now `4 (2^log + 1) + 8 n`.
 - **The build**: each place's tag from the hash its bucket came from (the host's builders have it; the device's
-  places phase hashes its row's key again, `ncols` reads a row), then `SAME`: a place compares its tag with its
-  bucket's first `MARK_REACH` marks (in order, beside it), and where its head is another place, its key with the
-  head's (`2 ncols` reads a place not its bucket's head). One more phase on the device (`PK_IX_MARK`), after the
-  places.
+  marks phase hashes a row's key again, `ncols` reads a row), then `SAME`: a place looks back over the
+  `MARK_REACH` places before it in its bucket for its tag (on the device a hash of each), and compares its key with the
+  first it finds (`2 ncols` reads). One more phase on the device (`PK_IX_MARK`), after the places.
 - **Paid once, read many times**: an index is built once and probed once a binding of every stage that probes it;
   the build's reads are one key a place, the reads it saves one key a candidate, a stage.
 
 ## The steps
 
 1. `Index::marks`, its room and the host's builders (`build_index`, `build_index_hashed`, freeze's), the reads
-   (`rel_group_mark`, in CLIF, and `relation.h` again from it), the lanes' reads.
+   (`rel_group_mark`, in CLIF, and `relation.h` again from it).
 2. The device's builder: the places phase writes the marks' tags, `PK_IX_MARK` their `SAME` bits; the device's index
    is the host's, mark for mark (its tests).
-3. The join program's probes (`candidates` in `join_stages.uglykl`, `join_run`'s walks and lanes): the tag, the
-   head's key once, `SAME`.
+3. The join program's probes (`cand_matches` in `join_stages.uglykl`, `join_run`'s walks): the tag, the walk's
+   last verdict of the tag carried by `SAME`. Not the lanes (measured above).
+
+## Measured (2026-11-24, the join program's timed test, one thread, best of 9)
+
+The keyed join (100 K x 100 K) and the closure (400 nodes); the program's time.
+
+| | keyed, CPU | closure, CPU | keyed, Metal |
+|---|---|---|---|
+| Before (mini) | 15.7-15.8 ms | 27.8 ms | 36.2 ms |
+| Marks read by the lanes too (mini) | 17.5-17.8 ms | 28.8 ms | |
+| Marks read by the walks, not the lanes (mini) | 15.3-15.6 ms | 27.3 ms | 33.6-33.8 ms |
+
+Candidates a binding, with the marks: the keyed join's 1,134,822 become 997,886, the closure's 660,660 become
+393,056.
+
+**The CPU's lanes do not read the marks.** A step of lanes compares 8 candidates' keys at once: reading 8 marks,
+comparing their tags and packing the kept places costs as much as the key compares it saves, and carrying `SAME`
+needs a walk's order, which a step of lanes does not have (a prefix of verdicts across lanes). Measured in one binary,
+the lanes reading the tags were 0.7 ms (keyed) and 0.9 ms (closure) slower than the same lanes not reading them, and
+the count's rewrite for packed places (its finds kept by place, not by candidate) slower again. The lanes are as
+before; the marks are read where a walk goes a place at a time and each skipped place is a dependent random read
+saved: the GPU's threads and the CPU's scalar walks (`join_run::each`). The layout is the same for both: should a
+lane reader gain from it later (a group with many keys of other tags), its marks are one 32-byte load beside its rows.
+
+The closure on the mini's Metal is refused before and after this change (a stratum past its launches, 60 s of GPU):
+not this decision's; the M1 Max's arena failure (decision 0567) is apart from it too.
