@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::ops::Range;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// One admitted value's rows of a relation: its source (a batch of the value alone), from row `start` of the parts.
 #[derive(Clone)]
@@ -355,13 +355,15 @@ pub struct Layered {
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made as they are looked up.
     made: Option<parking_lot::Mutex<Made>>,
     width: usize,
+    /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
+    seen: AtomicU64,
 }
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(|| parking_lot::Mutex::new(Made::default()));
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width }
+        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0) }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -386,8 +388,20 @@ impl Layered {
     /// With no value admitted, no relation has parts: a probe of a chunk with none (most of them) reads only the
     /// count, where the parts' load (`arc_swap`'s, a thread-local each) and the name's lookup took about 600 samples
     /// of a 15 s sample of `all`.
+    /// Asked once per value admitted: each probe's load of the parts and hash of the name took about 1% of `all`'s
+    /// per-file phase's samples.
     fn has_parts(&self) -> bool {
-        self.values.admitted() != 0 && self.values.total(&self.name) > 0
+        let admitted = self.values.admitted() as u64;
+        if admitted == 0 {
+            return false;
+        }
+        let seen = self.seen.load(Ordering::Relaxed);
+        if seen >> 1 == admitted {
+            return seen & 1 != 0;
+        }
+        let has = self.values.total(&self.name) > 0;
+        self.seen.store(admitted << 1 | u64::from(has), Ordering::Relaxed);
+        has
     }
 }
 
