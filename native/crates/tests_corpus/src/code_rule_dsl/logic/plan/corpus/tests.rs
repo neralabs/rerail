@@ -2070,6 +2070,39 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A text a `join` makes, read by `cat(w, ":", j)`, gives its row in a store where neither text is an atom yet. The cat
+/// checks `j` against the text it recovers from `m`: a test of a bound slot, whose `j` the walk made and deferred
+/// (`Deferred`). Looked up as a probe's text, a deferred text was no atom, and the row was dropped: phase 0 planned no
+/// module of two files (`core:a+b`), and every program reading one failed ("in no module of phase 0's plan").
+#[test]
+fn a_cat_of_a_text_its_join_made_keeps_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cat-of-join");
+    std::fs::create_dir_all(dir.join("corpus")).unwrap();
+    // Texts no store holds: the joined texts and the names are made in this run.
+    let nonce = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let program = format!(r#"
+.decl g(p: symbol)
+.decl member(p: symbol, q: symbol)
+.decl name(p: symbol, m: symbol)
+g("a"). g("b"). g("c").
+member("a", "x1{nonce}"). member("a", "x2{nonce}"). member("b", "y{nonce}"). member("c", "z1{nonce}"). member("c", "z2{nonce}"). member("c", "z3{nonce}").
+name(p, m) :- g(p), j = join q by q sep "+" : {{ member(p, q) }}, m = cat("core", ":", j).
+.output name
+"#);
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("corpus"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap();
+    rows.sort();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want: Vec<Vec<String>> = vec![
+        vec!["a".into(), format!("core:x1{nonce}+x2{nonce}")],
+        vec!["b".into(), format!("core:y{nonce}")],
+        vec!["c".into(), format!("core:z1{nonce}+z2{nonce}+z3{nonce}")],
+    ];
+    assert_eq!(rows, want, "each group's name, its members joined");
+}
+
 /// A cross-file reader of a node's text (`passes` reads `uses`, which joins two files) finds it (O-cross-file-answers):
 /// its request is narrowed to the node's own document (`file_local::requests_file_local`, the hub's work-queue
 /// question 2, option a), `uses` unfolded to `def(f, _)`, so the text is answered in the chunk that holds it. Asked in

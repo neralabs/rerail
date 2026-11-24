@@ -61,7 +61,7 @@ pub const VIEW_PLACED: u32 = 16;
 /// columns, which its indexes go in (decision 0478 step 3).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct OnDevice {
-    /// The `PlacedDir`, a buffer of no block's that the stages bind: held by a ledger of its own (decision 0491 step 2).
+    /// Held by a ledger at its address (decision 0491 step 2), as a pooled lease is: a launch that binds it holds it.
     dir: rerail_blocks::ledger::Tracked<rerail_device::device::Buffer>,
     tail: rerail_device::device::Buffer,
     _spans: crate::code_rule_dsl::facts::rows::InBlock,

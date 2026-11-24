@@ -591,6 +591,16 @@ pub fn composed_here(seed: &Seed) -> std::result::Result<Option<Graph>, Error> {
     composed(seed, &Dirs::here().expect("the library and the phase programs' directory"))
 }
 
+/// Graph `g` read back from each form a graph is kept in: the store's kept facts (`Images::facts`) and the shipped
+/// bundle's image (`Images::encode`), for the engine's tests of phase 0 (`phase0::tests`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn through_kept_forms(g: &Graph) -> Option<(Graph, Graph)> {
+    let images = Images::here()?;
+    let facts = images.graph_of(&images.facts(g), &mut Read::default())?;
+    let image = images.decode(&images.encode(g))?;
+    Some((facts, image))
+}
+
 /// Whether two graphs of a seed are one: their digest (modules and edges), what they reach through phases, and the
 /// candidates found absent (`RERAIL_PHASE0_COMPOSE=check`). The plans are the runs' that made them, not the graph.
 pub fn same_graph(a: &Graph, b: &Graph) -> bool {
@@ -681,12 +691,13 @@ impl Images {
     /// The key a store keeps seed key `key`'s graph under, as kept facts (`rr::graph_facts`): the image's key is the
     /// shipped bundle's.
     fn store_key(&self, key: &crate::content_store::HashKey) -> crate::content_store::HashKey {
-        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 1\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
+        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 2\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
     }
 
     /// The graph as facts (t33 step 2), its paths as the image writes them (`rel`): `p0g_include(from, at, name,
     /// path)`, `p0g_missing(from, at, name)`, `p0g_absent(path)`, `p0g_digest(path, sha256)`, `p0g_phase(from,
-    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, each relation's rows in the graph's order.
+    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, `p0g_module(name, rank, key, scope)`, `p0g_lowered(key,
+    /// image)`, each relation's rows in the graph's order.
     fn facts(&self, g: &Graph) -> crate::code_rule_dsl::logic::program_facts::Facts {
         use crate::code_rule_dsl::logic::front::Value;
         let s = |x: String| Value::Str(x.into());
@@ -718,6 +729,14 @@ impl Images {
         }
         for d in &g.plans {
             put("p0g_plan", vec![hex(d)]);
+        }
+        // The module plan and its images (decision 0639 §1, §3), as the image writes them (`encode`): a graph read back
+        // without them planned no module, and every text composed of it failed ("in no module of phase 0's plan").
+        for (m, r) in &g.plan {
+            put("p0g_module", vec![s(m.clone()), Value::Int(r.rank), s(r.key.clone()), s(r.scope.iter().cloned().collect::<Vec<_>>().join(","))]);
+        }
+        for (k, d) in &g.lowered {
+            put("p0g_lowered", vec![s(k.clone()), s(d.clone())]);
         }
         // A graph holds a row at least: every seed's graph names the modules it reached (`p0g_digest`).
         f
@@ -763,6 +782,15 @@ impl Images {
         for r in rows("p0g_plan") {
             let [a] = &r[..] else { return None };
             g.plans.push(read.digest(a)?);
+        }
+        for r in rows("p0g_module") {
+            let [a, b, c, d] = &r[..] else { return None };
+            let scope = text(d)?.split(',').filter(|x| !x.is_empty()).map(str::to_owned).collect();
+            g.plan.insert(text(a)?, PlanModule { rank: int(b)?, key: text(c)?, scope });
+        }
+        for r in rows("p0g_lowered") {
+            let [a, b] = &r[..] else { return None };
+            g.lowered.insert(text(a)?, text(b)?);
         }
         Some(g)
     }
@@ -1017,6 +1045,8 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let lib = dunce::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rerail");
+    // The store's module images, found before the run's first wave: its answers to `p0_lower_req` read them there.
+    crate::code_rule_dsl::logic::rr::images_ahead();
     // The builtin read: the one rule file the engine knows by itself.
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;
     let mut text = String::from_utf8(bytes).map_err(|e| PlanError::Plan(format!("{}: {e}", bootstrap.display())))?;

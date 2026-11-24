@@ -420,6 +420,8 @@ impl Reads {
     rel_read!(atoms_len, 66, (v: u32) -> u32);
     // Its result an address (`reads::addresses`): the symbol's bytes.
     rel_read!(atoms_at, 67, (v: u32) -> u64);
+    // The `k`th atom whose slot has hash `h`'s high half and whose string is `len` bytes (decision 0666), else NONE.
+    rel_read!(atoms_find, 85, (h: u64, len: u32, k: u32) -> u32);
     rel_read!(verdict_get, 68, (test: u32, v: u32) -> u32);
     rel_read!(verdict_put, 69, (test: u32, v: u32, verdict: u32) -> u32);
     // Their results an address, its low two bits what was found.
@@ -1263,6 +1265,234 @@ impl Dfa {
 /// `replace_all` of regex `g` in `x` by `z` (`text::table::Replacer`): each match's end by the forward automaton (the
 /// last match before it dies), its start by the reverse one run back from it (the furthest match), matches delayed a
 /// byte. The replaced text's length; written to `o` where given, the unmatched bytes and `z` a part's copy at a time.
+/// foldhash's folded multiply: the 128-bit product's halves, xored.
+fn fold_mul(x: u64, y: u64) -> u64 {
+    let p = x as u128 * y as u128;
+    (p as u64) ^ ((p >> 64) as u64)
+}
+
+/// `n` (at most 8) bytes from `p` as a little-endian word.
+unsafe fn bytes_le(p: *const u8, n: u32) -> u64 {
+    (0..n).fold(0, |w, k| w | (*p.add(k as usize) as u64) << (8 * k))
+}
+
+/// The store's hash of a string (`content_store::atoms::hash_str`: foldhash 0.2's quality hasher, fixed state, seed
+/// 0x5EED71, a `str`'s bytes then 0xff), the one the atoms blocks' tables from hash to id are keyed by (decision 0666):
+/// `store_hash`.
+unsafe fn store_hash(mut v: *const u8, len: u32) -> u64 {
+    const S: [u64; 6] = [0xc0ac29b7c97c50dd, 0x3f84d5b5b5470917, 0x9216d5d98979fb1b, 0xd1310ba698dfb5ac, 0x2ffd72dbd01adfb7, 0xb8e1afed6a267e96];
+    let at = |v: *const u8, k: u32| bytes_le(v.add(k as usize), 8);
+    // The per-hasher seed: folded_multiply(0x5EED71, ARBITRARY4) ^ ARBITRARY3, rotated by the length.
+    let mut acc = (fold_mul(0x5EED71, 0x452821e638d01377) ^ 0x082efa98ec4e6c89).rotate_right(len & 63);
+    if len <= 16 {
+        let (mut s0, mut s1) = (acc, S[1]);
+        if len >= 8 {
+            s0 ^= bytes_le(v, 8);
+            s1 ^= bytes_le(v.add(len as usize - 8), 8);
+        } else if len >= 4 {
+            s0 ^= bytes_le(v, 4);
+            s1 ^= bytes_le(v.add(len as usize - 4), 4);
+        } else if len > 0 {
+            s0 ^= *v as u64;
+            s1 ^= (*v.add(len as usize - 1) as u64) << 8 | *v.add(len as usize / 2) as u64;
+        }
+        acc = fold_mul(s0, s1);
+    } else {
+        let (mut s0, mut s1) = (acc, acc.wrapping_add(S[1]));
+        let mut n = len;
+        if n > 128 {
+            let (mut s2, mut s3) = (acc.wrapping_add(S[2]), acc.wrapping_add(S[3]));
+            if n > 256 {
+                let (mut s4, mut s5) = (acc.wrapping_add(S[4]), acc.wrapping_add(S[5]));
+                loop {
+                    s0 = fold_mul(at(v, 0) ^ s0, at(v, 48) ^ S[0]);
+                    s1 = fold_mul(at(v, 8) ^ s1, at(v, 56) ^ S[0]);
+                    s2 = fold_mul(at(v, 16) ^ s2, at(v, 64) ^ S[0]);
+                    s3 = fold_mul(at(v, 24) ^ s3, at(v, 72) ^ S[0]);
+                    s4 = fold_mul(at(v, 32) ^ s4, at(v, 80) ^ S[0]);
+                    s5 = fold_mul(at(v, 40) ^ s5, at(v, 88) ^ S[0]);
+                    v = v.add(96);
+                    n -= 96;
+                    if n <= 256 {
+                        break;
+                    }
+                }
+                s0 ^= s4;
+                s1 ^= s5;
+            }
+            loop {
+                s0 = fold_mul(at(v, 0) ^ s0, at(v, 32) ^ S[0]);
+                s1 = fold_mul(at(v, 8) ^ s1, at(v, 40) ^ S[0]);
+                s2 = fold_mul(at(v, 16) ^ s2, at(v, 48) ^ S[0]);
+                s3 = fold_mul(at(v, 24) ^ s3, at(v, 56) ^ S[0]);
+                v = v.add(64);
+                n -= 64;
+                if n <= 128 {
+                    break;
+                }
+            }
+            s0 ^= s2;
+            s1 ^= s3;
+        }
+        s0 = fold_mul(at(v, 0) ^ s0, at(v, n - 16) ^ S[0]);
+        s1 = fold_mul(at(v, 8) ^ s1, at(v, n - 8) ^ S[0]);
+        if n >= 32 {
+            s0 = fold_mul(at(v, 16) ^ s0, at(v, n - 32) ^ S[0]);
+            s1 = fold_mul(at(v, 24) ^ s1, at(v, n - 24) ^ S[0]);
+            if n >= 64 {
+                s0 = fold_mul(at(v, 32) ^ s0, at(v, n - 48) ^ S[0]);
+                s1 = fold_mul(at(v, 40) ^ s1, at(v, n - 40) ^ S[0]);
+                if n >= 96 {
+                    s0 = fold_mul(at(v, 48) ^ s0, at(v, n - 64) ^ S[0]);
+                    s1 = fold_mul(at(v, 56) ^ s1, at(v, n - 56) ^ S[0]);
+                }
+            }
+        }
+        acc = s0 ^ s1;
+    }
+    // A `str`'s 0xff (`write_u8`: the sponge), then the quality hasher's last fold.
+    fold_mul(fold_mul(0xff ^ acc, S[0]), 0x243f6a8885a308d3)
+}
+
+/// The atom whose string is the made text at `off` in arena `a`, `len` bytes: its id, found by the store's hash in the
+/// tables of atoms directory `d`'s runs (`atoms_find`, decision 0666), each candidate's bytes compared; -1 where no
+/// atom is (`atom_of_text`).
+unsafe fn atom_of_text(rd: &Reads, a: *const u32, off: u32, len: u32, d: *const u8) -> i64 {
+    if len == 0 {
+        return 0;
+    }
+    let mine = (a as *const u8).add(16 + off as usize);
+    let h = store_hash(mine, len);
+    for k in 0.. {
+        let id = rd.atoms_find(d, 0, h, len, k);
+        if id == NONE {
+            return -1;
+        }
+        let theirs = rd.atoms_at(d, 0, id) as *const u8;
+        if core::slice::from_raw_parts(theirs, len as usize) == core::slice::from_raw_parts(mine, len as usize) {
+            return id as i64;
+        }
+    }
+    -1
+}
+
+/// A regex group's closure from state `sid` at `pos` into a thread list (`rx_group_closure`): each state once, the
+/// group's two slots a thread, its entries in priority order; a capture state saves its slot, restored after.
+#[allow(clippy::too_many_arguments)]
+unsafe fn rx_group_closure(w: *const u32, list: &mut [u32], count: &mut u32, stack: &mut [u32], sid: u32, pos: u32, n: u32, c: [u32; 2]) {
+    let wd = |i: u32| *w.add(i as usize);
+    let st = w.add(wd(4) as usize);
+    let s_count = wd(0) as usize;
+    let (dense, rest) = list.split_at_mut(s_count);
+    let (sparse, slots) = rest.split_at_mut(s_count);
+    let mut cur = c;
+    let cap = wd(3);
+    stack[0] = sid;
+    stack[1] = 0;
+    let mut sp = 1u32;
+    // Bounded: each state is entered once a closure, and pushes its entries, `w[3]` at most.
+    let mut turn = 0;
+    while turn < 2 * cap + 2 && sp > 0 {
+        turn += 1;
+        sp -= 1;
+        let (a, old) = (stack[2 * sp as usize], stack[2 * sp as usize + 1]);
+        if a & 0x8000_0000 != 0 {
+            cur[(a & 1) as usize] = old;
+            continue;
+        }
+        let i = sparse[a as usize];
+        if i < *count && dense[i as usize] == a {
+            continue;
+        }
+        sparse[a as usize] = *count;
+        dense[*count as usize] = a;
+        slots[2 * *count as usize] = cur[0];
+        slots[2 * *count as usize + 1] = cur[1];
+        *count += 1;
+        let s = st.add(4 * a as usize);
+        let sd = |k: usize| *s.add(k);
+        let mut push = |x: u32, v: u32, sp: &mut u32| {
+            stack[2 * *sp as usize] = x;
+            stack[2 * *sp as usize + 1] = v;
+            *sp += 1;
+        };
+        match sd(0) {
+            3 => {
+                let mut k = sd(1);
+                while k > 0 && sp < cap {
+                    push(wd(sd(2) + k - 1), 0, &mut sp);
+                    k -= 1;
+                }
+            }
+            4 if sp + 2 <= cap => {
+                if sd(1) < 2 {
+                    push(0x8000_0000 | sd(1), cur[sd(1) as usize], &mut sp);
+                    cur[sd(1) as usize] = pos;
+                }
+                push(sd(2), 0, &mut sp);
+            }
+            5 if ((sd(1) == 0 && pos == 0) || (sd(1) == 1 && pos == n)) && sp < cap => push(sd(2), 0, &mut sp),
+            _ => {}
+        }
+    }
+}
+
+/// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0668): program `g` (`text::table::GroupProgram`, the regex's
+/// Thompson NFA) walked over `x` by a Pike VM, as `regex_automata`'s `PikeVM` walks it: its threads in priority order,
+/// each state once a position, the group's two slots a thread; a match cuts the threads after it, and the last match
+/// found is the leftmost-first one (`rx_group_range`). `scratch`: two thread lists and the closure's stack, grown here.
+/// The group's range of `x`, where the regex matched and the group took part.
+unsafe fn rx_group_range(g: *const u8, x: &Txt, scratch: &mut Vec<u32>) -> Option<(u32, u32)> {
+    let w = g as *const u32;
+    let wd = |i: u32| *w.add(i as usize);
+    let (s_count, n) = (wd(0) as usize, x.len());
+    let st = w.add(wd(4) as usize);
+    scratch.clear();
+    scratch.resize(8 * s_count + 2 * wd(3) as usize + 2, 0);
+    let (lists, stack) = scratch.split_at_mut(8 * s_count);
+    let (mut l0, mut l1) = lists.split_at_mut(4 * s_count);
+    let mut c0 = 0u32;
+    let (mut got0, mut got1) = (NONE, NONE);
+    rx_group_closure(w, l0, &mut c0, stack, wd(2), 0, n, [NONE, NONE]);
+    let mut pos = 0;
+    while pos <= n && c0 > 0 {
+        let mut c1 = 0u32;
+        let b = if pos < n { x.byte(pos) as u32 } else { 0 };
+        for i in 0..c0 as usize {
+            let s = st.add(4 * l0[i] as usize);
+            let sd = |k: usize| *s.add(k);
+            let (t0, t1) = (l0[2 * s_count + 2 * i], l0[2 * s_count + 2 * i + 1]);
+            if sd(0) == 6 {
+                got0 = t0;
+                got1 = t1;
+                break;
+            }
+            if pos == n {
+                continue;
+            }
+            let mut next = NONE;
+            if sd(0) == 1 && sd(1) <= b && b <= sd(2) {
+                next = sd(3);
+            } else if sd(0) == 2 {
+                for k in 0..sd(1) {
+                    let r = w.add((sd(2) + 3 * k) as usize);
+                    if *r <= b && b <= *r.add(1) {
+                        next = *r.add(2);
+                        break;
+                    }
+                }
+            }
+            if next != NONE {
+                rx_group_closure(w, l1, &mut c1, stack, next, pos + 1, n, [t0, t1]);
+            }
+        }
+        core::mem::swap(&mut l0, &mut l1);
+        core::mem::swap(&mut c0, &mut c1);
+        pos += 1;
+    }
+    (got0 != NONE && got1 != NONE).then_some((got0, got1))
+}
+
 unsafe fn rx_replace_txt(g: *const u8, x: &Txt, z: &Txt, o: Option<*mut u8>) -> u32 {
     let h = g as *const u32;
     let hw = |i: usize| *h.add(i);
@@ -2697,6 +2927,8 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         }
         return;
     }
+    // The regex group's thread lists (`rx_group_range`), grown to its program's states.
+    let mut rx_scratch = Vec::new();
     let mut row = sg;
     while row < n {
         let r = row;
@@ -2716,6 +2948,9 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         // A text kept by (functions P[5], symbol key 7) in the rolling cache: copied into the arena.
         let ksym = st.key_value(r, 7);
         let keeps = s.agg[0] & (1 << 9) != 0 && (0..=u32::MAX as i64).contains(&ksym);
+        // `ROW_FIND` (bit 10): the made text's value is the atom it is, found in the atoms directory (`atom_of_text`,
+        // decision 0666), or no row where none is.
+        let finds = s.agg[0] & (1 << 10) != 0;
         let ksym = ksym as u32;
         if keeps {
             let e = st.rd.text_find(vc, 0, pw(5), ksym);
@@ -2726,11 +2961,12 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 if !full {
                     core::ptr::copy_nonoverlapping(e.add(16), (a as *mut u8).add(16 + off as usize), len as usize);
                 }
-                made(ctl, vv, counts, r, text_value(a, table, ctl, canon, off, len, full), full);
+                let value = if !full && finds { atom_of_text(&st.rd, a, off, len, d) } else { text_value(a, table, ctl, canon, off, len, full) };
+                made(ctl, vv, counts, r, value, full);
                 continue;
             }
         }
-        let y = st.txt_of(r, d, a, 2, s.agg[1] >> 4, &mut unheld);
+        let y = st.txt_of(r, d, a, 2, (s.agg[1] >> 4) & 15, &mut unheld);
         let f = (s.agg[0] >> 16) & 255;
         let lx = x.len();
         // How the text is made, and its length.
@@ -2760,9 +2996,10 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
             }
             (Make::Digits { neg, u, ndig, pad }, len)
         } else if f == 12 {
-            // str_between(x, y, z): x less prefix y (key 2) and suffix z (key 4); no row where x has not both.
-            let y = st.txt_of(r, d, a, 2, 0, &mut unheld);
-            let z = st.txt_of(r, d, a, 4, 0, &mut unheld);
+            // str_between(x, y, z): x less prefix y (keys 2, 3) and suffix z (keys 4, 5), each of its kind (agg[1] >> 4
+            // and >> 8: a symbol, a held cat's parts, an arena text); no row where x has not both.
+            let y = st.txt_of(r, d, a, 2, (s.agg[1] >> 4) & 15, &mut unheld);
+            let z = st.txt_of(r, d, a, 4, (s.agg[1] >> 8) & 15, &mut unheld);
             let (ly, lz) = (y.len(), z.len());
             if lx < ly + lz || !x.same(0, &y, 0, ly) || !x.same(lx - lz, &z, 0, lz) {
                 *vv.add(r as usize) = -1;
@@ -2788,6 +3025,15 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 }
             }
             (Make::Range(0), cut)
+        } else if f == 14 {
+            // rx_group(x, re, name): the group's range of x by its program (`rx_group_range`); no row where the regex
+            // does not match x or the group took no part, as on the CPU.
+            let Some((from, to)) = rx_group_range(g, &x, &mut rx_scratch) else {
+                *vv.add(r as usize) = -1;
+                *counts.add(r as usize) = 0;
+                continue;
+            };
+            (Make::Range(from), to - from)
         } else if f == 6 {
             let y = st.txt_of(r, d, a, 2, 0, &mut unheld);
             let z = st.txt_of(r, d, a, 4, 0, &mut unheld);
@@ -2855,7 +3101,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 st.rd.cache_done(vc, 0, e as u64);
             }
         }
-        let value = text_value(a, table, ctl, canon, off, len, full);
+        let value = if !full && finds { atom_of_text(&st.rd, a, off, len, d) } else { text_value(a, table, ctl, canon, off, len, full) };
         if unheld {
             counter(4);
         }
@@ -3010,13 +3256,14 @@ unsafe fn text_value(a: *mut u32, t: *mut u32, ctl: *mut u32, canon: bool, off: 
     }
 }
 
-/// A made text's row: its value (`text_value`) and its keep bit.
+/// A made text's row: its value (`text_value`) and its keep bit: none for a text no atom is (`ROW_FIND`), as the CPU
+/// drops it at the function (`PROBE_OUT`).
 unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64, full: bool) {
     if full {
         at(ctl.add(6)).fetch_or(64, SeqCst);
     }
     *vv.add(r as usize) = value;
-    *counts.add(r as usize) = 1;
+    *counts.add(r as usize) = (full || value != -1) as u32;
 }
 
 // ---- The program (decisions 0603, 0648): its phases, a dispatch each, a group an item. ----
@@ -3501,6 +3748,7 @@ mod tests {
             ("view_number", super::NUMBER),
             ("atoms_len", 66),
             ("atoms_at", 67),
+            ("atoms_find", 85),
             ("verdict_get", 68),
             ("verdict_put", 69),
             ("text_find", 70),

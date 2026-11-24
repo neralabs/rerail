@@ -11374,3 +11374,27 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - rerail-simd's `all` of 64-bit lanes on NEON was true unless every lane was zero (`vminvq` where `vmaxvq` is meant): `col_get_in` took a step whose lanes mixed sealed and raw chunks as all raw. Tests: rerail-simd's eight-lane mask; the lanes test's relation with rows written past its sealed ones.
 - A batch that takes an index another batch's program builds checks that the build was whole again at its finish (`borrowed`), as ac66bcb1f8 did. 0872941bd7's wait at the take stays, so reads are ordered after the build, but the merge dropped the record: a builder's program stopped after the take went unseen (`an_index_whose_program_stopped_at_its_arena_is_not_built`).
 - Checked with Relax: check over ukl-rust, device-metal, simd and ukl-vec, no errors. Tests: simd 4; ukl-rust 5; ukl-vec 54; device-metal 98 of 99. The one left, `typing::file_local::tests::local_joins_are_pushed_on_a_version`, is the typing split's, next.
+
+### Q546. Roll-up 118 (django-bugs e8b914ded4 onto Pulling-it-all-together): what the merge chose
+
+- django-bugs' 0675 and the hub's parallel fix of the same causes: the hub's three commits (2e4513fea9, 71f7b8474c, 8510d466bb) were withdrawn (a1f17b705b), and 0675 was taken whole. That covers the graph facts' plan and lowerings (key bumped), the read of the store's pinned images before phase 0's first wave (`images_ahead`, `held_or_ahead`, `source_at`), and the CPU walk's `bind: false` reads. The hub's version pinned module images under an owner of their own, which 0675 does not; that difference is not carried.
+- `Reservation`: the hub's enum (`Held`/`Apart`) and django-bugs' alias (`Tracked<Reserved>`, a06ffd29ed: a buffer the host cannot read is tracked with a length of 1) were both left by the merge. The feeder's alias stays.
+- `places.rs`: both sides made the same change. The feeder's doc comment stays (0664).
+- Read list: the hub's `rel_group_mark` (84, after `tape_place_past_comments`) stays where it is. The feeder's `atoms_find` comes after it, as 85, in `clif/src/reads.rs` and in the generated `ukl/reads/relation.h`. The merge had dropped the closing brace between the two functions in relation.h; it is restored.
+- `metal_join.rs`'s taken index: the feeder's version holds the hub's `borrowed` record (ac66bcb1f8), and adds 0664's unbuilt check.
+- The CPU join program (`rerail_ukl_rust::join_program`) brought to django-bugs' `join_stages.uglykl`:
+  - the store's string hash and `atom_of_text` through `atoms_find` (`ROW_FIND`, 0666);
+  - the regex group's Pike VM (`rx_group_range`, f 14, 0668);
+  - the text kinds of `str_between`'s keys;
+  - a made text that is no atom keeps no row.
+  `JOIN_PROGRAM`'s digests are updated.
+- Coverage ledger blessed as progress: `@pkg_up` and `@str_between` now run on the device. `@rx_group` (not a constant regex) and an aggregate join not ordered by a number column now name their refusal. The lattice probes run on the device again (f700afa77b's placement).
+- Tests (Relax, RERAIL_GPU=cpu):
+  - device-metal join_rust, metal_join and setfix: 62.
+  - tests-corpus:
+    - phase0, the template and a_cat_of_a_text_its_join_made_keeps_its_row: 13;
+    - r5;
+    - every_operation_runs_on_every_executor.
+  - tests-rr module link and sum_and_join_lower: 6.
+  - accel-gpu a_started_batch_of_joins_is_charged_on_a_thread_with_no_evaluation.
+  - Check over rr-root, device-metal, clif, facts, ukl-rust and tests-corpus: 0 errors.

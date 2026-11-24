@@ -176,6 +176,12 @@ impl Interner {
     fn held(&self, s: &str) -> Option<i64> {
         self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?)))
     }
+    /// `v`, unless it is a text this walk made and deferred: no row of a relation the walk reads holds one, so a probe
+    /// of it (`PROBE_OUT`) matches nothing, as a text that is no atom (decision 0666: the device's atoms find, which
+    /// knows the atoms from before the walk, drops the row at the same step).
+    fn before_walk(&self, v: Option<i64>) -> Option<i64> {
+        v.filter(|&v| self.deferred_text(v).is_none())
+    }
     /// The value of text `s`: its atom (interned when new), or a morsel's deferred value.
     pub fn id(&mut self, s: &str) -> i64 {
         if self.deferred.is_some()
@@ -7977,7 +7983,7 @@ impl Step {
     }
 }
 
-pub(crate) const PROBE_OUT: u8 = 1;
+pub const PROBE_OUT: u8 = 1;
 pub(crate) const PROBE_A: u8 = 2;
 pub(crate) const PROBE_B: u8 = 4;
 /// Read by nothing (`UNREAD_OUT`, `_A`, `_B`): the text must exist (a function's NULL ends the branch) but needs no
@@ -8678,15 +8684,21 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         scratch(cx, v).map_or_else(|| cx.syms.name(v), str::to_owned)
     }
     /// The value a step's made text `t` gets, by how its slot is read (`probes`): held as text, none, looked up
-    /// (-1: no atom, so no row holds it), or interned.
-    fn text_value(cx: &mut Ctx<'_, '_>, probe: u8, t: String) -> i64 {
+    /// (-1: no atom, so no row holds it), or interned. A test of a bound slot (`bind` false) looks `t` up as the
+    /// slot's value: a text this walk deferred is one (`m = cat(w, ":", j)` tests `j` against the text it recovers
+    /// from `m`, and `j` a `join` this walk made), where a row of a relation it probes never holds one
+    /// (`before_walk`). Read as a probe's, the test dropped every row whose `j` the walk had made: phase 0's modules
+    /// of two files (`core:a+b`) were planned by no row.
+    fn text_value(cx: &mut Ctx<'_, '_>, probe: u8, bind: bool, t: String) -> i64 {
         if probe & TEXT_OUT != 0 {
             cx.texts.push(t);
             SCRATCH + cx.texts.len() as i64 - 1
         } else if probe & UNREAD_OUT != 0 {
             0
-        } else if probe & PROBE_OUT != 0 {
+        } else if probe & PROBE_OUT != 0 && !bind {
             cx.syms.held(&t).unwrap_or(-1)
+        } else if probe & PROBE_OUT != 0 {
+            cx.syms.before_walk(cx.syms.held(&t)).unwrap_or(-1)
         } else {
             cx.syms.id(&t)
         }
@@ -9049,8 +9061,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let mark = cx.texts.len();
                 let v = match joined {
                     None if j.probes[i] & TEXT_OUT != 0 || scratch(cx, y).is_none() => y,
-                    None => text_value(cx, j.probes[i], text(cx, y)),
-                    Some(t) => text_value(cx, j.probes[i], t),
+                    None => text_value(cx, j.probes[i], *bind, text(cx, y)),
+                    Some(t) => text_value(cx, j.probes[i], *bind, t),
                 };
                 if v == -1 && j.probes[i] & PROBE_OUT != 0 { return }
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
@@ -9061,7 +9073,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let v = if j.probes[i] & UNREAD_OUT != 0 {
                     0
                 } else if j.probes[i] & PROBE_OUT != 0 {
-                    match cat_held(cx.syms, val(slots, *a), val(slots, *b)) { Some(v) => v, None => return }
+                    // A test of a bound slot (`bind` false) may meet a text this walk deferred (`text_value`).
+                    match cat_held(cx.syms, val(slots, *a), val(slots, *b)).and_then(|v| if *bind { cx.syms.before_walk(Some(v)) } else { Some(v) }) { Some(v) => v, None => return }
                 } else {
                     cat(cx.syms, val(slots, *a), val(slots, *b))
                 };
@@ -9104,7 +9117,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 });
                 for (p, ax, by) in parts {
                     let (x, y) = p.map_or(("", w.as_str()), |p| (&w[..p], &w[p + 1..]));
-                    let held = |cx: &mut Ctx<'_, '_>, part: Part, t: &str| match part { Ok(v) => v, Err(()) => cx.syms.held(t) };
+                    let held = |cx: &mut Ctx<'_, '_>, part: Part, t: &str| match part { Ok(v) => v, Err(()) => cx.syms.before_walk(cx.syms.held(t)) };
                     match a {
                         Some(s) if probe & UNREAD_A != 0 => slots[*s] = 0,
                         Some(s) if probe & PROBE_A != 0 => match held(cx, ax, x) { Some(v) => slots[*s] = v, None => continue },
@@ -9155,7 +9168,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let v = match value {
                     rusqlite::types::Value::Integer(n) => n,
                     // Looked up and no atom: no row holds it.
-                    rusqlite::types::Value::Text(s) => match text_value(cx, j.probes[i], s) {
+                    rusqlite::types::Value::Text(s) => match text_value(cx, j.probes[i], *bind, s) {
                         -1 if j.probes[i] & PROBE_OUT != 0 => return,
                         v => v,
                     },

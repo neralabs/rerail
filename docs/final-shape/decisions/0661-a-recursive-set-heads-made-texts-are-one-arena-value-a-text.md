@@ -1,7 +1,7 @@
 # 0661. A recursive set head's made texts are one arena value a text
 
-Status: in progress (2026-11-23). Seven of the eight strata run on the device, and `literal_key` beside them; `ask_c`
-needs the forms listed at the end.
+Status: done (2026-11-24). Seven of the eight strata run on the device, and `literal_key` beside them. `ask_c`'s
+terms are the device's (0668); its component stays on the CPU, as it loads files inside its fixpoint (below).
 
 ## Intro
 
@@ -125,13 +125,10 @@ by value would pass it. The atom's step is counted by the comparison. The compil
 negated atom's key, as an atom's only key (a probe of every row), as a key of the component's own relation, or as two
 keys of one atom. Such an atom is never taken into a witness stage (0277), which compares keys by value.
 
-An atoms find on the device (the store's table from hash to id, decision 0401) would match the text by value. It
-needs the store's hash on the device, and it misses atoms interned in memory and not yet in blocks. The comparison
-needs neither.
-
-The CPU drops a row at the function whose text is no symbol yet (`PROBE_OUT`: no atom could match it). The device does
-not read the host's interner, so it drops that row at the atom. Their rows agree, and their counts agree from the atom
-on.
+Decision 0666 replaced this where the made text is read only as positive atoms' keys, as `ann_private`'s is. The
+device finds the atom the text is, by the store's hash in the atoms blocks' tables, and the atom is probed by value. A
+text no atom is drops the row at the function, as on the CPU, so every step's count agrees. The comparison above
+still serves a made text that is read otherwise as well.
 
 ## Tests
 
@@ -145,7 +142,7 @@ on.
   bound name, and a head's cat of a text function's value. Then a text function's value compared with another
   relation's symbol, and `literal_key`'s shape: a function of a cat of a made text, compared with that made text.
 - `text_functions_on_the_device_are_the_cpus` has a case of a made text as one of an atom's keys: names already lower
-  case, and a range of a name that is a name. Its rows are compared, and its counts from the atom on.
+  case, and a range of a name that is a name. Its rows are compared, and (since 0666) every step's count.
 - `a_string_join_on_the_device_is_the_cpus`: groups of 0 to 6 parts at places out of order, joined with a separator,
   and copied along alias edges (a recursive set head's text column). Clean, the component runs on the device. With a
   group of 40 parts, two names at one place and a part twice, those go to the host. Both runs' rows are the CPU's,
@@ -171,14 +168,16 @@ the device can run goes to it and stays there. Its findings are the CPU run's (C
 
 `literal_key`, not recursive, also moved to the device: its string join, and its function's value compared.
 
-A first run with the string join's row stage bound to the run's view format, where before a row stage had format 0,
-found one more RUF059 finding on the device. A row stage reads no view unless it is a string join, so its format is
-0 again otherwise. The two runs since have the CPU's findings. Which stage read the format wrongly was not found.
+A first run found one more RUF059 finding on the device. It was put down to the string join's row stage bound to the
+run's view format; that was wrong. About one run in seven differed, from an index another batch took being given back
+under it (decision 0664). Since that fix the repeated runs have the CPU's findings.
 
 Under the default binding, placement still puts these strata on the CPU at this scale (0657's threshold). That is
 the intended outcome: they can run on the device; at 10 files they should not.
 
-## Still to build
+## What stays on the CPU
 
-- **The `ask_c` component**: `@rx_group` (a regex's capture group, which the device's automata do not give), and
-  `@concat` and `@substr` in comparisons.
+- **The `ask_c` component**: its terms are the device's since decision 0668 (`@rx_group`, `@substr` of row numbers,
+  `str_between` of cats). The component is refused at run time for its gates and requests (0668, "What still keeps it
+  on the CPU"), and stays there: its fixpoint loads files, which the device cannot do. The user, 2026-11-24: "Loading
+  files can't happen on the GPU anyway".

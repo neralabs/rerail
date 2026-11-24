@@ -1540,7 +1540,7 @@ impl Batch {
             let had: HashSet<u32> = atoms.iter().copied().collect();
             atoms.extend(self.atoms.intern_all(&added).expect("the views' strings interned").iter().copied().filter(|a| !had.contains(a)));
         }
-        texts_of(&self.atoms, &atoms).expect("the atoms directory reads the batch's vocabulary")
+        texts_of(&*self.atoms, &atoms).expect("the atoms directory reads the batch's vocabulary")
     }
 }
 

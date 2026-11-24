@@ -530,6 +530,114 @@ UKL_INLINE int64_t sg_shuffle64(int64_t v, uint32_t from __UKL_PARAMS) {
     return (int64_t)((uint64_t)ukl_sg_shuffle((uint32_t)u, from __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(u >> 32), from __UKL_ARGS) << 32));
 }
 
+// foldhash's folded multiply: the 128-bit product's halves, xored.
+UKL_INLINE uint64_t fold_mul(uint64_t x, uint64_t y) { return (x * y) ^ ukl_umulhi64(x, y); }
+
+// n (at most 8) bytes from p as a little-endian word.
+UKL_INLINE uint64_t bytes_le(JSPACE const uint8_t* p, uint32_t n) {
+    uint64_t w = 0;
+    for (uint32_t k = 0; k < n; k++) w |= (uint64_t)p[k] << (8u * k);
+    return w;
+}
+
+// The store's hash of a string (`content_store::atoms::hash_str`: foldhash 0.2's quality hasher, fixed state, seed
+// 0x5EED71, a `str`'s bytes then 0xff), the one the atoms blocks' tables from hash to id are keyed by (decision 0666).
+// One thread hashes.
+UKL_INLINE uint64_t store_hash(JSPACE const uint8_t* v, uint32_t len) {
+    const uint64_t S0 = 0xc0ac29b7c97c50ddul, S1 = 0x3f84d5b5b5470917ul, S2 = 0x9216d5d98979fb1bul, S3 = 0xd1310ba698dfb5acul,
+                   S4 = 0x2ffd72dbd01adfb7ul, S5 = 0xb8e1afed6a267e96ul;
+    // The per-hasher seed: folded_multiply(0x5EED71, ARBITRARY4) ^ ARBITRARY3, rotated by the length.
+    uint64_t acc = fold_mul(0x5EED71ul, 0x452821e638d01377ul) ^ 0x082efa98ec4e6c89ul;
+    uint32_t r = len & 63u;
+    acc = r == 0u ? acc : ((acc >> r) | (acc << (64u - r)));
+    if (len <= 16u) {
+        uint64_t s0 = acc, s1 = S1;
+        if (len >= 8u) {
+            s0 ^= bytes_le(v, 8);
+            s1 ^= bytes_le(v + len - 8, 8);
+        } else if (len >= 4u) {
+            s0 ^= bytes_le(v, 4);
+            s1 ^= bytes_le(v + len - 4, 4);
+        } else if (len > 0u) {
+            s0 ^= (uint64_t)v[0];
+            s1 ^= ((uint64_t)v[len - 1] << 8) | (uint64_t)v[len / 2];
+        }
+        acc = fold_mul(s0, s1);
+    } else {
+        uint64_t s0 = acc, s1 = acc + S1;
+        uint32_t n = len;
+        if (n > 128u) {
+            uint64_t s2 = acc + S2, s3 = acc + S3;
+            if (n > 256u) {
+                uint64_t s4 = acc + S4, s5 = acc + S5;
+                do {
+                    s0 = fold_mul(bytes_le(v, 8) ^ s0, bytes_le(v + 48, 8) ^ S0);
+                    s1 = fold_mul(bytes_le(v + 8, 8) ^ s1, bytes_le(v + 56, 8) ^ S0);
+                    s2 = fold_mul(bytes_le(v + 16, 8) ^ s2, bytes_le(v + 64, 8) ^ S0);
+                    s3 = fold_mul(bytes_le(v + 24, 8) ^ s3, bytes_le(v + 72, 8) ^ S0);
+                    s4 = fold_mul(bytes_le(v + 32, 8) ^ s4, bytes_le(v + 80, 8) ^ S0);
+                    s5 = fold_mul(bytes_le(v + 40, 8) ^ s5, bytes_le(v + 88, 8) ^ S0);
+                    v += 96;
+                    n -= 96u;
+                } while (n > 256u);
+                s0 ^= s4;
+                s1 ^= s5;
+            }
+            do {
+                s0 = fold_mul(bytes_le(v, 8) ^ s0, bytes_le(v + 32, 8) ^ S0);
+                s1 = fold_mul(bytes_le(v + 8, 8) ^ s1, bytes_le(v + 40, 8) ^ S0);
+                s2 = fold_mul(bytes_le(v + 16, 8) ^ s2, bytes_le(v + 48, 8) ^ S0);
+                s3 = fold_mul(bytes_le(v + 24, 8) ^ s3, bytes_le(v + 56, 8) ^ S0);
+                v += 64;
+                n -= 64u;
+            } while (n > 128u);
+            s0 ^= s2;
+            s1 ^= s3;
+        }
+        s0 = fold_mul(bytes_le(v, 8) ^ s0, bytes_le(v + n - 16, 8) ^ S0);
+        s1 = fold_mul(bytes_le(v + 8, 8) ^ s1, bytes_le(v + n - 8, 8) ^ S0);
+        if (n >= 32u) {
+            s0 = fold_mul(bytes_le(v + 16, 8) ^ s0, bytes_le(v + n - 32, 8) ^ S0);
+            s1 = fold_mul(bytes_le(v + 24, 8) ^ s1, bytes_le(v + n - 24, 8) ^ S0);
+            if (n >= 64u) {
+                s0 = fold_mul(bytes_le(v + 32, 8) ^ s0, bytes_le(v + n - 48, 8) ^ S0);
+                s1 = fold_mul(bytes_le(v + 40, 8) ^ s1, bytes_le(v + n - 40, 8) ^ S0);
+                if (n >= 96u) {
+                    s0 = fold_mul(bytes_le(v + 48, 8) ^ s0, bytes_le(v + n - 64, 8) ^ S0);
+                    s1 = fold_mul(bytes_le(v + 56, 8) ^ s1, bytes_le(v + n - 56, 8) ^ S0);
+                }
+            }
+        }
+        acc = s0 ^ s1;
+    }
+    // A `str`'s 0xff (`write_u8`: the sponge), then the quality hasher's last fold.
+    return fold_mul(fold_mul(0xfful ^ acc, S0), 0x243f6a8885a308d3ul);
+}
+
+// The atom whose string is the made text at `off` in the arena, `len` bytes written by the SIMD group's lanes: its id,
+// found by the store's hash in the tables of atoms directory D's runs (`clif_atoms_find`, decision 0666), each
+// candidate's bytes compared by the group; -1 where no atom is (the directory lists every atom held, the store's and
+// those pending: no row of the batch's relations names one it misses). Every lane calls it.
+UKL_INLINE int64_t atom_of_text(JSPACE uint32_t* A, uint32_t off, uint32_t len, JSPACE const uint8_t* D, uint32_t lane __UKL_PARAMS)
+{
+    if (len == 0u) return 0;
+    JSPACE const uint8_t* mine = arena_bytes(A) + off;
+    ukl_sg_barrier();
+    uint64_t h = 0;
+    if (lane == 0) h = store_hash(mine, len);
+    h = (uint64_t)sg_shuffle64((int64_t)h, 0u __UKL_ARGS);
+    for (uint32_t k = 0;; k++) {
+        uint32_t id = 0;
+        if (lane == 0) id = clif_atoms_find(D, 0ul, h, len, k);
+        id = ukl_sg_shuffle(id, 0u __UKL_ARGS);
+        if (id == 0xffffffffu) return -1;
+        JSPACE const uint8_t* theirs = D + clif_atoms_at(D, 0ul, id);
+        bool diff = false;
+        for (uint32_t i = lane; i < len; i += SGW) diff = diff || theirs[i] != mine[i];
+        if (ukl_sg_ballot(diff __UKL_ARGS) == 0u) return (int64_t)id;
+    }
+}
+
 // A text's room in the arena: its bytes, and in a canonical one (`canon`) its length before them.
 UKL_INLINE uint32_t arena_claim(JSPACE uint32_t* A, uint32_t len, bool canon, uint32_t lane, UKL_PRIVATE bool* full __UKL_PARAMS)
 {
@@ -1195,6 +1303,112 @@ UKL_INLINE void row_strjoin(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, 
     }
 }
 
+// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0668): program G (`text::table::GroupProgram`, the regex's
+// Thompson NFA) walked over x by a Pike VM, as `regex_automata`'s `PikeVM` walks it, by lane 0: its threads in
+// priority order, each state once a position (a sparse set), the group's two slots a thread; a match cuts the threads
+// after it, and the last match found is the leftmost-first one. f: the group's scratch, two thread lists and the
+// closure's stack (`GroupProgram::scratch`). Whether the group took part, its range in [from, to).
+UKL_INLINE void rx_group_closure(JSPACE const uint32_t* w, JSPACE uint32_t* dense, JSPACE uint32_t* sparse, JSPACE uint32_t* slots,
+                                 UKL_PRIVATE uint32_t* count, JSPACE uint32_t* stack, uint32_t sid, uint32_t pos, uint32_t n,
+                                 uint32_t c0, uint32_t c1) {
+    JSPACE const uint32_t* st = w + w[4];
+    uint32_t cur[2] = {c0, c1};
+    uint32_t sp = 0, cap = w[3];
+    stack[0] = sid;
+    stack[1] = 0;
+    sp = 1;
+    // Bounded: each state is entered once a closure, and pushes its entries, `w[3]` at most.
+    for (uint32_t turn = 0; turn < 2u * cap + 2u && sp > 0; turn++) {
+        sp--;
+        uint32_t a = stack[2 * sp], old = stack[2 * sp + 1];
+        if ((a & 0x80000000u) != 0u) {
+            cur[a & 1u] = old;
+            continue;
+        }
+        uint32_t i = sparse[a];
+        if (i < *count && dense[i] == a) continue;
+        sparse[a] = *count;
+        dense[*count] = a;
+        slots[2 * *count] = cur[0];
+        slots[2 * *count + 1] = cur[1];
+        *count += 1;
+        JSPACE const uint32_t* s = st + 4 * a;
+        uint32_t kind = s[0];
+        if (kind == 3u) {
+            for (uint32_t k = s[1]; k > 0 && sp < cap; k--) {
+                stack[2 * sp] = w[s[2] + k - 1];
+                stack[2 * sp + 1] = 0;
+                sp++;
+            }
+        } else if (kind == 4u && sp + 2 <= cap) {
+            if (s[1] < 2u) {
+                stack[2 * sp] = 0x80000000u | s[1];
+                stack[2 * sp + 1] = cur[s[1]];
+                sp++;
+                cur[s[1]] = pos;
+            }
+            stack[2 * sp] = s[2];
+            stack[2 * sp + 1] = 0;
+            sp++;
+        } else if (kind == 5u && ((s[1] == 0u && pos == 0) || (s[1] == 1u && pos == n)) && sp < cap) {
+            stack[2 * sp] = s[2];
+            stack[2 * sp + 1] = 0;
+            sp++;
+        }
+    }
+}
+
+UKL_INLINE bool rx_group_range(JSPACE const uint8_t* G, Txt x, JSPACE uint8_t* f, uint32_t lane, UKL_PRIVATE uint32_t* from,
+                               UKL_PRIVATE uint32_t* to __UKL_PARAMS) {
+    JSPACE const uint32_t* w = (JSPACE const uint32_t*)G;
+    uint32_t S = w[0], n = txt_len(x);
+    uint32_t got0 = NONE, got1 = NONE;
+    if (lane == 0) {
+        JSPACE const uint32_t* st = w + w[4];
+        JSPACE uint32_t* m = (JSPACE uint32_t*)f;
+        // Two lists (dense, sparse, two slots a thread), then the stack.
+        JSPACE uint32_t* lists[2] = {m, m + 4 * S};
+        JSPACE uint32_t* stack = m + 8 * S;
+        uint32_t counts[2] = {0, 0};
+        uint32_t c = 0;
+        rx_group_closure(w, lists[0], lists[0] + S, lists[0] + 2 * S, &counts[0], stack, w[2], 0, n, NONE, NONE);
+        for (uint32_t pos = 0; pos <= n && counts[c] > 0; pos++) {
+            JSPACE uint32_t* cd = lists[c];
+            JSPACE uint32_t* cs = lists[c] + 2 * S;
+            JSPACE uint32_t* nd = lists[1 - c];
+            counts[1 - c] = 0;
+            uint32_t b = pos < n ? (uint32_t)txt_byte(x, pos) : 0u;
+            for (uint32_t i = 0; i < counts[c]; i++) {
+                JSPACE const uint32_t* s = st + 4 * cd[i];
+                if (s[0] == 6u) {
+                    got0 = cs[2 * i];
+                    got1 = cs[2 * i + 1];
+                    break;
+                }
+                if (pos == n) continue;
+                uint32_t next = NONE;
+                if (s[0] == 1u && s[1] <= b && b <= s[2]) next = s[3];
+                else if (s[0] == 2u) {
+                    for (uint32_t k = 0; k < s[1]; k++) {
+                        JSPACE const uint32_t* r = w + s[2] + 3 * k;
+                        if (r[0] <= b && b <= r[1]) {
+                            next = r[2];
+                            break;
+                        }
+                    }
+                }
+                if (next != NONE) rx_group_closure(w, nd, nd + S, nd + 2 * S, &counts[1 - c], stack, next, pos + 1, n, cs[2 * i], cs[2 * i + 1]);
+            }
+            c = 1 - c;
+        }
+    }
+    got0 = ukl_sg_shuffle(got0, 0u __UKL_ARGS);
+    got1 = ukl_sg_shuffle(got1, 0u __UKL_ARGS);
+    *from = got0;
+    *to = got1;
+    return got0 != NONE && got1 != NONE;
+}
+
 UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
                          JSPACE int64_t* V, JSPACE const uint8_t* G, JSPACE uint8_t* scratch, JSPACE const uint32_t* P, JSPACE const uint8_t* D,
                          JSPACE uint8_t* VC, JSPACE uint32_t* T, UKL_GLOBAL uint32_t* ctl, StageP s, uint32_t sg, uint32_t lane __UKL_PARAMS)
@@ -1276,6 +1490,9 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
         // step 2e): one lane looks it up (an entry's offset from VC, what it found in the low bits); a kept text is
         // copied into the arena.
         bool keeps = (s->agg[0] & (1u << 9)) != 0;
+        // `ROW_FIND` (bit 10): the made text's value is the atom it is, found in the atoms directory D (`atom_of_text`,
+        // decision 0666), or no row where none is.
+        bool finds = (s->agg[0] & (1u << 10)) != 0;
         uint32_t ksym = 0;
         if (keeps) {
             int64_t kv = key_value(s, L, row, 7);
@@ -1297,16 +1514,16 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                     JSPACE uint8_t* o = (JSPACE uint8_t*)A + 16 + off;
                     for (uint32_t i = lane; i < len; i += SGW) o[i] = e[16 + i];
                 }
-                int64_t value = full ? -1 : (canon ? canon_text(A, T, off, len, ctl, lane __UKL_ARGS) : arena_value(off, len));
+                int64_t value = full ? -1 : finds ? atom_of_text(A, off, len, D, lane __UKL_ARGS) : (canon ? canon_text(A, T, off, len, ctl, lane __UKL_ARGS) : arena_value(off, len));
                 if (lane == 0) {
                     if (full) ukl_atomic_or(&ctl[6], 64u);
                     V[row] = value;
-                    counts[row] = 1;
+                    counts[row] = (uint32_t)(full || value != -1);
                 }
                 continue;
             }
         }
-        Txt y = txt_of(s, L, row, D, A, 2, s->agg[1] >> 4, &unheld), z = y;
+        Txt y = txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld), z = y;
         uint32_t f = (s->agg[0] >> 16) & 255;
         uint32_t lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         uint64_t u = 0;
@@ -1331,9 +1548,10 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 len += pad;
             }
         } else if (f == 12) {
-            // str_between(x, y, z): x less prefix y (key 2) and suffix z (key 4); no row where x has not both.
-            y = txt_of(s, L, row, D, A, 2, 0, &unheld);
-            z = txt_of(s, L, row, D, A, 4, 0, &unheld);
+            // str_between(x, y, z): x less prefix y (keys 2, 3) and suffix z (keys 4, 5), each of its kind (agg[1] >> 4
+            // and >> 8: a symbol, a held cat's parts, an arena text); no row where x has not both.
+            y = txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld);
+            z = txt_of(s, L, row, D, A, 4, (s->agg[1] >> 8) & 15, &unheld);
             uint32_t ly = txt_len(y), lz = txt_len(z);
             bool fits = lx >= ly + lz;
             bool diff = !fits;
@@ -1374,6 +1592,17 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             from = 0;
             to = cut;
             len = cut;
+        } else if (f == 14) {
+            // rx_group(x, re, name): the group's range of x by its program G (`rx_group_range`); no row where the
+            // regex does not match x or the group took no part, as on the CPU.
+            if (!rx_group_range(G, x, fs, lane, &from, &to __UKL_ARGS)) {
+                if (lane == 0) {
+                    V[row] = -1;
+                    counts[row] = 0;
+                }
+                continue;
+            }
+            len = to - from;
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);
@@ -1431,12 +1660,13 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 if (lane == 0) clif_cache_done(VC, 0ul, r & ~3ul);
             }
         }
-        int64_t value = full ? -1 : (canon ? canon_text(A, T, off, len, ctl, lane __UKL_ARGS) : arena_value(off, len));
+        int64_t value = full ? -1 : finds ? atom_of_text(A, off, len, D, lane __UKL_ARGS) : (canon ? canon_text(A, T, off, len, ctl, lane __UKL_ARGS) : arena_value(off, len));
         if (lane == 0) {
             if (full) ukl_atomic_or(&ctl[6], 64u);
             if (unheld && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
             V[row] = value;
-            counts[row] = 1;
+            // A text no atom is (`ROW_FIND`): no row, as the CPU drops it at the function (`PROBE_OUT`).
+            counts[row] = (uint32_t)(full || value != -1);
         }
     }
 }

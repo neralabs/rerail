@@ -1364,6 +1364,11 @@ use rerail_blocks::vector::Vector;
             let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
             db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![if k == 7 { String::new() } else { name }, k]).unwrap();
         }
+        // Long names, for each of the store hash's paths on the device (past 16, 128 and 256 bytes: decision 0666).
+        for (k, parts_n) in [(2000, 40), (2001, 60), (2002, 90), (2003, 140), (2004, 200)] {
+            let name: String = (0..parts_n).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
+        }
         for k in 0..80 {
             let len = 1 + next(3);
             let name: String = (0..len).map(|_| parts[next(5) as usize]).collect();
@@ -1409,15 +1414,38 @@ use rerail_blocks::vector::Vector;
             // `literal_key` does) a made text, the function's text made of it.
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v1\nfunc str_between v0 v3 {} {}\nhead v1 v2", sym("<"), sym("<"), sym("")),
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v3 {} v2\nfunc str_concat v4 v3 {}\nfunc str_between v2 v4 {} {}\nhead v4 v1", sym("("), sym(",)"), sym("("), sym(",)")),
+            // A regex's capture groups (decision 0668), as `match("(?<d>…)", s)` lowers them: a path's directory and
+            // its first part's rest (the C includes' splits), a lazy repeat before a greedy one, a group in a repeat
+            // (its last part), a group of a multi-byte class; no row where the regex does not match or the group
+            // took no part. One made into a cat after it.
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<fw>[^/]+)/(?<rest>.+))$"), sym("rest")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<a>[a-z]*?)(?<b>[a-z_]*)\\..*)$"), sym("b")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?:(?<p>[A-Za-z]+)_)+.*)$"), sym("p")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<u>x9)|(?<g>[αβé]+).*)$"), sym("g")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nfunc str_concat v3 v2 {}\nhead v3 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d"), sym("/x.h")),
+            // `str_between` of made texts, as a cat compared with a bound text inverts to (`n = str_between(c,
+            // cat(l, "/"), "")`): a prefix that is a cat of a name, of a constant, a text function's value; a suffix
+            // that is a cat.
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("/"), sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\ncat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("b"), sym("")),
+            format!("pos {n} v0 v1\nfunc head v2 v0\nfunc str_between v3 v0 v2 {}\nhead v3 v1", sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v0\nfunc str_between v4 v1 {} v3\nhead v4 v2", sym("_"), sym("")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
-        // a range of a name that is a name. The CPU drops a row at the function whose text is no symbol yet, which no
-        // atom could match (`PROBE_OUT`); the device, which does not read the host's interner, drops it at the atom.
-        // So their counts agree from the atom on.
+        // a range of a name that is a name. Its value is the atom the text is, found by the store's hash in the atoms
+        // directory (`ROW_FIND`, decision 0666), and the row is dropped at the function where none is, as the CPU drops
+        // it (`PROBE_OUT`): every step's count agrees.
         let keyed = [
             format!("pos {n} v0 v1\nfunc sql_lower v2 v0\npos {n} v2 v1\nhead v0 v1"),
+            // Every name found (the empty one too), of every length.
+            format!("pos {n} v0 v1\nfunc str_concat v2 v0 {}\npos {n} v2 v1\nhead v0 v1", sym("")),
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:4\nfunc str_concat v3 v2 {}\npos {n} v3 v1\nhead v2 v1", sym("")),
+            // A capture group as an atom's key (`c_inc_found`'s `dir_entry(dd, bb, 0)`): the whole name, and a first
+            // part that may be a name.
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v1\nhead v0 v1", sym("^(?:(?<h>.*))$"), sym("h")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v3\nhead v0 v3", sym("^(?:(?<h>foo|Bar|SRC|x9).*)$"), sym("h")),
         ];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
             let mut got = Vec::new();
@@ -1442,12 +1470,7 @@ use rerail_blocks::vector::Vector;
                         assert_eq!(r.per_symbol, 0, "{case}: symbols read in place: {r:?}");
                     }
                 }
-                let mut counts = super::super::step_counts(&db, "dev_fn").unwrap();
-                if case == "made keys" {
-                    for c in &mut counts {
-                        c.drain(..c.len() - 1);
-                    }
-                }
+                let counts = super::super::step_counts(&db, "dev_fn").unwrap();
                 super::super::close(&db, "dev_fn").unwrap();
                 let mut rows: Vec<(String, i64)> = db
                     .prepare("SELECT sym_text(c0), c1 FROM temp.h0")

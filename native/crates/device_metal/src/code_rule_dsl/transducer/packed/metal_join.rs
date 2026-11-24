@@ -134,6 +134,10 @@ pub(in crate::code_rule_dsl) const ROW_STRJOIN: u32 = 6;
 /// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
 pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
+/// With a text function (`ROW_MAP`, `ROW_CAT`, …): its value is the atom whose string the made text is, found by the
+/// store's hash in the atoms directory's tables (decision 0666), and no row where no atom is. A symbol, not an arena
+/// text: an atom keyed by it is probed by value.
+pub(in crate::code_rule_dsl) const ROW_FIND: u32 = 1 << 10;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -152,6 +156,9 @@ pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_STR_BETWEEN: u32 = 12;
 /// `pkg_up(x, k)`: X less its last key 5 dotted parts; empty past its first.
 pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
+/// `rx_group(x, re, name)`: the range of X that regex `re`'s group `name` captures, by its program (the stage's
+/// automaton, `text::table::GroupProgram`, decision 0668); no row where `re` does not match or the group took no part.
+pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
@@ -1022,7 +1029,16 @@ impl DevIndex {
     }
 }
 
+/// An index's last bucket offset before its build writes it (its rows, `ix_offs_one`): never a count of rows.
+const UNBUILT: u32 = u32::MAX;
+
+/// The byte in its block of index room `room`'s last bucket offset: its rows once built.
+fn last_offset(room: &rerail_blocks::relation::IndexRoom) -> usize {
+    room.offs + 4 * (room.mask as usize + 1)
+}
+
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
+
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))
@@ -1389,32 +1405,6 @@ impl DevBytes {
     }
 }
 
-/// Address space a kernel binds (`rerail_device::device::Reserved`): an arena, a canonical table, a sort's room. Where
-/// the host reaches its pages (the CPU backend's, a wrap of the host's), held by a ledger of its own over all of it, as a
-/// pooled lease is (decision 0491 step 2): a command buffer that binds its bytes holds it, and when dropped its pages
-/// go only once that work completes. A sparse buffer's pages (Metal's) are the device's alone, bound by no address.
-pub(in crate::code_rule_dsl) enum Reservation {
-    Held(rerail_blocks::ledger::Tracked<rerail_device::device::Reserved>),
-    Apart(rerail_device::device::Reserved),
-}
-
-impl std::ops::Deref for Reservation {
-    type Target = rerail_device::device::Reserved;
-    fn deref(&self) -> &rerail_device::device::Reserved {
-        match self {
-            Reservation::Held(t) => t,
-            Reservation::Apart(r) => r,
-        }
-    }
-}
-
-/// `bytes` of address space, its first `mapped` mapped (`rerail_device::device::reserve`), held as `Reservation` says.
-fn reserve(device: &rerail_device::device::Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reservation, Error> {
-    let r = rerail_device::device::reserve(device, bytes, mapped, host_reads).map_err(|_| Error::BackendCapacity)?;
-    let base = r.buffer().contents().cast::<u8>();
-    Ok(if base.is_null() { Reservation::Apart(r) } else { Reservation::Held(rerail_blocks::ledger::Tracked::new(r, base, bytes)) })
-}
-
 /// A batch's text arena: the texts its text functions make (`TEXTFN`), shared by every job in the batch. Its first
 /// word is an atomic bump of the bytes given out, which counts on past the end, so a full arena says how much its
 /// jobs wanted; its second, its capacity. Address space (`rerail_device::device::Reserved`, host-read: on Metal the
@@ -1481,6 +1471,21 @@ pub(in crate::code_rule_dsl) const ARENA_START: usize = 64 << 10;
 /// bump of its header.
 fn text_arena_max() -> usize {
     rerail_accel::budget::metal_share(64 << 20).clamp(ARENA_START, u32::MAX as usize / 2)
+}
+
+/// Address space (`rerail_device::device::reserve`) held as a pooled lease is (decision 0491 step 2): by a ledger
+/// found at its host address (`rerail_blocks::ledger::Tracked`). A submission that binds it holds it, so what drops it
+/// while queued work reads it (an arena, a room, a sort's) lets it go only once that work completes; and a job's
+/// buffers in it are ones the ledger knows (`Pass::hold_for_later`'s check), as a block's and a lease's are.
+type Reservation = rerail_blocks::ledger::Tracked<rerail_device::device::Reserved>;
+
+/// `rerail_device::device::reserve`, its `bytes` of address space tracked from its first byte (a buffer the host
+/// cannot read is found by no address: nothing binds it by one).
+fn reserve(device: &rerail_device::device::Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reservation, Error> {
+    let r = rerail_device::device::reserve(device, bytes, mapped, host_reads).map_err(|_| Error::BackendCapacity)?;
+    let base = r.buffer().contents().cast::<u8>();
+    let len = if base.is_null() { 1 } else { bytes };
+    Ok(rerail_blocks::ledger::Tracked::new(r, base, len))
 }
 
 impl Arena {
@@ -2249,7 +2254,7 @@ impl Batch {
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
-                    taken = Some((room.index as u32, f.done.clone(), f.whole.clone()));
+                    taken = Some((room, f.done.clone(), f.whole.clone()));
                     break 'room None;
                 }
                 // Bound by the builder's buffer: its launches, before this batch's probes in the open submission,
@@ -2271,7 +2276,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 f.lent = true;
-                taken = Some((f.room.index as u32, f.done.clone(), f.whole.clone()));
+                taken = Some((f.room, f.done.clone(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
@@ -2287,15 +2292,23 @@ impl Batch {
         };
         // Out of the block's lock: its builder's work done before this batch encodes a read of it. A builder the device
         // failed fails this batch too.
-        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it. Its
-        // program may go on past the work this waits for (a later level, a run again), and stop there before the
-        // build: asked again at this batch's finish (`borrowed`), once all of it is done.
-        if let Some((index, done, whole)) = taken {
+        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it.
+        // One whose builder's program parked before the build (flag 128: a room or an arena's pages short, the rest of
+        // the program a later submission's) is unbuilt still, its last bucket offset `UNBUILT` (decision 0664): this
+        // batch's work is ordered after none of that submission's.
+        if let Some((room, done, whole)) = taken {
             if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 || !whole() {
                 return Err(Error::BackendFailure);
             }
+            // SAFETY: the builder's work is done; the room stays reserved while another batch took it (`lent`).
+            if rel.index_rows() > 0 && unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().read_volatile() } == UNBUILT {
+                crate::code_rule_dsl::prof::count_named("device.index taken in flight, its builder parked before the build (its batch on the CPU)".into(), 1);
+                return Err(Error::BackendFailure);
+            }
+            // Read again at this batch's finish (`borrowed`): its builder's program may yet stop before the build (a
+            // later stack, a park), as its control words then say.
             self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
-            return Ok(DevIndex { index, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -2345,6 +2358,12 @@ impl Batch {
             return Err(Error::BackendCapacity);
         };
         let n = rel.rows;
+        if !rel.live && rel.index_rows() > 0 {
+            // Its last bucket offset unbuilt until its build writes its rows there (`ix_offs_one`): what a batch that
+            // takes it in flight checks once its builder's work is done (`index`).
+            // SAFETY: the room is this batch's, just reserved in the block; nothing reads or writes it yet.
+            unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().write_volatile(UNBUILT) };
+        }
         // Held by the batch from here: an error before its builder is all encoded gives the room back when the batch
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
@@ -3592,12 +3611,12 @@ impl Batch {
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
                         item_kinds: prog.items.iter().map(|i| i[0] >> 24).collect(), jumps: prog.jumps, last };
         let rounds = ProgramSizes::now().rounds.unwrap_or(STACK_ROUNDS_FIRST).max(1);
-        let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
-        // The builders whose jobs it holds (every one encoded and not launched yet): whether it built their indexes
-        // whole is read from its control words once its stacks are done (`Built`).
-        for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
-            b.whole = Some(Built { ctl: r.ctl.clone() });
+        // What its jobs reach, held while the program lives (`Ran::holds`).
+        let holds = rerail_blocks::ledger::Fence::new();
+        for (b, _) in kit.uses.iter().chain(&kit.resident) {
+            holds.uses_address(b.contents() as usize);
         }
+        let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit, holds };
         self.launch(r)
     }
 
@@ -3660,6 +3679,13 @@ impl Batch {
         let table = self.arena.as_ref().filter(|_| kit.rebase.tt != 0).and_then(|a| a.canon_buffer());
         // Its own submission: what is open committed first, so the stack is one launch alone.
         self.submit_open()?;
+        // The builders whose jobs it holds (every one encoded and not launched yet): whether it built their indexes
+        // whole is read from its control words once its stacks are done (`Built`). Marked once what was open is
+        // committed: that submission tells only the builders it holds, not this program's, whose work is the stack's
+        // (a batch that took one waited for the submission before the stack, and read its index unbuilt).
+        for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
+            b.whole = Some(Built { ctl: r.ctl.clone() });
+        }
         let kit = &r.kit;
         let pass = self.open()?;
         pass.stack();
@@ -4991,6 +5017,12 @@ struct Ran {
     seq: u32,
     grids: Option<Words>,
     kit: Kit,
+    /// What its jobs reach, held from its launch until it is dropped, its work done (decision 0491 step 2): the
+    /// submission that held them since they were queued (`Pass::hold_for_later`) is committed before its first stack,
+    /// and its next stacks are launched once the submissions before them completed, so what their holders dropped
+    /// meanwhile (a stage's parameters, a table's lease) would go back to its pool while a stack still reads it. A
+    /// fence never committed ends its uses when dropped.
+    holds: std::sync::Arc<rerail_blocks::ledger::Fence>,
 }
 
 /// A stack's phases at most (decision 0648): its grids' room.
@@ -5816,6 +5848,31 @@ pub mod tests {
         taker.finish().unwrap();
         builder.finish().unwrap();
         assert_eq!(r.find_index(&[0], n as u32), Some(built.index as usize));
+        // Taken, and the same index built by the host meanwhile (it finds none marked): the builder, done first, keeps
+        // its own, which the taker's work may not have read yet. Given back, its entry in the directory was cleared,
+        // and a taker's probes read an empty index.
+        let mut builder = Batch::new().unwrap();
+        let built = builder.index(&placed, &[0, 1]).unwrap();
+        builder.commit_open().unwrap();
+        let mut taker = Batch::new().unwrap();
+        let taken = taker.index(&placed, &[0, 1]).unwrap();
+        assert!(!taken.built && taken.index == built.index, "taken");
+        let home = placed.home.as_ref().unwrap();
+        let hosts = {
+            let _lock = home.ix.lock().unwrap();
+            // SAFETY: under the block's index lock; the rows are written.
+            let room = unsafe { r.try_reserve_index(&home.block, &[0, 1], n as u32) }.unwrap();
+            unsafe {
+                r.build_index(&room);
+                r.index_built(&room);
+            }
+            room.index
+        };
+        builder.finish().unwrap();
+        let ix = r.index_at(built.index as usize);
+        assert!(ix.ncols == 2 && ix.state != rerail_blocks::relation::DEAD && ix.offs.len() == r.index_at(hosts).offs.len(), "a taken index kept by its builder");
+        assert_eq!(ix.rows.as_slice().len(), n, "its rows");
+        taker.finish().unwrap();
         // Not committed: each builds its own, and the second to finish gives its back.
         let (mut a, mut b) = (Batch::new().unwrap(), Batch::new().unwrap());
         let (ia, ib) = (a.index(&placed, &[1]).unwrap(), b.index(&placed, &[1]).unwrap());
@@ -5826,19 +5883,20 @@ pub mod tests {
         let ix = r.index_at(ib.index as usize);
         assert_eq!((ix.ncols, ix.state), (0, rerail_blocks::relation::DEAD), "the second given back");
         // A second build another batch took, whose builder finds the first built when it finishes: its room is kept,
-        // as the taker's stages may still be queued to read it (`InFlight::lent`).
+        // as the taker's stages may still be queued to read it (`InFlight::lent`). A key no build above marked (the
+        // host's [0, 1] is).
         let (mut x, mut a) = (Batch::new().unwrap(), Batch::new().unwrap());
-        let ix_x = x.index(&placed, &[0, 1]).unwrap();
-        let ix_a = a.index(&placed, &[0, 1]).unwrap();
+        let ix_x = x.index(&placed, &[1, 0]).unwrap();
+        let ix_a = a.index(&placed, &[1, 0]).unwrap();
         assert!(ix_x.built && ix_a.built && ix_x.index != ix_a.index);
         a.commit_open().unwrap();
         let mut t = Batch::new().unwrap();
-        let ix_t = t.index(&placed, &[0, 1]).unwrap();
+        let ix_t = t.index(&placed, &[1, 0]).unwrap();
         assert!(!ix_t.built && ix_t.index == ix_a.index, "the committed build taken");
         x.finish().unwrap();
         a.finish().unwrap();
         t.finish().unwrap();
-        assert_eq!(r.find_index(&[0, 1], n as u32), Some(ix_x.index as usize));
+        assert_eq!(r.find_index(&[1, 0], n as u32), Some(ix_x.index as usize));
         assert_ne!(r.index_at(ix_a.index as usize).state, rerail_blocks::relation::DEAD, "a taken build's room kept");
         // A delta read in place (its rows `from..`): its own index, though its count is that of the first rows'.
         let half = n / 2;

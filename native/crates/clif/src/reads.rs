@@ -174,6 +174,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_place_past_comments", params: &[I32], ret: I32, hot: false, body: place_past_comments },
     // A hashed index's place's mark (decision 0671). Last, so no other read's number moves.
     Read { family: Family::Relation, name: "rel_group_mark", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_mark },
+    // A string's atom by its hash in a directory of runs of atoms (decision 0666): the descriptor is an
+    // `AtomsDirRoot`. Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "atoms_find", params: &[I64, I32, I32], ret: I32, hot: false, body: crate::atoms_reads::atoms_find },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

@@ -335,7 +335,18 @@ fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
         Some((f, args)) if makes_text(f) && !args.is_empty() => {
             // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
             let constants = device_fn(f) != Some(DeviceFn::RegexReplace) || args[1..].iter().all(|a| !matches!(a, TermRef::Var(_)));
-            constants && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0])) && args[1..].iter().all(|a| !is_call(a))
+            // Its numbers may be row code (`substr(s, 1, strlen(s) - 2)`: a name's characters, arithmetic), bound
+            // by stages before it; its other texts are variables or constants, but `str_between`'s, which may be cats
+            // (a cat compared with a bound text inverts to `n = str_between(c, cat(l, "/"), "")`).
+            let (texts, between) = match device_fn(f) {
+                Some(DeviceFn::Text { texts, f: tf, .. }) => (texts, tf == caps::TextFn::StrBetween),
+                _ => (args.len(), false),
+            };
+            constants
+                && (!is_call(&args[0]) || is_text_fn_of_rows(v, args[0]))
+                && args[1..].iter().enumerate().all(|(k, &a)| {
+                    !is_call(&a) || if k + 1 >= texts { row_term(v, a) } else { between && (is_made_cat(v, a) || is_text_fn_of_rows(v, a)) }
+                })
         }
         _ => false,
     }
@@ -423,15 +434,15 @@ impl Shape {
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
-                // text bound, made on the device when the head alone reads it; not in a recursive stratum, unless it
-                // keeps its texts (0307). A cat of made texts (`is_made_cat`) binds a variable only.
+                // text bound, made on the device (in a recursive stratum too, its rounds keeping their texts one value
+                // a content, decision 0661). A cat of made texts (`is_made_cat`) binds a variable only.
                 Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
                     if [(l, r), (r, l)].into_iter().any(|(c, o)| {
                         (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c))
                             && match o {
-                                TermRef::Var(x) => {
-                                    !recursive || order.steps.iter().any(|s| b.plain_atom(s.at).is_some_and(|a| !a.neg() && a.args().any(|t| t.var() == Some(x))))
-                                }
+                                // In a recursive stratum too, as a head's cat: the rounds keep each made text one value a
+                                // content (decision 0661), and an atom keyed by it finds the atom it is (0666).
+                                TermRef::Var(_) => true,
                                 TermRef::Call(..) => false,
                                 _ => true,
                             }
@@ -798,8 +809,8 @@ pub mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
-        // is a symbol); `lower(x)` is (a text the device makes into its arena).
+        // `sha256(x)` is not, nor `lower(x)` in a recursive stratum; a cat in one is (its rounds keep their texts one
+        // value a content, decision 0661); `lower(x)` is (a text the device makes into its arena).
         let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
         let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
@@ -811,7 +822,7 @@ pub mod tests {
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
-        assert!(rec.forms.contains(&Form::Computed));
+        assert!(!rec.forms.contains(&Form::Computed), "{:?}", rec.forms);
         let lower = || cmp(T::Var("z"), T::Call("lower", vec![T::Var("x")]));
         let mut len = Shape::default();
         adds(&mut len, &[atom("kind", false), cmp(T::Var("z"), T::Call("sha256", vec![T::Var("x")]))], &[], 1.0, false);
