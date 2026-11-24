@@ -14,9 +14,17 @@ export const DAEMON_LOG_FILE = "daemon.log";
 export const DAEMON_ACCESS_TOKEN_FILE = "access-token";
 /** In `~/.rerail` (never `RERAIL_HOME`): which Claude Code status lines Rerail registered. */
 export const CLAUDE_STATUS_DATABASE_FILE = "harness.sqlite";
+/**
+ * In the Rerail home: one file per Claude Code session, named by its session id, holding the status line the daemon
+ * last drew for it. Claude Code's status command prints it (`claude-status.sh`). A name no one else would give a
+ * folder: a Rerail home may be shared with other files (`RERAIL_HOME=$HOME`).
+ */
+export const STATUS_LINES_FOLDER = "claude-status-lines";
 
 /** In the Rerail home: the updater's record of the installed versions and the update channel. */
 export const UPDATE_STATE_FILE = "update-state.json";
+/** In the Rerail home: the daemon's daily check for a newer Rerail, its last answer and when it last asked. */
+export const UPDATE_CHECK_FILE = "update-check.json";
 /** In the Rerail home: the installed versions. */
 export const VERSIONS_DIR = "versions";
 /** In the Rerail home: the link to the active package root. */

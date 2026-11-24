@@ -1,4 +1,4 @@
-//! The named-only tape's rule (RER-131's) on every `.rerail` file of the repository. A token is a
+//! The named-only tape's rule (decision 0161's) on every `.rerail` file of the repository. A token is a
 //! **delimiter** (a bracket, `,`, `;`, `|`, `<`, `>`, a quote) or not. A delimiter is left out
 //! where its gap is implied. Any other token (a keyword, an operator, `:`, `.`, `=>`) is left out
 //! only where its parent's kind implies it in every gap it can stand in: under one parent kind,
@@ -13,7 +13,7 @@ use rerail_rr_syntax::tape::{self, FIRST_ANONYMOUS, KIND_NAMES};
 use std::collections::BTreeMap;
 
 fn corpus() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -31,7 +31,7 @@ fn corpus() -> Vec<(String, String)> {
     files
 }
 
-/// RER-131's delimiters (`tape/tokens.rs`, `is_delimiter`).
+/// Decision 0161's delimiters (`tape/tokens.rs`, `is_delimiter`).
 fn is_delimiter(text: &str) -> bool {
     matches!(text, "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">" | "," | ";" | "|" | "\"" | "'" | "`")
 }

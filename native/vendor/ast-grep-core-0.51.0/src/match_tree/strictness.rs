@@ -124,7 +124,7 @@ impl MatchStrictness {
   ) -> bool {
     use MatchStrictness as M;
     while let Some(pattern) = goal_children.peek() {
-      // Rerail (RER-131): the end-of-children goal holds where the candidates end.
+      // Rerail (decision 0161): the end-of-children goal holds where the candidates end.
       if pattern.is_children_end() {
         goal_children.next();
         continue;

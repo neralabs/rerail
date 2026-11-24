@@ -26,6 +26,9 @@ import {
 } from "../../../src/runtime/index.js";
 import { commit, git } from "./git.js";
 
+/** A stamp of gh's sign-in as the gh client gives it. */
+type SignInStamp = ReturnType<GithubClient["signInStamp"]>;
+
 /** The notes the session has not been handed, recorded as handed, as a delivery that takes them all would. */
 export function takeNotes(service: MergeAssistRuntime, sessionId: string, checkoutPath: string): string[] {
   const notes = service.pendingNotes(sessionId, checkoutPath);
@@ -40,6 +43,16 @@ export interface FakeGithubOptions {
   readiness?: GithubReadiness;
   /** `gh`'s sign-in could not be read (a timeout, a crash): readiness is `unavailable`. */
   readinessError?: boolean;
+  /** `gh auth status` stalls: a readiness read never answers. */
+  readinessStalls?: boolean;
+  /** The state of gh's hosts file; a test changes it as `gh auth login`, `logout` or `switch` rewrites the file. */
+  signInStamp?: string;
+  /** Which sign-in this gh reads (its token variables and configuration folder); two processes may differ. */
+  signInEnvironment?: string;
+  /** The stat of gh's hosts file never answers, as on a drive that does not. */
+  signInStatStalls?: boolean;
+  /** The stat answers a turn of the event loop after it is asked, after a gh that answers with no process. */
+  signInStatSlow?: boolean;
   pullRequests?: PullRequestSummary[];
   /** Whether the listing stopped at its limit. */
   truncated?: boolean;
@@ -55,9 +68,21 @@ export class FakeGithub implements GithubClient {
 
   async readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
     this.readinessReads += 1;
+    if (this.options.readinessStalls === true) return await new Promise<never>(() => undefined);
     if (repository === null) return { state: "not-github", login: null, repository: null };
     if (this.options.readinessError === true) return { state: "unavailable", login: null, repository: `${repository.owner}/${repository.name}` };
-    return this.options.readiness ?? { state: "signed-in", login: "tbelanger", repository: `${repository.owner}/${repository.name}` };
+    return this.options.readiness ?? { state: "signed-in", login: "akim", repository: `${repository.owner}/${repository.name}` };
+  }
+
+  signInStamp(): SignInStamp {
+    return { environment: this.options.signInEnvironment ?? "the person's shell", file: this.#hostsFile() };
+  }
+
+  #hostsFile(): Promise<string> {
+    const stamp = this.options.signInStamp ?? "hosts.yml as first written";
+    if (this.options.signInStatStalls === true) return new Promise<never>(() => undefined);
+    if (this.options.signInStatSlow === true) return new Promise(resolve => setImmediate(() => resolve(stamp)));
+    return Promise.resolve(stamp);
   }
 
   async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {
@@ -75,7 +100,7 @@ export interface Workspace {
   readonly databasePath: string;
   readonly repositoryKey: string;
   /** A Merge Assist over the workspace's database, with this `gh` stand-in. */
-  service(options?: { github?: GithubClient; now?: () => number; noteWaitMs?: number }): MergeAssistRuntime;
+  service(options?: { github?: GithubClient; now?: () => number; noteWaitMs?: number; answersOnce?: boolean }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
   /**
@@ -103,7 +128,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
     const repo = join(folder, "repo");
     mkdirSync(repo);
     git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.name", "Tim Belanger");
+    git(repo, "config", "user.name", "Alex Kim");
     if (remote !== undefined) git(repo, "remote", "add", "origin", remote);
     commit(repo, { "src/api/client.ts": "export const client = { get: (path: string) => fetch(path) };\n", ...files }, "start");
     git(repo, "switch", "-q", "-c", "mine");
@@ -141,6 +166,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
           github: options.github ?? new FakeGithub(),
           ...(options.now === undefined ? {} : { now: options.now }),
           ...(options.noteWaitMs === undefined ? {} : { noteWaitMs: options.noteWaitMs }),
+          ...(options.answersOnce === undefined ? {} : { answersOnce: options.answersOnce }),
         });
         services.push(service);
         return service;

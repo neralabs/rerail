@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const daemonStop = vi.hoisted(() => ({ beforeStopped: undefined as undefined | ((home: string) => Promise<void>) }));
+const daemonStop = vi.hoisted(() => ({
+  beforeStopped: undefined as undefined | ((home: string) => Promise<void>),
+  result: "stopped" as "stopped" | "not-running" | "not-daemon" | "record-changed",
+}));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   return {
     ...actual,
-    // A running daemon's exit closes its last connection; the test stands in for that close.
+    // A running daemon's exit closes its last connection; the test stands in for that close, and for what the stop says.
     stopDaemon: async (home: string) => {
       if (daemonStop.beforeStopped === undefined) return await actual.stopDaemon(home);
       await daemonStop.beforeStopped(home);
-      return "stopped" as const;
+      return daemonStop.result;
     },
   };
 });
@@ -26,17 +29,20 @@ import {
   launcherPathMarker,
   ManagedUpdater,
   SEEN_AGENTS_FILE,
+  UPDATE_CHECK_FILE,
   UPDATE_LOCK_DIR,
   UPDATE_STATE_FILE,
   VERSIONS_DIR,
 } from "../../src/setup/index.js";
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
-import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
+import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE, STATUS_LINES_FOLDER, UNTAKEN_EVENTS_DIR } from "../../src/engine/index.js";
 import { AUTOSTART_CLAIM_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { installPackDirectory, withOlderTokenRule } from "../support/installed-packs.js";
+import { fixturesPath } from "../support/oracles.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -46,6 +52,7 @@ const contentCache = (home: string): string =>
 
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
+  daemonStop.result = "stopped";
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
@@ -193,6 +200,30 @@ describe("rerail install --root", () => {
     expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
   });
 
+  // A record naming a live process that is not the home's daemon was removed, and nothing ran: no daemon was running.
+  // daemon.json named another daemon, or none, when the stop would signal the one it named: nothing was stopped, and the
+  // daemon it names now may run, which the stop's own answer says.
+  it.each([
+    ["stopped", "Stopped the Rerail daemon.\n"],
+    ["not-running", "The Rerail daemon was not running.\n"],
+    ["not-daemon", "The Rerail daemon was not running.\n"],
+    ["record-changed", undefined],
+  ] as const)("says what its stop came to before it backs up or deletes the data (%s)", async (result, line) => {
+    const { context, packageRoot } = await fixture();
+    const { STOP_ANSWERS } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+    daemonStop.beforeStopped = async () => undefined;
+    daemonStop.result = result;
+    const lines = ["Stopped the Rerail daemon.\n", "The Rerail daemon was not running.\n", STOP_ANSWERS["record-changed"]];
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    for (const remove of [["--remove"], ["--remove", "--delete-data"]]) {
+      await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+      output.mockClear();
+      expect(await runInstallCommand(["--root", packageRoot, ...remove], context)).toBe(0);
+      const text = output.mock.calls.join("");
+      for (const each of lines) expect(text.includes(each), `${remove.join(" ")}: ${each}`).toBe(each === (line ?? STOP_ANSWERS["record-changed"]));
+    }
+  });
+
   it.skipIf(process.platform === "win32")("deletes the database, every backup, the cache and recorded checkouts' session ledgers with --delete-data, following no link", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
@@ -262,11 +293,15 @@ describe("rerail install --root", () => {
     const { context, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     vi.stubEnv("RERAIL_DEVICE_SECRET_STORE", "file");
-    // What `rerail activate`, the daemon, the device secret store and a write cut short leave in the home.
+    // What `rerail activate`, the daemon (its update check's record too), the device secret store and a write cut short
+    // leave in the home.
     await mkdir(join(context.home, PROFILES_DIR, "acme"), { recursive: true });
     await mkdir(join(context.home, DEVICE_SECRETS_DIR), { recursive: true });
     await writeFile(join(context.home, DEVICE_SECRETS_DIR, "acme"), "secret");
-    const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE];
+    // The daemon's folder for the events hooks leave while it does not read, with its mark of the newest one it took.
+    await mkdir(join(context.home, UNTAKEN_EVENTS_DIR));
+    await writeFile(join(context.home, UNTAKEN_EVENTS_DIR, "taken"), "");
+    const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE, UPDATE_CHECK_FILE];
     for (const name of written) await writeFile(join(context.home, name), "");
     await writeFile(join(context.home, RERAIL_DATABASE_FILE), "rules and history");
     const before = (await readdir(context.home)).sort();
@@ -274,7 +309,7 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
     const planned = output.mock.calls.join("");
-    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE]) {
+    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, UNTAKEN_EVENTS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE]) {
       expect(planned).toContain(`Would delete ${join(context.home, name)} (Rerail's settings, logs and records).`);
     }
     expect(planned).toContain(`Would delete ${context.home} (the Rerail home).`);
@@ -515,6 +550,35 @@ describe("rerail install --root", () => {
     expect(text).not.toContain("not Rerail's");
   });
 
+  it("removes the Claude Code status lines the daemon kept, which nothing reads once the status line is gone", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const status = join(context.home, STATUS_LINES_FOLDER);
+    await mkdir(status);
+    await writeFile(join(status, "a-session"), "R E R A I L ✕ not running\n");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    expect(existsSync(status)).toBe(false);
+    expect(output.mock.calls.join("")).toContain(`Removed ${status} (the Claude Code status lines).`);
+  });
+
+  it("removes only the status lines from a status lines folder that holds files that are not Rerail's", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const status = join(context.home, STATUS_LINES_FOLDER);
+    await mkdir(join(status, "drafts"), { recursive: true });
+    for (const name of ["a-session", "a-session.4242.2f0e9b7a-0000-4000-8000-000000000000.tmp"]) await writeFile(join(status, name), "Rerail's\n");
+    for (const name of ["notes.txt", "draft.tmp"]) await writeFile(join(status, name), "not Rerail's\n");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    expect((await readdir(status)).sort()).toEqual(["draft.tmp", "drafts", "notes.txt"]);
+    expect(output.mock.calls.join("")).toContain(`Kept ${status} (the Claude Code status lines): it holds files that are not Rerail's: draft.tmp, drafts, notes.txt.`);
+  });
+
   it("counts every name a Rerail writer gives an entry in its home as Rerail's, and what a write cut short leaves beside it", async () => {
     const { context, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
@@ -682,6 +746,17 @@ describe("rerail install --refresh", () => {
 
     expect(output.stdout()).toContain("Coding agents up to date: OMP");
     expect(output.stdout()).toContain("note: OMP also loads Rerail from its plugin install, so two copies run");
+  });
+
+  // Every update ends with this refresh, run by the version it activated, which keeps the installed packs' versions.
+  it("names the installed packs whose rules this Rerail does not run", async () => {
+    const { context } = await fixture();
+    installPackDirectory(withOlderTokenRule(fixturesPath("packs", "valid"), join(context.home, "copy"), "pass-statement"), "valid", context.home);
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(output.stdout()).toContain("This Rerail does not run 1 rule of Valid 0.1.0 (1): it tests a token parsed files now leave out. The pack's next version runs it again; rerail packs list names it.\n");
   });
 
   it("says so and writes nothing when no coding agent is connected", async () => {

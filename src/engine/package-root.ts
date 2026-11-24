@@ -35,8 +35,12 @@ export const ENTRY_POINTS = {
   startStateReader: "dist/runtime/start-state-reader.js",
   claudeHook: "dist/hosts/claude/claude-hook.js",
   claudeStatus: "dist/hosts/claude/claude-status.js",
+  /** Not started: the shell Claude Code runs the status command in reads it (`. <file>`). */
+  claudeStatusShell: "dist/hosts/claude/claude-status.sh",
   codexHook: "dist/hosts/codex/codex-hook.js",
   cursorHook: "dist/hosts/cursor/cursor-hook.js",
+  /** The `.rerail` runner's child process (`src/engine/rr/rr-child.ts`). */
+  rrChild: "dist/engine/rr/rr-child.js",
 } as const;
 
 /** `<package>/model`: the bundled embedding model. */

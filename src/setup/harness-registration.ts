@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
-  access,
   chmod,
   copyFile,
   lstat,
@@ -29,16 +28,16 @@ import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettings
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList } from "../harness/setup-screens.js";
-import { sameFile } from "../harness/same-file.js";
 import { commandLine, POWERSHELL_SAFE, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, STATUS_LINES_FOLDER, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
+import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
-import { pathKey, programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
+import { windowsSystemProgram } from "../engine/system-programs.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
@@ -61,18 +60,18 @@ export interface RegistrationOptions {
   platform?: NodeJS.Platform;
   /**
    * Keep a Claude Code hook entry on Windows that already runs the same launcher, recorded Node and hook, in either form
-   * registration writes: `node` from PATH or cmd.exe. Which of the two it writes depends on the PATH of the process that
-   * plans it (`hookExecEntry`), so a check of whether Rerail is connected, run with another PATH, would otherwise read a
-   * current registration as out of date. With it, registration reads no PATH. Set-up and `rerail update` leave it off
-   * and write the form their PATH calls for.
+   * a registration writes or wrote: cmd.exe, or `node` from PATH (`hookExecEntry`). Versions 0.2.1 and earlier wrote
+   * `node` where the PATH of the process that planned it found the recorded node, so a check of whether Rerail is
+   * connected would otherwise read such a registration as out of date. That check is a dry run and starts no cmd.exe
+   * (`hookExecEntry`). Set-up and `rerail update` leave it off and write the entry this version writes.
    */
   keepHookCommand?: boolean;
   /**
-   * Test seam: whether a file is at a path. Registration asks it of cmd.exe's System32 path before it writes or keeps a
-   * Windows hook entry that starts cmd.exe (`cmdHookEntry`). This computer's file system by default, asked without
-   * holding the event loop.
+   * Test seam: whether cmd.exe at a path runs a command. Registration asks it of cmd.exe's System32 path before it writes
+   * a Windows hook entry that starts cmd.exe (`hookExecEntry`); a check of whether Rerail is connected
+   * (`keepHookCommand`) never asks it. By default it starts that cmd.exe once (`cmdRunsCommands`).
    */
-  fileExists?: ((path: string) => boolean | Promise<boolean>) | undefined;
+  cmdRuns?: ((path: string) => boolean | Promise<boolean>) | undefined;
   /**
    * Removal only: whether `root` is the managed install, whose removal takes Pi's gallery entry (`npm:@neralabs/rerail`)
    * out too. `rerail install --remove` sets it when it removes the install itself, which before any set-up is the running
@@ -108,8 +107,10 @@ interface Context {
   platform: NodeJS.Platform;
   /** `RegistrationOptions.keepHookCommand`. */
   keepHookCommand: boolean;
-  /** `RegistrationOptions.fileExists`. */
-  fileExists: (path: string) => boolean | Promise<boolean>;
+  /** `RegistrationOptions.cmdRuns`. */
+  cmdRuns: (path: string) => boolean | Promise<boolean>;
+  /** cmd.exe ran no command, so Claude Code's hooks start with `node` (`hookExecEntry`): the notes say so. */
+  nodeHookFallback: boolean;
 }
 
 interface TextFile {
@@ -575,32 +576,25 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
 }
 
 /**
- * The same recorded-first order without a shell, for hosts that spawn exec-form hooks directly: the hook launcher runs
- * the hook under the recorded node, or under the node that started it once the recorded one is gone. Where `node` on
- * PATH is the recorded node, the host starts the launcher with it, and the launcher runs the hook in its own process.
- * Elsewhere `node` would start the launcher on another node, which would start the recorded one as a second process on
- * every hook event, so the hook starts through cmd.exe (`cmdHookEntry`): cmd starts the recorded node itself while it
- * exists and `node.exe` from PATH once it is gone, one node either way. Only a registration that writes the entry
- * chooses its form from PATH (`choosesHookForm`); with `keepHookCommand`, an entry in either form that the settings
- * already hold stays as it is (`keptHookEntry`).
+ * The same recorded-first order without a shell, for hosts that spawn exec-form hooks directly: the hook starts through
+ * cmd.exe (`cmdHookEntry`), which starts the recorded node itself while it exists and `node.exe` from PATH once it is
+ * gone, so a hook event starts one node whatever PATH the host runs with. A `node` entry would start the hook launcher
+ * on the node the host's PATH finds first, and where that is another node than the recorded one the launcher starts the
+ * recorded one as a second process on every hook event; the PATH set-up runs with tells nothing of the host's, which a
+ * version manager's shell, an editor started from another shell or an installer run since can make differ. The `node`
+ * entry stays only where cmd.exe cannot start the paths (`cmdHookEntry`) or, started once (`RegistrationOptions.cmdRuns`),
+ * runs no command; the notes then say so (`NODE_HOOK_FALLBACK_NOTE`). Registration reads no PATH. With
+ * `keepHookCommand`, a check of whether Rerail is connected, an entry in either form that the settings already hold
+ * stays as it is (`keptHookEntry`), and nothing is started: the check runs each time `rerail status` runs and the
+ * dashboard's Settings opens. A removal writes no entry (`updateGroupedHooks`), so it does not start cmd.exe either.
  */
 async function hookExecEntry(context: Context, executable: string): Promise<JsonObject> {
   const launched: LauncherArgs = [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)];
-  const viaPath = nodeHookEntry(launched);
-  if (!choosesHookForm(context)) return viaPath;
-  const viaCmd = await cmdHookEntry(context, launched);
-  return viaCmd === undefined || pathFindsNode(context.nodePath, context.platform) ? viaPath : viaCmd;
-}
-
-/**
- * Whether this registration writes the hook entry in the form its PATH calls for: set-up and `rerail update`, not a
- * removal, which never adds the entry, and not a check of whether Rerail is connected (`keepHookCommand`), which the
- * daemon runs each time the dashboard's Settings opens. Only these commands read PATH: a look for node there is a file
- * check per PATH entry, and one on a share that does not answer holds its process for as long as Windows waits on it,
- * about 21 s.
- */
-function choosesHookForm(context: Pick<Context, "mode" | "keepHookCommand">): boolean {
-  return context.mode === "register" && !context.keepHookCommand;
+  const viaCmd = context.mode === "register" ? cmdHookEntry(launched) : undefined;
+  if (viaCmd === undefined) return nodeHookEntry(launched);
+  if (context.keepHookCommand || await context.cmdRuns(viaCmd.command)) return viaCmd;
+  context.nodeHookFallback = true;
+  return nodeHookEntry(launched);
 }
 
 /** The `node` exec-form entry: `node` from PATH starts the hook launcher with `launched`. */
@@ -610,17 +604,17 @@ function nodeHookEntry(launched: LauncherArgs): JsonObject {
 
 /**
  * The cmd.exe exec-form entry that runs the hook launcher with `launched` (`cmdHookArgs`), or undefined where cmd.exe
- * would not read each path back as one word (`cmdReadsAsOneWord`), where SystemRoot does not give cmd.exe a full path
- * (`isFullWindowsPath`), or where no file is at that path: that hook starts with `node`, in two processes when PATH finds
- * another node. Windows completes any other path from a current folder or drive, and a hook's current folder is the
- * repository it runs in. A full path with nothing at it, from a SystemRoot that names no Windows, would start nothing on
- * every hook event. The words and the path's form are tested before the file is looked for, since a path that is not
- * full would be looked for from this process's current folder.
+ * would not read each path back as one word (`cmdReadsAsOneWord`) or where SystemRoot does not give cmd.exe a full path
+ * (`isFullWindowsPath`): that hook starts with `node`, in two processes when PATH finds another node. Windows completes
+ * any other path from a current folder or drive, and a hook's current folder is the repository it runs in. Set-up starts
+ * the cmd.exe this entry names once before it writes it (`hookExecEntry`), since a full path with nothing at it, from a
+ * SystemRoot that names no Windows, or a cmd.exe that a policy keeps from running commands, would fail every hook event;
+ * a path that is not full would be started from this process's current folder, so it is never started.
  */
-async function cmdHookEntry(context: Pick<Context, "fileExists">, launched: LauncherArgs): Promise<JsonObject | undefined> {
+function cmdHookEntry(launched: LauncherArgs): { type: "command"; command: string; args: string[] } | undefined {
   const cmd = windowsSystemProgram("cmd.exe");
   if (!isFullWindowsPath(cmd) || !launched.every(path => cmdReadsAsOneWord(path))) return undefined;
-  return await context.fileExists(cmd) ? { type: "command", command: cmd, args: cmdHookArgs(launched) } : undefined;
+  return { type: "command", command: cmd, args: cmdHookArgs(launched) };
 }
 
 /**
@@ -681,16 +675,15 @@ function cmdReadsAsOneWord(path: string): boolean {
 
 /**
  * `entry`, or with `keepHookCommand` the entry of either form for the same hook (`nodeHookEntry`, `cmdHookEntry`) that
- * `settings` already hold. Which form registration writes depends on the PATH of the process that plans it, so a check
- * of whether Rerail is connected, run with another PATH, would otherwise read a current registration as out of date. A
- * cmd.exe entry stays only while a file is at its path: one with nothing there starts no hook, so it reads as out of
- * date.
+ * `settings` already hold: versions 0.2.1 and earlier wrote the `node` form where their PATH found the recorded node,
+ * and such a hook still runs, so a check of whether Rerail is connected reads it as current. That check starts no cmd.exe
+ * (`hookExecEntry`), so it reads a cmd.exe entry as current even where a policy set since keeps cmd.exe from running
+ * commands: Claude Code then shows a hook error on each event, and set-up run again writes the `node` entry.
  */
-async function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): Promise<JsonObject> {
+function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): JsonObject {
   const launched = context.keepHookCommand && typeof entry.command === "string" ? launcherArgs(entry.command, entry.args) : undefined;
   if (launched === undefined) return entry;
-  const forms = [nodeHookEntry(launched), await cmdHookEntry(context, launched)].filter(form => form !== undefined);
-  return forms.find(form => holdsHookEntry(settings, form)) ?? entry;
+  return [nodeHookEntry(launched), entry].find(form => holdsHookEntry(settings, form)) ?? entry;
 }
 
 /** Whether `settings` hold `entry` among their hooks: the same command with the same arguments. */
@@ -701,39 +694,6 @@ function holdsHookEntry(settings: JsonObject, entry: JsonObject): boolean {
   const wanted = JSON.stringify([entry.command, entry.args]);
   return entries.some(found => isObject(found) && JSON.stringify([found.command, found.args]) === wanted);
 }
-
-/**
- * Whether `node` on this process's PATH is the file at `nodePath`, found as a spawn without a shell finds it
- * (`programOnPath`) and compared by the hook launcher's own test (`sameFile`). The search ends at the first PATH entry on
- * a server (`pathBeforeServer`), so where one comes before node's folder the answer is no and the cmd.exe entry is
- * written.
- */
-function pathFindsNode(nodePath: string, platform: NodeJS.Platform): boolean {
-  const found = programOnPath("node", { platform, env: pathBeforeServer(process.env) });
-  return found !== undefined && sameFile(found, nodePath);
-}
-
-/**
- * `env` with its PATH cut at the first entry on a server (`isServerPath`), unquoted as Windows reads PATH. Windows waits
- * about 21 s on a share that does not answer, as on a laptop off its VPN, and set-up would wait as long only to choose
- * a hook entry's form. Past such an entry the cmd.exe entry is the one to write: it starts the recorded node by its
- * path, so a hook event never asks the share either, where Claude Code's start of `node` would ask it on every event.
- */
-function pathBeforeServer(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const key = pathKey(env);
-  const entries = (env[key] ?? "").split(";");
-  const server = entries.findIndex(entry => isServerPath(entry.replace(/^"(.*)"$/u, "$1")));
-  return server < 0 ? env : { ...env, [key]: entries.slice(0, server).join(";") };
-}
-
-/**
- * Whether a Windows path names a folder on a server: `\\server\share`, or the long forms `\\?\UNC\server\share` and
- * `\\.\UNC\server\share`, with either slash. `\\?\C:\` and `\\.\C:\` name a local drive.
- */
-function isServerPath(path: string): boolean {
-  return /^[\\/]{2}(?:[^\\/?.]|[?.][\\/]unc[\\/])/iu.test(path);
-}
-
 
 type PromptCommandHarness = "claude-code" | "cursor";
 
@@ -953,7 +913,7 @@ async function updateGroupedHooks(
   entry: JsonObject,
 ): Promise<JsonObject> {
   const hooks = await stripHookEvents(hooksObject(value, path), context, executable);
-  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, await keptHookEntry(context, value, entry), path);
+  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, keptHookEntry(context, value, entry), path);
   return withHooks(value, hooks);
 }
 
@@ -977,78 +937,137 @@ function planGroupedHooks(
 }
 
 /**
- * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
- * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
- * project's settings, the settings path after it. Claude Code runs the status line through Git Bash on Windows too, so
- * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`). There the `sh` is a second Git
- * Bash process: 14 to 23 ms and about 6 MB a run, at most 1.2% of the status line's 2 s budget. The same test written
- * inline skips it, but registration would then write a second form and recognise one more, so every platform keeps
- * this one.
+ * The hooks' recorded-first, PATH-fallback order for the status line that starts node: without it, once the recorded
+ * node is gone the status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script
+ * and, for a project's settings, the settings path after it. Registration writes it on Windows only, where Claude Code
+ * runs the status line through Git Bash, so every word after it is quoted for a POSIX shell there as well
+ * (`claudeStatusCommand`). There the `sh` is a second Git Bash process: 14 to 23 ms and about 6 MB a run. On macOS
+ * and Linux earlier versions wrote it too, and registration still recognises it (`generatedClaudeStatus`).
  */
 const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
 
-/** The status line command for the settings at `path`: the fallback, then node, the script and a project's settings path. */
-function claudeStatusCommand(context: Context, path: string): string {
-  // A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes.
-  const word = (value: string): string => hookWord(value, "posix");
-  const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${word(path)}`;
-  return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(hookScript(context, ENTRY_POINTS.claudeStatus))}${settings}`;
+/** A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes. */
+const claudeStatusWord = (value: string): string => hookWord(value, "posix");
+
+/**
+ * The status line command for the settings at `path`.
+ *
+ * On macOS and Linux Claude Code runs it as `/bin/sh -c <command>`, and the command has that shell read Rerail's status
+ * script (`. <claude-status.sh>`), which prints the line the daemon keeps for the session with shell built-ins: a
+ * refresh starts no process but the shell Claude Code starts anyway. With a status line of the person's own to run
+ * first (`composed`), the command hands the script node, the Node status script and, for a project's settings, the
+ * settings path (`set -- …`), and the script starts node in the shell's place.
+ *
+ * On Windows every status line still starts node behind the fallback (`CLAUDE_STATUS_FALLBACK`): the status script has
+ * not been run under Git Bash, where `.` takes a Windows path and the home is not always `$HOME`.
+ */
+function claudeStatusCommand(context: Context, path: string, composed: boolean): string {
+  const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${claudeStatusWord(path)}`;
+  const node = `${claudeStatusWord(context.nodePath)} ${claudeStatusWord(hookScript(context, ENTRY_POINTS.claudeStatus))}${settings}`;
+  if (context.platform === "win32") return `${CLAUDE_STATUS_FALLBACK}${node}`;
+  const script = `. ${claudeStatusWord(hookScript(context, ENTRY_POINTS.claudeStatusShell))}`;
+  return composed ? `set -- ${node}; ${script}` : script;
 }
 
-function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
-  return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
+/**
+ * The refresh interval earlier versions set on a status line that had none, so Claude Code ran it every five seconds
+ * in every session, idle ones included. Registration sets none now: Claude Code runs the status line on its own events.
+ */
+const LEGACY_REFRESH_INTERVAL = 5;
+
+/**
+ * Whether the interval on `generated`, a status line Rerail composed over `previous`, is the default an earlier version
+ * wrote, not the person's: 5, on a command of the shape those versions wrote, where `previous` set none of its own. On
+ * Windows every command still has that shape, so an interval of exactly 5 a person sets there later reads the same.
+ */
+function isLegacyRefreshInterval(generated: ClaudeStatusLine, previous: ClaudeStatusLine | null, platform: NodeJS.Platform): boolean {
+  return generated.refreshInterval === LEGACY_REFRESH_INTERVAL && previous?.refreshInterval === undefined
+    && generatedClaudeStatus(generated.command, platform)?.legacy === true;
+}
+
+/** `base`'s display settings around Rerail's `command`, less the interval an earlier version set on it (`isLegacyRefreshInterval`). */
+function composedStatusLine(
+  base: ClaudeStatusLine | undefined, command: string, previous: ClaudeStatusLine | null, platform: NodeJS.Platform,
+): ClaudeStatusLine {
+  const composed: ClaudeStatusLine = { ...base, type: "command", command };
+  if (base !== undefined && isLegacyRefreshInterval(base, previous, platform)) delete composed.refreshInterval;
+  return composed;
 }
 
 /**
  * `replaceable`: the predecessor is a status line of this package, or of an install that is gone, whose composition
  * this home has no record of.
  * It keeps its display settings but is not recorded, so removal never brings back a status line of another install.
+ * The interval an earlier version set on it goes (`isLegacyRefreshInterval`); any other is the person's and stays.
  */
 function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
-  const command = claudeStatusCommand(context, path);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
-  const predecessor = ownsStatus ? registration : unownedClaudeStatus(context, path, command, { statusLine, inherited, replaceable });
-  next.statusLine = composedClaudeStatus(statusLine ?? inherited, command);
+  const { previous, previousInherited } = ownsStatus ? registration : unownedClaudeStatus(context, path, { statusLine, inherited, replaceable });
+  const command = claudeStatusCommand(context, path, previous !== null || previousInherited === true);
+  next.statusLine = composedStatusLine(statusLine ?? inherited, command, previous, context.platform);
   return {
-    settingsPath: path, installedRoot: context.root, installedCommand: command,
-    previous: predecessor.previous,
-    ...(predecessor.previousInherited === true ? { previousInherited: true } : {}),
+    settingsPath: path, installedRoot: context.root, installedCommand: command, previous,
+    ...(previousInherited === true ? { previousInherited: true } : {}),
   };
+}
+
+/** Whether `command` is a status line of Rerail's own: of a shape it writes or wrote, or the one it would write at `path`. */
+function isOwnStatusCommand(context: Context, path: string, command: string): boolean {
+  return generatedClaudeStatus(command, context.platform) !== undefined
+    || [false, true].some(composed => command === claudeStatusCommand(context, path, composed));
 }
 
 /**
  * What a status line Rerail has no record of owning leaves for removal to bring back: nothing when it is `replaceable`,
- * else itself or the one it inherits, which must not be a wrapper of Rerail's own (`claudeStatusScript`).
+ * else itself or the one it inherits, which must not be a status line of Rerail's own (`isOwnStatusCommand`).
  */
 function unownedClaudeStatus(
-  context: Context, path: string, command: string,
+  context: Context, path: string,
   { statusLine, inherited, replaceable }: { statusLine: ClaudeStatusLine | undefined; inherited: ClaudeStatusLine | undefined; replaceable: boolean },
 ): Pick<ClaudeStatusRegistration, "previous" | "previousInherited"> {
   if (replaceable) return { previous: null };
   const previous = statusLine ?? inherited;
-  if (previous !== undefined && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined)) {
+  if (previous === undefined) return { previous: null };
+  if (isOwnStatusCommand(context, path, previous.command)) {
     throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
   }
-  return { previous: previous ?? null, previousInherited: statusLine === undefined && inherited !== undefined };
+  // With no status line of its own here, the settings inherit `previous`.
+  return { previous, previousInherited: statusLine === undefined };
 }
 
-function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration): void {
+/**
+ * The status lines registration may have left for `registration`: its predecessor's display settings around the
+ * installed command, and that with the interval an earlier version set (`isLegacyRefreshInterval`).
+ */
+function installedClaudeStatuses(registration: ClaudeStatusRegistration, platform: NodeJS.Platform): ClaudeStatusLine[] {
+  const installed: ClaudeStatusLine = { ...registration.previous, type: "command", command: registration.installedCommand };
+  const legacy = { ...installed, refreshInterval: LEGACY_REFRESH_INTERVAL };
+  return isLegacyRefreshInterval(legacy, registration.previous, platform) ? [installed, legacy] : [installed];
+}
+
+function restoreClaudeStatus(
+  next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration, platform: NodeJS.Platform,
+): void {
   if (statusLine?.command !== registration.installedCommand) return;
-  const installedStatus = composedClaudeStatus(registration.previous, registration.installedCommand);
-  if (registration.previous === null || (registration.previousInherited && stableJsonText(statusLine) === stableJsonText(installedStatus))) {
+  const installed = installedClaudeStatuses(registration, platform);
+  const untouched = installed.some(status => stableJsonText(statusLine) === stableJsonText(status));
+  if (registration.previous === null || (registration.previousInherited && untouched)) {
     delete next.statusLine;
     return;
   }
-  next.statusLine = restoredClaudeStatus(statusLine, registration.previous, installedStatus);
+  next.statusLine = restoredClaudeStatus(statusLine, registration.previous, installed);
 }
 
-/** `previous` back in place of the installed status line, keeping the display settings the person changed since. */
-function restoredClaudeStatus(current: ClaudeStatusLine, previous: ClaudeStatusLine, installed: ClaudeStatusLine): ClaudeStatusLine {
+/**
+ * `previous` back in place of the installed status line, keeping the display settings the person changed since: an
+ * interval none of the `installed` status lines has is theirs.
+ */
+function restoredClaudeStatus(current: ClaudeStatusLine, previous: ClaudeStatusLine, installed: readonly ClaudeStatusLine[]): ClaudeStatusLine {
   const restored: ClaudeStatusLine = { ...current, type: previous.type, command: previous.command };
-  if (current.refreshInterval !== installed.refreshInterval) return restored;
+  if (!installed.some(status => status.refreshInterval === current.refreshInterval)) return restored;
   if (previous.refreshInterval === undefined) delete restored.refreshInterval;
   else restored.refreshInterval = previous.refreshInterval;
   return restored;
@@ -1165,7 +1184,7 @@ function addWantedEntries(
 const RERAIL_HOME_DATA_ENTRIES: readonly string[] = [
   "*.json*", "*.sqlite*", "*.log*", "*.lock",
   ...[DAEMON_ACCESS_TOKEN_FILE, ACTIVE_PROFILE_FILE].map(file => `${file}*`),
-  ...[DEVICE_SECRETS_DIR, PROFILES_DIR].map(folder => `${folder}/**`),
+  ...[DEVICE_SECRETS_DIR, PROFILES_DIR, STATUS_LINES_FOLDER].map(folder => `${folder}/**`),
 ];
 
 /** `path` as the absolute path of a Read or Edit rule (`//path`), its gitignore pattern characters escaped. */
@@ -1278,7 +1297,7 @@ async function nextClaudeStatusRecord(
     return registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
   }
   if (registration?.installedRoot !== context.root) return registration;
-  restoreClaudeStatus(next, statusLine, registration);
+  restoreClaudeStatus(next, statusLine, registration, context.platform);
   return undefined;
 }
 
@@ -1363,32 +1382,60 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
   }))];
 }
 
-/**
- * The node and the script a status line command runs, unquoted, when it has the generated shape: direct, as Windows
- * and earlier versions write it, or behind the POSIX fallback, with a project's settings path after the script or not.
- */
-function claudeStatusNodeAndScript(command: string, platform: NodeJS.Platform): [node: string, script: string] | undefined {
-  const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
-  const direct = fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
-  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu) ?? [];
-  if (![2, 3].includes(words.length) || words.join(" ") !== direct) return undefined;
-  // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
-  const windows = platform === "win32" && !fallback;
-  return [unquoteShellWord(words[0]!, windows), unquoteShellWord(words[1]!, windows)];
+/** One word of a generated status line command, as `claudeStatusWord` writes it. */
+const STATUS_WORD = String.raw`"(?:\\.|[^"\\])*"|[\w./:@+=-]+`;
+const STATUS_WORDS = new RegExp(STATUS_WORD, "gu");
+/** `. <claude-status.sh>`, after `set -- <node> <claude-status.js> [<settings>]; ` where a status line of the person's own runs first. */
+const STATUS_SCRIPT_COMMAND = new RegExp(String.raw`^(?:set -- ((?:${STATUS_WORD})(?: (?:${STATUS_WORD})){1,2}); )?\. (${STATUS_WORD})$`, "u");
+
+/** A status line command of a shape registration writes or wrote, recognized even when its package or ownership record is gone. */
+interface GeneratedClaudeStatus {
+  /** The package file the command names, `<root>/<executable>`, which identifies its install. */
+  script: string;
+  /** The `ENTRY_POINTS` path `script` ends in. */
+  executable: string;
+  /**
+   * The command starts node itself, direct or behind the fallback: the shape every version wrote before the status
+   * script, with a refresh interval of its own (`LEGACY_REFRESH_INTERVAL`), and the one Windows still gets.
+   */
+  legacy: boolean;
 }
 
-/** The script of a generated status line (`claudeStatusNodeAndScript`), recognized even when its old package/ownership is gone. */
-function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
-  const words = claudeStatusNodeAndScript(command, platform);
-  if (words === undefined) return undefined;
-  const [node, script] = words;
-  return isNodeExecutable(node) && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
+/** The Node status script that `text` starts (`<node> <claude-status.js> [<settings>]`), unquoted; undefined for any other words. */
+function nodeStatusScript(text: string, windows: boolean): string | undefined {
+  const words = text.match(STATUS_WORDS) ?? [];
+  if (![2, 3].includes(words.length) || words.join(" ") !== text) return undefined;
+  const script = unquoteShellWord(words[1]!, windows);
+  return isNodeExecutable(unquoteShellWord(words[0]!, windows)) && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
+}
+
+/** What `command` is when it has a generated shape (`claudeStatusCommand`, and the direct form earlier versions wrote). */
+function generatedClaudeStatus(command: string, platform: NodeJS.Platform): GeneratedClaudeStatus | undefined {
+  const sourced = STATUS_SCRIPT_COMMAND.exec(command);
+  return sourced === null ? nodeClaudeStatus(command, platform) : sourcedClaudeStatus(sourced);
+}
+
+/** `. <claude-status.sh>`, after `set -- <node> <claude-status.js> [<settings>]; ` or not (`STATUS_SCRIPT_COMMAND`). */
+function sourcedClaudeStatus([, node, word]: RegExpExecArray): GeneratedClaudeStatus | undefined {
+  const script = unquoteShellWord(word!);
+  const generated = script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatusShell)
+    && (node === undefined || nodeStatusScript(node, false) !== undefined);
+  return generated ? { script, executable: ENTRY_POINTS.claudeStatusShell, legacy: false } : undefined;
+}
+
+/** Node started on the Node status script: direct, as earlier versions wrote it, or behind the fallback. */
+function nodeClaudeStatus(command: string, platform: NodeJS.Platform): GeneratedClaudeStatus | undefined {
+  const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
+  // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
+  const script = nodeStatusScript(fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command, platform === "win32" && !fallback);
+  return script === undefined ? undefined : { script, executable: ENTRY_POINTS.claudeStatus, legacy: true };
 }
 
 /** A status line generated by any install of this package, or by one that is gone, identified as hooks are (`isReplaceableScript`). */
 async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusLine | undefined): Promise<boolean> {
-  const script = statusLine === undefined ? undefined : claudeStatusScript(statusLine.command, context.platform);
-  return script !== undefined && pathsOf(context.platform).isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
+  const generated = statusLine === undefined ? undefined : generatedClaudeStatus(statusLine.command, context.platform);
+  return generated !== undefined && pathsOf(context.platform).isAbsolute(generated.script)
+    && await isReplaceableScript(context, generated.script, generated.executable);
 }
 
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
@@ -1966,11 +2013,39 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
 }
 
 /**
- * Whether a file or folder is at `path`, asked of this computer's file system off the event loop: the daemon asks it in
- * the check of whether Rerail is connected (`keptHookEntry`), and a synchronous look would hold every request it serves.
+ * How long set-up waits for `cmd.exe /d /c exit 0` to end before it ends that cmd.exe, which then reads as one that
+ * runs no command. It bounds a start that never ends: Windows runs the program an Image File Execution Options
+ * `Debugger` value names for cmd.exe in its place, with cmd's command line, and that program may never exit.
  */
-function fileThere(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false);
+const CMD_RUN_LIMIT_MS = 10_000;
+
+/**
+ * Whether cmd.exe at `path` runs a command: `cmd.exe /d /c exit 0`, started as Claude Code starts an exec-form hook,
+ * ends with exit 0 within `limitMs`. A file there is not enough. The `DisableCMD` policy at 1 leaves it in place, and
+ * cmd then writes "The command prompt has been disabled by your administrator." and ends with exit 255 for every
+ * command; an AppLocker or WDAC rule refuses to start it. Only set-up asks it, before it writes a hook entry
+ * (`hookExecEntry`).
+ */
+export function cmdRunsCommands(path: string, limitMs = CMD_RUN_LIMIT_MS): Promise<boolean> {
+  return new Promise(resolve => {
+    try {
+      const cmd = spawn(path, ["/d", "/c", "exit", "0"], { stdio: "ignore" });
+      // Not spawn's `timeout`, whose timer only 'exit' clears: a start that fails sends 'error' alone, and that timer
+      // would hold the process open for its whole length. This one is cleared on both: it runs only while cmd.exe does.
+      const limit = setTimeout(() => cmd.kill(), limitMs);
+      cmd.once("error", () => {
+        clearTimeout(limit);
+        resolve(false);
+      });
+      cmd.once("exit", code => {
+        clearTimeout(limit);
+        resolve(code === 0);
+      });
+    } catch {
+      // The helper refuses a path that is not full, and spawn throws on arguments it cannot pass: no cmd.exe to start.
+      resolve(false);
+    }
+  });
 }
 
 function newContext(options: RegistrationOptions, mode: Mode): Context {
@@ -1985,7 +2060,8 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
     keepHookCommand: options.keepHookCommand === true,
-    fileExists: options.fileExists ?? fileThere,
+    cmdRuns: options.cmdRuns ?? cmdRunsCommands,
+    nodeHookFallback: false,
   };
 }
 
@@ -2056,6 +2132,7 @@ async function registrationNotes(changes: readonly RegistrationChange[], context
   if (context.mode === "register" && changes.some(change => change.path === codexHooks && wrote(change))) {
     notes.push(CODEX_TRUST_NOTE);
   }
+  if (context.nodeHookFallback) notes.push(NODE_HOOK_FALLBACK_NOTE);
   if (await ompPluginCopyMatters(context, selected)) notes.push(OMP_PLUGIN_NOTE);
   return notes;
 }
@@ -2083,6 +2160,16 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
 
 /** The note a registration that wrote Codex's hooks carries: Codex runs no hook the person has not trusted. */
 export const CODEX_TRUST_NOTE = "Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.";
+
+/**
+ * The note of a registration that started cmd.exe and saw it run no command, so it wrote Claude Code's hooks to start
+ * with `node` (`hookExecEntry`). A later set-up starts cmd.exe again; set-up run again in a set-up repository connects
+ * only coding agents found since, so the note names the refresh, which registers every connected one.
+ */
+export const NODE_HOOK_FALLBACK_NOTE =
+  "Claude Code: cmd.exe could not run a test command, so Rerail's hooks start with the node Claude Code's PATH finds. "
+  + "Where that is not the Node Rerail recorded, each hook event starts a second Node. "
+  + "Run rerail install --refresh to try cmd.exe again.";
 
 export function registerHarnesses(options: RegistrationOptions): Promise<RegistrationReport> {
   return run(options, "register");

@@ -5,10 +5,10 @@ Status: proposed part of `spec.md` (new §18). It follows `findings-contract.md`
 - resource exhaustion is reported and counts against coverage;
 - memory limits, debugging, testing tools and profiling are first-class design parts.
 
-The paths below are relative to the merged worktree (`Pulling-it-all-together`) unless prefixed:
-- `N1562:` means `jbarnes/sql-rerailer@8b6576f0`;
-- `SSC:` means `jeremy/sql-capture-demand-spikes@b87eba3b`;
-- `Tempo:` means `scale-test-the-re-railer@e95613625`, under `tempo/`;
+The paths below are relative to the merged worktree (PIAT) unless prefixed:
+- `N1562:` means `sql-rerailer@8b6576f0`;
+- `SSC:` means `sql-capture-demand-spikes@b87eba3b`;
+- `Predecessor:` means a branch of the predecessor repository at `e95613625`, under `<predecessor>/`;
 - `DLRE:` means the DLRE worktree.
 
 ---
@@ -30,21 +30,21 @@ The paths below are relative to the merged worktree (`Pulling-it-all-together`) 
 | `estimated_bytes` | `tape.rs:337,485,1417`, `lines.rs:128`, `relational/syntax.rs:188` | Per-object size estimates for caches | **Reuse the pattern.** Every cached or arena object reports bytes (§2.1) |
 | jemalloc | `native/src/lib.rs:25-74` (global allocator, tree-sitter allocations routed through it); `tikv-jemalloc-ctl` stats | Allocator residency | Reuse |
 | Budgets | `model.rs:36-49` (`max_visited_nodes`, per-file allowance); `eval/evidence.rs:248` | Work allowances | **Change meaning.** A budget now only produces `Unknown(budget)` (decision 0001). It is never semantics |
-| Profiling CLI and docs | `docs/code-rule-profiling.md`; `npm run profile:code-rule-dsl` (`scripts/profiling/run.py`, `sample.py`, `report.py`, `compare.py`) | Pinned-snapshot runs, macOS `sample` attachment, bottom-up reports, comparison | **Reuse.** `run.py` becomes the driver for the unified profile format |
+| Profiling CLI and docs | `docs/code-rule-profiling.md` (removed; at 7efcac9c67); `npm run profile:code-rule-dsl` (`scripts/profiling/run.py`, `sample.py`, `report.py`, `compare.py`) | Pinned-snapshot runs, macOS `sample` attachment, bottom-up reports, comparison | **Reuse.** `run.py` becomes the driver for the unified profile format |
 | SQL profile tooling | `benchmark/sql-profile/{inventory,coverage,execution-budget,execution-reduction,report,summarize,summary}.mjs`; `scripts/profiling/sql-{report,budget,stats,parity}.*` | Reports and parity over captured SQL | Keep `sql-parity.ts` and `report`. Delete the budget and reduction scripts tied to the authored-SQL executor when decision 0002 lands |
 | Full-repository gate | `DLRE:scripts/profiling/workloads/full_repository.py` (committed in DLRE at `ab4d83b3`) | Cold full data-layer workloads. Per invocation it records `files, bytes, expected, actual, peakRssBytes, compilationMs, coldMs, phaseCpuMs` plus `/usr/bin/time -l` resource usage, into `manifest.json` and `invocation.json` | **Reuse as the measurement gate.** It consumes the unified profile (§2.6.4). Compile time is already separate |
 
-### 1.2 Transducer and Metal (N1562, Tempo)
+### 1.2 Transducer and Metal (N1562, the predecessor)
 
 | Piece | Where | What it does | Verdict |
 |---|---|---|---|
-| Program validation | `Tempo:native/src/policy_dsl/transducer.rs:1534` (`validate`) | Table bounds, word-count limit (≤ 65,536), predicate and label consistency | **Reuse as the core of the verifier** and extend it (§2.3.2) |
-| Launch guard | `Tempo:transducer/metal_launch.rs:18-185` (`DispatchRecord`, `LaunchScope`, `peak_application_buffer_bytes`); tests at `:296,335,376` show no encoder can bypass it, and a GPU-side counting kernel counts every dispatch API | Counts every dispatch, tracks the peak application buffer bytes, and refuses submission past the cap | **Reuse the accounting and the bypass tests.** Replace the fixed caps (200/600 launches, `METAL_BUFFER_LIMIT = 2_000_000_000` at `metal_backend.rs:22`) with plan-time bounds (§2.1) |
+| Program validation | `Predecessor:native/src/policy_dsl/transducer.rs:1534` (`validate`) | Table bounds, word-count limit (≤ 65,536), predicate and label consistency | **Reuse as the core of the verifier** and extend it (§2.3.2) |
+| Launch guard | `Predecessor:transducer/metal_launch.rs:18-185` (`DispatchRecord`, `LaunchScope`, `peak_application_buffer_bytes`); tests at `:296,335,376` show no encoder can bypass it, and a GPU-side counting kernel counts every dispatch API | Counts every dispatch, tracks the peak application buffer bytes, and refuses submission past the cap | **Reuse the accounting and the bypass tests.** Replace the fixed caps (200/600 launches, `METAL_BUFFER_LIMIT = 2_000_000_000` at `metal_backend.rs:22`) with plan-time bounds (§2.1) |
 | Per-task status | `N1562:packed/metal_batch_runtime.metal:30-34` (`Status{error, resultCount, captureCount, programCounter, …}`, `Evaluation{outcome, failureArena, failureTask, failurePc, workUsed, quotas[14]}`) | Per-task error code, failing pc, failing arena and task, and work used | **Reuse the shape:** a failing task identifies itself (pc, arena, task). That is the basis for repro bundles (§2.2.5) |
 | Arena quotas | `N1562:packed/metal_batch_abi.rs:318-396` (`EvaluationQuotaRecord`, 14 arena kinds); `metal_batch_runtime.metal:39-40` (`reserve_shared`, `reserve_transient`) | Atomic logical and physical reservation. Returns 1 when the quota is exceeded and 2 when physical capacity is exhausted | **Reuse the reservation idiom** for the set-stage arenas. The 14 per-path arena kinds go away with path enumeration (`research/metal-recursion.md`) |
-| Semantic conformance | `Tempo:transducer/metal_semantic_conformance.rs` (+ phase test modules) | Metal against CPU on fixtures | **Reuse** as the seed of the executor differential suite (§2.4.1) |
-| Design and status docs | `Tempo:docs/metal-*.md`, `transducer-*.md`, `packed-result-bottleneck-profile.md` | Recorded dispatch counts, memory and failures | History only |
-| Dumps and disassembler | none found in Tempo or N1562 | — | **New** (§2.2.1) |
+| Semantic conformance | `Predecessor:transducer/metal_semantic_conformance.rs` (+ phase test modules) | Metal against CPU on fixtures | **Reuse** as the seed of the executor differential suite (§2.4.1) |
+| Design and status docs | `Predecessor:docs/metal-*.md`, `transducer-*.md`, `packed-result-bottleneck-profile.md` | Recorded dispatch counts, memory and failures | History only |
+| Dumps and disassembler | none found in the predecessor or N1562 | — | **New** (§2.2.1) |
 | Metal counters and GPU frame capture | none found (`MTLCaptureManager`, counter sample buffers absent) | — | **New** (§2.2.4, §2.6.2) |
 
 ### 1.3 SQL-side and parity harnesses
@@ -56,7 +56,7 @@ The paths below are relative to the merged worktree (`Pulling-it-all-together`) 
 | `dbstat` | not used | **New:** index size accounting (§2.6.3) |
 | Data-layer replay and parity | `conformance/data-layer/replay.ts:176-186`, `suite.ts`, `incremental.ts` | Reuse. Convert to finding-key sets (`findings-contract.md` §5) |
 | Language-pack scoring | `score.ts:39-58` | Reuse, as sets |
-| Two-binding swap precedent | ast-index-spike native↔pure-SQL child function, 0 mismatches over 4,264 queries (`README.md`, Architecture 2); N1562 plain-table substitution for `rerail_matches` | The pattern for the binding differential (§2.4.1) |
+| Two-binding swap precedent | SQL index prototype native↔pure-SQL child function, 0 mismatches over 4,264 queries (`README.md`, Architecture 2); N1562 plain-table substitution for `rerail_matches` | The pattern for the binding differential (§2.4.1) |
 | Fuzzing and property tests | none in `native/Cargo.toml` (no proptest, quickcheck or cargo-fuzz) | **New** (§2.4.3) |
 
 ---
@@ -82,7 +82,7 @@ The paths below are relative to the merged worktree (`Pulling-it-all-together`) 
 **Global caps.** `engine.limits.device_bytes` (default: 50% of `recommendedMaxWorkingSetSize`) and `engine.limits.host_bytes` (default: 25% of physical memory) are configuration, not constants in code. The planner packs batches so that Σ pool limits ≤ cap. The plan records each pool's limit, and the profile records each pool's high-water mark (§2.6).
 
 **Rules:**
-1. No pool may be sized by a hard-coded constant. Tempo's 2 GB `METAL_BUFFER_LIMIT` and its 200/600 launch caps are removed. The launch accounting and its bypass tests (`metal_launch.rs:296-376`) stay, now checked against the plan's reported dispatch count.
+1. No pool may be sized by a hard-coded constant. The predecessor's 2 GB `METAL_BUFFER_LIMIT` and its 200/600 launch caps are removed. The launch accounting and its bypass tests (`metal_launch.rs:296-376`) stay, now checked against the plan's reported dispatch count.
 2. Every cache object implements `estimated_bytes()` (the existing pattern).
 3. `Unknown(resource)` carries the pool name, the limit and the requested size. The coverage metric reports the share of `Unknown(resource)` per pool. CI fails if it exceeds the per-corpus threshold.
 
@@ -158,7 +158,7 @@ With `--path` it also shows the document's scope result (Absent / Present / Unkn
 - under `debug_assertions` at load time.
 
 **2.3.2 Obligations:**
-1. Table bounds and encoding limits (Tempo `validate`).
+1. Table bounds and encoding limits (the predecessor's `validate`).
 2. Every cycle makes progress.
 3. Bounded `CALL` depth (E6).
 4. The rule graph is acyclic, apart from monotone single-direction recursive groups.
@@ -177,7 +177,7 @@ With `--path` it also shows the document's scope result (Absent / Present / Unkn
   |---|---|
   | interpreter ↔ JIT ↔ Metal | executor equivalence |
   | fused ↔ unfused | fusion legality |
-  | vtab binding ↔ pure-SQL binding | two-binding rule (ast-index-spike swap precedent) |
+  | vtab binding ↔ pure-SQL binding | two-binding rule (SQL index prototype swap precedent) |
   | engine ↔ native ast-grep matcher | semantics oracle |
   | engine ↔ data-layer oracle findings | port parity, via `conformance/data-layer/replay.ts` as sets |
 
@@ -290,7 +290,7 @@ The coverage report is part of the profile (§2.6.4) and part of the gate.
 **Reuse:**
 - main/DLRE: `profile::trace` span mechanism, `Timing`, memory samples, `profile/sql.rs` statement profiler and deferred EXPLAIN, the `estimated_bytes` pattern, jemalloc stats, `scripts/profiling/run.py`/`report.py`/`compare.py`, the data-layer replay harness;
 - DLRE: `full_repository.py` as the gate;
-- Tempo: `validate` as the verifier core, launch accounting and its bypass tests, the semantic conformance suite;
+- The predecessor: `validate` as the verifier core, launch accounting and its bypass tests, the semantic conformance suite;
 - N1562: the per-task status and evaluation records, and the `reserve_*` quota idiom.
 
 **New:**
@@ -307,7 +307,7 @@ The coverage report is part of the profile (§2.6.4) and part of the gate.
 - the `rerail engine` CLI.
 
 **Removed:**
-- Tempo's fixed 2 GB, 200- and 600-launch caps;
+- The predecessor's fixed 2 GB, 200- and 600-launch caps;
 - N1562's 14 per-path arena kinds;
 - the SSC duplicate EXPLAIN helpers;
 - the authored-SQL budget and reduction scripts, after decision 0002.

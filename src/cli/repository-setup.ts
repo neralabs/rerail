@@ -15,6 +15,7 @@ import {
   checkoutName,
   checkoutStatus,
   onRuleCount,
+  checkoutRulesNotRun,
   setStarted,
   startSetUpRepository,
   stateOf,
@@ -23,7 +24,7 @@ import {
   workspaceSetUp,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type NoFitExplanation, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, rulesStartingOn, type NoFitExplanation, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
@@ -530,19 +531,23 @@ function dashboardScope(run: Run, repository: Repository): RulesDashboardScope {
 async function summary(run: Run, repository: Repository, firstStart: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
   const open = firstStart && run.io.lane === "terminal";
   const scope = dashboardScope(run, repository);
-  const { packNames, ruleCount, others } = readDatabase(run, database => {
+  const { packNames, ruleCount, others, notRun } = readDatabase(run, database => {
     const checkout = lookupCheckout(database, repository.root);
     return {
       packNames: packLabels(attachedPacks(database, scope.repositoryKey)),
       ruleCount: checkout === undefined ? 0 : onRuleCount(database, checkout),
       others: otherStartedRepositories(database, scope.repositoryKey),
+      // Set-up keeps a pack at the version installed, so it says which rules on here those versions have that this
+      // Rerail does not run: with `ruleCount`, they add up to the rules switched on.
+      notRun: checkout === undefined ? [] : checkoutRulesNotRun(database, checkout),
     };
-  }) ?? { packNames: [], ruleCount: 0, others: [] };
+  }) ?? { packNames: [], ruleCount: 0, others: [], notRun: [] };
   const dashboard = await run.request.environment.dashboard(scope, "rules", open);
   say(run.io, renderSummary({
     repoName: repository.name,
     packNames,
     ruleCount,
+    notRun,
     dashboard,
     otherStartedRepos: others,
     agents,
@@ -576,6 +581,7 @@ async function connect(run: Run, repository: Repository | undefined, again = fal
     })),
     codexTrust: result.codexTrust,
     ompPlugin: result.ompPlugin,
+    nodeHookFallback: result.nodeHookFallback,
     anyFound: found.length > 0,
     worksWith: codingAgents(HARNESSES),
   };
@@ -747,8 +753,6 @@ interface Offering {
   readonly nothingFits?: NoFitExplanation;
 }
 
-const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
-
 /** A pack "Choose rule packs…" lists, named as `--packs` names it: its id, or a third party's package name. */
 const availablePack = (pack: RulePack, packageName: string, version: string): AvailablePack =>
   ({ id: rulePackShortName(packageName), packageName, version, name: pack.name });
@@ -783,9 +787,9 @@ function chosenOffering(run: Run, repository: Repository, chosen: readonly PackV
   const missing = chosen.filter(({ id, packageName, version }) => catalog.packs.get(id)?.packageName !== packageName || catalog.packs.get(id)?.version !== version);
   if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${rulePackShortName(pack.packageName)}@${pack.version}`).join(", ")}.`);
   const packs = chosen.map(({ id, packageName }) => ({ pack: catalog.packs.get(id)!, packageName }));
-  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs.map(({ pack }) => pack)) : []).map(found => [found.pack.id, found]));
+  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs.map(({ pack }) => pack), catalog.notRun) : []).map(found => [found.pack.id, found]));
   const offers = packs.map(({ pack, packageName }) => ({
-    recommendation: matched.get(pack.id) ?? { pack, ruleCount: onRules(pack), reason: "you chose it", folder: "" },
+    recommendation: matched.get(pack.id) ?? { pack, ruleCount: rulesStartingOn(pack, catalog.notRun), reason: "you chose it", folder: "" },
     packageName,
     version: pack.version!,
     installed: pack.version,

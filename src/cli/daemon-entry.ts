@@ -1,13 +1,22 @@
 /**
  * The daemon's process entry (`ENTRY_POINTS.daemon`). It sits in the CLI layer so it can hand the daemon what the
- * layers above it provide, such as set-up's coding agent check, which the daemon layer may not import.
+ * layers above it provide, such as set-up's coding agent check and presentation's status lines, which the daemon layer
+ * may not import.
  */
+import { join } from "node:path";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { defaultRerailHome, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
+import { startGitWithoutCopying } from "../engine/git-start.js";
+import { loadNativeBinding } from "../engine/native/native.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
+import type { RerailApiStores } from "../api/operation.js";
+import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { recordLateCheck } from "../harness/hook-failures.js";
 import { stampLines } from "./daemon-log.js";
 
 // The daemon's stdout and stderr are `daemon.log`: what Rerail logs there is scrubbed of secrets, then each line starts
@@ -24,11 +33,25 @@ if (!node.ok) {
   process.exit(1);
 }
 
+// On Linux Node starts a child by copying the whole daemon, which holds its event loop longer the larger it grows; the
+// daemon starts its Git through the engine, which copies nothing (`git-start.ts`).
+startGitWithoutCopying(loadNativeBinding);
+
 // A home runs one daemon, whatever starts it (`runHomeDaemon`). A TLS key other accounts can read keeps the daemon from
-// other machines only: it then serves this one (`serveRerailDaemon`).
+// other machines only: it then serves this one (`serveRerailDaemon`). Claude Code's status line on Windows still starts
+// Node, which asks the daemon, so no status lines are kept there.
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
+    // The hook failure log, where `rerail status` says which events the daemon checked late.
+    lateChecked: pass => recordLateCheck(pass),
+    // A managed install asks npm once a day whether a newer Rerail is out; a checkout's build never does.
+    ...(isMainRerailBuild() && updateCheckApplies(defaultRerailHome()) ? {
+      updateChecks: () => startUpdateChecks({ home: defaultRerailHome() }),
+    } : {}),
+    ...(process.platform === "win32" ? {} : {
+      statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
+    }),
   });
 } catch (error) {
   process.stderr.write(`rerail daemon: ${(error as Error).message}\n`);

@@ -4,7 +4,8 @@
 
 Rerail ships as one customer-neutral local runtime; a signed activation profile configures it per customer.
 
-The sole channel is the npm package `@neralabs/rerail` on npmjs ([Registry](#registry)).
+The sole channel is npmjs: the package `@neralabs/rerail` and, for each platform, the engine package it depends on
+([Registry](#registry)).
 
 <details>
 <summary>What the profile supplies and what runs where</summary>
@@ -36,22 +37,28 @@ Adapters normalize native lifecycle events for that runtime. Customer-specific b
 
 ## Distribution artifact
 
-One immutable package version serves every customer and platform; customer-specific builds are prohibited by default.
+One immutable version serves every customer and platform: the core package and six engine packages, all at that
+version. Customer-specific builds are prohibited by default.
 
 ```text
-@neralabs/rerail@<version>
+@neralabs/rerail@<version>                    core: the runtime, the same on every platform
+@neralabs/rerail-engine-<suffix>@<version>    the native engine for one operating system and processor; six of them
 ```
 
 <details>
 <summary>Package contents and why there are no customer builds</summary>
 
-The package contains:
+The core package contains:
 
 - OMP and Pi extensions.
 - Transport-neutral lifecycle adapters for Claude Code, Codex, and Cursor.
 - The persistent Rerail event stream.
-- Supported native binaries.
 - The local model and generic runtime assets.
+
+It holds no native binary. Each engine package holds one: the engine for one operating system and processor, and
+nothing to import. Core names the six as optional dependencies at its own exact version, and loads the one for the
+machine it runs on ([release.md](release.md#engine-packages); [the six names](installation.md#registry-access)). One
+tarball holding all six engines is larger than npm's registry accepts.
 
 Customer-specific packages, branches and native builds are prohibited by default. Customer identity and leak attribution go in signed entitlements and policy bundles. Releases stay reproducible, and one security update serves every deployment.
 
@@ -59,9 +66,9 @@ Customer-specific packages, branches and native builds are prohibited by default
 
 ### Registry
 
-npmjs is the registry of record; no other registry, mirror or feed carries Rerail. `.github/workflows/release.yml` publishes each tagged version via npm trusted publishing (OIDC from a protected GitHub environment, no long-lived publish token).
+npmjs is the registry of record; no other registry, mirror or feed carries Rerail. `.github/workflows/release.yml` publishes each tagged version via npm trusted publishing (OIDC from a protected GitHub environment, no long-lived publish token). It publishes the version's six engine packages first, reads each back from npm, and publishes core last, so core is never on npm without the engines it pins ([release.md](release.md#publish-order)).
 
-The package is public, like the Apache-2.0 source; no npm account needed:
+The packages are public, like the Apache-2.0 source; no npm account needed:
 
 ```sh
 npx @neralabs/rerail setup
@@ -69,7 +76,8 @@ npx @neralabs/rerail setup
 
 ### Release channels
 
-Each version is built once and published under one npm dist-tag, its channel:
+Each version is built once and published under one npm dist-tag, its channel; a version's engine packages take the
+same dist-tag as its core:
 
 ```text
 next    preview, opt-in
@@ -77,18 +85,19 @@ beta    designated customer preview
 latest  stable customer release
 ```
 
-Merging the **Release** pull request publishes core and rule packs to `latest`. Previews come from a hand-pushed `v<version>-next.N` or `-beta.N` tag.
+Merging the **Release** pull request publishes core and rule packs to `next`. That is the release candidate: once it is tested, a person approves its promotion to `latest`, which the release run waits for ([release](release.md#promoting)). Previews come from a hand-pushed `v<version>-next.N` or `-beta.N` tag.
 
 <details>
 <summary>How a release runs</summary>
 
-Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions straight to `latest`:
+Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions to `next`, and a person promotes them to `latest`:
 
 1. `.github/workflows/release-pr.yml` keeps the **Release** pull request current with `main`. It bumps core's patch version if anything core ships changed since its last `v<version>` tag, beside the packs' changeset bumps.
 2. Merging it is the release: the workflow tags core's new version.
-3. `release.yml` builds and publishes core; `release-packs.yml` publishes packs. Each publish waits for a reviewer to approve the `release` environment. Each run then checks `latest` is the version it published ([release](release.md#release), [pack-format.md](pack-format.md#release)).
+3. `release.yml` builds and publishes core and its engine packages to `next`; `release-packs.yml` publishes packs to `next`. Each publish waits for a reviewer to approve the `release` environment. Each run then checks `next` is the version it published ([release](release.md#release), [pack-format.md](pack-format.md#release)).
+4. Each release run ends with its promotion, waiting for a person to approve it once the release is tested on `next`: core's, then the packs'. Each promotion moves the dist-tag, so `latest` gets the tested bytes; core's moves its engine packages' with it, and the packs' promotion refuses a pack the core on `latest` can't load ([release](release.md#promoting)).
 
-**GitHub Releases:** every released version, core's and each pack's, gets one on its tag, which comes first: neither the tag nor the Release waits on npm, and a failed publish is re-run for the same tagged version. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases ([release](release.md#release)).
+**GitHub Releases:** every released version, core's and each pack's, gets one on its tag, which comes first: neither the tag nor the Release waits on npm, and a failed publish is re-run for the same tagged version. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. A Release is a pre-release while its version is on `next` or `beta`; promoted, core's becomes the repository's latest release ([release](release.md#release)).
 
 </details>
 
@@ -97,12 +106,12 @@ Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions straight to `
 
 **`next` never trails `latest`,** so whoever follows `next` gets every stable release too:
 
-- A `latest` publish or promotion, core's or a pack's, also raises that package's `next`, unless `next` holds a newer preview (`scripts/release/raise-next.mjs`; `releasePacks`, `promotePacks`).
-- Each run's dist-tag check fails if a package it released under `latest` or `next` has a `next` unset or older than its `latest`.
-- A core `next` or `beta` preview older than `latest` is refused before it is built.
+- A promotion, core's or a pack's, also raises that package's `next`, unless `next` holds a newer version (`scripts/release/raise-next.mjs`; `promotePacks`).
+- Each run's dist-tag check fails if a package it released under `next`, or promoted to `latest`, has a `next` unset or older than its `latest`.
+- A core version older than `latest` is refused before it is built.
 - Previews leave `latest` alone; putting a version back leaves `next` where it is.
 
-**Rollback** moves only the dist-tag; bytes are never rebuilt between channels. `workflow_dispatch` with `latest` set on `release.yml` (core) or `release-packs.yml` (a pack) points `latest` at an earlier released version and holds it there. Both use npm trusted publishing, so no npm login is needed.
+**Promotion and rollback** move only the dist-tag; bytes are never rebuilt between channels. `workflow_dispatch` with `latest` set on `release.yml` (core and its engine packages) points `latest` at a released version, newer to promote it or earlier to put it back; `release-packs.yml` with no inputs promotes the packs, and with a pack and an earlier version puts it back and holds it there. Both use npm trusted publishing, so no npm login is needed.
 
 **Provenance:** every publish from CI carries an npm provenance attestation. Both workflows pass `--provenance`, so a publish npm cannot attest fails instead of going out without one.
 
@@ -121,7 +130,7 @@ rerail update status
 rerail events          # internal testing; experimental: needs RERAIL_EXPERIMENTAL_EVENT_STREAM=1
 ```
 
-Hooks, the daemon and `rerail events` never contact a registry. A new version arrives only via `rerail update`, and applies to newly started sessions.
+Hooks and `rerail events` never contact a registry. The daemon of an installed Rerail asks npm once a day for the newest version on the channel, only to say an update is out (`update-check.json`; `RERAIL_UPDATE_CHECK=0` turns it off). A new version arrives only via `rerail update`, and applies to newly started sessions.
 
 <details>
 <summary>Rerail home layout and rule packs</summary>
@@ -129,20 +138,26 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 ```text
 ~/.rerail/
 |- update-state.json
+|- update-check.json
 |- current -> versions/<active>/node_modules/@neralabs/rerail
 |- bin/rerail
 |- daemon.json
+|- claude-status-lines/<session id>
 |- packs/node_modules/@neralabs/rerail-pack-<id>/
 |- packs/node_modules/[@<scope>/]rerail-pack-<id>/
 `- versions/
-   |- 0.2.0/node_modules/@neralabs/rerail/
-   `- 0.2.1/node_modules/@neralabs/rerail/
+   |- 0.2.1/node_modules/@neralabs/rerail/
+   `- 0.2.2/node_modules/
+      |- @neralabs/rerail/
+      `- @neralabs/rerail-engine-<suffix>/
 ```
 
 - **npm** is the authenticated artifact transport. Rerail never copies, logs or sends npm credentials to a control plane.
+- **The engine** of a version is its engine package, installed beside core in that version's `node_modules`. A version installed by a Rerail older than 0.2.1, or by plain npm, has its engine packages inside core's own `node_modules` instead; Rerail finds the engine in either place.
 - **Rule packs** are npm packages: Rerail's under `@neralabs`, a third party's as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` ([rule packs](rule-packs.md#third-parties-packs)). They install with the same npm configuration into `packs/`, beside the versions, so `rerail update` keeps them.
 - **Pack compatibility** is `peerDependencies["@neralabs/rerail"]`. After an update, packs whose range excludes the new version leave the catalog, reported by `rerail packs list`, until a newer pack is installed.
 - **`update-state.json`** is the active-version pointer: selected dist-tag, current and previous known-good installs, last explicit check. It is written via a temporary file and atomic rename.
+- **`update-check.json`** is the daemon's daily update check: the channel, the newest version npm last named on it and when, and when the daemon last asked. It is written the same way, and only ever read to say an update is out.
 
 </details>
 
@@ -159,8 +174,8 @@ An update:
 2. Resolves the exact version behind the configured dist-tag.
 3. Compares it with the active semantic version.
 4. Takes a machine-wide update lock.
-5. Installs that exact version into a staging directory, production dependencies only.
-6. Confirms package name and version.
+5. Installs that exact version, and this machine's engine package of the same version, into a staging directory: production dependencies only, and no other optional dependency.
+6. Confirms package name and version, and that the engine package installed has the integrity core's shrinkwrap pins for it.
 7. Loads the native module and requires a successful health response.
 8. Moves staging into its immutable version directory.
 9. Atomically marks the old version previous and activates the new; the old stays in `versions/`.
@@ -169,7 +184,10 @@ An update:
     - An agent that cannot be registered again fails alone; the update exits non-zero with the new version active.
     - Agents whose configuration cannot be read to tell whether they are connected are named and left alone.
     - The update that introduces this step runs the previous version's updater, which lacks it: run `rerail install --refresh` once after it.
-11. Lists each installed rule pack with a newer version that fits the active core, with the `rerail packs add` command that installs it. It installs none.
+11. Runs `rerail packs update` as the new CLI, once the refresh succeeds: each installed rule pack moves to the newest version on the channel that the new core accepts, checked by the new core's engine.
+    - Runs even with no newer core: packs are released without one.
+    - A pack that does not install or load is put back alone; the update exits non-zero with the new version active.
+    - The update that introduces this step runs the previous version's updater, which only lists the newer packs: run `rerail packs update` once after it.
 
 **Health gate:** the native entrypoint and a real `RERAIL-EVENTS/1` session-start exchange must pass, or the update is discarded without changing the active version.
 
@@ -338,7 +356,7 @@ The software update signing key is planned, not built; today `rerail update` rel
 <details>
 <summary>What `rerail update` verifies today</summary>
 
-No Rerail code verifies a Nera signature on an update today. Before it runs a staged version, `rerail update` checks the registry signatures and provenance attestations of everything it installed with `npm audit signatures`. It installs with no install scripts. Those attestations come from Nera's trusted-publisher release workflow, so they bind a version to that workflow, not to a key Nera holds offline.
+No Rerail code verifies a Nera signature on an update today. Before it runs a staged version, `rerail update` checks the registry signatures and provenance attestations of everything it installed, the engine package included, with `npm audit signatures`, and compares the engine package's integrity with the one core's shrinkwrap pins. It installs with no install scripts. Those attestations come from Nera's trusted-publisher release workflow, so they bind a version to that workflow, not to a key Nera holds offline.
 
 </details>
 
@@ -389,4 +407,4 @@ Rerail is licensed under Apache-2.0. Restricted npm access does not limit the ri
 
 ## Evolution
 
-The public npm package is the distribution channel. Any future portal or registry must ship the same signed, immutable artifacts, with no customer-specific forks.
+The public npm packages are the distribution channel. Any future portal or registry must ship the same signed, immutable artifacts, with no customer-specific forks.

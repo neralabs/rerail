@@ -32,7 +32,7 @@ describe(".rerail/packs.json", () => {
   it("reads this repository's own .rerail/packs.json, as main commits it, as packs for the whole repository", () => {
     // The file already in use in this and other repositories; a change that refuses it breaks them.
     expect(readPacksFile(repositoryPath())).toEqual([
-      { kind: "published", packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.8" },
+      { kind: "published", packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.9", config: { ceiling: 10 } },
       { kind: "repository", path: "packs/rerail" },
     ]);
   });
@@ -41,6 +41,13 @@ describe(".rerail/packs.json", () => {
     expect(parsePacksFile(file([{ id: "typescript", version: "0.1.8", folders: ["web", "admin/app"] }, { path: "packs/acme", folders: ["api"] }]))).toEqual([
       { kind: "published", packageName: "@neralabs/rerail-pack-typescript", id: "typescript", version: "0.1.8", folders: ["web", "admin/app"] },
       { kind: "repository", path: "packs/acme", folders: ["api"] },
+    ]);
+  });
+
+  it("reads the option values an entry sets for its pack's rules, beside its folders", () => {
+    expect(parsePacksFile(file([{ id: "complexity", version: "0.1.9", config: { ceiling: 10 } }, { path: "packs/acme", folders: ["api"], config: { "max-depth": 3 } }]))).toEqual([
+      { kind: "published", packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.9", config: { ceiling: 10 } },
+      { kind: "repository", path: "packs/acme", folders: ["api"], config: { "max-depth": 3 } },
     ]);
   });
 
@@ -59,6 +66,9 @@ describe(".rerail/packs.json", () => {
     [file([{ id: "complexity", version: "0.1.8", folders: ["/srv"] }]), "packs[0].folders[0] \"/srv\" is absolute"],
     [file([{ id: "complexity", version: "0.1.8", folders: [3] }]), "packs[0].folders[0] is not a string"],
     [file([{ id: "complexity", version: "0.1.8", folders: ["web", "web"] }]), "packs[0].folders lists web twice"],
+    [file([{ id: "complexity", version: "0.1.8", config: 10 }]), "packs[0].config must be an object of option names and their values"],
+    [file([{ id: "complexity", version: "0.1.8", config: [10] }]), "packs[0].config must be an object of option names and their values"],
+    [file([{ id: "complexity", version: "0.1.8", config: {} }]), "packs[0].config must be an object of option names and their values"],
     [file([], { rules: [] }), "is not a rerail.packs/1 document"],
     [JSON.stringify({ format: "rerail.packs/v1", packs: [] }), "is not a rerail.packs/1 document"],
     ["{\"schema\": \"rerail.packs/1\", \"schema\": \"rerail.packs/1\", \"packs\": []}", "schema"],

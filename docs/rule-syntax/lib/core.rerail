@@ -297,6 +297,13 @@
 .decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
+// ---- a coding agent's tool calls (`tool-calls.md`) ----
+// tool_call(c, tool): a tool call the run is given (the `toolCalls` option, `run-policies --tool-calls`), by its id c,
+// and the tool's name (`Bash`, `shell`). tool_input(c, key, value): each string argument of call c, by its key, a
+// nested one by its dotted path (`command`, `options.branch`), as a JSON tool-call rule's `input.<path>` reads it. A
+// policy that reads them says `.scope tool_calls`: it reads no file, and its findings are at a call (`at: symbol`).
+.decl tool_call(call: symbol, tool: symbol)
+.decl tool_input(call: symbol, key: symbol, value: symbol)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
 // argument-matching rules must treat the call as open.
 .decl spread(n: node)                                    // a spread element or argument (`*args`, `...xs`)
@@ -676,6 +683,8 @@
 // .violation V(at: loc, …) "message"          at is a node, a span, or a @place. A place with line 0 is a file-level
 //                                              finding; @place of a missing path is a repository-level one. The
 //                                              code is V.
+// .violation V(at: symbol, …) "message"       in a `.scope tool_calls` policy: at is a tool call's id. The finding
+//                                              has no path and line 0 ("" and 0), and its `at` is the call's id.
 // .violation V(at: loc, …) code "E501" "…"    a constant code, for a code that is no identifier ("@next/next/x")
 //     suppress ruff "E501", …                 continuation line: the tool comments that silence it (`# noqa: E501`;
 //                                              ruff, flake8, nosec, eslint, oxlint, biome, clippy, phpcs, phpstan,
@@ -720,8 +729,14 @@
 //                                              repositories laid out differently (the scripts' --application-root).
 // .requires "data-layer:a", "data-layer:b"    a suite policy: one finding per member policy that fails, or that
 //                                              ends unknown on any file. Members run as usual.
-// .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
-//                                              skip .git, .venv, venv, __pycache__ and tmp.
+// .scope tests false                          drops documents with a `test` or `tests` path part. Walks (the
+//                                              corpus, file()) always skip the host's ignored directories, at
+//                                              any depth: .git, .hg, .svn, .rerail, .venv, __pycache__,
+//                                              node_modules, dist, build, .next, .turbo, coverage, target and
+//                                              vendor (src/engine/code-rule/ignored-directories.ts). Hidden
+//                                              ones (.github) are read. In a Git work tree, the corpus (and an
+//                                              .artifact's inputs) also leaves out what Git ignores. A site
+//                                              directory (one holding a *.dist-info) skips no folder.
 // .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
 //                                              the reference graph's links, as the policy's `references` gives
 //                                              them, over the files of `scope` (default: every file).

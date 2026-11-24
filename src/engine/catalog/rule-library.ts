@@ -9,7 +9,7 @@ import { storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { RuleCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
-import type { RuleDocument } from "./rule-store.js";
+import type { JsonRuleDocument } from "./rule-store.js";
 import {
   libraryRules,
   repositories,
@@ -51,7 +51,7 @@ export interface CopiedRule {
 }
 
 /** Validate a rule body of `kind`: code rules must compile in the engine (or name a language it does not read yet), conversation regexes must be accepted. */
-export function validateLibraryDocument(document: unknown, kind: RuleKind): RuleDocument {
+export function validateLibraryDocument(document: unknown, kind: RuleKind): JsonRuleDocument {
   if (kind === "code") return { kind, rule: storableCodeRule(document).rule };
   const rule = parseConversationRule(document);
   assertEngineRegexes(rule);
@@ -59,7 +59,7 @@ export function validateLibraryDocument(document: unknown, kind: RuleKind): Rule
 }
 
 /** Write an already validated document; the caller owns the transaction. */
-export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document: RuleDocument, options: LibraryRuleWriteOptions = {}): void {
+export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document: JsonRuleDocument, options: LibraryRuleWriteOptions = {}): void {
   const id = document.rule.id;
   const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   // A library rule written before a release bundled its id wins over that By Rerail rule, so it stays editable.
@@ -124,7 +124,7 @@ export function readLibraryRow(row: LibraryRow): { ok: true; rule: LibraryRule }
   });
   const unknown = unknownRuleKind(row.kind, row.document);
   if (unknown !== undefined) return quarantine(unknown.reason, unknown.kind);
-  let document: RuleDocument;
+  let document: JsonRuleDocument;
   if (row.kind === "code") {
     const read = readStoredCodeRule(row.document.rule);
     if (!read.ok) return quarantine(read.reason);
@@ -262,13 +262,47 @@ export function copyRerailRuleToLibrary(
 ): CopiedRule {
   const original = ruleCatalog.documents.get(sourceId);
   if (original === undefined) throw new Error(`${sourceId} is not a By Rerail rule`);
+  if (original.kind === "rerail") throw new Error(`${sourceId} is written in .rerail; a rule created by you cannot be a copy of it yet`);
+  return storeCopy(db, ruleCatalog, original.kind, sourceId, edited, tx => rerailRuleFolders(tx, ruleCatalog, repositoryKey, sourceId), { repositoryKey, ...options });
+}
+
+/**
+ * Store a coding agent's edit of your approved rule `sourceId` as a library copy, in one transaction, as
+ * {@link copyRerailRuleToLibrary} does for a By Rerail rule: the copy is added where the original is in the repository,
+ * runs in Log until a person approves it, and that first approval switches the original off there. Until then the
+ * approved original keeps running, unchanged in every repository it is added to.
+ */
+export function copyLibraryRuleToLibrary(
+  db: RerailDatabase,
+  ruleCatalog: RuleCatalog,
+  repositoryKey: RepositoryKey,
+  sourceId: string,
+  edited: unknown,
+  options: { readonly now?: number } = {},
+): CopiedRule {
+  const original = getLibraryRule(db, sourceId);
+  if (original === undefined) throw new Error(`${sourceId} is not a rule created by you`);
+  return storeCopy(db, ruleCatalog, original.document.kind, sourceId, edited, tx => libraryRuleFolders(tx, repositoryKey, sourceId), { repositoryKey, ...options });
+}
+
+/** Write `edited` as the copy of `sourceId`, and add it at the folders `foldersOf` reads in the same transaction. */
+function storeCopy(
+  db: RerailDatabase,
+  ruleCatalog: RuleCatalog,
+  kind: RuleKind,
+  sourceId: string,
+  edited: unknown,
+  foldersOf: (tx: Queries) => string[],
+  options: { readonly repositoryKey: RepositoryKey; readonly id?: string; readonly now?: number },
+): CopiedRule {
   if (typeof edited !== "object" || edited === null) throw new Error("the edited rule must be an object");
   const now = options.now ?? Date.now();
+  const { repositoryKey } = options;
   return db.transaction(tx => {
     const id = options.id ?? freeCopyId(tx, ruleCatalog, sourceId);
-    const document = validateLibraryDocument({ ...edited, id }, original.kind);
+    const document = validateLibraryDocument({ ...edited, id }, kind);
     writeLibraryRule(tx, ruleCatalog, document, { copiedFromRuleId: sourceId, now });
-    const folders = rerailRuleFolders(tx, ruleCatalog, repositoryKey, sourceId);
+    const folders = foldersOf(tx);
     for (const folder of folders) {
       tx.insert(ruleAttachments)
         .values({ repositoryKey, folder, sourceKind: "library_rule", sourceId: id, createdAt: now })

@@ -1,11 +1,13 @@
 import type { SteerRule } from "../adapter-contract.js";
-import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
+import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import type { GitReads } from "../git.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
-import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
+import { steerNaming, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -15,6 +17,8 @@ export interface CodeRuleDslDocument {
   id: string;
   revision: number;
   mode: RuleMode;
+  /** The rule in a person's own words, which the dashboard shows; the agent never reads it. */
+  title?: string;
   description?: string;
   scope?: CodeRuleDslScope;
   clauses: CodeRuleDslClause[];
@@ -1473,6 +1477,11 @@ export interface CodeRuleEditBatch {
    * in `log` mode, so the restored source is judged and recorded but steers nothing.
    */
   mode?: AuditMode;
+  /**
+   * Who these edits' audits belong to; `session` when absent. `repository`: changes the walk of the other worktrees
+   * found that no session made, recorded once for the repository by the one session the walk handed them to.
+   */
+  owner?: AuditOwner;
 }
 
 export interface CodeRuleSourceSpan {
@@ -1593,6 +1602,14 @@ export interface CodeRuleAuditor {
    * Absent: a file's checkout does not change while a session runs.
    */
   refreshOwners?(paths: readonly string[]): void;
+  /**
+   * Before a tool call's files are filtered at its start: builds the rules of the checkouts that own `paths` (as for
+   * `acceptsPath`), compiling them off the daemon's thread, and settles once they are built, so `acceptsPath`
+   * compiles nothing on it. Absent: `acceptsPath` builds them itself.
+   */
+  prepareRules?(paths: readonly string[]): Promise<void>;
+  /** Settles once the rules `openWorkspace` builds ahead of any call are built. Absent: it builds none. */
+  rulesBuiltAhead?(): Promise<void>;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
@@ -1619,16 +1636,41 @@ export interface CodeRuleAuditor {
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
-  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
-  worktreeRoots?(): readonly string[];
+  /**
+   * The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent.
+   * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
+   */
+  worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /**
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
+   * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list
+   * stored for the registry, with nothing started, for a call in the same synchronous run to take. Undefined, with
+   * nothing started, where there is nothing to learn. Never throws, and what it gives to wait on never rejects.
+   */
+  learnWorktreeRoots?(git: GitReads): WorktreeListLearning | undefined;
+  /**
+   * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
+   * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.
+   */
+  worktreeRegistry?(): string | undefined;
   /**
    * The checkouts (physical) whose Git ignore rules the session's checks follow, beside the session folder's own: a
    * change to their exclude files changes what is checked. None beyond the session folder's when absent.
    */
   ignoreRuleRoots?(): readonly string[];
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
-  /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
-  settleGeneratedEdits?(): Promise<void>;
+  /**
+   * Wait until every accepted generated edit has completed, without waiting for unrelated audits. With `steering`, only
+   * the edits that may steer the session (a mode other than `log`).
+   */
+  settleGeneratedEdits?(only?: "steering"): Promise<void>;
+  /**
+   * Whether `settleGeneratedEdits("steering")` waits for a walk's `log` edits too: in repository scope every batch, a
+   * walk's included, is checked by one audit of the whole repository. False when absent.
+   */
+  steeringWaitsForLog?(): boolean;
+  /** The agent's turn ended (or the session reached its final checkpoint): work waiting for the session to go quiet starts now. */
+  turnEnded?(): void;
   /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
@@ -1735,9 +1777,10 @@ export function buildSteer(
   shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
+  const naming = steerNaming(sourceOf);
   return {
     content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
-    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
+    rules: steerRules(findings, naming.origin, naming.title),
   };
 }

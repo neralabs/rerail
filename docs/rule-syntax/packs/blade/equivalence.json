@@ -1,0 +1,31 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "blade",
+  "equivalent": false,
+  "untranslated": {
+    "bladestan-identical-always-true": "failed: examples, fixtures, samples-blade: the translation failed: rerail-engine: docs/rule-syntax/packs/blade/bladestan-identical-always-true.rerail: invalid native table name (exit 1)",
+    "bladestan-if-always-true": "failed: examples, fixtures, samples-blade: the translation failed: rerail-engine: docs/rule-syntax/packs/blade/bladestan-if-always-true.rerail: invalid native table name (exit 1)"
+  },
+  "different": {
+    "blade-parser-duplicate-condition-expressions": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "tlint-space-after-blade-directives": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 10
+        }
+      }
+    }
+  }
+}

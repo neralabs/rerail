@@ -32,6 +32,7 @@ use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_de
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use crate::code_rule_dsl::logic::device::caps;
+use crate::code_rule_dsl::logic::lanes::wave::{self, OpenWaves};
 use crate::code_rule_dsl::logic::profile;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -1954,10 +1955,10 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
 }
 
 thread_local! {
-    /// The level's open command buffer (decision 0113 §3's wave): the strata placed on the device encode their joins
-    /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
-    /// whether it is open.
-    static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
+    /// The level's open command buffers (decision 0113 §3's wave): the strata placed on the device encode their joins
+    /// into the one of their job's fence depth and wait for the wave, so a level's small strata go out in one commit
+    /// and one wait. By number, while open (`lanes::wave::OpenWaves`: a job run inside another's opens its own).
+    static WAVE: RefCell<OpenWaves<mj::Batch>> = const { RefCell::new(OpenWaves::new()) };
     static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
     /// counted by a stratum.
@@ -1988,12 +1989,30 @@ fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
     mj::Batch::with_shared_arena(Rc::clone(arena)).map_err(|e| format!("{e:?}"))
 }
 
-/// The thread's open wave, committed (`direct_batch`).
+/// Every open wave on the thread committed (`direct_batch`), the outer jobs' too: a resident relation's sort may be
+/// in any of them (Q48). Each stays open for more work, its own job's commit still to come.
 fn commit_wave() -> Result<(), String> {
-    WAVE.with_borrow_mut(|w| match w {
-        Some((_, wave)) => wave.commit_open().map_err(|e| format!("{e:?}")),
-        None => Ok(()),
-    })
+    WAVE.with_borrow_mut(|w| w.each_mut().try_for_each(|batch| batch.commit_open().map_err(|e| format!("{e:?}"))))
+}
+
+/// Opens this job's command buffer for the level's wave (`OpenWaves`, at its fence depth), its commit deferred to
+/// this job's flush: its number. The buffer is made first, the one step that can fail; then its commit is deferred
+/// and it is opened, nothing that can fail between (`OpenWaves`, way 8): a failed make leaves nothing deferred or open.
+fn open_wave() -> Result<u64, String> {
+    let batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+    let n = WAVES.get() + 1;
+    WAVES.set(n);
+    wave::defer(Box::new(move || {
+        // Deferred only once the buffer was opened (`OpenWaves`, way 8): a missing one is a broken invariant, and the
+        // flush's error.
+        let Some(mut batch) = WAVE.with_borrow_mut(|w| w.take(n)) else { return Err(format!("device wave {n}: its deferred commit found it not open")) };
+        let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
+        // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
+        FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
+        Ok(())
+    }));
+    WAVE.with_borrow_mut(|w| w.open(wave::depth(), n, batch));
+    Ok(n)
 }
 
 /// A stratum's joins encoded into the level's open command buffer, to wait for the wave (`lanes::wave::flush`
@@ -2013,48 +2032,32 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    let opened = WAVE.with_borrow(Option::is_none);
-    if opened {
-        let n = WAVES.get() + 1;
-        WAVES.set(n);
-        WAVE.with_borrow_mut(|w| -> Result<(), String> {
-            *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
-            Ok(())
-        })?;
-        crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
-            let Some((n, mut batch)) = WAVE.with_borrow_mut(Option::take) else { return Ok(()) };
-            let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
-            // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
-            FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
-            Ok(())
-        }));
-    }
-    let encoded = WAVE.with_borrow_mut(|w| {
-        let (n, batch) = w.as_mut().expect("the open wave");
-        encode_runs(rules, batch, &mut rep, names).map(|runs| (*n, runs))
-    })?;
-    let (wave, runs) = encoded;
+    let n = match WAVE.with_borrow(|w| w.mine(wave::depth())) {
+        Some(n) => n,
+        None => open_wave()?,
+    };
+    let runs = WAVE.with_borrow_mut(|w| encode_runs(rules, w.get_mut(n).expect("the open wave"), &mut rep, names))?;
     if runs.len() < rules.len() {
         // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
         // which the wave keeps until it is done (back in the pool, another job's would be written).
-        WAVE.with_borrow_mut(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
+        WAVE.with_borrow_mut(|w| w.get_mut(n).expect("the open wave").hold(Box::new(runs)));
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
     let t = TICKETS.get() + 1;
     TICKETS.set(t);
-    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live)));
+    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, n, rep, live)));
     Ok(Some(t))
 }
 
 /// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
 pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
-    let Some((runs, wave, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
+    let Some((runs, n, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
     let all = rules.len();
     let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
     let rules = &some[..];
-    let done = FLUSHED.with_borrow_mut(|f| match f.get_mut(&wave) {
+    let done = FLUSHED.with_borrow_mut(|f| match f.get_mut(&n) {
         None => Err("a stratum's wave was not flushed".to_owned()),
         Some(Err(e)) => Err(e.clone()),
         // The wave's device seconds, counted once (by its first stratum).

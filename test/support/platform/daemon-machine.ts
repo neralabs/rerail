@@ -2,8 +2,8 @@ import type { DaemonMachine } from "../../../src/runtime/index.js";
 
 /**
  * A machine on `platform` where nothing reaches this one unless `overrides` says so: every pid is gone, no named pipe
- * exists, every engine refuses the capability proof, no main-instance or home daemon lock can be tried (as without
- * the native binding), the environment is empty, and a spawn fails the test. A test names the OS calls it checks, so
+ * exists, every engine refuses the capability proof, Windows names no pipe's holder, no main-instance or home daemon lock can be tried (as without
+ * the native binding), no process's start time can be read, the environment is empty, and a spawn fails the test. A test names the OS calls it checks, so
  * each platform's branch of the daemon control runs on every OS.
  */
 export function fakeMachine(platform: NodeJS.Platform, overrides: Partial<DaemonMachine> = {}): DaemonMachine {
@@ -18,9 +18,11 @@ export function fakeMachine(platform: NodeJS.Platform, overrides: Partial<Daemon
     env: {},
     pipes: () => [],
     capabilityProof: async () => "refused",
+    pipeServer: async () => undefined,
     forgetMainInstanceHolder: () => undefined,
     mainInstanceLockHeld: () => undefined,
     homeDaemonLockHeld: () => undefined,
+    processStartedAt: () => undefined,
     nodeExecutable: () => "node",
     spawnDetached: refuse("process through the native spawn"),
     spawn: refuse("process through Node's spawn"),

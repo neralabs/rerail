@@ -14,13 +14,14 @@ import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/daemon/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
+import type { UntakenPass } from "../engine/storage/untaken-events.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
@@ -30,8 +31,11 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
+import type { RerailApiStores } from "../api/operation.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
+import { eventAnswerFacts } from "../api/event-answer.js";
+import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -40,7 +44,7 @@ import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-m
 import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
-import { holdHomeDaemonLock } from "../engine/native/home-daemon-lock.js";
+import { holdHomeDaemonLock, type HolderRuns, type HomeDaemonLease } from "../engine/native/home-daemon-lock.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -65,9 +69,10 @@ const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 /**
  * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
- * long a handler takes to answer, and `/mcp` answers each POST with one JSON body (no SSE stream: `mcp.ts`), so no
- * response is cut short. Dashboard polls are small GETs; between them a kept-alive connection is closed by Node's
- * `keepAliveTimeout`, not these. Loopback carries the largest native body in well under 60 seconds.
+ * long a handler takes to answer, so no response is cut short: `/mcp` answers each POST with one JSON body (no SSE
+ * stream: `mcp.ts`), and the dashboard's change stream (`GET /api/changes`) is a GET received at once and answered for
+ * as long as the page shows. Between requests a kept-alive connection is closed by Node's `keepAliveTimeout`, not
+ * these. Loopback carries the largest native body in well under 60 seconds.
  */
 const HTTP_TIMEOUTS = { headersTimeout: 10_000, requestTimeout: 60_000 } as const;
 const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request; daemon.log in the Rerail home has the cause.";
@@ -78,6 +83,8 @@ export interface RerailDaemonOptions {
   remoteSink?: false | { intervalMs: number };
   /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
   checkoutPruning?: false | { intervalMs: number };
+  /** Internal testing: how the dashboard's change stream watches and beats; tests drive its notices and set its beat. */
+  changeFeed?: ChangeFeedOptions;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -108,6 +115,12 @@ export interface RerailDaemonOptions {
    * (`runHomeDaemon`), since it alone holds the home's lock; omitted, the state file is written once.
    */
   recordCheck?: { readonly everyMs: number; readonly home: string; readonly holdsHome: () => boolean };
+  /**
+   * The Rerail home's daemon lock this daemon holds (`holdHomeDaemonLock`), given up as the last step of `close`: a
+   * daemon restarting at its heap ceiling closes, then launches the next one, so that one finds the home free however
+   * long this process then takes to exit. The daemon of a home passes it (`runHomeDaemon`).
+   */
+  homeLease?: Pick<HomeDaemonLease, "release">;
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
@@ -119,6 +132,23 @@ export interface RerailDaemonOptions {
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
   /**
+   * Hears of each pass over the events hooks left untaken while the daemon did not read, once their checks ended: the
+   * daemon's entry point writes it to the hook failure log, where `rerail status` reads it.
+   */
+  lateChecked?: (pass: UntakenPass) => void;
+  /**
+   * Starts the daily update check `/healthz.update` reports, stopped when the daemon closes. The entry point of a
+   * managed install passes set-up's (`startUpdateChecks`); omitted, as for a checkout's daemon and in tests, nothing
+   * asks npm and `update` is null.
+   */
+  updateChecks?: () => { newest(): DaemonHealth["update"]; stop(): void };
+  /**
+   * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
+   * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
+   * daemon's; omitted, nothing is drawn ahead.
+   */
+  statusLines?: (stores: RerailApiStores) => { stop(): Promise<void> };
+  /**
    * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
    */
@@ -126,7 +156,7 @@ export interface RerailDaemonOptions {
   /**
    * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
    * the key (`serveRerailDaemon`). Its arguments asked for https, and may have asked to be reachable from other
-   * machines. The state file records it, for `rerail status` to say.
+   * machines. The state file records it, for `rerail status` to say. It also names a key that is empty or no key.
    */
   remoteRefused?: string;
   /**
@@ -136,7 +166,7 @@ export interface RerailDaemonOptions {
   onShutdownRequest?: () => void;
 }
 
-/** What `--tls-cert` and `--tls-key` name, read: PEM text. */
+/** What `--tls-cert` and `--tls-key` name, read: PEM text, which `loadDaemonTls` parses before it hands it on. */
 export interface DaemonTlsMaterial {
   cert: string;
   key: string;
@@ -434,6 +464,8 @@ interface StartedServices {
  * stderr, so a later EADDRINUSE has its cause on record.
  */
 async function closeAfterFailedStart({ engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+  // A watch of the untaken folder holds it open, and on Windows keeps the home from being removed: the engine service's
+  // close ends it first.
   const failed = (what: string, reason: unknown): void => {
     process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
   };
@@ -463,6 +495,33 @@ function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: Merg
   return mergeAssistExperimentEnabled() ? { mergeAssist: createMergeAssistService({ database }) } : {};
 }
 
+/**
+ * The engine service's option naming the home whose untaken events it checks (`EngineService.untaken`): the one
+ * `stateFile` is in, since hooks find the daemon there; none for a daemon no state file names. Each pass goes to
+ * daemon.log and to `lateChecked`.
+ */
+function untakenEventsOption(
+  stateFile: string | undefined, lateChecked: RerailDaemonOptions["lateChecked"],
+): { untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void } } {
+  if (stateFile === undefined) return {};
+  return {
+    untakenEvents: {
+      home: dirname(stateFile),
+      lateChecked: pass => {
+        process.stdout.write(`rerail daemon: ${lateCheckLine(pass)}\n`);
+        lateChecked?.(pass);
+      },
+    },
+  };
+}
+
+/** What daemon.log says of a pass over the events hooks left while the daemon did not read. */
+function lateCheckLine({ events, from, to, failed }: UntakenPass): string {
+  const what = events === 1 ? "1 hook event" : `${events} hook events`;
+  const lost = failed === 0 ? "" : `; ${failed} could not be checked and ${failed === 1 ? "is" : "are"} lost`;
+  return `checked late ${what} left from ${new Date(from).toISOString()} to ${new Date(to).toISOString()} while it did not read${lost}`;
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
@@ -488,12 +547,18 @@ export class RerailDaemon {
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
   #checkoutPruning: CheckoutPruning | undefined;
+  /** What `RerailDaemonOptions.updateChecks` started, once nothing can fail the start. */
+  #updateChecks: ReturnType<NonNullable<RerailDaemonOptions["updateChecks"]>> | undefined;
   #recordCheck: NodeJS.Timeout | undefined;
   /** The check of the state file in flight, which a close waits for before it removes the file. */
   #recordChecked: Promise<void> = Promise.resolve();
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
+  /** The id of the untaken folder its watch watches, which the state file names so hooks leave events there unasked. */
+  #untakenFolder: string | undefined;
+  /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
+  #statusLines: { stop(): Promise<void> } | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -569,6 +634,7 @@ export class RerailDaemon {
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
+      changeFeed: options.changeFeed,
     });
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
@@ -582,8 +648,11 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        ...untakenEventsOption(options.stateFile, options.lateChecked),
         worktreeWalks,
         ...sharedMergeAssist,
+        // Until the dashboard listens, a hook reads what it needs as it did before answers carried it.
+        answerFacts: (event, deliveries, held) => daemon === undefined ? undefined : eventAnswerFacts(stores.dashboardOrigin(), event, deliveries, held),
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
@@ -603,7 +672,9 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
+      daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
+      daemon.#startUpdateChecks();
       daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
@@ -627,6 +698,43 @@ export class RerailDaemon {
     if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
   }
 
+  /** Once nothing can fail the start: the daily ask for a newer Rerail, where the entry point passes one. */
+  #startUpdateChecks(): void {
+    this.#updateChecks = this.#options.updateChecks?.();
+  }
+
+  /**
+   * Watches this daemon's home for the events hooks leave untaken (`untaken-events.ts`), taking each as soon as this
+   * daemon's event loop runs. Only while the watch runs does the state file tell hooks they may leave events for it
+   * without asking it, naming the folder it watches (`#untakenFollowed`). Without one, events left by a hook that waited
+   * out this daemon are still taken at its next event and its next start.
+   */
+  #watchUntaken(stateFile: string): void {
+    this.#untakenFolder = this.#engineService.untaken.watch(folder => this.#untakenFollowed(stateFile, folder));
+  }
+
+  /**
+   * The watch followed the untaken folder to another one at its path (`folder`), or could follow it no more (undefined):
+   * the state file names that folder, or none, so hooks leave events unasked only where this daemon watches.
+   */
+  #untakenFollowed(stateFile: string, folder: string | undefined): void {
+    if (folder === this.#untakenFolder) return;
+    this.#untakenFolder = folder;
+    this.#recordChecked = this.#recordChecked.then(async () => {
+      if (this.#closed) return;
+      await this.#writeRecord(stateFile).catch((error: unknown) => {
+        process.stderr.write(`rerail daemon: could not write ${stateFile} again: ${errorText(error)}\n`);
+      });
+    });
+  }
+
+  /** Writes this daemon's state to `stateFile`, as what its record check keeps there. */
+  async #writeRecord(stateFile: string): Promise<void> {
+    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
+    await replaceFile(stateFile, text, { mode: 0o600 });
+    this.#recordText = text;
+  }
+
   /**
    * Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`), and nothing at all
    * while it is off in the daemon.
@@ -648,13 +756,15 @@ export class RerailDaemon {
    * start and hook in that home while it records into a database that home does not hold.
    */
   async #record(stateFile: string): Promise<void> {
-    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
-    await replaceFile(stateFile, text, { mode: 0o600 });
-    this.#recordText = text;
+    this.#watchUntaken(stateFile);
+    await this.#writeRecord(stateFile);
+    // After the file, so a launcher waiting for it is not held by a backlog; an event sent meanwhile waits for the pass
+    // to begin every check of it first (the engine service's before-event step).
+    void this.#engineService.untaken.taken();
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
-      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, text, check));
+      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, this.#recordText!, check));
     }, check.everyMs);
     this.#recordCheck.unref();
   }
@@ -722,6 +832,7 @@ export class RerailDaemon {
       readsSpelling: true,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
       ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
+      ...(this.#untakenFolder === undefined ? {} : { untakenFolder: this.#untakenFolder }),
     };
   }
 
@@ -743,16 +854,28 @@ export class RerailDaemon {
       workspaceRoot: this.#workspaceRoot,
       installedAt: this.#stores.installedAt(),
       experiments: enabledExperiments(),
+      update: this.#updateChecks?.newest() ?? null,
     };
+  }
+
+  /**
+   * Closes every checkout runtime no session uses (`EngineService.closeUnusedRuntimes`), settling once their memory was
+   * collected: the heap watch asks it before it restarts the daemon at its ceiling.
+   */
+  async closeUnusedRuntimes(): Promise<void> {
+    await this.#engineService.closeUnusedRuntimes();
   }
 
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
+    this.#engineService.untaken.close();
+    this.#updateChecks?.stop();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
+      await this.#statusLines?.stop();
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;
       // Pruning stops first: a remote sink that fails to stop must not leave a pass free to commit after close begins.
@@ -768,6 +891,9 @@ export class RerailDaemon {
         await this.#mergeAssist?.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await this.#removeOwnRecord(this.#options.stateFile);
+        // Last, once nothing of this daemon is open and its record is gone. Where a step above threw, the process's exit
+        // gives the lock up instead.
+        this.#options.homeLease?.release();
       }
     }
   }
@@ -949,17 +1075,32 @@ export class TlsKeyExposedError extends Error {
 }
 
 /**
+ * A TLS private key file that is empty or does not parse as a private key (`unparsedLine`), whether only its owner
+ * reads it or others can too (`loadDaemonTls`). The daemon serves this computer alone on it, as on a key others can
+ * read, so hooks keep recording; its message names the file and what it must hold, and then, when others can read it,
+ * says so as `TlsKeyExposedError`'s does. Node's https server reads an empty key as no key: it would listen, say https,
+ * and fail every handshake.
+ */
+export class TlsKeyUnparsedError extends Error {
+  override readonly name = "TlsKeyUnparsedError";
+}
+
+/**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
  * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
  * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
- * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
- * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
- * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
- * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
- * stops the start within seconds. `access` is for tests.
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). A key file this account reads
+ * that is empty or does not parse, such as one that holds the certificate, is a `TlsKeyUnparsedError`, on which the
+ * daemon serves this computer alone too: when only its owner reads it, and when others can read it too beside a
+ * certificate the start would take, its line then saying both. A key others can read that is no file this account can
+ * read (a folder, a FIFO, a file this account may not read, one another program holds with a lease or an oplock, one
+ * larger than any key) or that the certificate would not serve with, a key whose readers cannot be read (a missing or
+ * misspelled one), and a key only its owner reads that cannot be read (a folder, a file this account may not read), is
+ * a mistake in the command and stops the start within seconds. So does a certificate that is empty or does not parse
+ * (`refuseUnparsed`), in a line that names the file. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -975,51 +1116,111 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     throw await refusedKey(tls, `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
+  // The certificate first: one the start would refuse beside a good key is refused now, not once the key is fixed.
+  refuseUnparsed(CERTIFICATE_FILE, tls.certFile, cert);
+  refuseUnparsed(PRIVATE_KEY_FILE, tls.keyFile, key);
   return { cert, key };
 }
 
 /**
- * What a start whose key others can read throws: `TlsKeyExposedError`, on which the daemon serves this computer alone,
- * when the key is a private key this account reads (`readPrivateKey`) and the certificate would serve with it
- * (`certificateServes`); else `refusal`, main's message for this command line. On Windows a Node child opens the two
- * files first (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to
- * open them, the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
+ * What a TLS file is called, what it must hold, the parse that stands for the one its text meets at start, and what a
+ * file that fails it throws.
+ */
+interface TlsFileKind {
+  readonly name: string;
+  readonly holds: string;
+  readonly parse: (text: string) => unknown;
+  readonly refused: (message: string) => Error;
+}
+
+// The key is parsed as the https server parses it, so every key a server took before is taken still; the certificate
+// as `RerailDaemon.start` parses it for its fingerprint, which refused any other before.
+const PRIVATE_KEY_FILE: TlsFileKind = {
+  name: "TLS private key", holds: "a PEM private key", parse: key => createSecureContext({ key }), refused: message => new TlsKeyUnparsedError(message),
+};
+const CERTIFICATE_FILE: TlsFileKind = {
+  name: "TLS certificate", holds: "a PEM X.509 certificate", parse: pem => new X509Certificate(pem), refused: message => new Error(message),
+};
+
+/**
+ * One line that names `file` and says what is wrong when `text`, read from it, is empty or does not parse as `kind`;
+ * undefined when it parses. The line says the file could not be read as what it must hold, which stays true of a key
+ * that needs a passphrase.
+ */
+function unparsedLine(kind: TlsFileKind, file: string, text: string): string | undefined {
+  if (text === "") return `The ${kind.name} ${file} is empty: it must hold ${kind.holds}`;
+  try {
+    kind.parse(text);
+    return undefined;
+  } catch (error) {
+    return `The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`;
+  }
+}
+
+/** Throws `kind.refused` with `unparsedLine`'s line, when it has one. */
+function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
+  const line = unparsedLine(kind, file, text);
+  if (line !== undefined) throw kind.refused(line);
+}
+
+/**
+ * What a start whose key others can read throws, when the key is a file this account reads (`readKeyFile`) beside a
+ * certificate that would serve with it (`certificateServes`): `TlsKeyExposedError` for a private key and
+ * `TlsKeyUnparsedError` for a file that holds none (`servedAlone`), on each of which the daemon serves this computer
+ * alone; else `refusal`, main's message for this command line. On Windows a Node child opens the two files first
+ * (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to open them,
+ * the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
  */
 async function refusedKey(tls: DaemonTlsFiles, refusal: string): Promise<Error> {
   const child = process.platform === "win32" ? await openedInChild([tls.keyFile, tls.certFile]) : OPENED;
   if (child.kind !== "opened") return new Error(child.kind === "held" ? refusal : `${refusal}\n${child.why}`);
-  const key = await readPrivateKey(tls.keyFile);
-  return key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+  const key = await readKeyFile(tls.keyFile);
+  return key !== undefined && (await certificateServes(tls.certFile, key)) ? servedAlone(key, refusal) : new Error(refusal);
+}
+
+/** A key file others can read, as this account read it: a private key, or the line saying it is empty or holds none. */
+type KeyFile = { readonly kind: "key"; readonly key: Buffer } | { readonly kind: "unparsed"; readonly line: string };
+
+/**
+ * The error on which the daemon serves this computer alone for `key`, a file others can read as `refusal` says. For a
+ * file that holds no key, its one line first names the file and says so, then gives `refusal`.
+ */
+function servedAlone(key: KeyFile, refusal: string): Error {
+  return key.kind === "key" ? new TlsKeyExposedError(refusal) : new TlsKeyUnparsedError(`${key.line}; ${refusal}`);
 }
 
 /**
- * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads that parses as a
- * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease, one larger than any
- * key, a certificate or any other file is no key.
+ * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads: the key, when it
+ * parses as a private key; else the line `unparsedLine` gives it, empty or no key (text, the certificate, a key that
+ * needs a passphrase). Undefined for a folder, a FIFO, a file this account may not read or another program holds with a
+ * lease, one larger than any key, and one the https server would read though `createPrivateKey` does not.
  */
-async function readPrivateKey(path: string): Promise<Buffer | undefined> {
+async function readKeyFile(path: string): Promise<KeyFile | undefined> {
+  const text = await readWithoutWaiting(path).catch(() => undefined);
+  if (text === undefined) return undefined;
   try {
-    const key = await readWithoutWaiting(path);
-    if (key !== undefined) createPrivateKey(key);
-    return key;
+    createPrivateKey(text);
+    return { kind: "key", key: text };
   } catch {
-    return undefined;
+    const line = unparsedLine(PRIVATE_KEY_FILE, path, text.toString("utf8"));
+    return line === undefined ? undefined : { kind: "unparsed", line };
   }
 }
 
 /**
  * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
  * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
- * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
- * start throws for it beside a private key, naming a folder, whose read error names no file. A file
- * `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than any certificate)
- * serves nothing.
+ * which serves with neither. A key file that holds no key pairs with nothing: its certificate need only be one the
+ * start would take, as beside such a key only its owner reads. A certificate that cannot be read, holds no certificate
+ * or is not `key`'s throws what that start throws for it beside a private key, naming a folder, whose read error names
+ * no file. A file `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than
+ * any certificate) serves nothing.
  */
-async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
+async function certificateServes(certFile: string, key: KeyFile): Promise<boolean> {
   const cert = (await readWithoutWaiting(certFile))?.toString("utf8");
   if (cert === undefined) return false;
-  certificateFingerprint(cert);
-  createSecureContext({ cert, key });
+  refuseUnparsed(CERTIFICATE_FILE, certFile, cert);
+  if (key.kind === "key") createSecureContext({ cert, key: key.key });
   return true;
 }
 
@@ -1228,24 +1429,48 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<
+  RerailDaemonOptions,
+  "codingAgents" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
+>;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
  * daemon lock before anything opens a store or binds a pipe, a socket or a port, so a second daemon stops here naming
  * the first: two starts at once, or a start whose wait for a slow daemon ran out, could otherwise leave two, one holding
  * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheck`): two daemons
- * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
- * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
- * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
- * for the lock for a second.
+ * that each did would write over each other. The daemon gives the lock up at the end of its close (`homeLease`), and
+ * the lock goes with the process however else it ends; an exit also removes the holder's record beside it. A loopback
+ * restart for a TLS key it may not serve with runs in this process and keeps the lock. A restart at the heap ceiling
+ * closes the daemon, so the home is free before it launches the next daemon, whatever this process does before it exits.
+ * From the lock to the end of its start, the record beside the lock says it is starting (`homeDaemonStarting`), so a
+ * start that finds it then waits for it rather than taking it for a daemon that does not answer or launching a second
+ * one.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
-  const homeLock = await holdHomeDaemonLock(home);
+  const homeLock = await holdHomeDaemonLock(home, holderAnswers(home));
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
-  await serveRerailDaemon(argv, { ...services, recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() } });
+  await serveRerailDaemon(argv, {
+    ...services,
+    recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() },
+    homeLease: homeLock,
+  });
+  // Its start is over: it has recorded itself, said where it listens, and its one thread is free to answer. Until now
+  // its record beside the lock said it was starting, and a start that found it waited for this.
+  homeLock.started();
+}
+
+/**
+ * Whether the process the home's lock record names is the daemon daemon.json records, answering as it does to a start
+ * (`lookupDaemon`, its record's proof and its health) within the bound given.
+ */
+function holderAnswers(home: string): HolderRuns {
+  return async (pid, withinMs) => {
+    const lookup = await lookupDaemon(home, undefined, withinMs);
+    return lookup.status === "running" && lookup.health.pid === pid;
+  };
 }
 
 /**
@@ -1295,7 +1520,8 @@ export function remoteRefusal(argv: readonly string[]): { argv: string[]; reason
  * why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing. A
  * daemon launched with `--remote-refused`, as a restart of such a daemon is, serves this computer alone from the start.
  * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
- * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
+ * function's alone to say, so no caller can record a daemon other machines reach as one they cannot. A key that is
+ * empty or no key (`TlsKeyUnparsedError`) is served on in the same way.
  */
 export async function serveRerailDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const relaunched = remoteRefusal(argv);
@@ -1303,7 +1529,7 @@ export async function serveRerailDaemon(argv: readonly string[], services: Omit<
   try {
     await runRerailDaemon(argv, services);
   } catch (error) {
-    if (!(error instanceof TlsKeyExposedError)) throw error;
+    if (!(error instanceof TlsKeyExposedError) && !(error instanceof TlsKeyUnparsedError)) throw error;
     await serveLoopback(argv, error.message, services);
   }
 }
@@ -1411,6 +1637,8 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   process.once("SIGTERM", way.stop);
   process.once("SIGINT", way.stop);
   watchHeap({
+    // What the daemon keeps for its checkouts' next sessions goes before a restart that would make every hook wait.
+    relieve: () => daemon.closeUnusedRuntimes(),
     onCeiling: ({ used, limit }) => {
       process.stderr.write(`rerail daemon: heap at ${Math.round(used / 1e6)} MB of its ${Math.round(limit / 1e6)} MB limit; restarting before it runs out\n`);
       way.restart();

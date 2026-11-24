@@ -90,7 +90,7 @@ export function createRuleSkillPath(packageRoot: string): string {
 /**
  * `/rerail-create`: suggest rules from this repo's sessions and standards, or write the one the person names. The skill in
  * the package holds the steps; this keeps the commands and the one promise that matters in the command itself: test before
- * showing, and add only after the person says yes.
+ * showing, and nothing steers until the person says yes. Suggested rules are added unapproved, so they run in Log.
  */
 export function createRuleInstructions({ cli, packageRoot, request, shell }: CreateRuleInstructionsInput): string {
   return [
@@ -100,7 +100,7 @@ export function createRuleInstructions({ cli, packageRoot, request, shell }: Cre
     `Wherever it says \`rerail\`, run \`${cli}\`.`,
     "",
     "- With words: write that rule (the skill's Write).",
-    "- With no words: suggest rules from this repo's sessions and standards (the skill's Suggest), then write the ones the person picks.",
+    "- With no words: suggest rules from this repo's sessions and standards (the skill's Suggest): write and test each, add the ones that pass, and list them for the person to approve in the dashboard.",
     "- If the words say a rule is wrong or noisy: tune it (the skill's Tune).",
     "- If the words change only where a rule applies: change its scope and nothing else (the skill's Scope).",
     "",
@@ -113,12 +113,11 @@ export function createRuleInstructions({ cli, packageRoot, request, shell }: Cre
     `${cli} rules test <draft.json> --json`,
     `${cli} rules add <draft.json>`,
     `${cli} rules approve`,
-    `${cli} rules approve <id>`,
     "```",
     "",
-    "Test every draft before showing it, read it back with \"Add this rule?\", and run `rules add` only after the person says yes.",
-    "An added rule runs in Log, steering no one, until the person approves it. Audit any rule you did not write before asking (the skill's Approve), and run `rules approve <id>` only after they say yes to it.",
-    "Never add a rule the person has not confirmed. The rule belongs to this repo only: never offer \"every repo\". Never write instruction files.",
+    "Test every draft before showing it. A rule the person asked for: read it back with \"Add this rule?\", and run `rules add` only after they say yes. A rule from Suggest: run `rules add` once it passes.",
+    "An added rule runs in Log, steering no one, until the person approves it on its page in the dashboard. `rules approve` with no id lists what waits; with an id it is the person's, refused from your session. Audit any rule you did not write before they approve it (the skill's Approve).",
+    "Never add a rule the person has not confirmed, except Suggest's tested rules, unapproved. The rule belongs to this repo only: never offer \"every repo\". Never write instruction files.",
   ].join("\n");
 }
 

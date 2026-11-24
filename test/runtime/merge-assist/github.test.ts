@@ -1,10 +1,11 @@
 import type { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loopInPlace } from "../../support/platform/links.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import {
   createGithubClient,
@@ -12,6 +13,7 @@ import {
   PULL_REQUEST_LIMIT,
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
+import { ghConfigDir, ghSignInStamps, type SignInStamp } from "../../../src/runtime/merge-assist/gh-config.js";
 
 const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", name: "rerail" };
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
@@ -130,7 +132,7 @@ describe("gh invocation", () => {
   });
 
   it("reads the API only with GET, an explicit host and the GitHub media type", async () => {
-    const gh = fakeGh(() => ({ stdout: JSON.stringify({ login: "jbarnes" }) }));
+    const gh = fakeGh(() => ({ stdout: JSON.stringify({ login: "jdoe" }) }));
     await createGithubClient({ env, spawn: gh.spawn }).readiness({ ...REPOSITORY, host: "github.example.com" });
     expect(gh.calls.map(call => call.args)).toEqual([
       ["auth", "status", "--hostname", "github.example.com"],
@@ -255,7 +257,7 @@ describe("readiness", () => {
 
   it("is unavailable, not signed-out, when gh auth status fails with a login it could not check", async () => {
     // gh prints this for a rejected token, and for one it could not check because the network failed.
-    const stderr = "github.com\n  X Failed to log in to github.com account tbelanger (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n";
+    const stderr = "github.com\n  X Failed to log in to github.com account akim (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n";
     const gh = fakeGh(() => ({ code: 1, stderr }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
       .resolves.toEqual({ state: "unavailable", login: null, repository: "neralabs/rerail" });
@@ -268,10 +270,10 @@ describe("readiness", () => {
   });
 
   it("is signed-in with the login GitHub reports for the user", async () => {
-    // `gh api --method GET user --jq '{login}'` → {"login":"Moti-Velz"}
-    const gh = fakeGh(args => (args[0] === "auth" ? { stdout: "github.com\n  ✓ Logged in to github.com account Moti-Velz (keyring)\n" } : { stdout: JSON.stringify({ login: "Moti-Velz", id: 1, type: "User" }) }));
+    // `gh api --method GET user --jq '{login}'` → {"login":"dlee"}
+    const gh = fakeGh(args => (args[0] === "auth" ? { stdout: "github.com\n  ✓ Logged in to github.com account dlee (keyring)\n" } : { stdout: JSON.stringify({ login: "dlee", id: 1, type: "User" }) }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
-      .resolves.toEqual({ state: "signed-in", login: "Moti-Velz", repository: "neralabs/rerail" });
+      .resolves.toEqual({ state: "signed-in", login: "dlee", repository: "neralabs/rerail" });
     expect(gh.calls[1]?.args).toEqual(["api", "--method", "GET", "--hostname", "github.com", "-H", ACCEPT, "user"]);
   });
 
@@ -282,12 +284,99 @@ describe("readiness", () => {
   });
 });
 
+describe("the stamp of gh's sign-in", () => {
+  it("finds gh's configuration folder in gh's own order on each system", () => {
+    expect(ghConfigDir({ GH_CONFIG_DIR: "/c/gh", XDG_CONFIG_HOME: "/x", HOME: "/h" }, "linux")).toBe("/c/gh");
+    expect(ghConfigDir({ GH_CONFIG_DIR: "", XDG_CONFIG_HOME: "/x", HOME: "/h" }, "linux")).toBe("/x/gh");
+    expect(ghConfigDir({ APPDATA: "/a", HOME: "/h" }, "darwin")).toBe("/h/.config/gh");
+    expect(ghConfigDir({ AppData: "C:\\Users\\t\\AppData\\Roaming", USERPROFILE: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\AppData\\Roaming\\GitHub CLI");
+    expect(ghConfigDir({ xdg_config_home: "D:\\cfg", APPDATA: "C:\\Roaming" }, "win32")).toBe("D:\\cfg\\gh");
+    expect(ghConfigDir({ UserProfile: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\.config\\gh");
+  });
+
+  it("moves its file part when gh writes, rewrites or removes its hosts file, and holds otherwise", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
+    try {
+      const stamps = ghSignInStamps({ GH_CONFIG_DIR: folder });
+      const file = async (): Promise<string> => await stamps().file;
+      const hosts = join(folder, "hosts.yml");
+      const none = await file();
+      // gh auth login writes the file; gh auth switch rewrites it in place, here at the same length.
+      writeFileSync(hosts, "github.com:\n    user: akim\n");
+      utimesSync(hosts, 1_700_000_000, 1_700_000_000);
+      const login = await file();
+      writeFileSync(hosts, "github.com:\n    user: jdoe01\n");
+      utimesSync(hosts, 1_700_000_001, 1_700_000_001);
+      const switched = await file();
+      // gh auth logout of the last account leaves the file with no login.
+      writeFileSync(hosts, "{}\n");
+      const loggedOut = await file();
+      expect(new Set([none, login, switched, loggedOut]).size).toBe(4);
+      expect(await file()).toBe(loggedOut);
+      rmSync(hosts);
+      expect(await file()).toBe(none);
+    } finally {
+      removeFolderSync(folder);
+    }
+  });
+
+  it("stamps a hosts file it cannot read apart from an absent one and the readable one, and moves again once it can", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
+    const hosts = join(folder, "hosts.yml");
+    try {
+      const file = async (): Promise<string> => await ghSignInStamps({ GH_CONFIG_DIR: folder })().file;
+      const absent = await file();
+      writeFileSync(hosts, "github.com:\n    user: akim\n");
+      const readable = await file();
+      loopInPlace(hosts);
+      const unreadable = await file();
+      expect(unreadable).toMatch(/^unreadable:/u);
+      expect(new Set([absent, readable, unreadable]).size).toBe(3);
+      // Readable again: the file written anew in the link's place.
+      rmSync(hosts);
+      writeFileSync(hosts, "github.com:\n    user: akim\n");
+      const reopened = await file();
+      expect([reopened === absent, reopened === unreadable]).toEqual([false, false]);
+    } finally {
+      removeFolderSync(folder);
+    }
+  });
+
+  it("tells environments apart by gh's folder and the token variables set, not by their values", () => {
+    const environment = (env: NodeJS.ProcessEnv): string => ghSignInStamps(env, "linux", async () => "absent")().environment;
+    const shell = environment({ GH_CONFIG_DIR: "/c/gh" });
+    const withToken = environment({ GH_CONFIG_DIR: "/c/gh", GH_TOKEN: "a" });
+    const withOther = environment({ GH_CONFIG_DIR: "/c/gh", GITHUB_TOKEN: "a" });
+    const elsewhere = environment({ GH_CONFIG_DIR: "/d/gh" });
+    expect(new Set([shell, withToken, withOther, elsewhere]).size).toBe(4);
+    expect(environment({ GH_CONFIG_DIR: "/c/gh", GH_TOKEN: "b" })).toBe(withToken);
+    expect(environment({ GH_CONFIG_DIR: "/c/gh", GITHUB_TOKEN: "" })).toBe(shell);
+    expect(environment({ XDG_CONFIG_HOME: "/c" })).toBe(shell);
+  });
+
+  it("runs one stat of the hosts file at a time: stamps asked while one does not answer share it", async () => {
+    const asked: string[] = [];
+    let answer: (stamp: string) => void = () => undefined;
+    const stamps = ghSignInStamps({ GH_CONFIG_DIR: "/slow/gh" }, "linux", async file => {
+      asked.push(file);
+      return await new Promise<string>(resolve => { answer = resolve; });
+    });
+    const waiting: SignInStamp[] = [stamps(), stamps(), stamps()];
+    expect(asked).toEqual(["/slow/gh/hosts.yml"]);
+    answer("answered");
+    expect(await Promise.all(waiting.map(async stamp => await stamp.file))).toEqual(["answered", "answered", "answered"]);
+    // Once it has answered, the next stamp reads the file again.
+    void stamps().file;
+    expect(asked).toHaveLength(2);
+  });
+});
+
 describe("openPullRequests", () => {
   // The shape `gh pr list --json <PR_FIELDS>` prints (gh 2.89).
   const real = {
-    author: { id: "U_kgDOBnypnA", is_bot: false, login: "Moti-Velz", name: "Timo" },
+    author: { id: "U_kgDOAAAAAA", is_bot: false, login: "dlee", name: "Dana Lee" },
     baseRefName: "main",
-    headRefName: "Moti-Velz/changelog-entries",
+    headRefName: "dlee/changelog-entries",
     headRefOid: COMMIT,
     headRepositoryOwner: { id: "O_kgDOCHyD1g", login: "neralabs" },
     isCrossRepository: false,
@@ -312,7 +401,7 @@ describe("openPullRequests", () => {
       { ...real, number: 398, url: "https://github.com/neralabs/rerail/pull/398", updatedAt: "yesterday" },
       "not an object",
       // A fork's pull request names its head's owner; a deleted fork's names none.
-      { ...real, number: 399, url: "https://github.com/neralabs/rerail/pull/399", isCrossRepository: true, headRepositoryOwner: { id: "U_x", login: "Moti-Velz" } },
+      { ...real, number: 399, url: "https://github.com/neralabs/rerail/pull/399", isCrossRepository: true, headRepositoryOwner: { id: "U_x", login: "dlee" } },
       { ...real, number: 400, url: "https://github.com/neralabs/rerail/pull/400", isCrossRepository: true, headRepositoryOwner: null },
     ];
     const gh = fakeGh(() => ({ stdout: JSON.stringify(entries) }));
@@ -323,17 +412,17 @@ describe("openPullRequests", () => {
         number: 389,
         title: "Release notes: changelog entries wait in .changelog/",
         url: "https://github.com/neralabs/rerail/pull/389",
-        headRefName: "Moti-Velz/changelog-entries",
+        headRefName: "dlee/changelog-entries",
         headCommit: COMMIT,
         baseRefName: "main",
-        author: "Moti-Velz",
+        author: "dlee",
         isDraft: false,
         updatedAt: "2026-11-02T20:09:43Z",
         crossRepository: false,
         headOwner: "neralabs",
       },
       expect.objectContaining({ number: 390, author: "dependabot[bot]", isDraft: true, title: "Bump zod" }),
-      expect.objectContaining({ number: 399, crossRepository: true, headOwner: "Moti-Velz" }),
+      expect.objectContaining({ number: 399, crossRepository: true, headOwner: "dlee" }),
       expect.objectContaining({ number: 400, crossRepository: true, headOwner: null }),
     ]);
   });

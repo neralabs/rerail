@@ -1,0 +1,66 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "sql",
+  "equivalent": false,
+  "untranslated": {},
+  "different": {
+    "sqlfluff-al04-aliasing-unique-table": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        }
+      }
+    },
+    "sqlfluff-al05-aliasing-unused": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "sqlfluff-al08-aliasing-unique-column": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 14,
+          "translationOnly": 0
+        },
+        "samples-sql": {
+          "originalOnly": 39,
+          "translationOnly": 0
+        }
+      }
+    },
+    "sqlfluff-rf01-references-from": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        },
+        "samples-sql": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "sqlfluff-rf05-references-special-chars": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    }
+  }
+}

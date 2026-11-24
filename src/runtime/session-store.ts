@@ -1,23 +1,29 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
-import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
+import type { DiscoveryGap, DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
+import { flushRecordWrites, openRecordWriter, type RecordWrite, type RecordWriter } from "../engine/storage/record-writes.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
-import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import { SteerReceiptSchema, type SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
+import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -41,13 +47,22 @@ export interface StoredSessionSummary {
   eventCount: number;
 }
 
+/** A session as a surface drawn ahead of time reads it (`SqliteSessionReader.drawnSessions`). */
+export interface DrawnSession extends Pick<StoredSessionSummary, "sessionId" | "cwd" | "endedAt"> {
+  /** When its latest event was observed; when it started, for a session with none. */
+  lastActiveAt: number;
+}
+
 export interface SessionEventRecord {
   sequence: number;
   sessionId: string;
   eventId: string;
   kind: string;
   observedAt: number;
-  /** The stable JSON form of the payload; `{ "encoding": "node:v8" }` when it was not JSON-representable. */
+  /**
+   * The stable JSON form of the payload; `{ "encoding": "node:v8" }` when it was not JSON-representable, and null where
+   * the stored text is no JSON.
+   */
   payload: unknown;
 }
 
@@ -68,9 +83,75 @@ export interface SessionGaps {
   ignoredEdits: number;
   /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
   ignoreRuleChanges: number;
+  /** The places the session's walks could not check that its record holds, each once (`source-discovery-gap`). */
+  discoveryGaps: number;
+  /** The walks met more such places than the record takes (`DiscoveryGap.more`): `discoveryGaps` holds the first of them. */
+  discoveryGapsMore: boolean;
 }
 
-const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
+/** A `source-discovery-gap` event's payload, as `recordDiscoveryGap` writes it. */
+const discoveryGapPayloadSchema = z.object({ boundary: z.string(), path: z.string().optional(), reason: z.string() });
+
+/** A place a session's walks could not check (`source-discovery-gap`), and when it was first met. */
+export type DiscoveryGapRecord = z.infer<typeof discoveryGapPayloadSchema> & { readonly observedAt: number };
+
+/** The id of the one record that says the walks met more places than the record takes (`DiscoveryGap.more`): no place. */
+const MORE_DISCOVERY_GAPS_EVENT = "source-discovery-gap:more";
+
+const NO_GAPS: SessionGaps = {
+  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+};
+
+/** A coding agent's note on a steer it declined (`rerail feedback`), with the audit whose steer it was. */
+export interface DeclineNote {
+  ruleId: string;
+  /** The one line the agent gave the person. */
+  reason: string;
+  recordedAt: number;
+  /** The audit that steered the rule's violations the agent declined ({@link DECLINED_AUDIT}); null when none did. */
+  auditId: string | null;
+}
+
+/** A rule's declined violations in a range (`SqliteSessionReader.declinedByRule`). */
+export interface DeclinedViolations {
+  /** Distinct violations of a steer the coding agent declined. */
+  declined: number;
+  /** Of those, the ones an audit in range also recorded in Log mode. */
+  alsoLogged: number;
+}
+
+/** The steers a session's coding agent declined (`SqliteSessionReader.declines`). */
+export interface SessionDeclines {
+  /** Steered violations of a declined steer: its audit's violations of the rule, each counted once however many notes name it. */
+  violations: number;
+  /** Oldest first. */
+  notes: DeclineNote[];
+}
+
+/**
+ * The audit whose steer the `steer_feedback` row aliased `note` declined. A note keeps no audit, so time places it:
+ * `rerail feedback` runs after the steer it answers, so that steer is the latest audit of the note's session to report
+ * the rule's violations steered (`logged = 0`) and start at or before the note. Null when no audit did. The `+` keeps
+ * SQLite off `audit_violations_rule_started`, which reads the rule's violations in every session: it walks the
+ * session's own back from the note (`audit_violations_session_started`) and stops at the first. Two audits that start
+ * at the same moment are told apart by rowid, the later row first: the index already orders equal times by rowid, so
+ * the tie-break needs no sort.
+ */
+const DECLINED_AUDIT = sql`(
+  SELECT steered.audit_id FROM ${auditViolations} steered
+  WHERE steered.session_id = note.session_id AND +steered.rule_id = note.rule_id
+    AND steered.logged = 0 AND steered.started_at <= note.recorded_at
+  ORDER BY steered.started_at DESC, steered.rowid DESC LIMIT 1)`;
+
+/**
+ * How many steered violations of `session` a note declined: those its audit reported for its rule. An audit belongs to
+ * one session, so `(audit_id, rule_id)` alone finds them, an `audit_violations_audit_key` probe per note. Notes are
+ * few and only `rerail feedback` writes them, so reading them by session needs no index of its own.
+ */
+const declinedViolationCount = (session: SQL) => sql`(
+  SELECT count(*) FROM ${auditViolations} declined
+  WHERE declined.logged = 0 AND (declined.audit_id, declined.rule_id) IN (
+    SELECT ${DECLINED_AUDIT}, note.rule_id FROM ${steerFeedback} note WHERE note.session_id = ${session}))`;
 
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
@@ -86,6 +167,8 @@ export interface SessionPageRow extends StoredSessionSummary {
   violationCount: number;
   /** Of those, the ones no audit recorded in Log mode: steered (or blocked). */
   steeredViolations: number;
+  /** Of the steered, those of a steer the coding agent declined (`SessionDeclines.violations`). */
+  declinedViolations: number;
   /** `observed_at` of the session's newest event; null when it has none. */
   lastEventAt: number | null;
 }
@@ -148,17 +231,69 @@ export interface RepositoryScope {
   repositoryId?: string | readonly string[] | undefined;
 }
 
-/** Who a session row belongs to when a write has to (re)create it. */
+/**
+ * Who a session row belongs to when a write has to (re)create it, and when the fact an event row records happened where
+ * that is earlier than the write (`observedAt`: a fact of an event a hook left while the daemon did not read), which
+ * the event's own `observedAt` overrides.
+ */
 export interface SessionAttribution {
   startedAt?: number;
   endedAt?: number | null;
   repositoryKey?: string | null;
+  observedAt?: number;
 }
 
 function repositoryFilter(repositoryIds: string | readonly string[] | undefined) {
   if (repositoryIds === undefined) return undefined;
   const ids = typeof repositoryIds === "string" ? [repositoryIds] : [...repositoryIds];
   return ids.length === 0 ? sql`0` : inArray(sessions.repositoryId, ids);
+}
+
+/** The sessions after a page's cursor in newest-first order; every session without one. Refuses a malformed cursor. */
+function sessionsAfter(cursor: string | undefined): SQL | undefined {
+  if (cursor === undefined) return undefined;
+  const [startedAt, sessionId] = decodeCursor(cursor, sessionCursorSchema);
+  return sql`(${sessions.startedAt} < ${startedAt} OR (${sessions.startedAt} = ${startedAt} AND ${sessions.sessionId} > ${sessionId}))`;
+}
+
+/** The sessions a page query matches: started at or after `since`, in the repositories given. */
+function sessionsMatching(since: number | undefined, repositoryIds: string | readonly string[] | undefined): SQL | undefined {
+  return and(since === undefined ? undefined : gte(sessions.startedAt, since), repositoryFilter(repositoryIds));
+}
+
+/**
+ * Up to `limit` sessions matching `where`, newest first, each with its history counts. The page is chosen first and
+ * counted after: sorting every session with its counts attached would count them all.
+ */
+function sessionPageRows(database: RerailDatabase, where: SQL | undefined, limit: number): SessionPageRow[] {
+  return database.all<SessionPageRow>(sql`
+        SELECT
+          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
+          page.started_at AS startedAt, page.ended_at AS endedAt,
+          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
+          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
+            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
+          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
+          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
+            - (SELECT count(*) FROM ${auditViolations}
+              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations,
+          ${declinedViolationCount(sql`page.session_id`)} AS declinedViolations
+        FROM (
+          SELECT * FROM ${sessions}
+          WHERE ${where ?? sql`1 = 1`}
+          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
+          LIMIT ${limit}
+        ) page
+        ORDER BY page.started_at DESC, page.session_id
+      `);
+}
+
+/** The cursor to the page after `rows`, read with one row past `limit`; null when that row is not there. */
+function nextSessionCursor(rows: readonly SessionPageRow[], limit: number): string | null {
+  const last = rows[limit - 1];
+  return rows.length > limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null;
 }
 
 function listSessions(
@@ -195,6 +330,43 @@ function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRec
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
 }
 
+/** The event that records `gap` in the session `sessionId` (`recordDiscoveryGap`): its id is the gap's key's digest. */
+function discoveryGapEvent(sessionId: string, gap: DiscoveryGap): SessionEvent {
+  return {
+    sessionId,
+    eventId: gap.more === true ? MORE_DISCOVERY_GAPS_EVENT : `source-discovery-gap:${createHash("sha256").update(gap.key).digest("hex")}`,
+    kind: "source-discovery-gap",
+    payload: { boundary: gap.boundary, ...(gap.path === undefined ? {} : { path: gap.path }), reason: gap.reason },
+  };
+}
+
+/**
+ * The first `limit` places the session's walks could not check, in the order the session met them, and with `more` the
+ * record that says they met more (`MORE_DISCOVERY_GAPS_EVENT`) where it falls. Indexed by session and kind.
+ */
+function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: number, more: boolean): DiscoveryGapRecord[] {
+  return database
+    .select({ observedAt: events.observedAt, payloadJson: events.payloadJson })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "source-discovery-gap"), more ? undefined : ne(events.eventId, MORE_DISCOVERY_GAPS_EVENT)))
+    .orderBy(asc(events.sequence))
+    .limit(limit)
+    .all()
+    .flatMap(({ observedAt, payloadJson }) => {
+      const payload = discoveryGapPayloadSchema.safeParse(parsedRow(payloadJson));
+      return payload.success ? [{ ...payload.data, observedAt }] : [];
+    });
+}
+
+/** A row's payload, or null when its text is no JSON: a read takes that row as one with no payload and fails on none. */
+function parsedRow(payloadJson: string): unknown {
+  try {
+    return JSON.parse(payloadJson) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The HUD's Merge Assist segment for the session, absent when it has none: from the checkout it started in, as its
  * coverage names it (`owners`), else the deepest recorded checkout holding its working folder read through symlinks,
@@ -226,11 +398,14 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
 /**
  * Append-only, process-safe session and event persistence. Raw event payloads remain local to the
  * configured database. Sessions are attributed to the repository key given when they open, else to the
- * store's own `repositoryId`.
+ * store's own `repositoryId`. Every write goes through the database's record writer (`openRecordWriter`): made at
+ * once, or, while another process holds the write lock, in order once it is given back, never waiting on the caller's
+ * thread. Every read here is of what this process recorded, so it makes the waiting writes first (`#recorded`).
  */
 export class SqliteSessionStore {
   readonly path: string;
   readonly #database: RerailDatabase;
+  readonly #records: RecordWriter;
   readonly #repositoryId: string | null;
   /**
    * Each open session's repository as it opened here, to restore its row after a reset. A session's entry goes when it
@@ -252,11 +427,12 @@ export class SqliteSessionStore {
     this.#repositoryId = repositoryId ?? null;
     this.#onRowPutBack = onRowPutBack;
     this.#database = openRerailDatabase(path);
+    this.#records = openRecordWriter(path);
   }
 
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
-    this.#database
+    this.#records.write(database => database
       .insert(sessions)
       .values({ ...session, repositoryId: repositoryKey, startedAt, endedAt: null })
       .onConflictDoUpdate({
@@ -268,7 +444,7 @@ export class SqliteSessionStore {
           ...(repositoryKey === null ? {} : { repositoryId: repositoryKey }),
         },
       })
-      .run();
+      .run());
   }
 
   /** A stable identity makes reopen idempotent; missing history can never become complete later. */
@@ -288,12 +464,7 @@ export class SqliteSessionStore {
     ruleIds: readonly string[] = [],
     attribution?: SessionAttribution,
   ): void {
-    this.append({
-      sessionId: session.sessionId,
-      eventId: `steering-delivered:${receiptId}`,
-      kind: "steering-delivered",
-      payload: { ruleIds: [...ruleIds] },
-    }, session, attribution);
+    this.append(steerEvent(session, receiptId, ruleIds), session, attribution);
   }
 
   /** Marks the session's history incomplete over a stretch of events its host never delivered. */
@@ -314,6 +485,30 @@ export class SqliteSessionStore {
       kind: "source-discovery-pending",
       payload: { boundary },
     }, session, attribution);
+  }
+
+  /**
+   * Marks a place a boundary's walks could not check, so shell writes there went unchecked: its path and why. A place is
+   * recorded once per session and key (its path and its reason's kind, `DiscoveryGap.key`), at the first boundary that
+   * meets it: its id is the key's digest, so a place every later turn end meets again, in whatever order, a daemon
+   * restart and a reopened session add no copy of it. The record that says the walks met more places than the record
+   * takes (`DiscoveryGap.more`) has an id of its own (`MORE_DISCOVERY_GAPS_EVENT`), which `gaps` counts apart.
+   */
+  recordDiscoveryGap(session: AdapterSession, gap: DiscoveryGap, attribution?: SessionAttribution): void {
+    this.append(discoveryGapEvent(session.sessionId, gap), session, attribution);
+  }
+
+  /**
+   * `recordDiscoveryGap` for each of `gaps`, in one record write, so one transaction: a write each would wait for the
+   * disk once per place, 4 ms a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All
+   * of them or none. A write that finds the session's row gone puts it back inside the transaction, and `onRowPutBack`
+   * is told once it has committed (`#eventWrite`): its claim write goes through another connection, which would wait out
+   * the busy timeout (5 s) behind this one's write lock and fail, holding the turn end that long.
+   */
+  recordDiscoveryGaps(session: AdapterSession, gaps: readonly DiscoveryGap[], attribution?: SessionAttribution): void {
+    const rows = gaps.map(gap => eventRow(discoveryGapEvent(session.sessionId, gap), attribution?.observedAt));
+    const bytes = rows.reduce((total, row) => total + rowBytes(row), 0);
+    this.#records.write(this.#eventWrite(rows, this.#sessionRestore(session, attribution)), bytes);
   }
 
   /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
@@ -347,73 +542,161 @@ export class SqliteSessionStore {
   }
 
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
-    const latest = this.#database.select({ payloadJson: events.payloadJson }).from(events)
-      .where(and(eq(events.sessionId, session.sessionId), eq(events.kind, "rule-coverage")))
-      .orderBy(desc(events.sequence)).limit(1).get();
-    // Streaming ingestion checks coverage often; persist transitions, not identical copies.
-    // Looking in SQLite rather than an in-memory cache also recovers after a reset.
-    if (latest?.payloadJson === stableJsonText(coverage)) return;
-    this.append({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage }, session);
+    // Streaming ingestion checks coverage often; persist transitions, not identical copies, read first so an unchanged
+    // coverage takes no write lock and never waits. Looking in SQLite rather than an in-memory cache also recovers after
+    // a reset. The write reads again, since a coverage still waiting for the lock may be the latest.
+    const payloadJson = stableJsonText(coverage);
+    const unchanged = (database: RerailDatabase): boolean => latestCoverage(database, session.sessionId) === payloadJson;
+    const row = eventRow({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage });
+    const restore = this.#sessionRestore(session);
+    const write = this.#eventWrite([row], restore);
+    this.#records.writeUnless(() => unchanged(this.#database), database => {
+      if (!unchanged(database)) write(database);
+    }, rowBytes(row));
   }
 
   append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
-    const eventId = event.eventId ?? randomUUID();
-    const row = {
-      sessionId: event.sessionId,
-      eventId,
-      kind: event.kind,
-      observedAt: event.observedAt ?? Date.now(),
-      payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
-      payloadV8: serialize(event.payload),
+    const row = eventRow(event, attribution?.observedAt);
+    const restore = session === undefined ? undefined : this.#sessionRestore(session, attribution);
+    this.#records.write(this.#eventWrite([row], restore), rowBytes(row));
+    return row.eventId;
+  }
+
+  /**
+   * The record write of `rows` (`insertEvent`), one transaction for all of them. When one puts the session's row back,
+   * the store's owner is told (`onRowPutBack`) once, after the write's transaction has ended, in a microtask: the owner
+   * writes on its own connection, which would wait for the lock this write holds. A write kept until the lock is given
+   * back tells it then.
+   */
+  #eventWrite(rows: readonly EventRow[], restore: typeof sessions.$inferInsert | undefined): RecordWrite {
+    return database => {
+      let putBack: string | undefined;
+      for (const row of rows) if (insertEvent(database, row, restore)) putBack = row.sessionId;
+      const told = this.#onRowPutBack;
+      const sessionId = putBack;
+      if (sessionId !== undefined && told !== undefined) queueMicrotask(() => told(sessionId));
     };
-    try {
-      this.#database.insert(events).values(row).onConflictDoNothing().run();
-    } catch (error) {
-      // A `rerail reset` rebuilt the tables underneath a running session: its row is gone, so put
-      // it back and keep going. The events before the reset are gone by design; these are not.
-      if (session === undefined || !isForeignKeyFailure(error)) throw error;
-      this.#database.insert(sessions).values({
-        ...session,
-        repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
-        startedAt: attribution?.startedAt ?? Date.now(),
-        endedAt: attribution?.endedAt ?? null,
-      }).onConflictDoNothing().run();
-      this.#database.insert(events).values(row).onConflictDoNothing().run();
-      this.#onRowPutBack?.(event.sessionId);
-    }
-    return eventId;
+  }
+
+  /**
+   * The session row `insertEvent` puts back when a `rerail reset` rebuilt the tables underneath a running session,
+   * its times and repository taken now: a write that waits for the lock is made later.
+   */
+  #sessionRestore(session: AdapterSession, attribution?: SessionAttribution): typeof sessions.$inferInsert {
+    return {
+      ...session,
+      repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
+      startedAt: attribution?.startedAt ?? Date.now(),
+      endedAt: attribution?.endedAt ?? null,
+    };
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
     this.#sessionRepositories.delete(sessionId);
-    this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
+    this.#records.write(database => database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run());
   }
 
   sessions(): readonly StoredSessionSummary[] {
-    return listSessions(this.#database, { repositoryIds: this.#repositoryId ?? undefined });
+    return listSessions(this.#recorded(), { repositoryIds: this.#repositoryId ?? undefined });
   }
 
   session(sessionId: string): StoredSessionSummary | undefined {
+    return listSessions(this.#recorded(), { sessionId })[0];
+  }
+
+  /**
+   * {@link session} as the database holds it on disk, this process's waiting record writes not made first: for a caller
+   * that must not wait for another process's write lock, and knows itself what this process recorded.
+   */
+  storedSession(sessionId: string): StoredSessionSummary | undefined {
     return listSessions(this.#database, { sessionId })[0];
   }
 
   linkWork(link: WorkLink, createdAt = Date.now()): void {
-    this.#database
+    this.#records.write(database => database
       .insert(workLinks)
       .values({ ...link, url: link.url ?? null, createdAt })
       .onConflictDoUpdate({
         target: [workLinks.sessionId, workLinks.kind, workLinks.reference],
         set: { url: link.url ?? null },
       })
-      .run();
+      .run());
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
-    return listWorkLinks(this.#database, sessionId);
+    return listWorkLinks(this.#recorded(), sessionId);
+  }
+
+  /**
+   * The connection for a read of what this process recorded, its waiting writes made first: a link just added, a row
+   * just opened, which a holder of a moment in another process would otherwise hide from the caller acting on it.
+   */
+  #recorded(): RerailDatabase {
+    flushRecordWrites(this.path);
+    return this.#database;
+  }
+
+  /**
+   * The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order
+   * met, with the record that says they met more where it falls: the bridge reads it as its bound.
+   */
+  discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
+    return listDiscoveryGaps(this.#recorded(), sessionId, limit, true);
   }
 
   close(): void {
+    this.#records.close();
     this.#database.$client.close();
+  }
+}
+
+type EventRow = typeof events.$inferInsert & { eventId: string; payloadJson: string; payloadV8: Buffer };
+
+/** The event a steer's receipt is recorded as: its id is the receipt's, so a receipt recorded twice counts once. */
+function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonly string[]): SessionEvent {
+  return { sessionId: session.sessionId, eventId: `steering-delivered:${receiptId}`, kind: "steering-delivered", payload: { ruleIds: [...ruleIds] } };
+}
+
+/**
+ * The row of `event`, observed at its own `observedAt`, else at `happenedAt` (`SessionAttribution.observedAt`), else now,
+ * and its id, where it has none, made now: a write that waits for the lock is made later with both.
+ */
+function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
+  return {
+    sessionId: event.sessionId,
+    eventId: event.eventId ?? randomUUID(),
+    kind: event.kind,
+    observedAt: event.observedAt ?? happenedAt ?? Date.now(),
+    payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
+    payloadV8: serialize(event.payload),
+  };
+}
+
+/** The payload of the session's latest rule coverage event, as stored. */
+function latestCoverage(database: RerailDatabase, sessionId: string): string | undefined {
+  return database.select({ payloadJson: events.payloadJson }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
+    .orderBy(desc(events.sequence)).limit(1).get()?.payloadJson;
+}
+
+function rowBytes(row: EventRow): number {
+  return row.payloadJson.length + row.payloadV8.byteLength;
+}
+
+/**
+ * Inserts `row`, and says whether it put the session's row back. A `rerail reset` rebuilt the tables underneath a
+ * running session, or another program removed its row: it is gone, so `restore` puts it back and the event goes in after
+ * it. The events before the reset are gone by design; these are not.
+ */
+function insertEvent(database: RerailDatabase, row: EventRow, restore: typeof sessions.$inferInsert | undefined): boolean {
+  try {
+    database.insert(events).values(row).onConflictDoNothing().run();
+    return false;
+  } catch (error) {
+    if (restore === undefined || !isForeignKeyFailure(error)) throw error;
+    database.insert(sessions).values(restore).onConflictDoNothing().run();
+    database.insert(events).values(row).onConflictDoNothing().run();
+    return true;
   }
 }
 
@@ -452,6 +735,29 @@ export class SqliteSessionReader {
   session(sessionId: string): StoredSessionSummary | undefined {
     const database = this.#database.open();
     return database === undefined ? undefined : listSessions(database, { sessionId })[0];
+  }
+
+  /**
+   * The sessions of `host` active at or after `since`, and those among `sessionIds` whatever their activity: what a
+   * surface drawn ahead of time for each session (the Claude Code status files) reads to keep them current. Ended
+   * sessions are among them: a daemon's stop ends every open session, and the session's next event opens it again, so
+   * an ended one may still be running. So may one that never ended, whose end hook did not arrive; its activity alone
+   * says whether anything still reads it.
+   */
+  drawnSessions(host: AdapterSession["host"], since: number, sessionIds: readonly string[]): DrawnSession[] {
+    const database = this.#database.open();
+    if (database === undefined) return [];
+    const named = sessionIds.length === 0 ? sql`0` : sql`drawn.sessionId IN (${sql.join(sessionIds.map(sessionId => sql`${sessionId}`), sql`, `)})`;
+    // Each session's latest event by sequence, read from the (session, sequence) index.
+    return database.all<DrawnSession>(sql`
+      SELECT * FROM (
+        SELECT
+          session.session_id AS sessionId, session.cwd AS cwd, session.ended_at AS endedAt,
+          coalesce((SELECT event.observed_at FROM ${events} AS event WHERE event.session_id = session.session_id
+            ORDER BY event.sequence DESC LIMIT 1), session.started_at) AS lastActiveAt
+        FROM ${sessions} AS session WHERE session.host = ${host}
+      ) AS drawn WHERE drawn.lastActiveAt >= ${since} OR ${named}
+    `);
   }
 
   hud(sessionId: string): SessionHud {
@@ -509,24 +815,110 @@ export class SqliteSessionReader {
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
    * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
-   * before code rules were running, tool edits of files Git ignores, and changes to Git's ignore rules. Indexed by
-   * session and kind.
+   * before code rules were running, tool edits of files Git ignores, changes to Git's ignore rules, and what the
+   * shell-write check could not check, the record that says it met more of those than the record takes counted apart
+   * (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
     if (database === undefined) return { ...NO_GAPS };
-    const row = database.all<SessionGaps>(sql`
+    const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
-        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges
+        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} <> ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGaps,
+        count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} = ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGapsMore
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
-        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed')
+        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
-    return row ?? { ...NO_GAPS };
+    return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
+  }
+
+  /** The first `limit` places the session's walks could not check, in the order the session met them; no record that says they met more. */
+  discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
+    const database = this.#database.open();
+    return database === undefined ? [] : listDiscoveryGaps(database, sessionId, limit, false);
+  }
+
+  /**
+   * The steers the session's coding agent declined, each with the reason it recorded and the audit whose steer it was.
+   * Only a note says a steer was declined: an agent can decline one without recording why, so a steer with no note is
+   * not known to be followed either.
+   */
+  declines(sessionId: string): SessionDeclines {
+    const database = this.#database.open();
+    if (database === undefined) return { violations: 0, notes: [] };
+    return database.transaction(() => ({
+      violations: database.all<{ total: number }>(sql`SELECT ${declinedViolationCount(sql`${sessionId}`)} AS total`)[0]?.total ?? 0,
+      notes: database.all<DeclineNote>(sql`
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId
+        FROM ${steerFeedback} note
+        WHERE note.session_id = ${sessionId}
+        ORDER BY note.recorded_at, note.rowid
+      `),
+    }));
+  }
+
+  /**
+   * The notes of the sessions `sessionIds` placed on the steer each declined, oldest first: `violations_list` marks
+   * each violation of such a steer's audit and rule with the reasons. A note no audit steered before is left out.
+   */
+  placedDeclineNotes(sessionIds: readonly string[]): Array<DeclineNote & { auditId: string }> {
+    const database = this.#database.open();
+    if (database === undefined || sessionIds.length === 0) return [];
+    return database.all<DeclineNote & { auditId: string }>(sql`
+      SELECT ruleId, reason, recordedAt, auditId FROM (
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId,
+          note.rowid AS seq
+        FROM ${steerFeedback} note
+        WHERE note.session_id IN (${sql.join(sessionIds.map(id => sql`${id}`), sql`, `)})
+      ) WHERE auditId IS NOT NULL
+      ORDER BY recordedAt, seq
+    `);
+  }
+
+  /**
+   * Per rule, its violations in range whose steer the coding agent declined (`declined`), counted as `rules_activity`
+   * counts the rule's violations: each distinct violation key once, whichever sessions reported it. A declined steer
+   * is in range when its audit started in it. `alsoLogged` is how many of them an audit in range also recorded in Log
+   * mode, so are in `loggedViolations` too: a declined violation counts as declined, never also as Log only.
+   *
+   * Notes are few, so they drive the read: each note's steer (`DECLINED_AUDIT`), then that audit's violations of the
+   * rule, an `audit_violations_audit_key` probe. `CROSS JOIN` keeps that order, and the `+` keeps SQLite off
+   * `audit_violations_rule_started`, which would read every violation of the rule in range.
+   */
+  declinedByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, DeclinedViolations> {
+    const database = this.#database.open();
+    if (database === undefined) return new Map();
+    const scope = repositoryIds ?? this.#repositoryIds;
+    const scoped = (column: SQL) => (scope === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(scope)})`);
+    const rows = database.all<DeclinedViolations & { ruleId: string }>(sql`
+      WITH declined_steers AS (
+        SELECT DISTINCT ${DECLINED_AUDIT} AS auditId, note.rule_id AS ruleId
+        FROM ${steerFeedback} note WHERE ${scoped(sql`note.session_id`)}
+      ),
+      declined_keys AS (
+        SELECT DISTINCT sighting.rule_id AS ruleId, sighting.violation_key AS violationKey
+        FROM declined_steers steer
+        CROSS JOIN ${auditViolations} sighting ON sighting.audit_id = steer.auditId AND sighting.rule_id = steer.ruleId
+        WHERE sighting.logged = 0 AND +sighting.started_at >= ${since}
+      ),
+      logged_keys AS (
+        SELECT DISTINCT ${ruleViolationRollup.ruleId} AS ruleId, ${ruleViolationRollup.violationKey} AS violationKey
+        FROM ${ruleViolationRollup}
+        WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${ruleViolationRollup.lastLoggedAt} >= ${since}
+          AND ${ruleViolationRollup.ruleId} IN (SELECT ruleId FROM declined_keys) AND ${scoped(sql`${ruleViolationRollup.sessionId}`)}
+      )
+      SELECT declined.ruleId AS ruleId, count(*) AS declined, count(logged.ruleId) AS alsoLogged
+      FROM declined_keys declined
+      LEFT JOIN logged_keys logged ON logged.ruleId = declined.ruleId AND logged.violationKey = declined.violationKey
+      GROUP BY declined.ruleId
+    `);
+    return new Map(rows.map(({ ruleId, declined, alsoLogged }) => [ruleId, { declined, alsoLogged }]));
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {
@@ -554,7 +946,9 @@ export class SqliteSessionReader {
       .limit(limit)
       .all();
     if (backwards) rows.reverse();
-    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: JSON.parse(payloadJson) as unknown }));
+    // A row whose text is no JSON keeps its place with no payload: the page stays whole, so a reader's next page and
+    // its "earlier events" read as for any other page.
+    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: parsedRow(payloadJson) }));
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
@@ -568,49 +962,16 @@ export class SqliteSessionReader {
    */
   sessionPage(query: SessionPageQuery, repositoryIds: readonly string[] | undefined = undefined): SessionPage {
     // A malformed cursor is refused whether or not any history exists yet.
-    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
+    const continuing = sessionsAfter(query.cursor);
     const database = this.#database.open();
     if (database === undefined) return { sessions: [], total: 0, nextCursor: null };
-    const matching = and(
-      query.since === undefined ? undefined : gte(sessions.startedAt, query.since),
-      repositoryFilter(repositoryIds ?? this.#repositoryIds),
-    );
-    const continuing = after === undefined
-      ? undefined
-      : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
-    // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
+    const matching = sessionsMatching(query.since, repositoryIds ?? this.#repositoryIds);
     // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
     const { rows, total } = database.transaction(() => ({
-      rows: database.all<SessionPageRow>(sql`
-        SELECT
-          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
-          page.started_at AS startedAt, page.ended_at AS endedAt,
-          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
-          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
-            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
-          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
-          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
-            - (SELECT count(*) FROM ${auditViolations}
-              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations
-        FROM (
-          SELECT * FROM ${sessions}
-          WHERE ${and(matching, continuing) ?? sql`1 = 1`}
-          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
-          LIMIT ${query.limit + 1}
-        ) page
-        ORDER BY page.started_at DESC, page.session_id
-      `),
+      rows: sessionPageRows(database, and(matching, continuing), query.limit + 1),
       total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
     }));
-    const page = rows.slice(0, query.limit);
-    const last = page.at(-1);
-    return {
-      sessions: page,
-      total,
-      nextCursor: rows.length > query.limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null,
-    };
+    return { sessions: rows.slice(0, query.limit), total, nextCursor: nextSessionCursor(rows, query.limit) };
   }
 
   /** How many sessions started at or after `since`. */
@@ -669,5 +1030,134 @@ export function lastObservedEventAt(databasePath: string): number | null {
     return null;
   } finally {
     database?.$client.close();
+  }
+}
+
+/**
+ * The record write of `receipt` in the database at `databasePath`, for a record writer (`openRecordWriter`): its event
+ * (`steerEvent`), and, when a reset removed its session's row, that row put back, crediting the repository of the
+ * checkout the session's folder is in. The file is opened read-only here to find that repository, which checks it is a
+ * database this build can write, as a writable open does, without taking its write lock.
+ */
+export function steerReceiptWrite(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): RecordWrite {
+  const database = openRerailDatabase(databasePath, { readonly: true });
+  let repositoryId: string | null;
+  try {
+    repositoryId = checkoutRepository(database, session.cwd);
+  } finally {
+    database.$client.close();
+  }
+  const row = eventRow(steerEvent(session, receiptId, ruleIds));
+  const restore = { ...session, repositoryId, startedAt: Date.now(), endedAt: null };
+  return target => insertEvent(target, row, restore);
+}
+
+/** The repository key of the checkout `cwd` is in; null when none is known or the lookup fails. */
+function checkoutRepository(database: RerailDatabase, cwd: string): string | null {
+  try {
+    return lookupCheckout(database, cwd)?.repositoryKey ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * The receipts of steers the daemon took from hooks while another process held the database's write lock, kept on
+ * disk until their records are made. The hook that handed one over has ended by then, so a daemon that dies first
+ * (killed, crashed, the machine shut down) would lose it, where the hook used to wait for the lock and record it
+ * itself. One file per receipt in a folder beside the database (`rerail.sqlite-receipts`), named by its id's hash, which
+ * goes once its record is made; the next daemon's start records what is left (`keptReceipts`). A receipt recorded twice
+ * counts once, so a file a removal missed costs one more insert of nothing.
+ */
+
+/** A receipt kept on disk, and the record write that removes its file once queued behind the receipt's own write. */
+export interface KeptReceipt {
+  readonly receipt: SteerReceipt;
+  /**
+   * Removes the receipt's file once the database holds the receipt's event. A record writer makes writes in the order
+   * they were asked for, so queued behind the receipt's own write it runs once that one is made, or failed: a record
+   * that failed (the disk full, the database read-only) leaves the file for the next start, as a removal that fails
+   * does.
+   */
+  readonly forget: RecordWrite;
+}
+
+function keptReceiptsFolder(databasePath: string): string {
+  return `${databasePath}-receipts`;
+}
+
+/** Removes `file`; one a scanner holds on Windows stays, and the next start records it again, which counts once. */
+function forgetFile(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // Left for the next start.
+  }
+}
+
+function keptReceipt(file: string, receipt: SteerReceipt): KeptReceipt {
+  const where = and(eq(events.sessionId, receipt.session.sessionId), eq(events.eventId, steerEvent(receipt.session, receipt.receiptId, []).eventId!));
+  return {
+    receipt,
+    forget: database => {
+      if (database.select({ sequence: events.sequence }).from(events).where(where).get() !== undefined) forgetFile(file);
+    },
+  };
+}
+
+/**
+ * Keeps `receipt` in a file beside the database at `databasePath` (0600, in a 0700 folder) before it resolves, off the
+ * calling thread. The file survives the end of this process; it is not flushed to the drive, as the hook that held
+ * the receipt in memory before survived no power loss either.
+ */
+export async function keepReceipt(databasePath: string, receipt: SteerReceipt): Promise<KeptReceipt> {
+  const folder = keptReceiptsFolder(databasePath);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const file = join(folder, `${createHash("sha256").update(receipt.receiptId).digest("hex")}.json`);
+  await writeFile(file, JSON.stringify(receipt), { mode: 0o600 });
+  return keptReceipt(file, receipt);
+}
+
+/**
+ * The receipts kept beside the database at `databasePath` whose records were never made: a daemon took them and ended
+ * first. A file read whole that holds no receipt (one whose write the daemon's end cut short, before it answered the
+ * hook, which then recorded the receipt itself) is removed. A file that cannot be read now (another process holds it,
+ * access is refused, no descriptor is free) stays, so the next start reads it again. None when the folder does not
+ * exist, as it does not until a receipt is handed over while the lock is held.
+ */
+export function keptReceipts(databasePath: string): KeptReceipt[] {
+  const folder = keptReceiptsFolder(databasePath);
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return [];
+  }
+  return names.flatMap(name => {
+    const file = join(folder, name);
+    const text = keptText(file);
+    if (text === undefined) return [];
+    const receipt = receiptIn(text);
+    if (receipt !== undefined) return [keptReceipt(file, receipt)];
+    forgetFile(file);
+    return [];
+  });
+}
+
+/** What `file` holds, or undefined when it cannot be read now. */
+function keptText(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The receipt `text` holds, or undefined when it holds none. */
+function receiptIn(text: string): SteerReceipt | undefined {
+  try {
+    return SteerReceiptSchema.parse(JSON.parse(text));
+  } catch {
+    return undefined;
   }
 }

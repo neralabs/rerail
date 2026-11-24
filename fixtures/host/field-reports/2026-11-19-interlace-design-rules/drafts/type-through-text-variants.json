@@ -1,0 +1,87 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:type-through-text-variants",
+    "revision": 1,
+    "mode": "log",
+    "description": "Set text size and weight through a Text variant from the DESIGN.md type scale, not with size or weight classes in screens, features or shared components.",
+    "scope": {
+      "include": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts",
+        "src/components/ui/**",
+        "src/theme/**"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "size-class",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:^|[\\s'\"`:])text-(?:(?:xs|sm|base|lg|[2-9]?xl)\\b|\\[[0-9.]+(?:px|rem|em)?\\])",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "TEXT_SIZE_CLASS",
+          "anchor": "witness.span",
+          "message": "Use `<Text variant=...>` for the DESIGN.md style this is (card title, status line, ...); if that style has no variant yet, add it in src/components/ui/text.tsx."
+        }
+      },
+      {
+        "id": "weight-class",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:^|[\\s'\"`:])font-(?:thin|extralight|light|normal|medium|semibold|bold|extrabold|black)\\b",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "FONT_WEIGHT_CLASS",
+          "anchor": "witness.span",
+          "message": "Take the weight from a `<Text variant=...>` on the DESIGN.md type scale; if no variant has it yet, add one in src/components/ui/text.tsx."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/features/activities/activity-card.tsx",
+        "content": "<Text className=\"text-[15px] font-bold leading-snug\">{item.title}</Text>\n"
+      },
+      {
+        "path": "src/app/save.tsx",
+        "content": "{error && <Text className=\"text-destructive text-sm\">{t('save.error')}</Text>}\n"
+      },
+      {
+        "path": "src/components/screen-header.tsx",
+        "content": "<Text className=\"text-[28px] font-extrabold tracking-tight\">{title}</Text>\n"
+      },
+      {
+        "path": "src/app/tabs.tsx",
+        "content": "<Text className={cn('text-xs', focused ? 'font-bold' : 'font-semibold')}>{label}</Text>\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/app/a.tsx",
+        "content": "<Text variant=\"cardTitle\" className=\"text-muted-foreground text-center\">{t}</Text>\n"
+      },
+      {
+        "path": "src/app/b.tsx",
+        "content": "<Text className=\"text-attention-foreground font-sans\">{t}</Text>\n"
+      },
+      {
+        "path": "src/components/ui/text.tsx",
+        "content": "const v = { cardTitle: 'text-[15px] font-bold' };\n"
+      }
+    ]
+  }
+}

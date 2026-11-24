@@ -1,3 +1,0 @@
-^(?:_execute_raw_sql)$
-^(?:_execute_raw_sql_async)$
-^(?:_query_raw_sql_async)$

@@ -62,7 +62,7 @@ Receiver typing goes to Python first (the user, the same day).
 
 ## Prior work consulted
 
-- **ast-index-spike:** it scoped cross-file resolution out (design index §17, "Data flow / name resolution /
+- **SQL index prototype:** it scoped cross-file resolution out (design index §17, "Data flow / name resolution /
   cross-file facts"), as 0035 records. It offers no prior bound or pending mechanism.
 - **The ledger's row 20** (partition by file; global machinery only where needed) still holds. The pending round
   is global machinery, run only when the rounds have not converged.

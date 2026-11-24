@@ -131,7 +131,7 @@ fn compare_parsed(source: &str, language: GrammarDialect, rules: &[Value], damag
 }
 
 /// A source as the engine reads it: tree-sitter's tree written to a tape and restored, with no
-/// token the grammar implies (RER-131).
+/// token the grammar implies (decision 0161).
 fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
     let parsed = StrDoc::new(source, language);
     let grammar = Grammar::new(language).unwrap();
@@ -141,7 +141,7 @@ fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
 
 /// Each matcher (named for its failures) selects, from the anchor index of the restored tape, the
 /// nodes a full walk of that tape matches, visiting each stored node once. A tape is named-only
-/// (RER-131), and so is every tree the engine reads: tree-sitter's own tree is no oracle here.
+/// (decision 0161), and so is every tree the engine reads: tree-sitter's own tree is no oracle here.
 fn compare_matchers(
     source: &str,
     language: GrammarDialect,
@@ -481,7 +481,10 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .expect("an AST clause")
     }
 
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut pending = vec![
         root.join("packs/complexity/rules"),
         root.join("packs/javascript/rules"),
@@ -511,9 +514,9 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131); main's #740 adds four and
-    // #743 one.
-    assert_eq!(queries.len(), 1680, "pinned catalog query inventory");
+    // The t31 rewrites ask the operation a token stood for: six more queries (decision 0161); main's #740 adds four, #743
+    // one, and typescript-eslint-no-invalid-this's callback clause one.
+    assert_eq!(queries.len(), 1681, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -623,7 +626,7 @@ fn incomplete_index_is_not_a_clean_absence() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    // The tree\'s nodes: a stored image is named-only (RER-131).
+    // The tree\'s nodes: a stored image is named-only (decision 0161).
     let tree_nodes = tape.transducer_len();
     let matcher = compile_rule(
         &json!({"pattern": "bar(2)"}),
@@ -852,7 +855,7 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
 
 // ast-grep's sibling walks are byte-positioned on the native tree: `next` skips zero-width
 // siblings at the node's end, and `next_all`/`prev_all` start from the first child of the
-// parent that ends after the node's start. The tape stores no implied token (RER-131), so its
+// parent that ends after the node's start. The tape stores no implied token (decision 0161), so its
 // walks are tree-sitter's over the nodes it stores.
 #[test]
 fn tape_sibling_walks_match_native_around_zero_width_nodes() {
@@ -1487,7 +1490,10 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
 /// keep every finding and make AIR302 about a hundred times slower on such files (#375).
 #[test]
 fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    let rules = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("../packs/python/rules");
     // Names the rules report, with no `airflow` import: `airflowx` has the prefix, not the module.
     let without = "import airflowx\nfrom airflowx.hooks import PostgresHook\nimport os.path as airflow_path\n\nclass Dataset: ...\n\ndef run(h: \"PostgresHook\", d: \"Dataset\") -> \"BashOperator\":\n    airflow_path.join(h.conn, airflowx.DAG)\n    return BashOperator(bash_command=\"x\", sla=d)\n";
     let with = "from airflow.hooks.S3_hook import S3Hook\nfrom airflow import Dataset\nfrom airflow.operators.bash import BashOperator\n\ndef run(h: \"S3Hook\") -> \"BashOperator\":\n    return BashOperator(bash_command=\"x\", sla=Dataset(uri=\"x\"))\n";
@@ -1559,7 +1565,10 @@ fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
 /// complete on a file with a `builtins` import and on one without.
 #[test]
 fn ann_ports_select_soundly_with_and_without_a_builtins_import() {
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    let rules = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("../packs/python/rules");
     let without = "from typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @staticmethod\n    def s(x):\n        return x\n\n    @classmethod\n    def c(cls):\n        return cls\n\ndef f(a: Any):\n    return a\n";
     let with = "import builtins\nfrom typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @builtins.staticmethod\n    def s(x):\n        return x\n\n    @builtins.classmethod\n    def c(cls):\n        return cls\n\n    @staticmethod\n    def t(x):\n        return x\n\ndef f(a: Any):\n    return a\n";
     let without = tape_doc(without, GrammarDialect::Python);

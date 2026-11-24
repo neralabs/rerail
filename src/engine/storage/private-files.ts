@@ -4,8 +4,8 @@
  * ignores `mkdir`'s and `open`'s modes: there it is the folder's access control list (`windows-acl.ts`). Callers make
  * one call for either system and never branch on the platform.
  */
-import { chmodSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, type Stats } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,7 +18,9 @@ import {
   REMOTE_OUTBOX_FILE,
   REMOTE_TOKENS_FOLDER,
   RERAIL_DATABASE_FILE,
+  STATUS_LINES_FOLDER,
 } from "./rerail-home.js";
+import { UNTAKEN_EVENTS_DIR } from "./untaken-events.js";
 import { insideProfile, WINDOWS_ACL, type WindowsAcl } from "./windows-acl.js";
 
 /** The system a path is kept private on: its platform, Windows' access control and the profile folder; tests pass their own. */
@@ -59,6 +61,172 @@ export function keepFolderPrivate(folder: string, options: KeepFolderPrivate = {
   }
 }
 
+/**
+ * How a repair ended: `kept`, the folder needs nothing more; `transient`, it failed in a way that may pass by itself (a
+ * program cut at its time limit or one that did not start); `refused`, the system answered no for this folder (Access
+ * is denied, EPERM, EACCES), which holds until something about the folder changes.
+ */
+export type RepairEnd = "kept" | "transient" | "refused";
+
+/** The repair {@link keepFoundFolderPrivate} starts on a folder, once it has read the folder's ACL. */
+export interface FoundFolderRepair {
+  /**
+   * Resolves `kept` once the folder needs nothing more, or has its ACL and Windows has passed it to everything in it;
+   * `transient` or `refused` when its ACL or mode could not be read or set ({@link RepairEnd}).
+   */
+  readonly kept: Promise<RepairEnd>;
+  /**
+   * Resolves once `inner`, a folder made inside the repaired one after `since` (a `performance.now()` read before it was
+   * made), has the ACL that what is written there next takes from its first byte. When the folder has its own ACL, or
+   * Windows had passed its new one on by `since`, at once: `inner` takes the folder's, an entry set there for another
+   * account included. While a new one is passed on, once it was passed on after `since` (Windows may have gone over the
+   * folder before `inner` was there), or when it could not be read or set, once one `icacls` has given `inner` the
+   * owner-only ACL of its own, which takes time in step with what is in `inner` alone.
+   */
+  keepInside(inner: string, since: number): Promise<void>;
+}
+
+const NOTHING_TO_REPAIR: FoundFolderRepair = { kept: Promise.resolve("kept"), keepInside: () => Promise.resolve() };
+
+/**
+ * Whether a failure says nothing about the folder and may pass by itself: a program cut at its time limit (`killed`)
+ * or one that did not start (an error of the `spawn` or `spawnSync` call, a synchronous time-out included). Any other
+ * failure, a program that ran and refused or a system call refused, is the system's answer for the folder.
+ */
+function mayPassByItself(error: unknown): boolean {
+  const { killed, syscall } = (error ?? {}) as { killed?: unknown; syscall?: unknown };
+  return killed === true || (typeof syscall === "string" && syscall.startsWith("spawn"));
+}
+
+/** Names on stderr, which a daemon writes to its log, a folder Rerail could not keep its owner's alone. */
+function cannotKeep(folder: string, error: unknown): Exclude<RepairEnd, "kept"> {
+  process.stderr.write(`rerail: could not keep ${folder} to this user alone, so other accounts may read what Rerail writes there: ${
+    error instanceof Error ? error.message : String(error)}\n`);
+  return mayPassByItself(error) ? "transient" : "refused";
+}
+
+/** What {@link keepFoundFolderPrivate} is given: the system, and which folders in the found one every account shares. */
+export interface FoundFolder extends PrivateMachine {
+  /**
+   * Whether a folder in the found one, by its name, is one every account that may make a folder there adds files to,
+   * as each agent host's locks and held steers in a records folder; none by default.
+   */
+  readonly shared?: (name: string) => boolean;
+}
+
+/** Names on stderr a folder the accounts that record beside this one could not be let add files to. */
+function cannotShare(folder: string, error: unknown): void {
+  process.stderr.write(`rerail: could not let other accounts that record here use ${folder}: ${error instanceof Error ? error.message : String(error)}\n`);
+}
+
+/**
+ * Gives a found folder the ACL under which what each account makes there is that account's alone
+ * ({@link WindowsAcl.keepEachOwnersOwn}), keeping for the accounts an entry it inherits lets make a folder there, but
+ * for any a deny entry set on the folder names, that right and giving them no other: first each shared folder already
+ * in it lets them add files, so their hooks there go on through the change. A shared folder another account made, whose
+ * ACL only that account may change, stays its maker's and is named on stderr. One that failed in a way that may pass by
+ * itself ({@link mayPassByItself}) ends the repair before the folder's ACL changes, so the next try lets those accounts
+ * add files there first.
+ */
+async function keepEachOwnersOwn(folder: string, acl: WindowsAcl, shared: (name: string) => boolean): Promise<void> {
+  const writers = await acl.inheritedWriters(folder);
+  if (writers.length > 0) {
+    for (const entry of await readdir(folder, { withFileTypes: true })) {
+      const inner = join(folder, entry.name);
+      if (entry.isDirectory() && shared(entry.name)) {
+        await acl.letAddFiles(inner, writers).catch((error: unknown) => {
+          cannotShare(inner, error);
+          if (mayPassByItself(error)) throw error;
+        });
+      }
+    }
+  }
+  await acl.keepEachOwnersOwn(folder, writers);
+}
+
+/** Gives `inner` the owner-only ACL of its own; a refusal is named on stderr and never fails the caller. */
+async function keepOwnersAlone(inner: string, acl: WindowsAcl): Promise<void> {
+  await acl.restrictFolderToOwner(inner).catch((error: unknown) => cannotKeep(inner, error));
+}
+
+/**
+ * Gives `folder` its ACL in the background ({@link keepEachOwnersOwn}), and each folder inside it one of its own unless
+ * that had succeeded before the folder was made: a repair that failed leaves the folder's inherited ACL, which a new
+ * folder there would take, and one that ended after a folder was made may have gone over the folder before it was there.
+ */
+function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) => boolean): FoundFolderRepair {
+  let passedOnAt = Number.POSITIVE_INFINITY;
+  const kept = keepEachOwnersOwn(folder, acl, shared).then((): RepairEnd => {
+    passedOnAt = performance.now();
+    return "kept";
+  }, (error: unknown) => cannotKeep(folder, error));
+  return {
+    kept,
+    async keepInside(inner, since) {
+      if (passedOnAt >= since) await keepOwnersAlone(inner, acl);
+    },
+  };
+}
+
+/**
+ * Keeps what each account writes in a folder that another program may have made, and that other accounts may share,
+ * that account's alone. Elsewhere than Windows, takes away what lets other accounts list it and, where they may still
+ * add entries, rename or remove this account's ({@link keepNamesPrivate}).
+ * On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and, when the folder still takes
+ * entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it an ACL of its own
+ * ({@link keepEachOwnersOwn}): what is already there becomes its owner's alone, as does what any account makes there
+ * next, and an account an entry the folder inherits let make a folder there still can, to record its own sessions, but
+ * lists nothing. An entry set on the folder itself for another account is someone's choice and stays: an allow entry
+ * for an account the folder inherited that right for gains it, and a deny entry keeps that account from being given
+ * it. A folder with an ACL of its own is left as it is. It resolves once the ACL is read: Windows passes a new one on
+ * in the background, in time in step with what is in the folder, and {@link FoundFolderRepair.keepInside} keeps a
+ * folder in it private meanwhile, so nobody waits for that. A folder whose ACL it cannot read or change (on Windows,
+ * another account's, say) or whose mode change the system refuses is named on stderr, which a daemon writes to its
+ * log, and never fails the caller: its `kept` resolves `transient` or `refused`, and on Windows each folder kept inside
+ * it then gets the owner-only ACL of its own. Elsewhere than Windows, another account's folder is left as it is and
+ * resolves `kept`.
+ */
+export async function keepFoundFolderPrivate(folder: string, machine: FoundFolder = {}): Promise<FoundFolderRepair> {
+  const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir(), shared = () => false } = machine;
+  if (platform !== "win32") return keptNamesPrivate(folder);
+  if (insideProfile(folder, profile)) return NOTHING_TO_REPAIR;
+  let inherits: boolean;
+  try {
+    inherits = await acl.inherits(folder);
+  } catch (error) {
+    // Whether a new folder there would take an open ACL is not known, so each one gets the owner-only ACL of its own.
+    return { kept: Promise.resolve(cannotKeep(folder, error)), keepInside: inner => keepOwnersAlone(inner, acl) };
+  }
+  return inherits ? repairUnderWay(folder, acl, shared) : NOTHING_TO_REPAIR;
+}
+
+/** {@link keepNamesPrivate}, a mode change the system refuses named on stderr and never failing the caller. */
+function keptNamesPrivate(folder: string): FoundFolderRepair {
+  try {
+    keepNamesPrivate(folder);
+  } catch (error) {
+    return { ...NOTHING_TO_REPAIR, kept: Promise.resolve(cannotKeep(folder, error)) };
+  }
+  return NOTHING_TO_REPAIR;
+}
+
+/**
+ * On Windows, outside the profile folder, lets the accounts that may make a folder in `parent` add files to `folder`,
+ * just made in it as one every such account shares, as {@link keepFoundFolderPrivate} does for those already there:
+ * whoever makes it first, each account's hooks can then lock and hold steers there. None when `parent` lets no other
+ * account in. A failure is named on stderr and never fails the caller. Elsewhere it does nothing.
+ */
+export async function shareLikeParent(folder: string, parent: string, machine: PrivateMachine = {}): Promise<void> {
+  const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir() } = machine;
+  if (platform !== "win32" || insideProfile(folder, profile)) return;
+  try {
+    const writers = await acl.writers(parent);
+    if (writers.length > 0) await acl.letAddFiles(folder, writers);
+  } catch (error) {
+    cannotShare(folder, error);
+  }
+}
+
 /** What {@link openToOthers} reads a path's access with; tests pass their own. */
 export interface AccessReader {
   readonly platform?: NodeJS.Platform;
@@ -92,18 +260,44 @@ export async function openToOthers(path: string, reader: AccessReader = {}): Pro
  * there the folder's ACL does this ({@link keepFolderPrivate}).
  */
 function keepPrivate(path: string): void {
-  if (process.platform === "win32") return;
+  const stats = ownStats(path);
+  if (stats === undefined || (stats.mode & 0o077) === 0) return;
+  if (stats.isDirectory()) chmodSync(path, 0o700);
+  else if (stats.isFile()) chmodSync(path, 0o600);
+}
+
+/**
+ * Takes the group's and others' read from a folder this user owns, which is what lets another account list it, and
+ * keeps what lets one pass through it and make a folder of its own there. When the group or others may still add
+ * entries, it also sets the sticky bit, so such an account cannot rename or remove this account's entries (its `0700`
+ * session folders, its `.gitignore`); the folder's owner still can: `2775` becomes `3731`, `0777` `1733`, `0755`
+ * `0711`, `0700` stays. A records folder Git or a person made may be shared with another account that records its own
+ * sessions there; each session's folder is `0700`, so names are hidden and each account's records stay its own.
+ */
+function keepNamesPrivate(folder: string): void {
+  const stats = ownStats(folder);
+  if (stats?.isDirectory() !== true) return;
+  const found = stats.mode & 0o7777;
+  const unlisted = found & ~0o044;
+  const kept = (unlisted & 0o022) === 0 ? unlisted : unlisted | 0o1000;
+  if (kept !== found) chmodSync(folder, kept);
+}
+
+/**
+ * `path`'s `lstat` when this user owns it; undefined when it is missing, out of reach or another user's, and on Windows,
+ * which has no modes to change.
+ */
+function ownStats(path: string): Stats | undefined {
+  if (process.platform === "win32") return undefined;
   let stats;
   try {
     stats = lstatSync(path);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "EACCES") return;
+    if (code === "ENOENT" || code === "EACCES") return undefined;
     throw error;
   }
-  if (stats.uid !== process.geteuid!() || (stats.mode & 0o077) === 0) return;
-  if (stats.isDirectory()) chmodSync(path, 0o700);
-  else if (stats.isFile()) chmodSync(path, 0o600);
+  return stats.uid === process.geteuid!() ? stats : undefined;
 }
 
 /**
@@ -124,11 +318,13 @@ export function keepFilesPrivate(folder: string, prefixes: readonly string[]): v
 
 /**
  * What the Rerail home holds that is the person's alone: the database and its WAL, journal and pre-update copies
- * (`rerail.sqlite*`), the coding-agent recovery database (`harness.sqlite*`), the daemon's state, capability and log, and
- * the remote sink's configuration, tokens, outbox and machine id (`remote.json`, `remote-tokens/`, `remote-outbox.sqlite*`, `machine-id`).
+ * (`rerail.sqlite*`), the coding-agent recovery database (`harness.sqlite*`), the daemon's state, capability and log,
+ * the Claude Code status lines it keeps (`status/`), the events hooks left while the daemon did not read
+ * (`untaken-events/`), and the remote sink's configuration, tokens, outbox and machine id (`remote.json`,
+ * `remote-tokens/`, `remote-outbox.sqlite*`, `machine-id`).
  */
 const PRIVATE_HOME_FILES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, DAEMON_STATE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
-  REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER, REMOTE_OUTBOX_FILE, MACHINE_ID_FILE];
+  STATUS_LINES_FOLDER, UNTAKEN_EVENTS_DIR, REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER, REMOTE_OUTBOX_FILE, MACHINE_ID_FILE];
 
 /**
  * Creates the Rerail home (`0700`) when absent, and keeps it and the private files in it private

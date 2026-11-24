@@ -1,0 +1,7 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "rerail",
+  "equivalent": true,
+  "untranslated": {},
+  "different": {}
+}

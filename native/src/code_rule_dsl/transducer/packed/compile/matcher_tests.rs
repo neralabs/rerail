@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -647,7 +647,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {
@@ -710,7 +710,7 @@ fn ast_pattern_verdicts_reuse_their_bindings() {
     }
 }
 
-/// The end of children meets a named candidate (RER-131): where the tokens the tape leaves out after
+/// The end of children meets a named candidate (decision 0161): where the tokens the tape leaves out after
 /// the last matched child begin with the goal's, the rest trails, in the packed matcher as in
 /// ast-grep-core's. `case $V:` matches `case 1: f(); break;` (ast-grep 0.51.0 does); `f($A)` still
 /// refuses `f(a, b)`, whose gap after `a` is `,`.

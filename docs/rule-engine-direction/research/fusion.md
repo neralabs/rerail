@@ -2,11 +2,11 @@
 
 > **Superseded (2026-10-25).** This report predates `metal-enqueue.md` and the no-fallback rule (spec §8). Statements below that route anything to a CPU/JIT rerun are replaced: monotone recursion runs on Metal as GPU-scheduled waves, constructs that cannot be stratified are rejected by the verifier, and hard device limits yield `Unknown(resource)`, which is counted and gated.
 
-Benchmark sources and raw output are in `../experiments/fusion/`. These are CPU measurements only. The Metal claims below are structural (task counts, frontier boundedness, pass shape), not measured.
+Benchmark sources and raw output are in `../experiments/fusion/` (removed; at 7efcac9c67). These are CPU measurements only. The Metal claims below are structural (task counts, frontier boundedness, pass shape), not measured.
 
 ## Setup
 
-- **Interpreter.** A minimal copy of Tempo's transducer core loop (`policy_dsl/transducer.rs` opcodes at `:184-216`, `Path` at `:813`, tape interpreter at `:2600-2800`): one 32-bit word per instruction, with one path forked per navigation result.
+- **Interpreter.** A minimal copy of the predecessor's transducer core loop (`policy_dsl/transducer.rs` opcodes at `:184-216`, `Path` at `:813`, tape interpreter at `:2600-2800`): one 32-bit word per instruction, with one path forked per navigation result.
   - It adds `ANCESTOR`, `EXISTS`/`NOT_EXISTS`/`ACCEPT`, `DESCEND_KIND`, set mode with label bitsets and per-pc reachable-label masks, lazy enumeration (`LAZY=1`) and the peephole (`PEEP=1`).
   - It omits captures, value programs and repeats.
 - **Tape.** A regular table (kind, field, named, parent, next sibling, first child, subtree end) built from tree-sitter-python 0.25 parses of the Python 3.14 stdlib: 1,847 files, 8.54M nodes.

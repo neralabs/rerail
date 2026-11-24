@@ -51,9 +51,28 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   upstream's) and whose fork is the person's (its owner is the login `gh` is signed in with), or whose head commit
   this branch once pointed at (its reflog holds it), so it stays left out after an amend or a rebase. Pull requests
   are listed through `gh`, read-only and with the person's own sign-in: afresh by a scan, else at most every five
-  minutes, the 200 newest open ones; when more are open, the scan says so. `gh` is signed out only when `gh auth
-  status` says it holds no login for the host; any other failure of it (a token it could not check, offline) is
-  `unavailable`, reused for a minute only.
+  minutes, the 200 newest open ones; when more are open, the scan says so. A scan reads `gh`'s sign-in afresh first;
+  another listing starts from the kept reading of its environment while that reading is under five minutes old (one
+  while `gh` could not tell), and reads `gh` first otherwise. When `hosts.yml` moved, or its stat has not answered by
+  the time that listing ends, or the kept reading lists nothing (not signed in), the listing then reads `gh` and lists
+  again with the new reading: one more `gh pr list` where the kept reading listed. So while `gh` is not signed in,
+  each listing runs `gh auth status`: a listing that lists nothing ends before
+  the stat can show `hosts.yml` unmoved. `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
+  token it could not check, offline) is `unavailable`. A status shows the sign-in as `gh` last said it, with when
+  (`readAt`). A reading is kept per `gh` environment, `hosts.yml`'s path and which of `GH_TOKEN` and `GITHUB_TOKEN`
+  are set (a CLI and the daemon may differ, and so hold two sign-ins), for the last four environments that read it. A
+  status reads `gh` in its answer when its environment has none kept or `gh`'s sign-in changed since: `gh auth login`,
+  `logout`, `switch` and `refresh` rewrite `hosts.yml` in `gh`'s configuration folder (`GH_CONFIG_DIR`, else
+  `XDG_CONFIG_HOME/gh`, else `%AppData%\GitHub CLI` on Windows, else `~/.config/gh`), and a status compares that
+  file's identity, size and times, read with one stat off the daemon's thread, with the ones kept beside the reading.
+  It waits for that stat no longer than its own Git reads take; one that has not answered by then leaves the kept
+  reading shown with its time, and the CLI's process ends once its answer is written, whether the stat has answered
+  or not. Tests show the process waiting for a long answer's last bytes on Linux only, where they reach a pipe after
+  the write call returns; on Windows Node writes to a pipe before the call returns, and later only to a terminal,
+  which no test opens. A reading five minutes old, or one minute old while `gh` could not tell, is read again
+  when a status asks for it, which covers what no file tells (a token GitHub refuses, the network back, `gh`
+  installed): in the background, so that status shows the kept one and the next shows the new one; the CLI, which
+  answers once, shows it in that answer. No timer runs for it.
 - A branch's own change is its diff from where it left its base branch, so mainline work it merged in does not count,
   and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3
@@ -148,7 +167,9 @@ array run without a shell, from the checkout's root, with a timeout of 10 second
 - On macOS and Linux it runs in its own process group: past its timeout the group gets SIGTERM, then SIGKILL 2 seconds
   later, and its pipes are closed. When the daemon stops, every running command's group gets SIGTERM, then SIGKILL
   within half a second. Windows has no signal that asks a process to stop, so there the command and everything it
-  started end at once (`taskkill /T /F`), at the timeout or the stop.
+  started end at once (`taskkill /T /F`), at the timeout or the stop. A pass that ends within the stop's 2 s wait
+  still stores what it found; the hook hears its events at the next pass in that checkout, in this daemon or a later
+  one, before that pass's own.
 - A command that cannot start, exits non-zero, times out, writes more than 4 KiB or prints anything else is recorded on
   the conflict as `hook: { ok: false, error }` and shown on the dashboard and in the CLI. It never changes delivery.
 
@@ -169,10 +190,14 @@ it. Otherwise the conflict closes when the overlap is gone.
   `repositories-merge-assist`).
 - `merge_assist_state`, one JSON value per key: `conflicts:<checkout>` (open and dismissed, each with the files and
   content anchor its id rests on), `scan:<checkout>` and `scanning:<checkout>` (the scanning process's pid, so a mark
-  left by a process that died does not block scans), `github:<repository>` (`gh` readiness, reused for five minutes;
-  one that could not be read for one), `delivered:<session>` (the notes a session was handed) and
-  `settings:<repository>` (the hook command). A value that does not match what the build expects reads as absent, one
-  conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it; a
+  left by a process that died does not block scans), `github:<repository>` (`gh` readiness as last read and when, and the same
+  per `gh` environment with a hash of that environment and the stat of `gh`'s sign-in file then: each read of it writes
+  it, a status reads it), `delivered:<session>` (the notes a session was handed) and
+  `settings:<repository>` (the hook command), and `unheard:<checkout>` (conflict events stored while Merge Assist was
+  stopping, which the next pass that stores in the checkout, a dismissal or Merge Assist turned off hands to the hook
+  first, once, leaving out a conflict's events where the stored conflicts say otherwise, as after a build without this
+  key changed them). A value that does not match what the build expects reads as absent, one
+  conflict or one kept event at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:`, `scanning:` and `unheard:` rows with it; a
   repository that takes a new key (a clone that gains a remote) takes its `settings:` row along and drops its
   `github:` one, and a repository Rerail removes takes both with it; `rerail reset` drops the `delivered:` rows of the
   sessions it removes.

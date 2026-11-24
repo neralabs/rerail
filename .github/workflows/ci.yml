@@ -9,10 +9,33 @@ on:
   # pull_request run skips every job that needs a secret or the OIDC token; this run is not Dependabot's, so it runs
   # everything, like a push, and its CI result on the same commit is what arms auto-merge. Without a pull request it
   # has no base, so the conformance check runs without comparing its lists to the base.
+  # A manual run may also name the branch whose warm-start artifacts it reads, and save its own, to prove a change to
+  # the warm starts before main has saved any (the `env` below).
   workflow_dispatch:
+    inputs:
+      warm-ref:
+        description: The branch whose saved cargo targets, compile caches and engines this run starts from (a run on main starts from main's).
+        default: main
+      save-warm:
+        description: Save this run's cargo targets and compile caches, as a push to main does.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# Warm starts: the engine builds and Rust jobs start from the cargo targets and compile caches the latest push to main
+# saved as artifacts (.github/actions/cargo-target, .github/actions/rust-compile-cache), and every engine build reuses
+# an engine built from the same inputs (.github/actions/engine-artifact). Only pushes to main save the targets and
+# caches, unless a manual run on a branch asks to (`save-warm`); a run on a tag never saves. A run on a ref named main
+# (the branch, or a tag) starts from main's own whatever `warm-ref` says: what it uploads reads as main's for every
+# later run (scripts/check/ci/trusted-artifact.mjs takes main's runs by name, event and history), so another branch's
+# never become main's. A tag named main on an older commit of main runs that commit's ci.yml, which saved only on a
+# push to the branch; main takes squash merges alone (its ruleset), so no commit with a weaker version of this file
+# joins main's history.
+env:
+  WARM_REF: ${{ github.ref_name == 'main' && 'main' || inputs.warm-ref || 'main' }}
+  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && inputs.save-warm) }}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -46,9 +69,11 @@ concurrency:
 # decides, from the pull request's whole diff against its base, so a pull request that ever touched an input runs the
 # job on every later push; a push to main, and any other event, runs everything. A job may be skipped only when nothing
 # it reads changed: each filter is derived from its jobs' imports and runtime reads, and
-# scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data,
-# build and unit jobs (on Linux and on Windows), and the tools job's script tests and reference examples, run on every
-# pull request: the unit tests read nearly the whole tree, docs included.
+# scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data
+# and build jobs, and the tools job's script tests and reference examples, run on every pull request. The unit jobs (on
+# Linux and on Windows) run the test files the change can affect (the select-tests job), and Windows' none for a change
+# of prose alone (scripts/check/ci/prose.mjs: changesets, changelog entries, the root's and docs/'s Markdown), which
+# changes no code and reads the same on Windows.
 #
 # The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
 # core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
@@ -68,8 +93,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Its cache is saved by a push to main alone; any other run restores main's.
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       # Every file carries licence information and every licence it names has its text in LICENSES/.
       - name: REUSE lint
@@ -192,6 +220,7 @@ jobs:
       e2e: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.e2e || 'true' }}
       integration: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.integration || 'true' }}
       sessions: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.sessions || 'true' }}
+      translations: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.translations || 'true' }}
       # Which Rust packages' tests the change can affect (scripts/check/ci/rust-selection.mjs): the changed crates and every
       # crate that depends on one. Everything off pull requests, past 3000 files, and when the step fails: rust-all
       # 'true', rust-packages every package (or ["all"] when even the package list could not be read), rust-cargo-args
@@ -214,6 +243,7 @@ jobs:
               - 'native/**'
               - 'accel/**'
               - 'forest/**'
+              - 'tools/bitlex/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
@@ -228,6 +258,7 @@ jobs:
               - 'scripts/check/check-rustfmt.mjs'
               - 'scripts/check/check-rustfmt/files.txt'
               - 'scripts/check/ci/native-test-legs.mjs'
+              - 'scripts/check/ci/path-free-builds.mjs'
               - 'scripts/profiling/reachability/**'
               - 'scripts/profiling/preparation/**'
               - 'scripts/profiling/composition.py'
@@ -285,12 +316,14 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - '.gitattributes'
-            # The native engine the build job makes: its crates (native/crates/, and the accelerators' accel/ and
-            # forest/ it depends on), and the language registry its build.rs reads.
+            # The native engine the build job makes: its crates (native/crates/, and the accel/, forest/ and
+            # tools/bitlex/ it depends on: engine-inputs.mjs reads them from the manifests), and the language registry
+            # its build.rs reads.
             engine: &engine
               - 'native/**'
               - 'accel/**'
               - 'forest/**'
+              - 'tools/bitlex/**'
               - 'languages/**'
             # The package the build job makes and the daemon runs from source: every source file (tsc compiles all of
             # src/), the page, the bundled model, the hosts' hooks, skills and plugin manifests, the build scripts.
@@ -338,8 +371,9 @@ jobs:
               - 'packs/python/**'
               - 'packs/typescript/**'
             # The integration tests and the rule packs from npm: the suites, the test support they import, the vitest
-            # config, the OMP host they provision, the built package. The packs come from the registry, not packs/,
-            # except the complexity pack claude-hook-rules.test.ts adds from this checkout.
+            # config, the OMP host they provision, the built package, the scripts updater-cli.test.ts packs this checkout
+            # and its engine package with. The packs come from the registry, not packs/, except the complexity pack
+            # claude-hook-rules.test.ts adds from this checkout.
             integration:
               - *common
               - *package
@@ -348,12 +382,33 @@ jobs:
               - 'vitest.config.ts'
               - 'packs/complexity/**'
               - 'scripts/host/**'
+              - 'scripts/release/engine/**'
+              - 'scripts/release/shrinkwrap*.mjs'
             # The real-session runs: the host scripts and the built package, loaded by each host as its plugin. They set
             # repositories up with library rules only, so no pack.
             sessions:
               - *common
               - *package
               - 'scripts/host/**'
+            # The translation suite: the pack's translations and the libraries they include, the pack's rules, the
+            # engine both sides run, the product's runner, the suite and the corpora it pins. tsx reads tsconfig.json.
+            translations:
+              - *common
+              - *engine
+              - 'docs/rule-syntax/**'
+              - 'packs/rerail/**'
+              - 'conformance/**'
+              - 'src/engine/**'
+              - 'scripts/s3/**'
+              - 'scripts/samples/**'
+              - 'scripts/ship/translations*'
+              - 'scripts/ship/product-run.ts'
+              - 'scripts/ship/engine-json.ts'
+              - 'scripts/ship/corpus-tree.ts'
+              - 'scripts/ship/metric.ts'
+              - 'scripts/ship/verdict.ts'
+              - 'scripts/ship/corpora.json'
+              - 'tsconfig.json'
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -370,15 +425,66 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
           FILES: ${{ github.event.pull_request.changed_files || 0 }}
           RUSTUP_TOOLCHAIN: stable
+        # The base's package.json, when the pull request changes it: only the scripts that run cargo reach the crates.
+        run: |
+          base=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+            if grep -qx package.json "$RUNNER_TEMP/changed.txt" \
+              && gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$BASE" -H 'Accept: application/vnd.github.raw' > "$RUNNER_TEMP/base-package.json"; then
+              base=(--base-package-json "$RUNNER_TEMP/base-package.json")
+            fi
+          else
+            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+          fi
+          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" "${base[@]}" --github >> "$GITHUB_OUTPUT"
+
+  # Which unit test files a pull request can affect (scripts/check/ci/test-selection.mjs): those whose import closure, or
+  # the paths its files name, hold a changed file. The unit jobs run only those, on as many shards as their share needs
+  # (`unit-shards`, `windows-shards`), or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
+  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. A change of prose
+  # alone (scripts/check/ci/prose.mjs) gets no Windows shard: Linux's run what it selects. Its own job, so the `npm ci`
+  # it needs is off the path of the jobs that need `changes` alone.
+  select-tests:
+    name: Select the unit tests
+    needs: changes
+    if: needs.changes.outputs.release-pr != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      unit: ${{ steps.select.outputs.unit || 'all' }}
+      unit-tests: ${{ steps.select.outputs.unit == 'some' && steps.select.outputs.unit-tests || '' }}
+      unit-shards: ${{ steps.select.outputs.unit-shards || '[1, 2, 3]' }}
+      windows-shards: ${{ steps.select.outputs.windows-shards || '[1, 2, 3, 4, 5]' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - id: select
+        name: Select the unit tests to run
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          FILES: ${{ github.event.pull_request.changed_files || 0 }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
           else
-            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+            echo package-lock.json > "$RUNNER_TEMP/changed.txt"
           fi
-          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
+          node scripts/check/ci/test-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
 
   # Uploads, as this run's artifacts, every set of archives the jobs below download (.github/actions/pack-test-data,
   # `fetch: "true"`): every tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the
@@ -495,8 +601,8 @@ jobs:
 
   # rustfmt (on the files scripts/check/check-rustfmt/files.txt lists) and clippy, the engine's own tests, and the
   # profiling labs' checks, side by side; nothing downstream waits for them. They keep no Actions cache (the
-  # repository's 10 GB hold the other jobs' entries): each compiles from scratch, and the tests' compile happens once
-  # per run (rust-tests-build).
+  # repository's 10 GB hold the other jobs' entries): clippy and the test build start from main's compile cache (an
+  # artifact), and the tests' compile happens once per run (rust-tests-build).
   rust-clippy:
     name: Rust engine (fmt, clippy)
     needs: changes
@@ -510,8 +616,10 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
     permissions:
       contents: read
+      actions: read
     # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
@@ -537,14 +645,87 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
+      # sccache, starting from main's newest clippy store (an artifact): the dependencies' check builds are fetched.
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: clippy
+          ref: ${{ env.WARM_REF }}
+
       - name: Run fmt, clippy
         run: npm run check:native
+
+      - name: Save the compile cache for later runs
+        if: env.SAVE_WARM == 'true'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+  # The engine's browser build (native/wasm/README.md): no other job builds the engine for wasm32-wasip1, so a change
+  # that broke it failed no check. Checks, not builds: the library with its default features, then the shape a page
+  # ships, the rule explorer's (the binary and its library, `headless` and one language, without `tape-cache` or
+  # `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
+  # and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Gated as rust-windows is, when the change reaches
+  # the engine (`rust-engine`). A job of its own with no compile cache: its failure, or a failed download for it, leaves
+  # what rust-clippy saves as it was. Cold, at 4 jobs, the check takes 2.5 to 7 minutes.
+  rust-wasm:
+    name: Rust engine (browser build)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.rust-engine != 'false' &&
+        needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The grammars' parsers, which the build scripts compile for the target, are LFS objects.
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Check the engine's browser build (wasm32-wasip1)
+        env:
+          RUST_CHANNEL: ${{ steps.rust-toolchain.outputs.channel }}
+          WASI_SDK: wasi-sdk-34.0-x86_64-linux
+          WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+        run: |
+          rustup target add wasm32-wasip1 --toolchain "$RUST_CHANNEL"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/$WASI_SDK.tar.gz" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI_SDK.tar.gz"
+          echo "$WASI_SDK_SHA256  $RUNNER_TEMP/$WASI_SDK.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$WASI_SDK.tar.gz" -C "$RUNNER_TEMP"
+          export WASI_SDK_PATH="$RUNNER_TEMP/$WASI_SDK"
+          . native/wasm/env.sh
+          cargo check -p rerail-engine --lib --target wasm32-wasip1
+          cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
   # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
   # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
-  # binaries on as an artifact (1.5 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
+  # binaries on as an artifact (0.8 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
   # takes 13 to 17 minutes on the 4-vCPU runner; from main's compile cache (.github/actions/rust-compile-cache, an
   # artifact a push to main saves) about 5. Without one it compiles cold: never a failure.
   rust-tests-build:
@@ -596,6 +777,7 @@ jobs:
         uses: ./.github/actions/rust-compile-cache
         with:
           name: test
+          ref: ${{ env.WARM_REF }}
 
       # The crates a pull request's changes reach (the changes job): `--workspace`, or `-p <package>` for each.
       - id: build
@@ -603,6 +785,10 @@ jobs:
         env:
           NATIVE_TESTS_CARGO_ARGS: ${{ needs.changes.outputs.rust-cargo-args }}
         run: node scripts/check/ci/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
+
+      # No crate writes its checkout's path into its build, so a cache shared by checkouts reuses it (decision 0224).
+      - name: Check the builds name no checkout
+        run: node scripts/check/ci/path-free-builds.mjs
 
       - name: Hand the test binaries to the legs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -614,7 +800,7 @@ jobs:
           retention-days: 3
 
       - name: Save the compile cache for later runs
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true'
         uses: ./.github/actions/rust-compile-cache/save
         with:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
@@ -625,8 +811,9 @@ jobs:
   # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
   # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
   # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
-  # at the top). Each leg runs 3 to 8 minutes of tests after a minute taking the binaries; the slowest, the waves', is
-  # bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
+  # at the top). Each leg runs 3 to 8 minutes of tests; taking the binaries took 16 s to 4.4 minutes in 44383070532, so
+  # the artifact holds only binaries with tests, packed with a long window (1.46 to 0.79 GB). The slowest leg, the
+  # waves', is bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
   # the timeout leaves room for that.
   rust:
     name: Rust engine (${{ matrix.name }})
@@ -684,6 +871,8 @@ jobs:
       # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          save-cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Put CPython 3.13 on PATH
         run: |
@@ -774,7 +963,7 @@ jobs:
       # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
       # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor
       # batches or producer plans, and the 100-submission budget "remains an expected acceptance failure"
-      # (docs/sql-performance-recovery-workplan.md). As vitest.config.ts does for P's relational suites, they run only
+      # (docs/sql-performance-recovery-workplan.md, removed; at 7efcac9c67). As vitest.config.ts does for P's relational suites, they run only
       # with RERAIL_RELATIONAL_TESTS=1 (set it in this job's env) until O20 picks one anchor engine. By hand,
       # `npm run test:producer-shape` and `npm run test:sql-execution-budget -- <directory>` run as they are.
       # The shape gate requires profiling spans and must never silently skip on a production addon.
@@ -827,14 +1016,15 @@ jobs:
           cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
   # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
-  # tests and the tree watch's shared tests run here, on the engine's inputs, gated as the rust job is. They read no
-  # pack test data. A debug build, as in the rust job.
+  # tests and the tree watch's shared tests run here, when the change reaches its crate (rerail-tree-watch, which builds
+  # without the engine: a minute or two cold, where the engine's test target took 16). They read no pack test data. A
+  # debug build, as in the rust job.
   rust-macos:
     name: Rust engine (macOS tree watch)
     needs: changes
     if: >-
       ${{
-        needs.changes.outputs.rust-engine != 'false' &&
+        (needs.changes.outputs.rust-all != 'false' || contains(fromJSON(needs.changes.outputs.rust-packages), 'rerail-tree-watch')) &&
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
@@ -842,11 +1032,9 @@ jobs:
         )
       }}
     runs-on: macos-15
-    timeout-minutes: 30
-    # actions: main's compile cache, an artifact of another run.
+    timeout-minutes: 15
     permissions:
       contents: read
-      actions: read
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -857,9 +1045,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # build.rs refuses the Unicode names table's LFS pointer.
-      - uses: ./.github/actions/lfs
-
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
@@ -869,31 +1054,21 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: compile-cache
-        uses: ./.github/actions/rust-compile-cache
-        with:
-          name: test
 
       - name: Tree watch tests
-        run: "cargo test --manifest-path native/Cargo.toml --lib tree_watch::"
+        run: cargo test --manifest-path Cargo.toml -p rerail-tree-watch --lib
 
-      - name: Save the compile cache for later runs
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: ./.github/actions/rust-compile-cache/save
-        with:
-          artifact: ${{ steps.compile-cache.outputs.artifact }}
-          dir: ${{ steps.compile-cache.outputs.dir }}
-
-  # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. The engine
-  # builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target); pushes to main
-  # upload theirs.
+  # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. An engine an
+  # earlier run built from the same inputs is downloaded, not built (.github/actions/engine-artifact); otherwise the
+  # engine builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target), and
+  # pushes to main upload theirs.
   build:
     name: Build
     needs: changes
     if: needs.changes.outputs.release-pr != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # actions: read finds and downloads main's cargo target.
+    # actions: read finds and downloads an earlier engine and main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -906,19 +1081,30 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # An engine an earlier run built from the same inputs (main's, or this branch's last push): then no cargo at all.
+      - id: engine
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-unknown-linux-gnu
+          mode: find
+          ref: ${{ env.WARM_REF }}
+
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
+        if: steps.engine.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - uses: ./.github/actions/cargo-target
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-unknown-linux-gnu
           mode: restore
+          ref: ${{ env.WARM_REF }}
 
       - uses: ./.github/actions/node-deps
 
@@ -926,11 +1112,19 @@ jobs:
       # links against the runner's glibc and C++ runtime, so only this form shows a pull request whose engine a
       # release could not link, or one that needs more than the oldest supported Linux has.
       - name: Build the native engine
+        if: steps.engine.outputs.hit != 'true'
         run: node scripts/build/release-engine.mjs x86_64-unknown-linux-gnu
 
       # Straight after the build, so a later step's failure keeps it.
+      - name: Upload the engine for later runs
+        if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-unknown-linux-gnu
+          mode: upload
+
       - name: Save the cargo target
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true' && steps.engine.outputs.hit != 'true'
         uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-unknown-linux-gnu
@@ -954,15 +1148,23 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
-  # restored from what the test-data job saved.
+  # Every shard reads every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
+  # restored from what the test-data job saved. Runs the test files select-tests chose (all of them, or `unit-tests`),
+  # on its `unit-shards`; none when it chose none. The shards split the files by how long each takes in CI, not by their
+  # count (test/support/shards/time-balanced-sequencer.ts, from the times in unit-test-times.generated.ts beside it,
+  # which `node scripts/generate/tests/unit-test-times.mjs` rewrites from CI's logs: scripts/generate/README.md). With
+  # vitest's split by a hash of each path, one of two shards held 57% of the test time; three even ones end with the
+  # Windows shards. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`.
   unit:
-    name: Unit tests (${{ matrix.shard }}/2)
-    needs: [build, test-data]
+    name: Unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: [build, test-data, select-tests]
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        needs.select-tests.outputs.unit != 'none' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -971,7 +1173,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: ${{ fromJSON(needs.select-tests.outputs.unit-shards) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -992,26 +1194,34 @@ jobs:
       # The pack validation's check 4 leaves scoring the fixtures to the conformance check (the conformance and tools jobs
       # below), which scores the same fixtures through the same runner and fails on the same failures, so they are scored
       # once (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
+      # TESTS: the selected files' paths, read into words (none holds a space); empty runs every file. A shard may find
+      # none of a few selected files (--passWithNoTests); a run of every file that finds none fails.
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
-        run: npm test -- --shard=${{ matrix.shard }}/2
+          TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+          UNIT: ${{ needs.select-tests.outputs.unit }}
+        run: |
+          read -ra tests <<< "$TESTS"
+          some=(); if [ "$UNIT" = some ]; then some=(--passWithNoTests); fi
+          npm test -- "${some[@]}" --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
-      # file (package.json `test:coverage:lint-config`). Once, on the first shard.
+      # file (package.json `test:coverage:lint-config`). Once, on the first shard, which the split gives that much less
+      # of the suite (`firstShardExtraMs` in the times).
       - name: Lint config coverage gate
         if: matrix.shard == 1
         run: npm run test:coverage:lint-config
 
   # The Windows engine the Windows unit shards load, built once per run and handed to them as an artifact, as the build
-  # job hands Linux's to the Linux jobs: the release form package.yml builds, incrementally from the cargo target main's
-  # last run uploaded (main uploads its own). Gated as the shards are.
+  # job hands Linux's to the Linux jobs: the release form package.yml builds, downloaded or built as in the build job.
+  # Gated as the shards are.
   build-windows:
     name: Build (Windows)
-    needs: changes
+    needs: [changes, select-tests]
     if: >-
       ${{
-        needs.changes.outputs.release-pr != 'true' &&
+        needs.changes.outputs.release-pr != 'true' && needs.select-tests.outputs.windows-shards != '[]' &&
         (
           github.event_name != 'pull_request' ||
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -1020,7 +1230,7 @@ jobs:
     runs-on: windows-2025
     # A cold release build took 27 minutes on windows-2025 (44363497802, with rerail-logic and rerail-engine split).
     timeout-minutes: 45
-    # actions: read finds and downloads main's cargo target.
+    # actions: read finds and downloads an earlier engine and main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -1041,24 +1251,37 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # An engine an earlier run built from the same inputs (main's, or this branch's last push): then no cargo at all.
+      - id: engine
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-pc-windows-msvc
+          mode: find
+          ref: ${{ env.WARM_REF }}
+
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
+        if: steps.engine.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - uses: ./.github/actions/cargo-target
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-pc-windows-msvc
           mode: restore
+          ref: ${{ env.WARM_REF }}
 
-      - uses: ./.github/actions/node-deps
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/node-deps
 
       # build:native's checks, then the release build as package.yml runs it.
       - name: Build the native engine
+        if: steps.engine.outputs.hit != 'true'
         run: |
           node scripts/build/require-cargo.mjs
           node scripts/build/require-lfs.mjs
@@ -1075,20 +1298,30 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload the engine for later runs
+        if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-pc-windows-msvc
+          mode: upload
+
       - name: Save the cargo target
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true' && steps.engine.outputs.hit != 'true'
         uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-pc-windows-msvc
           mode: save
 
-  # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
-  # compiled out on Linux, where the rust job runs every other test; these filters select them and the Windows-neutral
-  # tests beside them: the process and tree watch tests are the engine's, the import roots' rerail-lang-ecma's, which
-  # mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
-  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
-  # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
-  # only when the change selects the engine's tests (`rust-engine`).
+  # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch, the path
+  # owner read, the named pipe lookup's open) are compiled out on Linux, where the rust job runs every other test;
+  # these filters select them and the Windows-neutral tests beside them: the process, path owner and pipe lookup
+  # tests are the engine's, the tree watch's rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts
+  # `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
+  # Windows' verbatim paths broke: its test runs here too. The main instance's lock tests run here as well: the wait
+  # for a held lock is Windows code (an overlapped LockFileEx cancelled at its bound) that the same tests run as Unix
+  # code on Linux. A debug build, as in the rust job, through its own compile cache. Its own job, beside
+  # build-windows and the shards rather than on one of them. Gated as the rust job is, and only when the change
+  # selects the engine's tests (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1140,32 +1373,37 @@ jobs:
         uses: ./.github/actions/rust-compile-cache
         with:
           name: test-windows-engine
+          ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: main_instance:: pipe_server:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
-        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
         uses: ./.github/actions/rust-compile-cache/save
         with:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
           dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
-  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has two: the suite
-  # runs more than twice as slowly here, and vitest splits the files by a hash of their path, not by how long they
-  # take, so with two shards one held nearly two thirds of the test time and CI result waited about 10 minutes for it.
-  # With five, the slowest shard's tests take about 4 minutes, so Windows ends with the Linux unit job. The count is
-  # the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated as the unit job is, and reads the
-  # same test data: the test-data job's artifact, downloaded and verified against the locks as on Linux. The engine is
-  # build-windows' artifact; the package is built here, which takes seconds.
+  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has three: the
+  # suite runs more than twice as slowly here. The shards split the files by how long each takes on Windows in CI, as
+  # the unit job's do; with vitest's split by a hash of each path the slowest of the five held nearly twice the
+  # fastest's test time. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated
+  # as the unit job is, and reads the same test data: the test-data job's artifact, downloaded and verified against the
+  # locks as on Linux. The engine is build-windows' artifact; the package (dist/) is the build job's, as every Linux job
+  # takes it, rather than `npm run build:js` in each shard (about 20 s): tsc and esbuild emit the same JavaScript for Node
+  # on any OS, from sources checked out with LF line ends (.gitattributes), and dist/ names no build machine's path.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [test-data, build-windows]
+    needs: [test-data, build, build-windows, select-tests]
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        needs.select-tests.outputs.windows-shards != '[]' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
       }}
     runs-on: windows-2025
     # A shard took 4 to 9 minutes with the engine downloaded (44363497802).
@@ -1175,7 +1413,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: ${{ fromJSON(needs.select-tests.outputs.windows-shards) }}
     defaults:
       run:
         shell: bash
@@ -1206,8 +1444,15 @@ jobs:
           name: engine-windows
           path: native
 
-      - name: Build the package
-        run: npm run build:js
+      # dist/ alone: the artifact's Linux engine stays out of native/.
+      - name: Download the built package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: built
+          path: ${{ runner.temp }}/built
+
+      - name: Take dist/ from the built package
+        run: mv "$RUNNER_TEMP/built/dist" dist
 
       # A runner's first Python start reads the interpreter and its standard library cold: about a second here, but
       # 0.5 to 11 s once the tests run beside it, and up to 87 s, past the 30 s a test may take, in the test of
@@ -1219,17 +1464,27 @@ jobs:
       # As in the unit job, with TEMP and TMP at runner.temp, a long path. The runner's TEMP is an 8.3 short path
       # (C:\Users\RUNNER~1\...), and Rerail's tests compare long paths: Rerail records a checkout by its long path, and
       # the tests expect the temporary folder's path as given, so 42 of them fail on the spelling alone.
+      # The test files select-tests chose (TESTS: their paths, read into words; empty runs every file), or none when it
+      # chose only the hook test below. vitest's own shim, from bash, starts node directly: npm's cmd.exe would cut the list
+      # at 8,191 characters, CreateProcess takes 32,767. As on Linux, only a shard of a few selected files may find none.
       - name: Unit tests
+        if: needs.select-tests.outputs.unit != 'none'
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+          TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+          UNIT: ${{ needs.select-tests.outputs.unit }}
+        run: |
+          read -ra tests <<< "$TESTS"
+          some=(); if [ "$UNIT" = some ]; then some=(--passWithNoTests); fi
+          node_modules/.bin/vitest run --dir test "${some[@]}" --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
-      # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above made, and takes
-      # about a minute, so one shard runs it.
+      # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above took, and takes
+      # about a minute, so one shard runs it, which the split gives that much less of the suite (`firstShardExtraMs`
+      # in the times).
       - name: Claude Code hook integration test
         if: matrix.shard == 1
         env:
@@ -1546,6 +1801,84 @@ jobs:
             gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
           fi
 
+  # The rerail pack's `.rerail` translations against its JSON rules (scripts/ship/translations.ts): each rule's findings
+  # through both, on the pack's examples and on an export of this repository at the commit scripts/ship/corpora.json
+  # pins (`rerail-translations`, checked against its pin), must be what docs/rule-syntax/packs/rerail/equivalence.json
+  # declares. The originals run through the product's path on the build job's engine; the translations through the
+  # release `rerail-engine` binary built here, from its own compile cache.
+  translations:
+    name: Rule translations against their originals
+    needs: [changes, build]
+    if: needs.changes.outputs.translations != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # actions: main's compile cache, an artifact of another run.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # build.rs refuses the Unicode names table's LFS pointer.
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: translations-engine
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Build the rerail-engine binary
+        run: cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine
+
+      # Straight after the build, so a later step's failure keeps it.
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+      # The checkout keeps no credentials, so the pinned commit is fetched alone with the token; the suite exports the
+      # corpus from it and fails when it does not match the pin.
+      - name: Fetch the corpus's pinned commit
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          commit="$(node -p 'require("./scripts/ship/corpora.json").corpora["rerail-translations"].commit')"
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$commit"
+
+      - name: Check the rerail pack's translations
+        run: npm run translations:check -- --pack rerail --engine target/release/rerail-engine --corpora "$RUNNER_TEMP/translations/corpora" --out "$RUNNER_TEMP/translations/out"
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: translations
+          path: ${{ runner.temp }}/translations/out/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
   # Real sessions call hosted models, which costs money on every run: they and provider-smoke run when the sessions
   # filter matches.
   real-sessions:
@@ -1622,8 +1955,8 @@ jobs:
           exit "$status"
 
   # The macOS engine the real-session smoke loads (it runs the hosts under sandbox-exec, so on macOS only), built as
-  # build-windows builds Windows' and handed over as an artifact, in its own job so a smoke that times out or is re-run
-  # never costs a build. Gated as the smoke is.
+  # build-windows builds Windows' (downloaded when an earlier run built it from the same inputs) and handed over as an
+  # artifact, in its own job so a smoke that times out or is re-run never costs a build. Gated as the smoke is.
   build-macos:
     name: Build (macOS)
     needs: changes
@@ -1642,7 +1975,7 @@ jobs:
     runs-on: macos-15
     # A cold release build took 20 minutes on macos-15 (44363497802, with rerail-logic and rerail-engine split).
     timeout-minutes: 35
-    # actions: read finds and downloads main's cargo target.
+    # actions: read finds and downloads an earlier engine and main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -1655,24 +1988,37 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # An engine an earlier run built from the same inputs (main's, or this branch's last push): then no cargo at all.
+      - id: engine
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: aarch64-apple-darwin
+          mode: find
+          ref: ${{ env.WARM_REF }}
+
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
+        if: steps.engine.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - uses: ./.github/actions/cargo-target
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-aarch64-apple-darwin
           mode: restore
+          ref: ${{ env.WARM_REF }}
 
-      - uses: ./.github/actions/node-deps
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/node-deps
 
       # build:native's checks, then the release build as package.yml runs it.
       - name: Build the native engine
+        if: steps.engine.outputs.hit != 'true'
         run: |
           node scripts/build/require-cargo.mjs
           node scripts/build/require-lfs.mjs
@@ -1689,8 +2035,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload the engine for later runs
+        if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: aarch64-apple-darwin
+          mode: upload
+
       - name: Save the cargo target
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true' && steps.engine.outputs.hit != 'true'
         uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-aarch64-apple-darwin
@@ -1698,7 +2051,7 @@ jobs:
 
   provider-smoke:
     name: Real Claude Code, Codex, and Cursor sessions
-    needs: [changes, build-macos]
+    needs: [changes, build, build-macos]
     if: >-
       ${{
         needs.changes.outputs.sessions != 'false' &&
@@ -1712,8 +2065,8 @@ jobs:
         )
       }}
     runs-on: macos-15
-    # Three provider attempts of up to 3 minutes each, side by side, after about 2 minutes of set-up and the host
-    # assets' build; the engine is build-macos'.
+    # Three provider attempts of up to 3 minutes each, side by side, after about 2 minutes of set-up; the host assets
+    # are the build job's package (dist/ is the same on every OS), the engine build-macos'.
     timeout-minutes: 20
     env:
       # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
@@ -1747,14 +2100,9 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      - name: Set up Node.js v24
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/node-deps
         with:
-          node-version: "24"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+          built: "true"
 
       - name: Install real provider CLIs
         run: |
@@ -1770,18 +2118,13 @@ jobs:
           ln -s "$HOME/.local/share/cursor-agent/cursor-agent" "$HOME/.local/bin/agent"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # After the built package, whose native/ holds Linux's engine and loader: the loader is the same, and the macOS
+      # engine joins it.
       - name: Download the macOS engine
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: engine-macos
           path: native
-
-      - name: Build host assets
-        run: |
-          npm run build:ts
-          npm run build:claude
-          npm run build:codex
-          npm run build:cursor
 
       - name: Exercise real Claude Code, Codex, and Cursor sessions
         run: |
@@ -1815,6 +2158,7 @@ jobs:
       - lint
       - audit
       - changes
+      - select-tests
       - test-data
       - test-data-in-s3
       - rust-clippy
@@ -1826,6 +2170,7 @@ jobs:
       - build-windows
       - build-macos
       - rust-windows
+      - rust-wasm
       - unit
       - unit-windows
       - ui-e2e
@@ -1834,6 +2179,7 @@ jobs:
       - conformance
       - tools
       - conformance-report
+      - translations
       - real-sessions
       - provider-smoke
     if: always()

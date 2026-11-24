@@ -1,0 +1,163 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:icon-buttons-have-labels",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Give every icon-only button a screen reader label, both icon-size Buttons and Pressables that hold only an icon.",
+    "scope": {
+      "include": [
+        "src/**/*.tsx"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts",
+        "src/components/ui/**"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "icon-button",
+        "forbid": {
+          "ast": {
+            "language": "typescript",
+            "rule": {
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "regex": "^<Button\\b",
+              "has": {
+                "kind": "jsx_attribute",
+                "regex": "^size=\\{?[\"']icon"
+              },
+              "not": {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "jsx_attribute",
+                      "regex": "^(?:accessibilityLabel|aria-label)\\b"
+                    },
+                    {
+                      "kind": "jsx_expression",
+                      "regex": "^\\{\\s*\\.\\.\\."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "violation": {
+          "code": "ICON_BUTTON_NO_LABEL",
+          "anchor": "witness.span",
+          "message": "Add accessibilityLabel={t('...')} to this icon-only Button, with the string in locales/en.json and fr.json."
+        }
+      },
+      {
+        "id": "icon-pressable",
+        "forbid": {
+          "ast": {
+            "language": "typescript",
+            "rule": {
+              "kind": "jsx_element",
+              "has": {
+                "kind": "jsx_opening_element",
+                "regex": "^<Pressable\\b",
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "jsx_attribute",
+                        "regex": "^(?:accessibilityLabel|aria-label)\\b"
+                      },
+                      {
+                        "kind": "jsx_expression",
+                        "regex": "^\\{\\s*\\.\\.\\."
+                      }
+                    ]
+                  }
+                }
+              },
+              "all": [
+                {
+                  "has": {
+                    "kind": "jsx_self_closing_element",
+                    "regex": "^<Icon\\b"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "jsx_element"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "jsx_expression"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "kind": "jsx_text",
+                      "regex": "\\S"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "violation": {
+          "code": "ICON_PRESSABLE_NO_LABEL",
+          "anchor": "witness.span",
+          "message": "Add accessibilityLabel={t('...')} to this Pressable; it holds only an icon, so a screen reader has nothing to read."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/app/a.tsx",
+        "content": "export const A = () => (\n  <Button variant=\"ghost\" size=\"icon-sheet\" onPress={go}>\n    <Icon as={ChevronLeft} size={22} />\n  </Button>\n);\n"
+      },
+      {
+        "path": "src/app/b.tsx",
+        "content": "export const B = () => (\n  <Pressable onPress={back} className=\"size-11 items-center justify-center\">\n    <Icon as={ChevronLeft} size={22} />\n  </Pressable>\n);\n"
+      },
+      {
+        "path": "src/app/c.tsx",
+        "content": "export const C = () => <Button size=\"icon\" onPress={go} />;\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/app/d.tsx",
+        "content": "export const D = () => (\n  <Button variant=\"ghost\" size=\"icon-sheet\" accessibilityLabel={t('child.nextMonth')} onPress={go}>\n    <Icon as={ChevronRight} size={22} />\n  </Button>\n);\n"
+      },
+      {
+        "path": "src/app/e.tsx",
+        "content": "export const E = () => (\n  <Pressable onPress={go} className=\"h-12\">\n    <Icon as={icon} size={22} />\n    <Text>{label}</Text>\n  </Pressable>\n);\n"
+      },
+      {
+        "path": "src/app/f.tsx",
+        "content": "export const F = () => (\n  <Pressable accessibilityLabel={t('settings.back')} onPress={back}>\n    <Icon as={ChevronLeft} size={22} />\n  </Pressable>\n);\n"
+      },
+      {
+        "path": "src/app/g.tsx",
+        "content": "export const G = () => <Button size=\"sheet\" onPress={go}><Text>{t('x')}</Text></Button>;\n"
+      }
+    ]
+  }
+}

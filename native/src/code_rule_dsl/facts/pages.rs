@@ -2,7 +2,7 @@
 //! one derivation per (scope, prefix, plan). It reads the directory's tree name, so only an edit
 //! under the directory dirties it, and outputs the digest of the directory's pages. The pages are
 //! keyed by tree hash, not by scope (`content_store::tree_pages`), so a subtree that another
-//! workspace already evaluated is a lookup: Tempo's reuse across workspaces, as a cutoff.
+//! workspace already evaluated is a lookup: the predecessor's reuse across workspaces, as a cutoff.
 
 use super::Graph;
 use super::memo::Evaluated;

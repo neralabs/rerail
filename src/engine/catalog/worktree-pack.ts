@@ -5,7 +5,8 @@
  * The folder is read again whenever a file in it is added, removed or changed, so an edit applies on the next event.
  */
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync, readdirSync, type Stats } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { ZodError } from "zod";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
@@ -14,7 +15,8 @@ import type { RuleCatalog, SkippedRulePack } from "./repository-model.js";
 import { catalogDigest } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import { compareRulePacks, type LoadedRulePack, type RulePack, type RulePackRule } from "./rule-packs.js";
-import type { RuleDocument } from "./rule-store.js";
+import { RERAIL_DOCUMENT_EXTENSION } from "./rerail-rules/rerail-rule.js";
+import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 
 /** Where a checkout keeps its own rules, relative to its top level. */
 export const WORKTREE_RULES_FOLDER = ".rerail/rules";
@@ -47,25 +49,48 @@ interface RuleFile {
   readonly size: number;
 }
 
+/** A rule file's stamp: it changes when the file is edited, replaced or becomes something other than a regular file. */
+const ruleFileStamp = (info: Stats): string => `${info.mtimeMs}:${info.size}:${info.mode}`;
+
 /**
- * The `.json` entries directly in the checkout's rules folder, by name; undefined when there is no such folder. A
- * symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
+ * The names in the rules folder that the catalog reads, the `.json` and `.rerail` entries, in the order it reads them: a
+ * `.rerail` file is listed as left out, so an edit of one changes the catalog and the change stream's token alike.
+ */
+const ruleNames = (names: readonly string[]): string[] =>
+  names.filter(name => name.endsWith(".json") || name.endsWith(RERAIL_DOCUMENT_EXTENSION)).sort(compareDeterministicStrings);
+
+/**
+ * The `.json` and `.rerail` entries directly in the checkout's rules folder, by name; undefined when there is no such
+ * folder. A symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
  */
 function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
   const parent = join(checkoutRoot, ".rerail");
   const directory = worktreeRulesDirectory(checkoutRoot);
   try {
     if (!lstatSync(parent).isDirectory() || !lstatSync(directory).isDirectory()) return undefined;
-    return readdirSync(directory)
-      .filter(name => name.endsWith(".json"))
-      .sort(compareDeterministicStrings)
-      .map(name => {
-        const path = join(directory, name);
-        const info = lstatSync(path);
-        return { name, path, stamp: `${info.mtimeMs}:${info.size}:${info.mode}`, regular: info.isFile(), size: info.size };
-      });
+    return ruleNames(readdirSync(directory)).map(name => {
+      const path = join(directory, name);
+      const info = lstatSync(path);
+      return { name, path, stamp: ruleFileStamp(info), regular: info.isFile(), size: info.size };
+    });
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * The checkout's rule files by name and stamp, as {@link worktreeRuleCatalog} reads them, read without blocking: it
+ * changes exactly when that catalog would read the rules again. Empty when there is no rules folder.
+ */
+export async function worktreeRulesStamp(checkoutRoot: string): Promise<string> {
+  const directory = worktreeRulesDirectory(checkoutRoot);
+  try {
+    if (!(await lstat(join(checkoutRoot, ".rerail"))).isDirectory() || !(await lstat(directory)).isDirectory()) return "";
+    const names = ruleNames(await readdir(directory));
+    const stamps = await Promise.all(names.map(async name => `${name}\0${ruleFileStamp(await lstat(join(directory, name)))}`));
+    return stamps.join("\n");
+  } catch {
+    return "";
   }
 }
 
@@ -78,10 +103,19 @@ function documentProblem(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The pack's entry for one of its rules: titled by its description, else its id; on, in its document's mode. */
+/** The pack's entry for one of its rules: titled by its title, else its description, else its id; on, in its document's mode. */
 function packRuleOf(document: RuleDocument): RulePackRule {
-  const title = document.kind === "code" ? document.rule.description?.trim() || document.rule.id : document.rule.id;
-  return { id: document.rule.id, kind: document.kind, title, group: "This worktree", mode: document.rule.mode, on: true };
+  const described = document.kind === "conversation" ? undefined : document.rule.description?.trim();
+  const titled = document.kind === "rerail" ? undefined : document.rule.title?.trim();
+  const title = titled || described || document.rule.id;
+  return { id: document.rule.id, kind: ruleKindOf(document), title, group: "This worktree", mode: document.rule.mode, on: true };
+}
+
+/** Each `.rerail` file among `files`, left out: a rule written in `.rerail` runs only from a rule pack for now. */
+function leftOutRerailFiles(files: readonly RuleFile[]): SkippedRulePack[] {
+  return files
+    .filter(file => file.name.endsWith(RERAIL_DOCUMENT_EXTENSION))
+    .map(file => ({ path: file.path, packageName: null, version: null, reason: `a rule written in .rerail is not supported yet in ${WORKTREE_RULES_FOLDER}; it runs from a rule pack` }));
 }
 
 /**
@@ -182,6 +216,7 @@ function withWorktreePack(installed: RuleCatalog, loaded: LoadedRulePack | undef
     sources: new Map([...installed.sources, ...loaded.sources]),
     digest: `sha256:${createHash("sha256").update(`${installed.digest}\0${catalogDigest([loaded])}`).digest("hex")}`,
     skipped: [...installed.skipped, ...skipped],
+    notRun: installed.notRun,
   };
 }
 
@@ -202,8 +237,8 @@ export function worktreeRuleCatalog(installed: RuleCatalog, checkoutRoot: string
   const stamp = files.map(file => `${file.name}\0${file.stamp}`).join("\n");
   const cached = worktreeCatalogs.get(checkoutRoot);
   if (cached !== undefined && cached.installed === installed && cached.stamp === stamp) return cached.catalog;
-  const { loaded, skipped } = readWorktreePack(installed, worktreeRulesDirectory(checkoutRoot), files);
-  const catalog = withWorktreePack(installed, loaded, skipped);
+  const { loaded, skipped } = readWorktreePack(installed, worktreeRulesDirectory(checkoutRoot), files.filter(file => file.name.endsWith(".json")));
+  const catalog = withWorktreePack(installed, loaded, [...skipped, ...leftOutRerailFiles(files)]);
   worktreeCatalogs.set(checkoutRoot, { installed, stamp, catalog });
   return catalog;
 }

@@ -1,0 +1,20 @@
+.policy "rr-sample-print-call" revision 1
+.description "Use logging instead of print calls, so output goes where the application's logs go."
+.language python
+.mode steer
+.scope include "**/*.py"
+// A fixture rule (fixtures/packs/README.md): it reads the pack's own library file beside it.
+
+#include "lib/sample-calls.rerail"
+
+.violation P001(at: node) code "P001" "Use logging instead of print."
+P001(c) :- sample_call_named(c, "print").
+
+.test print_is_reported exactly
+    .fixture "app/main.py" ```
+        import logging
+        print("starting")
+        logging.info("started")
+        ```
+    .expect P001 at "app/main.py":2
+.end

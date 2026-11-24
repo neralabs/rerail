@@ -6,7 +6,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
-import { runGit } from "../git.js";
+import { declaredSubmodulePaths } from "./checkouts/declared-submodules.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
 export interface CheckoutOwner {
@@ -195,18 +195,12 @@ export class CheckoutOwners {
 
   /**
    * The submodules the checkout at `root` declares that are checked out: each `.gitmodules` path that its index holds
-   * as a gitlink and that Git confirms as a checkout top level. Physical roots.
+   * as a gitlink ({@link declaredSubmodulePaths}, kept while what Git read for it is unchanged, so the recorded
+   * checkouts changing asks Git nothing again) and that Git confirms as a checkout top level now. Physical roots.
    */
   declaredSubmodules(root: string): string[] {
-    const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
-    if (configured.status !== 0) return [];
-    const paths = configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1));
-    if (paths.length === 0) return [];
-    const index = runGit(root, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths]);
-    if (index.status !== 0) return [];
-    return index.stdout.split("\0")
-      .filter(entry => entry.startsWith("160000 "))
-      .map(entry => join(root, entry.slice(entry.indexOf("\t") + 1)))
+    return declaredSubmodulePaths(root)
+      .map(path => join(root, path))
       .filter(folder => within(root, folder) && this.#confirm(folder) === physicalPath(folder));
   }
 

@@ -27,6 +27,7 @@ const unboundMessage: CodeRule = {
   id: "test:unbound-message",
   revision: 1,
   mode: "steer",
+  title: "No foo",
   clauses: [{
     id: "call",
     forbid: { ast: { language: "typescript", rule: { pattern: "foo($A)" } } },

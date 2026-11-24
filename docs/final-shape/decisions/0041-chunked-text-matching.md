@@ -8,7 +8,7 @@ serverplan_quality on 200 data-layer files spent 4.3 s of a 7.1 s cold audit con
 tests, and a module's text failed a regex slot's NFA work limit, which aborted the audit
 (`WorkLimit`). Why are text tests a byte-at-a-time NFA, run on every node's own text?
 
-- A lowered text test is a `ByteNfa` value program (t6 §7, Tempo's regex lowering): one control
+- A lowered text test is a `ByteNfa` value program (t6 §7, the predecessor's regex lowering): one control
   flow for the CPU and Metal, stepping one byte per NFA state with a per-path work budget.
 - 0017 made a walk's text test a slot of bits computed on the host before dispatch, one node at a
   time over the slot's domain (the kind tested before it, else every node). The host searched with
@@ -58,5 +58,5 @@ be slow in string matching; chunk-at-a-time NFAs/DFAs should be the default."
 - **PIAT `research/regex.md` §2.2–2.3:** a RegexSet per name is slower than one regex at a time;
   exact literal sets go by hash. *Agrees.* The prefix literals here are the same extraction
   (`regex_syntax` `Extractor`).
-- **t6 §7 (Tempo, `ByteNfa`):** *Superseded as the default* for text tests. It stays the reference
+- **t6 §7 (the predecessor, `ByteNfa`):** *Superseded as the default* for text tests. It stays the reference
   semantics for the differential tests.

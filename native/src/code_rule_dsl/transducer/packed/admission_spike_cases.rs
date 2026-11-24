@@ -38,7 +38,7 @@ fn native_rows(query: &str, source: &str, tape: &TapeDoc) -> CaptureRows {
         assert_eq!(tape.transducer_kind(index), node.kind_id());
         assert_eq!(tape.transducer_span(index), node.byte_range());
         nodes.insert(node.id(), index);
-        // The children the tape stores: no implied token (RER-131).
+        // The children the tape stores: no implied token (decision 0161).
         let children = crate::code_rule_dsl::tape::stored_children_for_test(SupportLang::Python, node);
         pending.extend(children.into_iter().rev().map(|(child, _)| child));
     }
@@ -94,6 +94,31 @@ fn first_difference(expected: &[Output], actual: &[Output]) -> Option<serde_json
     })
 }
 
+fn native_difference(
+    program: &Program,
+    native: Option<&CaptureRows>,
+    actual: &Result<Vec<Output>, Error>,
+) -> Option<serde_json::Value> {
+    let expected = native?;
+    let actual = capture_rows(program, actual.as_ref().ok()?);
+    (0..expected.len().max(actual.len())).find_map(|index| {
+        (expected.get(index) != actual.get(index)).then(|| {
+            serde_json::json!({
+                "index": index, "native": expected.get(index), "variant": actual.get(index),
+            })
+        })
+    })
+}
+
+/// Native QueryCursor does not implement the predecessor's host predicates or transforms.
+/// Compare only structural patterns, and only when both run the full root set.
+fn native_comparable(program: &Program, full_root_set: bool) -> bool {
+    program.predicates.is_empty()
+        && program.capture_predicates.is_empty()
+        && program.directives.is_empty()
+        && full_root_set
+}
+
 fn compare_case(
     name: &str,
     query: Option<&str>,
@@ -113,15 +138,8 @@ fn compare_case(
             "early experiment diverged from independent CPU oracle: {name}"
         );
     }
-    // Native QueryCursor does not implement Tempo's host predicates or transforms.
-    // Compare only structural patterns, and only when both run the full root set.
     let native = query
-        .filter(|_| {
-            program.predicates.is_empty()
-                && program.capture_predicates.is_empty()
-                && program.directives.is_empty()
-                && roots == all_roots
-        })
+        .filter(|_| native_comparable(program, roots == all_roots))
         .map(|q| native_rows(q, source, &tape));
     for (strategy, actual, measured) in std::iter::once((Strategy::Early, expected.clone(), early))
         .chain(
@@ -148,16 +166,7 @@ fn compare_case(
                 actual == expected
             })
         });
-        let native_difference = native.as_ref().and_then(|expected| {
-            let actual = capture_rows(program, actual.as_ref().ok()?);
-            (0..expected.len().max(actual.len())).find_map(|index| {
-                (expected.get(index) != actual.get(index)).then(|| {
-                    serde_json::json!({
-                        "index": index, "native": expected.get(index), "variant": actual.get(index),
-                    })
-                })
-            })
-        });
+        let native_difference = native_difference(program, native.as_ref(), &actual);
         let comparable = measured.stop.is_none() && baseline_complete;
         let difference = match (&expected, &actual) {
             (Ok(a), Ok(b)) => first_difference(a, b),
@@ -394,8 +403,8 @@ fn unequal_branch_depths_need_final_deduplication_after_active_bulk_reduction() 
 #[test]
 #[ignore = "decision experiment requires the pinned query catalog and source checkout"]
 fn pinned_catalog_sample_compares_every_pattern_without_omitting_failures() {
-    let query_root = std::path::PathBuf::from(std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap());
-    let source_root = std::path::PathBuf::from(std::env::var("TEMPO_ALL_SCM_REPOSITORY").unwrap());
+    let query_root = std::path::PathBuf::from(std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap());
+    let source_root = std::path::PathBuf::from(std::env::var("RERAIL_PACKED_ALL_SCM_REPOSITORY").unwrap());
     let mut paths = std::fs::read_dir(query_root)
         .unwrap()
         .map(|p| p.unwrap().path())
@@ -618,9 +627,9 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
 
 #[test]
 fn native_repetition_preserves_sibling_boundaries_and_capture_order() {
-    // No case captures an implied token such as `,`: the tape never stores one (RER-131).
+    // No case captures an implied token such as `,`: the tape never stores one (decision 0161).
     for (query, source) in [
-        // Separated by comparison operators, which a tape stores (a list's commas are implied, so not, RER-131).
+        // Separated by comparison operators, which a tape stores (a list's commas are implied, so not, decision 0161).
         ("(comparison_operator ((identifier) @item)+)", "a < b < c\n"),
         (
             r#"(comparison_operator [(identifier) @name "<" @comma]+)"#,
@@ -686,7 +695,7 @@ fn missing_patterns_reject_nested_or_multiple_node_kinds() {
 #[test]
 fn repetition_across_an_implied_token_is_one_run_on_the_tape() {
     // Tree-sitter ends a `+` run at an anonymous sibling: `[a, b, c]` gives three one-item matches. The tape
-    // stores no implied token (RER-131), so the run goes on over `a b c` and gives one match of three.
+    // stores no implied token (decision 0161), so the run goes on over `a b c` and gives one match of three.
     // O-repetition-implied-boundary: whether rules need tree-sitter's boundary here.
     let (query, source) = ("(list ((identifier) @item)+)", "items = [a, b, c]\n");
     let tape = document(source);

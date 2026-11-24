@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, readFile, realpath, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodeRuleBridge, renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../../src/engine/index.js";
+import { CodeRuleBridge, renderSteer, type CodeRuleViolation, type RuleSteerDelivery, type SteerRuleSource } from "../../../src/engine/index.js";
 import type { FileDigests } from "../../../src/runtime/owed-ledger.js";
 import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../../src/runtime/runtime.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -164,10 +164,10 @@ async function owingSession(options: { reopened?: Promise<void>; host?: "claude-
     steer: async (content = STEER) => await delivery!.requestSteer(session.sessionId, "steer", content, {
       revision: 0, scope: ["a.ts"], ruleIds: ["test:no-bad"], rules: [{ id: "test:no-bad", state: "steered" }],
     }),
-    /** `path`'s finding, held for the yield's digest (with the experimental digest on). */
-    hold: async (path = "a.ts") => await delivery!.requestSteer(session.sessionId, "steer", renderSteer([finding(path)]), {
+    /** `path`'s finding, held for the yield's digest (with the experimental digest on), its rule from `source`. */
+    hold: async (path = "a.ts", source?: SteerRuleSource) => await delivery!.requestSteer(session.sessionId, "steer", renderSteer([finding(path)]), {
       revision: 0, scope: [path], ruleIds: ["test:no-bad"], rules: [{ id: "test:no-bad", state: "steered" }],
-      generatedEdit: { violations: [finding(path)], sourceOf: () => undefined },
+      generatedEdit: { violations: [finding(path)], sourceOf: () => source },
     }),
     prompt: (eventId: string) => runtime.ingest({ kind: "user-prompt", eventId, sessionId: session.sessionId, session, text: eventId }),
     turnEnd: (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" }),
@@ -233,6 +233,21 @@ describe("what a session owes its agent while it is closed", () => {
       await owing.runtime.codeRulesOpened(owing.session.sessionId);
       expect((await owing.turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
       expect(await owing.turnEnd("turn-2")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("keeps the title of a held finding's rule across a close, so the digest's line for the person still names it", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    try {
+      await owing.hold("a.ts", { kind: "library_rule", packId: null, title: "No bad code" });
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await owing.prompt("next-morning");
+      await owing.runtime.codeRulesOpened(owing.session.sessionId);
+      const [digest] = await owing.turnEnd("turn");
+      expect(digest?.rules).toEqual([expect.objectContaining({ id: "test:no-bad", title: "No bad code" })]);
     } finally {
       await owing.runtime.dispose();
     }

@@ -34,7 +34,7 @@ const FACT_STORE: &[&str] = &[
     "file_documents",
     "object_pins",
     "store_state",
-    // The store's identity (RER-131): its atoms and connections belong to this store only.
+    // The store's identity: its atoms and connections belong to this store only.
     "store_identity",
     "push_pending",
     "rows",
@@ -217,6 +217,9 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
+    // Where each job running on this thread begins its part of the wave (`lanes::wave::fence`): state of the jobs in
+    // progress, not a result kept.
+    ("code_rule_dsl/logic/lanes.rs", "FENCES"),
     // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
     // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
@@ -277,14 +280,14 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
-    // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    // core.rerail's declarations, read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
-    // This thread's zstd contexts by dictionary (RER-131): open things, not results.
+    // This thread's zstd contexts by dictionary: open things, not results.
     ("content_store/compression.rs", "DECODERS"),
     ("content_store/compression.rs", "DICT_ENCODERS"),
-    // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
+    // The language tags the store's dictionaries are chosen by: set once as the library loads.
     ("content_store/compression.rs", "LANGUAGE_TAGS"),
-    // The store handles open in this process, by path (RER-131): a registry of open things.
+    // The store handles open in this process, by path: a registry of open things.
     ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
@@ -294,6 +297,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
+    // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
+    // (`corpus::owner`): which files are this process's, not results.
+    ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
+    ("code_rule_dsl/logic/plan/corpus/owner.rs", "SLOTS"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
@@ -442,7 +449,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
-    // RER-131's compiled group patterns, where `GROUPS` was.
+    // The compiled group patterns, where `GROUPS` was.
     ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
@@ -452,7 +459,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 23;
 
 fn src() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.

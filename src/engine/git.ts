@@ -1,12 +1,14 @@
-import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { homedir, userInfo } from "node:os";
+import { availableParallelism, homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
-import { promisify } from "node:util";
+import { getSystemErrorMap, promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
-import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
+import { endProcessTree, execFile, spawnSync } from "./child-process.js";
+import { runGitSync, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
+import { CallGuard, OLDER_GIT, READS_NO_WORKTREE, stdoutOrFailure, unanswered, type AskLater, type GitVariables } from "./git-guard/call-guard.js";
+import { guardedCall, inTurn, type StartLater } from "./git-guard/guarded-diff.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -970,8 +972,18 @@ export interface RunGitOptions {
   env?: Readonly<Record<string, string | undefined>>;
 }
 
-/** A repository's own config can't run programs through Rerail's git calls: no fsmonitor, no hooks. */
-const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`];
+/**
+ * What every Git call sets so that a repository's own config starts no program through it: no fsmonitor, no hooks, and
+ * no signature check, which `git reflog` and `git log` make under `log.showSignature` by starting `gpg.program` for each
+ * signed commit they list. A call that reads worktree files also needs the filter drivers a repository's config
+ * defines set to no program, which {@link runGit} and the reads that do not block do on Git 2.31 or later
+ * (`git-guard/call-guard.ts`); `runGitAsync` and `streamGit` do not, and of their calls only two of Merge Assist's (internal
+ * testing, off by default) read a worktree file: its diff of its base against the working files, and its
+ * `git blame --contents` of a working file (`conflict-detect.ts`).
+ */
+const SAFE_CONFIG: readonly string[] = [
+  "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`, "-c", "log.showSignature=false",
+];
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
@@ -996,14 +1008,116 @@ function timeLeft(limitMs: number): () => number {
 }
 
 /**
- * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
- * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
- * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
- * again ({@link ProcessGit.replacedNow}): the look and that second start get what is left of the call's time limit
- * ({@link timeLeft}), since the call blocks the thread and a look may wait on a folder far longer; with none left, the
- * call fails as its start did.
+ * {@link timeLeft} of a limit that starts when it is first asked, as the first Git of a call that does not block
+ * starts: the time the call waited for the event loop before it is not Git's, as one Git's limit started with it.
+ */
+function timeLeftFromFirstStart(limitMs: number): () => number {
+  let left: (() => number) | undefined;
+  return () => (left ??= timeLeft(limitMs))();
+}
+
+/**
+ * `git -C <cwd> <args>` with fsmonitor, hooks and signature checks disabled ({@link SAFE_CONFIG}), in
+ * {@link gitEnvironment} (no optional locks, no lazy fetch of a partial clone's missing objects), and a 10 s default
+ * timeout; throws {@link GitUnavailableError} when Git is missing, never on a non-zero exit. A call that reads worktree
+ * files runs under the guard (`git-guard/call-guard.ts`): with each filter driver the repository's config defines set
+ * as the person's own config sets it, or to no program, and as it is, with no config listed, where the repository's
+ * config read in process defines none. A call that would look into submodules runs as it is, Git looking into each
+ * with that submodule's drivers as they are: the audit's and the scan's `git diff --name-only -z`, which list
+ * submodules, run through {@link runGitWithoutBlocking}, which keeps Git out of them. A call whose config Git cannot
+ * list is not made: its result carries the listing's status and error, and none of its output. Every Git a call starts
+ * shares the call's one time limit ({@link withinCallLimit}). On a Git older than 2.31 every call runs as it did before
+ * the guard, and the process says why once.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const git = withinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
+  const guard = callGuard.now({ cwd, args, env: options.env ?? {} }, (question, asked) => stdoutOrFailure(git(cwd, question, asked)));
+  // A call the guard asks nothing for starts as one Git with the call's own time limit, as before the guard.
+  if (guard === READS_NO_WORKTREE) return startGitSync(cwd, args, options);
+  if (guard === OLDER_GIT) return git(cwd, args, options);
+  return "env" in guard ? git(cwd, args, { ...options, env: guard.env }) : unanswered(guard);
+}
+
+/**
+ * {@link runGit} without blocking the thread, for a call a person may wait on while the process serves others: the
+ * same guard, and a `git diff --name-only -z` that would look into submodules runs with Git kept out of them, Rerail
+ * asking each through the same guard (`git-guard/guarded-diff.ts`), all of them at once. Every Git it starts shares the
+ * call's one time limit and runs among at most {@link STARTS_AT_ONCE} of the call's Gits ({@link laterWithinCallLimit}),
+ * so the call ends within its limit (10 s by default), as one Git did before the guard; past it, it fails with the
+ * error `spawnSync` gives a Git that ran past its limit, as {@link runGit} does.
+ */
+export async function runGitWithoutBlocking(cwd: string, args: readonly string[], options: RunGitOptions = {}): Promise<GitResult> {
+  const git = laterWithinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
+  const guard = await callGuard.later({ cwd, args, env: options.env ?? {} }, async (question, asked) => stdoutOrFailure(await git(cwd, question, asked)));
+  if (guard === READS_NO_WORKTREE || guard === OLDER_GIT) return await git(cwd, args, options);
+  return "env" in guard ? await guardedCall(git, { cwd, args, options }, guard) : unanswered(guard);
+}
+
+/** The guard on this process's Git calls, which asks each Git this process runs its version once. */
+const callGuard = new CallGuard(() => readerGit(undefined));
+
+/**
+ * The most Git processes one {@link runGitWithoutBlocking} call runs at once: one per processor, as Git's own parallel
+ * work defaults to. A checkout's submodules are asked at once, and a thousand of them start no thousand Gits. Each call
+ * has its own, so two calls at once may run two per processor: a limit shared between calls would let one call's queue
+ * spend another's time limit.
+ */
+const STARTS_AT_ONCE = Math.max(1, availableParallelism());
+
+/**
+ * One Git of a {@link runGitWithoutBlocking} call, within the call's time limit of `limitMs`: each Git waits for one of
+ * {@link STARTS_AT_ONCE} places, then gets what is left of the limit; one asked once it is spent is not started, and
+ * one the limit ended fails, each as a Git that ran out of it under {@link runGit} ({@link spentLimit}).
+ */
+function laterWithinCallLimit(limitMs: number): StartLater {
+  const left = timeLeftFromFirstStart(limitMs);
+  const place = inTurn(STARTS_AT_ONCE);
+  return async (cwd, args, options = {}) => await place(async () => {
+    const rest = left();
+    if (rest === 0) return spentLimit(cwd, args);
+    const result = await runGitAsync(cwd, args, { ...options, timeout: rest });
+    return result.status === null && left() === 0 ? spentLimit(cwd, args) : result;
+  });
+}
+
+/** Starts one Git of a {@link runGit} call, as {@link startGitSync} does, within what is left of the call's time limit. */
+type CallGit = (cwd: string, args: readonly string[], options?: RunGitOptions) => GitResult;
+
+/**
+ * The {@link CallGit} of a call whose time limit is `limitMs`. Before the guard a call was one Git with the whole limit,
+ * Git's own statuses in submodules included, so the guard's questions and the call share it: each Git gets what is
+ * left ({@link timeLeft}), and one asked once the limit is spent is not started and fails as a Git that ran out of it.
+ */
+function withinCallLimit(limitMs: number): CallGit {
+  const left = timeLeft(limitMs);
+  return (cwd, args, options = {}) => {
+    const rest = left();
+    return rest === 0 ? spentLimit(cwd, args) : startGitSync(cwd, args, { ...options, timeout: rest });
+  };
+}
+
+/** The number Node gives a time-out error of its own (libuv's `UV_ETIMEDOUT`), which differs between systems. */
+const TIMED_OUT = [...getSystemErrorMap()].find(([, [name]]) => name === "ETIMEDOUT")?.[0];
+
+/**
+ * The result of a Git not started because its call's time limit was spent: the error `spawnSync` gives a Git that ran
+ * past its `timeout`, which callers throw as they throw any failed start.
+ */
+function spentLimit(cwd: string, args: readonly string[]): GitResult {
+  const executable = gitExecutable();
+  const error = Object.assign(new Error(`spawnSync ${executable} ETIMEDOUT`), {
+    errno: TIMED_OUT, code: "ETIMEDOUT", syscall: `spawnSync ${executable}`, path: executable, spawnargs: [...SAFE_CONFIG, "-C", cwd, ...args],
+  });
+  return { status: null, stdout: "", stderr: "", error };
+}
+
+/**
+ * `git -C <cwd> <args>` as {@link runGit} makes every call, with no guard of its own: when the Git kept for the process
+ * is gone, it runs once more with the Git found again ({@link ProcessGit.replacedNow}): the look and that second start
+ * get what is left of the call's time limit ({@link timeLeft}), since the call blocks the thread and a look may wait on
+ * a folder far longer; with none left, the call fails as its start did.
+ */
+function startGitSync(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const command = [...SAFE_CONFIG, "-C", cwd, ...args];
   const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const executable = gitExecutable();
@@ -1015,17 +1129,17 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 
 /** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
 function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): GitResult {
-  const result = spawnSync(executable, args, {
-    encoding: "utf8",
-    timeout: DEFAULT_TIMEOUT_MS,
-    ...options,
-    env: gitEnvironment(executable, options.env),
-  });
+  const { env, ...limits } = options;
+  const result = runGitSync(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
-type RunGitAsyncOptions = RunGitOptions & GitReadOptions & { input?: string };
+type RunGitAsyncOptions = RunGitOptions & GitReadOptions & {
+  input?: string;
+  /** The most bytes Git may print to stderr; `maxBuffer` by default. */
+  maxErrorBuffer?: number;
+};
 
 /**
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
@@ -1048,21 +1162,23 @@ export async function runGitAsync(cwd: string, args: readonly string[], options:
 
 /** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
 async function runGitAsyncWith(executable: string, args: readonly string[], options: RunGitAsyncOptions): Promise<GitResult> {
-  const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
+  const { maxBuffer = 1024 * 1024, maxErrorBuffer = maxBuffer, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(executable), stdio: ["pipe", "pipe", "pipe"] }));
+  const child = startOrError(() => startGit(executable, args, gitEnvironment(executable, options.env), "pipe"));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
+  const most = { stdout: maxBuffer, stderr: maxErrorBuffer };
   let failure: Error | undefined;
   for (const stream of ["stdout", "stderr"] as const) {
     let bytes = 0;
     child[stream].setEncoding("utf8");
     child[stream].on("data", (chunk: string) => {
       bytes += Buffer.byteLength(chunk);
-      if (bytes <= maxBuffer) printed[stream].push(chunk);
+      if (bytes <= most[stream]) printed[stream].push(chunk);
       else if (failure === undefined) {
-        failure = new Error(`Git printed more than maxBuffer (${maxBuffer} bytes) to ${stream}`);
+        // `ENOBUFS`, as `spawnSync` names the same failure, and the stream Git printed past its cap.
+        failure = Object.assign(new Error(`Git printed more than maxBuffer (${most[stream]} bytes) to ${stream}`), { code: "ENOBUFS", stream });
         endPastMaxBuffer(child);
       }
     });
@@ -1084,9 +1200,18 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.input ?? "");
+  endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * Closes Git's stdin after `input`. With none it only closes it: a write of nothing to a Git that has already exited, as
+ * one outside any repository does at once, fails with EPIPE, and the error's stack is built for nothing.
+ */
+function endInput(child: GitProcess, input: string | undefined): void {
+  if (input === undefined || input === "") child.stdin.end();
+  else child.stdin.end(input);
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
@@ -1127,10 +1252,59 @@ export class GitReads {
     return running;
   }
 
+  /** Whether {@link stop} was called: a read starts no Git from then on. */
+  get stopped(): boolean {
+    return this.#stopping.signal.aborted;
+  }
+
   /** Kills every read still running and settles once the Git each started has exited. */
   async stop(): Promise<void> {
     this.#stopping.abort();
     await Promise.allSettled([...this.#running]);
+  }
+}
+
+/** A read that the callers asking for one thing meanwhile share, and the signal of the caller that started it. */
+export interface SharedRead<T> {
+  readonly answer: Promise<T>;
+  readonly signal: AbortSignal | undefined;
+}
+
+/**
+ * `read`, shared through `reads` by the callers that ask for `key` while it runs. It runs under the signal of the caller
+ * that started it, and a caller under that signal waits for all of it, each Git it started included. A caller under
+ * another signal is answered undefined once its own signal is aborted, with no wait for the read; where the starter's
+ * signal stopped the read while its own is live, it reads again under its own. So no caller's stop cuts another's read.
+ */
+export async function sharedRead<K, T>(reads: Map<K, SharedRead<T>>, key: K, options: GitReadOptions, read: () => Promise<T>): Promise<T | undefined> {
+  const shared = reads.get(key) ?? startShared(reads, key, options.signal, read);
+  if (shared.signal === options.signal) return await shared.answer;
+  const answer = await untilAborted(shared.answer, options.signal);
+  return stoppedByStarter(shared.signal, options.signal) ? await sharedRead(reads, key, options, read) : answer;
+}
+
+/** Whether the starter's signal is aborted, which may have cut its read short, while the caller's is live. */
+function stoppedByStarter(starter: AbortSignal | undefined, caller: AbortSignal | undefined): boolean {
+  return starter?.aborted === true && caller?.aborted !== true;
+}
+
+function startShared<K, T>(reads: Map<K, SharedRead<T>>, key: K, signal: AbortSignal | undefined, read: () => Promise<T>): SharedRead<T> {
+  const shared = { answer: read().finally(() => reads.delete(key)), signal };
+  reads.set(key, shared);
+  return shared;
+}
+
+/** `answer`, or undefined as soon as `signal` is aborted: the abort stops no read, it only stops the wait. */
+async function untilAborted<T>(answer: Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
+  if (signal === undefined) return await answer;
+  const { promise: aborted, resolve: stop } = Promise.withResolvers<undefined>();
+  const onAbort = (): void => stop(undefined);
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) stop(undefined);
+  try {
+    return await Promise.race([answer, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -1182,7 +1356,7 @@ async function startedWithin<T>(executable: string, limits: ReadLimits, start: (
  * EFTYPE for a git.exe that is not a program, such as one an installer is still writing, which a look for Git can find.
  * A call it ends so answers as one whose Git could not start, and only ENOENT looks for Git again.
  */
-function startGit<T extends ChildProcess>(start: () => T): T | Error {
+function startOrError<T extends GitProcess>(start: () => T): T | Error {
   try {
     return start();
   } catch (error) {
@@ -1200,7 +1374,7 @@ function startThrew(error: unknown): error is Error {
  * Whether the start of `child` found no program at its path ({@link programMissing}), as its `error` event tells; asked
  * once the read has settled.
  */
-function startMissing(child: ChildProcess): () => boolean {
+function startMissing(child: GitProcess): () => boolean {
   let missing = false;
   child.once("error", error => {
     missing = programMissing(error);
@@ -1209,7 +1383,7 @@ function startMissing(child: ChildProcess): () => boolean {
 }
 
 /** Resolves once `child` has exited, or at once when it never started. */
-async function exited(child: ChildProcess): Promise<void> {
+async function exited(child: GitProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   child.once("exit", () => settle());
@@ -1247,15 +1421,60 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * Runs a Git command as `gitOutput` does, and says how it ended. Git's stderr goes to the null device, as `streamGit`'s
  * does: no answer reads it, and a process Git started that outlives Git (a repository's clean filter can leave one)
  * holds it for as long as it runs and writes there as much as it likes, while the read answers once Git has exited and
- * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}).
+ * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}). A read of
+ * worktree files runs under the guard {@link runGit} puts on such a call ({@link readerGuard}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
-  const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
+  // Git's version, the guard's config listing and the read share the read's one time limit, as a guarded runGit call's do.
+  const left = timeLeftFromFirstStart(DEFAULT_TIMEOUT_MS);
+  const guard = await readerGuard(cwd, args, { signal, left });
+  return "ended" in guard ? guard : await readGitWith(cwd, args, { signal, maxBuffer, env: guard.env, timeoutMs: left() });
+}
+
+/** How long the Gits of one read may still run, and its stop. */
+interface ReadLimit {
+  readonly signal: AbortSignal | undefined;
+  readonly left: () => number;
+}
+
+/**
+ * The variables a read of `args` in `cwd` runs with, as the guard decides them for a call of `runGit`
+ * (`git-guard/call-guard.ts`), each of its questions a read of its own within what is left of the read's limit; how
+ * the config's listing ended instead. No such read looks into submodules: one that would runs with Git looking into
+ * them as it does.
+ */
+async function readerGuard(cwd: string, args: readonly string[], limit: ReadLimit): Promise<{ readonly env: GitVariables } | GitReadEnd> {
+  const guard = await callGuard.later({ cwd, args, env: {} }, readerAsker(cwd, limit));
+  if (guard === READS_NO_WORKTREE || guard === OLDER_GIT) return { env: {} };
+  return "env" in guard ? { env: guard.env } : guard;
+}
+
+/** The guard's questions for a read in `cwd`: Git's version as a read of Git's output, the config listing as it asks. */
+function readerAsker(cwd: string, { signal, left }: ReadLimit): AskLater<GitReadEnd> {
+  return async (args, asked = { env: {}, maxBuffer: GIT_OUTPUT_MAX_BYTES }) => {
+    const read = await readGitWith(cwd, args, { signal, ...asked, timeoutMs: left() });
+    return read.ended === "printed" ? read.stdout : read;
+  };
+}
+
+/** How a Git read ended without an answer ({@link GitRead}). */
+type GitReadEnd = Exclude<GitRead, { readonly ended: "printed" }>;
+
+/** What one start of a Git read takes: its stop, the most it prints, the variables it sets, and its time limit. */
+interface ReadStart {
+  readonly signal: AbortSignal | undefined;
+  readonly maxBuffer: number;
+  readonly env: GitVariables;
+  /** What is left of the read's time limit: with none left, it starts no Git and ends as past its limit. */
+  readonly timeoutMs: number;
+}
+
+/** One Git read as {@link readGit} makes it, with `start.env` set and no guard of its own. */
+async function readGitWith(cwd: string, args: readonly string[], { signal, maxBuffer, env, timeoutMs }: ReadStart): Promise<GitRead> {
+  if (timeoutMs === 0) return { ended: "timed-out" };
+  const read = await readWithGit<GitRead>({ timeoutMs, signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["pipe", "pipe", "ignore"],
-    }));
+    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable, env), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
     if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };
     const missing = startMissing(child);
     const printed = gitPrinted(child, maxBuffer);
@@ -1278,7 +1497,7 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
  * ({@link endPastMaxBuffer}). Answers that text for the `status` Git exited with: only for 0, and only within
  * `maxBuffer`.
  */
-function gitPrinted(child: ChildProcess, maxBuffer: number): (status: number | null) => string | undefined {
+function gitPrinted(child: GitProcess, maxBuffer: number): (status: number | null) => string | undefined {
   const chunks: string[] = [];
   let bytes = 0;
   child.stdout?.setEncoding("utf8");
@@ -1291,7 +1510,7 @@ function gitPrinted(child: ChildProcess, maxBuffer: number): (status: number | n
 }
 
 /** Ends a Git that printed more than its read takes: closes its output, then sends it SIGTERM. */
-function endPastMaxBuffer(child: ChildProcess): void {
+function endPastMaxBuffer(child: GitProcess): void {
   child.stdout?.destroy();
   child.kill();
 }
@@ -1355,11 +1574,21 @@ function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: Nod
 }
 
 /**
+ * The global config files Git reads, as named: `GIT_CONFIG_GLOBAL` when set, else `.gitconfig` in Git's home
+ * ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in `XDG_CONFIG_HOME` or that
+ * home's `.config`. A relative `GIT_CONFIG_GLOBAL` stays relative: each Git opens it from its own folder.
+ */
+export function gitGlobalConfigFiles(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
+  const global = env.GIT_CONFIG_GLOBAL;
+  if (global !== undefined && global !== "") return [global];
+  return [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")];
+}
+
+/**
  * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
- * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig`
- * in Git's home ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in
- * `XDG_CONFIG_HOME` or that home's `.config`. The system file, which only an administrator writes, and files
- * `include.path` pulls in are left out. Undefined when Git does not name them, as for {@link gitExcludeFiles}.
+ * `config` and its worktree's `config.worktree`, and the global files ({@link gitGlobalConfigFiles}, from `env` on
+ * `platform`). The system file, which only an administrator writes, and files `include.path` pulls in are left out.
+ * Undefined when Git does not name them, as for {@link gitExcludeFiles}.
  */
 export async function gitConfigFiles(
   cwd: string,
@@ -1369,11 +1598,7 @@ export async function gitConfigFiles(
   const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
   if (local === undefined) return undefined;
   if (local === "") return [];
-  const global = env.GIT_CONFIG_GLOBAL;
-  const globals = global === undefined || global === ""
-    ? [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")]
-    : [global];
-  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
+  return [...local.split("\n"), ...gitGlobalConfigFiles(env, platform)].map(path => resolve(cwd, path));
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
@@ -1464,23 +1689,39 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
   return textGetsCrlf(config, platform) ? declared : undefined;
 }
 
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
 /**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
-  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", ...LINE_ENDING_ATTRIBUTES], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
-  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
-  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
-  for (let at = 0; at + 2 < fields.length; at += 3) {
-    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
-    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
-    attributes.set(path, entry);
+  return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
+ * paths whose three attributes all arrived, each value with its closing NUL. Output cut at the timeout leaves its last
+ * path partly read, which says nothing of the attributes or the end of a value that did not arrive, so that path is not
+ * answered, as the paths after it are not.
+ */
+function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
+  const values = new Map<string, Map<string, string>>();
+  const fields = output.split("\0");
+  // A value's closing NUL arrived where a field follows it: the empty one after the output's last NUL, at the least.
+  for (let at = 0; at + 3 < fields.length; at += 3) {
+    const byName = values.get(fields[at]!) ?? new Map<string, string>();
+    values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
+  }
+  const attributes = new Map<string, LineEndingAttributes>();
+  for (const [path, byName] of values) {
+    if (LINE_ENDING_ATTRIBUTES.every(name => byName.has(name)))
+      attributes.set(path, { text: byName.get("text")!, crlf: byName.get("crlf")!, eol: byName.get("eol")! });
   }
   return attributes;
 }
@@ -1513,6 +1754,9 @@ export async function gitCrlfPaths(
   }
   return rules;
 }
+
+// The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
+export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
@@ -1593,7 +1837,7 @@ function timeLimit(limitMs: number): (progress: Readonly<ReadProgress>) => boole
 }
 
 /** What `child`'s read has had so far ({@link ReadProgress}), kept up to date. */
-function readProgress(child: ChildProcess): Readonly<ReadProgress> {
+function readProgress(child: GitProcess): Readonly<ReadProgress> {
   const progress: ReadProgress = { ends: 0 };
   const ended = (): void => {
     progress.ends += 1;
@@ -1608,7 +1852,7 @@ function readProgress(child: ChildProcess): Readonly<ReadProgress> {
  * looks one loop turn after each tick: after a stall, Node runs its timers before it reads what a Git that finished
  * during the stall printed and handles its exit, and the look sees both.
  */
-function lookPastTimeLimit(child: ChildProcess, limitMs: number, end: () => void): () => void {
+function lookPastTimeLimit(child: GitProcess, limitMs: number, end: () => void): () => void {
   const tickMs = Math.min(TIME_LIMIT_TICK_MS, limitMs);
   const mayGoOn = timeLimit(limitMs);
   const progress = readProgress(child);
@@ -1646,7 +1890,7 @@ interface ReadLimits {
  * much of it the event loop stalled, and a read past it goes on only once more after Git exited or its output ended
  * ({@link timeLimit}). `settle` is told whether `timeoutMs` or `signal` ended the read.
  */
-function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
+function settleWhenDone(child: GitProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
   let ended = false;
   const forget = (): void => {
     stopLooking();
@@ -1696,10 +1940,7 @@ interface GitStream extends GitReadOptions {
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
   await readWithGit({ timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<void>();
-    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["pipe", "pipe", "ignore"],
-    }));
+    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
     if (child instanceof Error) return { answer: undefined, missing: false };
     const missing = startMissing(child);
     child.stdout.on("data", stream.onData);

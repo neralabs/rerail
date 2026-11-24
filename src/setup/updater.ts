@@ -22,11 +22,12 @@ import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, removeWithRetry, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
+import { nativeEnginePackageName, noEngineForSystem } from "../engine/native/native.js";
 import { processState } from "../engine/process-liveness.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { auditSignatures, checkRegistry, NPM_QUERY_TIMEOUT_MS, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, NPM_QUERY_TIMEOUT_MS, npmPackageRefusal, outsideAnyProject, prefixInstallNpm, runNpm, type NpmPackageRefusal, type NpmRunner } from "../runtime/npm.js";
 import { formatDuration, NO_PROGRESS, type Progress, type StallWarning } from "../runtime/progress.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { CURRENT_LINK, defaultRerailHome, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
@@ -50,8 +51,9 @@ const EVENT_HEALTH_TIMEOUT_MS = 15_000;
 const NATIVE_HEALTH_TIMEOUT_MS = 2 * 60_000;
 const STAGING_RENAME_RETRY_MS = 10_000;
 /**
- * Installing core downloads about 200 MB (about 300 MB installed): seconds on a fast line, minutes on a slow one. It
- * warns at 3 minutes and is stopped at 20, which a line of about 1.5 Mbit/s still finishes within.
+ * Installing core and this machine's engine downloads about 50 MB, and core's dependencies (about 250 MB installed):
+ * seconds on a fast line, minutes on a slow one. It warns at 3 minutes and is stopped at 20, which a line of about
+ * 1 Mbit/s still finishes within.
  */
 const NPM_INSTALL_STALL_MS = 3 * 60_000;
 const NPM_INSTALL_TIMEOUT_MS = 20 * 60_000;
@@ -124,7 +126,7 @@ export interface ManagedUpdaterOptions {
   lockEngine?: () => LockEngine;
 }
 
-function assertChannel(channel: string): void {
+export function assertChannel(channel: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(channel)) {
     throw new Error(`Invalid npm update channel: ${channel}`);
   }
@@ -187,21 +189,170 @@ export function compareSemver(left: string, right: string): number {
   return coreComparison === 0 ? comparePrerelease(a.prerelease, b.prerelease) : coreComparison;
 }
 
+/** What an npm lockfile records of each package, by its location (`node_modules/<name>`); none where it cannot be read. */
+async function lockedPackages(lockfilePath: string): Promise<Record<string, { resolved?: unknown; integrity?: unknown } | undefined>> {
+  try {
+    return (JSON.parse(await readFile(lockfilePath, "utf8")) as { packages?: Record<string, { resolved?: unknown; integrity?: unknown } | undefined> }).packages ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** The lockfile npm keeps of what it installed into `prefix`. */
+const installedLockfile = (prefix: string): string => join(prefix, "node_modules", ".package-lock.json");
+
 /**
  * The registry npm fetched `@neralabs/rerail` from into `prefix`, as its lockfile records the tarball: the address
  * up to the package's path. Undefined when npm recorded none.
  */
 async function installedFromRegistry(prefix: string): Promise<string | undefined> {
-  let lockfile: { packages?: Record<string, { resolved?: unknown } | undefined> };
-  try {
-    lockfile = JSON.parse(await readFile(join(prefix, "node_modules", ".package-lock.json"), "utf8")) as typeof lockfile;
-  } catch {
-    return undefined;
-  }
-  const resolved = lockfile.packages?.[`node_modules/${RERAIL_PACKAGE_NAME}`]?.resolved;
+  const resolved = (await lockedPackages(installedLockfile(prefix)))[`node_modules/${RERAIL_PACKAGE_NAME}`]?.resolved;
   if (typeof resolved !== "string") return undefined;
   const path = resolved.indexOf(`/${RERAIL_PACKAGE_NAME}/-/`);
   return path > 0 ? resolved.slice(0, path) : URL.parse(resolved)?.origin;
+}
+
+/**
+ * The npm packages this machine needs for Rerail `version` besides core, as install specs: today the engine package of
+ * its system. npm chooses among a package's optional dependencies by their `os` and `cpu` alone, which cannot tell a
+ * GPU or a processor's SIMD level, so a package a machine needs for one of those is chosen here. Throws where Rerail
+ * has no engine for the system: npm would otherwise be asked for a package that was never published, or refuse one
+ * built for another C library, and neither of its errors says so.
+ */
+export function machinePackageSpecs(version: string, platform: NodeJS.Platform = process.platform, architecture: string = process.arch, musl?: boolean): readonly string[] {
+  const none = noEngineForSystem(platform, architecture, musl);
+  if (none !== undefined) throw new Error(none);
+  return [`${nativeEnginePackageName(platform, architecture)}@${version}`];
+}
+
+/** The package an install spec `<name>@<version>` names. */
+const specName = (spec: string): string => spec.slice(0, spec.lastIndexOf("@"));
+
+/** What npm's refusal of the engine package `spec` means, and what to do about it. */
+function refusalReason({ code, registry }: NpmPackageRefusal, spec: string): string {
+  if (code === "EBADPLATFORM") {
+    return `npm takes it for another system's engine. It does where the npm on PATH runs on a Node built for another processor than the Node Rerail runs on (${process.execPath}, ${process.arch}): put that Node first on PATH and run this again`;
+  }
+  return `the registry npm installs from${registry === undefined ? "" : ` (${registry})`} does not have it. A mirror, proxy or allowlist must carry ${specName(spec)} as well as ${RERAIL_PACKAGE_NAME}: check the registry in your npm configuration`;
+}
+
+/**
+ * Why npm installed nothing, where it refused one of the packages `machineSpecs` names; undefined where it failed for
+ * another reason. npm's own error names the package and says nothing of what it is to Rerail.
+ */
+function machinePackageRefusal(error: unknown, machineSpecs: readonly string[], coreSpec: string): Error | undefined {
+  if (!(error instanceof Error)) return undefined;
+  for (const spec of machineSpecs) {
+    const refusal = npmPackageRefusal(error.message, specName(spec));
+    if (refusal !== undefined) {
+      return new Error(`npm could not install ${spec}, the engine ${coreSpec} runs on here (${refusal.code}): ${refusalReason(refusal, spec)}. Nothing was installed.`, { cause: error });
+    }
+  }
+  return undefined;
+}
+
+/** The digests of an npm integrity: it can hold several, separated by spaces. */
+const digestsOf = (integrity: string): readonly string[] => integrity.split(/\s+/u);
+
+/**
+ * The SHA-512 of the tarball npm installed for `spec`, whose lockfile entry, `recorded`, holds none. npm records the
+ * digests its registry's document gives for a version, and a registry whose documents carry only a SHA-1
+ * (`dist.shasum`, with no `dist.integrity`) leaves nothing there to hold against core's pin. `npm pack --dry-run`
+ * reads the same tarball, from npm's cache once the install has fetched it, writes no file, and prints its SHA-512
+ * beside its SHA-1. That SHA-1 must be the only digest recorded, so what npm hashed is what it installed: npm takes
+ * a download that matches any one digest of the strongest algorithm recorded, and a second digest would let it
+ * install another tarball than the one hashed here. Run in a folder no repository configures, as the install is.
+ * Throws where npm prints neither, or another tarball's.
+ */
+async function hashedIntegrity(npm: NpmRunner, spec: string, recorded: string): Promise<string> {
+  const { stdout } = await outsideAnyProject(async cwd => await npm(["pack", spec, "--dry-run", "--json", "--ignore-scripts"], { cwd, timeoutMs: NPM_INSTALL_TIMEOUT_MS }));
+  const [packed] = JSON.parse(stdout) as [{ integrity?: unknown; shasum?: unknown }?];
+  const { integrity, shasum } = packed ?? {};
+  if (typeof integrity !== "string" || !integrity.startsWith("sha512-") || typeof shasum !== "string") throw new Error(`npm pack printed no SHA-512 and SHA-1 for ${spec}`);
+  const sha1 = `sha1-${Buffer.from(shasum, "hex").toString("base64")}`;
+  if (recorded !== sha1) throw new Error(`npm pack read a tarball whose SHA-1 is ${sha1}, which is not the only digest npm recorded`);
+  return integrity;
+}
+
+/**
+ * Fails unless the SHA-512 in `found`, the integrity of the `spec` npm installed, is `expected`, the one core pins.
+ * npm takes a download that matches any one SHA-512 it recorded, so an integrity with a second one is refused even
+ * where the pin is among them.
+ */
+function checkPinned(spec: string, found: string, expected: string, coreSpec: string): void {
+  const sha512 = digestsOf(found).filter(digest => digest.startsWith("sha512-"));
+  if (sha512.length > 1) {
+    throw new Error(
+      `npm recorded more than one SHA-512 for the ${spec} it installed (its integrity is ${found}) and takes a file that matches any of them, so the file it installed cannot be held to the one ${coreSpec} pins, ${expected}. Nothing of it was run.`,
+    );
+  }
+  if (sha512[0] !== expected) {
+    throw new Error(
+      `The ${spec} npm installed is not the one ${coreSpec} was released with: its integrity is ${found}, and ${coreSpec} pins ${expected}. The registry npm installs from serves another file under that name. Nothing of it was run.`,
+    );
+  }
+}
+
+/**
+ * The integrity to hold against core's pin for the `spec` npm installed with the integrity `recorded`: `recorded`
+ * itself where it holds a SHA-512, else the tarball's, hashed by npm ({@link hashedIntegrity}). An install whose
+ * tarball npm cannot hash is refused: unchecked is not the same as checked.
+ */
+async function comparableIntegrity(npm: NpmRunner, spec: string, recorded: string, coreSpec: string): Promise<string> {
+  if (digestsOf(recorded).some(digest => digest.startsWith("sha512-"))) return recorded;
+  try {
+    return await hashedIntegrity(npm, spec, recorded);
+  } catch (error) {
+    throw new Error(
+      `npm recorded no SHA-512 for the ${spec} it installed (its integrity is ${recorded}), and its tarball could not be hashed to check it against the one ${coreSpec} pins: ${error instanceof Error ? error.message : String(error)}. Nothing of it was run.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Fails unless npm installed each of `machineSpecs` into `prefix` with the integrity the core installed there pins for
+ * it in its `npm-shrinkwrap.json`. npm resolves a package named in the install by itself, never through core's
+ * shrinkwrap, so this comparison is what ties the engine installed to the core it was released with.
+ */
+async function checkMachinePackages(npm: NpmRunner, prefix: string, machineSpecs: readonly string[], coreSpec: string): Promise<void> {
+  const installed = await lockedPackages(installedLockfile(prefix));
+  const pinned = await lockedPackages(join(prefix, "node_modules", ...RERAIL_PACKAGE_NAME.split("/"), "npm-shrinkwrap.json"));
+  for (const spec of machineSpecs) {
+    const location = `node_modules/${specName(spec)}`;
+    const expected = pinned[location]?.integrity;
+    const recorded = installed[location]?.integrity;
+    if (typeof expected !== "string") {
+      throw new Error(`${coreSpec} pins no ${specName(spec)} in its npm-shrinkwrap.json, so the ${spec} npm installed cannot be checked against it. Nothing of either was run.`);
+    }
+    if (typeof recorded !== "string") throw new Error(`npm installed ${coreSpec} without ${spec}, its engine on this system. Nothing of it was run.`);
+    checkPinned(spec, await comparableIntegrity(npm, spec, recorded, coreSpec), expected, coreSpec);
+  }
+}
+
+/**
+ * Installs core, `coreSpec`, into `prefix` with the packages this machine needs for `version`
+ * ({@link machinePackageSpecs}), and holds each of those to the integrity core pins for it.
+ *
+ * Core names every system's engine package as an optional dependency. npm 11.6.2 and later install all of them from
+ * core's shrinkwrap, on any system, and `optional=false` in a person's npm settings installs none. So the install
+ * leaves optional dependencies out (`--omit=optional`) and names this machine's packages itself: exactly those are
+ * installed whichever npm runs and whatever its `omit` and `optional` settings, and npm fails where its registry lacks
+ * one. Only `include=optional` in a person's settings changes that: it outranks `--omit`, and npm then installs every
+ * system's inside core as well. npm is not run at all on a system Rerail has no engine for
+ * ({@link machinePackageSpecs}).
+ */
+async function installForThisMachine(npm: NpmRunner, coreSpec: string, version: string, prefix: string): Promise<void> {
+  const machineSpecs = machinePackageSpecs(version);
+  try {
+    await npm(
+      ["install", "--prefix", prefix, "--ignore-scripts", "--omit=dev", "--omit=optional", "--no-audit", "--no-fund", ...machineSpecs, coreSpec],
+      { timeoutMs: NPM_INSTALL_TIMEOUT_MS },
+    );
+  } catch (error) {
+    throw machinePackageRefusal(error, machineSpecs, coreSpec) ?? error;
+  }
+  await checkMachinePackages(npm, prefix, machineSpecs, coreSpec);
 }
 
 export class NpmPackageRegistry implements PackageRegistry {
@@ -211,10 +362,13 @@ export class NpmPackageRegistry implements PackageRegistry {
     this.npm = prefixInstallNpm(npm);
   }
 
-  /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
+  /**
+   * Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer.
+   * npm's own update notifier stays off, so the daemon's daily check asks the registry for Rerail's version alone.
+   */
   async resolveVersion(channel: string): Promise<string> {
     const result = await outsideAnyProject(async cwd => await this.npm(
-      ["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"],
+      ["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json", "--no-update-notifier"],
       { cwd, timeoutMs: NPM_QUERY_TIMEOUT_MS },
     ));
     const parsed = JSON.parse(result.stdout) as unknown;
@@ -226,19 +380,17 @@ export class NpmPackageRegistry implements PackageRegistry {
   }
 
   /**
-   * Installs `version` into the staging `prefix` without running any package's install scripts, then checks the
-   * registry signatures of everything installed before the caller runs any of it. `--prefix` also keeps a project
-   * `.npmrc` in the caller's folder out of the install.
+   * Installs `version`, with the packages this machine needs for it ({@link installForThisMachine}), into the staging
+   * `prefix` without running any package's install scripts, then checks the registry signatures of everything
+   * installed before the caller runs any of it. `--prefix` also keeps a project `.npmrc` in the caller's folder out of
+   * the install.
    */
   async installVersion(version: string, prefix: string, progress: Progress = NO_PROGRESS): Promise<void> {
     const spec = `${RERAIL_PACKAGE_NAME}@${version}`;
     // npm installs without a word, and a large package on a slow line takes a while: the step says it is still going.
     await progress.step(`Downloading ${spec} from npm`, async () => {
       await checkRegistry(spec, this.npm);
-      await this.npm(
-        ["install", "--prefix", prefix, "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", spec],
-        { timeoutMs: NPM_INSTALL_TIMEOUT_MS },
-      );
+      await installForThisMachine(this.npm, spec, version, prefix);
     }, npmStall(NPM_INSTALL_STALL_MS, NPM_INSTALL_TIMEOUT_MS));
     const audited = await progress.step(
       `Checking the registry signatures of ${spec}`,

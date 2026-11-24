@@ -1,7 +1,7 @@
 import json, collections, sys
 D = json.load(open('edges.json'))
-# Tim's §11.4 recommended DAG (rr-ast inside rr-syntax for us, base=prof)
-TIM = """
+# The proposal's §11.4 recommended DAG (rr-ast inside rr-syntax for us, base=prof)
+PROPOSAL = """
 prof: prof phase_clock logic::profile
 cpython: cpython
 rr: logic::front logic::magic logic::rr
@@ -66,7 +66,7 @@ def closure(direct):
         return seen
     for c in direct: A[c] = go(c, set())
     return A
-TIM_ALLOW = closure({'prof': [], 'store': [], 'cpython': ['prof'], 'rr': ['prof', 'facts_ast'], 'facts': ['prof', 'store'],
+PROPOSAL_ALLOW = closure({'prof': [], 'store': [], 'cpython': ['prof'], 'rr': ['prof', 'facts_ast'], 'facts': ['prof', 'store'],
   'logic': ['rr', 'facts'], 'backends': ['facts', 'prof'], 'w': ['facts'], 'top': ['w', 'logic', 'backends', 'cpython', 'rr', 'facts', 'prof', 'store']})
 if __name__ == '__main__':
-    run(TIM, TIM_ALLOW, 'Tim 11.4 at HEAD', detail='-d' in sys.argv)
+    run(PROPOSAL, PROPOSAL_ALLOW, 'proposal 11.4 at HEAD', detail='-d' in sys.argv)

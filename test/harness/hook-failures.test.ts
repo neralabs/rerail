@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,10 +14,18 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
   return { ...actual, autostartDaemon: () => { autostart.calls += 1; } };
 });
 
-import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
-import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
-import { LOCKS_DIR, loadNativeBinding } from "../../src/engine/index.js";
+import {
+  HOOK_FAILURES_FILE, hookFailureLines, lateCheckLines, readHookFailures, recordHookFailure, recordLateCheck, untakenWaitingLines, type HookFailure, type HookFailureLog,
+} from "../../src/harness/hook-failures.js";
+import { pendingPath, persistPending, withSessionLock } from "../../src/harness/hook-adapter.js";
+import { runClaudeHook } from "../../src/hosts/claude/index.js";
+import { startTestRepository } from "../support/started-repository.js";
+import { DaemonUnreachableError, hookRerailStarted, runHostHook } from "../../src/harness/hook-host.js";
+import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, UNTAKEN_WATCH_MARK, untakenFolderId } from "../../src/engine/index.js";
+import { daemonLeftEventUntaken, engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
+import { holdHomeAsDaemon } from "../support/processes/home-lock.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { sourceModule } from "../support/processes/lock-race.js";
 
@@ -53,7 +61,7 @@ const failure = (at: number, event = "MessageDisplay"): HookFailure => ({
 });
 
 /** A log that reaches back over the whole period. */
-const whole = (...failures: HookFailure[]): HookFailureLog => ({ failures, keptSince: null });
+const whole = (...failures: HookFailure[]): HookFailureLog => ({ failures, keptSince: null, lateChecks: [] });
 
 describe("what rerail status says of hook failures", () => {
   it("says hooks run but nothing was recorded when every failure is newer than the last recorded event", () => {
@@ -471,12 +479,13 @@ describe("a hook that cannot record its event", () => {
     const rerailHome = await home();
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
-    // A live daemon: this process, holding the engine socket daemon.json names and proving the capability it records,
-    // with `answer` at the URL it records.
+    // A live daemon: this process, holding the home, the engine socket daemon.json names and proving the capability it
+    // records, with `answer` at the URL it records.
     const front = createHttpServer(answer);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-alive-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
     await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
     const closeEngine = await listenAsEngine(socketPath, "token");
+    const releaseHome = holdHomeAsDaemon(rerailHome);
     try {
       const port = (front.address() as AddressInfo).port;
       writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
@@ -495,6 +504,7 @@ describe("a hook that cannot record its event", () => {
       })]);
     } finally {
       front.closeAllConnections();
+      releaseHome();
       await Promise.all([new Promise(resolve => front.close(resolve)), closeEngine()]);
     }
   });
@@ -525,5 +535,359 @@ describe("a hook that cannot record its event", () => {
     await expect(runHostHook("claude-code", rerailHome, "s", false, options, async () => { throw new Error("Claude hook omitted index"); }, "MessageDisplay"))
       .rejects.toThrow("Claude hook omitted index");
     expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({ event: "MessageDisplay", reason: "Claude hook omitted index" })]);
+  });
+});
+
+describe("a hook beside a daemon that runs but does not read", () => {
+  /** A port nothing listens on: a probe there is refused at once, as a daemon whose pid lives but which does not answer. */
+  async function closedPort(): Promise<number> {
+    const server = createHttpServer();
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise(resolve => server.close(resolve));
+    return port;
+  }
+
+  /**
+   * This process as the home's daemon, which watches the home's untaken folder: it holds the home, as a daemon does, so
+   * a lookup keeps the record of this daemon that does not answer; its engine socket proves the capability daemon.json
+   * records, and `port` is at its URL. Returns what lets go of the home and ends the engine.
+   */
+  async function recordedDaemon(rerailHome: string, port: number): Promise<() => Promise<void>> {
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-untaken-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
+    const closeEngine = await listenAsEngine(socketPath, "token");
+    const releaseHome = holdHomeAsDaemon(rerailHome);
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
+    // Marked as a daemon marks the folder its watch opens on.
+    writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, UNTAKEN_WATCH_MARK), "test-watch");
+    writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
+      pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled", startedAt: 1,
+      packageRoot: rerailHome, databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: socketPath, accessToken: "token",
+      untakenFolder: untakenFolderId(rerailHome),
+    }));
+    return async () => {
+      releaseHome();
+      await closeEngine();
+    };
+  }
+
+  /** A front at the daemon's URL that never answers, and counts what reaches it. */
+  async function silentFront(): Promise<{ server: Server; requests: () => number }> {
+    let requests = 0;
+    const server = createHttpServer(() => { requests += 1; });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return { server, requests: () => requests };
+  }
+
+  async function closeFront(server: Server): Promise<void> {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+
+  const prompt = (eventId: string) => ({
+    kind: "user-prompt" as const, eventId, sessionId: "s", text: `${eventId}, with the key sk-ant-api03-${"a".repeat(90)}`,
+  });
+
+  /** The names of the events left in `rerailHome`'s folder, the daemon's marks left out. */
+  function eventNames(rerailHome: string): string[] {
+    return readdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR)).filter(name => name.endsWith(".json"));
+  }
+
+  /** The events left untaken in `rerailHome`, oldest first. */
+  function untaken(rerailHome: string): string[] {
+    const folder = join(rerailHome, UNTAKEN_EVENTS_DIR);
+    return eventNames(rerailHome).sort().map(name => parseEngineRequest(JSON.parse(readFileSync(join(folder, name), "utf8"))).event.eventId);
+  }
+
+  it("leaves its event for the daemon once it has waited out its whole wait, scrubbed, and logs nothing lost", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("first")) }));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(untaken(rerailHome)).toEqual(["first"]);
+      expect(readFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventNames(rerailHome)[0]!), "utf8")).not.toContain("sk-ant-api03-");
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("asks a daemon that has left an earlier event untaken nothing, and leaves its own behind that one", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("second")) }));
+      // A deadline 2 s off, under the case's bound: a hook that asked the silent daemon would wait it out, and be counted.
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 2_000, arrivedAt: 2_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(await hookRerailStarted("claude-code", rerailHome)).toBe(false);
+      expect(front.requests()).toBe(0);
+      expect(untaken(rerailHome)).toEqual(["first", "second"]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([]);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("still asks the daemon at a session's start, which is the hook that tells the person when none answers", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const handle = vi.fn(async () => ({}));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() };
+      await expect(runHostHook("claude-code", rerailHome, "s", true, options, handle, "SessionStart")).rejects.toBeInstanceOf(DaemonUnreachableError);
+      expect(handle).not.toHaveBeenCalled();
+      expect(untaken(rerailHome)).toEqual(["first"]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  // Off Windows a socket named outright gets the event as named: only on Windows is the pipe first shown to be the home's
+  // daemon, and a pipe that is not gets nothing.
+  it.runIf(process.platform === "win32")("loses its event, and says why, when the pipe RERAIL_ENGINE_SOCKET names is not this home's daemon: it leaves nothing for the daemon", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    // Another listener's pipe, whose engine proves another capability than the one daemon.json records.
+    const notHome = `\\\\.\\pipe\\rerail-not-home-${process.pid}-${Date.now()}`;
+    const closeNotHome = await listenAsEngine(notHome, "another-capability");
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", notHome);
+      const handle = vi.fn(async () => ({}));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 2_000, arrivedAt: 2_000 };
+      const refused = `${notHome} is not this Rerail home's daemon`;
+      await expect(runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).rejects.toThrow(refused);
+      expect(handle).not.toHaveBeenCalled();
+      expect(untaken(rerailHome)).toEqual(["first"]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({ event: "UserPromptSubmit", reason: expect.stringContaining(refused) })]);
+    } finally {
+      await Promise.all([closeNotHome(), closeEngine()]);
+    }
+  });
+
+  it("skips no wait for an event left in a folder the daemon does not watch: the one it watched was moved", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      expect(await daemonLeftEventUntaken()).toBeDefined();
+      renameSync(join(rerailHome, UNTAKEN_EVENTS_DIR), join(rerailHome, "moved"));
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("second")), 2_000);
+      expect(await daemonLeftEventUntaken()).toBeUndefined();
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  // On Linux a refused connect to the recorded socket says the pid belongs to another process now; macOS refuses a
+  // connect to a full queue too, and Windows asks the daemon's own pipe.
+  it.runIf(process.platform === "linux")("skips no wait for a recorded daemon whose engine socket no process listens on", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+    expect(await daemonLeftEventUntaken()).toBeDefined();
+    await closeEngine();
+    expect(await daemonLeftEventUntaken()).toBeUndefined();
+  });
+
+  // macOS asks the pid alone, so there no later check covers a pid the machine says is gone.
+  it("skips no wait for a recorded daemon whose pid the machine says is gone", async () => {
+    const rerailHome = await home();
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
+    // Marked as a daemon marks the folder its watch opens on.
+    writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, UNTAKEN_WATCH_MARK), "test-watch");
+    writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
+      pid: 4242, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test", ui: "bundled", startedAt: 1, packageRoot: rerailHome,
+      databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: "/tmp/rerail-gone.sock", accessToken: "token", untakenFolder: untakenFolderId(rerailHome),
+    }));
+    await leaveUntaken(rerailHome, 4242, engineRequestBody(prompt("first")), 1_000);
+    const env = { RERAIL_HOME: rerailHome };
+    expect(await daemonLeftEventUntaken(fakeMachine("darwin", { env }))).toBeUndefined();
+    expect(await daemonLeftEventUntaken(fakeMachine("darwin", { env, kill: () => true }))).toMatchObject({ pid: 4242 });
+  });
+
+  it("logs its event lost as before, and leaves nothing, beside a daemon whose state file names no folder of left events", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      // What an older daemon writes, or one whose watch could not start: no untakenFolder, and no one takes the folder.
+      const older = JSON.parse(readFileSync(join(rerailHome, "daemon.json"), "utf8")) as Record<string, unknown>;
+      delete older.untakenFolder;
+      writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify(older));
+      const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("first")) }));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({});
+      expect(handle).not.toHaveBeenCalled();
+      expect(eventNames(rerailHome)).toEqual([]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit", reason: `the Rerail daemon (pid ${process.pid}) is running but did not answer within 12 s, so this event was not recorded`,
+      })]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("leaves a tool's result without its output: the file holds the withheld marker, never what the tool printed", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      const result = { kind: "result" as const, eventId: "result", sessionId: "s", toolCallId: "t1", toolName: "Bash", output: { stdout: "PRINTED BY THE TOOL" } };
+      const handle = vi.fn(async (runtime: { ingest: (event: typeof result) => Promise<unknown> }) => ({ answered: await runtime.ingest(result) }));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "PostToolUse")).toEqual({ answered: [] });
+      const [name] = eventNames(rerailHome);
+      const text = readFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), "utf8");
+      expect(parseEngineRequest(JSON.parse(text)).event).toMatchObject({ kind: "result", toolCallId: "t1", output: { withheld: "tool output" } });
+      expect(text).not.toContain("PRINTED BY THE TOOL");
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("names the limit of one event, and no wait, when its event is too large to leave", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const large = { ...prompt("large"), text: "x".repeat(1024 * 1024) };
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(large) });
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 60_000, arrivedAt: 2_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(front.requests()).toBe(0);
+      expect(untaken(rerailHome)).toEqual(["first"]);
+      // Before, it was logged as a 12 s wait for the daemon, which this hook never made.
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit",
+        reason: `the Rerail daemon (pid ${process.pid}) is running but not reading, and the event is larger than the 1 MiB one event may hold, so this event was not recorded`,
+      })]);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("says what kept it from leaving its event when the folder cannot take it", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      // A file where the folder was: the hook that waited out its wait cannot write its event there.
+      await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR), "");
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("first")) });
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit", reason: expect.stringContaining(`the Rerail daemon (pid ${process.pid}) is running but not reading, and the event could not be left for it (`),
+      })]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("holds no session lock: it leaves its event while another hook of its session holds the lock, and keeps none waiting", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    const storageRoot = join(rerailHome, "sessions");
+    const holding = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const holder = withSessionLock(storageRoot, "claude-code", "s", async () => {
+      holding.resolve();
+      await release.promise;
+    });
+    try {
+      await holding.promise;
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("second")) });
+      // Before, the hook took the lock to run its handler and waited for the holder, up to the lock's 30 s.
+      expect(await runHostHook("claude-code", rerailHome, "s", false, { storageRoot, daemonDeadline: Date.now() + 60_000, arrivedAt: 2_000 }, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(untaken(rerailHome)).toEqual(["first", "second"]);
+    } finally {
+      release.resolve();
+      await holder;
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("touches none of its session's files: a steer held for the session stays for the next hook the daemon answers", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    const storageRoot = join(rerailHome, "sessions");
+    try {
+      const held = { sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: "held steer", ruleIds: [], rules: [] };
+      const path = pendingPath(storageRoot, "claude-code", "s");
+      await persistPending(path, [held]);
+      const before = readFileSync(path, "utf8");
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const input = {
+        hook_event_name: "PostToolUse", session_id: "s", cwd: rerailHome, transcript_path: join(rerailHome, "t.jsonl"),
+        tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "toolu_1", tool_response: { stdout: "", stderr: "" },
+      };
+      const databasePath = join(rerailHome, "rerail.sqlite");
+      startTestRepository(rerailHome, databasePath);
+      // Before, the hook routed the session's held steers as it would with a daemon's answer: it took them into its
+      // own output and emptied their file, under the lock.
+      expect(await runClaudeHook(input, { storageRoot, databasePath })).toEqual({});
+      expect(readFileSync(path, "utf8")).toBe(before);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("loses its event, and says why, once the folder holds the most events Rerail keeps for the daemon", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    try {
+      for (let count = 0; count < UNTAKEN_MOST_EVENTS; count += 1) {
+        writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, `${String(1_000 + count).padStart(13, "0")}-${process.pid}-1-${count}-2.json`), "{}");
+      }
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("past the bound")) });
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 60_000, arrivedAt: 9_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(front.requests()).toBe(0);
+      expect(eventNames(rerailHome)).toHaveLength(UNTAKEN_MOST_EVENTS);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit", reason: expect.stringContaining(`${UNTAKEN_MOST_EVENTS} events already wait for it, the most Rerail keeps, so this event was not recorded`),
+      })]);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("is named by rerail status while it waits, and once the daemon checked it late", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 41, engineRequestBody(prompt("first")), Date.UTC(2026, 10, 17, 12));
+    await leaveUntaken(rerailHome, 41, engineRequestBody(prompt("second")), Date.UTC(2026, 10, 17, 12, 1));
+    expect(untakenWaitingLines(rerailHome, 41)).toEqual([
+      "Hooks: 2 hook events wait in untaken-events for the Rerail daemon, which has not read since 2026-11-17T12:00:00.000Z; it checks them as soon as it reads again, and its next answers carry what it finds.",
+    ]);
+    expect(untakenWaitingLines(rerailHome, 42)).toEqual([]);
+    recordLateCheck({ events: 2, from: Date.UTC(2026, 10, 17, 12), to: Date.UTC(2026, 10, 17, 12, 1), failed: 0 }, { home: rerailHome, now: Date.UTC(2026, 10, 17, 12, 2) });
+    recordLateCheck({ events: 3, from: Date.UTC(2026, 10, 17, 13), to: Date.UTC(2026, 10, 17, 13, 5), failed: 1 }, { home: rerailHome, now: Date.UTC(2026, 10, 17, 13, 6) });
+    const log = readHookFailures(rerailHome, 0);
+    // A late check is no failure: the line that counts events Rerail could not record says nothing of it.
+    expect(hookFailureLines(log, null)).toEqual([]);
+    expect(lateCheckLines(log)).toEqual([
+      "Hooks: 5 hook events came from 2026-11-17T12:00:00.000Z to 2026-11-17T13:05:00.000Z while the Rerail daemon was not reading, in the last 24 hours; it checked them late, once it read again, and what it found went to the agent with its next answers; 1 event of them could not be checked and was lost.",
+    ]);
+  });
+
+  it("reads a state file it cannot read as no event left untaken, and goes on to ask as before", async () => {
+    const rerailHome = await home();
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    // A folder where daemon.json belongs: reading it fails with EISDIR on every system, as a file the user cannot read does.
+    mkdirSync(join(rerailHome, "daemon.json"));
+    await expect(hookRerailStarted("claude-code", rerailHome)).resolves.toBe(false);
   });
 });

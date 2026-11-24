@@ -329,9 +329,9 @@ fn persisted_image_round_trips_without_parsing() {
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`,
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
     // format (7: one document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes;
-    // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, RER-131; 13: the
-    // version alone; 14: the tokens the grammar implies never written, RER-131; 15: delimiters left out where
-    // implied, other tokens only where always implied, RER-131) changes the bytes.
+    // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, decision 0161; 13: the
+    // version alone; 14: the tokens the grammar implies never written, decision 0161; 15: delimiters left out where
+    // implied, other tokens only where always implied, decision 0161) changes the bytes.
     assert_eq!(
         digest,
         "5e9b8dc45f69e91f77139bbd18dac40bbc123697a55a66064335985e6bdc6c86"
@@ -1126,7 +1126,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
             }
         }
         // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
-        // no tape stores (RER-131).
+        // no tape stores (decision 0161).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
@@ -1186,7 +1186,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    // A record per stored node: the tokens the grammar implies are in no tape (decision 0161).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
@@ -1233,7 +1233,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (17, "x\n".repeat(8)),
     ] {
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -1278,7 +1278,7 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -2146,7 +2146,10 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2545,7 +2548,10 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2656,7 +2662,10 @@ fn the_msvc_json_fallback_reads_as_simdjson_does() {
     .into_iter()
     .map(|s| (format!("{s:?}"), s.to_owned()))
     .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2897,7 +2906,10 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3078,7 +3090,10 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {

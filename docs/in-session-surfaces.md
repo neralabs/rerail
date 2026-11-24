@@ -52,7 +52,7 @@ Rerail appends to your status-line command instead of replacing it; `rerail inst
 <summary>Details</summary>
 
 - This includes a command a Git worktree inherits from its main checkout; later edits to it apply without reinstalling.
-- It refreshes every five seconds unless you set your own interval.
+- Rerail sets no refresh interval: Claude Code runs the status line on its own events, so an idle session starts nothing ([how it is drawn](#how-claude-code-draws-it)). An interval you set stays. The 5-second interval an earlier version of Rerail set is removed the next time set-up or `rerail update` runs.
 - Re-running setup changes nothing. `rerail install --remove` restores your previous status line and interval and leaves other settings alone.
 - What Rerail replaced is recorded in `~/.rerail/harness.sqlite`.
 
@@ -98,7 +98,7 @@ In a terminal: rerail status · rerail version · rerail update · rerail daemon
 
 - **Not started:** says so and points at `/rerail-start`.
 - **No daemon:** says `✕ Rerail is not running.` and how to start it.
-- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. `rerail session` still asks the daemon once more for the dashboard link, so `--open` opens the page if the daemon answers then; in OMP and Pi, `/rerail` does not wait on it a second time.
+- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. It is not asked a second time, so this comes after those 2 seconds; only `rerail session --open` asks it once more for the dashboard link, and opens the page if the daemon answers then.
 - **Cursor:** shows the repository's rule count and a link to its rules.
 
 ## Steer
@@ -158,11 +158,12 @@ Block-mode rules steer the same way; blocking is not built yet. Log-mode rules n
 
 ### What you see
 
-One line per rule, `◆ Rerail · <rule id>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
+One line per rule, `◆ Rerail · <rule>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
 
 <details>
-<summary>Mark, link and glyphs</summary>
+<summary>Rule, mark, link and glyphs</summary>
 
+- **Rule:** the rule's title, as the dashboard lists it: the one you gave a rule of yours, or the one its rule pack lists. A rule with neither shows its id. The coding agent's block still names the id, which its `rerail feedback` command takes.
 - **Mark:** the footer's coloured `R E R A I L` where the agent draws colour (Claude Code, OMP); the word in Codex and Cursor.
 - **Link:** `why?` appears only while a daemon answers on a loopback address. With none, or one bound to `0.0.0.0`, the line has no link rather than a dead one.
 - **Glyphs:** `◆ steered`, `○ logged`. Log-mode rules never reach a session, so sessions show `◆` only.
@@ -176,7 +177,7 @@ Where your line appears, and what happens to a steer found as the turn ends:
 
 - **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer goes out at the turn's end: its line for you, and its block for the agent as `Stop hook feedback`, which continues the turn so the agent can act on it. Once a Stop hook, Rerail's or another, has kept the turn going, a steer found when it ends again waits, line and block together, for the agent's next tool call or session start, led as a late steer, so Rerail never keeps a turn going twice.
 - **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. Codex takes a turn-end block as your message, so a turn-end steer shows nothing then: its line and its block ride the next hook carrying context (your next prompt, a tool call, a session start), the block led as a late steer.
-- **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `… steered  ·  [why?](<url>)`. A turn-end steer waits for the next tool result or session start.
+- **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `` `◆ Rerail · <rule>  steered`  ·  [why?](<url>) ``, the rule's name as inline code so a title shows as written. A turn-end steer waits for the next tool result or session start.
 - **OMP:** drawn in OMP's theme colours, `why?` a link where the terminal draws them. Ctrl+O expands it to show each rule's source and the block, dimmed. A steer riding an edit's tool result shows right after that call's results, before the next model call; the agent never sees the line. At turn end, the run waits up to 10 seconds for the turn's check, then pending steers continue the run before it reports done. A steer arriving once the session is idle waits for your next message.
 - **Pi:** Pi's default message card, showing the whole block. Turn end as OMP.
 
@@ -189,10 +190,12 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 <details>
 <summary>Wait times</summary>
 
-- **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds.
+- **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds. At turn end they wait for all of the turn's checks while the hook waits, up to 30 seconds; once the hook gives up, the session's next prompt or tool call no longer waits behind the turn end, and the first prompt, tool call or turn end after the checks finish carries their steers.
 - **OMP and Pi** wait up to 10 seconds at a tool result and at turn end, so a shell command that wrote thousands of files does not stall the agent for minutes.
 
-Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule.
+Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook.
+
+One rare case misses the one-second wait: an agent writes a file into a worktree just after many of its files changed at once, such as a nested checkout moved inside it or the worktree deleted and added again, while another session is open in the repository. The walk of the other worktrees then checks every file that changed, and the steer for the new file can come one or two tool calls later. Its finding is in Log as soon as its check ends.
 
 </details>
 
@@ -217,6 +220,8 @@ Rerail checks shell-written files when the command finishes. Edits made while a 
 <summary>Shell edits and indexing</summary>
 
 - A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there.
+- A shell result reads the files Rerail's engine watch reported changed since the last look; a turn end reads every file. On Linux and Windows, three kinds of write get no change report: a write through a hard link whose other name is outside the folder, made after Rerail last read every file; a write through a memory map the program still holds (Linux); and a write that keeps the file's size by a program that still holds it open (Windows). Rerail finds them at the first shell result 10 minutes after it last read every file, or at the turn end if that comes first. Where the folder can't be watched, every shell result reads every file.
+- A turn end whose walks of the session's folder and the repository's other worktrees could not check part of them (a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails) goes on the session's record: each place once (`source-discovery-gap`), with its path and the reason, however many turn ends meet it, in whatever order, after the session reopens and after a daemon restart. A place is its path and its error's code, so one that heals and breaks again for the same reason is not recorded again; another reason is. Shell writes in a place Rerail could not read are not checked. A file or folder removed before the walk reached it, or being removed as it looks, is no gap. On Windows a path refuses the walk with EPERM both while its delete is pending (a delete that is not POSIX, as on FAT, exFAT and network volumes, while another program holds the file open) and when the user is denied it; after the walk, Rerail looks once more at its attributes and its lstat, reading none of it, and only a path still there whose attributes Windows gives, as it gives a denied one's, is a gap. A walk looks at most at 100 such paths, the first in path order with those an earlier walk found being deleted last, and not at one the record already holds; in another worktree, whose walk serves every session watching it, not at one every such session's record holds. A turn end records at most 100 new places, in path order on every system, and later turn ends record the next, the places an earlier turn end could not record among them. Past 1,000 places in one session, one more record says the walks met more, and no other is recorded. `sessions_get` counts the places recorded in `gaps.discoveryGaps`, says in `gaps.discoveryGapsMore` whether the walks met more, and lists the first 20 in `gaps.discoveryGapPlaces`. The dashboard's session timeline says rules could not fully check part of the repository, with the count (past the bound: more than 1,000 places, 1,000 recorded), and lists those places, each path with its reason. The coding agent is not told of them and reads no place: `session_events` withholds the events' payload, and `sessions_get` gives it the count and whether the walks met more, never a place.
 - A file the shell deleted is reported only if Rerail had seen it.
 
 In a large repository, Rerail indexes at session start before code rules can run; nothing waits for it.
@@ -229,9 +234,12 @@ The daemon frees what a session that sends nothing for 30 minutes holds in memor
 minutes after no session there holds them. The session stays open, since its agent may be too: the dashboard shows it
 live, a scan asked for it runs, and its next event opens it again. Its rules may then compile again (about 12 s of CPU
 for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's
-tool calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result
-as every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
-are not waited for further: that edit is checked by the first pass once they open.
+edits, shell commands and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its
+own result as every later one is; a tool call that writes nothing Rerail checks at its result, such as a read or a
+search, does not wait. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
+are not waited for further by that tool call or any later one, so the agent is held once, not at every call; those edits
+are checked by the first pass once they open, and the dashboard timeline counts each step that went without them. Each
+turn's end still waits for them, so the turn's steers reach the agent before the turn is over.
 
 - A command that rewrites a file the agent edited before the quiet is measured from the text the agent left there, so
   a rule that judges only the agent's lines judges only those.
@@ -345,7 +353,7 @@ R E R A I L ● 26 rules · steered 3×
 
 Where Rerail is not started, or was stopped, there is no footer; `/rerail` says `not on here`.
 
-It refreshes every five seconds and only reads: it never starts a daemon, runs a check or writes anything.
+It only reads: it never starts a daemon, runs a check or writes anything. OMP and Pi draw it inside the agent and refresh it every five seconds. Claude Code can only run a command for its status line, on its own events ([below](#how-claude-code-draws-it)).
 
 <details>
 <summary>Suffixes appended when they apply</summary>
@@ -374,6 +382,26 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 - **Unknown is not zero.** Older sessions, and history lost in a reset, show `steering unavailable`; recomputing coverage shows `rules unavailable`.
 - **A steer proves nothing** about whether the agent read it or fixed anything. A crash right after sending can leave it uncounted.
 - **Violations are not a to-do list** or a review-ready signal. Rerail running normally and an audit reporting failures are separate states.
+
+</details>
+
+### How Claude Code draws it
+
+Claude Code runs the status line when a session starts or resumes, on each new assistant message, after `/compact` and when the permission mode changes. Rerail sets no timer, so an idle session starts nothing.
+
+On macOS and Linux, where you had no status line of your own, a refresh starts no program. The daemon keeps each Claude Code session's line in `~/.rerail/claude-status-lines/<session id>` and writes it again when what it shows changes. The shell Claude Code starts for the status command prints that file with shell built-ins. Only a session's first draw may start a program, `sleep`, while it waits for the line.
+
+<details>
+<summary>What follows from that</summary>
+
+- **A new session's line shows a second or so after it starts.** Claude Code draws the status line as the session starts, before the session's start hook has told the daemon of it, and not again until the first reply. So until that reply, a draw that finds no line waits for it: 7 seconds at most, starting `sleep` six times at most. In a repository where Rerail is not on, or with no daemon to start, the first draw waits those 7 seconds once.
+- **The line is as of Claude Code's last draw.** A steer shows with the next assistant message. A change the daemon writes just after a reply shows with the reply after that: when a prompt's hook starts the daemon again, that prompt's reply can still say `not running`.
+- **A daemon that is killed or crashes leaves the last line it drew**, counts included, until a daemon starts again. A daemon that stops normally (`rerail daemon stop`, an update) leaves `not running`.
+- **A busy daemon's last line stays.** Claude Code's status line no longer says `not answering`.
+- **With no daemon recorded, a session with no line says `not running`**, also in a repository where Rerail is not on: the command cannot tell the two apart. While a daemon runs, such a session shows no line, as before.
+- **With a status line of your own, each refresh starts Node**, which runs your command and adds Rerail's line, read from the daemon as before. So does every refresh on Windows. Its first draw waits the same way while the daemon says `starting`.
+- **The files are yours alone**, like Rerail's other files, and set-up keeps coding agents' file tools out of the folder. A session's file goes when the session ends, with `rerail reset` when it deletes the session, and with `rerail install --remove`. Claude Code often exits before a session's end hook has run; such a session's file goes once it has had no event for a week. Rerail removes only its own files from the folder, named by session id; anything else you put there stays.
+- **`RERAIL_HOME` must be an absolute path** for the status line to find the files; with any other value it reads `~/.rerail`.
 
 </details>
 

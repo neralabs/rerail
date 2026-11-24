@@ -1,7 +1,7 @@
 //! `dfs_first` and `dfs_first_memo` (`core.rerail`, data-layer/DESIGN.md addition 7): the first target a depth-first
 //! search from each root reaches, set-based until a cycle.
 //!
-//! From the spike `docs/rule-syntax/spikes/dfs-first/native` (checked there against a port of the Data-layer
+//! From the spike `docs/rule-syntax/spikes/dfs-first/native` (removed; at 7efcac9c67) (checked there against a port of the Data-layer
 //! branch's `ordered_first.rs` on 40,000 random graphs and LEG-083's real call graph). A node's edges are tried in
 //! increasing `ord` (then `dst`); each node is entered once and a node on the current path is skipped; a target is
 //! a hit when an edge reaches it, so a root is never its own hit. Four set passes answer every root whose chain of

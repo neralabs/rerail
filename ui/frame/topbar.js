@@ -1,25 +1,27 @@
 /**
  * The top bar, over the sidebar and content and above the sheet, so nothing in it moves when the sheet opens: the
  * sidebar toggle, the wordmark, the repository the page shows (a pill; with a chevron and a menu of the others only
- * when Rerail knows more than one), and the status. The theme is in Settings → General.
+ * when Rerail knows more than one), and the status, with the version and, while a newer one is out, "Update available"
+ * and its popover. The theme is in Settings → General.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
+import { LIVE_MS } from "../poll.js";
+import { newerRelease } from "../settings-model.js";
 import { repoOption, repoHint } from "../render/repos.js";
+import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 
 const $ = id => document.getElementById(id);
 
 /* ---------- status ----------
- * One indicator for the daemon and this repo: "Live" while the polls come in, "Updated
- * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
+ * One indicator for the daemon and this repo: "Live" while the daemon's change stream comes in, "Updated
+ * 3 min ago" when the page has fallen behind (a hidden tab, a daemon that stopped answering), amber when Rerail is not on here or the
  * page is reconnecting, red once the daemon has not answered for a while or reports its model broken (the file at
  * fault named). The repo is in the pill beside the wordmark and the install date in Settings: the bar keeps only the
  * dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
-/** Two missed polls (every 5 s) and the page is no longer live. */
-const LIVE_MS = 12_000;
 const MINUTE = 60_000;
 
 /** "just now", "3 min ago", "2h ago", "4d ago". */
@@ -31,50 +33,211 @@ function updatedAgo(at) {
   return `${Math.round(min / 1440)}d ago`;
 }
 
+/** When the daemon was last heard: a poll's answer, or a message of its change stream. */
+const heardAt = () => Math.max(data.updatedAt, data.heardAt);
+/**
+ * Until when the page is known to show what the daemon holds: the moment it learned of something it has not read yet,
+ * or started a read that has not answered, whichever came first; else when the daemon was last heard. A read that
+ * hangs while the daemon beats leaves the page behind from then on, whoever asked for it.
+ */
+const currentAt = () => earliest(data.behindSince, data.readingSince) || heardAt();
+
+/** The earliest of `moments` that is set (not 0), or 0 when none is. */
+function earliest(...moments) {
+  const set = moments.filter(at => at > 0);
+  return set.length === 0 ? 0 : Math.min(...set);
+}
+
 /* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
  * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
- * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
-function status() {
+ * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. Each
+ * reading below says the status, or `null` when its state does not hold; the first that holds is the status. */
+
+/** Before the first answer, or a browser without the dashboard's capability. */
+function linkStatus() {
   if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
-  const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
-  const version = data.health ? ` ${data.health.version}` : "";
-  if (data.accessRequired) {
-    return { cls: "down", text: "Needs the dashboard link",
-      title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
+  if (!data.accessRequired) return null;
+  return { cls: "down", text: "Needs the dashboard link",
+    title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
+}
+
+/** The last read failed: reconnecting for a moment, then not responding. */
+function daemonStatus() {
+  if (!data.disconnected) return null;
+  const at = heardAt();
+  if (at && Date.now() - at <= DOWN_AFTER_MS) {
+    const shown = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
+    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${shown}; retrying.` };
   }
-  if (data.disconnected) {
-    if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
-      const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";
-      return { cls: "down", text: "Daemon not responding",
-        title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
-    }
-    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
-  }
-  // A model whose files do not match its manifest fails every session's attach, whichever repo the page shows.
+  const since = at ? ` since ${new Date(at).toLocaleTimeString()}` : "";
+  return { cls: "down", text: "Daemon not responding",
+    title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
+}
+
+/** A model whose files do not match its manifest fails every session's attach, whichever repo the page shows. */
+function modelStatus() {
   const model = data.health?.model;
-  if (model && !model.ok) {
-    return { cls: "down", text: `Model: ${model.message}`,
-      title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
-  }
+  if (!model || model.ok) return null;
+  return { cls: "down", text: `Model: ${model.message}`,
+    title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
+}
+
+/** The repository the page shows: none picked, unknown, not set up or stopped. */
+function repoStatus() {
   if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
   if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };
   if (data.repository?.setUp === false) {
     return { cls: "warn", text: "Not set up", title: "No rule packs chosen, so no rules run here. Run /rerail-start in a session here." };
   }
-  if (stateHere() === "stopped") {
-    return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
-  }
-  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · refreshing every 5 s.` };
-  return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
+  if (stateHere() !== "stopped") return null;
+  return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
 }
 
-/** The status pill; also run on a timer, since "Updated 2 min ago" ages without a poll. */
+/** Live while the page held what the daemon had within two beats, else how old the data is. */
+function freshStatus() {
+  const at = currentAt();
+  if (Date.now() - at < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${data.health ? ` ${data.health.version}` : ""} · up to date.` };
+  return { cls: "", text: `Updated ${at ? updatedAgo(at) : "never"}`, title: `Last refreshed ${new Date(at).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
+}
+
+const STATUS_READINGS = [linkStatus, daemonStatus, modelStatus, repoStatus, freshStatus];
+
+function status() {
+  for (const reading of STATUS_READINGS) {
+    const said = reading();
+    if (said !== null) return said;
+  }
+  return null;
+}
+
+/**
+ * How long until the status reads otherwise with nothing new from the daemon: Live ends two missed beats after the last
+ * message, Reconnecting turns red, an age moves to its next minute; `null` when time alone does not change it.
+ */
+function untilStatusMoves(s) {
+  if (s.text === "Live") return LIVE_MS - (Date.now() - currentAt());
+  if (data.disconnected && s.cls === "warn") return DOWN_AFTER_MS - (Date.now() - heardAt());
+  return s.text.startsWith("Updated ") && currentAt() ? untilNextMinute(Date.now() - currentAt()) : null;
+}
+
+/** From `age` until `updatedAgo` reads another minute (it rounds to the nearest). */
+const untilNextMinute = age => (Math.floor(age / MINUTE + 0.5) + 0.5) * MINUTE - age;
+
+let statusTimer = null;
+
+/**
+ * The status pill, drawn with each render; between renders it is drawn again once, when time alone would change it
+ * (`untilStatusMoves`), since the page renders only when the daemon says something.
+ */
 export function renderStatus() {
   const s = status(), el = $("status");
   setAttr(el, "class", `status${s.cls ? ` ${s.cls}` : ""}`);
   setAttr(el.querySelector(".dot"), "hidden", s.dot === false);
   setText($("statusText"), s.text);
   setAttr(el, "title", s.title || null);
+  clearTimeout(statusTimer);
+  const wait = untilStatusMoves(s);
+  statusTimer = wait === null ? null : setTimeout(renderStatus, Math.max(0, wait) + 1);
+  renderVersion(el);
+}
+
+/**
+ * The version of Rerail on this computer, "v0.2.0" in quiet text at the start of the status, whatever the status's
+ * colour; it opens Settings at About Rerail, where the release notes and how to update are. While the daemon reports a
+ * newer version, a small "Update available" beside it opens a popover with the command that updates Rerail, until
+ * Rerail is updated.
+ */
+function renderVersion(statusEl) {
+  const version = data.health?.version ?? null;
+  if (version === null) { statusEl.querySelector(".verwrap")?.remove(); return; }
+  const latest = newerRelease(data.health), el = versionSlot(statusEl), key = JSON.stringify([version, latest]);
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  el.replaceChildren(...versionButtons(version, latest));
+}
+
+/** The version's place at the start of the status, made the first time there is a version. */
+function versionSlot(statusEl) {
+  let el = statusEl.querySelector(".verwrap");
+  if (!el) { el = h("span.verwrap"); statusEl.prepend(el); }
+  return el;
+}
+
+function versionButtons(version, latest) {
+  const ver = h("button.ver", { "data-act": "nav", "data-i": "settings?section=about", title: `Rerail ${version}, on this computer. Open Settings to see how to update.` }, `v${version}`);
+  if (latest === null) return [ver];
+  return [ver, h("button.vnew", { "data-act": "updatepop", "aria-haspopup": "dialog", "aria-expanded": String(updateOpen), title: `Rerail ${latest} is available` }, "Update available")];
+}
+
+/* ---------- the update popover ----------
+ * "Update available" opens a small popover under it, at page level (`#updatelayer`) like the repository menu: the
+ * command to paste into a coding agent's session, Copy, and Details in Settings. A click opens it, not a hover, so it
+ * stays open to reach Copy and works from the keyboard; a click outside it, Esc, or using Copy or the link closes it. */
+
+let updateOpen = false;
+/** Copy takes the focus once the popover has drawn, when it has just opened. */
+let focusCopy = false;
+/** The chip takes the focus back once the popover has gone, when Copy closed it: the focus must not drop to the page. */
+let focusChip = false;
+
+/** The "Update available" chip, while a newer version is out. */
+const updateChip = () => (newerRelease(data.health) === null ? null : document.querySelector("#status .vnew"));
+
+function renderUpdatePop() {
+  const layer = $("updatelayer"), chip = updateChip();
+  if (chip === null) updateOpen = false;
+  else setAttr(chip, "aria-expanded", String(updateOpen));
+  if (!updateOpen) { setContent(layer, "", () => null); refocusChip(chip); return; }
+  const latest = newerRelease(data.health);
+  setContent(layer, latest, () => updatePopover(latest));
+  placeUnder(layer.firstChild, chip);
+  if (focusCopy) { focusCopy = false; layer.querySelector(".btn").focus({ preventScroll: true }); }
+}
+
+const updatePopover = latest => h("div.updpop", { role: "dialog", "aria-label": `Rerail ${latest} is available` },
+  h("b", null, `Rerail ${latest} is available`),
+  h("div.updrow", null, h("div.updcmd", null, h("code", null, AGENT_UPDATE_COMMAND)), updateCopyButton("button.btn.sm.solid", "Copy")),
+  h("p", null, "Paste it into a session with your coding agent. Your rule packs update too."),
+  updateDetailsLink());
+
+function refocusChip(chip) {
+  if (!focusChip) return;
+  focusChip = false;
+  chip?.focus();
+}
+
+/** The popover hangs under the chip, its right edge on the chip's. */
+function placeUnder(pop, chip) {
+  const at = chip.getBoundingClientRect();
+  pop.style.top = `${Math.round(at.bottom) + 6}px`;
+  pop.style.right = `${Math.max(12, Math.round(document.documentElement.clientWidth - at.right))}px`;
+}
+
+/** Whether the update popover is open (it follows the chip on resize). */
+export const updatePopOpen = () => updateOpen;
+
+/** A click that leaves the popover open: on its chip (which toggles it), or in it but not on Copy or the link. */
+function keepsUpdatePop(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("#status .vnew")) return true;
+  return target.closest(".updpop") !== null && target.closest("[data-act]") === null;
+}
+
+/** Close the update popover after a click anywhere it does not stay open for; `true` when it was open. */
+export function closeUpdatePop(target) {
+  if (!updateOpen || keepsUpdatePop(target)) return false;
+  updateOpen = false;
+  // Details in Settings goes to another page, so only Copy hands the focus back to the chip.
+  focusChip = target instanceof Element && target.closest(".updpop [data-act=cmdcopy]") !== null;
+  invalidate();
+  return true;
+}
+
+/** Esc: close the popover and give the focus back to its chip; `true` when it was open. */
+export function escapeUpdatePop() {
+  if (!closeUpdatePop(null)) return false;
+  updateChip()?.focus();
+  return true;
 }
 
 /* ---------- the repository and its menu ---------- */
@@ -149,6 +312,7 @@ export function renderTopbar() {
   renderNavToggle();
   renderRepoPick();
   renderStatus();
+  renderUpdatePop();
 }
 
 /** The bar's height as `--tb`: the sheet and the History views sit under it, and it wraps taller on a narrow page. */
@@ -162,4 +326,5 @@ export function trackTopbarHeight() {
 export const topbarActions = {
   repomenu: () => { menuOpen = !menuOpen; invalidate(); },
   navtoggle: () => toggleNav(),
+  updatepop: () => { updateOpen = !updateOpen; focusCopy = updateOpen; invalidate(); },
 };

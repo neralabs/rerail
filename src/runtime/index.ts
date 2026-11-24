@@ -10,6 +10,7 @@ export {
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonFetch,
+  daemonLeftEventUntaken,
   type DaemonHealth,
   type DaemonMachine,
   type DaemonLaunchOptions,
@@ -21,7 +22,7 @@ export {
   startDaemon,
   stopDaemon,
 } from "./daemon-control.js";
-export { type EngineService, ingestEngineEvent, startEngineService } from "./engine-service.js";
+export { engineRequestBody, type EngineService, ingestEngineEvent, parseEngineRequest, startEngineService } from "./engine-service.js";
 export { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "./daemon/engine-proof.js";
 export {
   AdapterEventSchema,
@@ -62,8 +63,8 @@ export {
   SqliteSessionReader,
   SqliteSessionStore,
 } from "./session-store.js";
-export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
-export { CommandTimeoutError, type NpmRunner, runNpm } from "./npm.js";
+export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, checkoutRulesNotRun, onRuleCount } from "./repository-start.js";
+export { CommandTimeoutError, KILL_GRACE_MS, type NpmRunner, runNpm } from "./npm.js";
 export { type Progress } from "./progress.js";
 export {
   addRemote,

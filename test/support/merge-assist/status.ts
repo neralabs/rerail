@@ -16,17 +16,17 @@ export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
     question: "overlap:0123456789abcdef01234567",
     title: "model.rs · fn compile",
     mine: {
-      label: "This branch", ref: "tbelanger/export-api", sha: "1".repeat(40), author: "Tim Belanger", tip: null, url: null,
+      label: "This branch", ref: "akim/export-api", sha: "1".repeat(40), author: "Alex Kim", tip: null, url: null,
       summary: "edits native/src/model.rs", location: "native/src/model.rs:469", hunk: "@@ -469 +469 @@\n-matchers: Vec<GrammarMatcher>,\n+matchers: Vec<GrammarMatcher>, // cloned",
     },
     theirs: {
-      label: "PR #398", ref: "refs/pull/398/head", sha: "2".repeat(40), author: "jbarnes", tip: { at: "2026-11-03T14:00:00Z", pushed: true }, url: "https://github.com/acme/app/pull/398",
+      label: "PR #398", ref: "refs/pull/398/head", sha: "2".repeat(40), author: "jdoe", tip: { at: "2026-11-03T14:00:00Z", pushed: true }, url: "https://github.com/acme/app/pull/398",
       summary: "Share compiled matchers", location: "native/src/model.rs:470", hunk: "@@ -470 +470 @@\n+matchers: Arc<[GrammarMatcher]>,",
     },
     evidence: ["Both sides change native/src/model.rs within 3 lines of each other."],
     detectedAt: "2026-11-03T14:05:00Z",
     dismissal: null,
-    summary: "PR #398 (jbarnes) is changing fn compile",
+    summary: "PR #398 (jdoe) is changing fn compile",
     hook: null,
     ...overrides,
   };
@@ -36,12 +36,12 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
   return {
     repositoryKey: "remote:github.com/acme/app",
     checkout,
-    branch: "tbelanger/export-api",
+    branch: "akim/export-api",
     baseBranch: "main",
     enabled: true,
     settings: DEFAULT_MERGE_ASSIST_SETTINGS,
     readiness: {
-      github: { state: "signed-in", login: "tbelanger", repository: "acme/app" },
+      github: { state: "signed-in", login: "akim", repository: "acme/app", readAt: "2026-11-03T14:05:00Z" },
     },
     scanning: false,
     lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
@@ -103,5 +103,10 @@ export class RecordingMergeAssistService implements MergeAssistService {
 
   dismissConflict(checkout: string, conflictId: string): Promise<MergeAssistStatus> {
     return this.#answer({ method: "dismissConflict", checkout, conflictId });
+  }
+
+  /** No `gh` stands behind these statuses, so nothing moves its sign-in. */
+  signInStamp(): Promise<string> {
+    return Promise.resolve("");
   }
 }

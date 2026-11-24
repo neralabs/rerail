@@ -1,4 +1,4 @@
-//! D (RER-131, t31): every pack rule's token tests, sorted by what named-only tapes do to them
+//! D (decision 0161, t31): every pack rule's token tests, sorted by what named-only tapes do to them
 //! (`compile::token_tests`, which refuses a rule with a test nothing answers).
 
 use crate::code_rule_dsl::compile::token_tests::{ORDER, Test, UNANSWERED, tests};
@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 /// pack's label, the rule's name, its language and the test, a test reached in several contexts
 /// once, in its worst category.
 fn census(mut each: impl FnMut(&str, &str, &str, Test)) {
-    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("../packs");
     let mut packs: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     packs.sort();
     for pack in packs {
@@ -31,7 +31,7 @@ fn census(mut each: impl FnMut(&str, &str, &str, Test)) {
     }
 }
 
-/// RER-131 D (ignored): every token test of every pack rule, its category, and where its token is
+/// Decision 0161, D (ignored): every token test of every pack rule, its category, and where its token is
 /// implied, to `RERAIL_TOKEN_READERS` (a TSV); a summary per pack and category on stderr.
 #[test]
 #[ignore = "census: RERAIL_TOKEN_READERS=<tsv>"]
@@ -83,7 +83,7 @@ fn no_rule_reads_a_token_the_tape_may_leave_out() {
     assert!(unanswered.is_empty(), "token tests nothing answers: {unanswered:#?}");
 }
 
-/// RER-131 (ignored): what the tape writer leaves out, over real files. For each file of
+/// Decision 0161 (ignored): what the tape writer leaves out, over real files. For each file of
 /// `RERAIL_FILES` (one path per line) it parses with tree-sitter and asks the writer's own filter
 /// (`TokenGrammar::stored_children`) which children are kept. To `RERAIL_DROP_CENSUS` (a TSV): per
 /// language, parent kind and anonymous token, how often it occurs and how often it is left out; on

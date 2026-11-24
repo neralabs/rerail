@@ -9,3 +9,9 @@ import type { Stats } from "node:fs";
 export function fileStamp(info: Pick<Stats, "dev" | "ino" | "size" | "mtimeMs" | "ctimeMs">): string {
   return [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(":");
 }
+
+/** The later of the two times `stamp` (`fileStamp`) holds: when the file last changed, as far as its times say. */
+export function stampTime(stamp: string): number {
+  const [, , , mtimeMs, ctimeMs] = stamp.split(":");
+  return Math.max(Number(mtimeMs), Number(ctimeMs));
+}

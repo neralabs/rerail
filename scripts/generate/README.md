@@ -24,6 +24,7 @@ the UI files project.
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `native/src/ignored_directories.generated.json` | `scripts/generate/walk/ignored-directories.ts` | `npm run generate:ignored-directories`, from the host's `IGNORED_DIRECTORIES` (`src/engine/code-rule/ignored-directories.ts`); `test/engine/code-rule/worktree-walks/ignored-directories.test.ts` fails when it is stale |
 | `native/src/code_rule_dsl/scope/data/es_globals.generated.json` | `scripts/generate/scope/es-globals.mjs` | `node scripts/generate/scope/es-globals.mjs <tools>/node_modules/eslint` (eslint 10.11.0) |
 | `native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json` | `scripts/generate/scope/ts-lib-globals.mjs` | `node scripts/generate/scope/ts-lib-globals.mjs <tools>/node_modules/@typescript-eslint/scope-manager` (8.70.1) |
 | `native/src/code_rule_dsl/scope/data/php_builtins.generated.json` | `scripts/generate/scope/php-builtins.php` | `php -n scripts/generate/scope/php-builtins.php` (PHP 8.5.11 with the extensions in `scripts/generate/scope/php-runtime.json`) |
@@ -108,6 +109,19 @@ exemption `engine-layout`).
 | `packs/typescript/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 ports). Writes `suppress.eslint` and `suppress.oxlint` (oxlint 1.88.0's `vitest` plugin implements all three); copies each violation's `suppress.biome` from the committed document; a document whose content changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/typescript/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
 | `packs/typescript/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
+| `packs/python/rules/bandit-b401-import-telnetlib.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | `node scripts/generate/packs/python-bandit-import-blacklist.mjs` (reads no tools; writes the 13 ports of Bandit 1.9.4's import blacklist, B401 to B415, from its qualnames). A port marked `candidate` goes to `packs/python/candidates/rules/`, and one that moves leaves no copy behind; only the document moves, so the rest of a promotion (`conformance.json`, `pack.json`, README, changeset, anchors pin) is by hand, as `docs/adding-rules-to-a-pack.md` lists; a document whose content changes gets the next revision. `test/scripts/generate/python-bandit-import-blacklist.test.mjs` fails when one is stale |
+| `packs/python/rules/bandit-b402-import-ftplib.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b405-import-xml-etree.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b406-import-xml-sax.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b407-import-xml-expat.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b408-import-xml-minidom.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b409-import-xml-pulldom.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b411-import-xmlrpclib.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b413-import-pycrypto.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/rules/bandit-b415-import-pyghmi.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/candidates/rules/bandit-b403-import-pickle.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/candidates/rules/bandit-b404-import-subprocess.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
+| `packs/python/candidates/rules/bandit-b412-import-httpoxy.json` | `scripts/generate/packs/python-bandit-import-blacklist.mjs` | as `bandit-b401-import-telnetlib.json` |
 | `packs/next/rules/` | `scripts/generate/packs/next-policies.mjs` | `node scripts/generate/packs/next-policies.mjs` (reads no tools): every document; a port that fails its fixtures or the port readiness gates goes to `packs/next/candidates/rules/` instead (none today). Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `nextjs` plugin implements; copies each violation's `suppress.biome` from the committed document and keeps its revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/next/conformance.json` | `scripts/generate/packs/next-policies.mjs` | as `packs/next/rules/`: its `capabilities` and `rules` lists; the rest is written by hand |
 | `packs/next/pack.json` | `scripts/generate/packs/next-policies.mjs` | as `packs/next/rules/`: its `rules` list, keeping each entry's hand-written fields (examples, mode, on); the rest is written by hand |
@@ -116,3 +130,9 @@ exemption `engine-layout`).
 | `packs/react/conformance.json` | `scripts/generate/packs/react-policies.mjs` | as `packs/react/rules/`; lists the specs and the `HAND_WRITTEN` ports, and `OWN` as `own` |
 | `packs/react/candidates/probes/rules/` | `scripts/generate/packs/react-probes.mjs` | `node scripts/generate/packs/react-probes.mjs`; the probe pack's `conformance.json` and `labels/` are written by hand, and the run fails when `conformance.json` does not list exactly its probes |
 | `conformance/biome-same-sources.generated.ts` | `scripts/generate/packs/biome-suppression.mjs` | as `native/src/code_rule_dsl/suppress/biome_registry.generated.rs`; the run also sets `suppress.biome` on every violation of `packs/<id>/rules/` and `packs/<id>/candidates/` that carries `suppress.eslint`, bumping a shipped document's revision when it changes |
+
+## Tests
+
+| Generated file | Generator | Command |
+|---|---|---|
+| `test/support/shards/unit-test-times.generated.ts` | `scripts/generate/tests/unit-test-times.mjs` | `node scripts/generate/tests/unit-test-times.mjs [<run id>...]`, with the GitHub CLI signed in: each unit test file's median time in CI's unit test jobs, per platform, which `test/support/shards/time-balanced-sequencer.ts` splits CI's shards by. With no run ids it reads main's five latest successful CI runs. Rerun it when the shards' times in CI drift apart; stale times only make the shards less even |

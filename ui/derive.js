@@ -33,6 +33,16 @@ export const packOriginName = pack => (isRerailPack(pack) || isWorktreePack(pack
 /** Whether a rule (or a pack, from `GET /api/rule-packs`) waits for a person's approval, and runs in Log until then. */
 export const awaitingApproval = item => item.approval?.approved === false;
 
+/**
+ * Whether a rule is one created by you (the library) that waits for your approval: `/rerail-create` adds the rules it
+ * finds there, unapproved, so they run in Log until you approve them. A worktree's own rules and packs Rerail did not
+ * publish are not: someone else wrote those, and each is read on its own page before it is approved. Nor is an edited
+ * copy (of a rule Rerail ships, or of your approved rule a coding agent edited): approving it turns the original off
+ * where the copy is added, which its page says.
+ */
+export const awaitingYourApproval = stored => awaitingApproval(stored) && !isFromPack(stored) && stored.approval.subject.kind === "rule"
+  && !stored.copiedFromRuleId;
+
 /** The origin of a rule that came in a rule pack this page does not know (its pack was removed): no publisher is claimed. */
 export const UNKNOWN_PACK_ORIGIN = "From a rule pack";
 
@@ -56,22 +66,40 @@ const CATEGORY_LABEL = { language: "Language", framework: "Framework", repositor
 export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 
 /**
- * Whether the rule runs: switched on, and its options apply to its document. A rule whose stored options no longer
- * apply (`configError`) is left out of the compiled set, so it is not counted as on.
+ * Whether the rule runs: switched on, its options apply to its document, and Rerail runs that document. A rule whose
+ * stored options no longer apply (`configError`), or that Rerail keeps but never evaluates (`inactive`: a language not
+ * read yet, or a pack version's form this Rerail no longer runs), is left out of the compiled set, so it is not counted
+ * as on.
  */
-export const isRunning = stored => stored.enabled && !stored.configError;
+export const isRunning = stored => stored.enabled && !stored.configError && !stored.inactive;
+
+/** Why a rule switched on runs nowhere, in a sentence; null when it runs, or is off. */
+export function notRunningReason(stored) {
+  if (!stored.enabled) return null;
+  if (stored.configError) return `Its options don't apply: ${stored.configError}`;
+  return stored.inactive?.reason ?? null;
+}
 
 const titles = new WeakMap();
-/** Sentence the row leads with: conversation rule → reference; file rule → first clause's message, else its id. */
+/**
+ * Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's
+ * message, a `.rerail` rule's description, else its id.
+ */
 export function ruleTitle(stored) {
   let title = titles.get(stored);
   if (title === undefined) {
-    const rule = stored.rule;
-    const clause = stored.kind === "conversation" ? undefined : rule.clauses[0];
-    title = collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
+    title = collapse(stored.rule.title) || collapse(untitledLead(stored)) || stored.rule.id;
     titles.set(stored, title);
   }
   return title;
+}
+
+/** What a rule with no title is led by: a conversation rule's reference, a JSON code rule's first message, a `.rerail` rule's description. */
+function untitledLead(stored) {
+  if (stored.kind === "conversation") return stored.rule.reference;
+  // A `.rerail` rule's messages are written in its file, which the dashboard is not given clause by clause.
+  if (stored.kind === "rerail") return stored.rule.description;
+  return stored.rule.clauses[0]?.violation?.message;
 }
 
 /** `rule.id` before the first `:`; the whole id when it has none. */
@@ -105,37 +133,13 @@ export const MODE_PLAIN = {
 export const inPack = (rule, packId) => rule.folderStates.some(state => state.source?.kind === "pack" && state.source.id === packId);
 
 /**
- * Whether pack `packId`'s setting, written as `owner` ("repository" or "checkout", this worktree being
- * `checkoutPath`) at the folder `state` is added at, would decide that folder's suppressions: only where the pack
- * added the rule, and by the resolver's precedence: this worktree, then the worktrees containing it, then the
- * repository; at one owner the deeper folder; at one owner and folder a rule's own setting before its pack's. Neither
- * a pack's starting value nor a rule's default holds it off.
+ * How a pack's rules here treat linter suppression comments, from each rule's own value: honoured, ignored, or ignored
+ * by some of them. The page only says so; it has no switch for it.
  */
-export function packSettingDecides(state, packId, owner, checkoutPath) {
-  if (state.source?.kind !== "pack" || state.source.id !== packId) return false;
-  const source = state.suppressionsSource;
-  if (source?.by !== "checkout" && source?.by !== "repository") return true;
-  // Lower outranks: this worktree, a worktree containing it, the repository.
-  const ownerRank = owner === "repository" ? 2 : 0;
-  const sourceRank = source.by === "repository" ? 2 : source.checkoutPath === checkoutPath ? 0 : 1;
-  if (ownerRank !== sourceRank) return ownerRank < sourceRank;
-  if (state.folder.length !== source.folder.length) return state.folder.length > source.folder.length;
-  return source.target === "pack";
-}
-
-/**
- * How pack `packId`'s rules here treat suppression comments, from each rule's own value, and what the pack's switch
- * (written as `owner` from the worktree `checkoutPath`) sets: honour once every folder of its rules it decides ignores
- * them, else ignore. A folder the pack did not add the rule at, or a setting outranking the pack's decides, counts in
- * the text but not in the switch, which does not change it.
- */
-export function packSuppressions(rules, packId, owner, checkoutPath) {
+export function packSuppressions(rules) {
   const ignoring = rules.filter(r => r.folderStates.some(state => state.suppressions === "ignore")).length;
-  const text = ignoring === 0 ? "honoured by its rules"
-    : ignoring === rules.length ? "ignored by its rules"
-    : `ignored by ${ignoring} of its ${rules.length} rules`;
-  const decided = rules.flatMap(rule => rule.folderStates.filter(state => packSettingDecides(state, packId, owner, checkoutPath)));
-  return { text, next: decided.length > 0 && decided.every(state => state.suppressions === "ignore") ? "honour" : "ignore" };
+  if (ignoring === 0) return "honoured by its rules";
+  return ignoring === rules.length ? "ignored by its rules" : `ignored by ${ignoring} of its ${rules.length} rules`;
 }
 
 /** Conversation rules are in internal testing (README.md, Internal testing): Rerail's latest release ships code rules only. */
@@ -172,9 +176,10 @@ export function conditionText(stored) {
   return collapse(rule.description ?? "");
 }
 
-/** What the coding agent is told (Steer) or what is recorded (Log), before any violation exists. */
+/** What the coding agent is told (Steer) or what is recorded (Log), before any violation exists; for a `.rerail` rule, only its violations say. */
 export function messageText(stored) {
   if (stored.kind === "conversation") return stored.rule.action.content;
+  if (stored.kind === "rerail") return "";
   return stored.rule.clauses[0]?.violation?.message ?? "";
 }
 
@@ -182,8 +187,8 @@ export function messageText(stored) {
  * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
  * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
  * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
- * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
- * written at every folder.
+ * options don't apply, from any folder, and `inactive` why Rerail never evaluates its document: the rule then runs
+ * nowhere, whatever its switch says. A change from the row is written at every folder.
  */
 export function toStoredRules(entries) {
   const rules = new Map();
@@ -203,6 +208,7 @@ function addFolder(known, entry) {
   known.folderStates.push(folderState(entry));
   known.enabled = known.enabled && entry.on;
   known.configError ??= entry.configError ?? null;
+  known.inactive ??= entry.inactive ?? null;
   known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
   known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
   known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
@@ -226,10 +232,13 @@ function storedRule(entry) {
     config: entry.config,
     configSource: entry.configSource,
     configError: entry.configError ?? null,
+    inactive: entry.inactive ?? null,
     revision: entry.revision,
     addedAt: entry.addedAt ?? null,
     // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
     approval: entry.approval ?? null,
+    // An edited copy (`<id>-copy`, of a rule Rerail ships or of your approved rule): the rule it was copied from.
+    copiedFromRuleId: entry.copiedFromRuleId ?? null,
     updatedAt: entry.updatedAt ?? null,
   };
 }
@@ -244,3 +253,18 @@ const folderState = entry => ({
   folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
   source: entry.source,
 });
+
+/**
+ * A rule's distinct violations in a range (one `rules_activity` entry), each in exactly one outcome: Log only (recorded
+ * on Log, so the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`, even when
+ * another audit recorded it on Log), or Steered (sent to the agent, and not declined). History by rule's chips and
+ * Overview's Violations steered both read it. An answer without the declined counts reads none declined.
+ * @param {{ distinctViolations: number, loggedViolations?: number, declinedViolations?: number, declinedLoggedViolations?: number }} a
+ * @returns {{ all: number, logged: number, steered: number, declined: number }}
+ */
+export function violationOutcomes(a) {
+  const all = a.distinctViolations;
+  const declined = Math.min(a.declinedViolations ?? 0, all);
+  const logged = Math.max(0, Math.min((a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0), all - declined));
+  return { all, logged, steered: all - logged - declined, declined };
+}

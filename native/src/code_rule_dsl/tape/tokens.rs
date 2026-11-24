@@ -1,4 +1,4 @@
-//! Named-only tapes (RER-131): which anonymous tokens the tape stores.
+//! Named-only tapes (decision 0161): which anonymous tokens the tape stores.
 //!
 //! A tree-sitter node's visible children follow its rule in `grammar.json`. For each visible kind
 //! this module builds the rule's automaton over the children (named children labelled by kind and
@@ -54,10 +54,11 @@ impl FilterScratch {
     }
 }
 
-/// Every visible kind's automaton for one grammar.
+/// Every visible kind's automaton for one grammar. Its names are the build's bytes, read where they lie (a grammar
+/// built here from a `grammar.json` holds its own, for the life of the process).
 pub struct TokenGrammar {
-    names: FxHashMap<String, Sym>,
-    texts: Vec<String>,
+    names: FxHashMap<&'static str, Sym>,
+    texts: Vec<&'static str>,
     kinds: FxHashMap<Sym, Kind>,
     /// Per tree-sitter field id: its symbol (0 where the grammar has none).
     field_sym: Vec<Sym>,
@@ -66,8 +67,6 @@ pub struct TokenGrammar {
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
     extras: BTreeSet<String>,
-    /// Every token text and field name, sorted, leaked once per dialect ([`Self::intern`]).
-    interned: Vec<&'static str>,
 }
 
 /// A kind's automaton, read from the bytes the build wrote when a walk first needs it (`TokenGrammar::automaton`):
@@ -114,6 +113,8 @@ impl TokenGrammar {
     pub fn from_json(json: &str, language: &Language) -> Result<Self, String> {
         token_automata::build(json).map(|built| {
             let token_automata::Built { texts, kinds, unsupported, extras } = built;
+            // Built once per dialect and never dropped, as the build's are.
+            let texts = texts.into_iter().map(|text| &*Box::leak(text.into_boxed_str())).collect();
             Self::from_kinds(texts, kinds.into_iter().map(|(sym, automaton)| (sym, Kind::held(automaton))).collect(), unsupported, extras, language)
         })
     }
@@ -126,18 +127,14 @@ impl TokenGrammar {
         Self::from_kinds(texts, kinds, unsupported, extras, language)
     }
 
-    fn from_kinds(texts: Vec<String>, kinds: FxHashMap<Sym, Kind>, unsupported: BTreeSet<String>, extras: BTreeSet<String>, language: &Language) -> Self {
-        let names: FxHashMap<String, Sym> = texts.iter().enumerate().map(|(sym, text)| (text.clone(), sym as Sym)).collect();
+    fn from_kinds(texts: Vec<&'static str>, kinds: FxHashMap<Sym, Kind>, unsupported: BTreeSet<String>, extras: BTreeSet<String>, language: &Language) -> Self {
+        let names: FxHashMap<&'static str, Sym> = texts.iter().enumerate().map(|(sym, &text)| (text, sym as Sym)).collect();
         let field_sym = (0..=language.field_count() as u16)
             .map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).copied()).unwrap_or(0))
             .collect();
         let kind_sym = (0..language.node_kind_count() as u16)
             .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied())).collect();
-        let mut interned: Vec<&'static str> = texts.iter().map(|text| &*Box::leak(text.clone().into_boxed_str())).collect();
-        interned.push("");
-        interned.sort_unstable();
-        interned.dedup();
-        Self { names, texts, kinds, field_sym, kind_sym, unsupported, extras, interned }
+        Self { names, texts, kinds, field_sym, kind_sym, unsupported, extras }
     }
 
     pub fn kind_count(&self) -> usize {
@@ -156,7 +153,7 @@ impl TokenGrammar {
 
     #[cfg(any(test, feature = "test-hooks"))]
     fn text(&self, sym: Sym) -> &str {
-        &self.texts[sym as usize]
+        self.texts[sym as usize]
     }
 
     /// Which of `node`'s children the tape stores, in order: `false` for an implied token (see the
@@ -237,7 +234,7 @@ impl TokenGrammar {
     /// The field names `kind`'s automaton labels its children with.
     pub(in crate::code_rule_dsl) fn fields_of(&self, kind: &str) -> impl Iterator<Item = &str> {
         let fields = self.names.get(kind).and_then(|&sym| self.automaton(sym)).map_or(&[][..], |automaton| &automaton.fields[..]);
-        fields.iter().map(|&field| self.texts[field as usize].as_str())
+        fields.iter().map(|&field| self.texts[field as usize])
     }
 
     /// The gaps of a `kind` node whose stored children are `children` (named, kind, field; `""`
@@ -246,60 +243,112 @@ impl TokenGrammar {
     /// `None` where the kind has no automaton or the automaton refuses the children.
     pub(in crate::code_rule_dsl) fn gaps<'c>(&self, kind: &str, children: impl IntoIterator<Item = (bool, &'c str, &'c str)>) -> Option<Gaps<'_>> {
         let automaton = self.automaton(*self.names.get(kind)?)?;
-        let word = |labels: &[Label]| labels.iter().map(|label| (self.texts[label.name as usize].as_str(), self.texts[label.field as usize].as_str())).collect::<Vec<_>>();
-        let walk = |mut state: u32, labels: &[Label]| -> Option<u32> {
-            for label in labels {
-                state = *automaton.moves[state as usize].get(label)?;
-            }
-            Some(state)
-        };
-        let kept_of = |implied: &[Label]| implied.iter().filter(|label| automaton.kept.contains(label)).copied().collect::<Vec<_>>();
-        // An implied word whose kept tokens are stored: the tokens the tape left out.
-        let dropped = |implied: &[Label]| implied.iter().filter(|label| !automaton.kept.contains(label)).copied().collect::<Vec<_>>();
-        let mut gaps = Gaps::default();
-        let (mut state, mut pending) = (0u32, Vec::<Label>::new());
+        let mut walk = GapWalk { grammar: self, automaton, state: 0, pending: Vec::new(), gaps: Gaps::default() };
         for (named, child, field) in children {
-            gaps.before.push(Vec::new());
-            if self.extras.contains(child) {
-                continue;
-            }
-            let label = Label { token: !named, name: *self.names.get(child)?, field: if field.is_empty() { 0 } else { *self.names.get(field)? } };
-            if !named {
-                pending.push(label);
-                continue;
-            }
-            if pending.is_empty() {
-                // An empty gap: the implied word, which is empty where the child follows directly.
-                match automaton.implied.to.get(&(state, label)) {
-                    Some(implied) => {
-                        *gaps.before.last_mut()? = word(implied);
-                        state = walk(state, implied)?;
-                    }
-                    None if automaton.moves[state as usize].contains_key(&label) => {}
-                    None => return None,
-                }
-            } else {
-                // A stored gap, which reaches the child; or an implied one whose kept tokens
-                // ([`kept`]) are stored and the rest left out (`for (k in o)`: `for` is kept, `(`
-                // is not), where the stored tokens alone walk only part of the way.
-                match walk(state, &pending).filter(|to| automaton.moves[*to as usize].contains_key(&label)) {
-                    Some(to) => state = to,
-                    None => {
-                        let implied = automaton.implied.to.get(&(state, label)).filter(|implied| kept_of(implied) == pending)?;
-                        *gaps.before.last_mut()? = word(&dropped(implied));
-                        state = walk(state, implied)?;
-                    }
-                }
-                pending.clear();
-            }
-            state = *automaton.moves[state as usize].get(&label)?;
+            walk.child(named, child, field)?;
         }
-        let end = automaton.implied.end[state as usize].as_deref();
-        let stored_end = walk(state, &pending).is_some_and(|to| automaton.accepting[to as usize]);
-        if pending.is_empty() || !stored_end && end.is_some_and(|implied| kept_of(implied) == pending) {
-            gaps.end = end.map(|implied| word(&dropped(implied))).unwrap_or_default();
+        walk.end();
+        Some(walk.gaps)
+    }
+
+    /// The label of a child of this kind (`""`: no field); `None` where the grammar has no such name.
+    fn label(&self, named: bool, child: &str, field: &str) -> Option<Label> {
+        let field = if field.is_empty() { 0 } else { *self.names.get(field)? };
+        Some(Label { token: !named, name: *self.names.get(child)?, field })
+    }
+
+    /// The labels' texts and fields.
+    fn word(&self, labels: &[Label]) -> Vec<(&'static str, &'static str)> {
+        labels.iter().map(|label| (self.texts[label.name as usize], self.texts[label.field as usize])).collect()
+    }
+}
+
+/// `TokenGrammar::gaps` in progress: a node's children walked through its kind's automaton, the stored tokens since
+/// the last named child pending.
+struct GapWalk<'g> {
+    grammar: &'g TokenGrammar,
+    automaton: &'g Automaton,
+    state: u32,
+    pending: Vec<Label>,
+    gaps: Gaps<'g>,
+}
+
+impl GapWalk<'_> {
+    /// The state `labels` walk to from `state`; `None` where the automaton refuses one.
+    fn walk(&self, mut state: u32, labels: &[Label]) -> Option<u32> {
+        for label in labels {
+            state = *self.automaton.moves[state as usize].get(label)?;
         }
-        Some(gaps)
+        Some(state)
+    }
+
+    /// The tokens of `implied` that are kept (stored) or not.
+    fn kept(&self, implied: &[Label], kept: bool) -> Vec<Label> {
+        implied.iter().filter(|label| self.automaton.kept.contains(label) == kept).copied().collect()
+    }
+
+    /// The next child: an extra passes, a token waits for the named child after it.
+    fn child(&mut self, named: bool, child: &str, field: &str) -> Option<()> {
+        self.gaps.before.push(Vec::new());
+        if self.grammar.extras.contains(child) {
+            return Some(());
+        }
+        let label = self.grammar.label(named, child, field)?;
+        if !named {
+            self.pending.push(label);
+            return Some(());
+        }
+        self.named(label)
+    }
+
+    /// A named child, after the gap before it.
+    fn named(&mut self, label: Label) -> Option<()> {
+        if self.pending.is_empty() {
+            self.empty_gap(label)?;
+        } else {
+            self.stored_gap(label)?;
+            self.pending.clear();
+        }
+        self.state = *self.automaton.moves[self.state as usize].get(&label)?;
+        Some(())
+    }
+
+    /// An empty gap before `label`: the implied word, which is empty where the child follows directly.
+    fn empty_gap(&mut self, label: Label) -> Option<()> {
+        match self.automaton.implied.to.get(&(self.state, label)) {
+            Some(implied) => {
+                *self.gaps.before.last_mut()? = self.grammar.word(implied);
+                self.state = self.walk(self.state, implied)?;
+            }
+            None if self.automaton.moves[self.state as usize].contains_key(&label) => {}
+            None => return None,
+        }
+        Some(())
+    }
+
+    /// A stored gap before `label`, which reaches the child; or an implied one whose kept tokens ([`kept`]) are
+    /// stored and the rest left out (`for (k in o)`: `for` is kept, `(` is not), where the stored tokens alone walk
+    /// only part of the way.
+    fn stored_gap(&mut self, label: Label) -> Option<()> {
+        match self.walk(self.state, &self.pending).filter(|to| self.automaton.moves[*to as usize].contains_key(&label)) {
+            Some(to) => self.state = to,
+            None => {
+                let implied = self.automaton.implied.to.get(&(self.state, label)).filter(|implied| self.kept(implied, true) == self.pending)?;
+                *self.gaps.before.last_mut()? = self.grammar.word(&self.kept(implied, false));
+                self.state = self.walk(self.state, implied)?;
+            }
+        }
+        Some(())
+    }
+
+    /// The word after the last child: the implied one, where the stored tokens since the last named child are none,
+    /// or are its kept tokens and alone do not end the walk.
+    fn end(&mut self) {
+        let end = self.automaton.implied.end[self.state as usize].as_deref();
+        let stored_end = self.walk(self.state, &self.pending).is_some_and(|to| self.automaton.accepting[to as usize]);
+        if self.pending.is_empty() || !stored_end && end.is_some_and(|implied| self.kept(implied, true) == self.pending) {
+            self.gaps.end = end.map(|implied| self.grammar.word(&self.kept(implied, false))).unwrap_or_default();
+        }
     }
 }
 
@@ -350,38 +399,50 @@ impl TokenGrammar {
     /// - `E state word`: the implied word from `state` to the end;
     /// - `P label`: a kept token (`kept`).
     pub fn automata_text(&self) -> String {
-        let label = |l: &Label| format!("{}\x1e{}\x1e{}", if l.token { "t" } else { "n" }, self.texts[l.name as usize], self.texts[l.field as usize]);
-        let word = |w: &[Label]| w.iter().map(label).collect::<Vec<_>>().join("\x1f");
         let mut kinds: Vec<_> = self.automata().filter(|(_, automaton)| automaton.dropped().next().is_some()).collect();
-        kinds.sort_by_key(|(sym, _)| self.texts[**sym as usize].clone());
+        kinds.sort_by_key(|(sym, _)| self.texts[**sym as usize]);
         let mut out = String::new();
-        for (sym, a) in kinds {
+        for (sym, automaton) in kinds {
             out.push_str(&format!("K\t{}\n", self.texts[*sym as usize]));
-            for (state, moves) in a.moves.iter().enumerate() {
-                out.push_str(&format!("S\t{state}\t{}\n", u8::from(a.accepting[state])));
-                let mut moves: Vec<_> = moves.iter().map(|(l, to)| (label(l), to)).collect();
-                moves.sort();
-                for (l, to) in moves {
-                    out.push_str(&format!("M\t{state}\t{l}\t{to}\n"));
-                }
-            }
-            let mut to: Vec<_> = a.implied.to.iter().map(|((state, l), w)| (*state, label(l), word(w))).collect();
-            to.sort();
-            for (state, l, w) in to {
-                out.push_str(&format!("I\t{state}\t{l}\t{w}\n"));
-            }
-            for (state, w) in a.implied.end.iter().enumerate() {
-                if let Some(w) = w {
-                    out.push_str(&format!("E\t{state}\t{}\n", word(w)));
-                }
-            }
-            let mut kept: Vec<_> = a.kept.iter().map(label).collect();
-            kept.sort();
-            for l in kept {
-                out.push_str(&format!("P\t{l}\n"));
-            }
+            self.states_text(automaton, &mut out);
+            self.implied_text(automaton, &mut out);
         }
         out
+    }
+
+    /// A label as `automata_text` writes it.
+    fn label_text(&self, label: &Label) -> String {
+        format!("{}\x1e{}\x1e{}", if label.token { "t" } else { "n" }, self.texts[label.name as usize], self.texts[label.field as usize])
+    }
+
+    /// A word as `automata_text` writes it.
+    fn word_text(&self, word: &[Label]) -> String {
+        word.iter().map(|label| self.label_text(label)).collect::<Vec<_>>().join("\x1f")
+    }
+
+    /// An automaton's `S` and `M` lines.
+    fn states_text(&self, automaton: &Automaton, out: &mut String) {
+        for (state, moves) in automaton.moves.iter().enumerate() {
+            out.push_str(&format!("S\t{state}\t{}\n", u8::from(automaton.accepting[state])));
+            let mut moves: Vec<_> = moves.iter().map(|(label, to)| (self.label_text(label), to)).collect();
+            moves.sort();
+            moves.into_iter().for_each(|(label, to)| out.push_str(&format!("M\t{state}\t{label}\t{to}\n")));
+        }
+    }
+
+    /// An automaton's `I`, `E` and `P` lines.
+    fn implied_text(&self, automaton: &Automaton, out: &mut String) {
+        let mut to: Vec<_> = automaton.implied.to.iter().map(|((state, label), word)| (*state, self.label_text(label), self.word_text(word))).collect();
+        to.sort();
+        to.into_iter().for_each(|(state, label, word)| out.push_str(&format!("I\t{state}\t{label}\t{word}\n")));
+        for (state, word) in automaton.implied.end.iter().enumerate() {
+            if let Some(word) = word {
+                out.push_str(&format!("E\t{state}\t{}\n", self.word_text(word)));
+            }
+        }
+        let mut kept: Vec<_> = automaton.kept.iter().map(|label| self.label_text(label)).collect();
+        kept.sort();
+        kept.into_iter().for_each(|label| out.push_str(&format!("P\t{label}\n")));
     }
 
     /// What the automata say, by name ([`token_automata::Census`]): per kind, the (token, field) pairs a tape of it
@@ -468,10 +529,7 @@ impl TokenGrammar {
     /// `text` (a token text or field name of this grammar) for the life of the process: the
     /// grammar is built once per dialect and never dropped.
     pub fn intern(&self, text: &str) -> &'static str {
-        match self.interned.binary_search_by(|known| (*known).cmp(text)) {
-            Ok(at) => self.interned[at],
-            Err(_) => "",
-        }
+        self.names.get_key_value(text).map_or("", |(&text, _)| text)
     }
 
     /// A dialect's automata, built once per process from its `grammar.json`; `None` where there

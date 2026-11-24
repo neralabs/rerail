@@ -5,16 +5,18 @@ use super::model::{ClauseKind, Query};
 use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use napi::Result;
 use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(relative);
+    let path = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..")
+    .join(relative);
     assert!(
         path.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each \
@@ -22,6 +24,29 @@ pub(super) fn pack_test_data(relative: &str) -> PathBuf {
          data\")"
     );
     path
+}
+
+/// Runs `test` (its whole path, an ignored test of this binary) alone in a child process of this binary. Every test
+/// of a run shares the process: its one pool, which a long parallel loop of another test's holds (minutes, on a loaded
+/// 4-core runner), and its process-wide counts, which other tests' runs move. In the child, both are the test's own,
+/// so what it times, overlaps or counts is its own run's.
+pub(super) fn alone(test: &str) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", test, "--ignored"]);
+    let mut process = super::logic::plan::corpus::switches::started(|| command.spawn()).unwrap();
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = process.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(120) {
+            let _ = process.kill();
+            let _ = process.wait();
+            panic!("{test} stalled");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(status.success(), "{test} failed: {status}");
 }
 
 pub(super) const JSX_SOURCE: &str =
@@ -360,7 +385,7 @@ pub(super) fn php_lossy(bytes: &[u8]) -> String {
 
 /// `0`'s patterns as tree-sitter parses them, every token kept: the reference a tape's patterns
 /// (which leave the tokens the grammar implies out, `tape::pattern_doc`) are checked against, on
-/// tree-sitter's own tree (RER-131).
+/// tree-sitter's own tree (decision 0161).
 #[derive(Clone, Copy)]
 pub(super) struct Unfiltered(pub(super) super::language::GrammarDialect);
 

@@ -83,13 +83,14 @@ reopens them.
 PRAGMA foreign_keys=ON;
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection
-PRAGMA mmap_size=0;
+PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection; the writer's is 32 MiB
+PRAGMA mmap_size=4294967296;      -- RERAIL_STORE_MMAP_MB: 4096 by default, 0 (off) on Windows
 PRAGMA journal_size_limit=16777216;
+PRAGMA temp_store=MEMORY;
 ```
 
-It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
+It also sets a 256-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. `RERAIL_STORE_MMAP_MB=0` turns the map off.
 
 </details>
 
@@ -240,7 +241,8 @@ A snapshot records what a commit holds; a workspace's overlay records what it ev
 
 Discovery skips:
 
-- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`);
+- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`, and Rerail's
+  session records folder `.rerail/sessions/` in any folder);
 - `.rerailignore` paths, in Git ignore syntax with negation. A negation cannot restore a built-in
   ignore.
 

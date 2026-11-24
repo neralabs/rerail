@@ -266,7 +266,7 @@ redoes it per phase.
     the Cranelift IR generator and an AOT Rust template held in a string (both PG), and the simdjson
     C++ walker. Constants are copied too: `CHECKPOINT_STRIDE` from the old rec6 wire codec,
     simdjson's own `STRIDE` in Rust and C++ (it does not depend on the format crate), and whole local
-    definitions in NGS, rer-131 and Transducer-demos.
+    definitions in NGS, the named-only tapes branch and Transducer-demos.
 47. **[I] PG's tier 2 writer hard-codes format 11's header offsets** (`56 + 8*k`, `image[24..56]`
     for the digest, `u64_at(56)`). They will be wrong on merge into format 15. A format kept only
     in a backend was deleted once already (open items, O-bitlex-writes-tape).
@@ -298,7 +298,7 @@ These are stated requirements, not preferences. Each is quoted from where it was
 
 - **Completely regular.** v4–v7 failed on overflow pairs, sorted flag lists and alias tables
   (`00-requirements.md` G2).
-- **Processable in SQL with ast-index-spike techniques**, including the pure-SQL fallback over a
+- **Processable in SQL with the SQL index prototype techniques**, including the pure-SQL fallback over a
   tape table function (G7).
 - **No size increase.** 8–11 B a node was rejected, and a change must show clear benefits (G3,
   0025). The user, 2026-11-13: for format 16 this is a tradeoff to measure

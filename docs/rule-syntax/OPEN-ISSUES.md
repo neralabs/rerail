@@ -91,7 +91,7 @@ confirm once a parser and engine exist. None is fixed yet.
    repository. test-budget.rerail is the worked port; the other four checks are not ported yet.
 6. `.budget M by k from base` over a metric relation was dropped: a metric ratchet is a rule
    (noqa-sec-ratchet.rerail, test-budget.rerail). The coverage table's 16 `.budget … from` uses include metric ratchets.
-7. LEG-083 is wrong upstream (data-layer/upstream/LEG-083.md, with LEG-083.patch, not applied):
+7. LEG-083 is wrong upstream (a patch was written and not applied; its note was removed):
    - any method named `resolve` counts as eager: all 18 findings at 2b1504 are pathlib or `resolve(arg)`
      calls;
    - one memo shared by a file's functions makes findings depend on name order;
@@ -129,14 +129,14 @@ route for each:
    stay `match`. Teaching it `\bWORD\b` (and `(?i)\bA\s+B\b` as `iword("a b", s)`) is the next exact case.
 5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is addition 7, `dfs_first`
    / `dfs_first_memo` (data-layer/DESIGN.md). Closed 2026-11-05:
-   - the search and the cycle pass are native in spikes/dfs-first/native: Tarjan reads the CSR edge array, no
+   - the search and the cycle pass are native in spikes/dfs-first/native (removed; at 7efcac9c67): Tarjan reads the CSR edge array, no
      table is materialised; 1,000,000 functions and 5,000,000 calls take 0.2 s of set passes;
    - the producer's supplied visiting set and memo are a rewrite of `edge` and `target`, checked on 20,000
      graphs; no extra arguments;
    - ordering roots by a symbol column matches Soufflé after all: Soufflé's `<` on symbols compares the
      decoded strings (interpreter Engine.cpp, COMPARE_STRING); only `ord()` is the table index. The earlier
      note here was wrong.
-   - on the real repository (spikes/dfs-first/realgraph.py, checked against the real linter's fact cache on
+   - on the real repository (spikes/dfs-first/realgraph.py (removed; at 7efcac9c67), checked against the real linter's fact cache on
      355 files), `dfs_first_memo` equals LEG-083's search on every root: 61,403 roots in its files, 152,753
      over every .py file. `dfs_first` adds 34 findings on the wider graph;
    - steps 1-3 and 5 run on 8 threads and steps 1-3 on Metal, with arrays equal to the sequential passes.
