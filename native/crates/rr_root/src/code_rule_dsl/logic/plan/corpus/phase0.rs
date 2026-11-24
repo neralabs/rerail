@@ -229,7 +229,16 @@ impl Looks {
         g.digests.iter().chain(&g.rules).all(|(p, d)| self.digests.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
             && g.absent.iter().all(|p| *self.missing.entry(p.clone()).or_insert_with(|| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing))
             // Each module's image in the store the run reads: one another store holds is lowered again here.
-            && g.lowered.keys().all(|k| *self.images.entry(k.clone()).or_insert_with(|| crate::code_rule_dsl::logic::rr::planned_module_held(k)))
+            && self.images_held(g)
+    }
+
+    /// Whether the store the run reads holds each module image `g` lowers: those not looked at yet asked together.
+    fn images_held(&mut self, g: &Graph) -> bool {
+        let new: Vec<&str> = g.lowered.keys().filter(|k| !self.images.contains_key(*k)).map(String::as_str).collect();
+        for (k, held) in new.iter().zip(crate::code_rule_dsl::logic::rr::planned_modules_held(&new)) {
+            self.images.insert((*k).to_owned(), held);
+        }
+        g.lowered.keys().all(|k| self.images[k])
     }
 }
 
@@ -361,6 +370,15 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             if g.is_none() {
                 *g = made.get(seed).cloned();
             }
+        }
+        // Kept as images, as a derived graph is (below): a composed graph is the one its run derives. Kept in the
+        // process alone, each later process composed every program's graph again (312 of a pack's 350 seeds, most of
+        // an edit's run before its strata).
+        if let Some(images) = &images
+            && !made.is_empty()
+        {
+            crate::code_rule_dsl::logic::rr::export_graph_images(&made.iter().map(|(seed, g)| (images.key(seed), images.encode(g))).collect::<Vec<_>>());
+            crate::code_rule_dsl::logic::rr::keep_graph_facts(images.store(), made.iter().map(|(seed, g)| (images.store_key(&images.key(seed)), images.facts(g))).collect());
         }
         kept.lock().expect("phase 0's graphs").extend(made.into_iter().map(|(seed, graph)| ((Some(dirs.clone()), seed), graph)));
     }

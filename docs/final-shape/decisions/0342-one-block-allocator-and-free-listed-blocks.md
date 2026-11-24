@@ -204,8 +204,10 @@ sections, the program image, the corpus memo, setfix, the planner); 257 sites on
    header (the previous header's offset, a state word) and its bytes, bumped from the top. Its going sets the state
    free, one atomic store, from any thread; the owning thread pops freed headers off the top at its next take
    (`settle`) and moves the top back. Past `KEEP` bytes above the top, pages go back to the OS, and a take that
-   reaches them marks them in use again. A room's region is zeroed, as every room's has been (`Room`): a
-   structure may read a byte it has not written. A use's takes are not.
+   reaches them marks them in use again. A room's region is zeroed, as the anonymous room's chunks were. A
+   use's takes are not, and neither is a relation block's chunk (`LifeRoom`, a home's room): a structure writes a
+   byte before it reads it, and nothing may skip a write on the strength of a room's zeros (a vector's growth that
+   did made phase 0's bootstrap run read stale bytes).
 2. **The thread's scratch is that stack** (`scratch::with`): a use's takes are its regions, tagged with the use, and
    its end frees them, so a freeze's temporaries and the room's regions are one memory, and a use may nest. Its
    ledger is the block's: a use's end with GPU work that binds its bytes queued fails, as before.
@@ -243,3 +245,36 @@ Each engine from nothing (a cold run, two warm, two edits), twice, alternating; 
 
 Time profiles put the allocators' code, vectors' growth with it, at about 5% of an edit's samples, under the
 pre-merge engine's share in jemalloc. The rest of the edit's gap to the pre-merge engine is not allocation.
+
+### The run's own rooms (designed, 2026-11-24)
+
+Item 6's families have two owners, not one. The census's long-lived regions by the site that asked:
+
+| Family | Made by | Held by | Lives |
+|---|---|---|---|
+| Join specs' sections (`JoinSpec::encode`) | `Run::join_spec`, on whichever thread plans the stratum | the corpus run's memo (`derived::value("join spec")`), and the component specs that name them | the corpus run (`Keep`) |
+| Step plans' and component specs' sections (`setfix::analysed`, `ComponentSpec::encode`) | `Fx::open`, `level::prefetch` | the native engine's component | the planner run |
+| `LiveRel`'s frequency maps, keys and counts (`LiveRel::of_native`, `component::live`) | `Run::drive`, on a strand's thread too | the planner run's model (`Stats::dfreq`, `keys`, `counts`); a strand's fork is taken into its parent's (`take_from`) | the planner run |
+
+1. **One room kind for an owner: free-listed blocks the owner holds** (`maps::FreeRoom`). It is the large room's
+   mechanism (decision item 4) made an owner's: a mutex over the open block, the next leased when it is full, a block
+   gone with its last region. The large room becomes a `FreeRoom` a thread; an owner's is a `FreeRoom` the owner
+   holds in an `Arc`, shared by the threads that make its structures. Its blocks reserve address space (pages are
+   touched as used) and keep a freed chunk's pages below `LARGE_RESIDENT`. A small region takes the free list's
+   smallest class (64 bytes); the families above are a few thousand regions a run, not millions.
+2. **The memo's room** (`derived::Memo::room`): what the memo keeps is made in it. `derived::value` gives `make`
+   no room; the value's maker encodes what is kept within it (`derived::placed(|| spec.encode())`), so a spec's
+   planning temporaries stay on the stack and only its section lies in the memo's blocks. The memo goes with the
+   corpus run; a value cloned out of it keeps only its own region's block.
+3. **The planner run's room** (`Run::room`): a strand's run is given its parent's (`Run::strand`), so a map made on a
+   strand's thread lies where the parent that takes it holds it. `Fx::stats` and `stats_changed` read the native
+   engine's statistics within it; `Fx::open` and the prefetch's `join_rule_bound` encode within it.
+4. **Not `LifeRoom(Life::Run)`.** Inside a chunk's evaluation it places a structure in that chunk's open relation
+   block (`open_chunk`'s `current_chunk`): a spec the memo keeps past the chunk would hold the chunk's block, and its
+   relations' bytes with it. Its one mutex a life is also every thread's.
+5. **Nothing is copied into a room.** A family is made where it will live; no region moves from a stack to an owner.
+
+Tests: an owner room's region lies in its blocks, and the blocks go with the owner and its last region; a chunk freed
+is taken again; two threads make regions in one owner's room; a kept join spec lies in the memo's room, not a
+thread's stack; a strand's live statistics lie in its parent run's room. Then the census again (expect about 1.8 times
+live, the replay's figure) and the edit's footprint against the pre-merge engine.

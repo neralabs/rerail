@@ -185,7 +185,9 @@ impl Writer {
             count * TABLE as usize,
             2 * SIDE_AREA as usize,
             64,
-            LAID_MAX,
+            // A block's laid parts, and the 8 bytes past them `reserve` keeps: the first node's `reserve_final` asks
+            // for that much, and a part held at `LAID_MAX` was moved to twice it at once.
+            LAID_MAX + 8,
             count * LAID_AT as usize,
             words * (1 + if blocks { count + 1 } else { 0 }) + 8,
             lines.len() + 8,
@@ -195,8 +197,8 @@ impl Writer {
             if z { 4 * buckets + 8 } else { 8 },
             if z { count * (Z / K) * cw + 8 } else { 8 },
             if z { w::LZ_TABLES as usize + 8 } else { 8 },
-            // The faults: a few a document, grown as blocks are made final (`reserve_final`).
-            64,
+            // The faults: room for a block's (each node may be one), as the first node's `reserve_final` asks.
+            4 * Z + 8,
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
         self.parts[part::KINDS as usize] = kinds;

@@ -1008,11 +1008,32 @@ pub fn hold_planned_modules(keys: &[String]) {
 /// store (or the shipped bundle), mapped where it is and not decoded. What a reused run of phase 0 checks its answer
 /// by (`World::observation`), and a graph by (`Graph::holds`): a key names its image's content.
 pub fn planned_module_held(key: &str) -> bool {
-    let Some(k) = planned_key(key) else { return false };
-    if crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(&(image_store_path(), k)) {
-        return true;
+    planned_modules_held(&[key])[0]
+}
+
+/// `planned_module_held` of each of `keys`, in their order: the store asked once for those the process and the bundle
+/// do not hold, and only whether it holds each (its alias's source), not for the image mapped where it lies, which
+/// was most of a graph's check (`phase0::Looks`).
+pub fn planned_modules_held(keys: &[&str]) -> Vec<bool> {
+    let at = image_store_path();
+    let planned: Vec<Option<crate::content_store::HashKey>> = keys.iter().map(|k| planned_key(k)).collect();
+    let mut held: Vec<bool> = {
+        let made = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
+        let made = made.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        planned.iter().map(|k| k.is_some_and(|k| made.contains_key(&(at.clone(), k)) || images::shipped_image(k).is_some())).collect()
+    };
+    let asked: Vec<usize> = (0..keys.len()).filter(|&i| !held[i] && planned[i].is_some()).collect();
+    if asked.is_empty() {
+        return held;
     }
-    images::read_image(image_store().as_deref(), k).is_some()
+    let Some(store) = image_store() else { return held };
+    let aliases: Vec<crate::content_store::HashKey> = asked.iter().map(|&i| planned[i].expect("a planned key")).collect();
+    if let Ok(ids) = store.sources_by_aliases(&aliases) {
+        for (&i, id) in asked.iter().zip(ids) {
+            held[i] = id.is_some();
+        }
+    }
+    held
 }
 
 /// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
