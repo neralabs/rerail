@@ -6857,7 +6857,7 @@ fn the_view_states_the_images_rules_literals_and_fields() {
         }
         expected.entry("img_facts").or_default().extend(ProgramFields::fact_names(&*v));
         expected.entry("img_kindset").or_default().extend(given.iter().map(|a| v.text(*a).to_owned()));
-        for (rel, source) in view::sources(&v, &given, [atom, agg]) {
+        for (rel, source) in view::sources(&v, &given, [atom, agg]).unwrap() {
             let shown: BTreeSet<String> = source_rows(source.as_ref())
                 .into_iter()
                 .map(|row| match rel {
@@ -6944,7 +6944,7 @@ fn kind_sets_take_out_by_rules_what_the_fixed_point_took_out() {
         let what = [rules.constant("atom").unwrap(), rules.constant("agg").unwrap()];
         let t = std::time::Instant::now();
         for _ in 0..RUNS {
-            rules.run(view::sources(&input, &given, what), &["img_kindset_out", "img_undeclare", "img_drop_facts"]).unwrap();
+            rules.run(view::sources(&input, &given, what).unwrap(), &["img_kindset_out", "img_undeclare", "img_drop_facts"]).unwrap();
         }
         let by_rules = t.elapsed().as_secs_f64() * 1e3 / f64::from(RUNS);
         let t = std::time::Instant::now();
@@ -6977,21 +6977,24 @@ fn spike_0662_a_rules_pass_run_profiled() {
         let kindsets: BTreeSet<String> = input.kindset_map().unwrap().into_keys().collect();
         let given: Vec<AtomId> = kindsets.iter().filter_map(|s| input.find(s)).collect();
         let what = [rules.constant("atom").unwrap(), rules.constant("agg").unwrap()];
+        // The runs in one run's scope; `RERAIL_SPIKE_KEEP`: with plans kept across them, as a corpus run keeps its
+        // plans (decision 0301).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        let _keep = std::env::var_os("RERAIL_SPIKE_KEEP").is_some().then(crate::code_rule_dsl::logic::plan::KeepPlans::start);
         // Warm: the program lowered, the thread's engine opened.
-        rules.run(view::sources(&input, &given, what), &outputs).unwrap();
+        rules.run(view::sources(&input, &given, what).unwrap(), &outputs).unwrap();
         let t = std::time::Instant::now();
         for _ in 0..runs {
-            rules.run(view::sources(&input, &given, what), &outputs).unwrap();
+            rules.run(view::sources(&input, &given, what).unwrap(), &outputs).unwrap();
         }
         let bare = t.elapsed().as_secs_f64() * 1e6 / f64::from(runs);
-        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         profile::reset();
         let t = std::time::Instant::now();
         for _ in 0..runs {
             let sources = {
                 let _s = profile::span(|| "the view's sources made".into());
-                view::sources(&input, &given, what)
+                view::sources(&input, &given, what).unwrap()
             };
             rules.run(sources, &outputs).unwrap();
         }

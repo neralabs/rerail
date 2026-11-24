@@ -1178,7 +1178,7 @@ impl ProgramPass for KindSets {
             let rules = (self.rules)();
             let sets: Vec<AtomId> = kindsets.keys().filter_map(|s| v.find(s)).collect();
             let what = [rules.constant("atom")?, rules.constant("agg")?];
-            let out = rules.run(crate::code_rule_dsl::logic::program_image::view::sources(&input, &sets, what), &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
+            let out = rules.run(crate::code_rule_dsl::logic::program_image::view::sources(&input, &sets, what)?, &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
             let name = |row: &Vec<i64>| v.text(AtomId(row[0] as u32)).to_owned();
             for row in &out[1] {
                 head.b.fields().undeclare(&name(row));
