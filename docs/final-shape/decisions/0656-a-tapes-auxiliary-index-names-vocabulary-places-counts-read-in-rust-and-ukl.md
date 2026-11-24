@@ -105,7 +105,8 @@ prototype's rule, "never key postings to known rules".
      index read back from the store), and `the_aux_indexes_ukl_reads_are_its_rust_reads`, whose kernel now reads the
      index in the tape's home through `ukl_aux_in_home`.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows
-   these replace are removed, and so is the work that made them. Done.
+   these replace are removed, and so is the work that made them. In progress: two pieces are not yet removed (below,
+   **Not yet removed**).
    - **One interface: `tape_format::doc_index::DocIndex`** (the user, 2026-11-23: "please put the calls behind an
      abstraction so that it's easier to switch out the design later"). The engine calls it and nothing under it:
      counts (`count`, `holds`, `counts`, `distinct`, `named_all_rooted`), listed codes (`listed`), text
@@ -134,9 +135,13 @@ prototype's rule, "never key postings to known rules".
      (`Projected::places_by_index`, `FactsIn::place`), and its view entry says so (`ViewDoc::places_by_index`), so the
      views' reads call the CLIF read `tape_place` (`clif::reads::place`: the last stored every-8th named sibling,
      then at most 7 named steps of the tape), which the host's JIT, the CPU's vector path and every device read the
-     same. No places column is made for it. The places column stays where the index cannot answer a place: T's shape
-     (it numbers no comments, and the index's places count them as named), an anchored projection (its places are
-     among anchors), and a tape whose home holds no index (format 15, or a 16 home without a presence).
+     same. No places column is made for it.
+   - **Not yet removed.**
+     - *The places column*, still made for T's shape (it numbers no comments, which the index's places count as
+       named), an anchored projection (an outermost anchor's place is its ordinal among the anchors under the root),
+       and a tape whose home holds no index (format 15, or a 16 home without a presence).
+     - *The `text` rows*: still made a row a node, now with a leaf's string by its term. Removing them makes `text` a
+       view of the tape and the index, which a node's text longer than one leaf does not fit as it stands.
    - **The reads take the home.** `DocTape::in_place` hands the reads the home's bytes (`extent`): the tape, its
      presence and its index, which the view names (`presence`). A home ends where its index ends
      (`AuxIndex::extent`; `presence::find` refuses bytes past it).
