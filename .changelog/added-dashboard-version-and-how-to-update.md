@@ -1,1 +1,0 @@
-The top bar's version now opens About Rerail in Settings, with its release notes and how to update. Once a day the daemon asks npm whether a newer Rerail is out, and the dashboard says so; `RERAIL_UPDATE_CHECK=0` turns that off. Settings shows in yellow only a coding agent whose access to Rerail's data needs a step from you.
