@@ -141,6 +141,57 @@ describe("the home's untaken events", () => {
     }
   });
 
+  // Before, a pass met a sidecar it could not remove for any reason, at each pass, and said nothing.
+  it("say once, with its path, the sidecar of a writer that has ended that no pass can remove, and try it at each", async () => {
+    const rerailHome = await home();
+    const writer = spawn(process.execPath, ["-e", ""], { stdio: "ignore", windowsHide: true });
+    await once(writer, "exit");
+    // A folder under the sidecar's name: no removal takes it, on every system.
+    const stuck = join(rerailHome, UNTAKEN_EVENTS_DIR, `${eventName(1_000)}.${String(writer.pid)}.${randomUUID()}.tmp`);
+    mkdirSync(stuck, { recursive: true });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const taker = untakenEventTaker(rerailHome, keeper());
+    try {
+      await taker.taken();
+      await taker.taken();
+    } finally {
+      taker.close();
+    }
+    expect(stderr.mock.calls.filter(([text]) => String(text).includes("could not be removed"))).toEqual([
+      [expect.stringContaining(`rerail: ${stuck} could not be removed, and each pass tries again: `)],
+    ]);
+    expect(existsSync(stuck)).toBe(true);
+  });
+
+  // Windows lets a program hold a file so that no one can remove it; other systems have no such hold.
+  it.runIf(process.platform === "win32")("say nothing of the sidecar of a writer that has ended while another program holds it, and remove it once let go", async () => {
+    const rerailHome = await home();
+    const folder = join(rerailHome, UNTAKEN_EVENTS_DIR);
+    mkdirSync(folder, { recursive: true });
+    const writer = spawn(process.execPath, ["-e", ""], { stdio: "ignore", windowsHide: true });
+    await once(writer, "exit");
+    const held = join(folder, `${eventName(1_000)}.${String(writer.pid)}.${randomUUID()}.tmp`);
+    writeFileSync(held, "{}");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const taker = untakenEventTaker(rerailHome, keeper());
+    try {
+      const holder = await heldOpen(held, "Read");
+      try {
+        await taker.taken();
+        expect(existsSync(held)).toBe(true);
+      } finally {
+        await holder.release();
+      }
+      await taker.taken();
+    } finally {
+      taker.close();
+    }
+    expect(existsSync(held)).toBe(false);
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
   it("are taken as they are left once the daemon watches its home, with no request and no timer", async () => {
     const rerailHome = await home();
     const taken = Promise.withResolvers<UntakenEvent>();

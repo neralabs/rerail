@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import type { AuditInput } from "../../../src/engine/audit/audit.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
-import { BUSY_TIMEOUT_MS, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { BUSY_TIMEOUT_MS, failWhileWriteLocked, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -425,6 +425,28 @@ describe("record writes while another process holds the write lock", () => {
     expect(claimed).toBeUndefined();
     expect(await freed).toBe(true);
     expect(rows(path, "SELECT session_id FROM policy_session_owners")).toEqual([[session.sessionId]]);
+  }, 30_000);
+
+  // The daemon asks whether the lock is held before it opens a quiet session again for a scan (`failWhileWriteLocked`).
+  // Before, that probe met a lock wait's take as a holder and said the lock was held though no other connection held it,
+  // so the scan's open waited for the lock once more.
+  it("leave the probe before a quiet session's open for a scan no lock wait's take to meet", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const holder = holderHere(path);
+    const lockWaitTry = holdNextLockWaitTry();
+    const stop = new AbortController();
+    closers.push(() => stop.abort());
+    const { waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    const freed = waitForWriteLock(path, stop.signal);
+    holder.exec("COMMIT");
+    await lockWaitTry.held;
+
+    const probed = thrown(() => failWhileWriteLocked(path));
+    lockWaitTry.release();
+
+    expect(probed).toBeUndefined();
+    expect(await freed).toBe(true);
   }, 30_000);
 
   it("are reported lost at the last store's close without waiting, once asked longer ago than the bound", async () => {
