@@ -3301,6 +3301,10 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     ukl_grid_beat(grid);
                     if (lp_spend(a, trn, 256u)) { rp->stop = LP_REFUSED; break; }
                 }
+                // A unit refused (its work spent, or another piece's room or reason) is read no further: its output
+                // is not used (a room's refusal runs it again larger). Each piece still ends as a stopped one does
+                // (`LP_ROOM`'s path), its end words written, so the queue drains and the phases after read them.
+                if ((step & 15u) == 0u && ukl_atomic_load(&a.ctl[2]) != 0u) { rp->stop = LP_REFUSED; break; }
                 // A call's arguments: a token a step, or a run of the group's window none `(`, `)` and `,`; a
                 // span or the top text next, past the window: the group looks.
                 if (rp->cl_on) {
@@ -3778,10 +3782,10 @@ UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint
             continue;
         }
         polls = 0u;
-        // A unit refused for work reads no more; each item taken spends some of its work.
-        uint32_t spent = 0u;
-        if (ln == 0u) spent = (lp_spend(a, trn, LP_ITEM_WORK) || (ukl_atomic_load(&a.ctl[2]) & X_WORK) != 0u) ? 1u : 0u;
-        if (ukl_sg_shuffle(spent, 0u __UKL_ARGS) != 0u) { if (ln == 0u) ukl_wq_done(q); break; }
+        // Each item taken spends some of the unit's work: past it the unit is refused, and each piece then stops at
+        // its first step (`lp_piece`), so a piece posted again and again ends. The queue is drained, never left: the
+        // phases after it read every piece's end words.
+        if (ln == 0u) (void)lp_spend(a, trn, LP_ITEM_WORK);
         // What its poster wrote before the push (a request's record, its arguments' entries; a piece read again,
         // its requests' results) seen by every lane: the take's acquire.
         ukl_fence_device();

@@ -2506,6 +2506,10 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
                     seen.push(x.run);
                     gpu.push(x.gpu_seconds);
                     batches.push(1);
+                    // `RERAIL_PP_RUN_TIMES`: each run's GPU time, by its first unit (its rung, its launches).
+                    if std::env::var_os("RERAIL_PP_RUN_TIMES").is_some() {
+                        eprintln!("RUN {:.1} ms rung {} launches {} {path}", x.gpu_seconds * 1e3, x.rung, x.launches);
+                    }
                 }
             }
             // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
