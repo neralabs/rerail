@@ -167,6 +167,8 @@ const storage = () => {
 };
 
 describe("a rule a coding agent edited", () => {
+  // A dismissal is also kept for the module's life (for when storage is blocked), and nothing here resets it, so each
+  // test uses digests of its own.
   beforeEach(() => { vi.stubGlobal("localStorage", storage()); });
 
   afterEach(() => {
@@ -184,6 +186,14 @@ describe("a rule a coding agent edited", () => {
       loadRules(ruleEntry("no-debugger"), copyOf("no-debugger", "sha256:a", {}, {
         approval: { subject: { kind: "rule", id: "no-debugger-copy", digest: "sha256:a" }, approved: true },
       }));
+      expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
+    });
+
+    it("has none while the original itself waits for approval, whose notice its sheet shows instead", () => {
+      loadRules(
+        ruleEntry("no-debugger", { approval: { subject: { kind: "pack", id: "javascript", digest: "sha256:p" }, approved: false } }),
+        copyOf("no-debugger", "sha256:k", { description: "No debugger, ever." }),
+      );
       expect(pendingEditOf(ruleById("no-debugger"))).toBeNull();
     });
 

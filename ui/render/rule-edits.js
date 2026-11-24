@@ -36,8 +36,12 @@ export function dismissEdit(digest) {
   try { localStorage.setItem(dismissKey(digest), "1"); } catch { /* private mode: dismissed for this visit */ }
 }
 
-/** The copy of `stored` that waits for approval and whose notice was not dismissed, else `null`. */
+/**
+ * The copy of `stored` that waits for approval and whose notice was not dismissed, else `null`. Also `null` while
+ * `stored` itself waits: its sheet then shows that approval instead, so its row says nothing of the edit either.
+ */
 export function pendingEditOf(stored) {
+  if (awaitingApproval(stored)) return null;
   const copy = waitingCopies(data.rules).get(stored.rule.id);
   return copy === undefined || editDismissed(copy.approval.subject.digest) ? null : copy;
 }

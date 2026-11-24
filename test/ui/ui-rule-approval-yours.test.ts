@@ -115,9 +115,9 @@ describe("Review in Created by you", () => {
     data.rules = toStoredRules([waiting("a-rule", {}, "Alpha"), waiting("b-rule", {}, "Beta"), waiting("c-rule", {}, "Gamma")]);
     const activity = (distinctViolations: number) => ({ measured: true, distinctViolations, loggedViolations: distinctViolations, rerails: 0, sessions: 0, lastSeenAt: null, audits: 1 });
 
-    expect(firstToReview(yourRulesToApprove()).rule.id).toBe("a-rule");
+    expect(firstToReview(yourRulesToApprove())?.rule.id).toBe("a-rule");
     data.activityAll = { "a-rule": activity(1), "b-rule": activity(7), "c-rule": activity(3) } as never;
-    expect(firstToReview(yourRulesToApprove()).rule.id).toBe("b-rule");
+    expect(firstToReview(yourRulesToApprove())?.rule.id).toBe("b-rule");
   });
 });
 

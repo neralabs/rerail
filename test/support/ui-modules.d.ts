@@ -356,7 +356,7 @@ declare module "*/ui/views/overview.js" {
   /** The rules created by you that wait for your approval, by title. */
   export function yourRulesToApprove(): Array<{ rule: { id: string } }>;
   /** Of `rules`, the one Review in Created by you opens: the one that caught the most since install. */
-  export function firstToReview<Rule extends { rule: { id: string } }>(rules: readonly Rule[]): Rule;
+  export function firstToReview<Rule extends { rule: { id: string } }>(rules: readonly Rule[]): Rule | undefined;
 }
 
 declare module "*/ui/render/rule-edits.js" {
