@@ -686,18 +686,29 @@ pub fn run_policies(
         (Vec::new(), Vec::new())
     };
     let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
+    // `RERAIL_BATCH_PACK=strict`: a failed pack's error is each member's, and none runs alone.
+    let mut failed: Vec<Option<String>> = paths.iter().map(|_| None).collect();
     for group in groups.iter().filter(|g| g.members.len() > 1) {
         // A failed pack can still contain policies that succeed on their own.
-        if let Ok(Some(each)) = invocation.evaluate(|root| run_pack(paths, &texts, group, root, out, options)) {
-            for (&k, found) in group.members.iter().zip(each) {
-                done[k] = Some(found);
+        match invocation.evaluate(|root| run_pack(paths, &texts, group, root, out, options)) {
+            Ok(Some(each)) => {
+                for (&k, found) in group.members.iter().zip(each) {
+                    done[k] = Some(found);
+                }
             }
+            Err(e) if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") => {
+                for &k in &group.members {
+                    failed[k] = Some(e.to_string());
+                }
+            }
+            _ => {}
         }
     }
     let mut succeeded = true;
     for (k, path) in paths.iter().enumerate() {
         let result = match done[k].take() {
             Some(run) => Ok(run),
+            None if failed[k].is_some() => Err(failed[k].take().unwrap_or_default()),
             None => {
                 let dir = out.join(k.to_string());
                 let evaluated = read_policy(path).and_then(|(program, files)| {
@@ -2650,6 +2661,159 @@ mod settings_tests {
             let usage = run(&args).unwrap_err();
             assert!(usage.starts_with("usage: rerail-engine run-policies [--tool-calls <calls.json>]"), "{args:?}: {usage}");
         }
+    }
+}
+
+/// Every pack and the data layer's policies are split with no undeclared crossing (decision 0652): each run as
+/// `run-policies` runs them, as one pack per language (`RERAIL_BATCH_PACK=strict`: a failed pack is its error), over
+/// a file of each language. Their `.scope` lines are dropped, so the file is in every policy's scope. Any run error
+/// fails the test, every one shown.
+#[cfg(test)]
+mod pack_split_tests {
+    /// Every policy of `dir`.
+    fn pack_runs(dir: &str) {
+        pack_shard_runs(dir, None)
+    }
+
+    /// Every policy of `dir`, or with `shard` (k, n) those whose place in the sorted list is k modulo n: python-main's
+    /// 537 policies, 142 of which ask for guests of their own and run alone, take 84 s of CPU at once,
+    /// JavaScript's 121 about 15 s (decision 0652).
+    fn pack_shard_runs(dir: &str, shard: Option<(usize, usize)>) {
+        pack_runs_as(dir, shard, "strict")
+    }
+
+    /// Every policy of `dir` run alone (`RERAIL_BATCH_PACK=off`), as a run of one policy is: a policy batched with
+    /// others is split as part of their pack, which can hold a relation one file's that the policy alone does not.
+    /// bounded-composed-graph-paths was refused alone over the corpus, its batch passing (decision 0665).
+    fn pack_alone_runs(dir: &str) {
+        pack_runs_as(dir, None, "off")
+    }
+
+    fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
+        let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
+        let tmp = tempfile::tempdir().unwrap();
+        let rules = tmp.path().join("rules").join(dir);
+        let mut policies = Vec::new();
+        let mut walk = vec![from.clone()];
+        while let Some(d) = walk.pop() {
+            for e in std::fs::read_dir(&d).unwrap() {
+                let path = e.unwrap().path();
+                if path.is_dir() {
+                    walk.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|x| x != "rerail") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let to = rules.join(path.strip_prefix(&from).unwrap());
+                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                // The scope's paths dropped (`include`, `exclude`, `dirs`), with the lines a list of them goes on to
+                // (an indented line after one ending in a comma): every policy runs over the corpus. What a policy
+                // reads (`.scope tool_calls`) stays.
+                let paths = |l: &str| l.strip_prefix(".scope").is_some_and(|r| ["include", "exclude", "dirs"].iter().any(|w| r.trim_start().starts_with(w)));
+                let code = |l: &str| l.split("//").next().unwrap_or("").trim_end().to_owned();
+                let mut dropping = false;
+                let kept: String = text.lines().filter(|l| {
+                    let drop = paths(l) || (dropping && l.starts_with(char::is_whitespace));
+                    dropping = drop && code(l).ends_with(',');
+                    !drop
+                }).map(|l| format!("{l}\n")).collect();
+                std::fs::write(&to, kept).unwrap();
+                if text.lines().any(|l| l.starts_with(".policy")) {
+                    policies.push(to);
+                }
+            }
+        }
+        policies.sort();
+        if let Some((k, n)) = shard {
+            policies = policies.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, p)| p).collect();
+        }
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        for (name, text) in [
+            ("a.py", "import os\n\ndef f(x):\n    return os.path.join(x, 'a')\n"),
+            ("a.js", "export function f(x) { return x + 1; }\n"),
+            ("a.ts", "export function f(x: number): number { return x + 1; }\n"),
+            ("a.tsx", "export function A() { return <div>a</div>; }\n"),
+            ("a.php", "<?php\nfunction f($x) { return $x + 1; }\n"),
+            ("a.blade.php", "<div>{{ $x }}</div>\n"),
+            ("a.rs", "fn f(x: i32) -> i32 { x + 1 }\n"),
+            ("a.sql", "select a from t where b = 1;\n"),
+            ("a.vue", "<template><div>{{ x }}</div></template>\n<script>export default {}</script>\n"),
+        ] {
+            std::fs::write(root.join(name), text).unwrap();
+        }
+        let report = super::run_policies(&policies, &root, &tmp.path().join("out"), &serde_json::Value::Null).unwrap();
+        let mut errors: Vec<String> = report["runs"].as_array().unwrap().iter().filter_map(|r| r["error"].as_str()).map(str::to_owned).collect();
+        errors.sort();
+        errors.dedup();
+        assert!(errors.is_empty(), "{dir}: {} policies, {} distinct errors:\n{}", policies.len(), errors.len(), errors.join("\n\n"));
+    }
+
+    macro_rules! packs {
+        ($($name:ident: $dir:expr),* $(,)?) => {
+            $(#[test] fn $name() { pack_runs($dir) })*
+        };
+    }
+
+    packs! {
+        the_data_layer_is_split_with_its_crossings_declared: "data-layer",
+        the_blade_pack_is_split_with_its_crossings_declared: "packs/blade",
+        the_complexity_pack_is_split_with_its_crossings_declared: "packs/complexity",
+        the_django_pack_is_split_with_its_crossings_declared: "packs/django",
+        the_next_pack_is_split_with_its_crossings_declared: "packs/next",
+        the_node_pack_is_split_with_its_crossings_declared: "packs/node",
+        the_php_pack_is_split_with_its_crossings_declared: "packs/php",
+        the_react_pack_is_split_with_its_crossings_declared: "packs/react",
+        the_rerail_pack_is_split_with_its_crossings_declared: "packs/rerail",
+        the_rr_pack_is_split_with_its_crossings_declared: "packs/rr",
+        the_rust_pack_is_split_with_its_crossings_declared: "packs/rust",
+        the_sql_pack_is_split_with_its_crossings_declared: "packs/sql",
+        the_typescript_pack_is_split_with_its_crossings_declared: "packs/typescript",
+        the_vue_pack_is_split_with_its_crossings_declared: "packs/vue",
+    }
+
+    #[test]
+    fn the_data_layer_is_split_with_its_crossings_declared_policy_by_policy() {
+        pack_alone_runs("data-layer")
+    }
+
+    macro_rules! shards {
+        ($dir:expr, $n:expr, $($name:ident: $k:expr),* $(,)?) => {
+            $(#[test] fn $name() { pack_shard_runs($dir, Some(($k, $n))) })*
+        };
+    }
+
+    shards! {
+        "packs/python-main", 12,
+        the_python_main_pack_is_split_with_its_crossings_declared_0: 0,
+        the_python_main_pack_is_split_with_its_crossings_declared_1: 1,
+        the_python_main_pack_is_split_with_its_crossings_declared_2: 2,
+        the_python_main_pack_is_split_with_its_crossings_declared_3: 3,
+        the_python_main_pack_is_split_with_its_crossings_declared_4: 4,
+        the_python_main_pack_is_split_with_its_crossings_declared_5: 5,
+        the_python_main_pack_is_split_with_its_crossings_declared_6: 6,
+        the_python_main_pack_is_split_with_its_crossings_declared_7: 7,
+        the_python_main_pack_is_split_with_its_crossings_declared_8: 8,
+        the_python_main_pack_is_split_with_its_crossings_declared_9: 9,
+        the_python_main_pack_is_split_with_its_crossings_declared_10: 10,
+        the_python_main_pack_is_split_with_its_crossings_declared_11: 11,
+    }
+
+    shards! {
+        "packs/python", 2,
+        the_python_pack_is_split_with_its_crossings_declared_0: 0,
+        the_python_pack_is_split_with_its_crossings_declared_1: 1,
+    }
+
+    shards! {
+        "packs/javascript", 3,
+        the_javascript_pack_is_split_with_its_crossings_declared_0: 0,
+        the_javascript_pack_is_split_with_its_crossings_declared_1: 1,
+        the_javascript_pack_is_split_with_its_crossings_declared_2: 2,
     }
 }
 

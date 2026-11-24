@@ -24,8 +24,10 @@ pub struct Codes {
     _kinds: Cells<u32>,
     _fields: Cells<u32>,
     _names: Option<Cells<u32>>,
-    /// A guest's spans as its host places them (`ViewDoc::placed`), where no word of the entry maps them.
+    /// A string's normalized pieces' spans as its host places them (`ViewDoc::placed`), which no word of the entry maps.
     _placed: Option<Cells<u64>>,
+    /// An embedder's program's segments (`ViewDoc::segments`).
+    _segments: Option<Cells<u32>>,
 }
 
 impl ViewEntry {
@@ -71,9 +73,9 @@ impl ViewEntry {
             })
             .expect("a batch's block holds its entries")
         });
-        // A guest whose placement no word maps (an embedder's segments, a string's normalized pieces): each position's
-        // span placed as the host places it (`Locs::place`), the table the `Loc` views read.
-        let placed = Self::locs(p).and_then(|x| x.host.as_ref()).filter(|(_, place)| !matches!(place, Placement::Copied { .. } | Placement::At(_))).map(|(_, place)| {
+        // A string's normalized pieces, which no word maps: each position's span placed as the host places it
+        // (`Locs::place`), the table the `Loc` views read.
+        let placed = Self::locs(p).and_then(|x| x.host.as_ref()).filter(|(_, place)| matches!(place, Placement::Mapped { .. })).map(|(_, place)| {
             let n = p.locs() as usize;
             // copy: derived (each position's host span, computed once from the guest's placement; no block holds it)
             Cells::build(block, n.max(1), |out| {
@@ -84,6 +86,20 @@ impl ViewEntry {
                 n
             })
             .expect("a batch's block holds its entries")
+        });
+        // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
+        // in the batch's block beside the entry)
+        let segments = Self::locs(p).and_then(|x| match &x.host {
+            Some((_, Placement::Segments(map))) => Some(
+                Cells::build(block, (map.words().count() * 5).max(1), |out| {
+                    for (k, w) in map.words().flatten().enumerate() {
+                        out[k] = w;
+                    }
+                    map.words().count() * 5
+                })
+                .expect("a batch's block holds its entries"),
+            ),
+            _ => None,
         });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
@@ -129,21 +145,26 @@ impl ViewEntry {
                             (*d).placement = rerail_clif::view_reads::PLACED_AT;
                             ((*d).within_lo, (*d).within_hi) = (at[0], at[1]);
                         }
+                        (Placement::Segments(_), _) => {
+                            (*d).placement = rerail_clif::view_reads::PLACED_SEGMENTS;
+                            let words = segments.as_ref().expect("an embedder's segments, laid out above");
+                            Run::set(&raw mut (*d).segments, words.as_ptr(), words.len() / 5);
+                        }
                         (_, Some(table)) => {
                             (*d).placement = rerail_clif::view_reads::PLACED_TABLE;
                             Run::set(&raw mut (*d).placed, table.as_ptr(), table.len());
                         }
-                        (_, None) => unreachable!("a placement no word maps has its table"),
+                        (_, None) => unreachable!("a string's normalized pieces have their table"),
                     }
                 }
             }
         }
-        Codes { _kinds: kinds, _fields: fields, _names: names, _placed: placed }
+        Codes { _kinds: kinds, _fields: fields, _names: names, _placed: placed, _segments: segments }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's
-    /// lines, by its placement (a copied stretch, a point) or, where no word maps it, by its spans placed
-    /// (`ViewDoc::placed`).
+    /// lines, by its placement: a copied stretch, a point, an embedder's segments (`ViewDoc::segments`), or a
+    /// string's normalized pieces, by its spans placed (`ViewDoc::placed`).
     pub fn locs(p: &Projected) -> Option<&super::Locs> {
         p.extra.as_deref()
     }

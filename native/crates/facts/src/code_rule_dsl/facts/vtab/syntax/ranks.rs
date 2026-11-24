@@ -7,7 +7,7 @@
 //! so:
 //! - a local id is a node's rank among the numbered nodes (`rank`), and a tape node's local id is its rank when its bit
 //!   is set (`local`);
-//! - the tape node of a local id is a select (`select`): a sample gives the group of every 64th item, and the bits from
+//! - the tape node of a local id is a select (`select`): a sample gives the group of every `SAMPLE`-th item (16), and the bits from
 //!   there;
 //! - a pass over the nodes walks the set bits (`iter`).
 //!
@@ -256,6 +256,15 @@ impl Ranks {
     pub fn select(&self, item: Item, r: u32) -> Option<u32> {
         // SAFETY: as `is`.
         let x = unsafe { self.numbering().select(item as u32, r) };
+        (x != rerail_clif::ids::NONE).then_some(x)
+    }
+
+    /// `select`, from the group in `hint` where it is near (`num_select`'s `Numbering::select_near`): probes in key
+    /// order.
+    #[inline]
+    pub fn select_near(&self, item: Item, r: u32, hint: &mut u32) -> Option<u32> {
+        // SAFETY: as `is`.
+        let x = unsafe { self.numbering().select_near(item as u32, r, hint) };
         (x != rerail_clif::ids::NONE).then_some(x)
     }
 

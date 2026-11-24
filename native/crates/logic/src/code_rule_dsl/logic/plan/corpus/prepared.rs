@@ -474,7 +474,10 @@ fn prepared_from(
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
-            crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?
+            let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?;
+            // No relation is cross-file without a declaration (decision 0652).
+            crate::code_rule_dsl::typing::file_local::crossings_checked(&split)?;
+            split
         }
     };
     // The memo's strata, when the program was kept with them; else the first run makes them.

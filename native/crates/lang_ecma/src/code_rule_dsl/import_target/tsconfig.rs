@@ -10,7 +10,7 @@ use super::path;
 type Entries = Vec<(String, Json)>;
 
 /// How many `extends` a configuration chain follows.
-const MAX_EXTENDS_DEPTH: usize = 8;
+use rerail_lang::code_rule_dsl::tsconfig::MAX_EXTENDS_DEPTH;
 
 /// A file's project configuration: where it is, and its merged `compilerOptions`.
 pub(crate) struct Tsconfig {
@@ -103,79 +103,26 @@ fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
     Some(options)
 }
 
-/// get-tsconfig's `resolveExtendsPath`: a relative or absolute path (`.json` appended where it
-/// names no file), or a package's configuration in a `node_modules` folder at or above
-/// `directory` (its `tsconfig` field, or the subpath it names, else its `tsconfig.json`). An
-/// absolute path is one `path.isAbsolute` reads as one where Rerail runs: on Windows a drive or
-/// UNC path too (`path::platform_absolute`).
+/// The view's files, as the shared `extends` resolver reads them (decision 0670).
+impl rerail_lang::code_rule_dsl::tsconfig::ConfigFiles for View {
+    fn base(&self) -> &str {
+        View::base(self)
+    }
+    fn is_file(&self, path: &str) -> bool {
+        View::is_file(self, path)
+    }
+    fn is_directory(&self, path: &str) -> bool {
+        View::is_directory(self, path)
+    }
+    fn real_path(&self, path: &str) -> String {
+        View::real_path(self, path)
+    }
+    fn text(&self, path: &str) -> Option<String> {
+        View::text(self, path).map(|text| text.as_str().to_owned())
+    }
+}
+
+/// get-tsconfig's `resolveExtendsPath` (`tsconfig::extends_path`).
 fn extends_path(view: &View, extends: &str, directory: &str) -> Option<String> {
-    let mut target = if extends == ".." {
-        "../tsconfig.json".to_owned()
-    } else {
-        extends.to_owned()
-    };
-    if target.starts_with('.') {
-        target = path::resolve(directory, &target);
-    } else if let Some(absolute) = path::platform_absolute(&target) {
-        target = absolute;
-    }
-    if target.starts_with('/') {
-        if view.is_file(&target) {
-            return Some(target);
-        }
-        if !target.ends_with(".json") && view.is_file(&format!("{target}.json")) {
-            return Some(format!("{target}.json"));
-        }
-        return None;
-    }
-    let mut parts = extends.splitn(2, '/');
-    let first = parts.next()?;
-    let rest = parts.next().unwrap_or("");
-    let (package, subpath) = if first.starts_with('@') {
-        let mut scoped = rest.splitn(2, '/');
-        let name = scoped.next().unwrap_or("");
-        (
-            format!("{first}/{name}"),
-            scoped.next().unwrap_or("").to_owned(),
-        )
-    } else {
-        (first.to_owned(), rest.to_owned())
-    };
-    let mut search = directory.to_owned();
-    let folder = loop {
-        let candidate = path::join(&search, &format!("node_modules/{package}"));
-        if view.is_directory(&candidate) {
-            break view.real_path(&candidate);
-        }
-        if search == view.base() || search == "/" {
-            return None;
-        }
-        search = path::dirname(&search).to_owned();
-    };
-    let manifest = path::join(&folder, "package.json");
-    if subpath.is_empty()
-        && let Some(Ok(json)) = view.json(&manifest)
-        && let Some(field) = json.get("tsconfig").and_then(Json::as_str)
-    {
-        let named = path::join(&folder, field);
-        if view.is_file(&named) {
-            return Some(named);
-        }
-    }
-    let named = path::join(
-        &folder,
-        if subpath.is_empty() {
-            "tsconfig.json"
-        } else {
-            &subpath
-        },
-    );
-    if !named.ends_with(".json") && view.is_file(&format!("{named}.json")) {
-        return Some(format!("{named}.json"));
-    }
-    if view.is_file(&named) {
-        return Some(named);
-    }
-    let nested = path::join(&named, "tsconfig.json");
-    view.is_file(&nested).then_some(nested)
+    rerail_lang::code_rule_dsl::tsconfig::extends_path(view, extends, directory)
 }

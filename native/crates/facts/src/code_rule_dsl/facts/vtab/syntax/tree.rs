@@ -15,8 +15,8 @@
 //! for one is refused when it is compiled.
 //!
 //! ```text
-//! visit_index(n, i)            n's place in the language's visit order, from 0 per document: CPython's `ast`
-//!                              order in a Python document, the tape's elsewhere
+//! visit_index(n, i)            n's place in the language's visit order, a key per document that compares in it
+//!                              (`keys_by_run`): CPython's `ast` order in a Python document, the tape's elsewhere
 //! ```
 //!
 //! Outside Python the order is the tape's: a node, then its children in order, so start offset, an ancestor before
@@ -140,6 +140,35 @@ impl Tree {
             out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
         }
         out
+    }
+}
+
+/// `visit_index`'s values for one document, `order` its nodes' local ids in visit order and `out` each one's place
+/// from 0 (as `visit_order` gives them): the rank of its *run*, a stretch of nodes consecutive in the visit order that
+/// are one granule's (its id's slot, `slot`), then its index among its granule's nodes in that order (decision 0121's
+/// key, in the language's visit order rather than preorder). An edit inside a granule moves no other granule's
+/// values; one that adds or removes a granule moves the ranks after it. Past the key's bits (more runs, or a
+/// granule's more nodes), the places from 0 stay: one scheme a document, so its values still compare.
+pub fn keys_by_run(order: &[u32], slot: impl Fn(u32) -> u32, out: &mut [u32]) {
+    use rerail_clif::ids::ORDER_INDEX_BITS;
+    let mut index: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    let (mut rank, mut last) = (0u32, None);
+    for (k, &l) in order.iter().enumerate() {
+        let s = slot(l);
+        if last.is_some_and(|x| x != s) {
+            rank += 1;
+        }
+        last = Some(s);
+        let i = index.entry(s).or_default();
+        if rank >> (32 - ORDER_INDEX_BITS) != 0 || *i >> ORDER_INDEX_BITS != 0 {
+            // Past the key's bits: every place from 0 again.
+            for (k, &l) in order[..k].iter().enumerate() {
+                out[l as usize] = k as u32;
+            }
+            return;
+        }
+        out[l as usize] = rank << ORDER_INDEX_BITS | *i;
+        *i += 1;
     }
 }
 

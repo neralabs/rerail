@@ -396,6 +396,48 @@ fn a_views_probes_read_through_a_cursor_are_its_lookups_and_rows() {
     assert!(tried >= 6, "views read as found: {tried}");
 }
 
+/// A view's membership test (`Source::test_at`, a membership step's `kind(n, k)`) is what its rows say: for every view
+/// that has the test, by its key column with each other column, every row's own values are held and a value no row
+/// of that key has is not, probed in key order, back and strided through one cursor; a node id no view has is not
+/// held; and the test keeps no state but its cursor's.
+#[test]
+fn a_views_membership_test_is_its_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("test-at")).unwrap();
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        let (n, width) = (source.len(), source.columns().len());
+        if n == 0 || width < 2 {
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        if source.test_at(0, source.value(0, 0), &[1], &[source.value(0, 1)], &mut cursor).is_none() {
+            continue;
+        }
+        // One cursor through each order: its hints (the document, the slot entry, the select's group) found again,
+        // kept, or left behind, the answers the same.
+        let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
+        for (other, order) in (1..width).flat_map(|c| orders.iter().map(move |o| (c, o))) {
+            let mut cursor = ProbeCursor::default();
+            for &r in order {
+                let (key, v) = (source.value(r, 0), source.value(r, other));
+                let rows = source.lookup(0, &[key]).expect("a tested view looks up");
+                let held = |w: i64| rows.iter().any(|&q| source.value(q, other) == w);
+                assert_eq!(source.test_at(0, key, &[other], &[v], &mut cursor), Some(true), "{name} row {r} column {other}");
+                let absent = (v + 1..).find(|&w| !held(w)).unwrap();
+                assert_eq!(source.test_at(0, key, &[other], &[absent], &mut cursor), Some(false), "{name} row {r} column {other}: {absent}");
+            }
+            let all: Vec<usize> = (1..width).collect();
+            let want: Vec<i64> = all.iter().map(|&c| source.value(n / 2, c)).collect();
+            assert_eq!(source.test_at(0, source.value(n / 2, 0), &all, &want, &mut cursor), Some(true), "{name}: every column at once");
+        }
+        let past = (0..n).map(|r| source.value(r, 0)).max().unwrap() + 1;
+        assert_eq!(source.test_at(0, past, &[1], &[source.value(0, 1)], &mut cursor), Some(false), "{name}: an id past every node's");
+        tried += 1;
+    }
+    assert!(tried >= 2, "views with a membership test: {tried}");
+}
+
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
@@ -513,6 +555,28 @@ fn visit_index_outside_python_is_the_tape_order() {
     assert_eq!(index("program"), 0);
     let (x, y) = (index("pair'x: 1'"), index("pair'y: 2'"));
     assert!(index("object'{ x: 1, y: 2 }'") < x && x < index("property_identifier'x'") && x < y, "{:?}", rows["visit_index"]);
+}
+
+/// `visit_index` is a key of the visit order by granule run (decision 0121's, in visit order): an edit inside one
+/// function moves no other function's values, and they still compare in CPython's order (a decorator after its
+/// definition's body).
+#[test]
+fn visit_index_keys_stay_outside_the_edited_granule() {
+    let source = |extra: &str| format!("def f(a):\n    b = a{extra}\n    return b\n\n@dec\ndef g(x):\n    return x + 1\n");
+    let keys = |src: String| -> std::collections::BTreeMap<String, i64> {
+        let rows = core_rows(vec![document(1, "m.py", "python", &src)]);
+        rows["visit_index"].iter().filter_map(|r| { let (n, i) = r.rsplit_once(' ')?; Some((n.to_owned(), i.parse().ok()?)) }).collect()
+    };
+    let (before, after) = (keys(source("")), keys(source("\n    c = b * 2")));
+    let of_g: Vec<&String> = before.keys().filter(|n| n.contains("x + 1") || n.contains("dec") || n.ends_with("'x'") || n.contains("(x)")).collect();
+    assert!(of_g.len() >= 4, "{before:?}");
+    for n in &of_g {
+        assert_eq!(before[*n], after[*n], "{n}: g's nodes keep their values when f is edited");
+    }
+    assert!(after.keys().any(|n| n.contains("b * 2")), "{after:?}");
+    let at = |m: &std::collections::BTreeMap<String, i64>, n: &str| m.iter().find(|(k, _)| k.as_str() == n).map(|(_, v)| *v).unwrap_or_else(|| panic!("no {n}: {m:?}"));
+    assert!(at(&after, "binary_operator'x + 1'") < at(&after, "decorator'@dec'"), "a decorator after its definition's body: {after:?}");
+    assert!(at(&after, "binary_operator'b * 2'") < at(&after, "binary_operator'x + 1'"), "f's nodes before g's: {after:?}");
 }
 
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
@@ -2822,6 +2886,36 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
     assert_eq!(tried, 4 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
+/// An embedder's guest is placed by its segments (`PLACED_SEGMENTS`, `ViewDoc::segments`) in the Rust reads as
+/// `Placement::host` places it: `SegmentMap::file_ranges(s..e).primary()`, for every span of the program. The views'
+/// parity test reads files alone, so a placement it never reads went unread: the Rust reads clamped an embedder's
+/// spans as a copied stretch's, into an empty `within`, and a warm edit's guest read its file's first line.
+#[test]
+fn the_rust_reads_place_an_embedders_spans_as_its_segments_do() {
+    use crate::code_rule_dsl::embed::segments::SegmentMap;
+    use rerail_tape_format::view_reads::{Doc, Tape};
+    let mut map = SegmentMap::new();
+    // Copied, written over another anchor, an empty one, copied again, and a written one inside the first's anchor.
+    map.push(0, 10, 100..110, true, false);
+    map.push(10, 13, 200..205, false, false);
+    map.push(13, 13, 300..300, false, false);
+    map.push(13, 30, 120..137, true, false);
+    map.push(30, 34, 104..106, false, false);
+    map.index();
+    let words: Vec<[u32; 5]> = map.words().collect();
+    let mut entry = Box::new(rerail_clif::view_reads::ViewDoc { placement: rerail_clif::view_reads::PLACED_SEGMENTS, ..Default::default() });
+    // SAFETY: the run points at `words`, which outlive every read of the entry below.
+    unsafe { rerail_clif::ids::Run::set(&raw mut entry.segments, words.as_ptr(), words.len()) };
+    let view = rerail_clif::view::TapeView::default();
+    let doc = Doc { entry: &entry, tape: Tape::new(&[], &view, std::ptr::null()), lines: &[], source: &[] };
+    for s in 0..=36u32 {
+        for e in s..=36u32 {
+            let want = map.file_ranges(s as usize..e as usize).primary();
+            assert_eq!(doc.placed((s, e)), (want.start as u32, want.end as u32), "program bytes {s}..{e}");
+        }
+    }
+}
+
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
@@ -3113,6 +3207,47 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
         assert_eq!(rows(&**s), eager[name], "{name}, made by probes then a scan");
     }
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
+}
+
+/// A made relation's membership test (`Source::test_at` by the column that names its row's document, `text(n, s)`)
+/// is what the eager batch's rows say: every row's own values held, a value no row of that key has not, through one
+/// cursor in row order, each document's group made by the probe that first needs it; another column has no test.
+#[test]
+fn a_made_relations_membership_test_is_its_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("made-test-at")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect()
+    };
+    let reads = ["node", "text", "comment", "op", "str", "name", "child", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let (_, eager, _, _) = Batch::build(&store, docs(), &projection, &[], &[], false).unwrap();
+    let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut tried = 0;
+    for (name, _, s) in made_sources(&probed) {
+        let Some((_, e)) = eager.iter().find(|(n, _)| *n == name) else { continue };
+        let width = e.columns().len();
+        if e.len() == 0 || width < 2 {
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        if s.test_at(0, e.value(0, 0), &[1], &[e.value(0, 1)], &mut cursor).is_none() {
+            assert!(s.test_at(1, e.value(0, 1), &[0], &[e.value(0, 0)], &mut cursor).is_none(), "{name}: no test by another column");
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        for r in 0..e.len() {
+            let key = e.value(r, 0);
+            let others: Vec<usize> = (1..width).collect();
+            let want: Vec<i64> = others.iter().map(|&c| e.value(r, c)).collect();
+            assert_eq!(s.test_at(0, key, &others, &want, &mut cursor), Some(true), "{name} row {r}");
+            let held = |w: i64| (0..e.len()).any(|q| e.value(q, 0) == key && e.value(q, 1) == w);
+            let absent = (e.value(r, 1) + 1..).find(|&w| !held(w)).unwrap();
+            assert_eq!(s.test_at(0, key, &[1], &[absent], &mut cursor), Some(false), "{name} row {r}: {absent}");
+        }
+        tried += 1;
+    }
+    assert!(tried >= 3, "made relations with a membership test: {tried}");
 }
 
 /// Decision 0353: core.rerail's places are the `Loc` view's with span rows only where a span relation is read
@@ -3963,14 +4098,23 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
             want.entry(STRUCTURAL[1]).or_default().insert(vec![n, i64::from(atoms[1])]);
         }
         let Some(dialect) = batch.dialects.get(p.tag()) else { continue };
-        // Every node's digest (`core_rr::digests`, by tape node) and place in CPython's visit order (`tree::visit_order`).
+        // Every node's digest (`core_rr::digests`, by tape node) and key in CPython's visit order (`tree::visit_order`,
+        // keyed by granule run: `tree::keys_by_run`).
         if !batch.docs.withheld(d) {
             let (hash, _) = super::core_rr::digests(f, dialect, true, false);
             for (_, id, n) in p.node_ids() {
                 let h = store.intern_atoms(&[super::core_rr::hex(&hash[id as usize]).as_str()]).unwrap()[0];
                 want.entry(DIGEST).or_default().insert(vec![n, i64::from(h)]);
             }
-            super::tree::visit_order(p, dialect, true, &mut |l, i| _ = want.entry(VISIT).or_default().insert(vec![p.global(l), i64::from(i)]));
+            let (mut order, mut keys) = (Vec::new(), vec![u32::MAX; p.len() as usize]);
+            super::tree::visit_order(p, dialect, true, &mut |l, i| {
+                keys[l as usize] = i;
+                order.push(l);
+            });
+            super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, &mut keys);
+            for &l in &order {
+                want.entry(VISIT).or_default().insert(vec![p.global(l), i64::from(keys[l as usize])]);
+            }
         }
         let mut toks: Vec<(u32, u32, i64)> = p
             .node_ids()

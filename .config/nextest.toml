@@ -35,6 +35,7 @@ default-filter = """not (
   | test(=code_rule_dsl::sql_executor::tests::reductions::dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_contexts)
   | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
   | test(=class_pack::tests::random_needs_are_answered)
+  | test(=code_rule_dsl::tools::pack_split_tests::the_data_layer_is_split_with_its_crossings_declared_policy_by_policy)
   | package(rerail-c-directives)
   | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
 )"""

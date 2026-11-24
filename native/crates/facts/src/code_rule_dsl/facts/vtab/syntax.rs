@@ -1906,6 +1906,10 @@ impl Projected {
     /// The tape node of local id `local` (a select of the rank index).
     #[inline]
     #[cfg_attr(feature = "tape-reads", track_caller)]
+    /// `node`, its group found from `hint` (`Ranks::select_near`): probes in key order.
+    pub fn node_near(&self, local: u32, hint: &mut u32) -> u32 {
+        self.ranks.select_near(Item::Node, local, hint).expect("a local id of the projection")
+    }
     pub fn node(&self, local: u32) -> u32 {
         self.ranks.select(Item::Node, local).expect("a local id of the projection")
     }
@@ -2194,9 +2198,13 @@ impl Projected {
     }
     /// The node or span whose id's low 32 bits are `low` (`global`'s inverse): from the table's numbers, no select.
     pub fn local_of(&self, low: u32) -> Option<u32> {
+        self.local_of_near(low, &mut { rerail_clif::ids::NONE })
+    }
+    /// `local_of`, the slot's entry first looked for at `hint` (`granules::Table::number_of_near`): probes in key order.
+    pub fn local_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
-            Some(d) => d.table.number_of(&self.ranks, low).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            Some(d) => d.table.number_of_near(&self.ranks, low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None => Some(low),
         }
     }
@@ -2213,8 +2221,12 @@ impl Projected {
         self.each_child_node(local, |c, _| f(c));
     }
     /// `each_child`, with each child's tape node: `f(local id, tape node)`.
-    pub fn each_child_node(&self, local: u32, mut f: impl FnMut(u32, u32)) {
-        self.f().each_child(self.node(local), |x| {
+    pub fn each_child_node(&self, local: u32, f: impl FnMut(u32, u32)) {
+        self.each_child_of_node(self.node(local), f);
+    }
+    /// `each_child_node` of the node whose tape node is `x`.
+    pub fn each_child_of_node(&self, x: u32, mut f: impl FnMut(u32, u32)) {
+        self.f().each_child(x, |x| {
             let c = self.local_of_node(x);
             if c != NONE {
                 f(c, x);
@@ -4310,8 +4322,12 @@ impl Batch {
     }
     /// `node`, its document found from `hint` (`doc_near`).
     fn node_near(&self, n: i64, hint: &mut u32) -> Option<(usize, u32)> {
+        self.node_nearer(n, hint, &mut { rerail_clif::ids::NONE })
+    }
+    /// `node_near`, the id's slot entry first looked for at `slot` (`Projected::local_of_near`), checked there.
+    fn node_nearer(&self, n: i64, hint: &mut u32, slot: &mut u32) -> Option<(usize, u32)> {
         let doc = self.doc_near(n >> 32, hint)?;
-        let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
+        let local = self.docs[doc].local_of_near((n & 0xffff_ffff) as u32, slot)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
     }
     /// The document index and node of id `n`.
@@ -4630,6 +4646,23 @@ impl Source for Viewed {
     }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.read_matches(column, value, columns, cursor, each)
+    }
+    /// A node's row by its id, tested (`kind(n, k)`, `node(n, _, k)` bound): its tape node found once, each tested
+    /// column read off the tape and compared as read, the first other value ending it. A view with a row for every
+    /// node alone: no row is found, no values handed on.
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::ProbeCursor) -> Option<bool> {
+        use read_op::*;
+        if column != self.own() || !matches!(self.view, View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End) {
+            return None;
+        }
+        let plan = self.plan_for(column, columns, cursor)?;
+        let b = &*self.batch;
+        // Each hint is checked against this document's tables: another document's gives the same answer.
+        let Some((doc, local)) = b.node_nearer(value, &mut cursor.hint[0], &mut cursor.near[0]) else { return Some(false) };
+        let p = &b.docs[doc];
+        let x = if plan.needs & NEED_X != 0 { p.node_near(local, &mut cursor.near[1]) } else { NONE };
+        let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+        Some(plan.ops[..usize::from(plan.len)].iter().zip(want).all(|(&op, &w)| Self::op_value(b, p, local, x, value, up, Known::default(), op) == w))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)
@@ -4970,7 +5003,12 @@ impl Viewed {
             }
         } else if matches!(self.view, View::Unit) && column == 1 {
             // A unit's nodes, walked on the tape (`Projected::each_of_unit`); the root's are those no unit holds.
-            if let Some((doc, local)) = b.node(v, memo) {
+            // The roots' own rows hold `-1` (the root has no unit): each document's root.
+            if v == -1 {
+                for doc in (0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0) {
+                    one(b.row(self.view, doc, 0));
+                }
+            } else if let Some((doc, local)) = b.node(v, memo) {
                 let p = &b.docs[doc];
                 p.each_of_unit(&b.dialects[p.tag()], local, |l| one(b.row(self.view, doc, l)));
             }
@@ -5017,6 +5055,19 @@ impl Viewed {
     /// probe in key order finds its document and its matches' granule without a search) and the plan of the reads
     /// (`read_op`, made on the step's first probe): a match computes only the inputs the plan needs, the ones the
     /// probe did not bring, then fills each slot from its op.
+    /// The cursor's plan of a match's reads for key `column` and output `columns`, made on the step's first probe.
+    fn plan_for(&self, column: usize, columns: &[usize], cursor: &mut super::ProbeCursor) -> Option<super::ReadPlan> {
+        if !cursor.plan.is_for(column, columns) {
+            let mut plan = super::ReadPlan::new(column, columns)?;
+            for (k, &c) in columns.iter().enumerate() {
+                let (op, needs) = Self::read_op(self.view, c);
+                plan.ops[k] = op;
+                plan.needs |= needs;
+            }
+            cursor.plan = plan;
+        }
+        Some(cursor.plan)
+    }
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         use read_op::*;
         // A place's row by its node or position (`line`, `col`, `docof`, by `n`): its values read off its span, into
@@ -5044,19 +5095,12 @@ impl Viewed {
         }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
         // passed over.
-        if !cursor.plan.is_for(column, columns) {
-            let Some(mut plan) = super::ReadPlan::new(column, columns) else { return false };
-            for (k, &c) in columns.iter().enumerate() {
-                let (op, needs) = Self::read_op(self.view, c);
-                plan.ops[k] = op;
-                plan.needs |= needs;
-            }
-            cursor.plan = plan;
-        }
-        let plan = cursor.plan;
+        let Some(plan) = self.plan_for(column, columns, cursor) else { return false };
         let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
         let cursor_also = cursor.also;
         let [doc_hint, granule] = &mut cursor.hint;
+        // Where the last probe's id was found (`ProbeCursor::near`): checked before use.
+        let [slot_hint, group_hint] = &mut cursor.near;
         let mut vals = [0i64; 8];
         let (firsts, kernel) = (b.firsts(view), self.kernel_view());
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
@@ -5095,14 +5139,14 @@ impl Viewed {
             each(row, &vals[..len]);
         };
         if column == self.own() {
-            if let Some((doc, local)) = b.node_near(value, doc_hint) {
+            if let Some((doc, local)) = b.node_nearer(value, doc_hint, slot_hint) {
                 emit(doc, local, NONE, Some(value), None, Known::default());
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
                 return false;
             }
-            if let Some((doc, local)) = b.node_near(value, doc_hint) {
+            if let Some((doc, local)) = b.node_nearer(value, doc_hint, slot_hint) {
                 // The children's place is the hop's counter and their depth the parent's and one, read once a probe
                 // where the plan reads it. Narrowed to anchors, a node's place counts the nodes under left-out ones too
                 // (`Projected::anchored`): there the place is read as before.
@@ -5126,7 +5170,7 @@ impl Viewed {
                     && !plan.ops[..len].contains(&IDX)
                 {
                     let known = if counted { Known { idx: None, depth: Some(depth), prev: None } } else { Known::default() };
-                    p.f().each_child_field(p.node(local), |x, code| {
+                    p.f().each_child_field(p.node_near(local, group_hint), |x, code| {
                         if i64::from(field_atom(p.tag(), code)) == f {
                             let c = p.local_of_node(x);
                             if c != NONE {
@@ -5137,7 +5181,7 @@ impl Viewed {
                     return true;
                 }
                 let mut i = 0;
-                p.each_child_node(local, |c, x| {
+                p.each_child_of_node(p.node_near(local, group_hint), |c, x| {
                     if at.is_some_and(|a| a != i) || field.is_some_and(|f| i64::from(field_atom(p.tag(), p.f().field(x))) != f) {
                         i += 1;
                         return;
@@ -5165,7 +5209,11 @@ impl Viewed {
                 });
             }
         } else if matches!(self.view, View::Unit) && column == 1 {
-            // A unit's nodes, walked on the tape: each match with its local id.
+            // A unit's nodes, walked on the tape: each match with its local id. The roots' rows (`-1`) are the row
+            // lookup's, as a parent's `-1` is.
+            if value == -1 {
+                return false;
+            }
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 let p = &b.docs[doc];
                 p.each_of_unit(&b.dialects[p.tag()], local, |l| emit(doc, l, NONE, None, None, Known::default()));

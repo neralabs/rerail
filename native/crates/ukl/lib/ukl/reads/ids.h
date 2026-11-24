@@ -208,7 +208,7 @@ UKL_COLD uint32_t clif_num_select(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,
   uint64_t v13=v10+v12;
   uint64_t v14=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+v13)));
   uint64_t v15=v13+v14;
-  uint32_t v16=((uint32_t)((uint32_t)(v2)>>(((uint32_t)(6))&31u)));
+  uint32_t v16=((uint32_t)((uint32_t)(v2)>>(((uint32_t)(4))&31u)));
   uint64_t v17=((uint64_t)(v16));
   uint64_t v18=v17*((uint64_t)(4ul));
   uint64_t v19=v15+v18;

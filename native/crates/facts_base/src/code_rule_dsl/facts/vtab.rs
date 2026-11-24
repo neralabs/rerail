@@ -136,6 +136,9 @@ pub struct ProbeCursor {
     /// A second key column's value of this probe, `(column, value)`, which the source may keep its matches to (a
     /// child by its place: `child(p, c, i)` by `p` and `i`). A hint too: the caller checks every key column.
     pub also: Option<(usize, i64)>,
+    /// Where the last probe's id was found in its document (a view of the tape): its slot's entry in the granule
+    /// table, and its select's group. Hints, checked before use; any value gives the same rows.
+    pub near: [u32; 2],
 }
 
 /// A source's plan of a probe's reads (`ProbeCursor::plan`): for the key column and output columns it was made for, one
@@ -309,6 +312,12 @@ pub trait Source: Send + Sync {
     /// checked, never trusted: any value gives the same rows.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
+    }
+    /// Whether some row with `value` in `column` has `want` in `columns` (a membership step's test, `exists`), read
+    /// as `lookup_read_at` would find it, without a row or its values handed on: `None` where the source has no such
+    /// test (the caller reads the matches instead).
+    fn test_at(&self, _column: usize, _value: i64, _columns: &[usize], _want: &[i64], _cursor: &mut ProbeCursor) -> Option<bool> {
+        None
     }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's

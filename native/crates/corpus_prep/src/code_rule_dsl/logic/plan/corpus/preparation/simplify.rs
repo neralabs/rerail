@@ -634,6 +634,11 @@ impl Value {
 /// facts and no rules (`guest_policy("library", "off")`, a library's setting) holds or not. A positive one that holds,
 /// or a negated one that does not, is dropped from its body; a rule with one that cannot hold goes. The rows are the
 /// facts only when some are stated and no rule, input or engine relation adds to them.
+///
+/// The run's own relations (`file_local::run_stated`: its options and its settings, decision 0665) are stated whole
+/// once the run gives them as facts, none or some: `env("python.venv", e)` of a run with no settings cannot hold.
+/// A test of variables too is decided where no row has its constants: `option_item("pydocstyle.ignore-decorators",
+/// _, q)` of a run that lists no decorator cannot hold, whatever `q`; one that has such a row is left to the run.
 #[derive(Default)]
 pub struct DecidedFactTests(pub usize);
 
@@ -643,7 +648,9 @@ impl ProgramPass for DecidedFactTests {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
         let derived: HashSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
-        let stated = |rel: &str| f.has_facts(rel) && !derived.contains(rel) && !fixed(&f, rel) && !(f.is_input(rel) || f.native(rel).is_some());
+        let stated = |rel: &str| {
+            (f.has_facts(rel) || crate::code_rule_dsl::typing::file_local::run_stated(rel)) && !derived.contains(rel) && !fixed(&f, rel) && !(f.is_input(rel) || f.native(rel).is_some())
+        };
         // Per rule: `None` where it goes, else the literals that go.
         let mut decided: Vec<Option<HashSet<u32>>> = Vec::new();
         let mut any = false;
@@ -656,8 +663,12 @@ impl ProgramPass for DecidedFactTests {
                 if !stated(rel) {
                     continue;
                 }
-                let Some(row) = a.args().map(cell_of).collect::<Option<Vec<Cell>>>() else { continue };
-                let present = f.facts(rel).is_some_and(|x| x.rows().any(|r| r.eq(row.iter().copied())));
+                let row: Vec<Option<Cell>> = a.args().map(cell_of).collect();
+                let present = f.facts(rel).is_some_and(|x| x.rows().any(|r| r.zip(&row).all(|(c, t)| t.is_none_or(|t| c == t))));
+                // A test of variables that some row has its constants is left to the run.
+                if present && row.iter().any(Option::is_none) {
+                    continue;
+                }
                 if present != a.neg() {
                     drop.insert(l.node());
                 } else {
@@ -703,8 +714,32 @@ impl ProgramPass for DecidedFactTests {
             }
             emptied = empty_among(&alive, before);
         }
+        // A request the world answers keeps its rules as written where none would be left: they hold no row, and
+        // the world's answer reads its table (decision 0665: with no `env`, `rr_file_req` of `pyvenv.cfg`).
+        let engine_asks = |rel: &str| request(rel) || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(_, q)| *q == rel);
+        let live_now = live(&alive);
+        for (i, r) in rules.iter().enumerate() {
+            let head = v.rel_name(r.head().rel());
+            if !alive[i] && engine_asks(head) && !live_now.contains(head) {
+                alive[i] = true;
+                drops[i].clear();
+            }
+        }
+        // An output whose every rule went is the run's still, with no row: an empty fact list, as an empty folded
+        // constant is, so every path makes its table (a constants' run's copy of a constant of the settings).
+        let outputs: HashSet<String> = v.output_names().into_iter().collect();
+        let live_now = live(&alive);
+        let emptied: BTreeSet<String> = rules
+            .iter()
+            .map(|r| v.rel_name(r.head().rel()))
+            .filter(|h| outputs.contains(*h) && !live_now.contains(*h) && f.facts(h).is_none())
+            .map(str::to_owned)
+            .collect();
         let input = w.input().clone();
         let b = w.derive()?;
+        for rel in &emptied {
+            b.fields().set_facts(rel, &[]);
+        }
         for ((r, keep), drop) in input.rules().zip(alive).zip(drops) {
             if !keep {
                 continue;
@@ -1210,20 +1245,62 @@ impl ProgramPass for InlineFilters {
                 }
             }
         };
+        // A computed view: one rule whose positive atoms of other relations (its domain) bind what its comparisons
+        // test, and whose head is computed from them: a call in the head (`cc_trim(raw, @replace_all(raw, …))`), or a
+        // head variable a comparison defines (`ca_split(r, h, t) :- ca_dotted(_, r), @rx(r, p) = 1, h = @rx_group(r,
+        // p, 1), …`; decision 0649).
         let computed = |rules: &[RuleRef<'_>]| -> bool {
             let [r] = rules else { return false };
             let mut bound = BTreeSet::new();
+            let mut atoms = 0;
+            let head = head_slots(*r);
             for l in r.body() {
-                if let Lit::Atom(a) = l.view() {
-                    bound.extend(atom_slots(a));
+                match l.view() {
+                    // Each domain atom shares a variable with the head, so a copy reads it keyed by what its reader
+                    // binds. One that shares none (`note(v) :- comment(_, w), v = @replace_all(w, …)`) would copy a
+                    // scan of every document's rows into each reader: a join of two documents (decision 0665).
+                    Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel() && atom_slots(a).iter().all(|x| !head.contains(x)) => return false,
+                    Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel() => {
+                        bound.extend(atom_slots(a));
+                        atoms += 1;
+                    }
+                    Lit::Cmp { .. } => {}
+                    _ => return false,
                 }
             }
-            r.head().args().any(|t| matches!(t, TermRef::Call(..))) && r.body().count() > 0 && r.body().all(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel())) && head_slots(*r).is_subset(&bound)
+            if atoms == 0 {
+                return false;
+            }
+            let from_domain = bound.clone();
+            // Each `$x = term` of bound slots binds `$x`, in any order.
+            loop {
+                let before = bound.len();
+                for l in r.body() {
+                    if let Lit::Cmp { l: lt, op: CmpOp::Eq, r: rt } = l.view() {
+                        for (x, e) in [(lt, rt), (rt, lt)] {
+                            let mut of = BTreeSet::new();
+                            term_slots(e, &mut of);
+                            if let TermRef::Var(s) = x
+                                && of.is_subset(&bound)
+                            {
+                                bound.insert(s);
+                            }
+                        }
+                    }
+                }
+                if bound.len() == before {
+                    break;
+                }
+            }
+            let cmps_bound = r.body().all(|l| !matches!(l.view(), Lit::Cmp { .. }) || lit_slots(l).is_subset(&bound));
+            let computes = r.head().args().any(|t| matches!(t, TermRef::Call(..))) || !head.is_subset(&from_domain);
+            computes && cmps_bound && head.is_subset(&bound)
         };
         let mut rules_of: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
         for r in v.rules() {
             rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
         }
+        let computed_rels: BTreeSet<&str> = rules_of.iter().filter(|(_, rules)| computed(rules)).map(|(rel, _)| *rel).collect();
         let core = crate::code_rule_dsl::logic::plan::keeps::core_names();
         let mut candidates: BTreeSet<&str> = rules_of
             .iter()
@@ -1243,6 +1320,8 @@ impl ProgramPass for InlineFilters {
             for l in r.body() {
                 match l.view() {
                     Lit::Atom(a) if !a.neg() && a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) && a.rel() != r.head().rel() => {}
+                    // A computed view's column read as `_` is computed and dropped (its domain is the reader's).
+                    Lit::Atom(a) if !a.neg() && computed_rels.contains(rel_of(a)) && a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Wild)) && a.rel() != r.head().rel() => {}
                     Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
                         candidates.remove(rel_of(a));
                     }
@@ -1265,6 +1344,10 @@ impl ProgramPass for InlineFilters {
                 }
             }
             def.body().all(|l| {
+                // A comparison is the view's function, copied as it is; its atoms are its domain.
+                if matches!(l.view(), Lit::Cmp { .. }) {
+                    return true;
+                }
                 let Lit::Atom(a) = l.view() else { return false };
                 let want: Vec<Tm> = a
                     .args()
@@ -1335,6 +1418,8 @@ impl ProgramPass for InlineFilters {
                         (TermRef::Var(s), TermRef::Var(x)) if to.get(v.text(def.var(s))) == Some(&format!("{}_f{fresh}", v.text(def.var(s)))) => {
                             to.insert(v.text(def.var(s)).to_owned(), placed_name(v, &read_p, x));
                         }
+                        // A column read as `_`: the definition's variable stays its own.
+                        (TermRef::Var(_), TermRef::Wild) => {}
                         (TermRef::Var(s), rt) => inlined.push(FLit::Eq { reader: read_p.owner, l: rt, r: Tm::Var(to[v.text(def.var(s))].clone()) }),
                         _ => {}
                     }
@@ -1342,7 +1427,7 @@ impl ProgramPass for InlineFilters {
                 let to = Arc::new(to);
                 inlined.extend(def.body().map(|lit| FLit::Placed(Placed { owner: def, lit, to: Some(to.clone()) })));
                 for (h, rt) in def.head().args().zip(read.args()) {
-                    if !matches!(h, TermRef::Var(_)) {
+                    if !matches!(h, TermRef::Var(_)) && !matches!(rt, TermRef::Wild) {
                         let m = to.clone();
                         let h = Tm::of(v, def, h).renamed(&|x| m.get(x).cloned());
                         inlined.push(FLit::Eq { reader: read_p.owner, l: rt, r: h });

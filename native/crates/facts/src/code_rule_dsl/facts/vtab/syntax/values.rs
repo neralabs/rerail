@@ -831,6 +831,35 @@ impl Source for Layered {
         }
         true
     }
+    /// The base's test; where the relation has parts that may hold the value, `None` (the matches are read).
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return self.base.test_at(column, value, columns, want, cursor);
+        }
+        let all = self.values.parts.load();
+        let Some(p) = all.get(&self.name).filter(|p| p.total > 0) else {
+            return self.base.test_at(column, value, columns, want, cursor);
+        };
+        if self.made.is_some() {
+            return None;
+        }
+        if self.base.test_at(column, value, columns, want, cursor)? {
+            return Some(true);
+        }
+        // Each part that may hold the value, read as `lookup_read_at` reads it (a value's rows are few).
+        let mut found = false;
+        p.of(value, self.base.keys_documents(column), &mut |part| {
+            if found {
+                return;
+            }
+            let mut each = |_: usize, got: &[i64]| found |= got == want;
+            if !part.src.lookup_read(column, value, columns, &mut each) {
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                found = rows.into_iter().any(|r| columns.iter().zip(want).all(|(&c, &w)| part.src.value(r, c) == w));
+            }
+        });
+        Some(found)
+    }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
     }

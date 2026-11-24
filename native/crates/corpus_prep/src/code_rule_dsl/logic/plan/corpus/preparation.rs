@@ -38,6 +38,64 @@ impl<F: FnMut(&Version) -> Result<(), String>> ProgramPass for Check<F> {
     }
 }
 
+/// Every head variable of every rule is bound in its body: by a positive atom, a matched pattern or a nearest, a
+/// comparison that defines it from bound terms (`Body::cmp_binds`), or an aggregate's result. A variable named only in a
+/// negation, or not at all, has no value: the rule's rows are not the rule's meaning, and its finding has no place
+/// (decision 0652: a `$$$X` captures nothing, and RUF016's fallback read its `I` from a negation alone).
+pub fn head_bound(v: &Version) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars, term_vars};
+    use crate::code_rule_dsl::logic::program_image::Lit as L;
+    let mut wrong = Vec::new();
+    for rule in v.rules() {
+        // An aggregate's context (`rr_ctx…`) names the outer rule's variables, some of which the outer rule binds.
+        if crate::code_rule_dsl::logic::rr::aggregate_demand::helper(v.rel_name(rule.head().rel())) {
+            continue;
+        }
+        let lits: Vec<_> = rule.body().collect();
+        let mut bound = VarSet::new();
+        let mut rest = Vec::new();
+        for l in &lits {
+            match l.view() {
+                L::Atom(a) if !a.neg() => bound.extend(&lit_vars(*l)),
+                L::Nearest { .. } | L::Ast { .. } => bound.extend(&lit_vars(*l)),
+                L::Agg { var, .. } => {
+                    bound.insert(var);
+                }
+                L::Cmp { .. } => rest.push(*l),
+                L::Atom(_) => {}
+            }
+        }
+        let body = Body::of(v, rule);
+        loop {
+            let before = rest.len();
+            rest.retain(|l| match l.view() {
+                // `x = t` or `t = x`: either side defines the other.
+                L::Cmp { l: a, op, r } => match body.cmp_binds(a, op, r, &bound).or_else(|| body.cmp_binds(r, op, a, &bound)) {
+                    Some(new) => {
+                        bound.extend(&new);
+                        false
+                    }
+                    None => true,
+                },
+                _ => false,
+            });
+            if rest.len() == before {
+                break;
+            }
+        }
+        let mut head = VarSet::new();
+        rule.head().args().for_each(|t| term_vars(t, &mut head));
+        let free: Vec<&str> = head.minus(&bound).iter().map(|s| v.text(rule.var(s))).collect();
+        if !free.is_empty() {
+            wrong.push(format!("  {}: {} bound by no positive literal\n      {}", v.rel_name(rule.head().rel()), free.iter().map(|x| format!("${x}")).collect::<Vec<_>>().join(", "), v.show_rule(rule).chars().take(400).collect::<String>()));
+        }
+    }
+    if wrong.is_empty() {
+        return Ok(());
+    }
+    Err(format!("{} rule(s) leave a head variable unbound: give each a value in a positive literal, or leave it out of the head:\n{}", wrong.len(), wrong.join("\n")))
+}
+
 /// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one). A node read
 /// (`typing::file_local::reads_a_node`) reads the long-text nodes' binding, though no atom names it.
 pub struct InputsRead;
@@ -327,6 +385,7 @@ pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: imp
     let mut nearest = Nearest::default();
     p.rules(&mut nearest);
     p.program(&mut Check(bound));
+    p.program(&mut Check(head_bound));
     // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
     let mut pushed = crate::code_rule_dsl::typing::file_local::PushLocalJoins::default();
     p.program(&mut pushed);

@@ -252,6 +252,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // The dispatch queue each nameless system thread was seen serving: the profiler's registry of the process's
+    // threads, for its report's labels; no reusable results.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
+    // The run's frame keys while the run is under way (`reuse::Naming`, K4), for its manifest to name: the run's own
+    // binding, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a

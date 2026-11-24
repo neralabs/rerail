@@ -247,7 +247,6 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
-    #[path = "cpython"]
     pub mod cpython {
         pub use rerail_cpython::code_rule_dsl::cpython::*;
         // Parity with real CPython (ignored tests): it reads the facts and the pack, so it is the pack's.

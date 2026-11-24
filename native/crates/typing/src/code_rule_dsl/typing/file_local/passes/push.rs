@@ -301,10 +301,25 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 if node_groups(v, f, rule, &atoms, &equal).len() > 1 {
                     continue;
                 }
+                // The comparisons and negations the component takes with it (those over its variables alone): they
+                // filter its rows in the chunk.
+                let goes_with = |l: LitRef<'_>| match l.view() {
+                    L::Cmp { .. } => true,
+                    L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && local.contains(rel(&a)))),
+                    _ => false,
+                };
+                let filtered = body.iter().enumerate().any(|(j, l)| {
+                    let lv = lit_vars(v, rule, *l);
+                    !lits.contains(&j) && goes_with(*l) && !lv.is_empty() && lv.is_subset(&vars)
+                });
                 let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
                 let rest: Vec<&AtomRef<'v>> = atoms.iter().filter(|a| !attribute(a)).collect();
+                // One plain atom and lookups of its nodes' attributes (`child(p, f, _), text(p, s)`) is a row a node the
+                // cross part reads as well where it is: left, unless a test of its variables goes with it
+                // (`!bound(p, s)`), which the chunk answers and the cross part would otherwise read whole.
                 if let [a] = rest[..]
                     && !must
+                    && !filtered
                     && plain(v, rule, *a)
                 {
                     let own: BTreeSet<String> = a.args().filter_map(|t| t.var()).map(|s| name(v, rule, s)).collect();
@@ -326,13 +341,8 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     continue;
                 }
                 for (j, l) in body.iter().enumerate() {
-                    let with = match l.view() {
-                        L::Cmp { .. } => true,
-                        L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && local.contains(rel(&a)))),
-                        _ => false,
-                    };
                     let lv = lit_vars(v, rule, *l);
-                    if with && !lv.is_empty() && lv.is_subset(&vars) {
+                    if goes_with(*l) && !lv.is_empty() && lv.is_subset(&vars) {
                         lits.insert(j);
                     }
                 }
@@ -465,7 +475,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             return Ok(None);
         }
         program.extend(helpers);
-        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
+        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), strategy: Vec::new(), nullary: Vec::new() };
         let split_span = crate::code_rule_dsl::logic::profile::span(|| "the round's program, split again".into());
         let (candidate, split) = super::candidate(v, &round)?;
         drop(split_span);

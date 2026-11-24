@@ -17,8 +17,9 @@
 .violation child_content(at: span, d: symbol) code "vue/no-child-content"
     "Child content is disallowed because it will be overwritten by the v-{d} directive."
     suppress eslint "vue/no-child-content"
+// e's kinds (vel_kind) said where match reads it: its tree's spans of those kinds.
 child_content(x, d) :- vdir(e, _, d, _), overwrites(d), vel_closed(e), child(e, c, _), content(c),
-    match("<(?:[^\"'>]|\"[^\"]*\"|'[^']*')*>(?<x>[\\s\\S])[\\s\\S]*", e).
+    (kind(e, "element") ; kind(e, "template_element")), match("<(?:[^\"'>]|\"[^\"]*\"|'[^']*')*>(?<x>[\\s\\S])[\\s\\S]*", e).
 .decl overwrites(d: symbol)
 overwrites("html"). overwrites("text").
 overwrites(d) :- option_item("additionalDirectives", _, d).

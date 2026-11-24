@@ -65,7 +65,8 @@ fn directory(label: &str) -> PathBuf {
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let dir = std::env::temp_dir().join(format!("rerail-recovery-{label}-{}-{nonce}-{n}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    // The store's folder is the user's alone, whatever the umask (decision 0574).
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     dir
 }
 
