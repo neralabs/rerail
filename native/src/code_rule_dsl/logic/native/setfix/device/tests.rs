@@ -407,6 +407,77 @@
         assert_eq!(got[0][0], got[1][0], "the CPU's reader after the handed-back closure finds h0's rows by its first column");
     }
 
+    /// Decision 0659's test: a recursive set head whose rules make texts runs on the device, its texts in one arena,
+    /// each one value a content. A tree's dotted names climbed down from its root (a name copied in, then a made text
+    /// cat a name a round), and copied along alias edges that reach a node in two rounds: the same text made twice is
+    /// one row, as on the CPU. Past half its canonical table's first places, the table grows and its texts are placed
+    /// again. A constant into the column is a text of the arena as well.
+    #[test]
+    fn a_recursive_set_heads_made_texts_are_one_value_a_text() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE r (c0); CREATE TEMP TABLE a (c0, c1);").unwrap();
+        let nodes = 6000i64;
+        let parts = ["ab", "c", "def", "g", "hi"];
+        for v in 0..nodes {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![v, format!("{}{}", parts[(v % 5) as usize], v % 7)]).unwrap();
+            if v > 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [(v - 1) / 3, v]).unwrap();
+            }
+        }
+        db.execute("INSERT INTO r VALUES (0)", []).unwrap();
+        // x -> y -> z and x -> z: z reached with x's text in two rounds.
+        for x in (1..nodes - 2).step_by(97) {
+            for (p, q) in [(x, x + 1), (x + 1, x + 2), (x, x + 2)] {
+                db.execute("INSERT INTO a VALUES (?1, ?2)", [p, q]).unwrap();
+            }
+        }
+        let n = format!("t:x:{}:{}:is", hex("temp.n"), hex("c0, c1"));
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let root = format!("t:x:{}:{}:i", hex("temp.r"), hex("c0"));
+        let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+        // q(x, t) :- r(x), n(x, t).  q(x, "lone") :- r(x).
+        let seed = format!("pos {root} v0\npos {n} v0 v1\nhead v0 v1");
+        let lone = format!("pos {root} v0\nhead v0 x:{}", hex("lone"));
+        // q(y, @dot(t, m)) :- q(x, t), e(x, y), n(y, m).  q(y, t) :- q(x, t), a(x, y).
+        let down = format!("pos d0 v0 v1\npos {e} v0 v2\npos {n} v2 v3\nhead v2 cat:v1:v3");
+        let alias = format!("pos d0 v0 v1\npos {a} v0 v2\nhead v2 v1");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("made_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("seed 0 {}", hex(&lone)), format!("join 0 0 {}", hex(&down)), format!("join 0 0 {}", hex(&alias))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+                assert!(r.rounds > 5, "its rounds on the device: {r:?}");
+                assert!(r.remaps >= 1, "its canonical table grown: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let rows: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.q").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            let mut sorted = rows.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), rows.len(), "device {device}: each row once");
+            got.push(sorted);
+        }
+        assert!(got[0].len() > nodes as usize, "the CPU's rows: {}", got[0].len());
+        assert!(got[0].contains(&(0, "lone".to_owned())), "the constant's row");
+        assert_eq!(got[1], got[0], "the device's made texts are the CPU's rows");
+    }
+
     /// Decisions 0603 and 0638's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
     /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
     /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past
@@ -1248,6 +1319,14 @@
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rx_replace v2 v0 {} {}\nfunc rr_strlen v3 v2\nhead v2 v3", sym("[αβé]+"), sym("<u>")),
             // Unicode's lower of ASCII names.
             format!("pos {a} v0 v1\nfunc lower v2 v0\nhead v2 v1"),
+            // A name less a prefix and a suffix, no row where it has not both; a dotted name less its last parts.
+            format!("pos {n} v0 v1\nfunc str_between v2 v0 {} {}\nhead v2 v1", sym("a"), sym("b")),
+            format!("pos {n} v0 v1\nfunc str_between v2 v0 {} {}\nhead v2 v1", sym("foo"), sym("x9")),
+            format!("pos {n} v0 v1\nfunc pkg_up v2 v0 i:1\nhead v2 v1"),
+            format!("pos {n} v0 v1\nlt v1 i:6\nfunc pkg_up v2 v0 v1\nhead v2 v1"),
+            // A cat of a made text compared with a bound name; a head's cat of a made text.
+            format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v0 v2 {}\nhead v0 v1", sym("/lib")),
+            format!("pos {n} v0 v1\nlt v1 i:300\nfunc head v2 v0\nhead cat:v2:v0 v1"),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false)] {

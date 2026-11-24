@@ -386,9 +386,7 @@ impl Shape {
     }
 
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
-    /// `texts_kept`: its head is a `shortlex_min` lattice, whose value its recursive rounds make into one device arena
-    /// (decision 0307).
-    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
+    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
         let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
@@ -397,12 +395,9 @@ impl Shape {
             self.note(Form::Recursion, || "recursion".into());
         }
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
-        // not in a recursive stratum, whose rounds would join it before it is one, unless the stratum keeps its texts
-        // in one arena (0307: the device's compile takes them into the lattice's value only).
-        // A text function's text, likewise (the device's arena).
-        let recursive = recursive && !texts_kept;
-        let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
-        if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
+        // a text function's text, likewise (the device's arena). In a recursive stratum its rounds keep each made text
+        // one value a content in one arena (decision 0659), stored as symbols when the stratum ends.
+        if let Some(op) = b.head().args().filter(|&t| !is_cat_of_rows(v, t) && !is_made_cat(v, t)).find_map(|t| not_row(v, t)) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
         let tests = |t: TermRef<'_>| call(v, t).map(|(f, _)| f).filter(|f| crate::code_rule_dsl::logic::strings::TESTS.contains(f));
@@ -443,7 +438,7 @@ impl Shape {
                 {
                     self.note(Form::Comparison, String::new);
                 }
-                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t).or_else(|| arena(t))) {
+                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t)) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),
                 },
@@ -777,7 +772,7 @@ pub mod tests {
         r.finish().expect("a rule");
         let made = b.finish().expect("a version").0;
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
-        shape.add(Order::new(&b, &steps), work, recursive, false);
+        shape.add(Order::new(&b, &steps), work, recursive);
     }
 
     #[test]

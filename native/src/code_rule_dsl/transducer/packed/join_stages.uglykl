@@ -411,6 +411,61 @@ UKL_INLINE JSPACE const uint8_t* arena_bytes(JSPACE uint32_t* A) { return (JSPAC
 // An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
 UKL_INLINE int64_t arena_value(uint32_t off, uint32_t len) { return (int64_t)(0x8000000000000000ul | ((uint64_t)off << 24) | (uint64_t)len); }
 
+// A canonical arena's probes a text at most before its table is called full (`Arena::grow` places it again).
+#define CANON_PROBES 64u
+
+// The made text at `off` (its bytes; its length the four bytes before, little-endian) of `len` bytes, kept one value
+// a content (`Canon`, decision 0659): the value of the one in table T (header [places - 1, texts, full, 0], places
+// after) whose bytes are its, else its own, put there. Every lane of the SIMD group calls it, its bytes written by
+// them. A table with no place for it in `CANON_PROBES`: its full word, the program's flag 64 and -1, and its phase
+// parks until the host grows it.
+UKL_INLINE int64_t canon_text(JSPACE uint32_t* A, JSPACE uint32_t* T, uint32_t off, uint32_t len, UKL_GLOBAL uint32_t* ctl, uint32_t lane __UKL_PARAMS)
+{
+    JSPACE const uint8_t* mine = arena_bytes(A) + off;
+    // Its bytes seen by the group, then by every thread before its place is: another group reads them once it finds
+    // the place.
+    ukl_sg_barrier();
+    ukl_fence_device();
+    uint32_t h = 0x811c9dc5u;
+    if (lane == 0) for (uint32_t i = 0; i < len; i++) h = (h ^ (uint32_t)mine[i]) * 0x01000193u;
+    h = ukl_sg_shuffle(h, 0u __UKL_ARGS);
+    uint32_t mask = T[0];
+    for (uint32_t p = 0; p < CANON_PROBES && p <= mask; p++) {
+        uint32_t i = (h + p) & mask;
+        uint32_t e = 0;
+        if (lane == 0) e = ukl_atomic_cas(&T[4 + i], 0u, off + 1u);
+        e = ukl_sg_shuffle(e, 0u __UKL_ARGS);
+        if (e == 0u) {
+            if (lane == 0) ukl_atomic_add(&T[1], 1u);
+            return arena_value(off, len);
+        }
+        // Another group's text: read coherently (`ukl/grid.h`'s rule).
+        UKL_COHERENT const uint8_t* theirs = (UKL_COHERENT const uint8_t*)(arena_bytes(A) + (e - 1u));
+        uint32_t elen = (uint32_t)theirs[-4] | ((uint32_t)theirs[-3] << 8) | ((uint32_t)theirs[-2] << 16) | ((uint32_t)theirs[-1] << 24);
+        if (elen != len) continue;
+        bool diff = false;
+        for (uint32_t k = lane; k < len; k += SGW) diff = diff || theirs[k] != mine[k];
+        if (ukl_sg_ballot(diff __UKL_ARGS) == 0u) return arena_value(e - 1u, len);
+    }
+    if (lane == 0) {
+        ukl_atomic_or(&T[2], 1u);
+        ukl_atomic_or(&ctl[6], 64u);
+    }
+    return -1;
+}
+
+// A text's room in the arena: its bytes, and in a canonical one (`canon`) its length before them.
+UKL_INLINE uint32_t arena_claim(JSPACE uint32_t* A, uint32_t len, bool canon, uint32_t lane, UKL_PRIVATE bool* full __UKL_PARAMS)
+{
+    uint32_t room = len + (canon ? 4u : 0u);
+    uint32_t off = 0;
+    if (lane == 0) off = ukl_atomic_add(A, room);
+    off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
+    *full = (uint64_t)off + room > ukl_atomic_load(&A[1]);
+    if (canon && !*full && lane < 4u) ((JSPACE uint8_t*)A)[16 + off + lane] = (uint8_t)(len >> (8u * lane));
+    return off + (canon ? 4u : 0u);
+}
+
 // A text operand: a symbol's name (b's empty), a held cat's text, never made (a's name, "." when `dot`, b's name), or
 // an arena text.
 typedef struct Txt { JSPACE const uint8_t* a; uint32_t al; JSPACE const uint8_t* b; uint32_t bl; uint32_t dot; } Txt;
@@ -932,8 +987,10 @@ UKL_INLINE uint64_t pow10_of(uint32_t k) {
 // groups (persistent, a threadgroup each), P[1]: the states a group's scratch holds.
 UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
                          JSPACE int64_t* V, JSPACE const uint8_t* G, JSPACE uint8_t* scratch, JSPACE const uint32_t* P, JSPACE const uint8_t* D,
-                         JSPACE uint8_t* VC, UKL_GLOBAL uint32_t* ctl, StageP s, uint32_t sg, uint32_t lane __UKL_PARAMS)
+                         JSPACE uint8_t* VC, JSPACE uint32_t* T, UKL_GLOBAL uint32_t* ctl, StageP s, uint32_t sg, uint32_t lane __UKL_PARAMS)
 {
+    // P[6]: the arena keeps its texts one value a content, in table T (`canon_text`, decision 0659).
+    bool canon = P[6] != 0u;
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
     uint32_t groups = P[0];
     for (uint32_t r = n + sg * SGW + lane; r <= s->cap_in; r += groups * SGW) counts[r] = 0;
@@ -1024,17 +1081,16 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 // stale, and the text read short, zeros past what was seen).
                 UKL_COHERENT const uint8_t* e = (UKL_COHERENT const uint8_t*)(VC + (r & ~3ul));
                 uint32_t len = *(UKL_COHERENT const uint32_t*)(e + 12) - 16u;
-                uint32_t off = 0;
-                if (lane == 0) off = ukl_atomic_add(A, len);
-                off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
-                bool full = (uint64_t)off + len > ukl_atomic_load(&A[1]);
+                bool full;
+                uint32_t off = arena_claim(A, len, canon, lane, &full __UKL_ARGS);
                 if (!full) {
                     JSPACE uint8_t* o = (JSPACE uint8_t*)A + 16 + off;
                     for (uint32_t i = lane; i < len; i += SGW) o[i] = e[16 + i];
                 }
+                int64_t value = full ? -1 : (canon ? canon_text(A, T, off, len, ctl, lane __UKL_ARGS) : arena_value(off, len));
                 if (lane == 0) {
                     if (full) ukl_atomic_or(&ctl[6], 64u);
-                    V[row] = full ? -1 : arena_value(off, len);
+                    V[row] = value;
                     counts[row] = 1;
                 }
                 continue;
@@ -1064,6 +1120,50 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 pad = w > len ? w - len : 0;
                 len += pad;
             }
+        } else if (f == 12) {
+            // str_between(x, y, z): x less prefix y (key 2) and suffix z (key 4); no row where x has not both.
+            y = txt_of(s, L, row, D, A, 2, 0, &unheld);
+            z = txt_of(s, L, row, D, A, 4, 0, &unheld);
+            uint32_t ly = txt_len(y), lz = txt_len(z);
+            bool fits = lx >= ly + lz;
+            bool diff = !fits;
+            if (fits) {
+                for (uint32_t i = lane; i < ly + lz; i += SGW) {
+                    uint8_t want = i < ly ? txt_byte(y, i) : txt_byte(z, i - ly);
+                    uint8_t got = i < ly ? txt_byte(x, i) : txt_byte(x, lx - lz + (i - ly));
+                    diff = diff || want != got;
+                }
+            }
+            if (ukl_sg_ballot(diff __UKL_ARGS) != 0u) {
+                if (lane == 0) {
+                    V[row] = -1;
+                    counts[row] = 0;
+                }
+                continue;
+            }
+            from = ly;
+            to = lx - lz;
+            len = to - from;
+        } else if (f == 13) {
+            // pkg_up(x, k): x to its k-th '.' from its end; empty where it has fewer.
+            int64_t k = key_value(s, L, row, 5);
+            uint32_t cut = lx;
+            if (k > 0) {
+                if (lane == 0) {
+                    int64_t seen = 0;
+                    cut = 0;
+                    for (uint32_t i = lx; i > 0; i--) {
+                        if (txt_byte(x, i - 1) == (uint8_t)'.' && ++seen == k) {
+                            cut = i - 1;
+                            break;
+                        }
+                    }
+                }
+                cut = ukl_sg_shuffle(cut, 0u __UKL_ARGS);
+            }
+            from = 0;
+            to = cut;
+            len = cut;
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);
@@ -1083,11 +1183,8 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             }
             len = to - from;
         }
-        uint32_t off = 0;
-        if (lane == 0) off = ukl_atomic_add(A, len);
-        off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
-        uint32_t cap = ukl_atomic_load(&A[1]);
-        bool full = (uint64_t)off + len > cap;
+        bool full;
+        uint32_t off = arena_claim(A, len, canon, lane, &full __UKL_ARGS);
         if (!full) {
             JSPACE uint8_t* o = (JSPACE uint8_t*)A + 16 + off;
             if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane __UKL_ARGS);
@@ -1124,10 +1221,11 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 if (lane == 0) clif_cache_done(VC, 0ul, r & ~3ul);
             }
         }
+        int64_t value = full ? -1 : (canon ? canon_text(A, T, off, len, ctl, lane __UKL_ARGS) : arena_value(off, len));
         if (lane == 0) {
             if (full) ukl_atomic_or(&ctl[6], 64u);
             if (unheld && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
-            V[row] = full ? -1 : arena_value(off, len);
+            V[row] = value;
             counts[row] = 1;
         }
     }
@@ -2029,7 +2127,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_SCAN_COUNT: scan_count_one(L, j->R, j->counters, c, j->totals, j->s, t); break;
         case PK_WITNESS_COUNT: witness_count_one(L, j->R, j->totals, c, j->bs, j->W[0], j->W[1], j->W[2], j->F, j->s, t); break;
         case PK_ROW_TEXT:
-            row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
+            row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, H, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
             break;
         case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, j->dd, t); break;
         case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, j->A, j->counters, j->D, j->F, j->ws, t); break;

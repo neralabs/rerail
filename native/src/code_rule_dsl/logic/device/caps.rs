@@ -43,6 +43,10 @@ pub enum TextFn {
     /// C's `%0Nd` (`@printf`'s lowering): a number's digits zero-padded to a width, the sign first.
     ZeroPad,
     Replace,
+    /// A text less a prefix and a suffix (`str_between`), none where it has not both.
+    StrBetween,
+    /// A dotted name less its last parts (`pkg_up`).
+    PkgUp,
 }
 
 /// What a device computes a function with.
@@ -104,6 +108,8 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
         "rr_to_string" => text(TextFn::ToString, 0, 1),
         "zero_pad" => text(TextFn::ZeroPad, 0, 2),
         "sql_replace" => text(TextFn::Replace, 3, 0),
+        "str_between" => text(TextFn::StrBetween, 3, 0),
+        "pkg_up" => text(TextFn::PkgUp, 1, 1),
         "replace_all" | "rx_replace" => RegexReplace,
         _ => return None,
     })
@@ -123,7 +129,7 @@ mod tests {
             assert!(device_fn(native(rr)).is_some(), "{rr}");
         }
         for name in ["rr_add", "rr_sub", "rr_mul", "rr_div", "mod", "rr_max", "rr_min", "rr_strlen", "lower", "sql_lower", "sql_upper", "head", "dir",
-                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "replace_all", "rx_replace", "str_cmp"] {
+                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "str_between", "pkg_up", "replace_all", "rx_replace", "str_cmp"] {
             let f = device_fn(name).expect(name);
             if let Some((_, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(name) {
                 assert_eq!(kinds.len(), f.arity(), "{name}");

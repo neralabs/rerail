@@ -3416,7 +3416,7 @@ impl<'a> Run<'a, '_> {
             }
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
-            shape.add(Order::new(b, &order), work, false, false);
+            shape.add(Order::new(b, &order), work, false);
             shape.seeded(head, rows);
             if let Some(x) = &x {
                 shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
@@ -3556,7 +3556,7 @@ impl<'a> Run<'a, '_> {
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 // Its delta as the plan priced it (`atom_rows`: the relation's rows, at most its last delta's).
                 let delta = self.model.stats.delta_rows.get(a).copied().map_or(self.model.card(a), |d| d.min(self.model.card(a)));
-                shape.add(Order::new(b, &order), 0.0, true, pf.lattice_name(head) == Some("shortlex_min"));
+                shape.add(Order::new(b, &order), 0.0, true);
                 shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
                     shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
@@ -7910,7 +7910,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let lacking = if super::profile::on() {
                 let mut shape = placement::Shape::default();
                 for ((_, order), b) in planned.iter().zip(planned_bodies) {
-                    shape.add(Order::new(b, order), 0.0, recursive, f0.lattice_name(b.rel(b.head())) == Some("shortlex_min"));
+                    shape.add(Order::new(b, order), 0.0, recursive);
                 }
                 shape.lacking()
             } else {

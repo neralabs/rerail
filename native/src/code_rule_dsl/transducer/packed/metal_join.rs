@@ -143,6 +143,10 @@ pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
 pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
 /// `zero_pad(n, w)`: key 5's digits zero-padded to key 6's width (0 to 64), the sign first, never truncated.
 pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
+/// `str_between(x, y, z)`: X less prefix Y (key 2) and suffix Z (key 4); no row where X has not both.
+pub(in crate::code_rule_dsl) const TEXTFN_STR_BETWEEN: u32 = 12;
+/// `pkg_up(x, k)`: X less its last key 5 dotted parts; empty past its first.
+pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
@@ -1336,6 +1340,53 @@ impl DevBytes {
 pub(in crate::code_rule_dsl) struct Arena {
     reserved: Arc<rerail_device::device::Reserved>,
     cap: std::cell::Cell<usize>,
+    /// Its texts kept one value a content (`Arena::canonical`, decision 0659), or none.
+    canon: Option<Canon>,
+}
+
+/// A recursive component's made texts, one arena value a text (decision 0659): an open-addressed table of its texts'
+/// offsets, by a hash of their bytes. A text is written with its length before it (four bytes, little-endian), and
+/// the table holds its bytes' offset plus one (a word: the device has no 64-bit compare-and-swap). A kernel that made
+/// a text looks it up there (`canon_text`): one found, its value is that one's; else its own is put there. So two
+/// rounds' equal texts are one value, and a set head's dedup, its indexes and its anti-joins, which compare words,
+/// compare texts. Its header: [places - 1, texts, full, 0]; its places after. Address space mapped as it fills, as the
+/// arena's is, and grown between launches by the host (`Arena::grow`), its texts placed again.
+struct Canon {
+    reserved: Arc<rerail_device::device::Reserved>,
+}
+
+/// A canonical table's places to start with, and its header's bytes.
+const CANON_START: usize = 1 << 12;
+const CANON_HEADER: usize = 16;
+
+/// A canonical text's hash (`canon_text`'s): FNV-1a of its bytes, 32 bits.
+fn canon_hash(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811c_9dc5u32, |h, &b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193))
+}
+
+impl Canon {
+    fn words(&self) -> *mut u32 {
+        self.reserved.buffer().contents().cast::<u32>()
+    }
+
+    fn header(&self, k: usize) -> u32 {
+        // SAFETY: the header's words, mapped from the start; read between launches.
+        unsafe { *self.words().add(k) }
+    }
+
+    fn set_header(&self, k: usize, v: u32) {
+        // SAFETY: as `header`'s; no command buffer is using the table.
+        unsafe { *self.words().add(k) = v };
+    }
+
+    fn places(&self) -> usize {
+        self.header(0) as usize + 1
+    }
+
+    fn place(&self, i: usize) -> *mut u32 {
+        // SAFETY: place `i` below `places()`, mapped.
+        unsafe { self.words().add(CANON_HEADER / 4 + i) }
+    }
 }
 
 /// A batch's arena, to start with: most strata make few texts.
@@ -1352,10 +1403,82 @@ impl Arena {
         let cap = cap.clamp(16, u32::MAX as usize / 2);
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let reserved = rerail_device::device::reserve(device, 16 + cap.max(text_arena_max()), 16 + cap, true).map_err(|_| Error::BackendCapacity)?;
-        let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap) };
+        let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap), canon: None };
         arena.header(0, 0);
         arena.header(1, cap as u32);
         Ok(arena)
+    }
+
+    /// An arena whose texts are kept one value a content (`Canon`, decision 0659): a recursive component's, whose set
+    /// heads keep made texts.
+    pub(in crate::code_rule_dsl) fn canonical(cap: usize) -> Result<Arena, Error> {
+        let mut arena = Arena::new(cap)?;
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        // At most a place a text of four bytes or more (its length is four), twice over.
+        let most = (text_arena_max() / 2).next_power_of_two().max(CANON_START);
+        let reserved = rerail_device::device::reserve(device, CANON_HEADER + 4 * most, CANON_HEADER + 4 * CANON_START, true).map_err(|_| Error::BackendCapacity)?;
+        let canon = Canon { reserved: Arc::new(reserved) };
+        // SAFETY: its first places' bytes, mapped; nothing uses the table yet.
+        unsafe { std::ptr::write_bytes(canon.words(), 0, CANON_HEADER / 4 + CANON_START) };
+        canon.set_header(0, (CANON_START - 1) as u32);
+        arena.canon = Some(canon);
+        Ok(arena)
+    }
+
+    /// Its canonical table's buffer, where its texts are kept one value a content.
+    pub(in crate::code_rule_dsl) fn canon_buffer(&self) -> Option<Buffer> {
+        self.canon.as_ref().map(|c| c.reserved.buffer())
+    }
+
+    /// The canonical text at `at` (its bytes' offset) of `len` bytes, found in the table or put there: the value of
+    /// the one there. None when the table has no place left.
+    fn canon_insert(&self, c: &Canon, at: usize, len: usize) -> Option<i64> {
+        let bytes = self.text(ARENA_TEXT | ((at as i64) << 24) | len as i64)?;
+        let mask = c.places() - 1;
+        let h = canon_hash(bytes) as usize;
+        for probe in 0..=mask {
+            let i = (h + probe) & mask;
+            // SAFETY: place `i`, below the table's places; no command buffer is using it.
+            let e = unsafe { *c.place(i) } as usize;
+            if e == 0 {
+                unsafe { *c.place(i) = at as u32 + 1 };
+                c.set_header(1, c.header(1) + 1);
+                return Some(ARENA_TEXT | ((at as i64) << 24) | len as i64);
+            }
+            let (eat, elen) = (e - 1, self.len_at(e - 1));
+            if elen == len && self.text(ARENA_TEXT | ((eat as i64) << 24) | elen as i64) == Some(bytes) {
+                return Some(ARENA_TEXT | ((eat as i64) << 24) | elen as i64);
+            }
+        }
+        None
+    }
+
+    /// The length written before a canonical text whose bytes are at `at`.
+    fn len_at(&self, at: usize) -> usize {
+        let mut w = [0u8; 4];
+        // SAFETY: the four bytes before a canonical text's, within the arena; read between launches.
+        unsafe { std::ptr::copy_nonoverlapping(self.base().add(16 + at - 4), w.as_mut_ptr(), 4) };
+        u32::from_le_bytes(w) as usize
+    }
+
+    /// Its canonical table placed again in `places` places (mapped further), every text in it. Between launches.
+    fn canon_regrow(&self, c: &Canon, places: usize) -> Result<bool, Error> {
+        if !c.reserved.map(CANON_HEADER + 4 * places).map_err(|_| Error::BackendCapacity)? {
+            return Ok(false);
+        }
+        let old = c.places();
+        // copy: not block data: the table's offsets, placed again at once.
+        let texts: Vec<usize> = (0..old).map(|i| unsafe { *c.place(i) } as usize).filter(|&e| e != 0).collect();
+        // SAFETY: the places mapped now; no command buffer is using the table.
+        unsafe { std::ptr::write_bytes(c.place(0), 0, places) };
+        c.set_header(0, (places - 1) as u32);
+        c.set_header(1, 0);
+        c.set_header(2, 0);
+        for e in texts {
+            let len = self.len_at(e - 1);
+            self.canon_insert(c, e - 1, len).ok_or(Error::BackendCapacity)?;
+        }
+        Ok(true)
     }
 
     /// Its header's word `k` set to `v` (no command buffer that uses the arena pending).
@@ -1382,6 +1505,13 @@ impl Arena {
     /// the batch's may have grown it already): false where it cannot be (past its address space, or an allocation
     /// that cannot grow).
     pub(in crate::code_rule_dsl) fn grow(&self) -> Result<bool, Error> {
+        // Its canonical table full, or half full: four times the places, its texts placed again (decision 0659).
+        if let Some(c) = &self.canon
+            && (c.header(2) != 0 || 2 * c.header(1) as usize > c.places())
+            && !self.canon_regrow(c, 4 * c.places())?
+        {
+            return Ok(false);
+        }
         let wanted = self.wanted();
         let room = (2 * wanted).min(u32::MAX as usize / 2);
         if wanted > room {
@@ -1409,6 +1539,19 @@ impl Arena {
     /// value, or none when it has no room.
     pub(in crate::code_rule_dsl) fn put(&self, bytes: &[u8]) -> Option<i64> {
         let off = self.wanted();
+        if let Some(c) = &self.canon {
+            // Its length first, then its bytes; the one there already where it is (decision 0659).
+            if off + 4 + bytes.len() > self.cap() || bytes.len() > 0xff_ffff {
+                return None;
+            }
+            // SAFETY: as below, four bytes more.
+            unsafe {
+                std::ptr::copy_nonoverlapping((bytes.len() as u32).to_le_bytes().as_ptr(), self.base().add(16 + off), 4);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.base().add(16 + off + 4), bytes.len());
+            }
+            self.header(0, (off + 4 + bytes.len()) as u32);
+            return self.canon_insert(c, off + 4, bytes.len());
+        }
         if off + bytes.len() > self.cap() || bytes.len() > 0xff_ffff {
             return None;
         }
@@ -2230,7 +2373,8 @@ impl Batch {
         job.reads_placed(left, &[(0, CAP_IN)]);
         job.makes_placed(out, &[(0, CAP_OUT)]);
         job.v_place = left.placed();
-        job.p = Some([ngroups as u32, kept, states, classes, start, id, 0, 0].iter().flat_map(|w| w.to_ne_bytes()).collect());
+        let canonical = u32::from(self.arena()?.canon.is_some());
+        job.p = Some([ngroups as u32, kept, states, classes, start, id, canonical, 0].iter().flat_map(|w| w.to_ne_bytes()).collect());
         job.desc.l = left.reach_by(&mut job, false)?;
         job.desc.a = job.reach(&arena, 0, true)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
@@ -2240,6 +2384,9 @@ impl Batch {
         job.desc.s = job.reach(&work.buffer, 0, true)?;
         job.desc.d = job.reach(&atoms.dir.0, atoms.dir.1, false)?;
         job.desc.vc = job.reach(&cache.cache.0, cache.cache.1, true)?;
+        // Its arena's canonical table, where its texts are kept one value a content (decision 0659): P[6] says so.
+        let canon = self.arena()?.canon_buffer();
+        job.desc.h = job.reach(canon.as_ref().unwrap_or(&self.dummy.buffer), 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
         // A SIMD group a row, a threadgroup each: its count's grid is its groups.
         (job.n, job.count, job.scatter) = (n, ngroups, n);
@@ -3064,7 +3211,7 @@ impl Batch {
         // reached by address), which every stack's own submission makes resident again.
         let resident = self.pass.as_ref().map(|p| p.resident()).unwrap_or_default();
         let kit = Kit { resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
-                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? },
+                        rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
                         item_kinds: prog.items.iter().map(|i| i[0] >> 24).collect(), jumps: prog.jumps, last };
         let rounds = ProgramSizes::now().rounds.unwrap_or(STACK_ROUNDS_FIRST).max(1);
         let r = Ran { ctl: Words::zeroed(16)?, slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
@@ -3093,6 +3240,15 @@ impl Batch {
             if kit.rebase.ta != 0 && now != kit.rebase.ta {
                 kit.retext(now);
             }
+            // Its canonical table grown since (decision 0659), likewise.
+            if let Some(t) = a.canon_buffer() {
+                let now = address(&t)?;
+                if kit.rebase.tt != 0 && now != kit.rebase.tt {
+                    let old = kit.rebase.tt;
+                    kit.readdress(old, now);
+                    kit.rebase.tt = now;
+                }
+            }
         }
         let [grid, phase, chain] = program_pipes(kit.format)?;
         if let Some(t) = &kit.top {
@@ -3100,6 +3256,7 @@ impl Batch {
             t.set(1, u32::try_from(room / 16).map_err(|_| Error::BackendCapacity)?);
         }
         let text = self.arena.as_ref().filter(|_| kit.rebase.ta != 0).map(|a| a.buffer());
+        let table = self.arena.as_ref().filter(|_| kit.rebase.tt != 0).and_then(|a| a.canon_buffer());
         // Its own submission: what is open committed first, so the stack is one launch alone.
         self.submit_open()?;
         let kit = &r.kit;
@@ -3121,6 +3278,9 @@ impl Batch {
         }
         if let Some(a) = &text {
             pass.use_read_write(a);
+        }
+        if let Some(t) = &table {
+            pass.use_read_write(t);
         }
         pass.use_read_write(&kit.counts.buffer);
         if let Some(t) = &kit.top {
@@ -3648,6 +3808,8 @@ struct Rebase {
     at: (u64, u64, u64),
     /// The batch's text arena's address its descriptors name (0: none), for one mapped further (`Kit::retext`).
     ta: u64,
+    /// Its canonical table's (decision 0659), likewise.
+    tt: u64,
 }
 
 impl Kit {
@@ -3679,6 +3841,13 @@ impl Kit {
     /// descriptor's buffer address that named the old one written again in place. Between launches: no work of it
     /// runs.
     fn retext(&mut self, ta: u64) {
+        let old = self.rebase.ta;
+        self.readdress(old, ta);
+        self.rebase.ta = ta;
+    }
+
+    /// Each descriptor's buffer address that named `old` written again as `now`. Between launches.
+    fn readdress(&mut self, old: u64, now: u64) {
         const WORDS: usize = std::mem::offset_of!(JobDesc, at) / 8;
         let n = self.descs.buffer.length() as usize / std::mem::size_of::<JobDesc>();
         let descs = self.descs.buffer.contents().cast::<[u64; WORDS]>();
@@ -3686,11 +3855,10 @@ impl Kit {
             // SAFETY: descriptor `i` of those this buffer was made of (`JobDesc`, its addresses its first `WORDS`
             // words); no work of the program runs between launches.
             let words = unsafe { &mut *descs.cast::<u8>().add(i * std::mem::size_of::<JobDesc>()).cast::<[u64; WORDS]>() };
-            for w in words.iter_mut().filter(|w| **w == self.rebase.ta) {
-                *w = ta;
+            for w in words.iter_mut().filter(|w| **w == old) {
+                *w = now;
             }
         }
-        self.rebase.ta = ta;
     }
 }
 
