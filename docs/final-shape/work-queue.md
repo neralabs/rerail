@@ -11127,3 +11127,8 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - tests-corpus frame, reuse, constants, warm, collect and revision 20;
   - logic's 16;
   - rr-root 53, all of them.
+
+### Q536. Roll-up 109 (build-and-test-loop-time 67d4431a99 onto Pulling-it-all-together): what the merge chose
+
+- build-and-test-loop-time 67d4431a99: Relax's patch gives a share's folder mounts the disk's answers, in std and in the program's own C path calls, so the observer's warm run under `RELAX_SHARE` sees nothing changed (`the_run_after_a_cold_one_with_tape_values_writes_nothing`); README section 18.
+- No conflicts: the dev scripts only. No engine code changes, so no engine check.
