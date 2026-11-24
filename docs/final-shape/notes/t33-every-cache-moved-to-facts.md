@@ -104,7 +104,7 @@ removed with nothing in its place but K1–K4.
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity) |
-| the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After RER-131 renumbers the nodes |
+| the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After the named-only tapes of decision 0161 renumber the nodes |
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
 | `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
 | `cross_rows`, `cross_blocks`, `cross_components` (0076) | an import component's file bytes | goes: cross-file relations in K1, partitioned by the document of their first location column, maintained by K4. 0092 §6: keys of bytes have no cutoff |

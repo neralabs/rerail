@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LOCKS_DIR, withHomeLock, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { loadNativeBinding, type NativeBinding } from "../../../src/engine/native/native.js";
 import { processState } from "../../../src/engine/process-liveness.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -36,10 +37,22 @@ class Busy extends Error {
 }
 
 const request = { name: "work", busy: (holder: LockHolder | undefined) => new Busy(holder) } satisfies LockRequest;
+
+/**
+ * `promise` with whether it was settled when it was made: a settled promise runs its callback within the turn of the
+ * microtask queue awaited here, while one a thread settles needs a turn of the event loop first.
+ */
+async function settledAtOnce<T>(promise: Promise<T>): Promise<{ readonly atOnce: boolean; readonly value: T }> {
+  let settled = false;
+  const marked = promise.then(value => { settled = true; return value; });
+  await Promise.resolve();
+  const atOnce = settled;
+  return { atOnce, value: await marked };
+}
 /** The engine as a Rerail whose engine does not load has it. */
 const withoutEngine = {
   ...request,
-  engine: () => { throw new Error("Unsupported platform or missing native addon"); },
+  engine: () => { throw new Error("Rerail's engine for Linux on x64 is not installed"); },
   withoutEngine: "folder",
 } satisfies LockRequest;
 
@@ -70,27 +83,6 @@ describe.each<[string, LockRequest]>([
     expect((refused as Busy).holder).toMatchObject({ pid: process.pid });
   });
 
-  it("waits while another holds it, then takes it", async () => {
-    const home = await temporaryHome();
-    const events: string[] = [];
-    const firstHolds = Promise.withResolvers<void>();
-    const firstMayEnd = Promise.withResolvers<void>();
-    const first = withHomeLock(home, lock, async () => {
-      events.push("first runs");
-      firstHolds.resolve();
-      await firstMayEnd.promise;
-      events.push("first ends");
-    });
-    await firstHolds.promise;
-    // The second finds the lock held; its first wait lets the first end. No real time passes.
-    const second = withHomeLock(home, { ...lock, waitMs: 60_000, sleep: async () => { firstMayEnd.resolve(); await first; } }, async () => {
-      events.push("second runs");
-    });
-
-    await Promise.all([first, second]);
-    expect(events).toEqual(["first runs", "first ends", "second runs"]);
-  });
-
   it("lets go when the work throws", async () => {
     const home = await temporaryHome();
 
@@ -107,14 +99,92 @@ describe.each<[string, LockRequest]>([
 const lock = ${JSON.stringify({ name: "work", withoutEngine: lock.withoutEngine })};
 ${lock.withoutEngine === "folder" ? `lock.engine = () => { throw new Error("no engine"); };` : ""}
 const take = inside => withHomeLock(${JSON.stringify(home)}, { ...lock, waitMs: 60_000, busy: () => new Error("busy") }, inside);`,
+      busy: /^busy$/u,
       ...size,
     });
 
-    expect(race).toEqual({ overlaps: 0, ran: size.processes * size.rounds, busy: 0, errors: [] });
+    // The OS lock waits, so every racer runs in turn. The folder lock, which only an update takes, tries once: each
+    // round one racer at least takes it, and the rest find it held.
+    const total = size.processes * size.rounds;
+    if (lock.withoutEngine === "folder") {
+      expect({ overlaps: race.overlaps, errors: race.errors, takes: race.ran + race.busy }).toEqual({ overlaps: 0, errors: [], takes: total });
+      expect(race.ran).toBeGreaterThanOrEqual(size.rounds);
+    } else {
+      expect(race).toEqual({ overlaps: 0, ran: total, busy: 0, errors: [] });
+    }
   }, 600_000);
 });
 
 describe("the OS lock", () => {
+  it("waits while another holds it in one call to the engine, and is handed the lock at the holder's release", async () => {
+    const home = await temporaryHome();
+    const events: string[] = [];
+    const firstHolds = Promise.withResolvers<void>();
+    const firstMayEnd = Promise.withResolvers<void>();
+    const first = withHomeLock(home, request, async () => {
+      events.push("first runs");
+      firstHolds.resolve();
+      await firstMayEnd.promise;
+      events.push("first ends");
+    });
+    await firstHolds.promise;
+    // The engine itself, counting its calls; the first lets go only once the second waits on the engine.
+    const native = loadNativeBinding();
+    const waits: number[] = [];
+    let tries = 0;
+    const engine = (): Pick<NativeBinding, "tryLockExclusive" | "lockExclusive"> => ({
+      tryLockExclusive: path => { tries += 1; return native.tryLockExclusive(path); },
+      lockExclusive: (path, waitMs) => {
+        waits.push(waitMs);
+        const waiting = native.lockExclusive(path, waitMs);
+        firstMayEnd.resolve();
+        return waiting;
+      },
+    });
+    const second = withHomeLock(home, { ...request, waitMs: 60_000, engine }, async () => { events.push("second runs"); });
+
+    await Promise.all([first, second]);
+    expect(events).toEqual(["first runs", "first ends", "second runs"]);
+    expect({ waits, tries }).toEqual({ waits: [60_000], tries: 0 });
+  });
+
+  it("answers at once when it need not wait: the engine settles its promise before the call returns", async () => {
+    const path = join(await temporaryHome(), "work.lock");
+    const native = loadNativeBinding();
+
+    const free = await settledAtOnce(native.lockExclusive(path, 60_000));
+    const held = await settledAtOnce(native.lockExclusive(path, 0));
+    free.value?.release();
+
+    expect({ free: free.atOnce, held: held.atOnce }).toEqual({ free: true, held: true });
+    expect({ taken: free.value !== null, refused: held.value }).toEqual({ taken: true, refused: null });
+  });
+
+  // Windows queues a waiting take's request in the kernel before the call returns and grants it as the holder lets go.
+  // Linux and macOS wake a waiting take, which then takes the lock, so a try can come first there.
+  it.runIf(process.platform === "win32")("hands a waiting take the lock as its holder lets go, before a handle that only tries", async () => {
+    const path = join(await temporaryHome(), "work.lock");
+    const native = loadNativeBinding();
+    const holder = native.tryLockExclusive(path);
+    const waiting = native.lockExclusive(path, 60_000);
+    holder?.release();
+    const between = native.tryLockExclusive(path);
+    between?.release();
+    const handed = await waiting;
+    handed?.release();
+
+    expect({ held: holder !== null, between: between !== null, handed: handed !== null }).toEqual({ held: true, between: false, handed: true });
+  });
+
+  it("names the holder when the lock is still held at the end of the wait", async () => {
+    const home = await temporaryHome();
+
+    const refused = await withHomeLock(home, request, async () => await withHomeLock(home, { ...request, waitMs: 20 }, async () => "ran").catch((error: unknown) => error));
+
+    expect(refused).toBeInstanceOf(Busy);
+    expect((refused as Busy).holder).toMatchObject({ pid: process.pid });
+  });
+
   it("records its holder while it holds the lock, and keeps the lock file once it lets go", async () => {
     const home = await temporaryHome();
     const locks = join(home, LOCKS_DIR);
@@ -138,7 +208,7 @@ describe("the OS lock", () => {
   it("fails without the engine unless the request takes the folder lock", async () => {
     const home = await temporaryHome();
 
-    await expect(withHomeLock(home, { ...withoutEngine, withoutEngine: "fail" }, async () => "ran")).rejects.toThrow("missing native addon");
+    await expect(withHomeLock(home, { ...withoutEngine, withoutEngine: "fail" }, async () => "ran")).rejects.toThrow("engine for Linux on x64 is not installed");
   });
 });
 

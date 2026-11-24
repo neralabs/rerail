@@ -1,4 +1,4 @@
-//! Named-only tapes (RER-131): which anonymous tokens the tape stores.
+//! Named-only tapes (decision 0161): which anonymous tokens the tape stores.
 //!
 //! A tree-sitter node's visible children follow its rule in `grammar.json`. For each visible kind
 //! this module builds the rule's automaton over the children (named children labelled by kind and

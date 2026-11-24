@@ -91,7 +91,7 @@ impl Language for GrammarDialect {
 
     /// A dialect whose patterns are its parser's own trees (Blade's, Forte's) builds them so
     /// (`tape::TreeParser::build_pattern`); every other dialect's are tapes of tree-sitter trees, written as
-    /// documents are: no token the grammar implies (`tape::pattern_doc`, RER-131).
+    /// documents are: no token the grammar implies (`tape::pattern_doc`, decision 0161).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         match crate::code_rule_dsl::tape::tree_parser(*self)
             .and_then(|parser| parser.build_pattern(builder))
@@ -440,7 +440,7 @@ pub fn pattern_source(key: &str) -> PatternSource<'_> {
 /// embedded clause's is its program's: `ast.embedded`).
 ///
 /// A pattern is compiled once a process for its language (`COMPILED`) and copied out after: its tree is
-/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, RER-131), which costs a parse, an
+/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, decision 0161), which costs a parse, an
 /// encode and a restore, and compiling one rule asks for the same pattern several times (the comparisons'
 /// captures, `compile::compare`, for each of its dialects; the matcher), as a pack's rules share patterns
 /// (`$X`, `$A.$B($$$ARGS)`). A pattern is its text's and its language's alone. One that does not compile is

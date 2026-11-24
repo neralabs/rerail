@@ -50,7 +50,7 @@ pub(super) fn define(
     signature.params.push(AbiParam::new(pointer_type));
     signature.params.push(AbiParam::new(types::I32));
     signature.params.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_sort_final_captures", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_sort_final_captures", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -254,7 +254,7 @@ fn define_first_capture_node(
     signature.params.push(AbiParam::new(types::I32));
     signature.returns.push(AbiParam::new(types::I32));
     let id = module.declare_function(
-        "tempo_result_first_capture_node",
+        "rerail_result_first_capture_node",
         Linkage::Local,
         &signature,
     )?;
@@ -309,7 +309,7 @@ pub(super) fn define_results(
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
     signature.params.push(AbiParam::new(types::I32));
-    let id = module.declare_function("tempo_sort_final_results", Linkage::Local, &signature)?;
+    let id = module.declare_function("rerail_sort_final_results", Linkage::Local, &signature)?;
     let mut context = module.make_context();
     context.func.signature = signature;
     let first_capture_node = module.declare_func_in_func(first_capture_node, &mut context.func);

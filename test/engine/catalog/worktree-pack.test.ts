@@ -7,7 +7,7 @@ import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { loadCheckoutRuleSet, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
-import { WORKTREE_PACK_ID, worktreeRuleCatalog } from "../../../src/engine/catalog/worktree-pack.js";
+import { WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeRulesStamp } from "../../../src/engine/catalog/worktree-pack.js";
 import { approve, currentSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { runRuleApproveCommand } from "../../../src/cli/index.js";
 import type { AuditInput, AuditRecorder, AuditResult } from "../../../src/engine/audit/audit.js";
@@ -103,6 +103,26 @@ describe("a worktree's own rules", () => {
     const second = worktreeRuleCatalog(installed, root);
     expect(second.digest).not.toBe(first.digest);
     expect(second.packs.get(WORKTREE_PACK_ID)?.rules.map(rule => [rule.id, rule.mode])).toEqual([["worktree-needle", "log"], ["second", "steer"]]);
+  });
+
+  it("list a rule written in .rerail as left out, and its edit moves the stamp the change stream reads as it moves the catalog", async () => {
+    const root = await temporaryDirectory();
+    const installed = testBundle();
+    const directory = writeRules(root, { "a.json": needle("worktree-needle", "NEEDLE") });
+    const before = await worktreeRulesStamp(root);
+
+    writeRules(root, { "local.rerail": "rule local\n" });
+    const added = worktreeRuleCatalog(installed, root);
+    expect(added.skipped.map(({ path, reason }) => ({ file: path.slice(directory.length + 1), reason }))).toEqual([
+      { file: "local.rerail", reason: `a rule written in .rerail is not supported yet in ${WORKTREE_RULES_FOLDER}; it runs from a rule pack` },
+    ]);
+    const stamped = await worktreeRulesStamp(root);
+    expect(stamped).not.toBe(before);
+
+    // A size of its own, so the stamp moves however coarse the file system's times are.
+    writeRules(root, { "local.rerail": "rule local, edited\n" });
+    expect(worktreeRuleCatalog(installed, root)).not.toBe(added);
+    expect(await worktreeRulesStamp(root)).not.toBe(stamped);
   });
 
   it("are present in their checkout for the whole checkout without an attachment, follow its settings, and nowhere else", async () => {
