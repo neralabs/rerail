@@ -146,6 +146,32 @@ language would need quotation of rules inside rules, and that is a second langua
    `LiteralsOnce`), then those that add one.
 4. `PLACE` on every pass.
 
+#### 5.1 How the first rules pass runs
+
+**The view is the engine's input, read in place.** Each `img_` relation of §1 is a `vtab::Source` over the
+`Version` (`program_image::view`), which the native engine binds as it binds any input. A row is an id: a rule's
+id for `img_rule`, a rule's id and a literal's number for `img_lit`, an atom for `img_decl`, `img_facts` and
+`img_kindset`. Each value is read off the image when the engine asks for it: a name is the image's own atom, a rule
+its id. Nothing of the image is copied or interned again.
+
+**The pass's program is lowered once.** A rules pass's program is a library file and its includes (`rr/view.rerail`),
+read as one program without `core.rerail`, and lowered once a process: it is a constant of the engine's files. Its
+constants (`"atom"`, `"agg"`) are numbered by the program's own interner from 2³¹ up, so none is an image's atom.
+Its lowering runs the tail, whose `KindSets` finds no kind set in it and evaluates nothing, so no pass is evaluated
+by the program it lowers.
+
+**A run is the evaluation alone.** The thread's connection binds the view's sources by name and runs the lowered
+program with the native engine (`run_atoms_native_over`), the one evaluator of S003: no corpus run, no documents.
+The outputs stay in the engine (`kept`) and are read where they lie; each name is the image's atom, read back as its
+text.
+
+**`KindSets` splits by what each part is.** The membership of each set (`kinds_of`) and the axes over derived sets
+are generators (§4) and stay Rust. Which sets are taken out is the analysis `rr/kind-sets.rerail` states, and it
+replaces the pass's Rust fixed point. The pass undeclares each `img_undeclare` and drops each `img_drop_facts`.
+
+`img_rule` and `img_lit` number their rules (`r: number`), and `img_decl` gives its relation's arity, which the
+image holds, not its columns' text. The view's relations are the program's `.input`s.
+
 ## Prior art
 
 - **ISLE** (Cranelift's instruction-selection DSL, vendored at `native/vendor/cranelift-codegen-0.125.4/src/*.isle`,
@@ -183,6 +209,12 @@ language would need quotation of rules inside rules, and that is a second langua
   the view's rows is the image printed.
 - **T16.** `KindSets` as rules (0639's T10), through the Pipeline: every pack program plans as with the Rust pass,
   and the kind set rules' time per program is reported beside the pass's.
+
+  **Built (2026-11-24):** §5.1. T16 passes on every pack's library tailed to just before `KindSets`: the rules take
+  out what the Rust fixed point took out, which the test keeps as its reference; their times per run are in decision
+  0639's step 6. T15 passes for the relations §5.1 states (`img_rule`, the literals that name a relation, `img_decl`,
+  `img_facts`, `img_kindset`), each compared with the image's own reads. The arguments (`img_arg`, `img_head_arg`)
+  and the literals that name no relation are not yet in the view, so an image is not yet printed from its rows.
 - **T17.** Each analysis moved (§5 item 2) gives its Rust pass's edits on every pack program.
 - **T18.** Each rewrite moved (§5 item 3) gives its Rust pass's rule on every pack program, and a clash of two
   `img_subst` rows is refused.

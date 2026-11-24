@@ -17,6 +17,7 @@ pub mod demand;
 pub mod magic;
 pub mod prune;
 pub mod rank;
+pub mod rules_pass;
 pub mod simplify;
 mod nearest;
 pub mod parts;

@@ -1,20 +1,22 @@
 // The view of a program image (decision 0662 §1): its rules, their literals and its fields as relations, which an
-// analysis pass's rules read. The engine states the rows from the image; what is derived from them is here.
+// analysis pass's rules read. The engine reads the rows off the image in place (decision 0662 §5.1); what is derived
+// from them is here.
 //
 //   img_rule(r, head)              each rule, by its id, and its head's relation
 //   img_lit(r, i, what, rel, neg)  each body literal `i` of rule `r` that names a relation: an atom ("atom") or an
 //                                  aggregate's atom ("agg"), negated (1) or not (0)
-//   img_decl(rel, cols)            each declared relation and its columns
+//   img_decl(rel, arity)           each declared relation and its number of columns
 //   img_facts(rel)                 each relation the image states facts of
 //   img_kindset(set)               each kind set of the header, whatever its kinds
 //
 // The names are `img_`, not `rr_`: `rr_` is the lowering's own, for the helpers it makes.
 
-.decl img_rule(r: symbol, head: symbol)
-.decl img_lit(r: symbol, i: number, what: symbol, rel: symbol, neg: number)
-.decl img_decl(rel: symbol, cols: symbol)
+.decl img_rule(r: number, head: symbol)
+.decl img_lit(r: number, i: number, what: symbol, rel: symbol, neg: number)
+.decl img_decl(rel: symbol, arity: number)
 .decl img_facts(rel: symbol)
 .decl img_kindset(set: symbol)
+.input img_rule, img_lit, img_decl, img_facts, img_kindset
 
 // A rule of `h` reads `b`, positively or not, in an atom or an aggregate.
 .decl img_reads(h: symbol, b: symbol)

@@ -7,7 +7,7 @@
 use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleId, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomId, Lit as L, RuleId, Slot, TermRef, Version};
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1074,6 +1074,8 @@ pub struct KindSets {
     /// The linked library of a module lowered in its scope (`rr::Library::version`): a set it reads has the library's
     /// kinds first (`kinds_of`).
     pub library: Option<std::sync::Arc<Version>>,
+    /// The rules that take out the sets no rule reads (`rr/kind-sets.rerail`, decision 0662 §5.1).
+    pub rules: fn() -> &'static super::rules_pass::RulesProgram,
 }
 
 /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`, rules gone
@@ -1139,6 +1141,8 @@ impl ProgramPass for KindSets {
             let sets = format!("{:?}", library.kindset_map().unwrap_or_default());
             bytes.extend_from_slice(&crate::content_store::HashKey::sha256(sets.as_bytes()).sha256_bytes().unwrap_or_default());
         }
+        // The rules that take sets out.
+        bytes.extend_from_slice((self.rules)().text().as_bytes());
         bytes
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
@@ -1165,31 +1169,23 @@ impl ProgramPass for KindSets {
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
             }
         }
-        // A set no rule reads is no relation of the program, to a fixed point.
+        // A set no rule reads but its own and those of sets taken out is no relation of the program: the rules of
+        // `rr/kind-sets.rerail` over the image's view (decision 0662 §5.1). A program that holds no kind set as a
+        // relation has none to take out and runs no rules, as the rules' own program does when it is lowered.
         let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
-        loop {
-            let unread: Vec<String> = kindsets
-                .keys()
-                .filter(|set| head.declares(set) || head.states_facts(set) || heads_of(&gone, set))
-                .filter(|set| {
-                    !v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel())) && v.rel_name(r.head().rel()) != set.as_str()).any(|r| {
-                        r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == set.as_str()))
-                    })
-                })
-                .cloned()
-                .collect();
-            if unread.is_empty() {
-                break;
+        if kindsets.keys().any(|set| head.declares(set) || head.states_facts(set) || heads_of(&gone, set)) {
+            let rules = (self.rules)();
+            let sets: Vec<AtomId> = kindsets.keys().filter_map(|s| v.find(s)).collect();
+            let what = [rules.constant("atom")?, rules.constant("agg")?];
+            let out = rules.run(crate::code_rule_dsl::logic::program_image::view::sources(&input, &sets, what), &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
+            let name = |row: &Vec<i64>| v.text(AtomId(row[0] as u32)).to_owned();
+            for row in &out[1] {
+                head.b.fields().undeclare(&name(row));
             }
-            for set in unread {
-                if head.states_facts(&set) {
-                    head.b.fields().drop_facts(&set);
-                }
-                if head.declares(&set) {
-                    head.b.fields().undeclare(&set);
-                }
-                gone.insert(set);
+            for row in &out[2] {
+                head.b.fields().drop_facts(&name(row));
             }
+            gone.extend(out[0].iter().map(name));
         }
         // `derived_axes`: each axis over a derived set read through a helper.
         let mut axes: BTreeMap<RuleId, Vec<AxisLit>> = BTreeMap::new();

@@ -285,6 +285,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "READS"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The kind set rules (0662 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
+    // every run.
+    ("code_rule_dsl/logic/rr.rs", "RULES"),
+    // A thread's connection for rules passes (0662 §5.1): scratch, its inputs bound and its relations forgotten
+    // within each run, nothing kept from one run for another.
+    ("code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE"),
     // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.

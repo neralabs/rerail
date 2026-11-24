@@ -120,6 +120,8 @@ pub mod code_rule_dsl {
             pub mod layouts;
             pub mod manager;
             pub mod passes;
+            /// The image as the engine's inputs (decision 0662 §5.1).
+            pub mod view;
             pub use analyses::{Edges, Strata};
         }
         // The profile's report and watch read the planner's placements; the rest is `rerail-prof`'s.

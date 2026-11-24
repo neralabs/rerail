@@ -634,7 +634,7 @@ silently. Each place a digest stands for content, what can collide, and what is 
    T10. **Spiked** (§6a, E12–E16) and specified: the module steps at module time under a tail key
    (`p0_module_tailed`), the program's downward steps over the union and the steps after them on their edit, kind
    sets as rules over decision 0662's view, the steps' places declared. T10–T14.
-   **Built (2026-11-24), T10–T14 passing:**
+   **Built (2026-11-24), T10–T14 and 0662's T15–T16 passing:**
    - Each module's tail at module time, under `p0_tail_key` / `p0_tail_req -> p0_module_tailed`; a program links the
      tails and runs `program_steps` (T11, T12, T14).
    - Module-time decisions that a reader decides moved to program time (`Place::Across`), each at its `TAIL`
@@ -648,7 +648,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
      process store wait on its atoms lease and corrupted kept facts.
    - `DOWNWARD` is `downward_steps()`, the steps that declare `Place::Downward`.
    - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0662's view, names
-     `img_`) takes out the same sets, undeclarations and facts as `KindSets` in every pack.
+     `img_`) takes out the same sets, undeclarations and facts as `KindSets` in every pack; it is now the pass, and T10 is
+     0662's T16.
    - The program's checks are of its own components (`cycles::check_within`), the relations each step changed read
      off the version it made: an overlay's or view's edit (`rr::changed_since`), or a derivation's rules by their
      sources (`rr::derived_changes`: a rule whose hash is not its source's, one with no source, a source no rule came
@@ -669,10 +670,16 @@ silently. Each place a digest stands for content, what can collide, and what is 
      that each local step ran over the edit (`Ran::Delta`). The program's steps over the link, whole against onto
      it with its checks narrowed (E15, spark2, one thread, ms a program over 6): django 40.6 against 23.3, python
      15.2 against 9.8, react 21.8 against 18.0, phases 10.1 against 7.6.
+   - `KindSets` takes sets out by rules (decision 0662 §5.1): `rr/kind-sets.rerail`, lowered once a process, run by
+     the native engine (`run_atoms_native_over`, the corpus run's evaluator without its documents) over the image's
+     view, whose relations are sources read off the `Version` in place (`program_image::view`, each rule where it lies,
+     `Version::rule_places`). Its Rust fixed point is gone. The membership of each set and the axes over derived sets
+     stay Rust (generators). T15: the view states each pack library's rules, literals, declarations, facts and kind
+     sets as the image's reads give them. T16: through the Pipeline, on every pack's library, the rules take out the
+     sets, undeclarations and facts the fixed point took out. Per run (spark2, ms, the rules against the fixed point):
+     python 7.0 against 10.7, django 4.5 against 3.9, phases 4.7 against 3.6, typescript 3.9 against 3.3, react 3.2
+     against 1.5, sql (42 rules) 0.8 against 0.01. The engine's run holds about 0.7 ms however small the program
+     (planning each rule fresh moves no time), and the inputs' statistics a fifth of the rest.
 
-   **Left of step 6:**
-   - `KindSets` as a rules pass in the Pipeline (decision 0662 §5.1): the view read into a run in place and the
-     pass's plan kept with its image. No in-process evaluator exists apart from a corpus run (50–90 ms fixed, E5,
-     against `KindSets`' 2 ms), and a second one would break S003. The view as an engine input is the work.
 7. §5 checked by T4 on the template, and the template's fill time measured.
 8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.

@@ -220,6 +220,7 @@ native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the 
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::TOLD	stays	the process's footprint sampler's refusal reporter (Q203 (c)): it tells the first few device leases the process refuses, with the heap sampler's holdings
 native/crates/rr_root/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
 native/crates/rr_root/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
+native/crates/rr_root/src/code_rule_dsl/logic/rr.rs::RULES	stays	computed once from the engine's own files (rr/kind-sets.rerail lowered, its constants numbered by its own interner)
 native/crates/plan_base/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
 native/crates/rr/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registers at load
 native/crates/rr/src/code_rule_dsl/logic/rr/lower.rs::ENGINE	stays	computed once from the engine's own constants

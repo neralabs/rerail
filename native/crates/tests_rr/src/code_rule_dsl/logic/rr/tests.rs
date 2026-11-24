@@ -6328,7 +6328,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             p.program(&mut lt::Findings { pending: findings, library: None });
             p.program(&mut lt::CoreDecls { docof_of_locs }).program(&mut lt::SpanPatterns { library: None }).program(&mut lt::GrammarNames).program(&mut lt::BuiltinsOut { rewritten });
             let input = Arc::clone(p.current().unwrap());
-            p.program(&mut lt::KindSets { sets: sets.clone(), library: None });
+            p.program(&mut lt::KindSets { sets: sets.clone(), library: None, rules: super::kind_set_rules });
             let output = Arc::clone(p.current().unwrap());
             let (in_keys, out_keys): (BTreeSet<String>, BTreeSet<String>) = (input.kindset_map().unwrap().into_keys().collect(), output.kindset_map().unwrap().into_keys().collect());
             let there = |v: &Version, s: &str| v.declares(s) || v.fact_names().iter().any(|f| f == s);
@@ -6725,75 +6725,161 @@ fn line_relation(l: &str) -> String {
     l.split(['(', ' ', ',']).next().unwrap_or_default().trim().to_owned()
 }
 
-/// T10 (decision 0639 §6a, E10; decision 0662 §2): the kind set rules (`rr/kind-sets.rerail`, over the image's view
-/// `rr/view.rerail`) take out what `KindSets` takes out, every pack: the same sets, the same declarations undeclared
-/// and the same facts dropped. Each library is tailed to just before `KindSets`, its view stated from that image (its
-/// relations named by pack, so one run holds all packs) and the rules run once; the pass runs on the same image.
-#[test]
-fn kind_set_rules_take_out_what_the_pass_takes_out() {
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
-    use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
+/// Each pack's library tailed to just before `KindSets`, with the sets its lowering named: what T15 and T16 read.
+fn libraries_before_kind_sets() -> Vec<(String, Arc<Version>, BTreeSet<String>)> {
     // The test's store bound on its thread, which the tails on the pool's threads carry (T12).
     let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
     let libraries = tail_libraries();
     let at = super::TAIL.iter().position(|s| *s == super::TailStep::KindSets).unwrap();
-    // Per pack: the view's facts of the image before the pass, and what the pass takes out (sets, undeclared, facts).
-    type Out = (Vec<String>, [BTreeSet<String>; 3]);
-    let per_pack: Vec<Out> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
         use rayon::prelude::*;
-        libraries.par_iter().map(|(pack, plan, _)| {
-            let l = lower::link_library(plan.iter().map(|m| m.module().unwrap()).collect()).unwrap().with(None).unwrap();
-            let sets = l.lowered.sets.clone();
-            let input = super::tail_steps(l.version, false, l.lowered, None, &super::TAIL[..at]).unwrap_or_else(|e| panic!("{pack}: the tail before kind sets: {e}"));
-            let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("T10: kind sets", Arc::clone(&input));
-            p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets { sets, library: None });
-            let output = Arc::clone(p.current().unwrap_or_else(|e| panic!("{pack}: kind sets: {e}")));
-            let n = |rel: &str| format!("{:?}", format!("{pack}/{rel}"));
-            let sets = output.kindset_map().unwrap();
-            let mut facts: Vec<String> = sets.keys().map(|s| format!("img_kindset({}).", n(s))).collect();
-            for r in input.rules() {
-                let id = n(&format!("{:?}", r.id()));
-                facts.push(format!("img_rule({id}, {}).", n(input.rel_name(r.head().rel()))));
-                for (i, l) in r.body().enumerate() {
-                    let (what, a) = match l.view() {
-                        HL::Atom(a) => ("atom", a),
-                        HL::Agg { atom: a, .. } => ("agg", a),
-                        _ => continue,
-                    };
-                    facts.push(format!("img_lit({id}, {i}, {what:?}, {}, {}).", n(input.rel_name(a.rel())), u8::from(a.neg())));
-                }
-            }
-            for d in ProgramFields::declared_names(&*input) {
-                let cols = ProgramFields::columns_of(&*input, &d).unwrap_or_default().iter().map(|(c, t)| format!("{c}:{t}")).collect::<Vec<_>>().join(",");
-                facts.push(format!("img_decl({}, {cols:?}).", n(&d)));
-            }
-            facts.extend(ProgramFields::fact_names(&*input).into_iter().filter(|f| ProgramFields::states_facts(&*input, f)).map(|f| format!("img_facts({}).", n(&f))));
-            // What the pass took out of the kind sets: held as a relation before, not after.
-            let named = |s: &String| format!("{pack}/{s}");
-            let undeclared: BTreeSet<String> = sets.keys().filter(|s| ProgramFields::declares(&*input, s) && !ProgramFields::declares(&*output, s)).map(named).collect();
-            let dropped: BTreeSet<String> = sets.keys().filter(|s| ProgramFields::states_facts(&*input, s) && !ProgramFields::states_facts(&*output, s)).map(named).collect();
-            // A set taken out is undeclared and its facts dropped: stated before, not after.
-            let stated = |v: &Version, s: &str| ProgramFields::declares(v, s) || ProgramFields::states_facts(v, s);
-            let out: BTreeSet<String> = sets.keys().filter(|s| stated(&input, s) && !stated(&output, s)).map(named).collect();
-            (facts, [out, undeclared, dropped])
-        }).collect()
-    });
-    let facts: Vec<&String> = per_pack.iter().flat_map(|(f, _)| f).collect();
-    // The rules pass's program, its view's rows stated after it.
-    let program = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("rr/kind-sets.rerail")).unwrap();
-    let text = format!("{program}\n{}\n", facts.iter().map(|f| f.as_str()).collect::<Vec<_>>().join("\n"));
-    let rules: [BTreeSet<String>; 3] = guests_run_with("kindsets", &[("a.py", "x = 1\n")], &text, |o| {
-        ["img_kindset_out", "img_undeclare", "img_drop_facts"].map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[0].trim_matches('"').to_owned()).collect())
-    });
+        libraries
+            .par_iter()
+            .map(|(pack, plan, _)| {
+                let l = lower::link_library(plan.iter().map(|m| m.module().unwrap()).collect()).unwrap().with(None).unwrap();
+                let sets = l.lowered.sets.clone();
+                let input = super::tail_steps(l.version, false, l.lowered, None, &super::TAIL[..at]).unwrap_or_else(|e| panic!("{pack}: the tail before kind sets: {e}"));
+                (pack.clone(), input, sets)
+            })
+            .collect()
+    })
+}
+
+/// A view source's rows, each its values.
+fn source_rows(s: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<Vec<i64>> {
+    let width = s.columns().len();
+    (0..s.len()).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect()
+}
+
+/// T15 (decision 0662 §1, §5.1): the view states, read off the image in place, each rule and its head, each body
+/// literal that names a relation, each declaration's arity, each relation with facts and each kind set given: on every
+/// pack's library tailed to just before `KindSets`, each relation's rows, their names read back as the image's atoms,
+/// are what the image's own reads give.
+#[test]
+fn the_view_states_the_images_rules_literals_and_fields() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
+    use crate::code_rule_dsl::logic::program_image::{AtomId, view};
     let mut failures = Vec::new();
-    for (i, what) in ["sets taken out", "declarations undeclared", "facts dropped"].iter().enumerate() {
-        let pass: BTreeSet<&String> = per_pack.iter().flat_map(|(_, o)| &o[i]).collect();
-        let by_rules: BTreeSet<&String> = rules[i].iter().collect();
-        if pass != by_rules {
-            failures.push(format!("{what}: only the pass {:?}; only the rules {:?}", pass.difference(&by_rules).take(8).collect::<Vec<_>>(), by_rules.difference(&pass).take(8).collect::<Vec<_>>()));
+    for (pack, v, sets) in libraries_before_kind_sets() {
+        let given: Vec<AtomId> = sets.iter().filter_map(|s| v.find(s)).collect();
+        let (atom, agg) = (-1, -2);
+        let name = |a: i64| v.text(AtomId(u32::try_from(a).expect("a name is an atom"))).to_owned();
+        let mut expected: std::collections::BTreeMap<&str, BTreeSet<String>> = std::collections::BTreeMap::new();
+        for r in v.rules() {
+            expected.entry("img_rule").or_default().insert(format!("{} {}", r.id().0, v.rel_name(r.head().rel())));
+            for (i, l) in r.body().enumerate() {
+                let (what, a) = match l.view() {
+                    HL::Atom(a) => ("atom", a),
+                    HL::Agg { atom: a, .. } => ("agg", a),
+                    _ => continue,
+                };
+                expected.entry("img_lit").or_default().insert(format!("{} {i} {what} {} {}", r.id().0, v.rel_name(a.rel()), u8::from(a.neg())));
+            }
+        }
+        for d in ProgramFields::declared_names(&*v) {
+            expected.entry("img_decl").or_default().insert(format!("{d} {}", ProgramFields::columns_of(&*v, &d).unwrap().len()));
+        }
+        expected.entry("img_facts").or_default().extend(ProgramFields::fact_names(&*v));
+        expected.entry("img_kindset").or_default().extend(given.iter().map(|a| v.text(*a).to_owned()));
+        for (rel, source) in view::sources(&v, &given, [atom, agg]) {
+            let shown: BTreeSet<String> = source_rows(source.as_ref())
+                .into_iter()
+                .map(|row| match rel {
+                    "img_rule" => format!("{} {}", row[0], name(row[1])),
+                    "img_lit" => format!("{} {} {} {} {}", row[0], row[1], if row[2] == agg { "agg" } else { "atom" }, name(row[3]), row[4]),
+                    "img_decl" => format!("{} {}", name(row[0]), row[1]),
+                    _ => name(row[0]),
+                })
+                .collect();
+            let want = expected.remove(rel).unwrap_or_default();
+            if shown != want {
+                failures.push(format!("{pack} {rel}: only the view {:?}; only the image {:?}", shown.difference(&want).take(4).collect::<Vec<_>>(), want.difference(&shown).take(4).collect::<Vec<_>>()));
+            }
+        }
+        if let Some((rel, _)) = expected.iter().find(|(_, rows)| !rows.is_empty()) {
+            failures.push(format!("{pack}: the view has no {rel}"));
         }
     }
-    let taken: usize = per_pack.iter().map(|(_, o)| o[0].len()).sum();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The sets the fixed point `KindSets` ran before its rules (decision 0662 §5.1) takes out of `v`: those of `sets` the
+/// image holds as relations (declared, with facts, or the head of a rule) that no rule reads but their own and those
+/// of sets taken out, to a fixed point; with those of them declared and those with facts. T16's reference.
+fn unread_sets(v: &Version, sets: &BTreeSet<String>) -> [BTreeSet<String>; 3] {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
+    let heads = |set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some());
+    let mut gone: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let unread: Vec<String> = sets
+            .iter()
+            .filter(|set| !gone.contains(*set) && (v.declares(set) || ProgramFields::states_facts(v, set) || heads(set)))
+            .filter(|set| {
+                !v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel())) && v.rel_name(r.head().rel()) != set.as_str()).any(|r| {
+                    r.body().any(|l| matches!(l.view(), HL::Atom(a) | HL::Agg { atom: a, .. } if v.rel_name(a.rel()) == set.as_str()))
+                })
+            })
+            .cloned()
+            .collect();
+        if unread.is_empty() {
+            break;
+        }
+        gone.extend(unread);
+    }
+    let undeclared = gone.iter().filter(|s| v.declares(s)).cloned().collect();
+    let dropped = gone.iter().filter(|s| ProgramFields::states_facts(v, s)).cloned().collect();
+    [gone, undeclared, dropped]
+}
+
+/// T16 (decision 0662 §5.1; 0639's T10): `KindSets`, through the Pipeline, takes sets out by the rules of
+/// `rr/kind-sets.rerail`, run by the native engine over the image's view: on every pack's library tailed to just
+/// before the pass, it takes out what the fixed point it replaced takes out (`unread_sets`): the same sets, the same
+/// declarations undeclared and the same facts dropped. The rules' run and the fixed point are each timed per pack.
+#[test]
+fn kind_sets_take_out_by_rules_what_the_fixed_point_took_out() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::{AtomId, view};
+    // The test's store bound on its thread, which the tails on the pool's threads carry (T12).
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let rules = super::kind_set_rules();
+    let (mut failures, mut taken, mut lines) = (Vec::new(), 0, Vec::new());
+    const RUNS: u32 = 20;
+    for (pack, input, sets) in libraries_before_kind_sets() {
+        let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("T16: kind sets", Arc::clone(&input));
+        p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets { sets, library: None, rules: super::kind_set_rules });
+        let output = Arc::clone(p.current().unwrap_or_else(|e| panic!("{pack}: kind sets: {e}")));
+        let kindsets: BTreeSet<String> = output.kindset_map().unwrap().into_keys().collect();
+        let held = |v: &Version, s: &str| v.declares(s) || ProgramFields::states_facts(v, s) || v.rel(s).is_some_and(|rel| v.heads(rel).next().is_some());
+        let by_pass: [BTreeSet<String>; 3] = [
+            kindsets.iter().filter(|s| held(&input, s) && !held(&output, s)).cloned().collect(),
+            kindsets.iter().filter(|s| input.declares(s) && !output.declares(s)).cloned().collect(),
+            kindsets.iter().filter(|s| ProgramFields::states_facts(&*input, s) && !ProgramFields::states_facts(&*output, s)).cloned().collect(),
+        ];
+        let reference = unread_sets(&input, &kindsets);
+        for (i, what) in ["sets taken out", "declarations undeclared", "facts dropped"].iter().enumerate() {
+            if by_pass[i] != reference[i] {
+                failures.push(format!("{pack}: {what}: only the rules {:?}; only the fixed point {:?}", by_pass[i].difference(&reference[i]).collect::<Vec<_>>(), reference[i].difference(&by_pass[i]).collect::<Vec<_>>()));
+            }
+        }
+        taken += by_pass[0].len();
+        // The rules' run as the pass makes it (the view's sources and the evaluation), against the fixed point.
+        let given: Vec<AtomId> = kindsets.iter().filter_map(|s| input.find(s)).collect();
+        let what = [rules.constant("atom").unwrap(), rules.constant("agg").unwrap()];
+        let t = std::time::Instant::now();
+        for _ in 0..RUNS {
+            rules.run(view::sources(&input, &given, what), &["img_kindset_out", "img_undeclare", "img_drop_facts"]).unwrap();
+        }
+        let by_rules = t.elapsed().as_secs_f64() * 1e3 / f64::from(RUNS);
+        let t = std::time::Instant::now();
+        for _ in 0..RUNS {
+            std::hint::black_box(unread_sets(&input, &kindsets));
+        }
+        let by_fixed_point = t.elapsed().as_secs_f64() * 1e3 / f64::from(RUNS);
+        lines.push(format!("T16 {pack}: {} rules, {} kind sets, {} taken out; ms a run: the rules {by_rules:.3}, the fixed point {by_fixed_point:.3}", input.rules().count(), kindsets.len(), by_pass[0].len()));
+    }
+    println!("{}", lines.join("\n"));
     assert!(taken > 0, "no pack's kind sets were taken out: the test compares nothing");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -49,6 +49,44 @@ pub struct UnionPart {
     back: std::collections::HashMap<u32, u32>,
 }
 
+/// A version's rules where they lie (`Version::rule_places`): each rule's image (a layer of the version, a union's
+/// part's with the part's ids) and its number there. The images are held, so the places outlive no image.
+#[derive(Default)]
+pub struct RulePlaces {
+    layers: Vec<(Arc<Image>, Option<Arc<UnionPart>>)>,
+    /// Each rule: its layer, its number in the layer's image, its id in the version.
+    rules: Vec<(u32, u32, RuleId)>,
+}
+
+impl RulePlaces {
+    pub fn len(&self) -> usize {
+        self.rules.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+    /// The `i`th rule, read where it lies.
+    pub fn get(&self, i: usize) -> RuleRef<'_> {
+        let (l, k, id) = self.rules[i];
+        let (image, part) = &self.layers[l as usize];
+        let r = RuleRef::new(image, k, id);
+        match part {
+            Some(p) => r.in_union(id, &p.map),
+            None => r,
+        }
+    }
+    fn layer(&mut self, image: &Arc<Image>, part: Option<&Arc<UnionPart>>) -> u32 {
+        self.layers.push((Arc::clone(image), part.cloned()));
+        (self.layers.len() - 1) as u32
+    }
+    /// The rules from `start` on, each kept where `id` gives its id (kept, as it reads in the version above), else
+    /// left out.
+    fn keep_from(&mut self, start: usize, id: impl Fn(RuleId) -> Option<RuleId>) {
+        let tail = self.rules.split_off(start);
+        self.rules.extend(tail.into_iter().filter_map(|(l, k, r)| id(r).map(|r| (l, k, r))));
+    }
+}
+
 impl UnionPart {
     /// Part `version`, its rules in `keep` kept, its ids in the union's `map`.
     pub fn new(version: Arc<Version>, keep: Vec<(u32, u32)>, map: IdMap) -> Result<UnionPart, String> {
@@ -481,6 +519,40 @@ impl Version {
                 Box::new(parent.rules().filter(move |r| removed.binary_search(&r.id().0).is_err()).chain((0..delta.rules() as u32).map(move |k| RuleRef::new(delta, k, RuleId(base + k)))))
             }
             Version::Union { parts, .. } => Box::new(parts.iter().flat_map(|(p, base)| p.version.rules().filter(|r| p.kept(r.id())).map(move |r| r.in_union(RuleId(base + r.id().0), &p.map)))),
+        }
+    }
+    /// Each rule, in `rules`' order, where it lies (`RulePlaces`): a reader that reads rules by their place many
+    /// times reads each in place, without the walk through the layers `rule` makes.
+    pub fn rule_places(&self) -> RulePlaces {
+        let mut places = RulePlaces::default();
+        self.places_into(None, &mut places);
+        places
+    }
+    fn places_into(&self, part: Option<&Arc<UnionPart>>, out: &mut RulePlaces) {
+        let start = out.rules.len();
+        match self {
+            Version::Base { image, .. } => {
+                let l = out.layer(image, part);
+                out.rules.extend((0..image.rules() as u32).map(|k| (l, k, RuleId(k))));
+            }
+            Version::View { parent, ranges, .. } => {
+                parent.places_into(part, out);
+                out.keep_from(start, |id| Self::in_ranges(ranges, id.0).then_some(id));
+            }
+            Version::Overlay { parent, delta, .. } => {
+                parent.places_into(part, out);
+                let removed = delta.removed();
+                out.keep_from(start, |id| removed.binary_search(&id.0).is_err().then_some(id));
+                let (l, base) = (out.layer(delta, part), delta.rule_base());
+                out.rules.extend((0..delta.rules() as u32).map(|k| (l, k, RuleId(base + k))));
+            }
+            Version::Union { parts, .. } => {
+                for (p, base) in parts {
+                    let at = out.rules.len();
+                    p.version.places_into(Some(p), out);
+                    out.keep_from(at, |id| p.kept(id).then_some(RuleId(base + id.0)));
+                }
+            }
         }
     }
     /// Whether rule `id` is one of this version's.

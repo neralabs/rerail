@@ -1459,7 +1459,7 @@ pub fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, decla
                 p.program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
             }
             TailStep::KindSets => {
-                p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
+                p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)), rules: kind_set_rules });
             }
             TailStep::WithinRead => {
                 p.program(&mut lowering_tail::WithinRead);
@@ -2725,6 +2725,37 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<RrFile>, LibraryFile), Err
 
 /// A program's files, each its path and the statements of it the program reads (positions in its tape).
 pub type Files = Vec<(PathBuf, Vec<Stmt>)>;
+
+/// The rules `KindSets` takes sets out by (`rr/kind-sets.rerail`, decision 0662 §5.1): a constant of the engine's
+/// files, lowered at its first run.
+pub fn kind_set_rules() -> &'static super::plan::corpus::preparation::rules_pass::RulesProgram {
+    use super::plan::corpus::preparation::rules_pass::RulesProgram;
+    static RULES: std::sync::OnceLock<RulesProgram> = std::sync::OnceLock::new();
+    RULES.get_or_init(|| RulesProgram::new(rules_pass_text("rr/kind-sets.rerail"), |text| parse_version(text).map_err(|e| e.to_string())))
+}
+
+/// A rules pass's program (decision 0662 §5.1): library file `file` after the files it includes, each once, as one
+/// text without `core.rerail` and without its `#include`s, so the program is lowered alone.
+fn rules_pass_text(file: &str) -> Result<String, String> {
+    fn add(file: &str, seen: &mut BTreeSet<String>, out: &mut String) -> Result<(), String> {
+        if !seen.insert(file.to_owned()) {
+            return Ok(());
+        }
+        let text = std::fs::read_to_string(library().join(file)).map_err(|e| format!("{file}: {e}"))?;
+        let statements = RrFile::read(text.as_str()).map_err(|e| format!("{file}: {e}"))?.statements();
+        for (name, _) in include_names(&statements) {
+            add(&name, seen, out)?;
+        }
+        for line in text.lines().filter(|l| !l.trim_start().starts_with("#include")) {
+            out.push_str(line);
+            out.push('\n');
+        }
+        Ok(())
+    }
+    let mut out = String::new();
+    add(file, &mut BTreeSet::new(), &mut out)?;
+    Ok(out)
+}
 
 /// Whether a statement is an `#include`.
 fn is_include(s: &Stmt) -> bool {
