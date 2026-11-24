@@ -11513,3 +11513,11 @@ asks for the new check), c-directives eval::tests 50.
 - blocks maps.rs: the feeder's (FreeRoom, OwnerRoom, within, default_room, install).
 - A leftover of roll-up 122: transducer_base no longer digests `Readings::provisional` (removed by 0673 step 5).
 - Relax: blocks 101, vector 1, tape-format 51, facts-base 84, the text readers' guard, tests-corpus's phase0, template, cold-run and warm tests (31), all green; checks 0 errors on every touched crate.
+
+### Q553. Roll-up 125 (final-rerail-shape ce38ee7d1d onto Pulling-it-all-together): what the merge chose
+
+- One mechanism for a small free chunk's pages: the feeder's `ledger::GIVE_MIN` (256 KB, on the merged chunk, every listed block) and the hub's `Block::keeping_pages_below(LARGE_RESIDENT)` (256 KB, the large and owners' rooms) kept the same pages for the same reason. GIVE_MIN stays; `keeping_pages_below`, `resident_below`, `LARGE_RESIDENT`, `push_never_live`'s `pages` and the hub's test of the switch are gone (the feeder's `a_small_free_keeps_its_pages` covers it); 0342 says so.
+- scratch.rs: the hub's stack (the feeder's only change there was `Extent::default()` in the `Scratch` the stack replaced).
+- gate/executor-coverage/packs.tsv blessed again (RERAIL_BLESS_COVERAGE=1); both coverage tests pass.
+- The feeder's 31 cost-shape cases (t57 §7, slow tier): 14 pass here; the feeder's note says 13 of 31 with E1. The 17 red are its open targets, not this merge's.
+- Relax: blocks 102, facts-base 84, setfix 137, vector, tape-format 51, typing 13; the feeder's changed tests in tests-corpus (21), tests-logic, tests-rr, tests-lang: green. Checks: 0 errors.

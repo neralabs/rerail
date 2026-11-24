@@ -682,7 +682,7 @@ impl Source for Layered {
     /// A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
     /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too (`sources_of`), so a host file's
     /// key names its guests' parts as well: the first of them that holds the node answers.
-    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
         self.sources_of(n).into_iter().find_map(|s| s.node_read(name, n))
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {

@@ -102,11 +102,13 @@ mod tests {
         assert_eq!(b.used(), top, "nothing from the front");
     }
 
-    /// A chunk's pages go to the OS once no live chunk shares them: freed beside a live chunk the page stays; when
-    /// the last chunk in it is freed it goes, and a chunk handed out in it again reads zero.
+    /// A chunk's pages go to the OS only once no live chunk shares them and its free chunk, merged, is of
+    /// `ledger::GIVE_MIN` or more: freed beside a live chunk the page stays; when the last chunk in it is freed, the
+    /// rest of the block live, its free chunk is a page and stays too, for the next chunk of its class (taken with no
+    /// fault). A free that merges past `GIVE_MIN` gives its pages (`ledger`'s `a_small_free_keeps_its_pages`).
     #[cfg(target_vendor = "apple")]
     #[test]
-    fn a_page_goes_back_once_no_live_chunk_shares_it() {
+    fn a_page_stays_while_a_live_chunk_shares_it_or_its_free_chunk_is_small() {
         let b = block();
         let page = b.try_alloc_chunk(PAGE, 64).unwrap();
         drain(&b);
@@ -117,28 +119,8 @@ mod tests {
         b.free_chunk(a, PAGE / 2);
         assert!(crate::mem::tests::modified(b.ptr::<u8>(a)), "a live chunk shares the page");
         b.free_chunk(c, PAGE / 2);
-        assert!(!crate::mem::tests::modified(b.ptr::<u8>(a)), "given back with its last chunk");
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(a)), "its free chunk a page, under GIVE_MIN: kept");
         assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(page), "the merged page taken again");
-        let bytes = unsafe { std::slice::from_raw_parts(b.ptr::<u8>(page), PAGE) };
-        assert!(bytes.iter().all(|&x| x == 0), "zeroed, as a fresh one reads");
-    }
-
-    /// A block keeping pages below a size (`keeping_pages_below`, a thread's large room): a chunk freed under it keeps
-    /// its pages for the next; one at or past it gives them back, as every block's does.
-    #[cfg(target_vendor = "apple")]
-    #[test]
-    fn a_chunk_under_the_resident_size_keeps_its_pages() {
-        let b = block().keeping_pages_below(4 * PAGE);
-        let small = b.try_alloc_chunk(PAGE, 64).unwrap();
-        let big = b.try_alloc_chunk(8 * PAGE, 64).unwrap();
-        drain(&b);
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(small), 0xab, PAGE) };
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 8 * PAGE) };
-        assert_eq!(b.free_chunk(small, PAGE), 0, "nothing given to the OS");
-        assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "its page kept");
-        assert!(b.free_chunk(big, 8 * PAGE) > 0, "a chunk past the size gives its pages back");
-        assert!(!crate::mem::tests::modified(b.ptr::<u8>(big)));
-        assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(small), "the kept page taken again");
     }
 
     /// A block made for a chunk (`facts::rows`' `2 * need` and its 1 MB margin) holds it: a large chunk lies aligned

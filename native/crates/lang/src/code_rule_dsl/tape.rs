@@ -387,6 +387,17 @@ pub struct TapeImage {
     pub source_digest: Option<[u8; 32]>,
 }
 
+/// A parsed image as the store's writer takes its bytes (`TapeBytes`) where no device reads tapes: the image's own
+/// extent, where the parser wrote it (`stored_extent`), not a copy into a room (decision 0353 step 4a). A read of the
+/// queued tape before it is written takes the image again (`facts::core::queued_image`).
+pub struct StoredImage(pub TapeImage);
+
+impl AsRef<[u8]> for StoredImage {
+    fn as_ref(&self) -> &[u8] {
+        self.0.stored_extent()
+    }
+}
+
 /// A stored tape's presence, read in place in its stored bytes (`f16::StoredPresence`).
 pub use rerail_tape_format::f16::StoredPresence;
 
@@ -1212,6 +1223,14 @@ impl TapeImage {
                 put(t.extent());
                 Ok(())
             }
+        }
+    }
+
+    /// The bytes the store keeps (`emit`'s), where the image holds them: format 16's and 16z's extent.
+    pub fn stored_extent(&self) -> &[u8] {
+        match &self.held {
+            Held::F16(t) => t.extent(),
+            Held::F16Z(t) => t.extent(),
         }
     }
 

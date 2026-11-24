@@ -482,6 +482,15 @@ impl LongTexts {
         values.get(&local).cloned()
     }
 
+    /// Node `n`'s preorder key, `node_order(n, k)`'s `k` (`view_reads::Doc::order_row`): its document's key and its
+    /// order key in the document. None for a span or a document not in the batch.
+    pub fn order_any(&self, n: i64) -> Option<i64> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let local = p.local_of(low).filter(|&l| l < p.len())?;
+        Some(i64::from(key) << 32 | i64::from(p.order(local)))
+    }
+
     /// Node `n`'s string literal's content, as the batch's shape states `str(n, s)`: `core.rerail`'s literal reading
     /// (`core_rr::node_str`), or T's (a string node's content between its quotes, `NodeRows`). It answers `str`'s
     /// requests (decisions 0174, 0353 step 3): only the nodes a rule asks for are read and interned.
@@ -506,12 +515,14 @@ impl Source for LongTexts {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
-    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
+        use rusqlite::types::Value;
         match name {
-            "rr_node_text" => self.long_text(n),
-            "rr_node_text_any" => self.text_any(n),
-            "rr_node_value" => self.value_any(n),
-            "rr_node_str" => self.str_any(n),
+            "rr_node_text" => self.long_text(n).map(Value::Text),
+            "rr_node_text_any" => self.text_any(n).map(Value::Text),
+            "rr_node_value" => self.value_any(n).map(Value::Text),
+            "rr_node_str" => self.str_any(n).map(Value::Text),
+            "rr_node_order" => self.order_any(n).map(Value::Integer),
             _ => None,
         }
     }
@@ -2104,6 +2115,54 @@ impl Projected {
         // The source, then a line (1-based: the source's position and one).
         let line = if t.source { k } else { k + 1 };
         (self.len() + x.tokens + line, NONE)
+    }
+    /// `each` local id and tape node (`NONE` for a position) of `text`'s rows whose text is `t`, in row order: the
+    /// rows `text` read by its string answers. A node's text is its span, so a node with text `t` starts where `t`
+    /// occurs in the source and is `t`'s length long; tape nodes start in preorder at nondecreasing offsets, so those
+    /// starting at an occurrence are one run, found by a binary search on their starts (`reads::start`). The
+    /// document's other text rows are not read. Its positions (tokens, its source, its lines) are compared one by one.
+    pub fn text_rows_of(&self, t: &[u8], mut each: impl FnMut(u32, u32)) {
+        let nodes = self.ranks.count(Item::Text);
+        let f = self.f();
+        let n = self.facts.len() as u32;
+        if t.is_empty() || self.facts.tape.is_none() {
+            // A zero-width span lies at every offset: every row compared.
+            for i in 0..nodes {
+                let (local, x) = self.text_local(i);
+                if self.with_text(local, x, |s| s.as_bytes() == t) {
+                    each(local, x);
+                }
+            }
+        } else {
+            let source = self.facts.source.as_bytes();
+            let finder = memchr::memmem::Finder::new(t);
+            let mut from = 0;
+            // Occurrences may overlap (`aa` in `aaa`): each search starts one byte past the last occurrence.
+            while let Some(k) = finder.find(&source[from..]) {
+                let a = (from + k) as u32;
+                from += k + 1;
+                let (mut lo, mut hi) = (0u32, n);
+                while lo < hi {
+                    let mid = lo + (hi - lo) / 2;
+                    if f.start(mid) < a { lo = mid + 1 } else { hi = mid }
+                }
+                let mut x = lo;
+                while x < n && f.start(x) == a {
+                    if f.end(x) - a == t.len() as u32
+                        && self.ranks.local(Item::Text, x).is_some()
+                    {
+                        each(self.ranks.rank(Item::Node, x), x);
+                    }
+                    x += 1;
+                }
+            }
+        }
+        for i in nodes..self.text_rows() {
+            let (local, x) = self.text_local(i);
+            if self.with_text(local, x, |s| s.as_bytes() == t) {
+                each(local, x);
+            }
+        }
     }
     /// `text`'s row of local id `local` (its tape node `x` where known, else `NONE`), where it has text.
     pub fn text_row_of(&self, local: u32, x: u32) -> Option<u32> {
@@ -4447,13 +4506,7 @@ impl Batch {
             if !may {
                 continue;
             }
-            let p = &self.docs[doc];
-            for i in 0..p.text_rows() {
-                let (local, x) = p.text_local(i);
-                if p.with_text(local, x, |s| s.as_bytes() == t) {
-                    each(doc, local, x);
-                }
-            }
+            self.docs[doc].text_rows_of(t, |local, x| each(doc, local, x));
         }
     }
     /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
@@ -5023,7 +5076,7 @@ impl Viewed {
             PREV => known.prev.unwrap_or_else(|| Self::prev_id(p, local)),
             UNIT => Self::unit_id(b, p, local),
             OP => b.op_atom(p.tag(), b.dialects[p.tag()].code(p.f(), x)),
-            TEXT => p.text_atom(&b.atoms, local, x),
+            TEXT => p.text_atom(&*b.atoms, local, x),
             ENDP => Self::end_id(p, local),
             _ => n,
         }
@@ -5162,7 +5215,7 @@ impl Viewed {
                     *o = match (c, column) {
                         (0, 0) | (1, 1) => value,
                         (0, _) => p.global(local),
-                        _ => p.text_atom(&b.atoms, local, x),
+                        _ => p.text_atom(&*b.atoms, local, x),
                     };
                 }
                 each(firsts.at(doc) + r as usize, &vals[..columns.len()]);

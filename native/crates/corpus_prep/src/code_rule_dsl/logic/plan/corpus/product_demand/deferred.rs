@@ -406,6 +406,7 @@ fn share(p: &mut Program<'_>, rel: &str, n: usize) -> Result<Option<String>, Str
     for r in [&hot, &factor] {
         qualifiers.entry(r.clone()).or_default().insert("no_inline".to_owned());
     }
+    qualifiers.entry(hot.clone()).or_default().insert(crate::code_rule_dsl::typing::file_local::STRATEGY.to_owned());
     let made = p.derive(
         &mut |first, v, r, b| {
             if r.id() != id {

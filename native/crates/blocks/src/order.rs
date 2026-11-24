@@ -154,17 +154,35 @@ pub fn fence_span(fences: &[i64], n: usize, lead: i64) -> (usize, usize) {
 }
 
 /// The positions of an order of `n` ids whose rows hold `key` on the order's first `key.len()` columns (`key` not
-/// empty): `cmp(i)` compares position `i`'s row with the key. The span by the tags (a tagged order) or the fences;
-/// within it, by the prints where they are kept and the key is whole (`whole`), else by bisection.
+/// empty): `cmp(i, m)` compares position `i`'s row on the order's first `m` columns with `key[..m]`. The span by the
+/// tags (a tagged order) or the fences; within it, `within`'s.
 #[inline]
-pub fn find(n: usize, fences: &[i64], tags: &[u16], prints: &[u8], key: &[i64], whole: bool, cmp: impl Fn(usize) -> Ordering) -> (usize, usize) {
+pub fn find(n: usize, fences: &[i64], tags: &[u16], prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
     let lead = key[0];
     let (lo, hi) = if !tags.is_empty() { tag_span(tags, tag(lead), 0, true) } else { fence_span(fences, n, lead) };
-    if !prints.is_empty() && whole {
-        return print_span(prints, lo, hi, print_of_key(key), |i| cmp(i).is_eq());
-    }
-    let s = split_at_pos(lo, hi, |i| cmp(i) == Ordering::Less);
-    let e = split_at_pos(s, hi, |i| cmp(i) == Ordering::Equal);
+    within(lo, hi, prints, printed, key, cmp)
+}
+
+/// The positions in `lo..hi` (a span the key's rows lie in) whose rows hold `key`. Where the order prints its first
+/// `printed` columns (`prints`, a print a position) and the key holds them, the span of their print is found by the
+/// prints, eight a word, reading only the rows whose print is the key's (`print_span`); a longer key is then bisected
+/// within that span alone. Else the span is bisected. Bisection reads a row a step, a sealed chunk's decode, and a
+/// span of a tagged order holds every key sharing the lead's tag (about 15 at a million keys): the prints leave one
+/// row read where there were about seven (t56 step 7 C).
+#[inline]
+pub fn within(lo: usize, hi: usize, prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
+    let m = key.len();
+    let (lo, hi) = if !prints.is_empty() && printed > 0 && m >= printed {
+        let (s, e) = print_span(prints, lo, hi, print_of_key(&key[..printed]), |i| cmp(i, printed).is_eq());
+        if m == printed || s == e {
+            return (s, e);
+        }
+        (s, e)
+    } else {
+        (lo, hi)
+    };
+    let s = split_at_pos(lo, hi, |i| cmp(i, m) == Ordering::Less);
+    let e = split_at_pos(s, hi, |i| cmp(i, m) == Ordering::Equal);
     (s, e)
 }
 
@@ -173,29 +191,37 @@ mod tests {
     use super::*;
 
     /// An order of runs of equal keys, searched by fences alone and by fences and prints, finds each key's span as a
-    /// scan does, for keys present and absent, and keys whose rows cross fences.
+    /// scan does, for keys present and absent, and keys whose rows cross fences: by its first column (printed on it),
+    /// and by both columns (printed on the first alone, or on both).
     #[test]
     fn an_orders_search_finds_a_scans_span() {
-        // Values 0, 0, 0, 3, 3, 6, ...: each value 3k, k % 5 + 1 times; long runs cross fences.
-        let mut vals: Vec<i64> = Vec::new();
+        // Rows (3k, j): each lead 3k held k % 5 + 1 times (150 more for some, crossing fences), j its place among them.
+        let mut rows: Vec<[i64; 2]> = Vec::new();
         for k in 0..400i64 {
-            for _ in 0..(k % 5 + 1 + if k % 37 == 0 { 150 } else { 0 }) {
-                vals.push(3 * k);
+            for j in 0..(k % 5 + 1 + if k % 37 == 0 { 150 } else { 0 }) {
+                rows.push([3 * k, j]);
             }
         }
-        let n = vals.len();
-        let fences: Vec<i64> = vals.iter().step_by(FENCE).copied().collect();
-        let prints: Vec<u8> = vals.iter().map(|&v| print_vals(std::iter::once(v))).collect();
-        for key in -2..1210i64 {
-            let want = (vals.partition_point(|&v| v < key), vals.partition_point(|&v| v <= key));
-            let cmp = |i: usize| vals[i].cmp(&key);
-            let (s, e) = find(n, &fences, &[], &[], &[key], true, cmp);
-            assert_eq!((s, e), want, "fences, key {key}");
-            let (s, e) = find(n, &fences, &[], &prints, &[key], true, cmp);
-            if want.0 == want.1 {
-                assert_eq!(s, e, "prints, key {key} (absent)");
-            } else {
-                assert_eq!((s, e), want, "prints, key {key}");
+        let n = rows.len();
+        let fences: Vec<i64> = rows.iter().step_by(FENCE).map(|r| r[0]).collect();
+        let lead: Vec<u8> = rows.iter().map(|r| print_vals(std::iter::once(r[0]))).collect();
+        let both: Vec<u8> = rows.iter().map(|r| print_vals(r.iter().copied())).collect();
+        let held = &rows;
+        let cmp = |key: &[i64]| { let key = key.to_vec(); move |i: usize, m: usize| held[i][..m].cmp(&key[..m]) };
+        let span = |key: &[i64]| (rows.partition_point(|r| r[..key.len()] < *key), rows.partition_point(|r| r[..key.len()] <= *key));
+        let same = |got: (usize, usize), want: (usize, usize), what: &str| {
+            if want.0 == want.1 { assert_eq!(got.0, got.1, "{what} (absent)") } else { assert_eq!(got, want, "{what}") }
+        };
+        for lead_key in -2..1210i64 {
+            let key = [lead_key];
+            assert_eq!(find(n, &fences, &[], &[], 0, &key, cmp(&key)), span(&key), "fences, key {key:?}");
+            same(find(n, &fences, &[], &lead, 1, &key, cmp(&key)), span(&key), &format!("printed on the lead, key {key:?}"));
+            same(find(n, &fences, &[], &both, 2, &key, cmp(&key)), span(&key), &format!("printed on both, a lead key {key:?} (bisected)"));
+            for j in [-1, 0, 2, 7, 160] {
+                let key = [lead_key, j];
+                assert_eq!(find(n, &fences, &[], &[], 0, &key, cmp(&key)), span(&key), "fences, key {key:?}");
+                same(find(n, &fences, &[], &lead, 1, &key, cmp(&key)), span(&key), &format!("printed on the lead, key {key:?}"));
+                same(find(n, &fences, &[], &both, 2, &key, cmp(&key)), span(&key), &format!("printed on both, key {key:?}"));
             }
         }
     }

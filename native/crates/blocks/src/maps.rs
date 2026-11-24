@@ -79,10 +79,6 @@ pub struct FreeRoom {
     block: usize,
 }
 
-/// A freed chunk under this many bytes keeps its pages for the next (`Block::keeping_pages_below`): a growing
-/// vector's regions, made and freed in turn, gave theirs to the OS and took them back at every step.
-const LARGE_RESIDENT: usize = 256 << 10;
-
 /// The bytes a thread's large room's block reserves.
 const LARGE_BLOCK: usize = 64 << 20;
 
@@ -129,7 +125,7 @@ impl Room for FreeRoom {
         // `ALIGN_MAX` past the block's first byte, and a page.
         let size = crate::free::class_of(bytes).1;
         let need = size + align.max(size.min(crate::free::ALIGN_MAX)) + 4096;
-        let b = Arc::new(Block::anon(crate::block::kind::FACTS, self.block.max(need)).with_free_list().keeping_pages_below(LARGE_RESIDENT));
+        let b = Arc::new(Block::anon(crate::block::kind::FACTS, self.block.max(need)).with_free_list());
         let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
         *open = Some(b);
         region_of(r, None)
