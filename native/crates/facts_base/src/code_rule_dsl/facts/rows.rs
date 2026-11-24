@@ -83,8 +83,8 @@ pub const AXIS_KEYS: usize = 4;
 
 /// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
 /// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
-/// the device failed fails its takers' batches too). `taken`: a taker took it (set under the block's index lock), so
-/// its builder never gives its room back.
+/// the device failed fails its takers' batches too). `lent`: a taker took it (set under the block's index lock), so
+/// its builder never gives its room back. `whole`: whether its builder wrote it whole and right, asked once `done` is.
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
@@ -92,7 +92,8 @@ pub struct InFlight {
     /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
     pub lent: bool,
     /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
-    /// arena passed, decision 0603 step 5) left it unwritten.
+    /// arena passed, decision 0603 step 5) left it unwritten. Nor is one whose builder read its keys through a view whose
+    /// reads found no room in their batch's cache (`Building::misread`): its buckets hold the dead entry's keys.
     pub whole: Whole,
 }
 
@@ -628,6 +629,24 @@ pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32,
 fn seal_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off"))
+}
+
+/// Whether a tail's full chunks are sealed as its writer passes them (0622 step 3), not only at its relation's freeze:
+/// `RERAIL_SEAL_TAILS=on`. Off by default: on `all` it sealed the same bytes earlier, the peak 2.99 GB against 2.97 GB,
+/// for 199.0 s of CPU against 178.2 s, the tails read sealed while they are written (0622).
+fn seal_tails() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(on) = SEAL_TAILS_HERE.get() {
+        return on;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| seal_on() && std::env::var("RERAIL_SEAL_TAILS").is_ok_and(|v| v == "on"))
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Tests: this thread's tails sealed as they are written (`Some(true)`), or not, whatever the setting.
+    static SEAL_TAILS_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
@@ -2415,8 +2434,17 @@ impl Rows {
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
+        let before = tail.len();
         for row in rows.chunks_exact(self.k) {
             tail.push(row);
+        }
+        // 0622 step 3, with `RERAIL_SEAL_TAILS=on`: a chunk the writer has passed is sealed now (`Part::seal_full`
+        // takes only full chunks below the rows, and only where this tail alone holds its relation).
+        if seal_tails() && before < tail.len() {
+            let min_log = tail.rel().rows.min_log;
+            if rerail_blocks::rows::chunk_of(before, min_log).0 != rerail_blocks::rows::chunk_of(tail.len(), min_log).0 {
+                tail.seal_full("rows.sealed_tail");
+            }
         }
         self.absorbed();
     }
@@ -3284,6 +3312,30 @@ mod tests {
         assert!(fails(&mut || { std::hint::black_box(v[3]); }), "a read under a GPU write");
         w.complete();
         assert_eq!(v[3], 7);
+    }
+
+    /// 0622 step 3 (`RERAIL_SEAL_TAILS=on`): a tail's chunks are sealed as its writer passes them, each full chunk
+    /// below its rows, and every row reads back as written, before and after more rows are pushed past them. Off (the
+    /// default), they stay raw until the relation is frozen.
+    #[test]
+    fn a_tails_passed_chunks_are_sealed_as_it_is_written() {
+        let k = 2;
+        let row = |i: i64| [i / 100, i % 7];
+        for on in [true, false] {
+            SEAL_TAILS_HERE.set(Some(on));
+            let mut rows = Rows::new(k);
+            for lo in (0..40_000i64).step_by(1000) {
+                // copy: not block data: a test's rows
+                let batch: Vec<i64> = (lo..lo + 1000).flat_map(row).collect();
+                rows.extend_from_slice(&batch);
+            }
+            SEAL_TAILS_HERE.set(None);
+            let tail = rows.tail.as_ref().expect("written");
+            assert_eq!(tail.rel().rows.is_sealed(0), on, "the first chunk sealed as the writer passed it: {on}");
+            for i in 0..40_000i64 {
+                assert_eq!(&*rows.row(i as u32, k), &row(i)[..], "row {i}, sealing {on}");
+            }
+        }
     }
 
     /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it

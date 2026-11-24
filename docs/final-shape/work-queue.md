@@ -11132,3 +11132,41 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 
 - build-and-test-loop-time 67d4431a99: Relax's patch gives a share's folder mounts the disk's answers, in std and in the program's own C path calls, so the observer's warm run under `RELAX_SHARE` sees nothing changed (`the_run_after_a_cold_one_with_tape_values_writes_nothing`); README section 18.
 - No conflicts: the dev scripts only. No engine code changes, so no engine check.
+
+### 537. Roll-up 110 (final-rerail-shape 555b374a67 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape (7 commits past its hub merge):
+  - 0660: Metal at 512 MB gives the CPU's rows (t50 step 9), ten defects;
+  - heavy values off a CPU-backed device (`kernels_on_cpu`, `table::gpu_pays`);
+  - t50 step 7: a name's parent is its split at the last ".";
+  - 0622 step 4: a sealed chunk of few values spread wide is a dictionary (DICT), and rerail-blocks takes rustc-hash;
+  - 0622 step 3 behind RERAIL_SEAL_TAILS=on;
+  - a layered source asks whether its relation has parts once per value admitted.
+- Where the hub had already fixed a 0660 defect, its mechanism stays and the branch's is not added as a second one. 0660 has a new section that maps each fix:
+  - 1: the hub's `Batch::again` and `Run::indexes_again`, not `Batch::index_again`;
+  - 2: the hub's taker waits for the builder's work, not `InFlight::buffer`;
+  - 4: a failed commit spoils the batch (`Batch::spoil`), not `Batch::lost`;
+  - 5: the hub's `device_view` gives no view without a home;
+  - the device test binary's loader: the hub's in `device_metal.rs` (the branch's second one registered twice and aborted).
+- Taken onto the hub's shapes:
+  - `Building::misread`, folded into `InFlight::whole`;
+  - `Fresh::lots`, with `Placed::Wave` read as its slots of the wave's room (`DevRel::in_block_from`);
+  - the refused seed's scalar and string-join indexes, through `Edit::Index`;
+  - `last_splits`, as an analysis of the plan's view (`Edit::Last`, `Split::last` in the section);
+  - `Source::lookup_seq` and `Seq` over `Vector`, with `Viewed::lookup_runs` carrying every hub lookup and the directory's memo;
+  - the DICT encoding on the hub's generic columns (`write_dict<V: Vals>`).
+- `ViewDir::by_key`, as an offset in the hub's self-relative directory:
+  - `made::directory` writes the identity order, and `views_over` the layered order;
+  - `doc_of_key` and `dir_doc_of_key` bisect it;
+  - view.h and relation.h are regenerated from clif;
+  - with `views_over`'s order left as row order, `a_childs_parent_walk_finds_the_values_admitted_below_the_chunks_keys` fails; with it, the test passes.
+- The decisions README gets rows for 0659, 0660 and 0661, and loses a stray literal `\n` left by roll-up 103.
+- Checked with Relax, RERAIL_GPU=cpu: 9 crates, 0 errors. Tests:
+  - clif 17;
+  - blocks 88;
+  - accel score 7;
+  - setfix 136;
+  - facts 13;
+  - tests-lang syntax 86, with `a_lookups_rows_by_position_are_its_rows`;
+  - tests-logic `a_prefix_walk_splits_at_the_last_dot`;
+  - device-metal: the child walk, plus three index hand-off tests, including `an_index_built_twice_that_a_batch_took_is_kept`, which was red before.

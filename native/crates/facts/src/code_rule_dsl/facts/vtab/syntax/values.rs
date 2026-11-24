@@ -26,7 +26,7 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::ops::Range;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// The end of a key's chain (`Shard::chained`).
 const END: u32 = u32::MAX;
@@ -494,13 +494,15 @@ pub struct Layered {
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made as they are looked up.
     made: Option<parking_lot::Mutex<Made>>,
     width: usize,
+    /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
+    seen: AtomicU64,
 }
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(|| parking_lot::Mutex::new(Made::default()));
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width }
+        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0) }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -533,8 +535,20 @@ impl Layered {
     /// With no value admitted, no relation has parts: a probe of a chunk with none (most of them) reads only the
     /// count, where the parts' load (`arc_swap`'s, a thread-local each) and the name's lookup took about 600 samples
     /// of a 15 s sample of `all`.
+    /// Asked once per value admitted: each probe's load of the parts and hash of the name took about 1% of `all`'s
+    /// per-file phase's samples.
     fn has_parts(&self) -> bool {
-        self.values.admitted.load(Ordering::Acquire) > 0 && self.values.total(&self.name) > 0
+        let admitted = self.values.admitted() as u64;
+        if admitted == 0 {
+            return false;
+        }
+        let seen = self.seen.load(Ordering::Relaxed);
+        if seen >> 1 == admitted {
+            return seen & 1 != 0;
+        }
+        let has = self.values.total(&self.name) > 0;
+        self.seen.store(admitted << 1 | u64::from(has), Ordering::Relaxed);
+        has
     }
     /// Made on lookup, with values admitted: the scan's rows of the values (`Scan`), made up to the parts admitted
     /// now; `f` reads them.
@@ -749,6 +763,32 @@ impl Source for Layered {
             }
         });
         Some(out)
+    }
+    /// `lookup`'s rows by position: the base's, then the parts' that may hold `value` (a value's rows are few), at
+    /// their place past the base's. A base made on lookup numbers its values' rows as they are made (`MADE_AT`):
+    /// `lookup`'s rows.
+    fn lookup_seq(&self, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::Seq<'_>> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        if !self.has_parts() {
+            return self.base.lookup_seq(column, value);
+        }
+        if self.made.is_some() {
+            return self.lookup(column, &[value]).map(Seq::rows);
+        }
+        let base = self.base.lookup_seq(column, value)?;
+        let mut more = rerail_blocks::vector::Vector::new();
+        let docs = self.base.keys_documents(column);
+        self.parts(|p| {
+            p.of(value, docs, &mut |part| {
+                let at = self.base_len() + part.start;
+                match part.src.lookup(column, &[value]) {
+                    Some(rows) => more.extend(rows.into_iter().map(|r| at + r)),
+                    // A part that keeps no index of `column` is read whole: a value's rows are few.
+                    None => more.extend((0..part.src.len()).filter(|&r| part.src.value(r, column) == value).map(|r| at + r)),
+                }
+            });
+        });
+        Some(base.then(Seq::rows(more)))
     }
     /// The base's matches read as found, then each part's that may hold the value (`Parts::of`), numbered past the
     /// base's as `lookup` numbers them: a part with no such read is looked up and its rows read (a value's rows are

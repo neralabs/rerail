@@ -1000,16 +1000,38 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
         }
     }
     rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Each relation counted by morsels of its rows across the pool, the morsels' counts merged as a tree. One pass of
+    // a relation on one thread left a run's CPU cross part waiting 77 s of its 90 s on three relations' counts, at a
+    // parallelism of 1.3 (t50, 2026-11-23: `rf_names`, `rf_fn_follows`, `rf_target`).
+    const MORSEL: usize = 1 << 15;
     rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
         reqs.into_par_iter()
             .map(|(src, _, cols)| {
                 let src = src?;
-                let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
-                for row in 0..src.len() {
-                    for (k, &c) in cols.iter().enumerate() {
-                        *counts[k].entry(src.value(row, c)).or_default() += 1;
-                    }
-                }
+                let n = src.len();
+                let empty = || -> Vec<FxHashMap<i64, u64>> { cols.iter().map(|_| FxHashMap::default()).collect() };
+                let counts = (0..n.div_ceil(MORSEL))
+                    .into_par_iter()
+                    .fold(empty, |mut counts, m| {
+                        for row in m * MORSEL..((m + 1) * MORSEL).min(n) {
+                            for (k, &c) in cols.iter().enumerate() {
+                                *counts[k].entry(src.value(row, c)).or_default() += 1;
+                            }
+                        }
+                        counts
+                    })
+                    .reduce(empty, |mut a, b| {
+                        for (x, mut y) in a.iter_mut().zip(b) {
+                            // The smaller merged into the larger.
+                            if y.len() > x.len() {
+                                std::mem::swap(x, &mut y);
+                            }
+                            for (v, k) in y {
+                                *x.entry(v).or_default() += k;
+                            }
+                        }
+                        a
+                    });
                 Some(counts.into_iter().map(HeavyCol::of_counts).collect())
             })
             .collect()
@@ -1028,14 +1050,16 @@ pub fn batches() -> [u64; 2] {
 }
 
 /// Whether a round of `rows` rows (each column's rows, summed) is made on the GPU: `RERAIL_STATS_GPU` on or off,
-/// else from `GPU_ROWS`, where one launch and the columns' upload cost less than the CPU's hashing.
+/// else from `GPU_ROWS`, where one launch and the columns' upload cost less than the CPU's hashing. Never where the
+/// device's kernels run on the CPU (`RERAIL_GPU=cpu`): there its radix sorts ran at a parallelism of about one, and a
+/// CPU run's cross part waited 77 s of its 90 s on three relations' rounds (t50, 2026-11-23).
 fn gpu_pays(rows: usize) -> bool {
     const GPU_ROWS: usize = 1 << 20;
     rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
         Ok("on") => Some(true),
         Ok("off") => Some(false),
         _ => None,
-    }).unwrap_or(rows >= GPU_ROWS)
+    }).unwrap_or(rows >= GPU_ROWS && !crate::code_rule_dsl::logic::device::solver().is_some_and(|s| s.kernels_on_cpu()))
 }
 
 /// Columns' heavy values made on the registered device (`SolverDevice::column_stats`), exact; `None` without one.
@@ -1069,6 +1093,42 @@ pub fn heavy_of_values_gpu(cols: &[&[i64]]) -> Option<Vec<HeavyCol>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A relation's heavy values counted by morsels of its rows across the pool are the counts of one pass: over a
+    /// source of several morsels and a ragged last one, a column of many values and a column of a few heavy ones.
+    #[test]
+    fn heavy_values_counted_by_morsels_are_one_pass() {
+        struct Rows(usize);
+        impl crate::code_rule_dsl::facts::vtab::Source for Rows {
+            fn columns(&self) -> Vec<String> {
+                vec!["a".into(), "b".into()]
+            }
+            fn len(&self) -> usize {
+                self.0
+            }
+            fn estimated_matches(&self, _: usize, _: bool) -> usize {
+                1
+            }
+            fn indexed(&self, _: usize) -> bool {
+                false
+            }
+            fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+                None
+            }
+            fn value(&self, row: usize, column: usize) -> i64 {
+                if column == 0 { (row % 997) as i64 } else { (row * row % 5) as i64 }
+            }
+        }
+        let n = 3 * (1 << 15) + 17;
+        let src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Rows(n));
+        let got = heavy_batch(vec![(Some(Arc::clone(&src)), None, vec![0, 1])]).pop().flatten().expect("counted");
+        for (c, h) in got.iter().enumerate() {
+            let mut counts: FxHashMap<i64, u64> = FxHashMap::default();
+            (0..n).for_each(|r| *counts.entry(src.value(r, c)).or_default() += 1);
+            let want = HeavyCol::of_counts(counts);
+            assert_eq!((h.rows, h.ndv, h.sq, h.cube, &h.top), (want.rows, want.ndv, want.sq, want.cube, &want.top), "column {c}");
+        }
+    }
 
     #[test]
     fn flat_maps_read_back_what_they_hold_as_blocks_grow() {

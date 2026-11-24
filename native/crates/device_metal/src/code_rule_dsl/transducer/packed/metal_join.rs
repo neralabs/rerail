@@ -1091,6 +1091,10 @@ struct Building {
     /// by the buffers both bind, and a wrap of the block made after it (the block grown, `Block::device_buffer`) is
     /// another buffer, which the build's writes are not ordered before.
     buffer: Option<Buffer>,
+    /// The view its builder reads its keys through, when the relation is a view's home (decision 0478 step 3): a 16z
+    /// view's reads go through its batch's cache, and one that found no room there read the dead entry, so the index
+    /// holds wrong keys (`misread`).
+    view: Option<crate::code_rule_dsl::facts::vtab::ViewInPlace>,
     /// The program its builder's last job launched in (`Ran::ctl`), once launched: whether it built the index whole.
     whole: Option<Built>,
 }
@@ -1124,6 +1128,15 @@ impl Building {
     /// batch.
     fn ran(&self) -> bool {
         self.behind.as_ref().is_none_or(|Behind(round, ends)| round() > *ends)
+    }
+
+    /// Whether its builder's reads of its view found no room in their batch's cache (read once its work is done): its
+    /// buckets then hold the dead entry's keys, and the index is never marked built, nor read by a taker
+    /// (`InFlight::whole`). Marked, it stayed in the view's home, which every stratum's batch shares, and their probes
+    /// by its key found nothing (t50 step 9, Metal at 512 MB: `param`'s probe of a `child` view lost half a chunk's
+    /// rows, every run).
+    fn misread(&self) -> bool {
+        self.view.as_ref().is_some_and(|v| v.cache_failed() > v.failed)
     }
 
     /// Its relation's descriptor's offset in its block: what its `InFlight` is found by.
@@ -1904,7 +1917,18 @@ impl Batch {
         // Its launches in the ledger: a stack's dispatches one (decision 0648).
         self.done.dispatches += pass.launches() as u32;
         rerail_accel::exec::command_committed();
-        let s = pass.commit().map_err(Error::from)?;
+        // A submission whose launches failed to encode (a lease past the device's budget, say) is dropped uncommitted
+        // with every stage encoded in it, not only the one whose launch failed: the batch is spoiled, so all its strata
+        // run on the CPU (t50 step 9, Metal at 512 MB: the others in that submission finished with the counts of work
+        // never run, and `param`'s probe after an index built in it found no rows).
+        let s = match pass.commit() {
+            Ok(s) => s,
+            Err(e) => {
+                crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch that lost a submission its launches failed to encode (its strata on the CPU)", 1);
+                self.spoil();
+                return Err(e.into());
+            }
+        };
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
         // be built (`finish`), as may one queued after a round end (decision 0657): none is told. Nor is any of a spoiled
@@ -1912,8 +1936,9 @@ impl Batch {
         for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && b.behind.is_none() && !self.spoiled) {
             // Launched, or not told: its program is what says whether it was built.
             let Some(whole) = b.whole.clone() else { continue };
+            let view = b.view.clone();
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), lent: false, whole: std::sync::Arc::new(move || whole.whole()) });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), lent: false, whole: std::sync::Arc::new(move || whole.whole() && view.as_ref().is_none_or(|v| v.cache_failed() <= v.failed)) });
             b.queued = true;
         }
         self.committed.push(s);
@@ -2051,6 +2076,12 @@ impl Batch {
             if !b.ran() || !b.whole.as_ref().is_some_and(Built::whole) {
                 crate::code_rule_dsl::prof::count_named("device.index its program stopped before, given back".into(), 4 * room.rows_n as usize);
                 // SAFETY: the batch's work has completed; nothing built or read the index.
+                unsafe { r.give_back_index(&b.home.block, room) };
+                continue;
+            }
+            if b.misread() {
+                crate::code_rule_dsl::prof::count_named("device.index whose view's reads found no room in the cache, not marked built".into(), 4 * room.rows_n as usize);
+                // SAFETY: the batch's work has completed; a taker read none of it (`InFlight::whole`).
                 unsafe { r.give_back_index(&b.home.block, room) };
                 continue;
             }
@@ -2276,7 +2307,7 @@ impl Batch {
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, buffer: None, whole: None });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, view: rel.view.clone(), buffer: None, whole: None });
         let buffer = bound(&home)?;
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;

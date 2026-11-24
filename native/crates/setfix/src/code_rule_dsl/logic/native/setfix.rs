@@ -1556,6 +1556,10 @@ impl Fresh {
         self.place(placed, rounds);
         self.map = Some(map);
     }
+    /// The lots other writers wrote (`place`) and the relation has not taken yet, in order.
+    pub fn lots(&self) -> impl Iterator<Item = &Placed> {
+        self.placed.iter().map(|(p, _)| p)
+    }
     /// The last lot another writer wrote (`place`): where a next one for the same relation goes on (decision 0384 step 3).
     pub fn last_placed(&self) -> Option<&Placed> {
         self.placed.last().map(|(p, _)| p)
@@ -4715,6 +4719,17 @@ impl View {
         let src: Vec<usize> = cols.iter().map(|&k| self.cols[k]).collect();
         self.src.lookup_columns(&src, key).map(|rows| rows.into_iter().map(|r| r as u32).collect())
     }
+    /// `find_keyed`'s rows read by position, in its order: one lookup's as the source holds them
+    /// (`Source::lookup_seq`), none listed; a document-kept lookup's or a filtered one's listed.
+    fn find_seq(&self, cols: &[usize], key: &[i64], lead: usize) -> crate::code_rule_dsl::facts::vtab::Seq<'_> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        let kept = self.src.doc_column().is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k]));
+        if self.eqs.is_empty() && !kept {
+            // No such lookup: `find`'s none.
+            return self.src.lookup_seq(self.cols[cols[lead]], key[lead]).unwrap_or_else(|| Seq::rows(Vector::new()));
+        }
+        Seq::rows(self.find_keyed(cols, key, lead).into_iter().map(|r| r as usize).collect())
+    }
     /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
     /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
     /// `cursor`: the step's probe cursor (`Source::lookup_read_at`); `spare`: the step's list of the probe before,
@@ -6468,7 +6483,7 @@ impl InRel {
     /// Decision 0236: `probe_each`, sampled where the index gives more than `limit` candidates: `limit` of them are
     /// drawn by position (with replacement, from `draw`), and `f` sees those that match. The matches, estimated as the
     /// candidates times the share drawn that match; exact, with `f` on every match, where there are `limit` or fewer
-    /// candidates, or the index cannot be read by position (a source's lookups: those are read whole).
+    /// candidates. A source's lookup is drawn from by position too: its candidate rows, as `probe_each` finds them.
     pub fn probe_sample<'s>(&'s self, cols: &[usize], key: &[i64], limit: usize, draw: &mut dyn FnMut() -> u64, f: &mut dyn FnMut(&dyn Fn(usize) -> i64)) -> f64 {
         let ix = self.index(cols);
         let mut buf = [0i64; MAX_KEY];
@@ -6510,9 +6525,17 @@ impl InRel {
             let ids = ix.get(self, ikey);
             run(ids.len(), &|i| live(ids[i]))
         } else {
-            let mut m = 0u64;
-            self.probe_each(cols, key, &mut |r| { m += 1; f(r) });
-            m as f64
+            // A source's lookup: its candidates, as `probe_each` finds them, drawn by position where the source holds
+            // them (`View::find_seq`) as an index's are. Read whole, each match read and kept by the walk, one search at
+            // a run's end took 36 s and 14 GB (t50 step 9).
+            let v = self.view.as_ref().expect("a relation with no view is answered above");
+            let seq = if ix.composite {
+                let eq: Vec<(usize, i64)> = icols.iter().zip(ikey).map(|(&c, &k)| (v.cols[c], k)).collect();
+                crate::code_rule_dsl::facts::vtab::Seq::rows(v.src.lookup_all(&eq).unwrap_or_default())
+            } else {
+                v.find_seq(icols, ikey, ix.lead)
+            };
+            run(seq.len(), &|i| Some(RowRef::Source(v, seq.nth(i)).read()))
         }
     }
 
@@ -6544,9 +6567,16 @@ impl InRel {
         } else if !ix.composite && !ix.source || self.view.is_none() {
             ix.get(self, ikey).len() as f64
         } else {
-            let mut m = 0.0;
-            self.probe_each(cols, key, &mut |_| m += 1.0);
-            m
+            // A source's lookup: its candidates, as `probe_each` finds them, counted where the source holds them
+            // (`View::find_seq`), none listed or read. Reading each one to test it (`Viewed::row_at`) cost a run's end
+            // 195 s of a search's walk, and listing them (a file's every node, a kind's) 15 s more (t50 step 9).
+            let v = self.view.as_ref().expect("a relation with no view is answered above");
+            if ix.composite {
+                let eq: Vec<(usize, i64)> = icols.iter().zip(ikey).map(|(&c, &k)| (v.cols[c], k)).collect();
+                v.src.lookup_all(&eq).map_or(0, |r| r.len()) as f64
+            } else {
+                v.find_seq(icols, ikey, ix.lead).len() as f64
+            }
         }
     }
 
@@ -7609,6 +7639,33 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
 
 pub use steps::{ArchivedMulti as Multi, ArchivedPlan as Plan, ArchivedSrc as Src, ArchivedStep as Step, Edit, Key};
 
+/// t50 step 7: a split whose second part a later step requires to hold no "." (`split_dot`'s `!contains(x, ".")`),
+/// and which nothing else reads, is the split at the last "." (`Step::Split::last`): one split a row in place of one
+/// at every ".", and the test, true by construction, is unused. Where the part is read nowhere else it is not interned
+/// either, so a walk up a dotted name's prefixes makes no symbol a step but the prefix its row holds. The edits, on
+/// the plan's view (`steps::Edit`).
+fn last_splits(steps: &[Step], head: &[Term], is_dot: impl Fn(i64) -> bool) -> Vec<Edit> {
+    let in_head = |s: usize| head.iter().any(|t| matches!(t, Term::Slot(x) if *x == s) || matches!(t, Term::Cat(a, b) if *a == s || *b == s));
+    let mut edits = Vec::new();
+    for (i, st) in steps.iter().enumerate() {
+        let Step::Split { b: Some(sb), last: false, .. } = st else { continue };
+        let sb = *sb;
+        if in_head(sb) {
+            continue;
+        }
+        let readers: Vec<usize> = (i + 1..steps.len()).filter(|&j| steps[j].observes(sb)).collect();
+        let [j] = readers[..] else { continue };
+        let Step::Test { op, s: Key::Slot(s), p: Key::Const(dot), want: false, .. } = &steps[j] else { continue };
+        if op.as_str() != "contains" || *s != sb || !is_dot(*dot) {
+            continue;
+        }
+        edits.push(Edit::Last(i));
+        edits.push(Edit::Unused(j, crate::code_rule_dsl::logic::analysis::Decision::new(true, "a split at its last \".\" leaves none in its second part")));
+    }
+    edits
+}
+
+
 /// A native join: its plan, in a section (`steps::Plan`), and what its walks count and keep as they run.
 /// `counts`: per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read
 /// them: the observed fanout of each step, which replanning uses in place of the estimate.
@@ -7682,6 +7739,9 @@ impl JoinRule {
     /// The CPU's indexes of its inputs, on the relations its steps hold: what `join_rule` gives a rule parsed with
     /// them, for one parsed without (a seed placed on the device, which then refused it).
     fn indexed(&mut self) {
+        // Every step that reads an input by its key: an atom, and an aggregate or a string join over one. Left as
+        // parsed, an aggregate's index was the device's unindexed one, whose `get` holds no rows: a refused
+        // stratum's `min` found nothing, and its head lost a whole chunk's rows (t50 step 9, Metal at 512 MB).
         let edits: Vec<Edit> = self
             .plan
             .steps
@@ -7689,7 +7749,7 @@ impl JoinRule {
             .zip(self.plan.ranges.iter())
             .enumerate()
             .filter_map(|(i, (st, r))| match st {
-                Step::Atom { src: Src::In(rel, ix), .. } => {
+                Step::Atom { src: Src::In(rel, ix), .. } | Step::Scalar { src: Src::In(rel, ix), .. } | Step::StrJoin { src: Src::In(rel, ix), .. } => {
                     let (rel, ix) = self.src_in(rel, ix);
                     let ix = rel.index(&ix.cols);
                     // A ranged probe reads the order on its key then the range's column, as `join_rule` gives it.
@@ -8147,7 +8207,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
                         _ => None,
                     };
                     let (sa, sb) = (part(&mut bound, a), part(&mut bound, b));
-                    steps.push(Step::Split { whole: Key::Slot(o), a: sa, b: sb, ka: a, kb: b });
+                    steps.push(Step::Split { whole: Key::Slot(o), a: sa, b: sb, ka: a, kb: b, last: false });
                     continue;
                 }
                 let bind = !is_bound(&bound, Key::Slot(o));
@@ -8261,14 +8321,19 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     };
     let multi = multi.into_iter().map(|(rel, cols)| steps::Multi { rel, cols }).collect();
     let plan = steps::Plan { steps, out, nslots: bound.len(), multi, probes: Vec::new(), fused: Vec::new(), spec: level::digest(spec), from, plan_steps, ranges: Vec::new() };
-    Ok(JoinRule::encoded(analysed(plan, !env_set!("RERAIL_NO_ROW_PROGRAMS"))))
+    Ok(JoinRule::encoded(analysed(plan, !env_set!("RERAIL_NO_ROW_PROGRAMS"), |c| syms.name(c) == ".")))
 }
 
-/// `plan`'s section, its analyses made on its view and their edits on its steps (`steps::Edit`): the sums and copies
-/// no one reads elided (`liveness`), the scalars' bags (`scalars`), the ranged probes' orders (`ranges`), and then
-/// what is read by step: the texts only probed (`probes`) and, where `fuse`, the row programs (`rowcode`).
-fn analysed(mut plan: steps::Plan, fuse: bool) -> Section<steps::Plan> {
+/// `plan`'s section, its analyses made on its view and their edits on its steps (`steps::Edit`): the splits at the
+/// last "." (`last_splits`, a constant `is_dot`), the sums and copies no one reads elided (`liveness`), the scalars'
+/// bags (`scalars`), the ranged probes' orders (`ranges`), and then what is read by step: the texts only probed (`probes`) and, where `fuse`, the row programs (`rowcode`).
+fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> Section<steps::Plan> {
     let mut s = plan.encode();
+    let last = last_splits(&s.steps, &s.out, is_dot);
+    if !last.is_empty() {
+        plan.edit(last);
+        s = plan.encode();
+    }
     let unused = liveness::sums(&s.steps, &s.out);
     if !unused.is_empty() {
         plan.edit(unused);
@@ -9007,14 +9072,24 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
             }
-            Step::Split { whole, a, b, ka, kb } => {
-                // As `cat` makes it: `"" . w`, or at each "." with a part before it.
+            Step::Split { whole, a, b, ka, kb, last } => {
+                // As `cat` makes it: `"" . w`, or at each "." with a part before it; with `last`, only the split whose
+                // second part holds no ".".
                 let probe = j.probes[i];
                 // The whole's text, and each part's atom where the part is only looked up (`PROBE_A`, `PROBE_B`), read
                 // under one read of the arena. `Err`: not known in memory, looked up after (`held`). A part not in
                 // memory where a miss is final has no atom (`Atoms::misses_are_final`).
                 type Part = Result<Option<i64>, ()>;
-                let at = |w: &str| std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))).collect::<Vec<_>>();
+                let at = |w: &str| -> Vec<Option<usize>> {
+                    if *last {
+                        return match w.rfind('.') {
+                            None => vec![None],
+                            Some(0) => Vec::new(),
+                            Some(p) => vec![Some(p)],
+                        };
+                    }
+                    std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))).collect()
+                };
                 let (pa, pb) = (a.is_some() && probe & PROBE_A != 0 && probe & UNREAD_A == 0, b.is_some() && probe & PROBE_B != 0 && probe & UNREAD_B == 0);
                 let fin = cx.syms.atoms.misses_are_final();
                 let read = crate::content_store::atoms::Sym::try_from(val(slots, *whole)).ok().and_then(|id| cx.syms.atoms.in_memory(|m| {
@@ -10260,7 +10335,7 @@ pub mod probe_tests {
         // The steps' plan, read as every reader reads it (`steps::Plan`'s view).
         let plan = |steps: Vec<Made>| steps::Plan { steps, out: Vec::new(), nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new() }.encode();
         // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
-        let split = || Made::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2) };
+        let split = || Made::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
         let tested = |out| Made::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None, kept: None };
         let made = Made::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true, texts: None, kept: None };
         let fns = plan(vec![tested(2), made]);
@@ -10275,6 +10350,36 @@ pub mod probe_tests {
         let s = plan(vec![split(), cat(false)]);
         let p = probes(&s.steps, &[]);
         assert_eq!(p[0] & (UNREAD_B | PROBE_B), 0, "the part a `@cat` tests");
+    }
+
+    /// t50 step 7: `split_dot(p, m, _)`'s split, whose second part only its no-"." test reads, splits at the last "."
+    /// alone, its test unused and its part unread (no atom made for it). A part the head holds, or another step reads,
+    /// or a test of another text, leaves the split at every ".".
+    #[test]
+    fn a_split_whose_second_part_holds_no_dot_is_the_last_split() {
+        use steps::Step as Made;
+        const DOT: i64 = 7;
+        let plan = |steps: Vec<Made>, out: Vec<Term>| {
+            let mut plan = steps::Plan { steps, out, nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new() };
+            let s = plan.encode();
+            plan.edit(last_splits(&s.steps, &s.out, |c| c == DOT));
+            plan.encode()
+        };
+        let split = || Made::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
+        let test = |p: i64| Made::Test { op: "contains", s: Key::Slot(2), p: Key::Const(p), matcher: None, test: None, want: false };
+        let last = |steps: &[Step]| matches!(steps[0], Step::Split { last: true, .. });
+        let s = plan(vec![split(), test(DOT)], vec![Term::Slot(0), Term::Slot(1)]);
+        assert!(last(&s.steps) && matches!(s.steps[1], Step::Unused { .. }));
+        assert_eq!(probes(&s.steps, &s.out)[0] & UNREAD_B, UNREAD_B, "the second part is unread");
+        // Held by the head.
+        let s = plan(vec![split(), test(DOT)], vec![Term::Slot(2)]);
+        assert!(!last(&s.steps) && matches!(s.steps[1], Step::Test { .. }));
+        // Read again by another step.
+        let s = plan(vec![split(), test(DOT), Made::Eq { a: Key::Slot(2), b: Key::Slot(1) }], Vec::new());
+        assert!(!last(&s.steps));
+        // A test of another text.
+        let s = plan(vec![split(), test(8)], Vec::new());
+        assert!(!last(&s.steps));
     }
 }
 

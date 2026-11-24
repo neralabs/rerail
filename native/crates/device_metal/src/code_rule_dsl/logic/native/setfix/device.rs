@@ -2825,7 +2825,30 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             b.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's distinct rows")), n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
             at += n;
         }
-        let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
+        // Less the rows the head holds, and those the stratum's earlier groups placed for it and the store has not
+        // taken yet (`Fresh::placed`: a stratum whose rules did not fit one submission, `encode_runs_bounded`), each
+        // read where it lies. The store takes every lot as it lies: left out, a lot repeated an earlier one's rows (t50
+        // step 9, Metal at 512 MB: `xd_raw_parameter_annotation`'s two rules in two groups, about twice its rows in
+        // 13 of 36 chunks).
+        // Each as its relation in its block and the rows of it read (`DevRel::in_block_from`).
+        let mut against: Vec<(crate::code_rule_dsl::facts::rows::InBlock, usize, usize)> = Vec::new();
+        if rel.n > 0
+            && let Some(held) = rel.in_block()
+        {
+            let n = held.rows as usize;
+            against.push((held, 0, n));
+        }
+        for lot in fresh[h].lots() {
+            against.push(match lot {
+                super::Placed::Part(p) => (p.in_block(p.len()), 0, p.len() as usize),
+                // The tail's rows to the lot's last: the relation's own there, then the lot's.
+                super::Placed::Tail { lent, n } => (lent.tail().in_block(lent.at + n), 0, (lent.at + n) as usize),
+                // Its slots of the wave's room: other lots' and the CPU's rows of the wave lie around them.
+                super::Placed::Wave { room, r, row, n } => (room.part(*r).in_block(row + n), *row as usize, *n as usize),
+            });
+        }
+        // Its counts: the union's (0), its distinct rows' (1), then each subtraction's.
+        let words = mj::Words::zeroed(2 + against.len().max(1)).map_err(|e| format!("{e:?}"))?;
         words.set(0, cap as u32);
         let all: Vector<usize> = (0..k).collect();
         // Made distinct: one rule's rows are already.
@@ -2837,29 +2860,26 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         } else {
             (union, None)
         };
-        // Less the rows the head holds, read where they lie.
-        let (rows, slot) = match rel.in_block() {
-            Some(held) if rel.n > 0 => {
-                let dev = mj::DevRel::in_block(&held, k).map_err(|e| format!("{e:?}: a relation in its block"))?;
-                let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
-                rep.in_place += 1;
-                if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-                let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
-                for c in 0..k {
-                    d.key_rcol[c] = c as u32;
-                    d.key_kind[c] = mj::SLOT;
-                    d.key_slot[c] = c as u32;
-                }
-                let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
-                let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
-                // A stage reads its bindings' count from its in-slot: the union's is the cap (slot 0).
-                b.stage(d, &rows, Some((&dev, Some(&ix))), None, slot.unwrap_or(0), 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
-                hold.push(rows);
-                hold_rels.push((dev, ix));
-                (fresh_rows, Some(2))
+        let (mut rows, mut slot) = (rows, slot);
+        for (j, (held, from, n)) in against.iter().enumerate() {
+            let dev = mj::DevRel::in_block_from(held, k, *from, *n).map_err(|e| format!("{e:?}: a relation in its block"))?;
+            let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
+            rep.in_place += 1;
+            if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+            let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
+            for c in 0..k {
+                d.key_rcol[c] = c as u32;
+                d.key_kind[c] = mj::SLOT;
+                d.key_slot[c] = c as u32;
             }
-            _ => (rows, slot),
-        };
+            let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+            let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
+            // A stage reads its bindings' count from its in-slot: the union's is the cap (slot 0).
+            b.stage(d, &rows, Some((&dev, Some(&ix))), None, slot.unwrap_or(0), 2 + j, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+            hold.push(std::mem::replace(&mut rows, fresh_rows));
+            hold_rels.push((dev, ix));
+            slot = Some(2 + j);
+        }
         let (room, dst, at) = head_room(rel, &fresh[h], k, cap, cap)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;

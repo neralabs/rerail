@@ -126,6 +126,10 @@ impl SolverDevice for Metal {
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
         joins::column_stats(cols, k).map_err(Refused::Failed)
     }
+
+    fn kernels_on_cpu(&self) -> bool {
+        rerail_device::device::cpu_chosen()
+    }
 }
 
 pub mod matcher {

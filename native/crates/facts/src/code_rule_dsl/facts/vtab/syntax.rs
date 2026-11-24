@@ -4548,6 +4548,18 @@ impl Source for Viewed {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)
     }
+    /// A kind's nodes read in their list (`Batch::by_kind`), not one run each; the other lookups' runs (a document's
+    /// rows are one) listed.
+    fn lookup_seq(&self, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::Seq<'_>> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        let b = &*self.batch;
+        if matches!(self.view, View::Node) && column == 2 {
+            let (list, nodes) = (b.by_kind(value), b.nodes());
+            return Some(Seq::new(list.len(), move |i| nodes.at(list[i][0] as usize) + list[i][1] as usize));
+        }
+        let (mut runs, mut memo) = (Vec::new(), crate::code_rule_dsl::facts::vtab::NO_MEMO);
+        self.lookup_runs(column, value, None, &mut memo, &mut |r| runs.push(r)).then(|| Seq::runs(runs))
+    }
     fn keys_rows(&self, column: usize) -> bool {
         column == self.own()
     }
@@ -4771,75 +4783,9 @@ impl Viewed {
     fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<rerail_blocks::vector::Vector<usize>> {
         // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
         let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
-        let b = &*self.batch;
-        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
-        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.file(*doc) == b.docs.key(o));
         let mut rows = rerail_blocks::vector::Vector::new();
         for &v in values {
-            if column == self.own() {
-                let found = if matches!(self.view, View::Loc(_)) { b.loc(v, &mut memo) } else { b.node(v, &mut memo) };
-                rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
-            } else if Some(column) == self.parent() {
-                if v == -1 && matches!(self.view, View::Tape) {
-                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes().at(doc)));
-                } else if let Some((doc, local)) = b.node(v, &mut memo) {
-                    b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
-                }
-            } else if matches!(self.view, View::Order) && column == 1 {
-                // An order key: its document, and the node with that key (`Projected::local_of_order`).
-                let key = (v & 0xffff_ffff) as u32;
-                rows.extend(b.doc(v >> 32, &mut memo).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
-            } else if matches!(self.view, View::End) && column == 1 {
-                // An end point's node: its place among the end points.
-                if let Some((doc, l)) = b.loc(v, &mut memo) {
-                    let p = &b.docs[doc];
-                    let from = p.extra.as_ref().map_or(u32::MAX, |x| p.len() + x.ends_from());
-                    if l >= from && l - from < p.len() {
-                        rows.extend(b.row(self.view, doc, l - from));
-                    }
-                }
-            } else if matches!(self.view, View::Op) && column == 0 {
-                // A node's anonymous children.
-                if let Some((doc, local)) = b.node(v, &mut memo) {
-                    let p = &b.docs[doc];
-                    p.f().each_child(p.node(local), |x| rows.extend(b.row_of_node(self.view, doc, local, x)));
-                }
-            } else if matches!(self.view, View::Unit) && column == 1 {
-                // A unit's nodes, walked on the tape (`Projected::each_of_unit`); the root's are those no unit holds.
-                if let Some((doc, local)) = b.node(v, &mut memo) {
-                    let p = &b.docs[doc];
-                    p.each_of_unit(&b.dialects[p.tag()], local, |l| rows.extend(b.row(self.view, doc, l)));
-                }
-            } else if matches!(self.view, View::Sibling) && column == 0 {
-                // The row of `a`'s next sibling: a hop along the tape's siblings.
-                rows.extend(b.node(v, &mut memo).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
-            } else if matches!(self.view, View::Core) && column == 0 {
-                rows.extend(b.doc(v, &mut memo).map_or(0..0, |doc| b.nodes().at(doc)..b.nodes().at(doc + 1)));
-            } else if matches!(self.view, View::Node) && column == 0 {
-                // A file's rows, then its programs' (decision 0431 §4).
-                let Ok(file) = u32::try_from(v) else { continue };
-                for doc in b.doc(v, &mut memo).into_iter().chain(b.programs_of(file)) {
-                    rows.extend(b.nodes().at(doc)..b.nodes().at(doc + 1));
-                }
-            } else if matches!(self.view, View::Loc(Place::Docof)) && column == 1 {
-                // A file's places, then its programs' (decision 0431 §4): at their documents' offsets, none made, where
-                // an index of the view's every row made every document.
-                let Ok(file) = u32::try_from(v) else { continue };
-                let offsets = b.firsts(self.view);
-                for doc in b.doc(v, &mut memo).into_iter().chain(b.programs_of(file)) {
-                    rows.extend(offsets.range(doc));
-                }
-            } else if matches!(self.view, View::Core) && column == 1 {
-                // A tape node of each document that has it as a node; the statement filters `d`.
-                let Ok(t) = u32::try_from(v) else { continue };
-                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
-                    if let Some(local) = p.ranks().local(Item::Node, t) {
-                        rows.push(b.nodes().at(doc) + local as usize);
-                    }
-                }
-            } else if matches!(self.view, View::Node) && column == 2 {
-                rows.extend(b.by_kind(v).iter().filter(|&&[doc, _, _]| kept(&(doc as usize))).map(|&[doc, local, _]| b.nodes().at(doc as usize) + local as usize));
-            } else {
+            if !self.lookup_runs(column, v, only, &mut memo, &mut |r| rows.extend(r)) {
                 return None;
             }
         }
@@ -4898,6 +4844,83 @@ impl Viewed {
             ENDP => Self::end_id(p, local),
             _ => n,
         }
+    }
+
+    /// `lookup_docs`' rows for one value, given to `each` as runs of rows, in their order; `false` where it has no
+    /// such lookup. A document's rows (a file's nodes, its places, its programs') are one run each: counted or drawn
+    /// from with none listed (`Source::lookup_seq`). `memo`: the directory's searches' memo, the read's.
+    fn lookup_runs(&self, column: usize, v: i64, only: Option<usize>, memo: &mut u32, each: &mut dyn FnMut(std::ops::Range<usize>)) -> bool {
+        let b = &*self.batch;
+        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
+        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.file(*doc) == b.docs.key(o));
+        let mut one = |r: Option<usize>| if let Some(r) = r { each(r..r + 1) };
+        if column == self.own() {
+            let found = if matches!(self.view, View::Loc(_)) { b.loc(v, memo) } else { b.node(v, memo) };
+            one(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
+        } else if Some(column) == self.parent() {
+            if v == -1 && matches!(self.view, View::Tape) {
+                (0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).for_each(|doc| one(Some(b.nodes().at(doc))));
+            } else if let Some((doc, local)) = b.node(v, memo) {
+                b.docs[doc].each_child(local, |c| one(b.row(self.view, doc, c)));
+            }
+        } else if matches!(self.view, View::Order) && column == 1 {
+            // An order key: its document, and the node with that key (`Projected::local_of_order`).
+            let key = (v & 0xffff_ffff) as u32;
+            one(b.doc(v >> 32, memo).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
+        } else if matches!(self.view, View::End) && column == 1 {
+            // An end point's node: its place among the end points.
+            if let Some((doc, l)) = b.loc(v, memo) {
+                let p = &b.docs[doc];
+                let from = p.extra.as_ref().map_or(u32::MAX, |x| p.len() + x.ends_from());
+                if l >= from && l - from < p.len() {
+                    one(b.row(self.view, doc, l - from));
+                }
+            }
+        } else if matches!(self.view, View::Op) && column == 0 {
+            // A node's anonymous children.
+            if let Some((doc, local)) = b.node(v, memo) {
+                let p = &b.docs[doc];
+                p.f().each_child(p.node(local), |x| one(b.row_of_node(self.view, doc, local, x)));
+            }
+        } else if matches!(self.view, View::Unit) && column == 1 {
+            // A unit's nodes, walked on the tape (`Projected::each_of_unit`); the root's are those no unit holds.
+            if let Some((doc, local)) = b.node(v, memo) {
+                let p = &b.docs[doc];
+                p.each_of_unit(&b.dialects[p.tag()], local, |l| one(b.row(self.view, doc, l)));
+            }
+        } else if matches!(self.view, View::Sibling) && column == 0 {
+            // The row of `a`'s next sibling: a hop along the tape's siblings.
+            one(b.node(v, memo).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
+        } else if matches!(self.view, View::Core) && column == 0 {
+            each(b.doc(v, memo).map_or(0..0, |doc| b.nodes().at(doc)..b.nodes().at(doc + 1)));
+        } else if matches!(self.view, View::Node) && column == 0 {
+            // A file's rows, then its programs' (decision 0431 §4).
+            let Ok(file) = u32::try_from(v) else { return true };
+            for doc in b.doc(v, memo).into_iter().chain(b.programs_of(file)) {
+                each(b.nodes().at(doc)..b.nodes().at(doc + 1));
+            }
+        } else if matches!(self.view, View::Loc(Place::Docof)) && column == 1 {
+            // A file's places, then its programs' (decision 0431 §4): at their documents' offsets, none made, where
+            // an index of the view's every row made every document.
+            let Ok(file) = u32::try_from(v) else { return true };
+            let offsets = b.firsts(self.view);
+            for doc in b.doc(v, memo).into_iter().chain(b.programs_of(file)) {
+                each(offsets.range(doc));
+            }
+        } else if matches!(self.view, View::Core) && column == 1 {
+            // A tape node of each document that has it as a node; the statement filters `d`.
+            let Ok(t) = u32::try_from(v) else { return true };
+            for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
+                if let Some(local) = p.ranks().local(Item::Node, t) {
+                    one(Some(b.nodes().at(doc) + local as usize));
+                }
+            }
+        } else if matches!(self.view, View::Node) && column == 2 {
+            b.by_kind(v).iter().filter(|&&[doc, _, _]| kept(&(doc as usize))).for_each(|&[doc, local, _]| one(Some(b.nodes().at(doc as usize) + local as usize)));
+        } else {
+            return false;
+        }
+        true
     }
     /// `Source::lookup_read`: `lookup_docs`'s matches for one value, each row's `columns` read from what found it.
     /// A lookup by a node's id knows the row's id; by its parent, the parent's id and each child's tape node; by a
