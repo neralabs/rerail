@@ -450,7 +450,7 @@ static TOKEN: [(u8, u8, u8); 1024] = {
     t[b'\\' as usize] = (7, 0, 0);
     t[b']' as usize] = (6, 2, 26);
     t[b'^' as usize] = (6, 2, 32);
-    t[b'_' as usize] = (4, 8, 64);
+    t[b'_' as usize] = (4, 8, 65);
     t[b'`' as usize] = (16, 5, 0);
     let mut c = b'a' as usize;
     while c <= b'z' as usize {
@@ -477,8 +477,8 @@ const WORD_LIST: [&[u8]; 71] = [
     b".", b";", b":", b"=", b"<", b">", b"!", b"{", b"}", b"|", b"@", b"*",
     b"[", b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"#include", b"must", b"may",
     b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options", b"by", b"sep", b"count", b"min",
-    b"max", b"sum", b"mean", b"join", b"test", b"exactly", b"uses", b"end", b"fixtures", b"input", b"output", b"true",
-    b"false", b"null", b"at", b"_", b"product", b"policy", b"decl", b"violation", b"edit", b"functor", b"lattice",
+    b"max", b"sum", b"mean", b"join", b"test", b"exactly", b"uses", b"end", b"fixtures", b"input", b"output", b"product",
+    b"true", b"false", b"null", b"at", b"_", b"policy", b"decl", b"violation", b"edit", b"functor", b"lattice",
 ];
 
 /// Up to 8 bytes as one word of memory: little-endian, zeros past them.
@@ -529,11 +529,11 @@ fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
 
 /// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
 /// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
-pub const UNRECORDED: u32 = 0x3ffe;
+pub const UNRECORDED: u32 = 0xffe;
 
 /// The marks whose token tests tier 2 asks where a rule reads the mark (decision 0655 step 6), as the lean parser asks
 /// what it reads of a token where it reads it: no record holds them.
-pub const TESTED: u32 = 0x1000;
+pub const TESTED: u32 = 0x800;
 
 /// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else
 /// one of its own. Its row by its first byte, its kind and whether it is an extra.
@@ -541,7 +541,7 @@ fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -
     let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);
     match b {
         // `json_bad`
-        12 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && CLASS[usize::from(src[i])] & C_CTL != 0) || (esc && (i < n && !(i < n && CLASS[usize::from(src[i])] & C_JESC != 0)))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
+        11 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && CLASS[usize::from(src[i])] & C_CTL != 0) || (esc && (i < n && !(i < n && CLASS[usize::from(src[i])] & C_JESC != 0)))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
             || (after && extra && (src[s] == b'/') && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })
             || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && ((src[s] == b'0') && (s + 1 < n && CLASS[usize::from(src[s + 1])] & C_DIGIT != 0)))
             || (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'!' | b'%'..=b'&' | b'('..=b'/' | b':'..=b'>' | b'@' | b'[' | b']'..=b'^' | b'{'..=b'~') && ((src[s] == b'-') && !(s + 1 < n && CLASS[usize::from(src[s + 1])] & C_DIGIT != 0))),
@@ -563,7 +563,7 @@ pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.
-pub const ASKED: u32 = 0x1006;
+pub const ASKED: u32 = 0x806;
 
 /// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its
 /// word), as the lean parser asks whether a token is on a line.
@@ -575,7 +575,7 @@ pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
         // `newline`
         2 => src[from..to].contains(&0x0a) && !matches!(before, 12),
         // `json_bad`
-        12 => src[from..to].contains(&0x0c),
+        11 => src[from..to].contains(&0x0c),
         _ => false,
     }
 }

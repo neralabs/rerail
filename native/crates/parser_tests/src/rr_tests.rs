@@ -288,8 +288,8 @@ const CASES: &[(&str, &str)] = &[
     (".fixtures a\n.fixtures b\n.end\n.end", "never"),
     ("r(x).\n.end", "never"),
     (".test a\nr(x).", "never"),
-    // `.input` with no relation, before an `#include` (`io_bare`'s `hash_word`, a keyword's
-    // token), a comment between: the engine refuses it, so every step does.
+    // `.input` with no relation, before an `#include` (a keyword's token, not a `.`: `io_none` does not
+    // hold, and a relation is read), a comment between: the engine refuses it, so every step does.
     (".input #include \"a\"", "never"),
     // A setting's JSON object on its line, a word after it; one over lines ends the setting, as the lean parser asks
     // whether a word is on its line from the word before's first byte (decision 0673 step 4).
@@ -396,7 +396,7 @@ fn a_refused_mark_is_checked() {
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
         (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
         (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("pragma_on json_flat json_bad fix_on", "pragma_on json_flat fix_on", "no hidden mark"),
+        ("agg_word json_bad fix_on", "agg_word fix_on", "no hidden mark"),
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
@@ -406,23 +406,29 @@ fn a_refused_mark_is_checked() {
 }
 
 /// `reread R`: the compiler takes a reading only by a name declared once, and gives its rows to
-/// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
+/// the program (`RETAG m=3` names one). rr reads no tree again (decision 0673 step 5), so JSON's
+/// grammar is given one: an object's member is a value, and a pair's key that value read again as a string.
 #[test]
 fn a_reading_is_checked() {
-    let source = grammar().remove(0).1;
+    let json = include_str!("../../json_parser/json.bitlex");
+    let (pair, member) = (
+        "  node object nested          = '{' [pair (',' pair)*] '}'\n  node pair                   = key: string ':' value: value\n",
+        "  node object nested          = '{' [member (',' member)*] '}'\n  choice member               = value wrap pair _ reread key ':' value: value\n  reading key                 = root as string, string_content gone, keep escape_sequence '\"'\n",
+    );
+    assert_eq!(json.matches(pair).count(), 1);
+    let source = json.replace(pair, member).replace("  implied pair ':'\n", "");
     assert_eq!(rerail_cpu_stream::ladder::compile_error(&source), None);
     for (from, to, why) in [
-        ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
-        ("reading parenthesized_strict = ", "reading parenthesized = ", "two of that name"),
-        ("conjunction gone, atom as call", "conjunction gone, conjunction gone, atom as call", "a kind twice"),
+        ("reread key ':'", "reread nowhere ':'", "no reading of that name"),
+        ("  reading key ", "  reading key                 = root gone, keep escape_sequence\n  reading key ", "two of that name"),
+        ("string_content gone,", "string_content gone, string_content gone,", "a kind twice"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
         let e = rerail_cpu_stream::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = rerail_cpu_stream::ladder::compile_step("rr", &source);
-    assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
-    assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
+    let c = rerail_cpu_stream::ladder::compile_step("json", &source);
+    assert_eq!(c.program.readings.maps.len(), 1);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
 }

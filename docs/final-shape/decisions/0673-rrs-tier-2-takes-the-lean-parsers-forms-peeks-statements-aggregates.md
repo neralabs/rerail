@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 4 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: in progress, steps 1 to 5 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -20,8 +20,8 @@ remain are these:
    - The rest of a line is a match over 31 punctuation words.
 3. **JSON.** The lean parser reads `{…}` as balanced braces and checks a policy document with `serde_json`. Tier 2
    parses JSON's grammar.
-4. **Cover forms instead of going back.** This waits on the user's choice; the page "Tier 2's going back" sets out the
-   options.
+4. **Cover forms instead of going back.** The user chose option C of the page "Tier 2's going back": a peek past the
+   matching `)` (step 5).
 5. **Aggregates.** The lean parser has one `aggregate` and `agg_part`. Tier 2 has ten rules, the remembered level word
    and a mark.
 6. **A bare term is checked late,** at the statement's end (`settled`), where the lean parser fails at once.
@@ -140,3 +140,64 @@ ladder generator picks no arm that cannot be derived (a `refused` one).
 rr's `tier2.rs` is 3,582 lines, about as before: eleven directive nodes and their peeks replace the `_tail` rules. Kotlin's
 generated code is unchanged. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95 (the ladder's four
 new cases of a setting's JSON), Bitlex 11, clippy.
+
+## Step 5: a `(` is decided by the token after its `)`; one aggregate; a bare term fails where it ends (done)
+
+Gaps 4, 5 and 6. The lean parser reads a group, and goes back where an operator or a comparison follows its `)`. Tier 2
+reads ahead instead (option C): a mark of tokens may scan to the matching `)` (`nest ("(" to ")")`) and test the token
+after it.
+
+- **A literal at a `(`.** `literal` is the lean parser's: a negation, a group, else a term and its tail. Three marks pick
+  the reading at a `(`:
+  - `paren_term`: an operator or a comparison after the `)`. The literal is a term.
+  - `paren_tilde`: a `~` after it. The literal is a pattern, and the subject in parentheses is `paren_subject`, nested
+    ones too (`paren_closes`).
+  - Any other `(`: a group.
+
+  The readings `parenthesized` and `parenthesized_strict`, `group_term`, `group_body` and `group_conjunction` are gone.
+- **A bare term.** It fails where the literal ends, as the lean parser's `if !call { return Err(()) }`. The rule says
+  so with `ending literal K refused`, one line for each kind a term can be but a call. The Rust writer joins them into
+  one test of the kind made last (`made_kind`). `(f(x)) ~` is refused the same way (`ending paren_inner call refused`).
+  So nothing is checked at the statement's end: `provisional` and `settled` are gone, from the Bitlex syntax, the
+  reference, the interpreter, the JIT and the Rust writer.
+- **Aggregates.** `aggregate` is the lean parser's: `count` and its body, else its word, its value, and `by` with its
+  keys, `sep` and the body. A value or a single key holds no named argument (`no_named`, set in `aggregate` and kept
+  in everything inside), as `agg_part`. A term decides an aggregate with three peeks:
+  - `count_on`: `count :`.
+  - `agg_call`: an aggregate word, `(…)`, then a `:`. The lean parser reads a call there and goes back.
+  - `agg_word`: an aggregate word and a token that can start a value.
+
+  Ten rules are gone: `agg_argument_list`, `agg_value`, `count_value`, `word_in_value`, `more`, `more1`,
+  `aggregated`, `word_agg`, `count_agg`, the `aggregate_value` reading. So are the remembered level word, and the
+  marks `empty_parens` and `no_value`.
+- **An I/O directive's relations.** They are none where a `.` is next (`io_none`), else at least one, as the lean
+  parser's `list(DOT, …)`. The refusing mark `io_bare` is gone. `io_none` is declared before every mark a statement
+  tests at its `.`: taking it sets the taken bits of the marks before it, and a directive's peek must not lose its own.
+  Kotlin's `bt_cref` still uses refusing token marks.
+- **Which marks are peeks.** Step 1 ruled out a peek wherever a mark at or after it was taken anywhere but right before
+  a token. That was coarser than the rule it stands for. A peek's taken bit is read only by a test of that peek, at
+  the same token, after a later mark's take and before the token's. The writer now computes exactly that
+  (`set_then_asked`):
+  - each element's first questions (`first_asks`);
+  - what each rule may be asked after it ends (its callers', to a fixed point);
+  - the bits each take sets that a test may then read.
+
+  Every rr mark of tokens is now a peek but the five that scan to a matching bracket (`json_flat`, `paren_term`,
+  `paren_tilde`, `paren_closes`, `agg_call`), and `json_bad`.
+- **Decisions.** No decision of rr's numbers its arms. Two changes to step 3's `if` chain make this so:
+  - A word or a kind of another arm goes before the last run of marks when none of those marks can hold at it. A
+    kind's tokens are its keywords rows' words, soft ones too. So `literal` tests its peeks, then `!`, then `(`, then
+    the term's tests; `minus` tests `float_at`, then a number, then the operand's.
+  - A choice of tokens taken as one kind (`aggregate_word as variable`) is one take of any of its words, as `anon()`.
+- **The reference.** An option whose first token is next is taken (`predicts`). That now leaves out a way that
+  `unless F` guards while `F` is set, as the machine's decision does. So `sum x : {…}` is an aggregate there too, not a
+  named argument `x: {…}`.
+
+Tests:
+- The deep-nesting test nests 30,000 deep. The JIT bounds the calls open by the stack's bytes (`STACK_BYTES`), not
+  their count: a paren's frames are smaller now, and 3,000 deep fits, parsed as the engine's tape.
+- `a_reading_is_checked` reads JSON's grammar with a reading added, since rr has none.
+
+rr's `tier2.rs` is 3,293 lines, from 3,582. Kotlin's is 8,503 lines, from 9,099: 15 of its marks are peeks now, and one
+fewer decision numbers its arms (14). Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11,
+clippy.

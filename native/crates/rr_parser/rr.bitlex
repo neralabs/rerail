@@ -254,6 +254,10 @@ mark line        = lf, end
 # tokens: a statement takes one where it ends, without taking the token, and no mark of tokens
 # taken there may follow, so each is a peek at the tokens (decision 0673 step 1).
 mark newline     = lf unless after ",", end
+# An I/O directive's relations end at once where a `.` is next, as the lean parser's `list(DOT, …)`; else it reads
+# one at least. Taken at the next statement's `.`, so declared before every mark a statement tests there: it passes
+# the line breaks' alone.
+mark io_none     = tokens "."
 # The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
 # before, `after`) follow, comments between them skipped. Tier 2 reads them from the records.
 # Before a `.violation`'s continuation word, where the tokens after it are the engine's.
@@ -263,14 +267,8 @@ mark options_on  = tokens "options" "{"
 mark over_on     = tokens "over" "{"
 # A `{` around one name: a column's name, not its raw text.
 mark one_name    = tokens "{" identifier "}"
-# A `(` whose next token is `)`.
-mark empty_parens = tokens "(" ")"
 # `at` and a string after a pattern's literal: its selector.
 mark at_on       = tokens "at" string
-# `min`, `max`, `sum`, `product`, `mean` or `join`, then `()` and a `:` (not `:-`): the engine reads an
-# aggregate there, with no value, and refuses it. A mark the grammar takes nowhere, so the
-# file is refused wherever it is.
-mark no_value   = tokens after "min" | "max" | "sum" | "product" | "mean" | "join" "(" ")" ":"
 # A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments.
 mark end_on      = tokens "." "end"
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
@@ -286,14 +284,6 @@ mark json_bad    = ff,
                    after comment when count(line_open | block_open) at least 1,
                    at punct when run(minus & ~next(digit)) at least 1,
                    at number when run(zero & next(digit)) at least 1
-
-# Token marks that refuse: the tokens after a token, comments between them skipped. Declared
-# last, a state tests each only in its switch's arms for its token's first byte.
-# `.input` and `.output` with no relation: before any token but a `.` or a name (which is one), or at the file's end.
-# Refused as the engine refuses them: it reads a relation there.
-mark io_bare     = tokens "." "input" | "output" hash_word | "#include" | end | string | number | code_literal
-                   | "(" | ")" | "," | ";" | ":" | "=" | "<" | ">" | "!" | "|" | "@" | "*" | "[" | "]" | "-" | "+" | "/"
-                   | "%" | "~" | "^" | "&" | "{" | "}" | ":-" | "=>" | "!=" | "<=" | ">=" | "<:" | "->"
 
 # Token marks past the code's bits: tier 2 tests their tokens alone, as the engine peeks.
 # A `,` and a string: a suppress line's next rule. A `,` before anything else ends the line, as the engine reads it.
@@ -316,6 +306,18 @@ mark pragma_on   = tokens "." "pragma"
 # A `{` whose JSON object is on one line: no line break before any of its tokens, its `}` too. The lean parser asks
 # whether a setting's word is on its line from the word before's first byte: a JSON object over lines ends the setting.
 mark json_flat   = tokens "{" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char without line)* nest ("{" to "}") "}" without line
+# A `(` and what follows its `)`, as the lean parser's `literal` reads a group and goes back where its `)` has after it
+# an operator or a comparison (`paren_term`), or a `~` (`paren_tilde`); and a `)` (`paren_closes`): parentheses alone
+# in parentheses.
+mark paren_term  = tokens "(" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char)* nest ("(" to ")") ")" "=" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/" | "%"
+mark paren_tilde = tokens "(" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char)* nest ("(" to ")") ")" "~"
+mark paren_closes = tokens "(" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char)* nest ("(" to ")") ")" ")"
+# An aggregate at its word, as the lean parser's `primary`: `count` and a `:`; an aggregate's word, its `(…)` and a `:`
+# (`call_or_aggregate`, which reads the call and goes back); an aggregate's word and a token a term starts with, but a
+# `-` or a `(`.
+mark count_on    = tokens "count" ":"
+mark agg_call    = tokens "min" | "max" | "sum" | "product" | "mean" | "join" "(" (string | code_literal | hash_word | identifier | number | punct | bad | bad_char)* nest ("(" to ")") ")" ":"
+mark agg_word    = tokens "min" | "max" | "sum" | "product" | "mean" | "join" number | string | code_literal | identifier | "{" | "@"
 
 # --- The tree ----------------------------------------------------------------------------------
 
@@ -349,7 +351,7 @@ tree rr {
   node declaration      = '.' 'decl' name: identifier columns: column_list (modifier: word | punctuation | '{')* line
   node type_declaration = '.' 'type' name: identifier (definition: raw_line | relabel definition line)
   # `.input`, `.output`: a level of its own, which takes every name after it as a relation.
-  node io_directive nested = '.' (merge '.input' 'input' | merge '.output' 'output') [relation: io_relation (',' relation: io_relation)*]
+  node io_directive nested = '.' (merge '.input' 'input' | merge '.output' 'output') (io_none | relation: io_relation (',' relation: io_relation)*)
   node pragma           = '.' 'pragma' (argument: string)*
   node lattice_declaration = '.' 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
   node policy_document  = '.' 'policy' document: json_document
@@ -398,50 +400,40 @@ tree rr {
                                                   | relabel relation as identifier arguments: argument_list)
                         | relation: identifier arguments: argument_list
   node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
-  # An aggregate's word's arguments, which a `:` after them reads again as its value: one
-  # term in parentheses. A `,` is written, then dropped at the token after it: it stays in the
-  # table, gone, until the file's end, so the reading, which names no gone node, refuses a
-  # second argument there as the engine does.
-  node agg_argument_list nested = retag argument_list '(' [argument: term (',' drop argument: term)*] ')'
   # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
-  choice body           = without no_named conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
+  choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
   node conjunction nested = literal: literal (',' literal: literal)*
-  node group nested     = '(' body: group_body ')'
-  # A group's body: its first conjunction's `,` is written, then dropped, as an aggregate's
-  # word's (`agg_argument_list`): a reading of the group as a term, which names no gone node,
-  # refuses a second literal as the engine does.
-  choice group_body     = without no_named group_conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
-  node group_conjunction nested = retag conjunction literal: literal (',' drop literal: literal)*
-  # A literal: a negation, a group, or a term and what follows it, as the lean parser's
-  # `literal`: a comparison or a pattern after the term makes it a literal's (`literal_tail`).
-  # A term alone that is a call is an atom (`ending`, the lean parser's `retag_atom`), its
-  # function the relation; any other is `bare`, which only a group a term turns out to be may
-  # hold. A `(` is a group's first: a group a term turns out to be is read again as one
-  # (`group_term`).
+  node group nested     = '(' body: body ')'
+  # A literal, as the lean parser's `literal` (decision 0673 step 5): a negation; a `(` whose `)` an operator or a
+  # comparison follows (`paren_term`), a term, where the lean parser's group fails or goes back; one a `~` follows
+  # (`paren_tilde`), a pattern's term in parentheses (`paren_subject`); any other `(`, a group; else a term. A term's
+  # comparison or pattern after it makes it a literal's (`literal_tail`).
   # A literal decided (`decide`) has no field of its own: its caller's, `literal` or a negation's
   # `operand`, set where it returns, as the lean parser's `self.literal()?; self.field(..)`.
-  choice literal nested = negation | group [group_term] | bare: term [literal_tail]
+  choice literal nested = negation | paren_term term [literal_tail] | paren_tilde paren_subject pattern_tail | group
+                        | term [literal_tail]
+  # A term alone is a call, an atom (the lean parser's `retag_atom`), its function the relation; any other term alone
+  # is refused where the literal ends, as the lean parser's `if !call { return Err(()) }`.
   ending literal call as atom inner relation
+  ending literal variable refused
+  ending literal number refused
+  ending literal float refused
+  ending literal string refused
+  ending literal code_literal refused
+  ending literal wildcard refused
+  ending literal unary_expression refused
+  ending literal binary_expression refused
+  ending literal parenthesized_expression refused
+  ending literal functor_call refused
+  ending literal aggregate refused
+  ending literal json_object refused
+  ending literal named_argument refused
   choice literal_tail   = decide (comparison_tail | pattern_tail)
-  # After a group's `)`: an operator or a comparison, it was a term; a `~`, a term too, unless
-  # it holds an atom (then the engine keeps the group, which no `~` follows).
-  choice group_term     = reread parenthesized (relabel bare more1 [literal_tail] | comparison_tail)
-                        | reread parenthesized_strict pattern_tail
-  provisional bare
-  # `min (…) : {…}`: the call read again inside the aggregate around it.
-  # An aggregate's call read again inside it: its word the aggregate's kind (`remember`).
-  reading aggregate_value = root gone, identifier as aggregate_word, argument_list as parenthesized_expression, '(', ')',
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
-                          field function as operator, field relation as operator, field arguments as value, field argument as expression
-  reading parenthesized = group as parenthesized_expression, conjunction gone, atom as call, '(', ')', identifier,
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object argument_list,
-                          field literal as expression, field bare as expression, field relation as function
-  reading parenthesized_strict = group as parenthesized_expression, conjunction gone, '(', ')',
-                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
-                          field literal as expression, field bare as expression
-  # A term's rest, at least one operator.
-  choice more1          = (wrap binary_expression left operator: multiplicative right: primary)+ (wrap binary_expression left operator: additive right: product)*
-                        | (wrap binary_expression left operator: additive right: product)+
+  # `(…) ~`: the term in parentheses, nested ones too. A call alone there is refused: the lean parser reads it as a
+  # group, which no `~` follows.
+  node paren_subject nested = retag parenthesized_expression '(' expression: paren_inner ')'
+  choice paren_inner nested = paren_closes paren_subject | term
+  ending paren_inner call refused
   # `!` before any literal, which is never a comparison: the lean parser's `inner == Lit::Cmp`, asked
   # where the negation ends (`ending`).
   node negation nested  = '!' operand: literal
@@ -449,8 +441,6 @@ tree rr {
   choice comparison_tail = wrap comparison left operator: comparison_operator right: term
   # A pattern's literal, then `at` and a string: the node kind it selects.
   choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal [at_on 'at' selector: string]
-  # After a primary: the rest of its product, then of its term.
-  choice more           = (wrap binary_expression left operator: multiplicative right: primary)* (wrap binary_expression left operator: additive right: product)*
   choice comparison_operator = '=' | '!=' | '<' | '<=' | '>' | '>='
   # Terms by precedence, each operator around the left side so far.
   choice term nested    = product (wrap binary_expression left operator: additive right: product)*
@@ -458,55 +448,36 @@ tree rr {
   choice additive       = '+' | '-'
   choice multiplicative = '*' | '/' | '%'
   # A word is a variable, unless a `(` or a `:` after it makes it a call's function or a named
-  # argument's name.
+  # argument's name, or it starts an aggregate, as the lean parser's `primary`: `count` and a `:`; an aggregate's
+  # word, its `(…)` and a `:` (`agg_call`, where the lean parser reads a call and goes back); an aggregate's word and
+  # a term's first token (`agg_word`). An aggregate's word is no named argument's name.
   choice primary        = numeric | unsigned
   # A number, a float where its token says so: one leaf.
   choice numeric nested = float_at number as float | number
   choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
+                        | count_on aggregate | agg_call aggregate | agg_word aggregate
+                        | aggregate_word as variable [wrap call function as identifier arguments: argument_list]
                         | identifier as variable [wrap call function as identifier arguments: argument_list
                                                  | unless no_named (wrap named_argument name as identifier ':' value: term)]
-                        | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
-                        | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]]
                         | parenthesized_expression
   # `-` and a number: one number leaf (a float, where its token says so). Else `-` and its
   # operand, a primary that is no number.
   choice minus          = '-' (float_at merge float number | merge number number | wrap unary_expression _ drop operand: unsigned)
   node parenthesized_expression = '(' expression: term ')'
   node functor_call     = '@' function: identifier arguments: argument_list
-  # The aggregates' words but `count`: each the word of its level, which a wrap or a reading
-  # gives back its own kind (`as aggregate_word`).
-  remember aggregate_word
-  # `product`, the one past `join`, has no kind of its own: an identifier, as the engine stores it.
+  # The aggregates' words but `count`. `product`, the one past `join`, has no kind of its own: an identifier, as the
+  # engine stores it.
   choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join' | 'product' as identifier
-  # The aggregate around its word, which takes its own kind back.
-  # `count` with a body alone: implied, so dropped once the aggregate holds it.
-  choice count_agg      = wrap aggregate _ drop agg_body
-  choice word_agg      = wrap aggregate operator as aggregate_word aggregated
-  # What a value's aggregate holds after its word.
-  choice aggregated     = value: with no_named agg_value ('by' ('(' key: without no_named term (',' key: without no_named term)* ')' keyed_body | key: with no_named agg_value agg_tail) | agg_tail)
-  # An aggregate's `:` is stored: `by (k) : {` holds it beside the stored `)`, a gap stored whole,
-  # so under an aggregate a `:` is stored everywhere. Its `{` is implied but in that gap (a key
-  # list's `)` with no `sep` after it).
+  # An aggregate, as the lean parser's `aggregate`: `count` and its body alone (`count` implied); else its word, its
+  # value, then `by` and its keys, `sep` and its separator, and its body. Its value and a single key are terms with no
+  # named argument in them (`no_named`, down through all they hold), as the lean parser's `agg_part`. Its `:` is
+  # stored, and its `{` after a key list's `)` with no `sep` after it.
+  flag no_named
+  node aggregate        = 'count' agg_body
+                        | operator: aggregate_word value: with no_named term ('by' ('(' key: term (',' key: term)* ')' keyed_body | key: with no_named term agg_tail) | agg_tail)
   choice agg_tail       = ['sep' separator: string] agg_body
   choice keyed_body     = 'sep' separator: string agg_body | ':' '{' body: body '}'
   choice agg_body       = ':' '{' body: body '}'
-  # An aggregate's value or single key: a term with no named argument in it (`no_named`, down
-  # through the calls in it), starting with no `-` or `(` (after the word those make it a
-  # variable's or a call's). A word of an aggregate here starts its own aggregate, a call or a
-  # variable, as it does in any term. A body, and a key in parentheses, may hold named
-  # arguments again (`without no_named`).
-  flag no_named
-  choice agg_value nested = (numeric | string | code_literal | '_' as wildcard | functor_call | json) more
-                   | identifier as variable [wrap call function as identifier arguments: argument_list] more
-                   | count_value
-                   | word_in_value
-  # `count` in a value: a `:` after it is its aggregate's, as the engine reads it (a nested
-  # level takes what it can before it ends).
-  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list] more
-  # An aggregate's word in a value, read as in any other term.
-  choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
-                             | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]] more
   # Every punctuation but `{`, which opens a setting's JSON object: a declaration's tail takes it besides.
   choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
   # A `#` word but `#include`: an identifier with no field, as the engine stores any token on the line.
@@ -539,20 +510,19 @@ tree rr {
   implied type '>'
   implied clause ',' ':-' '=>' '.'
   implied argument_list '(' ',' ')'
-  implied agg_argument_list '(' ')'
   implied body ';'
-  implied group_body ';'
   implied conjunction ','
   implied group '(' ')'
   implied negation '!'
   implied pattern_tail '~' 'at'
   implied unsigned ':'
+  implied paren_subject '(' ')'
   implied parenthesized_expression '(' ')'
   implied functor_call '@'
-  implied aggregated ','
+  implied aggregate 'count' ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden float_at line newline end_on test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
+  hidden float_at line newline io_none end_on test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat paren_term paren_tilde paren_closes count_on agg_call agg_word json_bad fix_on suppress_on options_on over_on one_name at_on comma_rule bare_functor
   extra comment
   # The lexer's errors, a byte's and a character's: no rule takes them, nor `any`, as the lean
   # parser fails at a `Bad` where it reads any token (its raw line's).

@@ -1029,9 +1029,6 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
-                if nodes.iter().any(|n| n.kind != DEAD && n.field != 0 && program.readings.provisional.contains(&n.field)) {
-                    refuse!('step, pc - 1, "a provisional field at the file's end");
-                }
                 if head.is_empty() && !dead {
                     return Ok(nodes);
                 }
@@ -1078,12 +1075,6 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             GOTO => pc = usize::from(operand),
             STATEMENT => {
-                // The statement before ends here: one that holds a provisional field fails (`settled`).
-                if let Some(m) = &stmt
-                    && nodes[m.nodes..].iter().any(|n| n.kind != DEAD && n.field != 0 && program.readings.provisional.contains(&n.field))
-                {
-                    refuse!('step, pc - 1, "a provisional field at the statement's end");
-                }
                 // A region read in parts has no mark (as the calls form's `recover`, not yet).
                 stmt = (!at_end && late.is_none() && parts.is_empty()).then(|| Mark {
                     first: next - 1,

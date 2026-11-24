@@ -179,7 +179,7 @@ fn rr_sparse_marks_bound() {
         let stack = lines.iter().filter(|l| memory(l) && l.contains("[sp")).count();
         (lines.len(), lines.iter().filter(|l| memory(l)).count() - stack, stack)
     };
-    let sparse = ["options_on", "over_on", "no_value", "one_name", "fix_on", "empty_parens", "suppress_on"];
+    let sparse = ["options_on", "over_on", "one_name", "fix_on", "suppress_on"];
     let ops: Vec<u16> = c.values.iter().filter(|v| sparse.iter().any(|s| v.name == format!("mark {s}"))).map(|v| v.op).collect();
     // The marks' masks are `starts & (m | prev(fill(..)))` of these: the outputs the masks name.
     let mut p = c.block.clone();

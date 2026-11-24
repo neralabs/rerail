@@ -6916,33 +6916,6 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         let last = f.ins().iadd_imm(nodes, -1);
                         table.close_cells(&mut f, &env, Closed { at: root, size, last }, len, None);
                     }
-                    if !native.readings.provisional.is_empty() {
-                        // No node left holds a provisional field (a dropped record aside): a loop
-                        // over the table, a step a record.
-                        let (check, step, after) = (f.create_block(), f.create_block(), f.create_block());
-                        f.append_block_param(check, types::I64);
-                        heads.push((check, Step::Node));
-                        f.ins().jump(check, &[BlockArg::from(zero)]);
-                        f.switch_to_block(check);
-                        let i = f.block_params(check)[0];
-                        let done = f.ins().icmp(IntCC::Equal, i, nodes);
-                        f.ins().brif(done, after, &[], step, &[]);
-                        f.switch_to_block(step);
-                        let (fld, k) = {
-                            let row = NodeCol::row(&mut f, rows_here, i);
-                            (field_c.get_row(&mut f, row), kind_c.get_row(&mut f, row))
-                        };
-                        let mut hit = f.ins().iconst(types::I8, 0);
-                        for &p in &native.readings.provisional {
-                            let is = f.ins().icmp_imm(IntCC::Equal, fld, i64::from(p));
-                            hit = f.ins().bor(hit, is);
-                        }
-                        let _ = k;
-                        guard(&mut f, hit, pc);
-                        let i1 = f.ins().iadd_imm(i, 1);
-                        f.ins().jump(check, &[BlockArg::from(i1)]);
-                        f.switch_to_block(after);
-                    }
                     // A value past its width (an offset, a tail, the node count): refused at
                     // these widths (docs/parser-generators/37: parsed again at wider ones). A
                     // format 16 run reads only its sizes, compiled at 4 bytes: it passes the
@@ -6989,43 +6962,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 Op::Goto { target } => {
                     f.ins().jump(word(target), &[]);
                 }
-                // A statement's start (decision 0650): the statement before ends here, one that holds a provisional field
-                // refused; then its mark (`Ctx::mark`), where the stream goes on and the levels open are at most
+                // A statement's start (decision 0650): its mark (`Ctx::mark`), where the stream goes on and the levels open are at most
                 // `MARK_LEVELS`; then a token a refusing mark held (`MARK_HELD`) refuses it.
                 Op::Statement if recovers => {
                     let p = pinned(&mut f);
-                    if !native.readings.provisional.is_empty() {
-                        let marked = f.ins().load(types::I64, MemFlags::trusted(), p, MARK);
-                        let (from_mark, check, step, after) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
-                        f.append_block_param(check, types::I64);
-                        f.ins().brif(marked, from_mark, &[], after, &[]);
-                        f.switch_to_block(from_mark);
-                        let p = pinned(&mut f);
-                        let from = f.ins().load(types::I64, MemFlags::trusted(), p, MARK_STATE + 8 * Mem::Nodes as i32);
-                        let nodes = mget(&mut f, Mem::Nodes);
-                        f.ins().jump(check, &[BlockArg::from(from)]);
-                        f.switch_to_block(check);
-                        heads.push((check, Step::Node));
-                        let i = f.block_params(check)[0];
-                        let done = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, nodes);
-                        f.ins().brif(done, after, &[], step, &[]);
-                        f.switch_to_block(step);
-                        let (fld, k) = {
-                            let row = NodeCol::row(&mut f, rows_here, i);
-                            (field_c.get_row(&mut f, row), kind_c.get_row(&mut f, row))
-                        };
-                        let mut hit = f.ins().iconst(types::I8, 0);
-                        for &q in &native.readings.provisional {
-                            let is = f.ins().icmp_imm(IntCC::Equal, fld, i64::from(q));
-                            hit = f.ins().bor(hit, is);
-                        }
-                        let live = f.ins().icmp_imm(IntCC::NotEqual, k, i64::from(DEAD));
-                        let hit = f.ins().band(hit, live);
-                        guard(&mut f, hit, pc);
-                        let i1 = f.ins().iadd_imm(i, 1);
-                        f.ins().jump(check, &[BlockArg::from(i1)]);
-                        f.switch_to_block(after);
-                    }
                     let (save, unmark, marked) = (f.create_block(), f.create_block(), f.create_block());
                     let next = mget(&mut f, Mem::Next);
                     let ended = ended_now(&mut f, next);

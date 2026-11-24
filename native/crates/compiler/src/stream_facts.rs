@@ -129,9 +129,6 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, si
         }
         facts.coded = coded(&facts);
     }
-    if sixteen && facts.coded && !native.readings.provisional.is_empty() {
-        return Err("format 16 ahead of time: provisional fields, which `ACCEPT` reads from the rows".into());
-    }
     if let Some(fx) = &facts.fetch {
         for (pc, word) in words.iter().enumerate() {
             if matches!(word.operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
@@ -429,7 +426,7 @@ impl Fetched {
 /// `rust_source_16`'s). `None` elsewhere.
 pub fn direct_keys(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Option<Vec<(u32, u32)>> {
     let x = facts(native, widths, tag, true).ok()?;
-    let plain = native.extras.is_empty() && native.readings.provisional.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
+    let plain = native.extras.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
     (x.coded && plain).then(|| (0..native.structural.len()).map(|pc| key_after(&x, pc)).collect())
 }
 

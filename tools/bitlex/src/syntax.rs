@@ -871,9 +871,6 @@ pub enum Stmt {
     Refuse { mark: String, levels: Vec<String> },
     /// `reading NAME = ITEM, …` (in a tree): a way to read a made node (`reread`).
     Reading { name: String, reading: Reading },
-    /// `provisional FIELD …` (in a tree): fields a node holds only until a later token decides
-    /// what it is; a node that holds one at the file's end refuses the file.
-    Provisional(Vec<String>),
     /// `remember CHOICE …` (in a tree): choices of tokens whose token is remembered at its
     /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
     /// level starts with its caller's and gives it back when it ends.
@@ -2331,16 +2328,6 @@ impl P {
                     self.want_p(",")?;
                 }
                 Stmt::Recover { node, clauses }
-            }
-            "provisional" => {
-                let mut fields = vec![];
-                while matches!(self.peek(), Some(Tok::Ident(_))) {
-                    fields.push(self.ident()?);
-                }
-                if fields.is_empty() {
-                    return self.err("provisional FIELD …");
-                }
-                Stmt::Provisional(fields)
             }
             "extra" | "hidden" | "untaken" => {
                 let mut kinds = vec![];

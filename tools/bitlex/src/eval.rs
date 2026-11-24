@@ -80,8 +80,6 @@ pub struct TreeDecl {
     pub nested: Vec<String>,
     /// Each `reading NAME = …`, by name (`reread`).
     pub readings: Vec<(String, crate::syntax::Reading)>,
-    /// The `provisional` fields: none may be left in a finished tree.
-    pub provisional: Vec<String>,
     /// The `remember` choices: the token each takes is its level's word (`as CHOICE`).
     pub remember: Vec<String>,
     /// The flags a level runs with (`flag F`, `with F A`, `unless F A`).
@@ -475,7 +473,6 @@ impl<'a> Ev<'a> {
             Stmt::Untaken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untaken.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
-            Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
             Stmt::Flags(names) => self.tree.get_or_insert_with(TreeDecl::default).flags.extend(names.iter().cloned()),
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).

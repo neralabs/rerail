@@ -103,8 +103,6 @@ struct G<'a> {
     /// The `remember` choices: a token one takes is its level's word (`P::word`), the kind a wrap's, relabel's or
     /// reading's `as C` names.
     remember: Vec<String>,
-    /// The `provisional` fields: a node that holds one at the file's end refuses it.
-    provisional: Vec<String>,
     /// `recover NODE …`: the node whose repetition is the statement loop, and its resume patterns (decision 0650).
     recover: Option<(&'a str, &'a [::bitlex::syntax::RecoverClause])>,
     /// `refuse M in L …`: each level's refused marks, their bits in a record's code: a token the level takes with one
@@ -224,7 +222,7 @@ impl<'a> G<'a> {
         let mut order = Vec::new();
         let mut flags = Vec::new();
         let mut readings = HashMap::new();
-        let (mut remember, mut provisional, mut recover) = (Vec::new(), Vec::new(), None);
+        let (mut remember, mut recover) = (Vec::new(), None);
         let mut refusing: HashMap<String, u32> = HashMap::new();
         let mut endings = Vec::new();
         for s in x.tree {
@@ -242,7 +240,6 @@ impl<'a> G<'a> {
                     readings.insert(name.as_str(), reading);
                 }
                 Stmt::Remember(n) => remember.extend(n.iter().cloned()),
-                Stmt::Provisional(f) => provisional.extend(f.iter().cloned()),
                 Stmt::Recover { node, clauses } => recover = Some((node.as_str(), clauses.as_slice())),
                 Stmt::Ending { rule, kind, ending } => endings.push((rule.as_str(), kind.as_str(), ending)),
                 // A mark tier 1 gives no bit is refused nowhere here: `source` refuses the grammar.
@@ -256,7 +253,7 @@ impl<'a> G<'a> {
             }
         }
         let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
-        G { x, rules, order, flags, readings, remember, provisional, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -300,7 +297,7 @@ impl<'a> G<'a> {
     }
 
     /// Field `name`'s id in a node's key, which holds 6 bits: the grammar's id, or for one past them (a field the
-    /// tape names not, which a reading renames or `provisional` refuses before the file's end: `rr_parser`'s own ids)
+    /// tape names not, which a reading renames: `rr_parser`'s own ids)
     /// a slot from the top of the 6 bits down, the same wherever it is named.
     fn field_id(&self, name: &str) -> Result<u16, String> {
         let id = (self.x.field)(name).ok_or_else(|| format!("no field `{name}`"))?;
@@ -502,13 +499,21 @@ impl<'a> G<'a> {
             None => c,
         };
         let mut mg: Vec<(Vec<String>, usize)> = Vec::new();
+        // The marks of the last run of marks, by arm.
+        let mut last_marks: Vec<usize> = Vec::new();
         for (m, f, t) in &marks {
             let c = guard(f, self.mark_test(*m));
             let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
             let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
             match mg.last_mut() {
-                Some((cs, tt)) if tt == t => cs.push(c),
-                _ => mg.push((vec![c], *t)),
+                Some((cs, tt)) if tt == t => {
+                    cs.push(c);
+                    last_marks.push(*m);
+                }
+                _ => {
+                    mg.push((vec![c], *t));
+                    last_marks = vec![*m];
+                }
             }
         }
         let mut wg: Vec<(String, usize)> = Vec::new();
@@ -562,18 +567,44 @@ impl<'a> G<'a> {
                 _ => runs.push((vec![c], t)),
             };
             let mut runs: Vec<(Vec<String>, usize)> = Vec::new();
-            for (cs, t) in &mg {
+            let word_test = |pat: &String| if pat.contains(" | ") { format!("matches!(self.word(), {pat})") } else { format!("self.word() == {pat}") };
+            // A word another arm than the last marks' takes goes before those marks where none of them can hold at it:
+            // the marks' arm and its words are then one run.
+            let (last, next) = (mg.last().map(|g| g.1), kg.first().map(|g| g.1));
+            let held_at = |pat: &String| last_marks.iter().any(|&m| firsts(m).is_none_or(|ws| pat.split(" | ").any(|w| ws.contains(&w.to_owned()))));
+            let early: Vec<&(String, usize)> = wg.iter().filter(|g| last.is_some_and(|l| l != g.1) && !held_at(&g.0)).collect();
+            // So does a kind another arm takes, where none of those marks, and none of the words after, can be its
+            // token: a token of a kind is one of its keywords rows' words, or no word.
+            let late_words: Vec<String> = wg.iter().filter(|g| !early.contains(g)).flat_map(|g| g.0.split(" | ").map(str::to_owned)).collect();
+            let mark_words: Option<Vec<String>> = last_marks.iter().map(|&m| firsts(m)).collect::<Option<Vec<_>>>().map(|v| v.concat());
+            let early_kinds: Vec<(String, usize)> = match &mark_words {
+                Some(mw) => kinds
+                    .iter()
+                    .filter(|(_, f, t)| f.is_none() && last.is_some_and(|l| l != *t) && kinds.iter().filter(|x| x.2 == *t).count() == 1)
+                    .filter(|(k, _, _)| !mw.iter().chain(&late_words).any(|w| self.kind_words(k).contains(w)))
+                    .map(|(k, f, t)| (guard(f, self.kind_test(k, "self.kind()", "self.word()")), *t))
+                    .collect(),
+                None => vec![],
+            };
+            for (i, (cs, t)) in mg.iter().enumerate() {
+                if i + 1 == mg.len() {
+                    for (pat, t) in &early {
+                        push(word_test(pat), *t, &mut runs);
+                    }
+                    for (c, t) in &early_kinds {
+                        push(c.clone(), *t, &mut runs);
+                    }
+                }
                 cs.iter().for_each(|c| push(c.clone(), *t, &mut runs));
             }
-            // The words in any order: the one the last mark's arm takes first, the first kind's last.
-            let (last, next) = (mg.last().map(|g| g.1), kg.first().map(|g| g.1));
-            let mut ws: Vec<&(String, usize)> = wg.iter().collect();
+            // The other words in any order: the one the last mark's arm takes first, the first kind's last.
+            let mut ws: Vec<&(String, usize)> = wg.iter().filter(|g| !early.contains(g)).collect();
             ws.sort_by_key(|g| if Some(g.1) == last { 0 } else if Some(g.1) == next { 2 } else { 1 });
             for (pat, t) in ws {
-                push(if pat.contains(" | ") { format!("matches!(self.word(), {pat})") } else { format!("self.word() == {pat}") }, *t, &mut runs);
+                push(word_test(pat), *t, &mut runs);
             }
             for (cs, t) in &kg {
-                cs.iter().for_each(|c| push(c.clone(), *t, &mut runs));
+                cs.iter().filter(|c| !early_kinds.iter().any(|e| e.0 == **c)).for_each(|c| push(c.clone(), *t, &mut runs));
             }
             let mut seen = HashSet::new();
             if runs.iter().all(|r| seen.insert(r.1)) {
@@ -1069,6 +1100,19 @@ impl<'a> G<'a> {
         let mut alts = Vec::new();
         Self::alts(body, &mut alts);
         let remembered = self.remember.iter().any(|r| r == n);
+        // Taken as one kind (`aggregate_word as variable`): every way's leaf is that kind, so one take of any of its
+        // tokens, as the lean parser's `anon()`.
+        if let (Some(k), false) = (kind, remembered) {
+            let tests: Option<Vec<Test>> = alts.iter().map(|a| self.token_of(if let Gram::As(_, t) = a { t } else { a }).map(|t| t.0)).collect();
+            if let Some(tests) = tests {
+                let words: Option<Vec<String>> = tests.iter().map(|t| if let Test::Word(w) = t { Some(format!("w::{}", self.word_const(*w))) } else { None }).collect();
+                let cond = match words {
+                    Some(ws) if ws.len() > 1 => format!("matches!(self.word(), {})", ws.join(" | ")),
+                    _ => tests.iter().map(|t| self.token_cond(t)).collect::<Vec<_>>().join(" || "),
+                };
+                return Ok(format!("{pad}self.tk({cond}, {}, 0)?;\n", self.kind_const(k)?));
+            }
+        }
         let mut arms = Vec::new();
         for a in alts {
             // A token taken as a kind (`'product' as identifier`): its leaf that kind, and the word it remembers.
@@ -1139,12 +1183,22 @@ impl<'a> G<'a> {
     /// kind of the node made last at its level, as the lean parser's `literal` asks its term's after it (`retag_atom`).
     fn ending_code(&self, name: &str, pad: &str) -> Result<String, String> {
         let mut out = String::new();
-        for &(_, kind, ending) in self.endings.iter().filter(|e| e.0 == name) {
+        // The kinds it refuses, one test of them all, as the lean parser's `if !call { return Err(()) }`.
+        let refused: Vec<&str> = self.endings.iter().filter(|e| e.0 == name && matches!(e.2, ::bitlex::syntax::Ending::Refused)).map(|e| e.1).collect();
+        match refused.as_slice() {
+            [] => {}
+            [k] => {
+                let _ = writeln!(out, "{pad}if self.made_is({}) {{\n{pad}    return self.refuse();\n{pad}}}", self.kind_const(k)?);
+            }
+            ks => {
+                let ks = ks.iter().map(|k| self.kind_const(k)).collect::<Result<Vec<_>, _>>()?.join(" | ");
+                let _ = writeln!(out, "{pad}if matches!(self.made_kind(), {ks}) {{\n{pad}    return self.refuse();\n{pad}}}");
+            }
+        }
+        for &(_, kind, ending) in self.endings.iter().filter(|e| e.0 == name && !matches!(e.2, ::bitlex::syntax::Ending::Refused)) {
             let _ = writeln!(out, "{pad}if self.made_is({}) {{", self.kind_const(kind)?);
             match ending {
-                ::bitlex::syntax::Ending::Refused => {
-                    let _ = writeln!(out, "{pad}    return self.refuse();");
-                }
+                ::bitlex::syntax::Ending::Refused => unreachable!("written above"),
                 ::bitlex::syntax::Ending::Relabel { moved, inner } => {
                     if let Some(g) = inner {
                         let _ = writeln!(out, "{pad}    self.relabel_inner({})?;", self.field_const(g)?);
@@ -1229,23 +1283,21 @@ impl<'a> G<'a> {
     }
 
     /// The root `name`'s statement loop (decision 0650), as the lean parser's: a mark before each statement (`call`);
-    /// one that fails, or holds a provisional field at its end, is cut back to it (`cut`, then `recover`) and made one
+    /// one that fails is cut back to it (`cut`, then `recover`) and made one
     /// ERROR leaf. Then the root's close.
     fn statement_loop(&self, name: &str, call: &str, cut: &str) -> Result<String, String> {
         let (whole, padded) = match self.rules[name] {
             Stmt::Node { whole, padded, .. } => (*whole, *padded),
             _ => return Err(format!("recover {name}: no node")),
         };
-        let settled = if self.provisional.is_empty() { "" } else { ".and_then(|()| self.settled(save.w))" };
         Ok(format!(
-            "        self.open_root({});\n        while self.i < self.n {{\n            let save = self.mark();\n            if {call}{settled}.is_err() {{\n{cut}                self.recover(save)?;\n            }}\n        }}\n        self.close_root({whole}, {padded})\n",
+            "        self.open_root({});\n        while self.i < self.n {{\n            let save = self.mark();\n            if {call}.is_err() {{\n{cut}                self.recover(save)?;\n            }}\n        }}\n        self.close_root({whole}, {padded})\n",
             self.kind_const(name)?
         ))
     }
 
     /// `recover`'s runtime (decision 0650), added to `out`: the statement's `Mark` (what a statement changes of the
-    /// parser's state, as the lean parser's), `mark` and `reset`, `settled` (no provisional field held at the
-    /// statement's end), `recover` (the ERROR leaf to the resume point), and `limited` (a limit refuses the file).
+    /// parser's state, as the lean parser's), `mark` and `reset`, `recover` (the ERROR leaf to the resume point), and `limited` (a limit refuses the file).
     fn recovery(&self, mut out: String, clauses: &[::bitlex::syntax::RecoverClause]) -> Result<String, String> {
         if !crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() || out.contains("    lost: Option<") && out.contains("self.lose_pending()") {
             return Err("tier 2 as Rust: `recover` with regions read in parts or extras lost: not yet".into());
@@ -1294,10 +1346,6 @@ impl<'a> G<'a> {
             code.push_str("        self.dead.retain(|&o| o != NONE && (o as usize) < m.w);\n");
         }
         code.push_str("        self.taken = 0;\n        let _ = self.arrive();\n    }\n\n");
-        if !self.provisional.is_empty() {
-            let fields: Vec<String> = self.provisional.iter().map(|f| self.field_id(f).map(|id| id.to_string())).collect::<Result<_, _>>()?;
-            let _ = write!(code, "    /// No node the statement made from `from` on holds a field a later token decides (`provisional`): one that does\n    /// failed, as the lean parser's literal fails where no comparison follows a bare term.\n    fn settled(&self, from: usize) -> R {{\n        if (from..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, {})) {{\n            return self.refuse();\n        }}\n        Ok(())\n    }}\n\n", fields.join(" | "));
-        }
         // The resume point's tests at record `k`: each clause's tokens from `k` on, its first first on its line.
         let mut at = Vec::new();
         let mut past = Vec::new();
@@ -1526,20 +1574,14 @@ impl<'a> G<'a> {
     /// The marks the code tests by looking at the tokens, as the lean parser's `is_p_at` and `kind_at`, a bit each by
     /// order: a hidden mark of tokens alone, with no question and nothing its taking does, whose taken bit no test can
     /// read. A mark taken at a token sets its own bit and the bits before it (and its `passes`), and the bits go when
-    /// the token is taken. Where every mark that may set a peek's bit is taken only right before the token is
-    /// (`takes_first`), no test comes between. So the peek holds wherever the mark did, and needs no bit, no cache
-    /// (`held`) and no take.
+    /// the token is taken. So a peek's bit is read only by a test of the peek at a token where a mark at or after it
+    /// was taken, before the token is. Where no such test can come (`set_then_asked`), the peek holds wherever the mark
+    /// did, and needs no bit, no cache (`held`) and no take.
     fn peeks(&self) -> u64 {
         if let Some(p) = self.peek_marks.get() {
             return p;
         }
-        // The marks taken somewhere the token is not taken next.
-        let mut loose = 0u64;
-        for st in self.rules.values() {
-            if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = st {
-                self.loose_marks(body, None, &mut loose);
-            }
-        }
+        let read = self.set_then_asked();
         let n = self.x.marks.len();
         let first = |m: usize| self.mark_of(&self.x.marks[m].name).unwrap_or(m);
         let mut peeks = 0u64;
@@ -1562,9 +1604,7 @@ impl<'a> G<'a> {
                     && d.hidden
                     && d.tokens.is_some_and(|(_, seq)| !seq.is_empty() && seq.iter().all(|e| e.iter().all(|x| !matches!(x, TokenElem::Many(..) | TokenElem::With(_) | TokenElem::Without(_) | TokenElem::Starting(_)))))
             });
-            // Every mark that may set its bit taken only right before its token.
-            let setters = (0..n).filter(|&x| first(x) == x && (x >= o || self.x.marks[x].passes >> o & 1 == 1));
-            if plain && setters.into_iter().all(|x| loose >> x & 1 == 0) {
+            if plain && read >> o & 1 == 0 {
                 peeks |= 1 << o;
             }
         }
@@ -1572,47 +1612,101 @@ impl<'a> G<'a> {
         peeks
     }
 
-    /// The marks `g` takes where what follows (`next`, in its sequence) does not take the token first.
-    fn loose_marks(&self, g: &Gram, next: Option<&Gram>, loose: &mut u64) {
+    /// The marks whose taken bit a test can read: each a mark's take sets (it and those before it, and its `passes`)
+    /// that a test may ask at the same token after the take, before a token is taken. What a rule asks after it ends
+    /// is its callers' (`follow`, to a fixed point); the root's is nothing, the file's end.
+    fn set_then_asked(&self) -> u64 {
+        let mut follow: HashMap<&str, u64> = HashMap::new();
+        loop {
+            let mut next = follow.clone();
+            let mut read = 0u64;
+            for (name, st) in &self.rules {
+                if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = st {
+                    let after = follow.get(name).copied().unwrap_or(0);
+                    self.walk_asks(body, after, &mut next, &mut read);
+                }
+            }
+            if next == follow {
+                return read;
+            }
+            follow = next;
+        }
+    }
+
+    /// `g`, with `after` the marks that may be asked after it before a token is taken: each call's follow grows by
+    /// what may be asked after it (`follow`), and each mark's take adds the bits it sets that may be asked (`read`).
+    fn walk_asks<'b>(&'b self, g: &'b Gram, after: u64, follow: &mut HashMap<&'b str, u64>, read: &mut u64) {
         match g {
-            Gram::Sym(n) if self.mark_of(n).is_some() => {
-                // Before a token's take, or `refused` (a choice of none), after which nothing is asked.
-                if !next.is_some_and(|x| matches!(x, Gram::Alt(v) if v.is_empty()) || self.takes_first(x, &mut HashSet::new())) {
-                    *loose |= 1 << self.mark_of(n).expect("a mark");
+            Gram::Sym(n) => match self.mark_of(n) {
+                Some(m) => {
+                    let set = (0..self.x.marks.len()).filter(|&o| o <= m || self.x.marks[m].passes >> o & 1 == 1).fold(0u64, |a, o| a | 1 << o);
+                    *read |= set & after;
                 }
-            }
+                None if self.rules.contains_key(n.as_str()) => *follow.entry(n.as_str()).or_default() |= after,
+                None => {}
+            },
             Gram::Seq(v) => {
-                for (i, x) in v.iter().enumerate() {
-                    self.loose_marks(x, v.get(i + 1), loose);
+                let mut cur = after;
+                for x in v.iter().rev() {
+                    self.walk_asks(x, cur, follow, read);
+                    let (a, empty) = self.first_asks(x, &mut HashSet::new());
+                    cur = if empty { a | cur } else { a };
                 }
             }
-            Gram::Alt(v) => v.iter().for_each(|x| self.loose_marks(x, None, loose)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.loose_marks(a, None, loose),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.loose_marks(body, None, loose),
+            Gram::Alt(v) => v.iter().for_each(|x| self.walk_asks(x, after, follow, read)),
+            Gram::Opt(a) => self.walk_asks(a, after, follow, read),
+            Gram::Star(a) | Gram::Plus(a) => {
+                let again = self.first_asks(a, &mut HashSet::new()).0 | after;
+                self.walk_asks(a, again, follow, read);
+            }
+            Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.walk_asks(a, after, follow, read),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => {
+                self.walk_asks(body, after, follow, read)
+            }
             _ => {}
         }
     }
 
-    /// Whether `g` takes the token before it asks anything of it: a token, or what begins with one through the forms
-    /// that take none (a field, a wrap, a level's call).
-    fn takes_first(&self, g: &Gram, seen: &mut HashSet<String>) -> bool {
+    /// The marks `g` may ask before it takes a token (a decision tests the marks its ways begin with), and whether it
+    /// may take none.
+    fn first_asks(&self, g: &Gram, seen: &mut HashSet<String>) -> (u64, bool) {
         match g {
-            Gram::Seq(v) => v.first().is_some_and(|x| self.takes_first(x, seen)),
-            Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) => self.takes_first(a, seen),
-            Gram::As(_, a) if self.token_of(a).is_some() => true,
-            Gram::Wrap { body, .. } => self.takes_first(body, seen),
-            // A relabel takes no token, but `decide` decides.
-            Gram::Relabel { field, body, .. } if field.as_deref() != Some(::bitlex::syntax::DECIDED) => self.takes_first(body, seen),
-            Gram::Sym(n) if self.mark_of(n).is_none() && self.rules.contains_key(n.as_str()) => {
-                if !seen.insert(n.clone()) {
-                    return false;
+            Gram::Sym(n) => match self.mark_of(n) {
+                Some(m) => (1 << m, true),
+                None if self.rules.contains_key(n.as_str()) => {
+                    // A rule reached again before a token: left recursion, which no machine has.
+                    if !seen.insert(n.clone()) {
+                        return (0, false);
+                    }
+                    let r = match self.rules[n.as_str()] {
+                        Stmt::Node { body, .. } | Stmt::Choice { body, .. } => self.first_asks(body, seen),
+                        _ => (u64::MAX, true),
+                    };
+                    seen.remove(n);
+                    r
                 }
-                match self.rules[n.as_str()] {
-                    Stmt::Node { body, .. } | Stmt::Choice { body, .. } => self.takes_first(body, seen),
-                    _ => false,
+                None if self.token_of(g).is_some() => (0, false),
+                None => (u64::MAX, true),
+            },
+            Gram::Seq(v) => {
+                let mut acc = 0;
+                for x in v {
+                    let (a, empty) = self.first_asks(x, seen);
+                    acc |= a;
+                    if !empty {
+                        return (acc, false);
+                    }
                 }
+                (acc, true)
             }
-            g => self.token_of(g).is_some(),
+            Gram::Alt(v) => v.iter().fold((0, false), |(acc, e), x| {
+                let (a, empty) = self.first_asks(x, seen);
+                (acc | a, e || empty)
+            }),
+            Gram::Opt(a) | Gram::Star(a) => (self.first_asks(a, seen).0, true),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first_asks(a, seen),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.first_asks(body, seen),
+            Gram::Lit(_) | Gram::Balanced { .. } | Gram::Any(_) => (0, false),
         }
     }
 
@@ -1924,9 +2018,17 @@ impl<'a> G<'a> {
 
     /// A token kind's test, as the lean parser's `self.kind() == STR`: the record's kind (`kind`, of the code's low
     /// byte) one of its records' kinds (`t`), and its word (`word`) none of its row's hard words.
+    /// The words a token of kind `k` can be (`w::…`): its keywords rows' words, soft ones too.
+    fn kind_words(&self, k: &str) -> Vec<String> {
+        let hard = self.x.keywords.iter().filter(|r| r.0 == k).flat_map(|r| r.1.iter().map(|(w, _)| w));
+        let soft = self.x.soft.iter().filter(|r| r.0 == k).flat_map(|r| r.1.iter());
+        hard.chain(soft).filter_map(|w| self.word_of(&String::from_utf8_lossy(w))).map(|w| format!("w::{}", self.word_const(w))).collect()
+    }
+
     fn kind_test(&self, k: &str, kind: &str, word: &str) -> String {
         let kinds: Vec<String> = self.x.tokens.iter().filter(|(_, n)| *n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| format!("t::{}", upper(n))).collect();
-        let hard: Vec<String> = self.x.keywords.iter().filter(|r| r.0 == k).flat_map(|r| r.1.iter().filter_map(|(w, _)| self.word_of(&String::from_utf8_lossy(w)))).map(|w| format!("w::{}", self.word_const(w))).collect();
+        // A row of keywords only (`required`) names them all: its kind holds at each, as the interpreter's `kind_set`.
+        let hard: Vec<String> = self.x.keywords.iter().filter(|r| r.0 == k && !r.2).flat_map(|r| r.1.iter().filter_map(|(w, _)| self.word_of(&String::from_utf8_lossy(w)))).map(|w| format!("w::{}", self.word_const(w))).collect();
         let is = match kinds.as_slice() {
             [] => "false".to_owned(),
             [one] => format!("{kind} == {one}"),
@@ -2095,15 +2197,6 @@ impl<'a> G<'a> {
                 }
                 out = out.replace(a, b);
             }
-        }
-        // A grammar's `provisional` fields: the root closed, a node that holds one refuses the file.
-        if !self.provisional.is_empty() && self.recover.is_none() {
-            let fields: Vec<String> = self.provisional.iter().map(|f| self.field_id(f).map(|id| id.to_string())).collect::<Result<_, _>>()?;
-            let a = "        self.w.set_start(0, first);\n";
-            if out.matches(a).count() != 1 {
-                return Err("tier 2 as Rust: `provisional`'s place in the runtime".into());
-            }
-            out = out.replace(a, &format!("        // A field that a later token decides (`provisional`), held still at the file's end: refused.\n        if (0..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, {})) {{\n            return self.refuse();\n        }}\n{a}", fields.join(" | ")));
         }
         // A grammar's `drop`: the nodes it took out, held as dead where a reading may reach them (`drop_made`).
         if rules.contains("self.drop_made(") {
@@ -2598,6 +2691,15 @@ fn leaf_fields(code: &str) -> String {
 /// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser
 /// whose rules call it.
 const MORE: &[(&str, &str)] = &[
+    (
+        "made_kind",
+        r#"    /// `ending … K refused`: the kind of the node made last at this level, `NONE` where it made none.
+    fn made_kind(&self) -> u16 {
+        let at = self.top.1;
+        if at == NONE { NONE as u16 } else { (self.w.key(at as usize) & 0x3ff) as u16 }
+    }
+"#,
+    ),
     (
         "made_is",
         r#"    /// `ending … K`: the node made last at this level is a `kind`.
