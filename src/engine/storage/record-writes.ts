@@ -20,7 +20,7 @@ import { resolve } from "node:path";
 import Database from "better-sqlite3";
 import { BUSY_TIMEOUT_MS, openSqliteDatabase, type RerailDatabase } from "./database.js";
 import { isBusy } from "./sqlite-wal.js";
-import { busyPauseMs, waitForWriteLock } from "./write-lock-wait.js";
+import { apartFromLockWaits, busyPauseMs, waitForWriteLock } from "./write-lock-wait.js";
 
 const { SqliteError } = Database;
 
@@ -176,13 +176,14 @@ class FileRecordWriter {
 
   /**
    * True once `write` is made in one immediate transaction; false when the lock was held, before any statement ran.
-   * Other failures roll it back and throw. The transaction's statements are prepared once per connection.
+   * Other failures roll it back and throw. The transaction's statements are prepared once per connection. The begin
+   * never meets this writer's own lock wait taking the lock to learn it is free (`apartFromLockWaits`).
    */
   #makeNow(write: RecordWrite): boolean {
     const database = this.#connection();
     const transaction = this.#transaction!;
     try {
-      transaction.begin.run();
+      apartFromLockWaits(this.#path, () => transaction.begin.run());
     } catch (error) {
       if (isBusy(error)) return false;
       throw error;

@@ -8,6 +8,7 @@ import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/chec
 import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { requireRecordWritesMade } from "../storage/record-writes.js";
+import { apartFromLockWaits } from "../storage/write-lock-wait.js";
 import { runGitWithoutBlocking } from "../git.js";
 import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits, events } from "../storage/schema.js";
@@ -412,7 +413,9 @@ export class SqliteAuditControlStore {
     // The session's row, just opened, may still wait in this process's record writer behind a holder of a moment; and the
     // claim's reopen of the row must not commit ahead of a waiting close of it, so the claim fails as the lock does.
     requireRecordWritesMade(this.path);
-    this.#database.transaction(() => {
+    // The transaction reads before it writes, so SQLite fails its write at once against a holder rather than wait: no
+    // lock wait of this thread's, which takes the lock to learn it is free, takes it meanwhile.
+    apartFromLockWaits(this.path, () => this.#database.transaction(() => {
       requireSession(this.#database, sessionId);
       const owner = this.#owner(sessionId);
       if (owner?.active) throw new Error(`Rerail session ${sessionId} is already owned by a live runtime`);
@@ -422,7 +425,7 @@ export class SqliteAuditControlStore {
       // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
       // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
       this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
-    });
+    }));
     if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
   }

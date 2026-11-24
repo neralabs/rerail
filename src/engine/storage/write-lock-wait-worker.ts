@@ -10,13 +10,19 @@ import { type FSWatcher, watch } from "node:fs";
 import Database from "better-sqlite3";
 import { parentPort, workerData } from "node:worker_threads";
 import { isBusy } from "./sqlite-wal.js";
-import { busyTryAtMs, epochNow, WRITE_LOCK_FREE, type WriteLockWaitData } from "./write-lock-wait.js";
+import {
+  busyTryAtMs, epochNow, TURN_FREE, TURN_THREAD_ASKS, TURN_WAIT_TRIES, WRITE_LOCK_FREE, type WriteLockWaitData,
+} from "./write-lock-wait.js";
 
 // `waitForWriteLock` starts this thread with a `WriteLockWaitData`.
-const { path, stop, since } = workerData as WriteLockWaitData;
+const { path, stop, since, turn } = workerData as WriteLockWaitData;
 
-/** Whether the write lock was taken and given back; false while another connection holds it. */
+/**
+ * Whether the write lock was taken and given back; false while another connection holds it, or while the starting
+ * thread tries it itself (`apartFromLockWaits`), whose try this one would meet as a holder.
+ */
 function takeAndGiveBack(database: Database.Database): boolean {
+  if (Atomics.compareExchange(turn, 0, TURN_FREE, TURN_WAIT_TRIES) !== TURN_FREE) return false;
   try {
     database.exec("BEGIN IMMEDIATE");
     database.exec("ROLLBACK");
@@ -24,6 +30,8 @@ function takeAndGiveBack(database: Database.Database): boolean {
   } catch (error) {
     if (isBusy(error)) return false;
     throw error;
+  } finally {
+    if (Atomics.exchange(turn, 0, TURN_FREE) === TURN_THREAD_ASKS) Atomics.notify(turn, 0);
   }
 }
 

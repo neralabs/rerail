@@ -6,7 +6,7 @@
  * busy handler does, at that handler's own times. That runs here on a worker thread of its own, so the thread that
  * answers hooks never sleeps in it (`record-writes.ts`, and a quiet session's reopen in `engine-service.ts`).
  */
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import { PACKAGE_ROOT } from "../package-root.js";
 
@@ -27,6 +27,56 @@ export interface WriteLockWaitData {
    * the lock back at a given time is found then.
    */
   readonly since: number;
+  /** The starting thread's turn at the database's write lock, which each try takes first (`apartFromLockWaits`). */
+  readonly turn: Int32Array;
+}
+
+/**
+ * The values of a turn's word: no one takes the lock through it; a wait's thread tries the lock; the starting thread
+ * waits for that try to end, which wakes it (`Atomics.notify`); the starting thread tries the lock itself.
+ */
+export const TURN_FREE = 0;
+export const TURN_WAIT_TRIES = 1;
+export const TURN_THREAD_ASKS = 2;
+export const TURN_THREAD_TRIES = 3;
+
+/** This thread's turn at each database's write lock, by its resolved path, shared with every wait it starts there. */
+const turns = new Map<string, Int32Array>();
+
+function turnOf(path: string): Int32Array {
+  const key = resolve(path);
+  let turn = turns.get(key);
+  if (turn === undefined) {
+    turn = new Int32Array(new SharedArrayBuffer(4));
+    turns.set(key, turn);
+  }
+  return turn;
+}
+
+/**
+ * Runs `attempt`, this thread's own try for the write lock of the database at `path`, with no try of a wait this thread
+ * started (`waitForWriteLock`) holding the lock meanwhile: one in progress, two statements that never wait, ends first,
+ * and none begins until `attempt` returns. A wait's try takes the lock as any connection does, so before, a try of this
+ * thread's that came at that moment failed as another process's holder fails it, where SQLite runs no busy handler: a
+ * write whose waiting time is spent (`record-writes.ts`), and a transaction that read before it wrote (the session's
+ * owner claim). A try in progress here makes the wait's next try fail as a held lock does, so it tries again later.
+ */
+export function apartFromLockWaits<T>(path: string, attempt: () => T): T {
+  const turn = turnOf(path);
+  for (;;) {
+    const was = Atomics.compareExchange(turn, 0, TURN_FREE, TURN_THREAD_TRIES);
+    if (was === TURN_FREE) break;
+    // This thread's try within its own: the turn is already this thread's.
+    if (was === TURN_THREAD_TRIES) return attempt();
+    // A wait's try: marked asked, so its end wakes this thread. One that ended meanwhile leaves the word free.
+    Atomics.compareExchange(turn, 0, TURN_WAIT_TRIES, TURN_THREAD_ASKS);
+    Atomics.wait(turn, 0, TURN_THREAD_ASKS);
+  }
+  try {
+    return attempt();
+  } finally {
+    Atomics.store(turn, 0, TURN_FREE);
+  }
 }
 
 /** What the thread posts once it took the write lock and gave it back at once. */
@@ -64,7 +114,7 @@ export function waitForWriteLock(path: string, signal?: AbortSignal, since = epo
   const stop = new Int32Array(new SharedArrayBuffer(4));
   // A worker that cannot start (a package that lost its file) rejects, as one that fails later does.
   return new Promise<boolean>((resolve, reject) => {
-    const worker = lockWaitWorker({ path, stop, since });
+    const worker = lockWaitWorker({ path, stop, since, turn: turnOf(path) });
     worker.unref();
     const onAbort = (): void => {
       Atomics.store(stop, 0, 1);
