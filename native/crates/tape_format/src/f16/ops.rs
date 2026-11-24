@@ -157,7 +157,11 @@ impl Writer {
             ..State::default()
         });
         debug_assert_eq!(state.stride, w::stride_of(w3, cw as u32));
-        let kinds: crate::Vector<u8> = lang.table().entries().flat_map(|e| super::presence::kind_word(e.kind, e.field, e.flags).to_le_bytes()).collect();
+        // The language's kinds' part, made once with it (`Lang::kinds_part`), into this part's own buffer: built from
+        // the code table at each document, it was a third of a small document's writer (a rule file's).
+        let mut kinds = std::mem::take(&mut self.parts[part::KINDS as usize]);
+        kinds.clear();
+        kinds.extend_from_slice(lang.kinds_part());
         let words = 8 * (kind_words + field_words);
         let count = nodes.div_ceil(Z).max(1);
         let buckets = (4 * count).next_power_of_two().max(64);

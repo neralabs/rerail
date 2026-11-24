@@ -566,6 +566,11 @@ impl Within {
     /// and one is registered: `None` sends it to the host's.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn solved_on_device(&self) -> Option<Solved> {
+        // The binding first: the views' directory is the device's alone, and made for a run on the CPU it was most of
+        // an edit's within solve (every document's views made, then dropped for the host's solve).
+        if !self.on_device() {
+            return None;
+        }
         let views = super::device_chunk::views_in_place(&self.batch)?;
         let keep = Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>;
         self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, start_in_block: Some(c.start) })
