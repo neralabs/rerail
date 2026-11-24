@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 6 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: in progress, steps 1 to 7 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -226,3 +226,32 @@ own: `json_document`, `json_member`, `json_value`, `json_array`, with no merges.
 
 rr's `tier2.rs` is 3,308 lines; the JSON rules are four, each written once. Kotlin's is 8,478 lines, from 8,503 (the
 empty `else`s). Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
+## Step 7: one take, a leaf's text checked once, depth counted where the grammar recurses (done)
+
+Gap 9 is the runtime's helpers. The lean parser has one `p` and one `id`, checks a policy document's text once it has
+read it, has no depth count, and has no helper it does not call. Tier 2 now does the same where the grammar lets it:
+
+- **A leaf's refused marks are checked once.** Every `refuse M in L` of rr's is under a `leaf`, so `leaf_close` checks
+  the leaf's tokens for the marks (`leaf_refuses`). That is the lean parser's `serde_json` check, after reading. No
+  call saves the marks refused, and no take tests them, so the `refusing` field is gone. A grammar that refuses a mark
+  outside a leaf keeps the general mechanism. No rule outside a leaf may call a rule under one, since that rule's
+  takes write nothing: the writer refuses such a grammar.
+- **One take.** `takes` gives each take the tests its token needs (`M`: a mark no rule takes; `F`: a refused mark). In
+  rr every take is `M` false and `F` false, and in Kotlin every one is `M` true and `F` false. Where a grammar's takes
+  are all one pair, `one_take` drops the const parameters, and `take` asks only what that pair asks. rr's `take` is now
+  the lean parser's `bump`: the span, the advance and the last end.
+- **The depth is counted where the grammar recurses.** A call outside every cycle of the rules' calls nests no deeper
+  than the grammar is long, so only a cycle's calls need counting. In the grammar's order, a level counts the depth
+  (`deeper`) if it is still on a cycle once the levels before it that count are taken out (`depth_cuts`). If a cycle
+  holds only rules that are not levels, every level counts, as before. rr counts at 11 levels, down from 19, and
+  Kotlin at 6. The loop form counts at the same levels.
+- **No helper nothing calls.** `drop_uncalled` matched only the runtime's text as written, so a helper that an earlier
+  replacement had edited was never dropped. `no_dead_methods` drops any method that nothing calls, in the final text.
+  That removes rr's `settle` and `open_mark`, and Kotlin's unused `bump`.
+
+`flush` and `pass_comments` stay. They are the lean parser's comment cursor (`push`'s `next_comment` test, and
+`comments_before`), written once each: the first places the comments before a node, and the second moves past them.
+
+rr's `tier2.rs` is 3,237 lines, from 3,308, and `tier2_loop.rs` is 3,968, from 4,036. Kotlin's `tier2.rs` is 8,394,
+from 8,478. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.

@@ -139,6 +139,14 @@ struct G<'a> {
     /// The rules a `leaf K R` reaches (`R` and those it calls): they read the tokens and make nothing, the leaf made
     /// over them after (decision 0673 step 6).
     recognizers: HashSet<String>,
+    /// `refuse M in L` where every level `L` is under a `leaf`: each leaf's rule and its refused marks, the leaf's tokens
+    /// checked once where it closes (`leaf_close`), as the lean parser checks a policy document's text once it has read
+    /// it. `refusing` is then empty: no call saves the marks refused, no take tests them (decision 0673 step 7).
+    leaf_refuses: HashMap<String, u32>,
+    /// A `leaf K R`'s call of `R` being written: the one call of a rule under a leaf from outside one.
+    leaf_call: std::cell::Cell<bool>,
+    /// The levels that count the depth (`depth_cuts`).
+    cuts: std::cell::RefCell<Option<HashSet<String>>>,
 }
 
 /// `s`'s lines at `p`.
@@ -281,7 +289,23 @@ impl<'a> G<'a> {
                 syms(body, false, &mut todo);
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers }
+        // Refusals all under leaves: checked where each leaf closes. Every level a refusing level calls refuses the same
+        // marks (`ladder`'s check), so a leaf whose rule refuses them refuses them at each of its tokens.
+        let mut leaf_refuses = HashMap::new();
+        let bits: HashSet<u32> = refusing.values().copied().collect();
+        if bits.len() == 1 && refusing.keys().all(|l| recognizers.contains(l)) {
+            let mut roots = Vec::new();
+            for st in rules.values() {
+                if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = st {
+                    syms(body, true, &mut roots);
+                }
+            }
+            if roots.iter().all(|r| refusing.contains_key(r)) {
+                leaf_refuses = roots.into_iter().map(|r| (r, bits.iter().copied().next().unwrap_or(0))).collect();
+                refusing.clear();
+            }
+        }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -815,6 +839,52 @@ impl<'a> G<'a> {
         out
     }
 
+    /// Whether level `rule` counts the depth (`deeper`): it is one of the levels that cut every cycle of the rules' calls
+    /// (`depth_cuts`). A call off every cycle nests no deeper than the grammar is long, so only a cycle's call can
+    /// nest without bound, as the lean parser's recursion is only where its grammar's is.
+    fn counts_depth(&self, rule: &str) -> bool {
+        self.cuts.borrow_mut().get_or_insert_with(|| self.depth_cuts()).contains(rule)
+    }
+
+    /// The levels that count the depth: in the grammar's order, each level still on a cycle of calls once the levels
+    /// before it that count are taken out; every level where a cycle has none but rules that are no level.
+    fn depth_cuts(&self) -> HashSet<String> {
+        let mut calls: HashMap<&str, Vec<String>> = HashMap::new();
+        for (n, st) in &self.rules {
+            if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = st {
+                let mut out = Vec::new();
+                called(body, &mut out);
+                out.retain(|c| self.rules.contains_key(c.as_str()));
+                calls.insert(n, out);
+            }
+        }
+        // Whether `from` reaches `to` by calls, through no rule of `cut`.
+        let reaches = |from: &str, to: &str, cut: &HashSet<String>| {
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut todo: Vec<&str> = calls.get(from).map(|v| v.iter().map(String::as_str).collect()).unwrap_or_default();
+            while let Some(c) = todo.pop() {
+                if c == to {
+                    return true;
+                }
+                if cut.contains(c) || !seen.insert(c) {
+                    continue;
+                }
+                todo.extend(calls.get(c).into_iter().flatten().map(String::as_str));
+            }
+            false
+        };
+        let mut cut = HashSet::new();
+        for n in &self.order {
+            if self.nested(n) && reaches(n, n, &cut) {
+                cut.insert((*n).to_owned());
+            }
+        }
+        if self.order.iter().any(|n| !cut.contains(*n) && reaches(n, n, &cut)) {
+            return self.order.iter().filter(|n| self.nested(n)).map(|n| (*n).to_owned()).collect();
+        }
+        cut
+    }
+
     fn nested(&self, rule: &str) -> bool {
         matches!(self.rules.get(rule), Some(Stmt::Node { nested: true, .. } | Stmt::Choice { nested: true, .. })) || self.order.first() == Some(&rule)
     }
@@ -921,6 +991,7 @@ impl<'a> G<'a> {
             // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them, as the lean parser's `json` reads the
             // braces and makes its leaf.
             Gram::Leaf { kind, rule: r } => {
+                self.leaf_call.set(true);
                 let call = self.code(&Gram::Sym(r.clone()), rest, rule, pad)?;
                 format!("{pad}self.leaf_open();\n{call}{pad}self.leaf_close({})?;\n", self.kind_const(kind)?)
             }
@@ -950,6 +1021,8 @@ impl<'a> G<'a> {
                     format!("{pad}self.mark_{}()?;\n", ident(&self.x.marks[o].name))
                 }
             }
+            // A rule under a `leaf` writes nothing: no rule outside one calls it.
+            Gram::Sym(n) if self.recognizers.contains(n) && !self.recognizers.contains(rule) && !self.leaf_call.replace(false) => return Err(format!("rule {rule}: calls `{n}`, which a `leaf` reads, outside a leaf")),
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) && self.nested(n) => {
                 // A level's call: the questions it asks where it may end at a mark, those of the
                 // level it returns to (set where that takes the mark, kept where it ends there too).
@@ -1269,7 +1342,7 @@ impl<'a> G<'a> {
         };
         let root = self.order.first() == Some(&name);
         let mut out = format!("    /// `{name}`.\n    fn {}(&mut self) -> R {{\n", rule_fn(name));
-        if nested {
+        if nested && self.counts_depth(name) {
             out.push_str("        self.deeper()?;\n");
         }
         // A level that may set the level's word (`remember`) gives its caller's back where it ends, as the machine's
@@ -1305,7 +1378,7 @@ impl<'a> G<'a> {
             if keeps_word {
                 out.push_str("        self.word = word;\n");
             }
-            if nested {
+            if nested && self.counts_depth(name) {
                 out.push_str("        self.depth -= 1;\n");
             }
             out.push_str("        self.marked = false;\n        Ok(())\n");
@@ -2275,7 +2348,14 @@ impl<'a> G<'a> {
             }
         }
         // The helpers only some grammars' rules call, each written where it is called.
-        let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
+        // A leaf's refused marks (`leaf_refuses`): one set, the grammar's, else no check.
+        let refused = self.leaf_refuses.values().fold(0, |a, b| a | b);
+        let check = "        // The marks the leaf refuses (`refuse M in L`), at any of its tokens: its text checked, as the lean parser checks\n        // a policy document is JSON.\n        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, REFUSED)) {\n            return self.refuse();\n        }\n";
+        let used: Vec<String> = MORE
+            .iter()
+            .filter(|(name, _)| rules.contains(&format!("self.{name}(")))
+            .map(|(_, code)| if refused == 0 { code.replace(check, "") } else { code.replace("REFUSED", &format!("{refused:#x}")) })
+            .collect();
         if !used.is_empty() {
             out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
             out.push_str(&used.join("\n"));
@@ -2356,8 +2436,90 @@ impl<'a> G<'a> {
         }
         let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
         let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, finished by `finish` (the\n/// image, or the columns, as the grammar's lean parser finishes), or the byte it was refused at.\npub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        // Nearly every file is parsed at the narrow widths, fixed in the parser's code, as the lean parser's.\n        let at = if widths == Narrow::WIDTHS {{ parse_at(src, lx, Narrow, finish)? }} else {{ parse_at(src, lx, widths, finish)? }};\n        match at {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}\n\n/// `parse` at `layout`'s widths: the tape `finish` makes of the writer, or the widths to parse at again; or the byte\n/// it was refused at.\nfn parse_at<L: Layout, F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, layout: L, finish: &mut F) -> R<Result<F::Out, rerail_tape_format::Redo>> {{\n    let mut p = P::new(src, lx, layout)?;\n    p.{entry}()?;\n    Ok(finish.finish(p.w))\n}}");
-        Ok(plain_writer(&out))
+        Ok(plain_writer(&no_dead_methods(&one_take(&out))))
     }
+}
+
+/// The rules `g` calls: its symbols, and the rule each `leaf` reads (marks and tokens too; the caller keeps the rules).
+fn called(g: &Gram, out: &mut Vec<String>) {
+    match g {
+        Gram::Sym(n) | Gram::Leaf { rule: n, .. } => out.push(n.clone()),
+        Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| called(x, out)),
+        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => called(a, out),
+        Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => called(body, out),
+        _ => {}
+    }
+}
+
+/// `code` with no method nothing calls: those the runtime gives every grammar (`settle`, `open_mark`, …) where its code
+/// no longer calls them, whatever replacement wrote them, as the lean parser has no helper it does not use.
+fn no_dead_methods(code: &str) -> String {
+    let mut out = code.to_owned();
+    loop {
+        let chunks: Vec<String> = out.split("\n\n").map(str::to_owned).collect();
+        let mut dropped = false;
+        for c in &chunks {
+            // One method, its docs and attributes before it, braces balanced.
+            let Some(name) = c.lines().find_map(|l| l.strip_prefix("    fn ")).and_then(|l| l.split(['(', '<']).next()) else { continue };
+            if c.lines().filter(|l| l.starts_with("    fn ")).count() != 1 || c.matches('{').count() != c.matches('}').count() || !c.lines().all(|l| l.starts_with("    ")) {
+                continue;
+            }
+            let Some(at) = out.find(&format!("\n\n{c}\n")) else { continue };
+            let without = format!("{}{}", &out[..at + 1], &out[at + 2 + c.len()..]);
+            let called = without.lines().filter(|l| !l.trim_start().starts_with("//")).any(|l| [format!("{name}("), format!("{name}::<"), format!("{name},"), format!("{name})"), format!("= {name}")].iter().any(|x| l.contains(x.as_str())));
+            if !called {
+                out = without;
+                dropped = true;
+                break;
+            }
+        }
+        if !dropped {
+            return out;
+        }
+    }
+}
+
+/// `code` with one take, as the lean parser's one `p` and `id`, where every take asks the same: `takes` gives each the
+/// tests its token needs (`M`, `F`), and where the grammar's are one pair, the takes have no const parameters, and
+/// `take` asks only what that pair asks (decision 0673 step 7).
+fn one_take(code: &str) -> String {
+    let mut code = code.to_owned();
+    let bump = "    /// The token taken: its span; the next token's marks not yet taken.\n    #[inline(always)]\n    fn bump(&mut self) -> R<(u32, u32)> {\n        self.take::<true, true>()\n    }\n\n";
+    if !code.contains("self.bump()") {
+        code = code.replace(bump, "");
+    }
+    let pairs: Vec<(bool, bool)> = [(false, false), (false, true), (true, false), (true, true)].into_iter().filter(|(m, f)| code.contains(&format!("::<{m}, {f}>"))).collect();
+    let (m, f) = match pairs.as_slice() {
+        [] => (false, false),
+        [p] => *p,
+        _ => return code,
+    };
+    let checks = [
+        (
+            "        // Not past the last record: a take of `M` false passed a word's or a kind's test, which fails there.\n        if M && (self.i >= self.n || self.open_mark()) {\n",
+            m,
+            "        // Not past the last record, and no mark no rule takes at the token (`open_mark`).\n        if self.i >= self.n || self.open_mark() {\n",
+        ),
+        ("        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if F && ", f, "        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if "),
+    ];
+    for (a, keep, b) in checks {
+        let Some(at) = code.find(a) else { continue };
+        if keep {
+            code.replace_range(at..at + a.len(), b);
+        } else {
+            // The check, to its `}`.
+            let end = at + code[at..].find("\n        }\n").map_or(0, |e| e + "\n        }\n".len());
+            code.replace_range(at..end, "");
+        }
+    }
+    code.replace(&format!("::<{m}, {f}>"), "")
+        .replace("::<M, F>", "")
+        .replace("<const M: bool, const F: bool>", "")
+        .replace(
+            "    /// `bump`, its tests those the take needs (`takes`): `M`, whether a mark no rule takes may hold at the token\n    /// (its word may be one of theirs); `F`, whether the level open may refuse a mark there (a rule a refusing level\n    /// reaches). The lean parser asks neither at a token it knows.\n",
+            "    /// The token taken: its span; the next token's marks not yet taken.\n",
+        )
+        .replace(" (`take`'s `M` and `F`)", "")
 }
 
 /// `code` with its writer's calls the plain ones (`Writer::plain_key` and the rest): tier 2 opens no chain and writes an
@@ -2786,6 +2948,11 @@ const MORE: &[(&str, &str)] = &[
     fn leaf_close(&mut self, kind: u16) -> R {
         while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
             self.pend += 1;
+        }
+        // The marks the leaf refuses (`refuse M in L`), at any of its tokens: its text checked, as the lean parser checks
+        // a policy document is JSON.
+        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, REFUSED)) {
+            return self.refuse();
         }
         let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
         self.set_made(at as u32);

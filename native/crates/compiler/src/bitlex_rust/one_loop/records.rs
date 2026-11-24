@@ -93,7 +93,7 @@ fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
 /// `code`, a rule's that runs with no mark refused: its token takes without the test of the refused marks
 /// (`takes`, the `_nf` calls).
 fn no_refusing(code: &str) -> String {
-    ["tk", "word_leaf", "word_skip", "skip", "merge"].iter().fold(code.to_owned(), |c, t| c.replace(&format!("self.{t}("), &format!("self.{t}_nf(")))
+    ["tk", "word_leaf", "word_skip", "skip", "merge", "pass", "word_pass"].iter().fold(code.to_owned(), |c, t| c.replace(&format!("self.{t}("), &format!("self.{t}_nf(")))
 }
 
 /// What may run while a level refuses a mark (`Rl::hot`), and the levels whose calls save the marks refused
@@ -364,14 +364,15 @@ impl Rl<'_, '_> {
             Stmt::Choice { body, .. } => (body, false),
             _ => unreachable!(),
         };
-        let mut code = String::from(if nested { "self.deeper()?;\n" } else { "" });
+        let counts = nested && self.g.counts_depth(n);
+        let mut code = String::from(if counts { "self.deeper()?;\n" } else { "" });
         // Its endings first (`ending`), as the rule's method has them before its close.
         let mut end = self.g.ending_code(n, "")?;
         if node {
             code.push_str(&self.open(n)?);
             end.push_str("self.close()?;\n");
         }
-        if nested {
+        if counts {
             end.push_str("self.depth -= 1;\n");
         }
         end.push_str("self.marked = false;\n// The place the call returns to, then what a level's saved of its caller's.\n");
