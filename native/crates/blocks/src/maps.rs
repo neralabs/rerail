@@ -46,6 +46,9 @@ pub fn place_of(r: &Region) -> Option<(&Arc<Block>, usize)> {
     if let Some(h) = owner.downcast_ref::<Held>() {
         return Some((h.0.region().block(), h.0.region().at()));
     }
+    if let Some(l) = owner.downcast_ref::<crate::long::InLong>() {
+        return Some(l.place());
+    }
     owner.downcast_ref::<crate::scratch::OnStack>().map(|s| s.place())
 }
 
@@ -68,11 +71,9 @@ impl Room for InBlock {
     }
 }
 
-/// Free-listed blocks a holder keeps (decision 0342: big pieces, not millions of small ones), the next leased when
-/// one is full; a block goes when its last region does. A thread's large regions (`scratch::LARGE` bytes and more,
-/// which `scratch::StackRoom` sends to its thread's, `FreeRoom::large`), and an owner's family (`FreeRoom::owner`:
-/// the structures an owner keeps past what a stack's order holds, made `within` it). Its lock is its holder's: a
-/// thread's but for a free from another, an owner's shared by the threads that make its structures.
+/// Free-listed blocks a thread keeps for its large regions (`scratch::LARGE` bytes and more, which its stack and its
+/// long room send to it: `FreeRoom::large`; decision 0342: big pieces, not millions of small ones), the next leased
+/// when one is full; a block goes when its last region does. Its lock is its thread's but for a free from another.
 pub struct FreeRoom {
     open: std::sync::Mutex<Option<Arc<Block>>>,
     /// The bytes each block reserves (address space; pages are touched as used).
@@ -86,34 +87,10 @@ const LARGE_RESIDENT: usize = 256 << 10;
 /// The bytes a thread's large room's block reserves.
 const LARGE_BLOCK: usize = 64 << 20;
 
-/// The bytes an owner's room's block reserves: an owner's family is a few thousand small regions a run.
-const OWNER_BLOCK: usize = 4 << 20;
-
 impl FreeRoom {
     /// A thread's room for its large regions.
     pub fn large() -> Self {
         FreeRoom { open: std::sync::Mutex::new(None), block: LARGE_BLOCK }
-    }
-
-    /// An owner's room, held as long as it holds what is made in it.
-    pub fn owner() -> Arc<dyn Room> {
-        Arc::new(FreeRoom { open: std::sync::Mutex::new(None), block: OWNER_BLOCK })
-    }
-}
-
-/// An owner's room as a field of its structure (`FreeRoom::owner`, made with it: `Default`).
-pub struct OwnerRoom(pub Arc<dyn Room>);
-
-impl Default for OwnerRoom {
-    fn default() -> Self {
-        OwnerRoom(FreeRoom::owner())
-    }
-}
-
-impl OwnerRoom {
-    /// `f`, what it makes with no room made in this room (`within`).
-    pub fn within<R>(&self, f: impl FnOnce() -> R) -> R {
-        within(&self.0, f)
     }
 }
 
@@ -123,7 +100,7 @@ impl Room for FreeRoom {
         if let Some(b) = &*open
             && let Some(r) = Mutable::alloc_aligned(b, bytes, align, name)
         {
-            return region_of(r, None);
+            return region_of(r, self.counted(name, bytes));
         }
         // Room for the chunk the free list takes for `bytes` (its class, a power of two), aligned to its size up to
         // `ALIGN_MAX` past the block's first byte, and a page.
@@ -132,7 +109,14 @@ impl Room for FreeRoom {
         let b = Arc::new(Block::anon(crate::block::kind::FACTS, self.block.max(need)).with_free_list().keeping_pages_below(LARGE_RESIDENT));
         let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
         *open = Some(b);
-        region_of(r, None)
+        region_of(r, self.counted(name, bytes))
+    }
+}
+
+impl FreeRoom {
+    /// The census's token for a region of it (`RERAIL_ANON_CENSUS`), when the census runs.
+    fn counted(&self, name: &'static str, bytes: usize) -> Keep {
+        crate::census::counted(crate::census::LARGE, name, bytes)
     }
 }
 
@@ -166,6 +150,16 @@ pub fn within<R>(room: &Arc<dyn Room>, f: impl FnOnce() -> R) -> R {
     }
     let _back = Back(WITHIN.with(|w| w.borrow_mut().replace(room.clone())));
     f()
+}
+
+/// Runs `f` with the calling thread's long-lived room the room of every structure made with no room (`within`): what
+/// is known to outlive the work it is made in (decision 0342, amended 2026-11-24: one long-lived room a thread).
+pub fn long<R>(f: impl FnOnce() -> R) -> R {
+    thread_local! { static LONG: Arc<dyn Room> = Arc::new(crate::long::LongRoom::new()); }
+    match LONG.try_with(Arc::clone) {
+        Ok(room) => within(&room, f),
+        Err(_) => f(),
+    }
 }
 
 fn run_room() -> Arc<dyn Room> {
@@ -1372,30 +1366,14 @@ mod tests {
         assert!(!in_owner(), "a panic's end restores the scope before");
     }
 
-    /// An owner's room (decision 0342 amended): its regions lie in its own blocks, a chunk freed is taken again, two
-    /// threads make regions in it at once, and its block goes with the owner and its last region, not before.
+    /// What is made `long` lies in the thread's long-lived room (decision 0342, amended 2026-11-24), and the stack
+    /// is the room again after it.
     #[test]
-    fn an_owners_room_holds_its_regions_in_its_own_blocks() {
-        let room = FreeRoom::owner();
-        let block_of = |r: &Region| Arc::downgrade(place_of(r).expect("placed").0);
-        let first = room.region(64, 8, "a test's");
-        let block = block_of(&first);
-        let at = place_of(&first).unwrap().1;
-        assert!(within(&room, || Arc::ptr_eq(&block.upgrade().unwrap(), place_of(&default_room().region(64, 8, "a test's")).unwrap().0)), "made within it: its block");
-        drop(first);
-        let again = room.region(64, 8, "a test's");
-        assert_eq!(place_of(&again).unwrap().1, at, "the chunk freed, taken again");
-        let made: Vec<Region> = std::thread::scope(|s| {
-            let hs: Vec<_> = (0..2).map(|_| s.spawn(|| (0..500).map(|i| room.region(64 + i % 200, 8, "a test's")).collect::<Vec<_>>())).collect();
-            hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
-        });
-        let mut spans: Vec<(usize, usize, usize)> = made.iter().map(|r| { let (b, at) = place_of(r).unwrap(); (Arc::as_ptr(b) as usize, at, r.len()) }).collect();
-        spans.sort();
-        assert!(spans.windows(2).all(|w| w[0].0 != w[1].0 || w[0].1 + w[0].2 <= w[1].1), "two threads' regions do not overlap");
-        drop((room, made));
-        assert!(block.upgrade().is_some(), "a region outliving the owner keeps its block");
-        drop(again);
-        assert!(block.upgrade().is_none(), "the block goes with the owner and its last region");
+    fn what_is_made_long_lies_in_the_threads_long_room() {
+        let r = long(|| default_room().region(64, 8, "a test's"));
+        assert!(r.owner().downcast_ref::<crate::long::InLong>().is_some(), "made long: a long room's slot");
+        let s = default_room().region(64, 8, "a test's");
+        assert!(s.owner().downcast_ref::<crate::scratch::OnStack>().is_some(), "after it: the stack");
     }
 
     /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,

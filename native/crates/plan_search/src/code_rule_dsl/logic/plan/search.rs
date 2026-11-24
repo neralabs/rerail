@@ -1715,7 +1715,8 @@ impl RunPlans {
         }
         let mut pending = self.pending.lock();
         if let Some(read) = pending.take() {
-            let (plans, ready) = read();
+            // The store's plans live through the run: read into the thread's long-lived room (decision 0342 amended).
+            let (plans, ready) = rerail_blocks::maps::long(read);
             self.stored.store(Arc::new(plans));
             self.prepared.store(Arc::new(ready));
             self.pending_any.store(false, std::sync::atomic::Ordering::Release);
@@ -3017,7 +3018,9 @@ impl Model {
     /// `live_sizes` with the line's `delta_misses` (`plan_key_at`'s). Each atom's relation is found once, and its
     /// columns read by its number (decision 0209 §3), not by name a column at a time.
     fn live_sizes_at(&self, b: &Body<'_>, first: Option<usize>, misses: &[usize]) -> Vector<f64> {
-        let mut sizes = rerail_blocks::vector::Vector::with_capacity(2 + 4 * b.len());
+        // Kept with the plan it prices (`Priced`) for the run: made in the thread's long-lived room (decision 0342
+        // amended 2026-11-24); a clone of it is made where it was. On the stack it held everything taken after it.
+        let mut sizes = rerail_blocks::maps::long(|| rerail_blocks::vector::Vector::with_capacity(2 + 4 * b.len()));
         sizes.extend(self.read_sizes(b));
         if let Some(a) = first.and_then(|f| b.atom(f)) {
             sizes.push(self.stats.delta_rows.get(b.rel(a)).copied().unwrap_or(-1.0));
