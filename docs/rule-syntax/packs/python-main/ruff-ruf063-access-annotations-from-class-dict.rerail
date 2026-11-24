@@ -8,7 +8,7 @@
 // annotations_literal(n): the JSON util `annotations-literal`, used where the JSON says `matches: "annotations-literal"`
 .decl ruf063_annotations_literal(n: node)
 ruf063_annotations_literal(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
-    value(n, v1), value_type(v1, "str"), v1 = "__annotations__",
+    value(n, v1), value_type_of(n, "str"), v1 = "__annotations__",
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
 ruf063_annotations_literal(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
     ruf063_annotations_literal(c3).

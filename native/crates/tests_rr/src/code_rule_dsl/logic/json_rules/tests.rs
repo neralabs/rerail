@@ -9,7 +9,8 @@ fn repo() -> std::path::PathBuf {
 }
 
 /// Every JSON rule of main's pinned pack translates to the pack's `<id>.rerail`, byte for byte: the generated pack is
-/// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`).
+/// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`, or
+/// `RERAIL_WRITE_PACK=1`, which writes each file that differs).
 #[test]
 fn json_rules_pack_is_current() {
     let pack = repo().join("docs/rule-syntax/packs/python-main");
@@ -24,6 +25,7 @@ fn json_rules_pack_is_current() {
         let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e}", golden.display()));
         match translator.translate_file(json) {
             Ok(got) if got == want => {}
+            Ok(got) if std::env::var_os("RERAIL_WRITE_PACK").is_some() => std::fs::write(&golden, got).unwrap_or_else(|e| panic!("{}: {e}", golden.display())),
             Ok(_) => differ.push(format!("{id}: differs from {}", golden.display())),
             Err(e) => differ.push(format!("{id}: {e}")),
         }
@@ -140,4 +142,41 @@ fn json_tool_call_rule_finds_its_examples() {
     let eq = r#"{"id": "x", "mode": "steer", "match": {"field": "input.command", "eq": "ls"}, "sample": {"source": "tool:*", "boundary": "tool-call"}, "action": {"content": "no"}}"#;
     let refused = super::Translator::new().translate_text(eq, "x").unwrap_err();
     assert!(refused.contains("not translated"), "{refused}");
+}
+
+/// A value's `type` is the node's own (`value_type_of(n, t)`), not its text's (decision 0677): `value_type(v, t)` is
+/// keyed by the text, which `"12"` and `12` share, so `value(n, x), value_type(x, "int")` held at the string too,
+/// from the int's row, and joined every file's types in the cross-file part. A value followed through a binding
+/// (`follow`) is no node's own, and keeps its text's type.
+#[test]
+fn json_rules_value_type_is_the_nodes_own() {
+    let rule = |value: &str| {
+        format!(
+            r#"{{"format":"rerail.policy/v1","id":"int-literal","revision":1,"mode":"steer","description":"x","scope":{{"include":["**/*"],"exclude":[]}},
+"clauses":[{{"id":"c","forbid":{{"ast":{{"language":"python","rule":{{"any":[{{"kind":"integer"}},{{"kind":"string"}}],"value":{value}}}}}}},"message":"an int"}}]}}"#
+        )
+    };
+    let own = super::Translator::new().translate_text(&rule(r#"{"type":"int"}"#), "int-literal").expect("translates");
+    assert!(own.contains("value_type_of(") && !own.contains("value_type("), "{own}");
+    let followed = super::Translator::new().translate_text(&rule(r#"{"follow":true,"type":"int"}"#), "int-literal").expect("translates");
+    assert!(followed.contains("static_value(") && followed.contains("value_type("), "{followed}");
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("int-literal.rerail");
+    std::fs::write(&policy, &own).unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "a = \"12\"\nb = 12\n").unwrap();
+    let lines = |text: &str| {
+        std::fs::write(&policy, text).unwrap();
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &dir.path().join("out"), &serde_json::Value::Null).unwrap();
+        report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_i64().unwrap()).collect::<Vec<_>>()
+    };
+    assert_eq!(lines(&own), [2], "the int alone, not the string of the same text:\n{own}");
+    // The text's type, as it was translated: the string's text is the int's, so it is found too.
+    let at = own.find("value_type_of(").unwrap() + "value_type_of(".len();
+    let node = own[at..].split(',').next().unwrap();
+    let read = own.find(&format!("value({node}, ")).unwrap() + format!("value({node}, ").len();
+    let var = own[read..].split(')').next().unwrap();
+    let by_text = own.replace(&format!("value_type_of({node}, "), &format!("value_type({var}, "));
+    assert_eq!(lines(&by_text), [1, 2], "{by_text}");
 }

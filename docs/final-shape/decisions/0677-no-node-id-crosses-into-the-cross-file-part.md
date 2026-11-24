@@ -132,33 +132,44 @@ position report does. `RERAIL_STRICT_NODES=1` refuses the program instead, namin
 
 ### What the list holds now
 
-3,190 relations over the packs and the data layer, by the crossing they are under (and 117 more for the data layer's
-policies split alone):
+3,023 relations over the packs and the data layer, by the crossing they are under (and 117 more for the data layer's
+policies split alone). It held 3,190 when the check was built; fix 1 took out 182, and 15 others are new (below).
 
 | Crossing | Where | Relations | Packs |
 |---|---|---:|---|
-| `resolve_export` | `lib/python/imports.rerail`: Python name resolution (family 1) | 2,454 | python-main 2,280, python 109, django 52, data-layer 13 |
-| `value_type` | the input `value_type(v, t)`, joined with no location | 251 | python-main 249, javascript 2 |
+| `resolve_export` | `lib/python/imports.rerail`: Python name resolution (family 1) | 2,536 | python-main 2,362, python 109, django 52, data-layer 13 |
 | `pt_wres` | `lib/python/points-to.rerail` | 39 | django |
 | `plp_anycand` | `data-layer/pure-lazy-runtime-purity.rerail` | 25 | data-layer |
 | (its own) | a relation that is cross-file for itself | 25 | |
 | `dj_model_q` | `lib/python/django.rerail` | 19 | django |
 | `subclass` | `lib/python/names.rerail`: class hierarchy (family 3) | 18 | django 14, python 4 |
 | `item_parts` | `lib/tsx/eslint-b-scope.rerail` | 18 | javascript 12, typescript 6 |
-| 145 more | 18 crossings of 5–14 relations each (132 relations), and 127 of fewer than 5 (209) | 341 | |
+| the rest | 146 crossings of 1–14 relations each | 343 | |
 
 ### The fixes, in order
 
-1. **`value_type`.** Its 251 followers are one change, if it holds. The corpus memo already owns `value_type`'s rows by
-   their text (`corpus::memo::owner`: `Owner::Text(0)`, "a row is each file's whose text holds it"), as it owns a
-   string test's. The split does not: it reads `value_type` as an input with no location, so every rule joining it
-   is cross-file. Placed as a string test is, `value(n, v), value_type(v, t)` stays per file. First check that the
-   chunk is bound to its own values' rows, then change the split, and the 251 relations leave the list.
-2. **Python name resolution: the phase `py_names`.** This is family 1. It covers 2,454 relations, 77% of the list.
+1. **`value_type`: done (2026-11-24).** 251 relations were under it, 249 of them in python-main. Main's translator
+   wrote a value's `type` test (and `numeric`, `truthy`, `bitsAny`) as `value(n, x), value_type(x, T)`.
+   `value_type(v, t)` is keyed by the value's text, which `"12"` and `12` share. So the join held at the string
+   `"12"` because some int `12` existed, in whatever file. It was the cross-file part's join of every file's types,
+   and a false finding besides. Placing `value_type` per file in the split would not have fixed it: a batch makes it
+   from its own nodes, so the answer would have depended on which files share a chunk. Both relations are made from
+   the same type names per node (`syntax.rs`), so the translator now writes `value_type_of(n, T)`, the node's own
+   type, for a node's own value. A value followed through a binding (`follow`, `static_value`) is no node's own, and
+   keeps `value_type`. The 41 python-main files are regenerated. `json_rules_value_type_is_the_nodes_own` runs the
+   rule over `a = "12"` / `b = 12`: the int alone is found, and the old join finds both.
+   - **Where they went.** 182 relations left the list: 177 of the 251, and 5 others whose chain ran through them.
+     Of the 251, 74 are still listed. 71 read a Python name too, and are under `resolve_export` now. Two are under
+     crossings of their own (`D412`, `value`), and two are the JavaScript policy's (below). 15 relations are new to
+     the list, all under `resolve_export`: each read its node from a relation that the fix made per file, so the
+     node now enters at them.
+   - **One hand-written use remains.** A JavaScript policy's two relations are under `value_type`, and are listed
+     with the tail.
+2. **Python name resolution: the phase `py_names`.** This is family 1. It covers 2,536 relations, 84% of the list.
    Its plan is above (§ Fixing, 1).
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
-4. **The tail:** 145 crossings of 1–14 relations each, read one by one, as 0652's were.
+4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ## Open
 
