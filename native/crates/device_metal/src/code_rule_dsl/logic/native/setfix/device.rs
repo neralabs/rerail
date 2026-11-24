@@ -2317,25 +2317,50 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vector<u64>, String> {
-    let room = admitted(rules, rep)?;
-    let mut batch = direct_batch(None)?;
-    let runs = encode_runs(rules, &mut batch, rep, names)?;
-    // Its heads' rows placed in the same program (decision 0603: a stratum is one launch), from the device's counts.
-    let pre = encode_place(&runs, rules, store, fresh, rep, &mut batch)?;
-    // Its arena is address space mapped as its claims reach it (`mj::Batch::arena_reserved`): a claim past it maps
-    // more, and nothing runs again. Where the host reads a placed table of it (a head read back, every head not placed
-    // by the program), one the host reads (on Metal a wrapped one, not private storage).
-    let placed_all = pre.as_ref().is_some_and(|p| p.heads.len() == runs.iter().zip(rules).map(|(_, r)| r.2).collect::<std::collections::BTreeSet<_>>().len());
-    batch.arena_reserved(!placed_all);
-    drop(room);
-    let (t0, w0) = (Instant::now(), thread_cpu());
-    let done = batch.finish().map_err(|e| format!("{e:?}"))?;
-    rep.wait_wall += t0.elapsed().as_secs_f64();
-    rep.wait_cpu += thread_cpu() - w0;
-    tally(rep, &done);
-    let full = if done.arena_full { done.arena_wanted.max(1) } else { 0 };
-    complete(runs, rules, store, names, fresh, rep, full, pre.filter(|_| !done.stopped))
+    let before = rep.clone();
+    // Encoded again where its encoding grew a block its work had bound (`Done::rewrapped`): a head's room grows the
+    // block its relation shares with those the joins read, wrapped anew at another device address, and one launch
+    // reaching a block through two wraps misreads on G15 (`mj::Batch::queue`). Cut there, the stratum would be two
+    // launches (decision 0603: a stratum is one launch); encoded again, every bind takes the grown wrap.
+    for _ in 0..REWRAPS_MOST {
+        let room = admitted(rules, rep)?;
+        let mut batch = direct_batch(None)?;
+        batch.again_on_rewrap();
+        let runs = encode_runs(rules, &mut batch, rep, names)?;
+        // Its heads' rows placed in the same program (decision 0603: a stratum is one launch), from the device's counts.
+        let pre = encode_place(&runs, rules, store, fresh, rep, &mut batch)?;
+        // Its arena is address space mapped as its claims reach it (`mj::Batch::arena_reserved`): a claim past it maps
+        // more, and nothing runs again. Where the host reads a placed table of it (a head read back, every head not
+        // placed by the program), one the host reads (on Metal a wrapped one, not private storage).
+        let placed_all = pre.as_ref().is_some_and(|p| p.heads.len() == runs.iter().zip(rules).map(|(_, r)| r.2).collect::<std::collections::BTreeSet<_>>().len());
+        batch.arena_reserved(!placed_all);
+        drop(room);
+        let (t0, w0) = (Instant::now(), thread_cpu());
+        let done = batch.finish().map_err(|e| format!("{e:?}"))?;
+        if done.rewrapped {
+            // Nothing of it ran: its heads' rooms given back, and its report the encoding's to come.
+            if let Some(pre) = pre {
+                for (_, room, _, _) in pre.pending {
+                    // SAFETY: the batch is finished, and wrote no row of the room (none of its work ran).
+                    drop(unsafe { written(room, 0) });
+                }
+            }
+            *rep = before.clone();
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a stratum encoded again, its encoding having grown a block its work bound", 1);
+            continue;
+        }
+        rep.wait_wall += t0.elapsed().as_secs_f64();
+        rep.wait_cpu += thread_cpu() - w0;
+        tally(rep, &done);
+        let full = if done.arena_full { done.arena_wanted.max(1) } else { 0 };
+        return complete(runs, rules, store, names, fresh, rep, full, pre.filter(|_| !done.stopped));
+    }
+    Err(format!("a stratum's encoding grew a block its work had bound {REWRAPS_MOST} times"))
 }
+
+/// The encodings of a stratum (`group`) at most: each grows the blocks its work binds to what it reaches, so a second
+/// finds them wrapped whole.
+const REWRAPS_MOST: usize = 3;
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
 /// Each relation the rules' stages read, made as `resident` reads it (`len`, and a view's source's), outside the wave.

@@ -80,3 +80,33 @@ builder's work on the host before it encodes a read (the hub's). This record's c
 where the hub's does not reach, a builder that parked before the build (its rest a later submission's), and it is now
 a host read: once the builder's work is done, the room's last bucket offset still `UNBUILT` fails the taker's batch
 to the CPU. The device copy (`check_taken`) and its words are gone.
+
+### The merged tree's red device tests, fixed at their causes
+
+The merged tree failed 15 of the 61 `setfix::device` and `metal_join` tests on the M1 Max. Two of them were on the
+hub's own list of reds (parity_aggregates, parity_random_integers). Five causes:
+
+- **A stratum cut in two.** A head's room (`head_room`) grows the block its relation shares with the relations the
+  stratum's joins read. The block is then wrapped anew at another device address, and `Batch::queue` cuts the program
+  where a job reaches a block through a second wrap (G15, `d98a947506`). The one-launch check (`one_launch`, decision
+  0603) then found two programs. `group` now does what the recursive strata's `device_rounds` does
+  (`again_on_rewrap`): a batch whose encoding grew a block it had bound runs nothing (`Done::rewrapped`), gives its
+  heads' rooms back and is encoded again, at most `REWRAPS_MOST` times. Its second encoding binds the grown wrap.
+- **A program's index told with the submission before its stack.** `run_program` marked its builders (`Built`)
+  before `launch`, which first commits the open submission on its own. That commit told the indexes to their blocks
+  with its own completion as `done`, so a taker waited for the wrong submission and read the index before the stack
+  built it. Our `UNBUILT` check caught it. Builders are now marked after that commit, so the stack's own commit tells
+  them.
+- **A taken index never read again at the taker's finish.** The hub's `Batch::borrowed` was drained at `finish` but
+  never filled. A taker now pushes its builder's submission and `whole`, so a builder's program that stops later fails
+  the taker (`an_index_whose_program_stopped_at_its_arena_is_not_built`).
+- **Buffers a program reaches, let go before its stacks ran.** `Pass::hold_for_later` holds a queued job's buffers
+  on the open submission. That submission commits before the program's first stack, and a relaunched stack runs once
+  the submissions before it are done. What a holder dropped meanwhile (a stage's parameters, a table's lease) went back
+  to its pool while a stack could still read it, and the hub's check refused the bind. A program now holds what its
+  jobs reach in a fence of its own (`Ran::holds`) until it is dropped, its work done.
+- **Memory no ledger knew.** A placed view's directory (`Places::on_device`, 32 bytes) and the arenas' reservations
+  were device memory outside any block or lease. Both are now `rerail_blocks::ledger::Tracked`.
+
+`a_batch_takes_an_index_another_batch_has_committed` joined two sections into one test: ours marks a host-built
+`[0, 1]`, which the hub's later section assumed absent. The hub's section now uses `[1, 0]`.

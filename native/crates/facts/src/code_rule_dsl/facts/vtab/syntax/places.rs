@@ -60,7 +60,8 @@ pub const VIEW_PLACED: u32 = 16;
 /// columns, which its indexes go in (decision 0478 step 3).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct OnDevice {
-    dir: rerail_device::device::Buffer,
+    /// Held by a ledger at its address (decision 0491 step 2), as a pooled lease is: a launch that binds it holds it.
+    dir: rerail_blocks::ledger::Tracked<rerail_device::device::Buffer>,
     tail: rerail_device::device::Buffer,
     _spans: crate::code_rule_dsl::facts::rows::InBlock,
     home: crate::code_rule_dsl::facts::rows::Part,
@@ -117,6 +118,8 @@ impl Places {
         let placed = PlacedDir { dir: view_dir, tail: base, at: spans.at as u64, rows: self.first() as u32, pad: 0 };
         // SAFETY: the buffer's bytes, shared with the host, `PlacedDir`'s size, read by no stage yet.
         unsafe { dir.contents().cast::<PlacedDir>().write_unaligned(placed) };
+        let at = dir.contents().cast::<u8>();
+        let dir = rerail_blocks::ledger::Tracked::new(dir, at, std::mem::size_of::<PlacedDir>());
         let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
         Some(OnDevice { dir, tail, _spans: spans, home })
     }
@@ -138,7 +141,7 @@ impl Source for Places {
         let on = self.device.get_or_init(|| self.on_device(v.dir)).as_ref()?;
         v.dir = on.dir.device_address()?;
         v.kind |= VIEW_PLACED;
-        v.buffers.push(on.dir.clone());
+        v.buffers.push((*on.dir).clone());
         v.buffers.push(on.tail.clone());
         d.rows = self.len();
         d.home = on.home.clone();
