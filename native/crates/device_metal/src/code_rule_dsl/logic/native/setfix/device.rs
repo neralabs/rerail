@@ -275,12 +275,23 @@ struct PStage {
     npassed: usize,
 }
 
+/// What bounds a head column's values: a column of an input relation (`InRel::col_range`), or of a relation of the
+/// component (its rules' bounds, to a fixed point).
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) enum HeadFrom {
+    In(Arc<InRel>, usize),
+    Own(usize, usize),
+}
+
 /// A join rule's device plan.
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Plan {
     stages: Vec<PStage>,
     head: Vec<Option<i64>>,
     head_slots: Vec<usize>,
+    /// Per head column, what bounds its values: a column of an input relation or of the component's own, or none (a
+    /// constant's column, or a value computed). The head's sort packs its key to these bounds (`head_bounds`).
+    head_from: Vec<Option<HeadFrom>>,
     /// Per head column, whether its values are arena texts (a text function's), stored as symbols as the rows are.
     arena: Vec<bool>,
     nslots: usize,
@@ -473,6 +484,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
+    // Where a slot's value came from when it is a column of the component's own relation (relation, column): with
+    // `origin`, what bounds a head column's values (`Plan::head_from`).
+    let mut own_origin: Vec<Option<(usize, usize)>> = vec![None; j.nslots];
     // Slots a `let` filled with a constant (a text stage reads the constant).
     let mut known: HashMap<usize, i64> = HashMap::new();
     BINDER.with_borrow_mut(|b| {
@@ -578,6 +592,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                             origin.resize(s + 1, None);
                         }
                         origin[s] = match src { Src::In(rel, _) => Some((rel.clone(), c)), _ => None };
+                        if s >= own_origin.len() {
+                            own_origin.resize(s + 1, None);
+                        }
+                        own_origin[s] = match src { Src::Delta(r) | Src::Full(r) | Src::FullMulti(r, _) => Some((*r, c)), Src::In(..) => None };
                     }
                 }
                 let cols = keys.iter().map(|&(c, _)| c).collect();
@@ -715,6 +733,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         origin.resize(out + 1, None);
                     }
                     origin[out] = match (doc, src) { (false, Key::Slot(x)) => origin.get(x).cloned().flatten(), _ => None };
+                    if out >= own_origin.len() {
+                        own_origin.resize(out + 1, None);
+                    }
+                    own_origin[out] = match (doc, src) { (false, Key::Slot(x)) => own_origin.get(x).copied().flatten(), _ => None };
                     if matches!(src, Key::Slot(x) if is_arena(x)) {
                         if doc {
                             return Err("a document of an arena text has no device form".into());
@@ -995,6 +1017,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
     }
     let mut head = Vec::new();
     let mut head_slots = Vec::new();
+    let mut head_from = Vec::new();
     let mut arena = Vec::new();
     let mut nslots = j.nslots;
     for t in &j.out {
@@ -1002,11 +1025,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Term::Slot(s) => {
                 head.push(None);
                 head_slots.push(s);
+                head_from.push(match (origin.get(s).cloned().flatten(), own_origin.get(s).copied().flatten()) {
+                    (Some((r, c)), _) => Some(HeadFrom::In(r, c)),
+                    (None, Some((r, c))) => Some(HeadFrom::Own(r, c)),
+                    _ => None,
+                });
                 arena.push(is_arena(s));
             }
             Term::Const(c) => {
                 head.push(Some(c));
                 head_slots.push(0);
+                head_from.push(None);
                 arena.push(false);
             }
             Term::Cat(x, y) => {
@@ -1017,6 +1046,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(st);
                 head.push(None);
                 head_slots.push(nslots);
+                head_from.push(None);
                 arena.push(true);
                 nslots += 1;
             }
@@ -1029,7 +1059,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         h.finish()
     };
     let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
-    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key, est })
+    Ok(Plan { stages, head, head_slots, head_from, arena, nslots, nsteps: j.steps.len(), key, est })
 }
 
 /// Whether `step` binds slot `x`.
@@ -2481,6 +2511,70 @@ const PLACE_ROOM_BYTES: usize = REACH_BYTES;
 
 /// A head's room's rows at least where its reach is not its room (`encode_place`).
 const PLACE_ROOM_MIN: usize = 1 << 16;
+
+/// Each head's columns' bounds (least, greatest), for the rows its rules can make: a constant's column its value, an
+/// input relation's column its rows' (`InRel::col_range`), a column of a relation of the component that relation's
+/// bounds, and the rows each head holds already (`Rel::ranges`); to a fixed point, as a recursive head's rows come from
+/// its own. A value computed (a text made, a view's column) is unbounded: `[MIN, MAX]`. `[MAX, MIN]`: no rows.
+pub(in crate::code_rule_dsl) fn head_bounds(rules: &[(&Plan, &JoinRule, usize)], store: &Store) -> HashMap<usize, Vec<[i64; 2]>> {
+    const ALL: [i64; 2] = [i64::MIN, i64::MAX];
+    let join = |a: [i64; 2], b: [i64; 2]| [a[0].min(b[0]), a[1].max(b[1])];
+    let mut b: HashMap<usize, Vec<[i64; 2]>> = HashMap::new();
+    for r in rules {
+        b.entry(r.2).or_insert_with(|| store.rels[r.2].ranges.clone());
+    }
+    loop {
+        let mut changed = false;
+        for (plan, _, h) in rules {
+            for c in 0..plan.head.len() {
+                let v = match (plan.head[c], &plan.head_from[c]) {
+                    (Some(k), _) => [k, k],
+                    (None, Some(HeadFrom::In(r, col))) => r.col_range(*col).unwrap_or(ALL),
+                    (None, Some(HeadFrom::Own(r, col))) => b.get(r).map_or_else(|| store.rels[*r].ranges.get(*col).copied().unwrap_or(ALL), |v| v.get(*col).copied().unwrap_or(ALL)),
+                    (None, None) => ALL,
+                };
+                let cur = b.get_mut(h).expect("each head's bounds");
+                let n = join(cur[c], v);
+                if n != cur[c] {
+                    cur[c] = n;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return b;
+        }
+    }
+}
+
+/// A head's rows' sort key (t58 increment A): its first order (`Rel::first_order`), packed most significant first:
+/// the leading column's 16-bit tag where the order is tagged (`runs::tag`), then each column of the order as its
+/// value less its least, in the bits its bounds need (none for a column of one value). Its rows sorted by it are in the
+/// order the host notes them in, so the host takes them as they lie.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::code_rule_dsl) struct HeadKey {
+    pub tagged: bool,
+    /// (column, least, bits), most significant first.
+    pub parts: Vec<(usize, i64, u32)>,
+    pub bits: u32,
+}
+
+impl HeadKey {
+    /// The key of `order`'s rows under `bounds` (a column's least and greatest), where it fits 64 bits.
+    pub(in crate::code_rule_dsl) fn of(order: &[usize], tagged: bool, bounds: &[[i64; 2]]) -> Option<HeadKey> {
+        let mut parts = Vec::with_capacity(order.len());
+        let mut bits = if tagged { 16 } else { 0 };
+        for &c in order {
+            let [lo, hi] = *bounds.get(c)?;
+            // No rows: one value's width.
+            let span = if hi < lo { 0 } else { hi.wrapping_sub(lo) as u64 };
+            let w = 64 - span.leading_zeros();
+            parts.push((c, if hi < lo { 0 } else { lo }, w));
+            bits += w;
+        }
+        (bits <= 64).then_some(HeadKey { tagged, parts, bits })
+    }
+}
 
 /// `place`'s work encoded into the stratum's own program, after its joins (decision 0603: a stratum is one launch):
 /// each head's union of its rules' distinct rows from their counts on the device (`append_rows`, a placed table),
