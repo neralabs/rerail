@@ -809,6 +809,10 @@ pub struct Induction {
     /// Asked in rounds: the first solve past `replay` stops the question with its formula.
     capture: bool,
     captured: Option<(u32, Clauses)>,
+    /// The solve the last round stopped at had a hypothesis, whose core it tells (`decided`).
+    captured_core: bool,
+    /// The core of the solve that proved the last `prove` (`Outcome::Proved`).
+    core: Option<Vec<bool>>,
 }
 
 /// A solve's outcome in a question asked in rounds (decision 0654).
@@ -829,7 +833,7 @@ pub enum Round {
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 4;
+pub const PROOFS_VERSION: u32 = 5;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1201,7 +1205,9 @@ const ROUNDS: u32 = 24;
 
 #[derive(Clone)]
 enum Outcome {
-    Proved,
+    /// No way; with a hypothesis, each of its values whether the contradiction read it at the position (its core,
+    /// `Solver::used`; decision 0670), where the solver could tell.
+    Proved(Option<Vec<bool>>),
     /// A way: its edge (the values past the horizon, in the stream), and the group of the
     /// position's byte (every byte when nothing reads it).
     Way(Lemma, ByteSet),
@@ -1210,7 +1216,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), question: 0, solver: Solver::default(), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), question: 0, solver: Solver::default(), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, captured_core: false, core: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1259,7 +1265,8 @@ impl Induction {
     /// The outcome of the solve the last round stopped at: unsatisfiable by propagation alone
     /// (`conflict`, as the CPU's solver finds it with no conflict spent), else the CPU's to solve.
     pub fn decided(&mut self, conflict: bool) {
-        self.replay.push(if conflict { Replayed::Known(Outcome::Proved) } else { Replayed::Cpu });
+        // A solve that tells its core is the CPU's: the device's conflict does not say what it read (decision 0670).
+        self.replay.push(if conflict && !self.captured_core { Replayed::Known(Outcome::Proved(None)) } else { Replayed::Cpu });
     }
 
     /// The streams this prover's solves found (`Streams`).
@@ -1349,7 +1356,7 @@ impl Induction {
                         found[i] |= group[i];
                     }
                 }
-                Outcome::Proved => {
+                Outcome::Proved(_) => {
                     self.solves = SOLVES;
                     return if self.prove(&mut ops, tables, v, d, LEVELS, None, &found) { found } else { [!0; 4] };
                 }
@@ -1380,7 +1387,10 @@ impl Induction {
             }
             self.solves -= 1;
             let edge = match self.solve(ops, tables, v, d, hypothesis, false, exclude) {
-                Outcome::Proved => return true,
+                Outcome::Proved(core) => {
+                    self.core = core;
+                    return true;
+                }
                 Outcome::Unknown => return false,
                 Outcome::Way(edge, _) => edge,
             };
@@ -1394,14 +1404,20 @@ impl Induction {
                 ops.truncate(base);
                 return false;
             }
-            // Smaller: each value dropped while the rest are still proved never to hold.
+            // Smaller: to the values its proof's contradiction read at the position (its core, decision 0670),
+            // proved again, while that drops any; then each value dropped while the rest are still proved never to
+            // hold, and each drop's core taken too, while solves are left. An edge is every carried value past the
+            // horizon, and most are not why it never holds: one at a time, a lemma of 254 values spent the
+            // question's solves.
+            self.by_core(ops, tables, level, &mut lemma, &mut 0);
             let mut i = 0;
-            while i < lemma.len() && lemma.len() > 1 {
+            while i < lemma.len() && lemma.len() > 1 && self.solves > 0 {
                 let mut fewer = lemma.clone();
                 fewer.remove(i);
                 let c = cube(ops, &fewer);
                 if self.prove(ops, tables, c, 0, level - 1, Some(&fewer), &[0; 4]) {
                     lemma = fewer;
+                    self.by_core(ops, tables, level, &mut lemma, &mut i);
                 } else {
                     i += 1;
                 }
@@ -1410,6 +1426,25 @@ impl Induction {
             self.lemmas.push(lemma);
         }
         false
+    }
+
+    /// `lemma`, proved by the last `prove`, cut to that proof's core (`Outcome::Proved`) and proved again, while
+    /// the core leaves any value out (decision 0670). `tried`: the values before it were tried already; it is
+    /// moved past those of them kept.
+    fn by_core(&mut self, ops: &mut Vec<BlockOp>, tables: &[ClassTable], level: u32, lemma: &mut Lemma, tried: &mut usize) {
+        while let Some(core) = self.core.take() {
+            let kept = core.iter().filter(|&&k| k).count();
+            if kept == 0 || kept == lemma.len() || self.solves == 0 {
+                return;
+            }
+            let smaller: Lemma = lemma.iter().zip(&core).filter(|&(_, &k)| k).map(|(&e, _)| e).collect();
+            let c = cube(ops, &smaller);
+            if !self.prove(ops, tables, c, 0, level - 1, Some(&smaller), &[0; 4]) {
+                return;
+            }
+            *tried = core[..(*tried).min(core.len())].iter().filter(|&&k| k).count();
+            *lemma = smaller;
+        }
     }
 
     /// A new question, of `ops`: the windows of the last are dropped (its operations may not
@@ -1593,6 +1628,7 @@ impl Induction {
             let mut clauses = u.clauses.clone();
             u.gates.cnf(&mut clauses);
             self.captured = Some((u.vars.unsigned_abs(), clauses));
+            self.captured_core = hypothesis.is_some();
             break 'solve Outcome::Unknown;
         }
         let s = &mut self.solver;
@@ -1605,7 +1641,14 @@ impl Induction {
         let answer = s.solve(&u.gates, fan, base_gates, self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
         self.work.spend(s.conflicts - before);
         let answer = match answer {
-            Sat::Unsat => Outcome::Proved,
+            // With a hypothesis, its values the contradiction read at the position: the rest may go (`prove`).
+            Sat::Unsat => Outcome::Proved(hypothesis.and_then(|h| {
+                let used = s.used(&u.gates)?;
+                let at_position = |&(at, l, _): &(u16, u32, bool)| {
+                    at == STREAM || u.memo.get(&(at, u32::from(d) + l)).is_none_or(|&x| x.unsigned_abs() <= 1 || used[x.unsigned_abs() as usize])
+                };
+                Some(h.iter().map(at_position).collect())
+            })),
             Sat::Unknown => Outcome::Unknown,
             Sat::Sat => {
                 let holds = |l: Lit| if l == 1 { true } else if l == -1 { false } else { s.holds(l.unsigned_abs() as usize) == (l > 0) };

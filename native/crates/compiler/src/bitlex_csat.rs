@@ -230,6 +230,11 @@ pub struct Solver {
     conflict: Vec<Lit>,
     explained: Vec<Lit>,
     broken: bool,
+    /// The variables at level 0 a conflict's analysis left out of its clause: what the clauses it learned rest on
+    /// (`used`).
+    rested: Vec<usize>,
+    /// The last solve's contradiction (`used`): its conflict met at level 0, its clause in `conflict`.
+    refuted: bool,
     /// The conflicts its solves met, in all (a caller's work budget reads it).
     pub conflicts: u64,
 }
@@ -258,7 +263,8 @@ impl Solver {
         self.gate_of.clear();
         self.trail.clear();
         self.limits.clear();
-        (self.head, self.broken) = (0, false);
+        (self.head, self.broken, self.refuted) = (0, false, false);
+        self.rested.clear();
         self.order.reset(vars);
     }
 
@@ -296,6 +302,26 @@ impl Solver {
             }
         }
         self.scratch = c;
+    }
+
+    /// After `Unsat`, the variables its contradiction rests on: those its conflict at level 0 reads, those the
+    /// clauses it learned rest on, and back through each one's reason (a unit given, a decision's, stops it). `None`
+    /// where the clauses given were contradictory as they were added. A caller may drop an assumption no variable
+    /// of it is among, and must prove what is left again: the set is what the derivation read, not a proof.
+    pub fn used(&mut self, gates: &Gates) -> Option<Vec<bool>> {
+        if !self.refuted {
+            return None;
+        }
+        let mut used = vec![false; self.value.len()];
+        let mut work: Vec<usize> = self.conflict.iter().map(|&l| var(l)).chain(self.rested.iter().copied()).collect();
+        while let Some(v) = work.pop() {
+            if std::mem::replace(&mut used[v], true) || self.reason[v] == NONE || self.value[v] == 0 {
+                continue;
+            }
+            self.explain(gates, v);
+            work.extend(self.explained.iter().map(|&l| var(l)));
+        }
+        Some(used)
     }
 
     /// A variable's value after `Sat`.
@@ -539,7 +565,11 @@ impl Solver {
                     continue;
                 }
                 let v = var(q);
-                if self.seen[v] || self.level[v] == 0 {
+                if self.level[v] == 0 {
+                    self.rested.push(v);
+                    continue;
+                }
+                if self.seen[v] {
                     continue;
                 }
                 self.seen[v] = true;
@@ -615,11 +645,13 @@ impl Solver {
         // The gates that imply with nothing set.
         for &g in &fan.seeds {
             if self.check(gates, g as usize) {
+                self.refuted = true;
                 return Answer::Unsat;
             }
         }
         for g in base..gates.len() {
             if seed(gates, g) && self.check(gates, g) {
+                self.refuted = true;
                 return Answer::Unsat;
             }
         }
@@ -627,6 +659,7 @@ impl Solver {
         loop {
             if self.propagate(gates, fan) {
                 if self.limits.is_empty() {
+                    self.refuted = true;
                     return Answer::Unsat;
                 }
                 if left == 0 {
@@ -775,6 +808,45 @@ mod tests {
             }
         }
         assert!(sat > 500 && unsat > 500, "{sat} satisfiable, {unsat} not");
+    }
+
+    /// An unsatisfiable formula stays so with every unit clause dropped whose variable its contradiction does not
+    /// rest on (`Solver::used`): random circuits with a few units more, as a lemma's values assumed.
+    #[test]
+    fn a_contradiction_rests_on_what_it_used() {
+        let mut rng = Rng(0x2545f4914f6cdd1d);
+        let mut s = Solver::default();
+        let (mut checked, mut dropped) = (0, 0);
+        for i in 0..4000 {
+            let (vars, gates, base, mut clauses) = random(&mut rng);
+            for _ in 0..rng.below(8) {
+                let l = ((rng.below(vars as u64) + 1) as Lit) * if rng.below(2) == 0 { 1 } else { -1 };
+                clauses.push(&[l]);
+            }
+            let fan = Fanout::of(&gates, base, vars);
+            s.reset(vars);
+            for c in clauses.iter() {
+                s.add(c);
+            }
+            if s.solve(&gates, &fan, base, u32::MAX) != Answer::Unsat {
+                continue;
+            }
+            let Some(used) = s.used(&gates) else { continue };
+            let mut kept = Clauses::default();
+            for c in clauses.iter() {
+                if c.len() == 1 && !used[var(c[0])] {
+                    dropped += 1;
+                } else {
+                    kept.push(c);
+                }
+            }
+            gates.cnf(&mut kept);
+            let mut r = bitlex_sat::Solver::new(vars);
+            r.add_all(&kept);
+            assert_eq!(r.solve(u32::MAX), Answer::Unsat, "formula {i}: a unit it did not use was needed");
+            checked += 1;
+        }
+        assert!(checked > 500 && dropped > 500, "{checked} checked, {dropped} units dropped");
     }
 
     /// Hard formulas need conflicts, and their learned clauses reason through the gates: pigeons in holes, as

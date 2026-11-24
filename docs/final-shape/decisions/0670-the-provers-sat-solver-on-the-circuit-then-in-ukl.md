@@ -142,3 +142,26 @@ says the threads it kept busy, and each batch its parts and its longest question
   (about 0.5 s of a compile, from shipped answers too).
 - The pair lemmas' `first_bytes_many` (0.8 to 1.8 s at 3 to 7 threads).
 
+**Step 2, second part: a lemma cut to its proof's core** (the user, "go ahead" to making the questions that fail
+late cheaper; `PROOFS_VERSION` 5).
+- **What a late failure was** (a solve-by-solve trace of one): the bounded solve proved, the step found a way whose
+  edge was 254 values, that lemma proved one level down with no conflict, and then its shrinking dropped one value
+  at a time, each drop proved, 2 solves each, until the question's 64 solves were spent: 31 values dropped, the
+  rest of the drops refused at once (no solves), and the question not proved.
+- **The core.** After a solve with no way (`Solver::used`): the variables its contradiction rests on, back from
+  its conflict at level 0 and from the level-0 values each learned clause's analysis left out, through each one's
+  reason. A lemma's value at the position whose variable is not among them is not why the cube never holds:
+  `prove` cuts the lemma to the rest and proves it again (`Induction::by_core`), while that drops any, then drops
+  the rest one at a time as before, each proved drop cut to its own core too. Proving each cut lemma again keeps it
+  sound whatever the core reads. Random circuits test the core: an unsatisfiable one stays so with every unit
+  dropped that it did not read.
+- **The core is part of a proved outcome** (`Outcome::Proved`), so a question asked in rounds replays it; a solve
+  that wants one is the CPU's when 0654's kernel finds its conflict, since the kernel does not say what it read.
+- **Results** (a DGX Spark, cold Kotlin, the budget lifted): a 204-value edge cut to 11 values at once. The steps
+  spent 214 to 157 million; proving 6.4 to 6.6 s to 5.2 to 5.5 s. Every grammar's shipped answers blessed again:
+  the same values as at version 4. A GPU-propagated Kotlin compile blesses the same bytes. The quick tiers: 388 tests
+  pass.
+- **What is left of a late failure**: its first, bounded solve, one hard search (110 to 320 ms, thousands of
+  conflicts), and the drops from about 11 values to 2 or 3, one at a time. The first is the solver's own speed: no
+  restarts, no saved phases, no learned clauses dropped (step 1's search as `bitlex_sat`'s).
+
