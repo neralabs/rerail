@@ -1587,7 +1587,9 @@ fn resolve_shared(statements: Statements) -> Result<(SharedFiles, Statements, Ve
     // The plan holds every file the text reads, each in one module.
     let planned: BTreeSet<&Path> = plan.iter().flat_map(|m| m.files.lines().map(Path::new)).collect();
     if let Some((path, _, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
-        return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1)", path.display())));
+        let digest = g.digests.contains_key(path);
+        let sample: Vec<String> = planned.iter().take(3).map(|p| p.display().to_string()).collect();
+        return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1): {} modules of {} files planned (such as {sample:?}); the file {} a digest in the graph", path.display(), plan.len(), planned.len(), if digest { "has" } else { "has no" })));
     }
     Ok((files, own, plan))
 }

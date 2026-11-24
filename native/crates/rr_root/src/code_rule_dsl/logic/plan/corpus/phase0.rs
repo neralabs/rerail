@@ -681,12 +681,15 @@ impl Images {
     /// The key a store keeps seed key `key`'s graph under, as kept facts (`rr::graph_facts`): the image's key is the
     /// shipped bundle's.
     fn store_key(&self, key: &crate::content_store::HashKey) -> crate::content_store::HashKey {
-        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 1\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
+        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 2\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
     }
 
     /// The graph as facts (t33 step 2), its paths as the image writes them (`rel`): `p0g_include(from, at, name,
     /// path)`, `p0g_missing(from, at, name)`, `p0g_absent(path)`, `p0g_digest(path, sha256)`, `p0g_phase(from,
-    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, each relation's rows in the graph's order.
+    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, and the module plan (decision 0639 §1)
+    /// `p0g_module(name, rank, key, scope)` and `p0g_lowered(key, image)`, each relation's rows in the graph's order.
+    /// Kept without the module plan (facts 1), a graph read back planned no module, so every file a program read was
+    /// "in no module of phase 0's plan" in any run whose graph came from a store.
     fn facts(&self, g: &Graph) -> crate::code_rule_dsl::logic::program_facts::Facts {
         use crate::code_rule_dsl::logic::front::Value;
         let s = |x: String| Value::Str(x.into());
@@ -718,6 +721,12 @@ impl Images {
         }
         for d in &g.plans {
             put("p0g_plan", vec![hex(d)]);
+        }
+        for (m, r) in &g.plan {
+            put("p0g_module", vec![s(m.clone()), Value::Int(r.rank), s(r.key.clone()), s(r.scope.iter().cloned().collect::<Vec<_>>().join(","))]);
+        }
+        for (k, d) in &g.lowered {
+            put("p0g_lowered", vec![s(k.clone()), s(d.clone())]);
         }
         // A graph holds a row at least: every seed's graph names the modules it reached (`p0g_digest`).
         f
@@ -763,6 +772,15 @@ impl Images {
         for r in rows("p0g_plan") {
             let [a] = &r[..] else { return None };
             g.plans.push(read.digest(a)?);
+        }
+        for r in rows("p0g_module") {
+            let [m, rank, key, scope] = &r[..] else { return None };
+            let scope = text(scope)?.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect();
+            g.plan.insert(text(m)?, PlanModule { rank: int(rank)?, key: text(key)?, scope });
+        }
+        for r in rows("p0g_lowered") {
+            let [k, d] = &r[..] else { return None };
+            g.lowered.insert(text(k)?, text(d)?);
         }
         Some(g)
     }
