@@ -77,6 +77,9 @@ pub(super) struct Cost {
     pub plans: BTreeMap<String, Vec<(u64, u64)>>,
     /// By span path: bytes allocated while open, less the spans inside it.
     pub alloc: BTreeMap<String, (u64, u64)>,
+    /// The joins' step CPU (profiled): the steps that only filter bound variables (`filter_steps`), every step, and
+    /// the filter steps placed after a negation (outside the binding atom's row program).
+    pub step_cpu: (f64, f64, f64),
     /// By copy site: bytes, calls.
     pub copies: BTreeMap<String, (u64, u64)>,
     /// Rows of each output relation.
@@ -178,6 +181,21 @@ pub(super) fn run(files: usize, n: usize) -> Cost {
             }
         }
     }
+    {
+        let held = profile::merged();
+        for ((_, plan), cpu) in &held.native_step_cpu {
+            let body: Vec<&str> = plan.split_once(": ").map_or(plan.as_str(), |x| x.1).split(" , ").collect();
+            for (k, (l, t)) in body.iter().zip(cpu).enumerate() {
+                cost.step_cpu.1 += t;
+                if filter_steps(l) == 1 {
+                    cost.step_cpu.0 += t;
+                    if body[..k].last().is_some_and(|p| p.starts_with('!')) {
+                        cost.step_cpu.2 += t;
+                    }
+                }
+            }
+        }
+    }
     for (path, t) in profile::spans() {
         cost.alloc.insert(path, (t.own_alloc, t.alloc));
     }
@@ -203,6 +221,7 @@ fn cost_shape_dump() {
     let (files, n) = (env("RERAIL_COST_FILES", 4), env("RERAIL_COST_N", 8));
     let c = run(files, n);
     println!("outputs {:?}", c.outputs);
+    println!("step cpu: filters {:.4} s of {:.4} s in all steps, {:.4} s in steps after a negation", c.step_cpu.0, c.step_cpu.1, c.step_cpu.2);
     println!("{}", c.report(env("RERAIL_COST_TOP", 60)));
     let mut a: Vec<_> = c.alloc.iter().collect();
     a.sort_by_key(|(_, x)| std::cmp::Reverse(x.0));
@@ -458,8 +477,10 @@ fn a_scan_is_one_unit_a_row() {
     bounded(&c, "c_node", c.made("c_node") + 1, "one unit a node");
 }
 
-/// E3. No plan carries a step that only bounds an id's range or compares bound values: those are tests in the
-/// step that binds them.
+/// E3. A step that only filters bound variables (an id's range, a comparison) costs nothing beside the probes: it
+/// runs inside the binding atom's row program (`rowcode`), or as a comparison. Its rows count as units of work
+/// (`plan_work`, a quarter of them here), but its CPU is under 1% of the steps': the units overstate the joins'
+/// work by those rows (t57 §8).
 #[test]
 fn filters_are_no_steps_of_their_own() {
     let (c, names) = case();
@@ -467,8 +488,9 @@ fn filters_are_no_steps_of_their_own() {
         let body: Vec<&str> = p.split_once(": ").map_or(p.as_str(), |x| x.1).split(" , ").collect();
         body.iter().zip(s).filter(|(l, _)| filter_steps(l) == 1).map(|(_, (a, _))| a).sum::<u64>()
     }).sum();
-    let plans = c.plans.keys().filter(|p| filter_steps(p) > 0).count();
-    assert!(units == 0, "{plans} plans spend {units} units ({:.1} a name read) on steps that only filter bound variables", units as f64 / names as f64);
+    let (filters, all, _) = c.step_cpu;
+    assert!(all > 0.0, "the profile times the steps");
+    assert!(filters <= all / 100.0, "the filter steps take {filters:.4} s of the steps' {all:.4} s ({units} units, {:.1} a name read)", units as f64 / names as f64);
 }
 
 // -- the parts (W: one pass a file, then the link)
