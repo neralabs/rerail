@@ -20,7 +20,9 @@ pub(super) fn selected(r: &Relation, column: usize, keys: &[i64]) -> Option<Vec<
     Some(rows)
 }
 fn run<const TRACE: bool>(r: &Relation, column: usize, keys: &[i64], mut mode: Mode) -> (Vec<usize>,Work) {
-    let index=&r.index(column).rows;
+    // The order's rows by position (a column pushed in order is its own order: no ids kept).
+    let ix=r.index(column);
+    let index: &[u32]=&(0..r.len()).map(|p| ix.row(p)).collect::<Vec<u32>>();
     let mut reads=0;
     let mut value=|i:usize| { if TRACE { reads+=1; } r.value(index[i] as usize,column) };
     let mut out=Vec::new();
@@ -82,7 +84,7 @@ fn lookup_shape_matrix() {
     ];
     let mut reports=Vec::new();
     for (name,keys) in cases {
-        let expected:Vec<usize>=keys.iter().flat_map(|&key|relation.index(0).rows[relation.between(0,key,key)].iter().map(|&r|r as usize)).collect();
+        let expected:Vec<usize>=keys.iter().flat_map(|&key|relation.between(0,key,key).map(|p|relation.index(0).row(p) as usize)).collect();
         for mode in [Mode::Point,Mode::Merge,Mode::Gallop,Mode::Adaptive] {
             let (got,work)=run::<true>(&relation,0,&keys,mode);assert_eq!(got,expected,"{name}: {mode:?}");
             let mut samples=Vec::new();

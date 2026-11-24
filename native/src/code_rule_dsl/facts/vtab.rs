@@ -1569,15 +1569,25 @@ pub struct Relation {
     /// so that one takes their writer and its rows follow these in the same block relation.
     grows: bool,
 }
+/// A column's sorted order, in the relation's block (t56 step 3), searched by the orders' one search
+/// (`rerail_blocks::order`): its rows in value order (then row), the value at every `FENCE`th, and each row's print of
+/// its value. A probe of one value reads the fences, then its span's prints, eight a word, and only the rows whose
+/// print is the value's: about one row read where a bisection read eight, each a decode of its sealed chunk.
 struct ColumnIndex {
-    rows: Vec<u32>,
+    /// The rows in value order; empty for a column pushed in order (`Relation::ordered`): its rows are their order.
+    ids: super::rows::BlockVec<u32>,
     distinct: usize,
-    /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
-    /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
-    fence: Vec<i64>,
+    fences: super::rows::BlockVec<i64>,
+    prints: super::rows::BlockVec<u8>,
 }
-/// Rows a fence entry stands for (0.125 bytes a row).
-const FENCE: usize = 64;
+impl ColumnIndex {
+    /// The row at position `p` of the order.
+    #[inline(always)]
+    fn row(&self, p: usize) -> u32 {
+        if self.ids.is_empty() { p as u32 } else { self.ids[p] }
+    }
+}
+use rerail_blocks::order::FENCE;
 impl Relation {
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
@@ -1696,54 +1706,54 @@ impl Relation {
     }
     fn index(&self, column: usize) -> &ColumnIndex {
         crate::code_rule_dsl::logic::profile::once(&self.indexes[column], "relation: a column's index built", || {
+            use super::rows::BlockVec;
+            use rerail_blocks::order::print_vals;
+            let home = self.cells().home();
+            let print = |v: i64| print_vals(std::iter::once(v));
+            if let Some(distinct) = self.ordered[column] {
+                // Its rows are its order: the fences and prints of its values as they lie, each read once.
+                let vals = (0..self.len()).map(|r| self.value(r, column));
+                let prints = BlockVec::from_iter_in(home.as_ref(), vals.map(print));
+                let fences = BlockVec::from_iter_in(home.as_ref(), (0..self.len()).step_by(FENCE).map(|r| self.value(r, column)));
+                return ColumnIndex { ids: BlockVec::from_iter_in(home.as_ref(), std::iter::empty()), distinct, fences, prints };
+            }
             // Each value read once, and the pairs sorted (ties by row, as a stable sort by value): a sort reading the
             // rows' values at every comparison read each of them about 2 log n times.
             let mut pairs: Vec<(i64, u32)> = (0..self.len()).map(|r| (self.value(r, column), r as u32)).collect();
             pairs.sort_unstable();
             let distinct = 1 + pairs.windows(2).filter(|w| w[0].0 != w[1].0).count();
-            let fence = pairs.iter().step_by(FENCE).map(|p| p.0).collect();
-            let rows = pairs.into_iter().map(|p| p.1).collect();
-            ColumnIndex { rows, distinct, fence }
+            let fences = BlockVec::from_iter_in(home.as_ref(), pairs.iter().step_by(FENCE).map(|p| p.0));
+            let prints = BlockVec::from_iter_in(home.as_ref(), pairs.iter().map(|p| print(p.0)));
+            let ids = BlockVec::from_iter_in(home.as_ref(), pairs.into_iter().map(|p| p.1));
+            ColumnIndex { ids, distinct, fences, prints }
         })
     }
     /// Whether `column`'s values were pushed in order, so that it is its own index.
     pub fn ordered(&self, column: usize) -> bool {
         self.ordered[column].is_some()
     }
-    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): the start by the cells' own search
-    /// (`Rows::lower_bound`: its parts, its chunks, then the chunk's encoding), then the end galloped from it. A probe
-    /// of one value (a key's, `text(n, s)`'s) reads a row or two past the start where a second bisection read about
-    /// log n, each through a segment search and a decode. (A gallop of the start from this thread's last probe was
-    /// measured too, on `all`: the probes are not near each other, and it cost 23 G instructions more.)
-    fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let n = self.len();
-        let start = (self.cells().lower_bound(column, lo) as usize).min(n);
-        start..(self.cells().upper_from(column, start as u32, hi) as usize).clamp(start, n)
+    /// The positions in `column`'s order of the rows holding `value` (`rerail_blocks::order::find`: the fences, then
+    /// the span's prints, then the rows whose print is the value's).
+    fn equal(&self, column: usize, value: i64) -> Range<usize> {
+        let ix = self.index(column);
+        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, &[value], true, |p| self.value(ix.row(p) as usize, column).cmp(&value));
+        s..e
     }
     /// The rows with values in `lo..=hi`, in value order.
     fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
-        if self.ordered[column].is_some() {
-            return self.ordered_between(column, lo, hi).collect();
-        }
-        self.index(column).rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect()
+        let ix = self.index(column);
+        self.between(column, lo, hi).map(|p| ix.row(p) as usize).collect()
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
         let index = self.index(column);
-        // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
-        // search to one fence's span.
-        // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
-        let first = |below: &dyn Fn(i64) -> bool| -> usize {
-            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off")) {
-                return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
-            }
-            let j = index.fence.partition_point(|&k| below(k));
-            let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(index.rows.len()));
-            from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
-        };
-        let start = first(&|v| v < lo);
+        let (n, at) = (self.len(), |p: usize| self.value(index.row(p) as usize, column));
+        // The first position not below `lo`: the fence's entry past it bounds the rows to search to one fence's span.
+        let j = index.fences.partition_point(|&k| k < lo);
+        let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(n));
+        let start = rerail_blocks::order::split_at_pos(from, to, |p| at(p) < lo);
         // The end from the start (`first_from`): no second search of the fence and its span.
-        start..first_from(index.rows.len(), start, |m| self.value(index.rows[m] as usize, column) <= hi).max(start)
+        start..first_from(n, start, |m| at(m) <= hi).max(start)
     }
 }
 
@@ -1818,21 +1828,19 @@ impl Source for Relation {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         #[cfg(any(test, feature = "test-hooks"))]
         if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
-        if self.ordered[column].is_some() {
-            return Some(values.iter().flat_map(|&v| self.ordered_between(column, v, v)).collect());
-        }
-        let rows = &self.index(column).rows;
-        Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
+        let ix = self.index(column);
+        Some(values.iter().flat_map(|&v| self.equal(column, v).map(|p| ix.row(p) as usize)).collect())
     }
     /// A slice of the column's sorted index, or for a column pushed in order of the rows' ids: a probe makes no list.
     /// Through `lookup`, each probe of a relation built for a chunk (the scopes' `rr_nearest_*`, the texts)
     /// collected its rows into a list, and the join copied it into another: 6,400 samples of a cold PostHog run.
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        let range = self.equal(column, value);
         if self.ordered[column].is_some() {
             let ids = self.identity.get_or_init(|| (0..self.len() as u32).collect());
-            return Some(&ids[self.ordered_between(column, value, value)]);
+            return Some(&ids[range]);
         }
-        Some(&self.index(column).rows[self.between(column, value, value)])
+        Some(&self.index(column).ids[range])
     }
     /// The rows of `value` with their values of `columns`, read from the column's order where they lie: no list of
     /// ids made a probe (`lookup`'s), which the join's view probe made for every relation a chunk binds (t50 step 6).
@@ -1848,17 +1856,14 @@ impl Source for Relation {
             }
             each(r, &row[..columns.len()]);
         };
-        if self.ordered[column].is_some() {
-            self.ordered_between(column, value, value).for_each(&mut give);
-        } else {
-            self.index(column).rows[self.between(column, value, value)].iter().for_each(|&r| give(r as usize));
-        }
+        let ix = self.index(column);
+        self.equal(column, value).for_each(|p| give(ix.row(p) as usize));
         true
     }
     /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
     fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
         self.ordered[column].is_some().then(|| {
-            let r = self.ordered_between(column, value, value);
+            let r = self.equal(column, value);
             r.start as u32..r.end as u32
         })
     }
@@ -1873,7 +1878,7 @@ impl Source for Relation {
     /// The row of `value` in a key column (`keys_rows`): a search of the cells, as `lookup`'s.
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
         debug_assert!(self.keys_rows(column));
-        self.ordered_between(column, value, value).next()
+        self.equal(column, value).next()
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.cells().get(row as u32, column)

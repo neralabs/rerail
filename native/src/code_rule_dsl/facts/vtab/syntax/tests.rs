@@ -2035,7 +2035,7 @@ fn a_text_reads_cost() {
     let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
     // Every document made (as a chunk's run reads them): `text`'s reads go to its batch's relation.
     let _ = (text.len(), text.value(0, 0));
-    eprintln!("text: {} rows, its node column in order: {}", text.len(), text.sorted_range(0, ids[0]).is_some());
+    eprintln!("text: {} rows, its node column pushed in order: {}", text.len(), text.sorted_range(0, ids[0]).is_some());
     let reps = (2_000_000 / ids.len().max(1)).max(1);
     let time = |what: &str, src: &dyn Source, column: usize, read: usize| {
         let t = std::time::Instant::now();
@@ -2058,8 +2058,9 @@ fn a_text_reads_cost() {
         }
         eprintln!("{what:<32} {:7.1} ns a probe (sum {sum})", t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64);
     };
-    split("text, its search alone", &mut |n| text.sorted_range(0, n).map_or(0, |r| i64::from(r.start)));
-    split("text, its search and value", &mut |n| text.sorted_range(0, n).filter(|r| !r.is_empty()).map_or(0, |r| text.value(r.start as usize, 1)));
+    // The search through `sorted_rows`, which every relation answers (its order's rows), in order or not.
+    split("text, its search alone", &mut |n| text.sorted_rows(0, n).map_or(0, |r| r.len() as i64));
+    split("text, its search and value", &mut |n| text.sorted_rows(0, n).and_then(|r| r.first()).map_or(0, |&r| text.value(r as usize, 1)));
     split("text, a value read", &mut |n| text.value((n & 0x3fff) as usize % text.len(), 1));
     time("text, bare", &*text, 0, 1);
     time("text, layered with a value", &text_l, 0, 1);
