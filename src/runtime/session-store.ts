@@ -499,7 +499,7 @@ export class SqliteSessionStore {
   /**
    * Where a walk back over the session's ledger for lost events ends (`lostEvents`): the id of the newest event of
    * `kinds` the session's history holds, or, when a record of lost events (`recordLostEvents`) is newer, the last event
-   * of the stretch it counted. One read: the session's rows newest first, to the first of those kinds, after this
+   * of the stretch it looked over. One read: the session's rows newest first, to the first of those kinds, after this
    * process's waiting record writes are made (`#recorded`). A row whose write the lock still keeps waiting past the bound
    * of that wait reads as not recorded; `recordLostEvents` looks for it again once its own write is made, behind it.
    */

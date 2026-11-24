@@ -154,9 +154,10 @@ function lookAgain(moved: () => boolean, onMoved: () => void): { start(): void; 
  * flushed or closed: on Windows 11, 4 notices for 20 such commits, and 20 for 20 at `FULL`, while the log's size and
  * time, read by path or through a handle, and `data_version` moved at every commit. So this process's record writes are
  * told by their writer (`onRecordsWritten`, through {@link ChangeFeed.notify}), as the API stores' own writes are, and
- * another process's commit on Windows shows when that process closes the database (a CLI command, at its end), at the
- * next notice or this process's next commit, and else at the next beat, within {@link BEAT_MS}: no fact of it reaches
- * this process sooner, since SQLite tells no other process of a commit and the system reports no change for it. A
+ * another process's commit on Windows shows at once when it waited for the disk (every commit of the `rerail` command,
+ * `commitEveryWriteDurably`), and otherwise when that process closes the database, at the next notice or this process's
+ * next commit, and else at the next beat, within {@link BEAT_MS}: no fact of it reaches this process sooner, since
+ * SQLite tells no other process of a commit and the system reports no change for it. A
  * `data` notice is told once `version` moved, at once for this process's commits, and after the looks again of
  * {@link LOOK_AGAIN_MS} for another process's. A notice for the main file covers a database not in WAL mode yet, and a
  * name the OS does not report is taken as either. The folder is watched, not the file, so a database created, removed

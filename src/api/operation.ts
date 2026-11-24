@@ -144,8 +144,10 @@ async function answerOnDisk(operation: Operation, stores: RerailApiStores, input
 
 /**
  * Run one operation for one caller; a write that returns counts toward the stores' change token, and is answered only
- * once it is on the disk: a rule or setting change a person made, or any other write, must not roll back after a power
- * cut once its caller heard it succeeded. The sync runs off the daemon's thread, so no hook waits for it.
+ * once the log holding it is on the disk: a rule or setting change a person made must not roll back after a power cut
+ * once its caller heard it succeeded. A history write that waits in the record writer while another process holds the
+ * lock (`openRecordWriter`) commits after the answer, and the background sync takes it to the disk
+ * (`startHistorySync`). The sync runs off the daemon's thread, so no hook waits for it.
  */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   // Refused before anything runs, and before a write could count toward the change token.

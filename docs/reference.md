@@ -466,9 +466,9 @@ The daemon writes rules and work links; the shared runtime records harness event
   after the read that found the daemon back. A browser without Web Locks, or a page that is not a secure context, holds
   no stream and reads every 5 s. A daemon that stops closes the stream. The records the daemon writes for sessions and
   checks, and the dashboard's own writes, are sent at once, and so is another process's commit on Linux and macOS. On
-  Windows another process's commit is sent when that process closes the database, as each CLI command does at its
-  end, and otherwise at the next 5 s message: Rerail commits without waiting for the disk, and Windows reports no change
-  to the database's files for such a commit until the file is flushed or closed.
+  Windows a commit of the `rerail` command, which waits for the disk, is sent at once too; another process's other
+  commits, which do not wait for it, are sent when that process closes the database, and otherwise at the next 5 s
+  message: Windows reports no change to the database's files for such a commit until the file is flushed or closed.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.
