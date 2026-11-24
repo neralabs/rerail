@@ -47,15 +47,15 @@ Device side (`<ukl/chain.h>`):
 - A phase's group knows its item from its dispatch: its group index (`GID0 / LSZ0`) from the phase's first.
 
 Host side: `Pass::chain_at(pipe, buffers, bytes, counts, offsets)`: one dispatch a phase, each indirect at its
-counts' offset. No barrier is encoded: a pass's dispatches are on one serial compute encoder (Metal), whose each
-dispatch completes before the next starts, as the pass's launches before decision 0603 relied on; CUDA's stream,
-OpenCL's queue and the CPU's run them in order too. The counts' buffer is bound or resident, as any indirect
-launch's.
+counts' offset, a memory barrier between two (`ComputeQueue::memory_barrier`: Metal's `memoryBarrierWithScope:`
+buffers, since the phases reach blocks by address, which no binding tracks; CUDA's stream, OpenCL's queue and the
+CPU's run in order and need none). The chain's resident buffers are declared once, at its first dispatch: its
+dispatches share one encoder. `Pass::dispatches` counts a chain once, as the ledger does.
 
 ### Each backend
 
 - **Metal**: `dispatchThreadgroups(indirectBuffer:indirectBufferOffset:threadsPerThreadgroup:)` a phase, on the
-  pass's one serial compute encoder.
+  pass's one compute encoder, a buffer barrier between two.
 - **The CPU executor**: the dispatches run in order, each reading its counts when it runs (`launch_indirect` reads
   them then already); the join program's Rust (`rerail_ukl_rust::join_run`) runs a phase's groups as it does a
   launch's.
@@ -114,7 +114,36 @@ What each part of `join_run`'s queue (0603) becomes:
    it reads, so needs none). `a_chains_phases_size_each_other_and_are_one_launch`: 205 phases, sized 3, 1, 2,000
    (past `CHAIN_GROUPS`), 7, then 0; each phase's groups run once each; one launch in the ledger. Passes on Metal
    (M1 Max), CUDA (GB10, re-dispatched) and the CPU executor.
-2. The join program on chains: its phases dispatched, not queued; its rounds encoded as bounded rounds of phases.
-   Its CPU Rust to the same source (its digests).
+2. **Done, as designed above.** `join_run` is a chain: dispatch 0 its start (begin, or resume a budget's end, an item
+   put back, texts or a gate released), then a phase a dispatch, a group an item (`TGID0`), the finisher writing the
+   next dispatch's counts. The queue, its slots and its tickets are gone (`ProgP` is the phases and the chain's
+   dispatches). A chain is the program's phases (four times them for a program of rounds), at least
+   `PROGRAM_BUDGET` (16), at most `PROGRAM_DISPATCHES` (1024); the test switch `RERAIL_PROGRAM_BUDGET` sets it.
+   The Rust (`rerail_ukl_rust::join_run`) runs each group as the kernel does; its digests are the new source's.
+   The stratum tests (`setfix::device::tests`, 27) pass on Metal (M1 Max) and the CPU backend.
+
+   Measured (M1 Max, the timed test, `nowrite`, best of the warm runs):
+
+   | | before (queue) | chain |
+   |---|---|---|
+   | keyed join, Metal: program | 12.5 ms | 14.1 to 14.5 ms |
+   | keyed join, Metal: encoding (host CPU) | | 2.7 ms (4.0 before residency was declared once) |
+   | keyed join, CPU executor: program | 15.1 ms | 19.0 ms |
+   | closure (400 nodes), CPU executor: program | 27.8 ms | 72 to 84 ms |
+   | closure, CUDA (GB10, re-dispatched, rooms mapped) | | 156 ms |
+
+   Not faster yet, and why (the CPU executor's trace of each phase): the keyed join's second program is 35 phases,
+   18 of them one group; the closure is **2,388 phases** in series (51 rounds of about 47), 1,861 of them one group:
+   per round about 20 scan phases (a scan's 5 levels, several scans) and 10 size scripts. Each phase is now a
+   dispatch: a dispatch's start on the GPU, a launch on the CPU executor (about 5 us there). The width is right now;
+   the phases' number is the cost. That is step 3.
+
+   **Open: the closure hangs on the M1 Max's Metal.** It ran 929 phases over 12 chains (gate parks at phases 82 and
+   129, rooms grown, released, each right), then a chain after a release at phase 82 held the GPU past the farm's
+   watchdog (twice) or Metal's timeout (once). The same chains run right on the CPU executor with rooms mapped
+   (`RERAIL_ROOMS_MAPPED=1`) and on CUDA, whose kernel is this source: so a Metal-only fault. The buffer barrier did
+   not change it. Decision 0672's G13 exit-code check (another branch's, applied here for the test and backed out)
+   passed `join_run` under 255 and the hang stayed. The queue's program hung on the mini's Metal the same way
+   (decision 0671). Not run on the M3 (unreachable then).
 3. Its phases folded: size scripts into finishers, a scan one phase.
 4. Measured: the keyed join and the closure, per phase and whole, Metal against the CPU executor.

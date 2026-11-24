@@ -1435,7 +1435,7 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) remaps: u32,
     /// Its remaps of a gate's rooms (`Batch::gate_rooms`): rows mapped as a recursive component's rounds reach them.
     pub(in crate::code_rule_dsl) room_remaps: u32,
-    /// Its programs' items taken, over all their launches, and a launch's budget of items (its workers' shares'), the
+    /// Its programs' phases run (their dispatches), over all their launches, and a launch's chain's dispatches, the
     /// least of its programs'.
     pub(in crate::code_rule_dsl) taken: u64,
     pub(in crate::code_rule_dsl) launch_items: u64,
@@ -1720,7 +1720,7 @@ impl Batch {
                 // A remap (an arena mapped further) is a run again with more room: its launch charges the run's
                 // reruns' budget (decision 0540), as the rerun it replaces did; a budget's relaunch, the evaluation's.
                 let _rerun = remap.then(rerail_accel::gpu::launch::rerun);
-                self.launch(r.kit, r.ctl, r.slots)?;
+                self.launch(r.kit, r.ctl)?;
             }
             self.submit_open()?;
         }
@@ -2989,7 +2989,7 @@ impl Batch {
         // claim (decision 0603 step 5); twice what its first program's tables' rows were guessed to take, and what the
         // batch's programs' claims wanted when they passed one before.
         let sizes = ProgramSizes::now();
-        let budget = sizes.budget.unwrap_or(PROGRAM_BUDGET).max(1);
+        let budget = sizes.budget;
         let counts = match &self.pool {
             Some(a) => a.clone(),
             None => {
@@ -3054,28 +3054,24 @@ impl Batch {
             prog.script.iter().map(|o| SizeOp { w: late(o.w), c: late(o.c), op: o.op, k: o.k, x: o.x, y: o.y }).collect();
         let script = bytes(as_bytes(&script))?;
         let top = prog.top.take();
-        // A group for each item of its largest phase, so any phase's items run at once: a group that finds nothing to
-        // take ends, and each takes its budget's items at most (`PROGRAM_BUDGET`, `ProgramSizes`), so a launch does
-        // its workers' budgets' items at most, whatever its rounds (not every item of the program's, which would bound
-        // nothing). The queue's room, emptied of what was taken between launches (`Ran::compact`): the items a launch
-        // pushes are those its workers take (their budgets') and those left queued, one phase's at most (a phase is
-        // pushed once the one before is done), past those queued when it starts (one phase's, and a parked item); and
-        // a slot a group gives up at its end.
-        let phase_max = prog.phases.iter().map(|p| p[1] as usize).max().unwrap_or(0);
-        let workers = phase_max.clamp(1, PROGRAM_WORKERS);
-        let capacity = workers * (budget as usize + 1) + 2 * phase_max + 1;
+        // Its chain's dispatches past its start (decision 0674): its phases, each a dispatch, once; four times them for
+        // a program of rounds (its rounds go on across its launches); at least `PROGRAM_BUDGET`, at most
+        // `PROGRAM_DISPATCHES` (a launch's GPU time bounded, decision 0603 point 5); a test's budget where it sets one.
+        let rounds = prog.items.iter().any(|i| i[0] >> 24 == PK_ROUND);
+        let nphases = prog.phases.len() as u32;
+        let dispatches = budget.unwrap_or_else(|| (if rounds { 4 * nphases } else { nphases }).clamp(PROGRAM_BUDGET, PROGRAM_DISPATCHES)).max(1);
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
-        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms),
+        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, dispatches, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms),
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? } };
-        let (ctl, slots) = (Words::zeroed(10 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
-        self.launch(kit, ctl, slots)
+        let ctl = Words::zeroed(10 + 2 * kit.phase_items.len() + 4 * (kit.dispatches as usize + 2))?;
+        self.launch(kit, ctl)
     }
 
-    /// One launch of `join_run` over `kit`'s program, its queue `slots` and control words `ctl` (decision 0603): its
-    /// first, or one again where the last left items (`Ran::again`). Its arena's room, the pages mapped, in its top's
-    /// second word.
-    fn launch(&mut self, mut kit: Kit, ctl: Words, slots: Words) -> Result<(), Error> {
+    /// One launch of `join_run` over `kit`'s program and its control words `ctl` (decisions 0603, 0674): a chain, its
+    /// start and `kit.dispatches` dispatches, its first, or one again where the last left it (`programs_done`). Its
+    /// arena's room, the pages mapped, in its top's second word.
+    fn launch(&mut self, mut kit: Kit, ctl: Words) -> Result<(), Error> {
         let nphases = kit.phase_items.len();
         // A wrapped arena mapped further since its last launch: a new buffer over the same pages, at another address
         // (Metal) or at the same one, longer (CUDA's host memory at the host's address).
@@ -3099,12 +3095,18 @@ impl Batch {
             let room = kit.reserved.as_ref().map_or(kit.counts.buffer.length() as usize, |r| r.mapped());
             t.set(1, u32::try_from(room / 16).map_err(|_| Error::BackendCapacity)?);
         }
-        // The launch's budget: its items taken so far (`ctl[8]`) and its workers' budgets' items, the tickets its groups
-        // share.
-        let items = kit.budget.saturating_mul(kit.workers as u32);
-        let limit = ctl.get(8).saturating_add(items);
-        self.done.launch_items = if self.done.launch_items == 0 { u64::from(items) } else { self.done.launch_items.min(u64::from(items)) };
-        let args: Vec<u8> = [nphases as u32, kit.capacity as u32, kit.phase_items[0][1], limit].iter().flat_map(|w| w.to_ne_bytes()).collect();
+        // The chain: its start one group (its counts the host's), its dispatches' counts emptied, its dispatch 0 again.
+        let dispatches = u64::from(kit.dispatches);
+        let slot = 10 + 2 * nphases;
+        for w in 0..4 * (kit.dispatches as usize + 2) {
+            ctl.set(slot + w, 0);
+        }
+        for w in 0..3 {
+            ctl.set(slot + w, 1);
+        }
+        ctl.set(1, 0);
+        self.done.launch_items = if self.done.launch_items == 0 { dispatches } else { self.done.launch_items.min(dispatches) };
+        let args: Vec<u8> = [nphases as u32, kit.dispatches, 0, 0].iter().flat_map(|w| w.to_ne_bytes()).collect();
         let text = self.arena.as_ref().filter(|_| kit.rebase.ta != 0).map(|a| a.buffer());
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
@@ -3128,25 +3130,27 @@ impl Batch {
         if let Some(t) = &kit.top {
             pass.use_read_write(&t.buffer.buffer);
         }
-        pass.run_bytes_at(
+        let offsets: Vec<u64> = (0..=dispatches).map(|d| 4 * (slot as u64 + 4 * d)).collect();
+        pass.chain_at(
             &pipe,
-            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&kit.counts.buffer, 0)],
+            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&ctl.buffer.buffer, 0), (&kit.counts.buffer, 0)],
             &args,
-            kit.workers,
+            &ctl.buffer.buffer,
+            &offsets,
         );
-        self.programs.push(Ran { ctl, slots, last: nphases - 1, phases: nphases, items: kit.phase_items[nphases - 1][1], kit });
+        self.programs.push(Ran { ctl, last: nphases - 1, phases: nphases, items: kit.phase_items[nphases - 1][1], kit });
         Ok(())
     }
 
-    /// The programs run since the last `finish`, each whole: its last phase done and nothing pushed past its room;
-    /// and those to launch again (decision 0603 point 5): one whose workers spent their budgets with items left, and
-    /// one whose size script parked past its arena's pages, mapped now for twice what it wanted, its item put back.
+    /// The programs run since the last `finish`, each whole: its last phase done; and those to launch again (decisions
+    /// 0603 point 5, 0674): one whose chain's dispatches ended with its phases left, and one whose size script parked
+    /// past its arena's pages, mapped now for twice what it wanted, its item put back.
     fn programs_done(&mut self) -> Result<(bool, Vec<(Ran, bool)>), Error> {
         let mut whole = true;
         let mut again = Vec::new();
         for mut r in std::mem::take(&mut self.programs) {
             let flags = r.ctl.get(6);
-            let (overflow, done) = (flags & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(10 + r.last));
+            let done = r.ctl.get(10 + r.last);
             // Its last phase's items as pushed: its segments' (0: all of them).
             let want = match r.ctl.get(10 + r.phases + r.last) {
                 0 => r.items,
@@ -3158,11 +3162,10 @@ impl Batch {
             // the host past the device's text arena.
             // A gate's room mapped past (`ctl[9]`'s top two bits, the gate's phase): the rooms grown, and the program
             // launched again from the phase after the gate (bit 29); else stopped there, as a gate stops it.
-            if !overflow && flags & 32 != 0 && r.ctl.get(9) >> 30 == 3 {
+            if flags & 32 != 0 && r.ctl.get(9) >> 30 == 3 {
                 if r.kit.grow_rooms()? {
                     self.done.remaps += 1;
                     self.done.room_remaps += 1;
-                    r.compact();
                     r.ctl.set(6, flags & !32);
                     r.ctl.set(9, 0x2000_0000 | (r.ctl.get(9) & 0x1fff_ffff));
                     again.push((r, true));
@@ -3172,14 +3175,13 @@ impl Batch {
                 self.done.taken += u64::from(r.ctl.get(8));
                 continue;
             }
-            if !overflow && flags & 32 != 0 && r.ctl.get(9) & 0x8000_0000 != 0 {
+            if flags & 32 != 0 && r.ctl.get(9) & 0x8000_0000 != 0 {
                 let grown = match &self.arena {
                     Some(a) => a.grow()?,
                     None => false,
                 };
                 if grown {
                     self.done.remaps += 1;
-                    r.compact();
                     r.ctl.set(6, flags & !32);
                     // Released: the next launch's first group pushes the phase again (bit 30).
                     r.ctl.set(9, 0x4000_0000 | (r.ctl.get(9) & 0x3fff_ffff));
@@ -3193,7 +3195,7 @@ impl Batch {
             // A size script parked past its arena's pages (decision 0603 step 5): the arena mapped for twice what
             // its claims wanted, and the program launched again; else, an arena that cannot grow, stopped as a gate
             // stops it, and the batch's next programs' arenas twice what its claims wanted.
-            if !overflow && flags & 32 != 0 {
+            if flags & 32 != 0 {
                 let wanted = 16 * r.kit.top.as_ref().map_or(0, |t| t.get(2) as usize);
                 let mapped = match &r.kit.reserved {
                     Some(a) => a.map(2 * wanted).map_err(|_| Error::BackendCapacity)?,
@@ -3213,28 +3215,28 @@ impl Batch {
                 continue;
             }
             // A gate stopped it: its phases after the gate are undone, as the caller asked.
-            if !overflow && flags & 2 != 0 {
+            if flags & 2 != 0 {
                 self.done.stopped = true;
                 self.done.taken += u64::from(r.ctl.get(8));
                 continue;
             }
             // A round's end ended it (no new rows) or stopped it past its rounds (`round_end`).
-            if !overflow && flags & (4 | 16) != 0 {
+            if flags & (4 | 16) != 0 {
                 self.done.ended |= flags & 16 != 0;
                 self.done.past_rounds |= flags & 4 != 0;
                 self.done.taken += u64::from(r.ctl.get(8));
                 continue;
             }
-            // It spent its budget with items left: launched again, where it goes on.
-            if !overflow && (r.ctl.get(2) > 0 || r.ctl.get(5) < r.kit.phase_items[0][1]) {
+            // Its chain's dispatches ended with a phase left (its last finisher gave the next groups): launched again,
+            // where it goes on.
+            if r.ctl.get(1) == r.kit.dispatches + 1 && r.ctl.get(4) != 0 {
                 self.done.relaunches += 1;
-                r.compact();
                 again.push((r, false));
                 continue;
             }
             self.done.taken += u64::from(r.ctl.get(8));
-            if overflow || done != want {
-                eprintln!("rerail: a join program left undone (decision 0603): its last phase {done} of {want} items, overflow {overflow}");
+            if done != want {
+                eprintln!("rerail: a join program left undone (decision 0603): its last phase {done} of {want} items");
                 whole = false;
             }
         }
@@ -3616,10 +3618,8 @@ struct Kit {
     reserved: Option<std::sync::Arc<rerail_device::device::Reserved>>,
     /// Each phase's first item, its items and its segments (`Program::phases`).
     phase_items: Vec<[u32; 4]>,
-    capacity: usize,
-    workers: usize,
-    /// A worker's items in a launch at most (`PROGRAM_BUDGET`, `ProgramSizes`).
-    budget: u32,
+    /// Its chain's dispatches past its start (`PROGRAM_BUDGET`, `ProgramSizes`).
+    dispatches: u32,
     format: u32,
     uses: Vec<(Buffer, bool)>,
     hold: Vec<Held>,
@@ -4207,7 +4207,6 @@ const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
 /// A program launched (`Batch::run_program`): its control words, its last phase and that phase's items.
 struct Ran {
     ctl: Words,
-    slots: Words,
     last: usize,
     phases: usize,
     items: u32,
@@ -4215,47 +4214,22 @@ struct Ran {
 }
 
 impl Ran {
-    /// Its queue's items left (positions taken to its tail), moved to its front between launches, when no worker
-    /// runs: a slot given up (`UKL_WQ_TAKEN`) or never written left out. The ring's pause of `<ukl/workqueue.h>`, done
-    /// by the host, so the next launch has the queue's whole room.
-    fn compact(&self) {
-        let (head, tail) = (self.ctl.get(0) as usize, (self.ctl.get(1) as usize).min(self.kit.capacity));
-        let mut n = 0;
-        for p in head..tail {
-            let v = self.slots.get(p);
-            self.slots.set(p, 0);
-            if v != 0 && v != u32::MAX {
-                self.slots.set(n, v);
-                n += 1;
-            }
-        }
-        for p in n..head {
-            self.slots.set(p, 0);
-        }
-        self.ctl.set(0, 0);
-        self.ctl.set(1, n as u32);
-    }
-
-    /// Its parked item (a size script's, `ctl[9]`) queued again, its queue compacted first, and its park flag cleared.
+    /// Its parked item (a size script's, `ctl[9]`) put back (`ctl[2]`: the next chain's start runs it alone), and its
+    /// park flag cleared.
     fn put_back(&self) {
-        self.compact();
-        let item = self.ctl.get(9);
-        let n = self.ctl.get(1);
-        self.slots.set(n as usize, item);
-        self.ctl.set(1, n + 1);
-        self.ctl.set(2, self.ctl.get(2) + 1);
+        self.ctl.set(2, self.ctl.get(9));
         self.ctl.set(9, 0);
         self.ctl.set(6, self.ctl.get(6) & !32);
     }
 }
 
-/// A program's groups at most: a group an item.
-const PROGRAM_WORKERS: usize = 1 << 16;
-
-/// A worker's share of a launch's items (decision 0603 point 5): a launch takes its workers' shares' items at most, as
-/// tickets its groups share (`ctl[8]`), so a group takes more than its share where others ended. A launch's GPU time is
-/// its budget's items, whatever its rules and rounds, and the host launches it again while items are left.
+/// A chain's dispatches past its start at least (decisions 0603 point 5, 0674): a program of few phases still runs
+/// the rounds of a few phases a launch. A launch's GPU time is its dispatches', whatever its rules and rounds, and the
+/// host launches it again while phases are left.
 pub(in crate::code_rule_dsl) const PROGRAM_BUDGET: u32 = 16;
+
+/// A chain's dispatches past its start at most: its encoding's host time and its GPU time bounded.
+const PROGRAM_DISPATCHES: u32 = 1024;
 
 /// Whether a recursive component's rooms are mapped as its rounds reach them (decision 0603's fewer reruns, its gate's
 /// rooms: `Batch::gate_rooms`): where a mapped page is real memory (`rerail_device::device::map_commits`), its rows
@@ -4276,7 +4250,7 @@ pub(in crate::code_rule_dsl) fn map_commits() -> bool {
     rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits)
 }
 
-/// A program's sizes where a test sets them: its workers' budget (`PROGRAM_BUDGET` else), and its first arena's
+/// A program's sizes where a test sets them: its chain's dispatches (`PROGRAM_BUDGET` at least, else), and its first arena's
 /// bytes (twice what its claims were guessed to take, else), so a test's launches go again and its arena's pages are
 /// mapped as they would be at a larger scale. A test build's switches (`RERAIL_PROGRAM_BUDGET`,
 /// `RERAIL_PROGRAM_ARENA`, set through `switches::set`); none in any other build.

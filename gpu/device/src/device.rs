@@ -474,6 +474,16 @@ impl ComputeQueue {
         }
     }
 
+    /// A barrier between the launches before and after it (decision 0674's chain): their writes, buffers reached by
+    /// address too, seen by those after. In-order queues need none.
+    pub fn memory_barrier(&self) {
+        match &self.kind {
+            QueueKind::Native(q) => q.memory_barrier(),
+            QueueKind::Cpu(q) => q.memory_barrier(),
+            QueueKind::OpenCl(q) => q.memory_barrier(),
+        }
+    }
+
     pub fn flush(&mut self) -> ComputeEvent {
         match &mut self.kind {
             QueueKind::Native(q) => ComputeEvent::Native(q.flush()),

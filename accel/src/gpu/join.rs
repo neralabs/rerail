@@ -507,7 +507,7 @@ impl Pass {
         std::ptr::from_ref::<u8>(&self.key) as usize
     }
 
-    /// The launches made so far.
+    /// The launches made so far (a chain one, decision 0674).
     pub fn dispatches(&self) -> usize {
         self.dispatches.get()
     }
@@ -522,12 +522,17 @@ impl Pass {
     }
 
     /// A chain (decision 0674): `pipe` dispatched once a phase, in order, phase `p`'s threadgroups the three words at
-    /// `offsets[p]` of `counts`, which the phases before write on the device (`<ukl/chain.h>`); each dispatch sees the
-    /// writes of those before it (the pass's one serial encoder; the CPU's, CUDA's and OpenCL's in-order queues).
-    /// One launch in the ledger, however many phases (the user's). Where a GPU has no indirect dispatch, each phase
-    /// is `CHAIN_GROUPS` groups that run its count's groups between them (the shims' re-dispatcher).
+    /// `offsets[p]` of `counts`, which the phases before write on the device (`<ukl/chain.h>`). A memory barrier
+    /// between two (Metal's over buffers: its blocks are reached by address, which no binding tracks), so each
+    /// dispatch, its counts' read too, sees the writes of those before it; the CPU's, CUDA's and OpenCL's queues run
+    /// in order. One launch in the ledger, however many phases (the user's); its resident buffers declared once, on
+    /// the encoder its dispatches share. Where a GPU has no indirect dispatch, each phase is `CHAIN_GROUPS` groups
+    /// that run its count's groups between them (the shims' re-dispatcher).
     pub fn chain_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], counts: &Buffer, offsets: &[u64]) {
         for (p, &offset) in offsets.iter().enumerate() {
+            if p > 0 && self.error.borrow().is_none() {
+                self.queue.memory_barrier();
+            }
             self.dispatch_at(pipe, buffers, bytes, Grid::Indirect { grid: counts, offset, most: CHAIN_GROUPS }, Some(p == 0));
         }
     }
@@ -565,8 +570,11 @@ impl Pass {
             if pipe.args {
                 l = l.bytes("a", bytes);
             }
-            for (b, write) in self.resident.borrow().iter() {
-                l = if *write { l.uses(b) } else { l.uses_read(b) };
+            // A chain's dispatches after its first share its encoder's residency (`chain_at`).
+            if chained != Some(false) {
+                for (b, write) in self.resident.borrow().iter() {
+                    l = if *write { l.uses(b) } else { l.uses_read(b) };
+                }
             }
             match grid {
                 Grid::Groups(groups, threads) => l.run(&[groups.max(1) as u64, 1, 1], &[threads, 1, 1]),
@@ -577,7 +585,10 @@ impl Pass {
         if let Err(e) = made {
             *self.error.borrow_mut() = Some(e);
         }
-        self.dispatches.set(self.dispatches.get() + 1);
+        // A chain is one launch (decision 0674): counted at its first dispatch.
+        if chained != Some(false) {
+            self.dispatches.set(self.dispatches.get() + 1);
+        }
     }
 
     /// `groups` threadgroups of 256 threads over `buffers`, `bytes` its parameter block (the kernel's `ARGS`
@@ -1926,14 +1937,14 @@ DEFINE_KERNEL2(chaintest, chain_test,\n\
     LSZ0, uint32_t, lsz, )\n\
 {\n\
     uint32_t g = gid / lsz, groups = gsz / lsz;\n\
-    if (l == 0u) fin[0] = ukl_chain_phase(ctl);\n\
+    if (l == 0u) fin[0] = ukl_atomic_poll(&ctl[0]);\n\
     ukl_tg_barrier();\n\
     uint32_t p = fin[0];\n\
     if (l == 0u && p < 5u && g < 2048u) ukl_atomic_add(&seen[p * 2048u + g], g + 1u);\n\
     ukl_tg_barrier_device();\n\
     if (l == 0u) fin[1] = ukl_chain_finish(&done[p], groups) ? 1u : 0u;\n\
     ukl_tg_barrier();\n\
-    if (l == 0u && fin[1] != 0u) ukl_chain_next(ctl, p, p < 5u ? plan[p] : 0u);\n\
+    if (l == 0u && fin[1] != 0u) { ukl_chain_set(&ctl[4u + 4u * (p + 1u)], p < 5u ? plan[p] : 0u); ukl_atomic_store(&ctl[0], p + 1u); ukl_fence_device(); }\n\
 }\n";
         let pipe = pipeline("chain", "chain_test", || SRC.to_owned()).unwrap();
         let (ctl, done, seen, plan) = (Held::zeroed(4 * (4 + 4 * 256)).unwrap(), Held::zeroed(4 * 256).unwrap(), Held::zeroed(4 * 5 * 2048).unwrap(), Held::zeroed(4 * 8).unwrap());
@@ -1954,7 +1965,7 @@ DEFINE_KERNEL2(chaintest, chain_test,\n\
         let pass = Pass::new().unwrap();
         let buffers = [(&ctl.buffer, 0), (&done.buffer, 0), (&seen.buffer, 0), (&plan.buffer, 0)];
         pass.chain_at(&pipe, &buffers, &[], &ctl.buffer, &offsets);
-        assert_eq!(pass.dispatches(), phases, "a dispatch a phase");
+        assert_eq!(pass.dispatches(), 1, "a chain is one launch");
         pass.commit_wait().unwrap();
         assert_eq!(evaluation.snapshot().len(), phases, "each dispatch recorded");
         // A second chain in the same evaluation: the first was charged once, so the budget has room.

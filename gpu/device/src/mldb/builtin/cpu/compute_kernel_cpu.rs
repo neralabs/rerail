@@ -649,6 +649,10 @@ impl CpuComputeQueue {
     }
 
     /// The work so far, handed to the root's thread; its event.
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order, each done before the next.
+    pub fn memory_barrier(&self) {}
+
     pub fn flush(&mut self) -> CpuComputeEvent {
         let done = Arc::new(Done::default());
         let ops = std::mem::take(&mut *self.ops.borrow_mut());

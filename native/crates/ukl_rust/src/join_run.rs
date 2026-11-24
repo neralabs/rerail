@@ -338,9 +338,9 @@ struct SortPass {
 #[repr(C)]
 struct ProgP {
     phases: u32,
-    capacity: u32,
-    seeds: u32,
-    budget: u32,
+    dispatches: u32,
+    pad0: u32,
+    pad1: u32,
 }
 #[repr(C)]
 struct SizeOp {
@@ -2803,7 +2803,7 @@ unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, off: u32, 
     *counts.add(r as usize) = 1;
 }
 
-// ---- The program: a work queue of items, a group an item. ----
+// ---- The program: a chain of dispatches, a phase a dispatch, a group an item (decision 0674). ----
 
 struct Prog {
     jobs: *mut Job,
@@ -2814,7 +2814,6 @@ struct Prog {
     sorts: *const SortPass,
     script: *const SizeOp,
     ctl: *mut u32,
-    slots: *mut u32,
     counts: *mut u32,
     a: ProgP,
     rd: Reads,
@@ -2846,44 +2845,89 @@ impl Prog {
         (ns != 0 && m == 0) as u32
     }
 
-    /// Phase `next - 1`'s items onto the work (none: no phase), its segments' (`none`: its first segment's first
-    /// alone, a phase of no items').
-    unsafe fn phase_push(&self, work: &mut Work, next: u32, none: u32) {
-        if next == 0 {
-            return;
-        }
-        let [first, count, s0, ns] = self.phase(next - 1);
-        if ns == 0 {
-            work.push(self, first, count);
-        }
-        for g in 0..ns {
-            let seg = self.segs.add((s0 + g) as usize);
-            let m = if none != 0 && g == 0 { 1 } else { self.seg_items(seg) };
-            work.push(self, (*seg).first, m);
-        }
+    /// Phase `q`'s groups, a group an item, once reset: its items, or its segments' (its `target`).
+    unsafe fn phase_groups(&self, q: u32) -> u32 {
+        let [_, count, _, ns] = self.phase(q);
+        if ns == 0 { count } else { self.ctl(10 + (self.a.phases + q) as usize).load(SeqCst) }
     }
 
-    unsafe fn phase_texts(&self, work: &mut Work, p: u32) {
+    /// The item group `g` of phase `p` runs (`phase_item`): its `g`-th through its segments' counts (the first
+    /// segment's first alone where `none`); with `texts`, its `g`-th text item. `NONE` past them.
+    unsafe fn phase_item(&self, p: u32, mut g: u32, none: u32, texts: bool) -> u32 {
         let [first, count, s0, ns] = self.phase(p);
-        for pass in 0..2 {
-            let mut m = 0u32;
-            for g in 0..ns.max(1) {
-                let (a, n) = if ns == 0 { (first, count) } else { let seg = self.segs.add((s0 + g) as usize); ((*seg).first, self.seg_items(seg)) };
-                for i in 0..n {
-                    if (*self.items.add((a + i) as usize)).what >> 24 != PK_ROW_TEXT {
-                        continue;
-                    }
-                    m += 1;
-                    if pass == 1 {
-                        work.push(self, a + i, 1);
-                    }
+        for s in 0..ns.max(1) {
+            let (at_, n) = if ns == 0 {
+                (first, count)
+            } else {
+                let seg = self.segs.add((s0 + s) as usize);
+                ((*seg).first, if none != 0 && s == 0 { 1 } else { self.seg_items(seg) })
+            };
+            if !texts {
+                if g < n {
+                    return at_ + g;
                 }
+                g -= n;
+                continue;
             }
-            if pass == 0 {
-                at(self.ctl.add(10 + self.a.phases as usize + p as usize)).store(m.max(1), SeqCst);
-                at(self.ctl.add(10 + p as usize)).store(0, SeqCst);
+            for i in 0..n {
+                if (*self.items.add((at_ + i) as usize)).what >> 24 != PK_ROW_TEXT {
+                    continue;
+                }
+                if g == 0 {
+                    return at_ + i;
+                }
+                g -= 1;
             }
         }
+        NONE
+    }
+
+    /// Phase `p`'s text items to run again (`phase_texts`): its count emptied, its items to count them; their number.
+    unsafe fn phase_texts(&self, p: u32) -> u32 {
+        let [first, count, s0, ns] = self.phase(p);
+        let mut m = 0u32;
+        for g in 0..ns.max(1) {
+            let (a, n) = if ns == 0 { (first, count) } else { let seg = self.segs.add((s0 + g) as usize); ((*seg).first, self.seg_items(seg)) };
+            for i in 0..n {
+                m += u32::from((*self.items.add((a + i) as usize)).what >> 24 == PK_ROW_TEXT);
+            }
+        }
+        self.ctl(10 + (self.a.phases + p) as usize).store(m.max(1), SeqCst);
+        self.ctl(10 + p as usize).store(0, SeqCst);
+        m
+    }
+
+    /// The phase after phase `p`'s last item (`phase_next`): a round's end's jump, else the next; none where a gate
+    /// stopped the program or past the last. Reset and made the one running; its groups.
+    unsafe fn phase_next(&self, p: u32) -> u32 {
+        let jump = self.ctl(7).load(SeqCst);
+        if jump != 0 {
+            self.ctl(7).store(0, SeqCst);
+        }
+        let next = if jump != 0 {
+            if jump == NONE { 0 } else { jump }
+        } else if p + 1 < self.a.phases && self.ctl(6).load(SeqCst) & 2 == 0 {
+            p + 2
+        } else {
+            0
+        };
+        if next == 0 {
+            return 0;
+        }
+        let none = self.phase_reset(next - 1);
+        self.ctl(0).store(next - 1, SeqCst);
+        self.ctl(3).store(none, SeqCst);
+        self.phase_groups(next - 1)
+    }
+
+    /// The next dispatch's groups, `n` (`ukl_chain_set`), the finisher's of dispatch `d`.
+    unsafe fn chain_set(&self, d: u32, n: u32) {
+        self.ctl(4).store(n, SeqCst);
+        let slot = 10 + 2 * self.a.phases as usize + 4 * d as usize;
+        self.ctl(slot).store(n, SeqCst);
+        self.ctl(slot + 1).store(1, SeqCst);
+        self.ctl(slot + 2).store(1, SeqCst);
+        self.ctl(1).store(d, SeqCst);
     }
 
     /// Item `it`'s work, every thread of the group's: whether it is whole (a size script that parked is not).
@@ -3033,166 +3077,71 @@ impl Prog {
         }
     }
 
-    /// The launch's items, phase by phase (decision 0567): the items a last launch left (`Work::carried`), the seeds,
-    /// then each phase's items in order as its phase before ends, until none is left or the launch's budget is spent;
-    /// the items left then are the next launch's (`Work::spill`).
-    unsafe fn drive(&self) {
-        let mut work = Work::carried(self);
-        let (mut next, mut none) = (0u32, 0u32);
-        for turn in 0.. {
-            if turn == 0 {
-                // A phase parked as its texts found the arena full (bit 30), or after a gate's room (bit 29).
-                let pp = self.ctl(9).load(SeqCst);
-                if pp >> 30 == 1 && self.ctl(9).compare_exchange(pp, 0, SeqCst, SeqCst).is_ok() {
-                    self.phase_texts(&mut work, pp & 0x3fff_ffff);
-                }
-                if pp >> 29 == 1 && self.ctl(9).compare_exchange(pp, 0, SeqCst, SeqCst).is_ok() {
-                    let p = pp & 0x1fff_ffff;
-                    let jump = self.ctl(7).load(SeqCst);
-                    if jump != 0 {
-                        self.ctl(7).store(0, SeqCst);
-                    }
-                    next = if jump != 0 {
-                        if jump == NONE { 0 } else { jump }
-                    } else if p + 1 < self.a.phases {
-                        p + 2
-                    } else {
-                        0
-                    };
-                    if next != 0 {
-                        none = self.phase_reset(next - 1);
-                    }
-                }
-                self.phase_push(&mut work, next, none);
-            }
-            // A ticket of the launch's budget, then a seed while any are left, else a continuation.
-            let (mut got, mut item) = (0u32, 0u32);
-            if self.ctl(8).fetch_add(1, SeqCst) < self.a.budget {
-                if self.ctl(5).load(SeqCst) < self.a.seeds {
-                    item = self.ctl(5).fetch_add(1, SeqCst);
-                    got = (item < self.a.seeds) as u32;
-                    item = item.wrapping_add(*self.phases);
-                }
-                if got == 0
-                    && let Some(i) = work.pop()
-                {
-                    item = i;
-                    got = 2;
-                }
+    /// Group `g` of the chain's dispatch now (`join_run`): the start (dispatch 0), else its phase's item, and the
+    /// next dispatch's groups where it finishes the phase.
+    unsafe fn group(&self, g: u32) {
+        let (d, p, mode, back) = (self.ctl(1).load(SeqCst), self.ctl(0).load(SeqCst), self.ctl(3).load(SeqCst), self.ctl(2).load(SeqCst));
+        if d == 0 {
+            let pp = self.ctl(9).load(SeqCst);
+            let n = if self.ctl(5).load(SeqCst) == 0 {
+                self.ctl(5).store(1, SeqCst);
+                let none = self.phase_reset(0);
+                self.ctl(0).store(0, SeqCst);
+                self.ctl(3).store(none, SeqCst);
+                self.phase_groups(0)
+            } else if pp >> 30 == 1 {
+                self.ctl(9).store(0, SeqCst);
+                let q = pp & 0x3fff_ffff;
+                let n = self.phase_texts(q);
+                self.ctl(0).store(q, SeqCst);
+                self.ctl(3).store(2, SeqCst);
+                n
+            } else if pp >> 29 == 1 {
+                self.ctl(9).store(0, SeqCst);
+                self.phase_next(pp & 0x1fff_ffff)
+            } else if back != 0 {
+                1
             } else {
-                self.ctl(8).fetch_sub(1, SeqCst);
-                work.spill(self);
-                return;
-            }
-            if got == 0 {
-                self.ctl(8).fetch_sub(1, SeqCst);
-                return;
-            }
-            let it = *self.items.add(item as usize);
-            let whole = self.item(it);
-            (next, none) = (0, 0);
-            if !whole {
-                self.ctl(9).store(item + 1, SeqCst);
-                self.ctl(6).fetch_or(32, SeqCst);
-            } else {
-                let p = it.phase;
-                let finished = at(self.ctl.add(10 + p as usize)).fetch_add(1, SeqCst) + 1;
-                let target = at(self.ctl.add(10 + self.a.phases as usize + p as usize)).load(SeqCst);
-                let all = finished == if target != 0 { target } else { *self.phases.add(4 * p as usize + 1) };
-                let flags = if all { self.ctl(6).load(SeqCst) } else { 0 };
-                if flags & 128 != 0 {
-                    self.ctl(6).fetch_and(!128, SeqCst);
-                }
-                if flags & 128 != 0 && flags & 2 == 0 {
-                    // A gate's room mapped past: the program parks after the gate's phase.
-                    self.ctl(9).store(0xC000_0000 | p, SeqCst);
-                    self.ctl(6).fetch_or(32, SeqCst);
-                } else if all && flags & 64 != 0 {
-                    // Its texts found the arena full: the phase parks, and runs again once the host maps more.
-                    self.ctl(6).fetch_and(!64, SeqCst);
-                    self.ctl(9).store(0x8000_0000 | p, SeqCst);
-                    self.ctl(6).fetch_or(32, SeqCst);
-                } else {
-                    let jump = if all { self.ctl(7).load(SeqCst) } else { 0 };
-                    if jump != 0 {
-                        self.ctl(7).store(0, SeqCst);
-                    }
-                    next = if jump != 0 {
-                        if jump == NONE { 0 } else { jump }
-                    } else if all && p + 1 < self.a.phases && self.ctl(6).load(SeqCst) & 2 == 0 {
-                        p + 2
-                    } else {
-                        0
-                    };
-                    if next != 0 {
-                        none = self.phase_reset(next - 1);
-                    }
-                }
-            }
-            self.phase_push(&mut work, next, none);
-            if got == 2 {
-                self.ctl(2).fetch_sub(1, SeqCst);
-            }
+                self.ctl(4).load(SeqCst)
+            };
+            self.chain_set(1, n);
+            return;
         }
-    }
-}
-
-/// A launch's items not yet run, in their order: ranges of items (a phase's segment each). The host's count of them is
-/// `ctl[2]`, as a queue's pushes counted it; they reach the slots (the host's) only when a launch's budget ends with
-/// items left (`spill`), and a launch's first takes them back (`carried`).
-struct Work {
-    ranges: Vec<(u32, u32)>,
-    at: usize,
-}
-
-impl Work {
-    /// The items a last launch left in the slots (spilled, or put back by the host), the slots emptied.
-    unsafe fn carried(p: &Prog) -> Work {
-        let (head, tail) = (p.ctl(0).load(SeqCst), p.ctl(1).load(SeqCst).min(p.a.capacity));
-        let mut ranges = Vec::new();
-        for i in head..tail {
-            match at(p.slots.add(i as usize)).swap(NONE, SeqCst) {
-                0 | NONE => {}
-                v => ranges.push((v - 1, 1)),
-            }
+        let item = if back != 0 { back - 1 } else { self.phase_item(p, g, mode & 1, mode & 2 != 0) };
+        let whole = item == NONE || self.item(*self.items.add(item as usize));
+        if back != 0 {
+            self.ctl(2).store(0, SeqCst);
         }
-        p.ctl(0).store(tail, SeqCst);
-        Work { ranges, at: 0 }
-    }
-
-    /// Items `first..first + n` after the others, counted as the host counts its pending items (`ctl[2]`).
-    unsafe fn push(&mut self, p: &Prog, first: u32, n: u32) {
-        if n > 0 {
-            p.ctl(2).fetch_add(n, SeqCst);
-            self.ranges.push((first, n));
+        if !whole {
+            self.ctl(9).store(item + 1, SeqCst);
+            self.ctl(6).fetch_or(32, SeqCst);
+            return;
         }
-    }
-
-    fn pop(&mut self) -> Option<u32> {
-        while let Some(r) = self.ranges.get_mut(self.at) {
-            if r.1 > 0 {
-                r.1 -= 1;
-                r.0 += 1;
-                return Some(r.0 - 1);
-            }
-            self.at += 1;
+        let want = self.ctl(10 + (self.a.phases + p) as usize).load(SeqCst);
+        let want = if want != 0 { want } else { self.phase(p)[1] };
+        if self.ctl(10 + p as usize).fetch_add(1, SeqCst) + 1 != want {
+            return;
         }
-        None
-    }
-
-    /// The items left into the slots past their tail, for the next launch: past their room, the program's overflow
-    /// (`ctl[3]`, `ctl[6]` bit 0), its items uncounted, as a queue's push past its room.
-    unsafe fn spill(&mut self, p: &Prog) {
-        while let Some(item) = self.pop() {
-            let tail = p.ctl(1).fetch_add(1, SeqCst);
-            if tail >= p.a.capacity {
-                p.ctl(3).store(1, SeqCst);
-                p.ctl(2).fetch_sub(1, SeqCst);
-                p.ctl(6).fetch_or(1, SeqCst);
-                continue;
-            }
-            at(p.slots.add(tail as usize)).store(item + 1, SeqCst);
+        self.ctl(8).fetch_add(1, SeqCst);
+        let flags = self.ctl(6).load(SeqCst);
+        if flags & 128 != 0 {
+            self.ctl(6).fetch_and(!128, SeqCst);
         }
+        let n = if flags & 128 != 0 && flags & 2 == 0 {
+            // A gate's room mapped past: the program parks after the gate's phase.
+            self.ctl(9).store(0xC000_0000 | p, SeqCst);
+            self.ctl(6).fetch_or(32, SeqCst);
+            0
+        } else if flags & 64 != 0 {
+            // Its texts found the arena full: the phase parks, and runs its texts again once the host maps more.
+            self.ctl(6).fetch_and(!64, SeqCst);
+            self.ctl(9).store(0x8000_0000 | p, SeqCst);
+            self.ctl(6).fetch_or(32, SeqCst);
+            0
+        } else {
+            self.phase_next(p)
+        };
+        self.chain_set(d + 1, n);
     }
 }
 
@@ -3207,7 +3156,7 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
     assert!(threads == TG, "join_run: a group of {TG} threads, not {threads}");
     assert!(!l.reads.is_null(), "join_run: the compiled reads (Launch::reads)");
     let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
-    let a = (*argv.add(10) as *const ProgP).read_unaligned();
+    let a = (*argv.add(9) as *const ProgP).read_unaligned();
     let prog = Prog {
         jobs: buf(0) as *mut Job,
         items: buf(1) as *const Item,
@@ -3217,15 +3166,12 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
         sorts: buf(5) as *const SortPass,
         script: buf(6) as *const SizeOp,
         ctl: buf(7) as *mut u32,
-        slots: buf(8) as *mut u32,
-        counts: buf(9) as *mut u32,
+        counts: buf(8) as *mut u32,
         a,
         rd: Reads(l.reads),
     };
-    // Its groups run one after another on one thread (the CPU device's): the first runs the launch's items.
-    if l.group == [0, 0, 0] {
-        prog.drive();
-    }
+    // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
+    prog.group(l.group[0]);
 }
 
 #[cfg(test)]
