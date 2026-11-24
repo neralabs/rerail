@@ -86,15 +86,19 @@ pub fn set_directory(dir: &Path) {
 }
 
 fn cpu() -> f64 {
-    // macOS: the thread's CPU by `clock_gettime`, a quarter of `thread_info`'s cost (every span reads it twice).
-    #[cfg(target_os = "macos")]
+    // The thread's CPU by `clock_gettime`, which brings the running thread's time up to date. macOS: a quarter of
+    // `thread_info`'s cost (every span reads it twice). Linux: `getrusage(RUSAGE_THREAD)` reads the time as of the
+    // thread's last scheduler update (a tick, or a call that updates it, as `getrusage(RUSAGE_SELF)` in
+    // `memory::peak_sampled` does as a span closes), so each span lost the time since then to its parent: the
+    // lowering's tail showed 4.6 ms a run of its own that its passes did (spike 0639, spark2).
+    #[cfg(unix)]
     {
         let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
         // SAFETY: fills `t` with the calling thread's CPU time.
         unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
         t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(unix))]
     {
         let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s

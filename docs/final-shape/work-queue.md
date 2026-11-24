@@ -10942,3 +10942,21 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - The branch's own "0639" (its draft number for 0641) in accel, device, ledger and region read 0641.
 - `RERAIL_STACK_ROUNDS`, `RERAIL_STACK_PHASES` and `RERAIL_SCAN_OWN_TILES` are read through `profile::var` and listed as scoped; `RERAIL_PROGRAM_BUDGET`, read nowhere now, is dropped from the list.
 - Checked (Relax, RERAIL_GPU=cpu): device-metal, accel, prof, blocks, device, gpu 0 errors. device-metal's tests on the CPU backend: 83 passed, 4 failed (aggregate and random-integer parity, `an_index_built_twice_that_a_batch_took_is_kept`, `local_joins_are_pushed_on_a_version`). The same four fail at the hub before the merge; they are fixed on their own after the roll-ups.
+
+### Q526. Roll-up 99 (final-rerail-shape-rr-align f95c3e944f onto Pulling-it-all-together): what the merge chose
+
+- Decision 0639 steps 1 to 4 (phase 0 plans the library's modules as rules; a module's lowering is phase 0's request; helpers named by their content; a program's library a union over its modules' images), the cone's shared kept strata, the fresh-run tiers and one source walk a nextest run come in whole.
+- Onto the hub's statements as a block column (`Statements`, 3890a7ee49): the branch's `Read::Modular { plan }`, `linked_from_plan`, `lower_planned_module` and its tests take `Statements`, not `Vec<Stmt>`; phase 0's answer rows are `Vector<i64>` (the hub's). The hub's `Vector` columns kept beside the branch's new fields (`Graph::plans`, `Op::View`, build's `vars`).
+- `library_modules` is the branch's (phase 0's plan, no `files` argument); the hub's edits to the old unit-finding body go with it. The hub's `HelperKey`/`template_of`, unused once helpers are named by content, go too.
+- Fixed, red at the branch's tip too: `library_modules_link_to_the_lowering_of_them_together`.
+  - A helper named by its content declared its columns with the walk's variable names (`rr_any4`), so two lowerings of one helper differed. Its walk-made columns are now named by place (`rr_c<i>`, `renamed_fields`).
+  - The test lowers the library together in the modules' link order (phase 0's plan).
+  - It compares lines with walk-made names numbered within each line, and module- and content-named helpers read by their stem, as a sorted list. A module's walk counts again from its start (0639 §4), and a module's or content's name carries its module's digest.
+- Maintenance test: the branch's fresh-run tier on the R10 check, with the hub's R2 checks (`frames_read`, `rows_copied`).
+- Checked (Relax): rr-root, rr, program-image, plan-base, logic, tests-rr, tests-corpus, tests-lang 0 errors. Tests passed:
+  - tests-rr: the 0639 link tests (15);
+  - tests-corpus: phase 0, cone and maintenance (21);
+  - logic: strings (18);
+  - tests-lang: id reads (7);
+  - boot: test flush (1).
+- Not passing: `json_rules_pack_is_current`, red before the merge too, fixed on its own. The whole tests-rr suite does not finish inside one capped run (32 tests in 580 s): the branch's spike tests take 40 to 90 s each.

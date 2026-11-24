@@ -6876,6 +6876,30 @@ fn run_observed_within(
                 let answer = match rel { git::REVISION => "git_view_revision_of", git::REPO_REVISION => "git_revision_of", _ => "git_object_of" };
                 return Ok(vec![(answer.to_owned(), out)]);
             }
+            if rel == crate::code_rule_dsl::logic::rr::LOWER_REQUEST {
+                // Each module asked, in rank order: its scope's images, which rank below it, are made first
+                // (decision 0639 §3).
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}: modules lowered"));
+                let mut asked: Vec<&Vector<i64>> = rows.iter().collect();
+                asked.sort_by_key(|r| r.get(1).copied().unwrap_or_default());
+                let mut out = Vec::new();
+                for row in asked {
+                    let [key, _, files, scope, reached] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a key, a rank, files, a scope and its files"))); };
+                    let key_text = text(*key)?;
+                    // A module that does not lower is not answered: a program that reads it lowers it where it
+                    // reads it, and meets the error there, in its own place.
+                    let image = match crate::code_rule_dsl::logic::rr::lower_planned_module(&key_text, &text(*files)?, &text(*scope)?, &text(*reached)?) {
+                        Ok(image) => image,
+                        Err(e) => {
+                            crate::code_rule_dsl::logic::profile::decision("a module phase 0 could not lower (decision 0639 §3)", || e.to_string());
+                            continue;
+                        }
+                    };
+                    world.consulted_lookup(rel, &key_text, "", "held".to_owned());
+                    out.push(rerail_blocks::vector![*key, atoms(&[image.as_str()])?[0]]);
+                }
+                return Ok(vec![(crate::code_rule_dsl::logic::rr::LOWERED.to_owned(), out)]);
+            }
             if rel == analysis_history::REQUEST {
                 let mut out = Vec::new();
                 for row in rows {

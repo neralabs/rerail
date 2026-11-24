@@ -391,6 +391,13 @@ fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> K
                 [int(i as i64), int(1), int(*parent as i64), str_value(&hex32(&image)), str_value("")]
             }
             StoredVersion::View { parent, removed } => [int(i as i64), int(2), int(*parent as i64), str_value(""), ids_text(removed)],
+            StoredVersion::Union { header, parts } => {
+                for (k, (part, keep)) in parts.iter().enumerate() {
+                    let keep: Vec<u32> = keep.iter().flat_map(|&(s, e)| [s, e]).collect();
+                    facts.entry("pipeline_run_union_part".into()).or_default().push([int(i as i64), int(k as i64), int(*part as i64), ids_text(&keep)].into());
+                }
+                [int(i as i64), int(3), int(*header as i64), str_value(""), str_value("")]
+            }
         };
         facts.entry("pipeline_run_version".into()).or_default().push(row.into());
     }
@@ -579,7 +586,7 @@ impl StoredRuns<'_> {
         // mapped, and opened over the mapping, not decompressed, hashed or copied (decision 0394).
         let digests: Vec<Option<[u8; 32]>> = by_index
             .iter()
-            .map(|r| if matches!(r[1], Value::Int(2)) { Ok(None) } else { text(&r[3]).and_then(|t| unhex32(&t).ok_or_else(|| bad("a stored run's image is not a digest"))).map(Some) })
+            .map(|r| if matches!(r[1], Value::Int(2) | Value::Int(3)) { Ok(None) } else { text(&r[3]).and_then(|t| unhex32(&t).ok_or_else(|| bad("a stored run's image is not a digest"))).map(Some) })
             .collect::<Result<_, String>>()?;
         let rows_digest = match rows("pipeline_run_rows").first() {
             Some(r) => Some(unhex32(&text(&r[0])?).ok_or_else(|| bad("a stored run's rows are not a digest"))?),
@@ -617,6 +624,18 @@ impl StoredRuns<'_> {
                     v
                 }
                 (2, None) => Version::view_without(&parent()?, &text_ids(&r[4])?)?,
+                (3, None) => {
+                    let header = parent()?;
+                    let at = int(&r[0])?;
+                    let mut parts: Vec<(i64, std::sync::Arc<crate::code_rule_dsl::logic::program_image::UnionPart>)> = Vec::new();
+                    for p in rows("pipeline_run_union_part").iter().filter(|p| int(&p[0]).ok() == Some(at)) {
+                        let part = usize::try_from(int(&p[2])?).ok().and_then(|k| versions.get(k).cloned()).ok_or_else(|| bad("a stored union names no part before it"))?;
+                        let keep: Vec<(u32, u32)> = text_ids(&p[3])?.chunks(2).map(|c| (c[0], c.get(1).copied().unwrap_or(c[0]))).collect();
+                        parts.push((int(&p[1])?, std::sync::Arc::new(crate::code_rule_dsl::logic::program_image::UnionPart::found_in(&header, part, keep)?)));
+                    }
+                    parts.sort_by_key(|(k, _)| *k);
+                    Version::union(header, parts.into_iter().map(|(_, p)| p).collect())?
+                }
                 _ => return Err(bad("a stored run's version is of no kind")),
             };
             if let Some(d) = image {

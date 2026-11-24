@@ -147,7 +147,6 @@ native/crates/kotlin_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/kotlin_parser/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
 native/crates/lang/src/code_rule_dsl/build_ids.rs::ENGINE	stays	computed once from the engine's own build
 native/crates/lang/src/code_rule_dsl/build_ids.rs::GRAMMAR	stays	computed once from the engine's own build
-native/crates/lang/src/code_rule_dsl/build_ids.rs::REBUILT	stays	computed once from the engine's own grammar
 native/crates/lang/src/code_rule_dsl/embed.rs::EMBEDDERS	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/fixtures.rs::DIR	stays	the conformance fixtures' directory, cargo's RERAIL_FIXTURES_DIR for the process: one value for every caller
 native/crates/lang/src/code_rule_dsl/fixtures.rs::NEXT	stays	an id counter: append-only

@@ -311,9 +311,9 @@ fn one_tests_rows_are_its_share_of_every_tests() {
     }
     let all = vocabulary.rows(|i| strings[i].as_str(), &symbols);
     let fresh = Vocabulary::from_specs(&names, specs).unwrap();
-    for k in 0..70 {
-        assert_eq!(vocabulary.rows_of(k, |i| strings[i].as_str(), &symbols), all[k], "test {k}, tested before");
-        assert_eq!(fresh.rows_of(k, |i| strings[i].as_str(), &symbols), all[k], "test {k}, a vocabulary of its own");
+    for (k, rows) in all.iter().enumerate().take(70) {
+        assert_eq!(&vocabulary.rows_of(k, |i| strings[i].as_str(), &symbols), rows, "test {k}, tested before");
+        assert_eq!(&fresh.rows_of(k, |i| strings[i].as_str(), &symbols), rows, "test {k}, a vocabulary of its own");
     }
     assert!(vocabulary.rows_of(70, |i| strings[i].as_str(), &symbols).is_empty(), "no such test");
 }

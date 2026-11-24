@@ -286,13 +286,18 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
         let (first, expected) = run(texts, src, true);
         let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
         assert_eq!(ran, all, "the first run evaluates every stratum");
-        assert_eq!(run(texts, src, false).1, expected);
+        // Its states: the first run's, then each edit's (`fresh_tier`).
+        if super::fresh_tier::compared(0, edits.len() + 1) {
+            assert_eq!(run(texts, src, false).1, expected);
+        }
         let (mut maintained, mut recursive) = (0, 0);
-        for (path, text) in edits {
+        for (i, (path, text)) in edits.iter().enumerate() {
             std::fs::write(src.join(path), text).unwrap();
             let (report, got) = run(texts, src, true);
-            let (_, want) = run(texts, src, false);
-            assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+            if super::fresh_tier::compared(i + 1, edits.len() + 1) {
+                let (_, want) = run(texts, src, false);
+                assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+            }
             eprintln!("{path}: {:?} strata, {:?} maintained (recursive, derived again; {:?}); {} findings", report.cross_kept, report.cross_maintained, report.cross_again, got.len());
             maintained += report.cross_maintained.0;
             recursive += report.cross_maintained.1;
@@ -434,14 +439,20 @@ fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_
         findings()
     };
     let first = run(true);
-    assert_eq!(run(false), first);
+    // Its states: the first run's, then each edit's (`fresh_tier`).
+    let states = REACH_EDITS.len() + 1;
+    if super::fresh_tier::compared(0, states) {
+        assert_eq!(run(false), first);
+    }
     assert!(first.iter().any(|f| f.iter().any(|v| v.contains("CYC"))), "the first cycle's imports: {first:?}");
     let mut codes = std::collections::BTreeSet::new();
-    for (path, text, what) in REACH_EDITS {
+    for (i, (path, text, what)) in REACH_EDITS.iter().enumerate() {
         std::fs::write(src.join(path), text).unwrap();
         let got = run(true);
-        let want = run(false);
-        assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        if super::fresh_tier::compared(i + 1, states) {
+            let want = run(false);
+            assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        }
         codes.extend(got.iter().flat_map(|f| ["CYC", "INCYC", "TOF", "SEESE", "DIRECT"].into_iter().filter(|c| f.iter().any(|v| v.contains(c)))));
     }
     assert_eq!(codes.len(), 5, "every reader's findings appeared along the edits: {codes:?}");
@@ -651,6 +662,40 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The cone's strata are kept for every root (`kept_strata::cone_space_shared`, unless `RERAIL_CONE_SPACE=root`): a
+/// corpus's first run finds clean the strata another corpus's run over the same libraries kept, and loads what a run
+/// with nothing kept loads.
+#[test]
+fn a_corpus_first_run_reads_the_cone_strata_another_root_kept() {
+    if std::env::var("RERAIL_CONE_SPACE").is_ok_and(|v| v == "root") {
+        return;
+    }
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cone-shared");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (a, b) = (dir.join("a"), dir.join("b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("main.py"), "import os\n").unwrap();
+    std::fs::write(b.join("tool.py"), "import os\nx = 1\n").unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |root: &std::path::Path, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut loaded = crate::code_rule_dsl::logic::plan::output::shown(&out, "n_loaded").unwrap();
+        loaded.sort();
+        (report.cone_kept, loaded)
+    };
+    run(&a, "kept.sqlite");
+    let (kept, loaded) = run(&b, "kept.sqlite");
+    let (evaluated, of) = kept.expect("a run with a store keeps its cone");
+    assert!(evaluated < of, "b's first run evaluates only the strata a's left unclean: {evaluated} of {of}");
+    assert_eq!(loaded, run(&b, "fresh.sqlite").1, "b's loads are a run's with nothing kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0145: the cone run as rounds from the last run's final round finds what the gated fixpoint over
 /// nothing kept finds, edit after edit: a new import, a library's own import, an import taken away (its load is
 /// not asked again), and a library file that goes.
@@ -685,13 +730,17 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
         loaded.sort();
         (report.cone_rounds, loaded)
     };
+    // The edits below, each a state checked against a fresh run's in the full tier, the last in every tier (`fresh_tier`).
+    const EDITS: usize = 5;
     let both = |what: &str, want: &[&str]| {
         let (rounds, kept) = run("kept.sqlite");
         fresh.set(fresh.get() + 1);
-        let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+        if super::fresh_tier::compared(fresh.get() - 1, EDITS) {
+            let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+            assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
+            assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
+        }
         assert!(rounds > 0, "{what}: the kept run runs rounds");
-        assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
-        assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
         assert_eq!(kept, want, "{what}");
     };
     assert_eq!(run("kept.sqlite"), (0, vec!["a.pyi".to_owned(), "b.pyi".to_owned(), "builtins.pyi".to_owned()]), "the first run is the fixpoint");
@@ -974,12 +1023,15 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
         ("c.py", "from b import g\ndef h():\n    pass\n"),
         ("b.py", "def g():\n    pass\n"),
     ];
+    let n = edits.len();
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
         let (maintained, rows, pieces) = run("kept.sqlite");
         together += pieces;
-        let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        if super::fresh_tier::compared(i, n) {
+            let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after edit {i} ({file})");
+        }
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
     assert!(together > 0, "a stratum's pieces ran together, or the maintain mode ran it as one component");
@@ -1099,11 +1151,14 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
         ("c.py", "def h():\n    pass\n", "two uses gone: f's count falls, g's group empties"),
         ("b.py", "def g():\n    pass\n", "every use gone"),
     ];
+    let n = edits.len();
     for (i, (file, body, what)) in edits.into_iter().enumerate() {
         write(file, body);
         let (rows, mode) = run("kept.sqlite");
-        let (fresh, _) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after {what}");
+        if super::fresh_tier::compared(i, n) {
+            let (fresh, _) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after {what}");
+        }
         assert!(mode > 0, "after {what}: the maintain mode maintained strata");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -1977,11 +2032,14 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
         ("b.py", "def g():\n    pass\n"),
     ];
     let mut tested = false;
+    let n = edits.len();
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
         let (report, rows) = run("kept.sqlite");
-        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        if super::fresh_tier::compared(i, n) {
+            let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after edit {i} ({file})");
+        }
         // The program's one native is the text test.
         assert!(!report.cross_again.contains_key("a relation made natively"), "edit {i}: the text test is maintained, not derived again: {:?}", report.cross_again);
         tested |= report.text.0 > 0;

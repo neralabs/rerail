@@ -2466,7 +2466,7 @@ Hit(n) :- e(n).
         let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let heads: Vec<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
         assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::FOUND_NODE), "the finding's node by its clause: {heads:?}");
-        let own = super::own_names(&super::super::link::Versioned::of_version(v).unwrap(), &crate::code_rule_dsl::logic::rr::core_names());
+        let own = super::own_names(&super::super::link::Versioned::of_version(v).unwrap(), crate::code_rule_dsl::logic::rr::core_names());
         for shared in [crate::code_rule_dsl::logic::rr::FOUND_NODE, crate::code_rule_dsl::logic::rr::FOUND_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::PLACED_AT, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
             assert!(!own.contains(shared), "{shared} is the pack's: {own:?}");
         }

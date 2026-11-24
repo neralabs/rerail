@@ -1445,7 +1445,7 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
         ran.unwrap();
         declined
     };
-    assert!(!declined.keys().any(|k| ["rr_dfs", "rr_mall", "hit", "hm", "found"].iter().any(|r| k.contains(r))), "{declined:?}");
+    assert!(!declined.keys().any(|k| ["rr_dfs", "hit", "hm", "found"].iter().any(|r| k.contains(r)) || crate::code_rule_dsl::logic::rr::lower::holds_helper(k, &["mall"])), "{declined:?}");
     assert_eq!(got["hit"], [["10", "30", "1"], ["20", "30", "5"], ["40", "30", "2"]]);
     assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
     let found = |row: [&str; 5]| got["found"].contains(&row.map(str::to_owned).to_vec());

@@ -37,7 +37,6 @@ impl ProgramPass for WidenCyclicContexts {
     const NAME: &'static str = "widen the cyclic contexts";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
         let about = cx.get::<crate::code_rule_dsl::logic::program_image::About>()?;
         let errors = crate::code_rule_dsl::logic::program_image::analyses::unstratified(v, &about);
         let sccs: Vec<BTreeSet<String>> = errors.iter().filter_map(|e| e.unstratified().map(|(scc, _)| scc.clone())).collect();
@@ -49,7 +48,7 @@ impl ProgramPass for WidenCyclicContexts {
         for scc in &sccs {
             for rule in v.rules() {
                 let head = v.rel_name(rule.head().rel());
-                if !head.starts_with(&ctx_prefix) || !scc.contains(head) {
+                if crate::code_rule_dsl::logic::rr::lower::helper_stem(head) != Some("ctx") || !scc.contains(head) {
                     continue;
                 }
                 let in_cycle = |l: &L<'_>| match l {
@@ -488,7 +487,7 @@ impl ProgramPass for AggregateDemand {
         for r in v.rules() {
             for l in r.body() {
                 if let L::Agg { atom, .. } = l.view()
-                    && v.rel_name(atom.rel()).contains("rr_agg")
+                    && crate::code_rule_dsl::logic::rr::lower::holds_helper(v.rel_name(atom.rel()), &["agg"])
                 {
                     names.insert(v.rel_name(atom.rel()).to_owned());
                 }
@@ -1611,35 +1610,6 @@ impl ProgramPass for ThreeValued {
                 b.rewrite(&input, r, &mut Side { v: &input, three: &three, must: true }).finish()?;
             }
             b.rewrite(&input, r, &mut Side { v: &input, three: &three, must: false }).finish()?;
-        }
-        Ok(())
-    }
-}
-
-/// A module's program linked onto the scope's (`lower::append_fields`):
-/// its header added to the input's, its rules copied after the input's. Its settings: the module's version (by
-/// digest) and the counts of inputs stated first.
-pub struct AppendModule {
-    pub own: std::sync::Arc<Version>,
-    pub stated: usize,
-    pub own_stated: usize,
-}
-
-impl ProgramPass for AppendModule {
-    const NAME: &'static str = "append a module";
-    fn settings(&self) -> Vec<u8> {
-        format!("{} {} {} {}", self.own.digest(), self.own.size(), self.stated, self.own_stated).into_bytes()
-    }
-    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let mut stated = self.stated;
-        let input = std::sync::Arc::clone(w.input());
-        let b = w.derive()?;
-        crate::code_rule_dsl::logic::rr::lower::append_fields(&mut b.fields(), &*self.own, &mut stated, self.own_stated);
-        for r in input.rules() {
-            b.keep(&input, r);
-        }
-        for r in self.own.rules() {
-            b.copy(&self.own, r);
         }
         Ok(())
     }

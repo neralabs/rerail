@@ -1136,10 +1136,10 @@ fn shown_columns(rules: &[W], outputs: &[String]) -> HashMap<String, BTreeSet<us
     shown
 }
 
-/// A context relation (`rr_ctx…`, a policy's copy too): what `asking` adds.
+/// A context relation (a helper of stem `ctx`, `lower::helper_stem`; a policy's copy too): what `asking` adds.
 pub(super) fn is_context(r: &str) -> bool {
     let own = r.strip_prefix('p').and_then(|t| t.find('_').filter(|&i| i > 0 && t[..i].bytes().all(|b| b.is_ascii_digit())).map(|i| &t[i + 1..]));
-    own.unwrap_or(r).starts_with("rr_ctx")
+    crate::code_rule_dsl::logic::rr::lower::helper_stem(own.unwrap_or(r)) == Some("ctx")
 }
 
 /// `hiding::asking` over the rules here: the guest demand and the contexts only it reads, transitively.

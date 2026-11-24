@@ -25,6 +25,9 @@ struct Session {
     outputs: Vec<&'static str>,
     handle: super::session::Handle,
     fresh: usize,
+    /// The last edit's outputs, not yet checked against a fresh run: checked as the session ends, where no edit
+    /// followed (`fresh_tier`: by default a session checks its last state only).
+    unchecked: std::cell::RefCell<Option<(String, Vec<BTreeSet<Vec<String>>>)>>,
 }
 
 /// What one edit's session run did.
@@ -47,7 +50,7 @@ impl Session {
         std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let handle = super::session::Handle::open(&dir.join("session")).unwrap();
-        let s = Session { _one: one, dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0 };
+        let s = Session { _one: one, dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0, unchecked: Default::default() };
         for (file, body) in files {
             s.write(file, body);
         }
@@ -55,6 +58,8 @@ impl Session {
     }
 
     fn write(&self, file: &str, body: &str) {
+        // An edit follows the one left unchecked: its state was not the last.
+        self.unchecked.borrow_mut().take();
         let path = self.dir.join("src").join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, format!("{}{body}", self.marker)).unwrap();
@@ -108,16 +113,28 @@ impl Session {
         self.rows(&out)
     }
 
-    /// The session's run after an edit, checked against a fresh run (R10).
+    /// The session's run after an edit, checked against a fresh run (R10): at once in the full tier, else as the
+    /// session ends if no edit follows (`fresh_tier`).
     fn edit(&mut self, what: &str) -> Ran {
         let ran = self.run();
-        assert_eq!(ran.rows, self.fresh(), "R10: after {what}, the session's outputs are a fresh run's");
+        if super::fresh_tier::every() {
+            assert_eq!(ran.rows, self.fresh(), "R10: after {what}, the session's outputs are a fresh run's");
+        } else {
+            *self.unchecked.borrow_mut() = Some((what.to_owned(), ran.rows.clone()));
+        }
         ran
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // The last edit's state (R10), where the test did not fail before it.
+        let unchecked = self.unchecked.borrow_mut().take();
+        if let Some((what, rows)) = unchecked
+            && !std::thread::panicking()
+        {
+            assert_eq!(rows, self.fresh(), "R10: after {what}, the session's outputs are a fresh run's");
+        }
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -222,10 +239,12 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
 fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
     let mut s = kinds("r2-kept");
     s.run_kept();
-    for (file, body, what) in SMALL_EDITS {
+    for (i, (file, body, what)) in SMALL_EDITS.iter().enumerate() {
         s.write(file, body);
         let ran = s.run_kept();
-        assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
+        if super::fresh_tier::compared(i, SMALL_EDITS.len()) {
+            assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
+        }
         assert!(
             ran.shape.inputs_from_owners + ran.shape.inputs_hashed > 0,
             "R2: after {what}, the inputs' deltas are found by their documents ({:?})",
@@ -247,10 +266,12 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
 fn r2_a_new_process_reads_its_kept_rows_in_place() {
     let mut s = kinds("r2-in-place");
     s.run_kept();
-    for (file, body, what) in SMALL_EDITS {
+    for (i, (file, body, what)) in SMALL_EDITS.iter().enumerate() {
         s.write(file, body);
         let ran = s.run_kept();
-        assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
+        if super::fresh_tier::compared(i, SMALL_EDITS.len()) {
+            assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
+        }
         assert!(ran.shape.frames_read > 0, "R2: after {what}, the kept entries are bound where they lie");
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no kept row is copied");
     }
