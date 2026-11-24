@@ -273,8 +273,7 @@ version by hand, once ([publishing-a-new-pack.md](publishing-a-new-pack.md)).
 - **Skeleton**: package manifest, pack listing with no rules, README, LICENSE, NOTICE. Set-up recommends the pack by
   the listing's `match` (check 7).
 - **Register**: packs are npm workspaces. `generate:packs` writes core's pack list; check 7 fails when it is stale.
-- **Changeset**: the first release is `0.1.1`; a pack that needs Rerail 0.2 or newer, such as one with `.rerail`
-  rules, takes a `minor`, so its first release is `0.2.0`.
+- **Changeset**: the first release is `0.1.1`.
 - **Rules**: a pack whose ports are all candidates ships no rules and is never recommended.
 - **Repository lists**: the pack tables in rule-packs.md and the root README, `packs/README.md`, and the first
   paragraph of `docs/pack-format.md`.
