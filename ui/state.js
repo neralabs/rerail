@@ -254,13 +254,16 @@ export const titleOf = stored => (stored.rule.title?.trim() ? ruleTitle(stored) 
 export const dimensionsOf = stored => packRuleOf(stored.rule.id)?.rule.dimensions;
 
 const haystacks = new WeakMap();
-/** Text the search box runs over: title, id, description, scope, pack, group, and the risk and hazard the pack gives. */
+/** A rule's dimensions as search words: its risk by label and by id (`data safety`, `data-safety`), severity, layer, hazard. */
+const dimensionWords = d => (d === undefined ? [] : [riskLabel(d.risk), d.risk, d.severity, d.layer, d.hazard ?? ""]);
+
+/** Text the search box runs over: title, id, description, scope, pack, group, and the dimensions the pack gives. */
 function searchText(stored) {
   let hay = haystacks.get(stored);
   if (hay === undefined) {
-    const entry = packRuleOf(stored.rule.id), dimensions = entry?.rule.dimensions;
+    const entry = packRuleOf(stored.rule.id);
     hay = [titleOf(stored), stored.rule.id, stored.rule.description ?? "", scopeText(stored), entry?.pack.name ?? "", entry?.rule.group ?? "",
-      dimensions ? riskLabel(dimensions.risk) : "", dimensions?.hazard ?? ""].join(" ").toLowerCase();
+      ...dimensionWords(entry?.rule.dimensions)].join(" ").toLowerCase();
     haystacks.set(stored, hay);
   }
   return hay;

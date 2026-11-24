@@ -61,6 +61,15 @@ function updateStopped(badge, stored) {
     : notRunningReason(stored));
 }
 
+/** The rule's risk and severity, as its pack gives them; its layer and hazard, the id it shares with other packs, on hover. */
+function updateRisk(span, stored) {
+  const dimensions = dimensionsOf(stored);
+  setAttr(span, "hidden", dimensions === undefined);
+  if (dimensions === undefined) return;
+  setText(span, `${riskLabel(dimensions.risk)} · ${dimensions.severity}`);
+  setAttr(span, "title", [`Layer: ${dimensions.layer}`, ...(dimensions.hazard ? [`Hazard: ${dimensions.hazard}`] : [])].join(" · "));
+}
+
 function updateRow(row, stored) {
   const id = stored.rule.id, r = row._r, title = titleOf(stored);
   setClass(row, "off", !isRunning(stored));
@@ -80,11 +89,7 @@ function updateRow(row, stored) {
   // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
   setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));
-  // What the rule's pack says it guards against, how badly, where; the hazard id it shares with other packs on hover.
-  const dimensions = dimensionsOf(stored);
-  setText(r.risk, dimensions ? `${riskLabel(dimensions.risk)} · ${dimensions.severity}` : "");
-  setAttr(r.risk, "title", dimensions ? [`Layer: ${dimensions.layer}`, ...(dimensions.hazard ? [`Hazard: ${dimensions.hazard}`] : [])].join(" · ") : null);
-  setAttr(r.risk, "hidden", dimensions === undefined);
+  updateRisk(r.risk, stored);
   const lastSeen = activityAllOf(id).lastSeenAt;
   const lastText = allFires(id) && lastSeen ? `last logged ${whenLabel(lastSeen)}` : "";
   setText(r.last, lastText);

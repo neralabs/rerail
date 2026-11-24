@@ -269,17 +269,21 @@ describe("a pack page's rules", () => {
 
   it("offers the risks its rules have, in the risks' order with counts, and filters and searches by them", () => {
     const [typescript] = data.packs as { rules: { id: string; dimensions?: unknown }[] }[];
-    typescript!.rules[0]!.dimensions = { risk: "performance", layer: "ui", severity: "low" };
+    typescript!.rules[0]!.dimensions = { risk: "data-safety", layer: "jobs", severity: "critical" };
     typescript!.rules[2]!.dimensions = { risk: "security", layer: "server", severity: "high", hazard: "auth.mutation-without-auth" };
     data.packs = [...data.packs];
     const all = pageRules("pack:typescript")!;
     const shown = (filter: string, query = "") => { Object.assign(ui2, { filter, query, sort: "az" }); return shownRules(all).map(r => r.rule.id); };
 
-    expect(pageRiskFilters(all)).toEqual([["risk:security", "Security (1)"], ["risk:performance", "Performance (1)"]]);
+    expect(pageRiskFilters(all)).toEqual([["risk:security", "Security (1)"], ["risk:data-safety", "Data safety (1)"]]);
     expect(pageRiskFilters(pageRules("pack:next")!)).toEqual([]);
     expect(shown("risk:security")).toEqual(["ts:c"]);
-    expect(shown("risk:data-safety")).toEqual([]);
-    expect(shown("all", "performance")).toEqual(["ts:a"]);
+    expect(shown("risk:data-safety")).toEqual(["ts:a"]);
+    expect(shown("risk:performance")).toEqual([]);
+    // A risk is found by its label and by its id as pack.json and the API write it.
+    expect(shown("all", "data safety")).toEqual(["ts:a"]);
+    expect(shown("all", "data-safety")).toEqual(["ts:a"]);
+    expect(shown("all", "critical")).toEqual(["ts:a"]);
     expect(shown("all", "mutation-without-auth")).toEqual(["ts:c"]);
   });
 

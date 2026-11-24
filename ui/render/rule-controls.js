@@ -26,17 +26,25 @@ function build() {
 }
 
 /**
+ * The Filter select: the page's risk choices (`riskFilters`, `pageRiskFilters`) under Risk, which none hides; the
+ * choice `ui.filter` names when the page offers it; and Clear while it narrows the list.
+ */
+function syncFilter(riskFilters) {
+  setContent(built.risks, JSON.stringify(riskFilters), () => riskFilters.map(([v, label]) => h("option", { value: v }, label)));
+  setAttr(built.risks, "hidden", riskFilters.length === 0);
+  const offered = [...PAGE_FILTERS, ...riskFilters].some(([v]) => v === ui.filter);
+  if (offered && built.filter.value !== ui.filter) built.filter.value = ui.filter;
+  setClass(built.filterCtl, "on", ui.filter !== "all");
+  setAttr(built.clear, "hidden", ui.filter === "all");
+}
+
+/**
  * The controls' element, built once, set to `ui`'s search, filter and sort; `slot` is the end of the Filter · Sort row.
- * `riskFilters` (`pageRiskFilters`) are the page's risk choices, under Risk in the Filter select; none hides it.
+ * `riskFilters` are the page's risk choices for the Filter (`syncFilter`).
  */
 export function ruleControls(riskFilters) {
   if (built === null) build();
-  setContent(built.risks, JSON.stringify(riskFilters), () => riskFilters.map(([v, label]) => h("option", { value: v }, label)));
-  setAttr(built.risks, "hidden", riskFilters.length === 0);
-  const known = PAGE_FILTERS.some(([v]) => v === ui.filter) || riskFilters.some(([v]) => v === ui.filter);
-  if (built.filter.value !== ui.filter && known) built.filter.value = ui.filter;
-  setClass(built.filterCtl, "on", ui.filter !== "all");
-  setAttr(built.clear, "hidden", ui.filter === "all");
+  syncFilter(riskFilters);
   if (built.sort.value !== ui.sort) built.sort.value = ui.sort;
   if (built.search.value.trim().toLowerCase() !== ui.query && document.activeElement !== built.search) built.search.value = ui.query;
   return { root: built.root, slot: built.slot };
