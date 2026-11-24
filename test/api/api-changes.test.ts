@@ -193,8 +193,10 @@ describe("the daemon's change stream (GET /api/changes)", () => {
 
   it("sends a new token when another connection of the daemon's process commits a record, as a hook's records do", async () => {
     // The record writer tells the feed itself: on Windows the folder's watch hears nothing of a commit that does not wait
-    // for the disk.
-    const stream = await open();
+    // for the disk. The folder watches here report nothing, as Windows' does, and no beat comes within the case, so on
+    // every system only the writer's notice can move the token.
+    const silent = storesFor({ changeFeed: { beatMs: 3_600_000, watch: drivenWatch().watch } });
+    const stream = messagesOf(await createRerailApi(silent, operations, { version: "0.0.0-test" }).request("/api/changes"));
     const first = await stream.next();
     const other = new SqliteSessionStore(databasePath);
     try {
@@ -204,6 +206,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     } finally {
       other.close();
       await stream.stop();
+      silent.close();
     }
   });
 
