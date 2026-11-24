@@ -12,6 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
+import type * as DaemonWaits from "../../src/runtime/daemon/daemon-waits.js";
 import {
   type DaemonHealth,
   type DaemonLookup,
@@ -36,6 +37,8 @@ import {
   daemonNotRunningMessage,
   dashboardAccessLink,
   daemonUsesPackageRoot,
+  ENGINE_ANSWER_WAIT_MS,
+  engineEndpointAt,
   findRunningDaemon,
   isUsableEngineSocketPath,
   keepAutostartClaim,
@@ -61,8 +64,9 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/daemon/engine-pipe.js";
-import { engineCapabilityProof } from "../../src/runtime/daemon/engine-proof.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServer } from "../../src/runtime/daemon/engine-pipe.js";
+import { HOOK_DAEMON_WAIT_MS } from "../../src/runtime/daemon/daemon-waits.js";
+import { engineCapabilityProof, type EngineProofAnswer } from "../../src/runtime/daemon/engine-proof.js";
 import { ingestEngineEvent } from "../../src/runtime/engine-service.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
@@ -73,6 +77,12 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell.
 vi.mock("node:child_process", { spy: true });
+/** How long a start waits (`START_TIMEOUT_MS`), read at each wait: the product's, unless a test sets its own. */
+const waits = vi.hoisted(() => ({ startMs: undefined as number | undefined }));
+vi.mock("../../src/runtime/daemon/daemon-waits.js", async importOriginal => {
+  const actual = await importOriginal<typeof DaemonWaits>();
+  return { ...actual, get START_TIMEOUT_MS() { return waits.startMs ?? actual.START_TIMEOUT_MS; } };
+});
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -135,6 +145,7 @@ describe("Rerail daemon control", () => {
   });
 
   afterEach(async () => {
+    waits.startMs = undefined;
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await removeFolder(home);
@@ -227,6 +238,328 @@ describe("Rerail daemon control", () => {
     await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, holding))
       .rejects.toThrow(/alive but not answering/);
     expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
+  });
+
+  /**
+   * The home lock's holder record naming `pid` as a daemon still in its start writes it, with `logOffset`, where its
+   * output starts in the log, when given.
+   */
+  async function holdHomeStarting(pid: number, logOffset?: number): Promise<void> {
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid, starting: true, logOffset }));
+  }
+
+  /**
+   * A daemon of this process's pid that daemon.json records, with `state` over what it says, and that holds the home in
+   * its start (`holdHomeStarting`): its health answers 503, as one in its start does not answer, until `answer(pid)`,
+   * after which daemon.json names `pid`, this process's unless given, and its health answers as `pid`.
+   */
+  async function recordedStartingDaemon(state: Partial<DaemonState> = {}): Promise<{ answer: (pid?: number) => void; close: () => void }> {
+    let answers: number | undefined;
+    const server = createHttpServer((_request, response) => {
+      response.writeHead(answers === undefined ? 503 : 200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ status: "ok", pid: answers ?? process.pid }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const record = (pid: number): void => writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid, url: `http://127.0.0.1:${port}/`, port, ...state })));
+    record(process.pid);
+    await holdHomeStarting(process.pid);
+    return {
+      answer: (pid = process.pid) => {
+        record(pid);
+        answers = pid;
+      },
+      close: () => server.close(),
+    };
+  }
+
+  /** The home's lock as a daemon that takes it between a start's looks: free for the first `free` asks, held after. */
+  function lockTakenAfter(free: number): () => boolean {
+    let asks = 0;
+    return () => (asks += 1) > free;
+  }
+
+  // A daemon still in its start, recorded and not answering yet, used to fail a start beside it after one 2 s probe,
+  // named as a daemon that does not answer. The record beside the home's lock now says it is starting.
+  it("waits for a recorded daemon still in its start, and finds it running once its start is over", async () => {
+    const daemon = await recordedStartingDaemon();
+    try {
+      const holding = { ...posix, homeDaemonLockHeld: () => true };
+      const told: number[] = [];
+      const onWaiting = (pid: number): void => {
+        told.push(pid);
+        daemon.answer();
+        writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+      };
+      const result = await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, holding);
+      expect(result).toMatchObject({ started: false, daemon: { state: { pid: process.pid } } });
+      expect(told).toEqual([process.pid]);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // The start a hook makes before it sends its settings, which replaces a daemon of another package, waits as the plain
+  // start does.
+  it("waits, in the start that replaces another package's daemon, for a daemon still in its start, and uses it once it answers", async () => {
+    const daemon = await recordedStartingDaemon();
+    try {
+      const holding = { ...posix, homeDaemonLockHeld: () => true };
+      const told: number[] = [];
+      const onWaiting = (pid: number): void => {
+        told.push(pid);
+        daemon.answer();
+      };
+      const result = await startDaemonForPackage({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, holding);
+      expect(result).toMatchObject({ started: false, daemon: { state: { pid: process.pid } } });
+      expect(told).toEqual([process.pid]);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // A record that still says starting, as a daemon that could not rewrite it at the end of its start leaves, kept every
+  // start waiting beside a daemon that served.
+  it("takes a daemon that daemon.json names and that answers for running, though its record still says it is starting", async () => {
+    const daemon = await recordedStartingDaemon();
+    try {
+      daemon.answer();
+      const told: number[] = [];
+      const holding = { ...posix, homeDaemonLockHeld: () => true };
+      const result = await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting: pid => void told.push(pid) }, { dev: true }, holding);
+      expect(result).toMatchObject({ started: false, daemon: { state: { pid: process.pid } } });
+      expect(told).toEqual([]);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // A hook's start gave up on a daemon still in its start at the hook's deadline, sooner than it waited for the daemon
+  // it launched. It now waits as long as any start waits for its own launch, then leaves the daemon running.
+  it("waits for a daemon still in its start as long as a start waits for its own launch, past a hook's deadline, then leaves it running", async () => {
+    waits.startMs = 1_000;
+    await holdHomeStarting(DEAD_PID);
+    const machine = fakeMachine("linux", { env: { RERAIL_HOME: home }, kill: () => true, homeDaemonLockHeld: () => true });
+    const begun = Date.now();
+    await expect(daemonEngineEndpoint(true, begun + 200, machine))
+      .rejects.toThrow(`Rerail daemon (pid ${DEAD_PID}) has not answered within 1s and may still be starting; this start leaves it running.`);
+    expect(Date.now() - begun).toBeGreaterThanOrEqual(1_000);
+    expect(JSON.parse(readFileSync(join(home, LOCKS_DIR, "daemon.json"), "utf8"))).toEqual({ pid: DEAD_PID, starting: true });
+  });
+
+  /** `kill` on a machine where every pid runs, DEAD_PID until `gone()` says it has exited. */
+  function deadPidRunsUntil(gone: () => boolean): (pid: number) => true {
+    return pid => {
+      if (pid === DEAD_PID && gone()) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    };
+  }
+
+  /** A `spawn` whose every launch is a daemon of pid 4242, noted in `launched`, that `act` makes go on as it launches. */
+  function launchesOf(launched: number[], act: (child: EventEmitter) => void): () => StartedChild {
+    return () => {
+      const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
+      launched.push(child.pid);
+      act(child);
+      return child;
+    };
+  }
+
+  /** The health of a daemon past its start that answers as `pid`, with `record()`, which writes the daemon.json naming it. */
+  async function answeringHealth(pid: number): Promise<{ record: () => void; close: () => void }> {
+    const server = createHttpServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ status: "ok", pid }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    return {
+      record: () => writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid, url: `http://127.0.0.1:${port}/`, port }))),
+      close: () => server.close(),
+    };
+  }
+
+  const noSqliteRepair = async (root: string): Promise<{ prefix: string; rebuilt: boolean }> => ({ prefix: root, rebuilt: false });
+
+  // A daemon that took the home between a start's looks, before it wrote daemon.json, failed the start once the wait for
+  // it to record itself was over, or was started beside. The start waits for it. One that exits in its start failed the
+  // start with its log, where a start in a home with none launches a daemon of its own package and options: a hook's
+  // start beside another package's daemon that fails in its start is the case that launch cures. The start looks again
+  // under the lock once the daemon it found exits, and launches one.
+  it.each([
+    ["a start, the home taken while it waits for a holder to record itself", 1, startDaemon],
+    ["a start, the home taken after it found no holder", 2, startDaemon],
+    ["a hook's start, which replaces another package's daemon", 1, startDaemonForPackage],
+  ])("%s: waits for the daemon in its start, and once it exits before it wrote daemon.json launches one of its own", async (_start, free, start) => {
+    waits.startMs = 1_000;
+    await holdHomeStarting(DEAD_PID);
+    let gone = false;
+    const own = await answeringHealth(4242);
+    const launched: number[] = [];
+    const spawn = launchesOf(launched, () => own.record());
+    const machine = fakeMachine("linux", { kill: deadPidRunsUntil(() => gone), homeDaemonLockHeld: lockTakenAfter(free), spawn });
+    const told: number[] = [];
+    const onWaiting = (pid: number): void => {
+      told.push(pid);
+      gone = true;
+    };
+    try {
+      const result = await start({ home, packageRoot: "/nowhere/rerail", onWaiting, ensureSqlite: noSqliteRepair }, { dev: true }, machine);
+      expect(result).toMatchObject({ started: true, daemon: { state: { pid: 4242 } } });
+      expect(told).toEqual([DEAD_PID]);
+      expect(launched).toEqual([4242]);
+    } finally {
+      own.close();
+    }
+  });
+
+  // The daemon a start launches once the one it found in its start has exited fails as any launch does: once, with what
+  // it wrote to the log since its launch, none of the found daemon's lines.
+  it("fails once, with its own launch's log, when the daemon it launched after a found one exited fails too", async () => {
+    waits.startMs = 1_000;
+    const log = join(home, DAEMON_LOG_FILE);
+    await writeFile(log, "rerail daemon: the found daemon's failure\n");
+    await holdHomeStarting(DEAD_PID, 0);
+    let gone = false;
+    const launched: number[] = [];
+    const spawn = launchesOf(launched, child => {
+      appendFileSync(log, "rerail daemon: this start's daemon's failure\n");
+      setImmediate(() => child.emit("exit", 3, null));
+    });
+    const machine = fakeMachine("linux", { kill: deadPidRunsUntil(() => gone), homeDaemonLockHeld: () => true, spawn });
+    const onWaiting = (): void => {
+      gone = true;
+    };
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting, ensureSqlite: noSqliteRepair }, { dev: true }, machine))
+      .rejects.toThrow(new Error("Rerail daemon exited with code 3 before it was ready:\nrerail daemon: this start's daemon's failure"));
+    expect(launched).toEqual([4242]);
+  });
+
+  // A found daemon still silent at the end of the wait is left running, and the start shows what it wrote to the log from
+  // where its record says its output starts: a notice it wrote before this start found it, none of an earlier run's
+  // lines. A record whose place is no place a read can start from, as only a hand-edited one holds, made the start show
+  // none of the log, since the read failed: the log is shown from its beginning.
+  const earlierRun = "rerail daemon: an earlier run's failure\n";
+  it.each([
+    ["the place its output starts at", Buffer.byteLength(earlierRun), "rerail daemon: this daemon's notice"],
+    ["a negative place", -10, `${earlierRun}rerail daemon: this daemon's notice`],
+    ["a fractional place", 0.5, `${earlierRun}rerail daemon: this daemon's notice`],
+  ])("leaves a found daemon silent at the end of the wait running, and shows its log from %s in its record", async (_place, logOffset, shown) => {
+    waits.startMs = 1_000;
+    const log = join(home, DAEMON_LOG_FILE);
+    await writeFile(log, `${earlierRun}rerail daemon: this daemon's notice\n`);
+    await holdHomeStarting(DEAD_PID, logOffset);
+    const machine = fakeMachine("linux", { kill: () => true, homeDaemonLockHeld: () => true });
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, machine)).rejects.toThrow(new Error(
+      `Rerail daemon (pid ${DEAD_PID}) has not answered within 1s and may still be starting; this start leaves it running. `
+      + `Once it answers, rerail status shows it running. See ${log}:\n${shown}`,
+    ));
+  });
+
+  // A launcher that found a daemon in its start ended its autostart claim before it waited for that daemon, so each
+  // hook that found no daemon.json meanwhile launched one more start.
+  it("keeps its launcher's autostart claim while it waits for a daemon still in its start, and ends it with the start", async () => {
+    const daemon = await recordedStartingDaemon();
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The claim names its launcher, here this process, which runs the start.
+    await writeFile(claim, String(process.pid));
+    try {
+      const claimed: string[] = [];
+      const onWaiting = (): void => {
+        claimed.push(existsSync(claim) ? readFileSync(claim, "utf8") : "gone");
+        daemon.answer();
+      };
+      await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, { ...posix, homeDaemonLockHeld: () => true });
+      expect(claimed).toEqual([String(process.pid)]);
+      expect(existsSync(claim)).toBe(false);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // The start a hook makes before it sends its settings replaces a running daemon of another package. One found in its
+  // start that answers as another package's is replaced the same way, once it answers, never used.
+  it("replaces a daemon of another package found in its start once it answers, as it replaces a running one", async () => {
+    const daemon = await recordedStartingDaemon({ packageRoot: "/older/rerail" });
+    let stopped = false;
+    const signals: string[] = [];
+    const kill = (pid: number, signal?: string | number): true => {
+      if (pid === process.pid && stopped) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      if (signal === "SIGTERM") signals.push(`${pid} ${signal}`);
+      stopped ||= signal === "SIGTERM";
+      return true;
+    };
+    const launched: number[] = [];
+    const launch = (): StartedChild => {
+      const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
+      launched.push(child.pid);
+      setImmediate(() => child.emit("exit", 3, null));
+      return child;
+    };
+    const machine = fakeMachine("linux", { kill, homeDaemonLockHeld: () => !stopped, spawn: launch });
+    const control = { home, packageRoot: "/nowhere/rerail", onWaiting: () => daemon.answer(), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    try {
+      await expect(startDaemonForPackage(control, { dev: true }, machine)).rejects.toThrow("Rerail daemon exited with code 3 before it was ready");
+      expect(signals).toEqual([`${process.pid} SIGTERM`]);
+      expect(launched).toEqual([4242]);
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // A start looks again once the daemon it found in its start answers, and waits for one in its start that look finds,
+  // but for no more: daemons that take the home one after another cannot keep it waiting.
+  it("waits for one more daemon found in its start once the first answers, and for no third", async () => {
+    const daemon = await recordedStartingDaemon();
+    const following = [process.pid + 1, process.pid + 2];
+    const told: number[] = [];
+    const onWaiting = (pid: number): void => {
+      told.push(pid);
+      daemon.answer(pid);
+      // By the next look another daemon holds the home in its start, while one follows.
+      const next = following.shift();
+      writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify(next === undefined ? { pid } : { pid: next, starting: true }));
+    };
+    try {
+      const result = await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, fakeMachine("linux", { kill: () => true, homeDaemonLockHeld: () => true }));
+      expect(told).toEqual([process.pid, process.pid + 1]);
+      expect(result).toMatchObject({ started: false, daemon: { state: { pid: process.pid + 1 } } });
+    } finally {
+      daemon.close();
+    }
+  });
+
+  // The second wait is the last: a daemon of another process that the look under the lock finds in its start, once the
+  // first one found exited, fails the start by its exit, with what it wrote to the log from where its own record says its
+  // output starts, a notice before the start found it included, and the start launches no daemon of its own.
+  it("fails with its own log when a second daemon found in its start, after the first exited, exits too, and launches none", async () => {
+    waits.startMs = 1_000;
+    const log = join(home, DAEMON_LOG_FILE);
+    await writeFile(log, "rerail daemon: the first found daemon's failure\n");
+    await holdHomeStarting(DEAD_PID, 0);
+    const second = DEAD_PID - 1;
+    const told: number[] = [];
+    const onWaiting = (pid: number): void => {
+      told.push(pid);
+      if (pid !== DEAD_PID) return;
+      // As the first exits, another process's daemon takes the home in its start and writes a notice past its record's place.
+      writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: second, starting: true, logOffset: statSync(log).size }));
+      appendFileSync(log, "rerail daemon: the second found daemon's notice\n");
+    };
+    // Each daemon runs until the start says it waits for it, and has exited from then on.
+    const kill = (pid: number): true => {
+      if (told.includes(pid)) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    };
+    const launched: number[] = [];
+    const machine = fakeMachine("linux", { kill, homeDaemonLockHeld: () => true, spawn: launchesOf(launched, () => undefined) });
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting, ensureSqlite: noSqliteRepair }, { dev: true }, machine))
+      .rejects.toThrow(new Error(`Rerail daemon (pid ${second}) exited before it was ready:\nrerail daemon: the second found daemon's notice`));
+    expect(told).toEqual([DEAD_PID, second]);
+    expect(launched).toEqual([]);
   });
 
   it("stops an unresponsive daemon that holds the home and clears its state file", async () => {
@@ -1239,6 +1572,46 @@ describe("a state file Windows left behind", () => {
     expect(result.replaced).toEqual(replaced);
   });
 
+  // A daemon of Rerail 0.1.4 or earlier writes no `starting` beside the home's lock, so a start never waits for it as a
+  // daemon still in its start: it ends it, waits outside the start lock for its own launch while that one is in its
+  // start, and names the daemon it ended once its launch answers.
+  it("ends a daemon whose engine has no proof that holds the home, never waiting for it as one in its start, and names it once its own launch answers after its start", async () => {
+    const events: string[] = [];
+    const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    await holdHome(home, DEAD_PID);
+    const launched = DEAD_PID - 1;
+    let probes = 0;
+    // The launch's first probe finds it in its start, and it answers from the next on.
+    vi.stubGlobal("fetch", vi.fn(async () => ((probes += 1) === 1 ? new Response(null, { status: 503 }) : Response.json({ status: "ok", pid: launched }))));
+    let running = true;
+    const machine: DaemonMachine = {
+      ...older,
+      homeDaemonLockHeld: () => true,
+      kill: pid => {
+        if (pid === launched || (pid === DEAD_PID && running)) return true;
+        throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      },
+      endProcessStartedBy: () => {
+        events.push("end");
+        running = false;
+        return "ended";
+      },
+      spawnDetached: () => {
+        events.push("launch");
+        writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: launched, starting: true }));
+        writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: launched, kernelSocketPath: PIPE })));
+        return { pid: launched };
+      },
+    };
+    const told: number[] = [];
+    const control = { home, packageRoot: OWN_ROOT, onWaiting: (pid: number) => void told.push(pid), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const result = await startDaemon(control, { dev: true, port: 0 }, machine);
+    expect(result).toMatchObject({ started: true, daemon: { state: { pid: launched } }, replaced: { pid: DEAD_PID, version: "0.1.4" } });
+    expect(events).toEqual(["end", "launch"]);
+    expect(told).toEqual([]);
+    expect(probes).toBe(2);
+  });
+
   // Every event of a session after its start asks the same: a daemon whose engine has no proof does not take it, even
   // when it ran from the hook's own package. Its replacement ends here at the end of its process, which the test makes
   // fail.
@@ -1462,6 +1835,269 @@ describe("a state file Windows left behind", () => {
       daemon.kill();
       await closed;
     }
+  });
+
+  describe("the engine pipe RERAIL_ENGINE_SOCKET names", () => {
+    const asked: Array<[string, string, number]> = [];
+    const held: Array<[string, number]> = [];
+    const STARTED = 1_700_000_000_000;
+    beforeEach(() => {
+      asked.length = 0;
+      held.length = 0;
+    });
+    /** Windows (unless `platform` says otherwise) with the pipe listed, its engine answering the proof `answer`. */
+    const answering = (answer: EngineProofAnswer, platform: NodeJS.Platform = "win32", server?: PipeServer): DaemonMachine => fakeMachine(platform, {
+      env: { RERAIL_HOME: home },
+      kill: () => true,
+      pipes: () => [PIPE_NAME],
+      capabilityProof: async (socketPath, accessToken, timeoutMs) => {
+        asked.push([socketPath, accessToken, timeoutMs]);
+        return answer;
+      },
+      pipeServer: async (socketPath, timeoutMs) => {
+        held.push([socketPath, timeoutMs]);
+        return server;
+      },
+    });
+    const recordState = async (overrides: Partial<DaemonState>) => await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor(overrides)));
+    /** `body`'s answer, with Date.now standing at `STARTED` while it runs, moved on only by the `advance` it is given. */
+    const atStandInTime = async <T,>(body: (advance: (ms: number) => void) => Promise<T>): Promise<T> => {
+      let now = STARTED;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        return await body(ms => {
+          now += ms;
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    };
+    const notOurs = `the engine pipe ${PIPE} is not this Rerail home's daemon`;
+
+    it("asks Windows which process holds it first, and its engine to prove it holds the capability only when Windows names another, within a wait the event shares", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const other = { pid: DEAD_PID + 1, startedAt: STARTED - 1 };
+      const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering("proved", "win32", other)));
+      expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability", proofTookMs: 0 });
+      expect(held).toEqual([[PIPE, ENGINE_ANSWER_WAIT_MS]]);
+      expect(asked).toEqual([[PIPE, "capability", ENGINE_ANSWER_WAIT_MS]]);
+    });
+
+    it("is sent nothing when another process holds it and gives no proof, and the hook says why", async () => {
+      // The other process began before the daemon daemon.json records stamped its start, so only its pid tells them apart.
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const other = { pid: DEAD_PID + 1, startedAt: STARTED - 1 };
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused"))).rejects.toThrow(notOurs);
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", other))).rejects.toThrow(notOurs);
+      await expect(engineEndpointAt(PIPE, undefined, answering("silent", "win32", other))).rejects.toThrow(`the engine on the pipe ${PIPE} did not prove within 30 s`);
+      expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(3).fill([PIPE, "capability"]));
+      expect(held.map(([socketPath]) => socketPath)).toEqual([PIPE, PIPE, PIPE]);
+    });
+
+    /**
+     * `machine` with Windows taking `freedAfterMs` of the stand-in clock to free an instance of the pipe before it names
+     * the holder, as while other clients take every instance, and the engine `proofMs` to answer the proof.
+     */
+    const slowed = (machine: DaemonMachine, advance: (ms: number) => void, freedAfterMs: number, proofMs = 0): DaemonMachine => ({
+      ...machine,
+      pipeServer: async (socketPath, timeoutMs) => {
+        advance(freedAfterMs);
+        return await machine.pipeServer(socketPath, timeoutMs);
+      },
+      capabilityProof: async (socketPath, accessToken, timeoutMs) => {
+        advance(proofMs);
+        return await machine.capabilityProof(socketPath, accessToken, timeoutMs);
+      },
+    });
+
+    it("gives the engine's proof the whole wait from when Windows named another holder, however long Windows took to free an instance, and the event how long the proof took", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const other = answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 });
+      const took = await atStandInTime(async advance => {
+        const proofs: Array<number | undefined> = [];
+        for (const freedAfterMs of [10_000, ENGINE_ANSWER_WAIT_MS - 1_000]) {
+          const { proofTookMs } = await engineEndpointAt(PIPE, undefined, slowed(other, advance, freedAfterMs, 12_000));
+          proofs.push(proofTookMs);
+        }
+        return proofs;
+      });
+      expect(asked.map(([, , timeoutMs]) => timeoutMs)).toEqual([ENGINE_ANSWER_WAIT_MS, ENGINE_ANSWER_WAIT_MS]);
+      expect(took).toEqual([12_000, 12_000]);
+    });
+
+    it("is asked the home's proof when daemon.json names another pipe, and sent nothing without it", async () => {
+      // The daemon moved to a pipe of its own because another process held the default name first.
+      await recordState({ kernelSocketPath: fallbackPipe(PIPE), accessToken: "capability" });
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused"))).rejects.toThrow(notOurs);
+      expect(await engineEndpointAt(PIPE, undefined, answering("proved"))).toMatchObject({ socketPath: PIPE, accessToken: "capability" });
+      expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
+    });
+
+    it("is sent nothing when there is no daemon.json to say which engine it must be", async () => {
+      const ours = { pid: DEAD_PID, startedAt: STARTED - 1 };
+      await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", ours))).rejects.toThrow(`no daemon.json in ${home} says which engine the pipe ${PIPE} must be`);
+      expect(asked).toEqual([]);
+      expect(held).toEqual([]);
+    });
+
+    describe("named in a daemon.json that records no capability, as a daemon before Rerail 0.1.1 wrote it", () => {
+      beforeEach(async () => {
+        await recordState({ kernelSocketPath: PIPE, pid: DEAD_PID, startedAt: STARTED });
+      });
+
+      it("is sent the event, with no capability, when Windows names the daemon daemon.json records as its holder", async () => {
+        expect(await engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID, startedAt: STARTED - 1 }))).toEqual({ socketPath: PIPE });
+        expect(held).toEqual([[PIPE, ENGINE_ANSWER_WAIT_MS]]);
+        expect(asked).toEqual([]);
+      });
+
+      it("is sent nothing, and the hook says why, when Windows names another process or none", async () => {
+        const why = `the engine pipe ${PIPE} is not this Rerail home's daemon: Windows did not name the daemon ${join(home, DAEMON_STATE_FILE)} records as its holder, and that file records no capability for the engine to prove`;
+        await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 }))).rejects.toThrow(why);
+        await expect(engineEndpointAt(PIPE, undefined, answering("proved"))).rejects.toThrow(why);
+        expect(asked).toEqual([]);
+      });
+    });
+
+    describe("held, as Windows says, by the process daemon.json records", () => {
+      beforeEach(async () => {
+        await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      });
+
+      it("is sent the capability at once, with no proof asked, whether its engine would prove, refuse as a daemon of Rerail 0.1.4 or earlier does, or say nothing", async () => {
+        const answers = [["proved", STARTED], ["refused", STARTED - 60_000], ["silent", STARTED]] as const;
+        for (const [answer, startedAt] of answers) {
+          const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering(answer, "win32", { pid: DEAD_PID, startedAt })));
+          expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability" });
+        }
+        expect(asked).toEqual([]);
+        expect(held).toEqual(Array(answers.length).fill([PIPE, ENGINE_ANSWER_WAIT_MS]));
+      });
+
+      it("is sent the event with its own whole wait from its request, however long Windows took to free an instance of the pipe", async () => {
+        // A busy daemon's every instance taken for 29 s: its request waits for one as it did before Windows was asked.
+        const ours = answering("refused", "win32", { pid: DEAD_PID, startedAt: STARTED });
+        const endpoint = await atStandInTime(async advance => await engineEndpointAt(PIPE, undefined, slowed(ours, advance, ENGINE_ANSWER_WAIT_MS - 1_000)));
+        expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability" });
+        expect(asked).toEqual([]);
+      });
+
+      it("is sent nothing when the holder has the recorded pid but started after the daemon recorded itself, or Windows does not say when", async () => {
+        // Windows gave a dead daemon's pid to the process holding the pipe now.
+        await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID, startedAt: STARTED + 1 }))).rejects.toThrow(notOurs);
+        await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID }))).rejects.toThrow(notOurs);
+        await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID, startedAt: null }))).rejects.toThrow(notOurs);
+      });
+    });
+
+    // A daemon of Rerail 0.1.4 or earlier has no proof to give. Named outright, its pipe gets the event with the
+    // capability that daemon wrote once Windows names it the holder, as a daemon of any release does; held by another
+    // process, the pipe gets nothing, as one that refuses the proof. A lookup, which a hook makes when no variable
+    // names a pipe, finds the same daemon older and gives no caller its capability, so a start replaces it.
+    it("is sent the event when Windows names the recorded daemon of Rerail 0.1.4 or earlier as its holder, and nothing otherwise, while a lookup finds that daemon older", async () => {
+      const recorded = { kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED, version: "0.1.4" };
+      await recordState(recorded);
+      const holding = (server: PipeServer): DaemonMachine => ({ ...answering("no-proof", "win32", server), processStartedAt: () => STARTED - 600 });
+      const own = holding({ pid: DEAD_PID, startedAt: STARTED - 600 });
+      expect(await engineEndpointAt(PIPE, undefined, own)).toEqual({ socketPath: PIPE, accessToken: "capability" });
+      expect(asked).toEqual([]);
+      await expect(engineEndpointAt(PIPE, undefined, holding({ pid: DEAD_PID + 1, startedAt: STARTED - 1 }))).rejects.toThrow(notOurs);
+      expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual([[PIPE, "capability"]]);
+      expect(await lookupDaemon(home, own)).toEqual({ status: "older", state: { ...stateFor(recorded), accessToken: undefined } });
+    });
+
+    it("says the daemon is not running, and to start it, when nothing listens on the pipe", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const machine = { ...answering("refused"), pipes: () => ["other-pipe"] };
+      await expect(engineEndpointAt(PIPE, undefined, machine)).rejects.toThrow(
+        `nothing listens on the engine pipe ${PIPE}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`,
+      );
+    });
+
+    it("says the daemon is not running, and to start it, when nothing listens on the pipe and no daemon.json is left, as after rerail daemon stop", async () => {
+      const machine = { ...answering("refused"), pipes: () => ["other-pipe"] };
+      await expect(engineEndpointAt(PIPE, undefined, machine)).rejects.toThrow(
+        `nothing listens on the engine pipe ${PIPE}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`,
+      );
+      expect(asked).toEqual([]);
+    });
+
+    it("asks the engine to prove itself, and sends the event once it does, when the engine's binding will not load in the hook's process, and says why once", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      // The binding that asks Windows which process serves the pipe is missing, as while an update replaces it.
+      const missing = join(home, "missing-engine.node");
+      vi.stubEnv("RERAIL_ENGINE_PATH", missing);
+      const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        const unloaded = (answer: EngineProofAnswer): DaemonMachine => ({ ...answering(answer), pipeServer });
+        expect(await engineEndpointAt(PIPE, undefined, unloaded("proved"))).toMatchObject({ socketPath: PIPE, accessToken: "capability" });
+        await expect(engineEndpointAt(PIPE, undefined, unloaded("refused"))).rejects.toThrow(notOurs);
+        expect(written.mock.calls.map(([text]) => String(text))).toEqual([expect.stringContaining(`which process serves the pipe ${PIPE}, so the engine on it must prove it holds the capability daemon.json records, and where daemon.json records none nothing is sent to it: RERAIL_ENGINE_PATH does not exist: ${missing}`)]);
+      } finally {
+        written.mockRestore();
+        vi.unstubAllEnvs();
+      }
+      expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
+    });
+
+    it("is sent nothing, and the hook says the pipe stayed busy, when other clients kept every instance taken for the whole wait", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const busy = `other clients kept every instance of the engine pipe ${PIPE} taken for 30 s, so Windows could not say whether this Rerail home's daemon holds it, so nothing was sent to it`;
+      // Windows names no holder then, which the native binding may give as an absent pid or a null one.
+      for (const holder of [{}, { pid: null }]) await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", holder))).rejects.toThrow(busy);
+      // The wait is spent, so no proof is asked.
+      expect(asked).toEqual([]);
+    });
+
+    describe("named in a hook whose start check had the same pipe's proof", () => {
+      /** A hook's deadline for an event that arrived at `arrived`. */
+      const deadlineFrom = (arrived: number) => arrived + HOOK_DAEMON_WAIT_MS;
+
+      it("asks no second proof of the pipe daemon.json names, whatever the case of its name, and the event keeps its whole wait", async () => {
+        await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: process.pid });
+        const machine = answering("proved");
+        const arrived = Date.now();
+        expect(await recordedDaemonStatus(stateFor({ kernelSocketPath: PIPE, accessToken: "capability", pid: process.pid }), machine)).toBe("alive");
+        expect(await engineEndpointAt(PIPE, deadlineFrom(arrived), machine)).toEqual({ socketPath: PIPE, accessToken: "capability" });
+        expect(await engineEndpointAt(PIPE.toUpperCase(), deadlineFrom(arrived), machine)).toEqual({ socketPath: PIPE.toUpperCase(), accessToken: "capability" });
+        expect(asked.length).toBe(1);
+      });
+
+      it("asks again when that proof came before the event, for another capability, refused, or with no deadline to tell", async () => {
+        const state = stateFor({ kernelSocketPath: PIPE, accessToken: "capability", pid: process.pid });
+        await recordState(state);
+        const machine = answering("proved");
+        const now = vi.spyOn(Date, "now").mockReturnValue(STARTED);
+        try {
+          await recordedDaemonStatus(state, machine);
+          expect(await engineEndpointAt(PIPE, deadlineFrom(STARTED), machine)).toEqual({ socketPath: PIPE, accessToken: "capability" });
+          expect(asked.length).toBe(1);
+          await engineEndpointAt(PIPE, deadlineFrom(STARTED + 1), machine);
+          await engineEndpointAt(PIPE, undefined, machine);
+          await recordState({ ...state, accessToken: "another" });
+          await engineEndpointAt(PIPE, deadlineFrom(STARTED), machine);
+          expect(asked.length).toBe(4);
+        } finally {
+          now.mockRestore();
+        }
+        const refusing = answering("refused", "win32", { pid: DEAD_PID + 1, startedAt: STARTED });
+        await recordState(state);
+        expect(await recordedDaemonStatus(state, refusing)).toBe("gone");
+        await expect(engineEndpointAt(PIPE, deadlineFrom(Date.now()), refusing)).rejects.toThrow("is not this Rerail home's daemon");
+        expect(asked.length).toBe(6);
+      });
+    });
+
+    it("is asked nothing off Windows, where the daemon's socket sits in a folder only the person can open", async () => {
+      const socket = join(home, "engine.sock");
+      await recordState({ kernelSocketPath: socket, accessToken: "capability" });
+      expect(await engineEndpointAt(socket, undefined, answering("refused", "linux"))).toEqual({ socketPath: socket, accessToken: "capability" });
+      expect(await engineEndpointAt(join(home, "other.sock"), undefined, answering("refused", "darwin"))).toEqual({ socketPath: join(home, "other.sock") });
+      await rm(join(home, DAEMON_STATE_FILE));
+      expect(await engineEndpointAt(socket, undefined, answering("refused", "linux"))).toEqual({ socketPath: socket });
+      expect(asked).toEqual([]);
+      expect(held).toEqual([]);
+    });
   });
 
   it("waits for a daemon whose engine is silent to the proof, as for a busy one, and sends it nothing", async () => {

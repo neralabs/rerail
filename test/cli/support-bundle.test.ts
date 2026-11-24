@@ -299,6 +299,35 @@ describe("rerail support-bundle", () => {
     expect(audit?.failures[0]).toMatchObject({ code: "adapter-error", stage: "parse", path: "src/app.ts" });
   });
 
+  it("keeps, of an audit with 120 blind files, the failure that says its stored paths are not a JSON array", async () => {
+    const world = await fixture();
+    recordSession(world, SESSION, 1_000);
+    const store = new SqliteAuditStore(defaultRerailDatabasePath());
+    try {
+      const auditId = store.start({ sessionId: SESSION, workspaceRoot: world.repo, scope: "ai-output", mode: "steer", revision: 1, catalogRevision: "digest", ruleRevisions: [], paths: ["src/app.ts"] });
+      const blindFiles = Array.from({ length: 120 }, (_, index) => ({
+        clauseId: "file", code: "budget-exceeded" as const, message: "not checked", path: `src/file-${index}.ts`, stage: "evaluate" as const, blind: "budget" as const,
+      }));
+      store.finish(auditId, { status: "completed", violations: [], failures: blindFiles });
+    } finally {
+      store.close();
+    }
+    // A hand edit past the CHECK on `audits`.
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      database.$client.pragma("ignore_check_constraints = ON");
+      database.$client.prepare("UPDATE audits SET paths_json = ?").run('["src/app.ts"');
+    } finally {
+      database.$client.close();
+    }
+    const { bundle, stderr } = await run(world);
+    const audit = bundle.session?.audits[0];
+    expect(audit).toMatchObject({ pathCount: 0, failuresOmitted: 21, blindFileCount: 120 });
+    expect(audit?.failures).toContainEqual(expect.objectContaining({ clauseId: "paths", code: "adapter-error", stage: "persistence" }));
+    // The error output the command was given names the audit.
+    expect(stderr).toContain("the paths_json of its own row is not a JSON array of strings");
+  });
+
   it("records a kind it does not know by its name alone", async () => {
     const { bundle } = await run(await reportedWorld());
     expect(bundle.session?.timeline.find(entry => entry.kind === "a-kind-from-the-future")).toEqual({ at: expect.any(Number), kind: "a-kind-from-the-future" });

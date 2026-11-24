@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, dirname, join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
-import { encodeRerailEventResult, type DaemonMachine, type EngineEndpoint } from "../../src/runtime/index.js";
+import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, encodeRerailEventResult, engineProof, type DaemonMachine, type EngineEndpoint } from "../../src/runtime/index.js";
 import { defaultEngineSocketPath } from "../../src/daemon/index.js";
 import {
   emitHookOutput,
@@ -38,13 +38,13 @@ import { DEAD_PID } from "../support/processes/daemon-home.js";
 // The lookup of a named engine socket, a session start's lookup of the daemon, and a later hook's lookup of the running
 // daemon work as they do; a test stands in for one call of any of them at a time.
 const lookups = vi.hoisted(() => ({
-  engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>(),
+  engineEndpointAt: vi.fn<(socketPath: string, deadline?: number) => Promise<EngineEndpoint>>(),
   daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean, deadline?: number) => Promise<EngineEndpoint>>(),
   runningDaemonEngineEndpoint: vi.fn<(deadline?: number) => Promise<unknown>>(),
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
-  lookups.engineEndpointAt.mockImplementation(socketPath => actual.engineEndpointAt(socketPath));
+  lookups.engineEndpointAt.mockImplementation((socketPath, deadline) => actual.engineEndpointAt(socketPath, deadline));
   lookups.daemonEngineEndpoint.mockImplementation((replace, deadline) => actual.daemonEngineEndpoint(replace, deadline));
   lookups.runningDaemonEngineEndpoint.mockImplementation(deadline => actual.runningDaemonEngineEndpoint(deadline));
   return {
@@ -70,9 +70,13 @@ interface HeldEngine {
   close(): Promise<void>;
 }
 
+/** The capability the held engine holds, which daemon.json records for its socket. */
+const HELD_CAPABILITY = "held-engine-capability";
+
 /**
  * A daemon's engine socket that answers the first event only once `answerFirst` is called, as a busy daemon checking an
- * edit does, and every later event at once.
+ * edit does, and every later event at once. daemon.json records it with its capability until it closes, and it proves
+ * it holds that capability, which a hook on Windows asks before it sends an event.
  */
 async function heldEngine(root: string): Promise<HeldEngine> {
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-held-engine-${randomUUID()}` : join(root, "engine.sock");
@@ -80,6 +84,11 @@ async function heldEngine(root: string): Promise<HeldEngine> {
   const firstArrived = Promise.withResolvers<void>();
   const first = Promise.withResolvers<void>();
   const server = createServer(async (request, response) => {
+    if (request.url === ENGINE_PROOF_PATH) {
+      request.resume();
+      response.end(JSON.stringify({ proof: engineProof(HELD_CAPABILITY, String(request.headers[ENGINE_CHALLENGE_HEADER])) }));
+      return;
+    }
     let body = "";
     for await (const chunk of request) body += String(chunk);
     const { event } = JSON.parse(body) as { event: { eventId: string } };
@@ -91,12 +100,19 @@ async function heldEngine(root: string): Promise<HeldEngine> {
     response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [] }));
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
+  await mkdir(process.env.RERAIL_HOME!, { recursive: true });
+  await writeFile(stateFile, JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+    databasePath: join(root, "rerail.sqlite"), kernelSocketPath: socketPath, ui: "bundled", startedAt: 1, packageRoot: root, accessToken: HELD_CAPABILITY }));
   return {
     socketPath,
     received,
     firstArrived: firstArrived.promise,
     answerFirst: () => first.resolve(),
-    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+    close: async () => {
+      await rm(stateFile, { force: true });
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
   };
 }
 
@@ -369,6 +385,24 @@ describe("hook host durable state", () => {
       await Promise.allSettled(hooks);
       await engine.close();
     }
+  });
+
+  it("looks up the engine socket the hook is given with the hook's deadline, so a proof its start check had since the event arrived answers for it", async () => {
+    const root = await temporaryDirectory();
+    const deadlines: number[] = [];
+    // The hook ends at its lookup, which is all this case reads: the deadline it hands the lookup.
+    lookups.engineEndpointAt.mockImplementationOnce(async (_socketPath, deadline) => {
+      deadlines.push(deadline ?? Number.NaN);
+      throw new Error("the lookup this case stands in for");
+    });
+    const { embedder: _embedder, ...options } = hookOptions(root);
+    const before = Date.now();
+    await expect(runClaudeHook({ session_id: "s", cwd: root, hook_event_name: "UserPromptSubmit", prompt_id: "p", prompt: "go" }, { ...options, kernelSocketPath: join(root, "named.sock") }))
+      .rejects.toThrow("the lookup this case stands in for");
+    expect(deadlines).toHaveLength(1);
+    // The hook's deadline: 12 s from the event's arrival, the start check's read of the daemon included.
+    expect(deadlines[0]).toBeGreaterThanOrEqual(before + 12_000);
+    expect(deadlines[0]).toBeLessThanOrEqual(Date.now() + 12_000);
   });
 
   it("finds the daemon before it takes the session's lock, so a hook waiting on a busy daemon's probe holds up no other hook", { timeout: 20_000 }, async () => {

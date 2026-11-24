@@ -176,6 +176,16 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .status .ver:hover{color:var(--foreground);text-decoration:underline;text-underline-offset:3px}
 .status .vnew{padding:1px 8px;border-radius:var(--pill);background:var(--info-subtle);color:var(--info-foreground);font-weight:500}
 .status .vnew:hover{filter:brightness(.96)}
+.status .vnew[aria-expanded="true"]{filter:brightness(.94)}
+/* "Update available"'s popover (frame/topbar.js), under the chip like the repository menu: slightly see-through over a
+ * blur, no outline, as round as Overview's tiles; the command in its grey box with Copy beside it. */
+.updpop{position:fixed;z-index:30;width:300px;max-width:calc(100vw - 24px);background:color-mix(in srgb,var(--popover) 78%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.6);backdrop-filter:blur(16px) saturate(1.6);color:var(--popover-foreground);border:0;border-radius:var(--radius-xl);box-shadow:var(--card-shadow);padding:12px 14px;display:grid;gap:8px;font-size:13px;line-height:1.45;text-align:left}
+.updpop b{font-weight:600}
+.updpop p{margin:0;color:var(--muted-foreground)}
+.updpop .updrow{display:flex;align-items:stretch;gap:8px}
+.updpop .updcmd{flex:1;min-width:0;display:flex;align-items:center;padding:0 10px;border-radius:var(--radius-md);background:var(--subtle)}
+.updpop .updcmd code{flex:1;font-size:12.5px;background:none;padding:0}
+.updpop .textlink{justify-self:start}
 .status.warn{color:var(--warning-foreground)} .status.warn .dot{background:var(--warning-foreground)}
 .status.down{color:var(--danger-foreground)} .status.down .dot{background:var(--danger-foreground)}
 
@@ -225,6 +235,9 @@ body[data-panel="open"] .panel{display:flex}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--muted-foreground)}
 .btn.ghost.link{color:var(--brand-foreground);padding-inline:6px}
 .btn.ghost.link:hover{text-decoration:underline;text-underline-offset:3px;background:transparent}
+/* A link-style button set in running text or beside a button: the brand's colour, no box. */
+.textlink{color:var(--brand-foreground);white-space:nowrap}
+.textlink:hover{text-decoration:underline;text-underline-offset:3px}
 .btn.danger{background:var(--danger-subtle);color:var(--danger-foreground);border-color:transparent}
 .btn.danger:hover{background:var(--danger-subtle);filter:brightness(.97)}
 /* Remove pack on its page: an outline, danger text and a 45% danger stroke, no fill until hovered. */
@@ -262,6 +275,7 @@ body[data-panel="open"] .panel{display:flex}
 .welcome b{font-size:14px}
 .welcome p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--info-foreground);opacity:.9}
 .welcome p.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;opacity:1}
+.welcome p.acts:has(> .textlink){align-items:center;column-gap:16px}
 .welcome .x{margin-left:auto;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--info-foreground);flex:none}
 .welcome .x:hover{background:var(--subtle)}
 .welcome.warn{background:var(--warning-subtle);color:var(--warning-foreground)}
@@ -312,10 +326,12 @@ section.group{margin-bottom:24px}
 .row.off .rtitle button.t{color:var(--muted-foreground)}
 .rmeta{grid-column:1;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:var(--muted-foreground);align-items:center}
 .rmeta > .mono + span::before{content:"·";margin-right:10px}
-/* The count, enforcement and switch tracks; the column labels above (.colhead) declare the same ones, so a label and
- * its column share an edge: 96px count, 92px enforcement tag, 34px switch, 32px apart; under 1100px or beside a sheet
- * the count shrinks to its figure and the gaps to 14px. */
-.rside{grid-column:2;grid-row:1 / span 2;display:grid;grid-template-columns:96px 92px 34px;gap:0 32px;align-items:center;justify-self:end}
+/* The enforcement, count and switch tracks; the column labels above (.colhead) declare the same ones, so a label and
+ * its column share an edge: 92px enforcement tag, 76px count (just wider than "Violations"), and a 40px track with the
+ * 34px switch at its right end, so "On/off" centres on the switch and the labels sit an equal 32px apart. Under 1100px
+ * or beside a sheet the count shrinks to its figure and the gaps to 14px. */
+.rside{grid-column:2;grid-row:1 / span 2;display:grid;grid-template-columns:92px 76px 40px;gap:0 32px;align-items:center;justify-self:end}
+.rside > .sw{justify-self:end}
 /* A rule's enforcement, read-only (render/enforcement.js): its mode's outcome colours and icon, as History shows them;
  * faded with the row when the rule is off. */
 .enftag{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);font-size:12px;font-weight:500;white-space:nowrap;justify-self:start;cursor:default}
@@ -336,17 +352,18 @@ section.group{margin-bottom:24px}
 .colhead{display:grid;grid-template-columns:minmax(0,1fr) 96px 34px;gap:0 48px;white-space:nowrap;padding:0 15px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);text-align:right}
 .colhead > span:first-child{text-align:left}
 .colhead > span:last-child{display:flex;justify-content:center;width:34px}
-.colhead.enfcols{grid-template-columns:minmax(0,1fr) 96px 92px 34px;gap:0 32px}
-.colhead.enfcols > span:nth-child(3){text-align:left}
+.colhead.enfcols{grid-template-columns:minmax(0,1fr) 92px 76px 40px;gap:0 32px}
+.colhead.enfcols > span:nth-child(2){text-align:left}
+.colhead.enfcols > span:last-child{justify-self:end}
 /* Under 1100px, or beside an open sheet: the count track shrinks to its figure, the gap to 14px, and the meta line
  * clips instead of wrapping. */
-body[data-panel="open"] .rside{grid-template-columns:minmax(40px,max-content) 92px 34px;gap:0 14px}
-body[data-panel="open"] .colhead.enfcols{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 92px 34px;gap:0 14px}
+body[data-panel="open"] .rside{grid-template-columns:92px minmax(40px,max-content) 40px;gap:0 14px}
+body[data-panel="open"] .colhead.enfcols{grid-template-columns:minmax(0,1fr) 92px minmax(40px,max-content) 40px;gap:0 14px}
 body[data-panel="open"] .rmeta{flex-wrap:nowrap;overflow:hidden;min-width:0}
 body[data-panel="open"] .rmeta > span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
 @media (max-width:1100px){
-  .rside{grid-template-columns:minmax(40px,max-content) 92px 34px;gap:0 14px}
-  .colhead.enfcols{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 92px 34px;gap:0 14px}
+  .rside{grid-template-columns:92px minmax(40px,max-content) 40px;gap:0 14px}
+  .colhead.enfcols{grid-template-columns:minmax(0,1fr) 92px minmax(40px,max-content) 40px;gap:0 14px}
 }
 
 /* ---- disclosures and code ---- */
