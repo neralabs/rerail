@@ -30,8 +30,10 @@ pub enum Format {
 /// §4, step 6): the tape's presence stored after it, in its home. Layout 6: a MISSING node sets the presence's
 /// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error. Layout 8
 /// (decision 0656 step 3): the tape's auxiliary index after its presence, in its home (`lay_aux`). Layout 9: its
-/// SIBLINGS of named children (version 2) and its NAMED section. Layout 10: its COUNTS' strays (version 2).
-const F16_LAYOUT: u32 = 10;
+/// SIBLINGS of named children (version 2) and its NAMED section. Layout 10: its COUNTS' strays (version 2). Layout 11:
+/// its COMMENTS section, and every home with its index (a home without one is refused, `TapeImage::sixteen`). Its
+/// format 16 key (1116) is a 16z home's of layout 1, which holds no index: refused, so read cold.
+const F16_LAYOUT: u32 = 11;
 
 impl Format {
     pub const ALL: [Format; 2] = [Format::F16, Format::F16Z];
@@ -316,10 +318,10 @@ impl TapeImage {
 /// here, where the tape is written, and stored, placed and loaded with it, so every reader (the host's and the
 /// device's) reads it where the tape lies. Keyed by the tape's content: its header holds the source digest's first
 /// eight bytes, and the store keys the home by its layout (`F16_LAYOUT`). A tape without a presence (one no
-/// producer of the engine writes) is left without one.
+/// producer of the engine writes) is refused: its index lies after it.
 fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, digest: &[u8; 32]) -> Result<(), String> {
     if tape.presence_bytes().is_none() {
-        return Ok(());
+        return Err("a written tape without its presence".into());
     }
     let key = u64::from_le_bytes(digest[..8].try_into().expect("8 bytes"));
     let lang = match &*tape {
@@ -327,7 +329,7 @@ fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, dige
         f16::Written::F16Z(t) => f16::lang(t.tag()),
     }
     .ok_or("a format 16 tape of a language without its table")?;
-    let named = named_codes(lang.table(), language);
+    let named = code_sets(lang.table(), language);
     let aux = match &*tape {
         f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, &named, rerail_tape_format::aux_index::Sections::ALL)?,
         f16::Written::F16Z(t) => {
@@ -350,6 +352,22 @@ pub fn named_codes(table: &rerail_tape_format::tape::CodeTable, language: Gramma
             None => kinds.kind_is_named(if e.flags & rerail_tape_format::CODE_ERROR != 0 { super::ERROR_SYMBOL } else { e.kind }),
         }
     })
+}
+
+/// The code sets a tape's index is built with (`aux_index::CodeSets`): its named codes (`named_codes`), and its
+/// comments, the codes whose kind is named `comment` (its alias's name where it has one), which T's shape numbers no
+/// place of (`syntax::Class::Comment`, by the same name).
+pub fn code_sets(table: &rerail_tape_format::tape::CodeTable, language: GrammarDialect) -> rerail_tape_format::aux_index::CodeSets {
+    let comments = rerail_tape_format::aux_index::named_codes(table.len(), |c| {
+        let e = table.entry(c);
+        let name = match &e.alias {
+            Some(alias) => Some(alias.0),
+            None if e.flags & rerail_tape_format::CODE_ERROR != 0 => None,
+            None => language.kind_name(e.kind),
+        };
+        name == Some("comment")
+    });
+    rerail_tape_format::aux_index::CodeSets { named: named_codes(table, language), comments }
 }
 
 /// `source`'s tape from the `.rerail` parser, in the run's format (`rerail_rr_syntax::lean::tape_to`, compiled in the

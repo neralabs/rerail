@@ -35,9 +35,6 @@ pub struct ViewDoc {
     /// name's canonical code's), and the field atom (`tag << 16 | field`).
     pub kinds: Run,
     pub fields: Run,
-    /// Each numbered node's place among its parent's children (u32s, by local id): the walk's, derived once
-    /// (`Projected::idx`, decision 0353 step 3), as the tape holds no sibling's place.
-    pub places: Run,
     /// core.rerail's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
     /// document's own (1) the whole text and each line, then the end points (`ends`, one a node, or none).
     pub tokens: u32,
@@ -58,12 +55,19 @@ pub struct ViewDoc {
     /// guest's placement gives its span (`Placement::host`; u64s). A placement no word maps (an embedder's segments,
     /// a string's normalized pieces): its spans placed once, as the host places them.
     pub placed: Run,
-    /// 1 where a node's place is read in its tape's auxiliary index (`tape_place`, decision 0656 step 4), with no
-    /// `places`: a projection of core.rerail's shape, not narrowed to anchors, whose tape's home holds an index.
-    pub places_by_index: u32,
+    /// Which place a numbered node's is, read in its tape's auxiliary index (decision 0656 step 4): `PLACE_NAMED`
+    /// (`tape_place`, core.rerail's shape) or `PLACE_PAST_COMMENTS` (`tape_place_past_comments`, T's). An outermost
+    /// anchor's is its rank among the anchors (`ids` item `ANCHOR_ITEM`).
+    pub place: u32,
     pub pad: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 8);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 8);
+
+/// `ViewDoc::place`'s kinds.
+pub const PLACE_NAMED: u32 = 1;
+pub const PLACE_PAST_COMMENTS: u32 = 2;
+/// The rank index's item of an anchored projection's anchors (`Item::Anchor`).
+pub const ANCHOR_ITEM: i64 = 10;
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
@@ -200,7 +204,6 @@ pub mod at {
     pub const NUMBERING: i32 = offset_of!(ViewDoc, numbering) as i32;
     pub const KINDS: i32 = offset_of!(ViewDoc, kinds) as i32;
     pub const FIELDS: i32 = offset_of!(ViewDoc, fields) as i32;
-    pub const PLACES: i32 = offset_of!(ViewDoc, places) as i32;
     pub const TOKENS: i32 = offset_of!(ViewDoc, tokens) as i32;
     pub const OWN_TEXT: i32 = offset_of!(ViewDoc, own_text) as i32;
     pub const ENDS: i32 = offset_of!(ViewDoc, ends) as i32;
@@ -211,7 +214,7 @@ pub mod at {
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
     pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
-    pub const PLACES_BY_INDEX: i32 = offset_of!(ViewDoc, places_by_index) as i32;
+    pub const PLACE: i32 = offset_of!(ViewDoc, place) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -234,7 +237,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 20] = [
+    let fields: [(&str, &str, usize); 19] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -242,7 +245,6 @@ pub fn ukl() -> String {
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
         ("Run", "kinds", offset_of!(ViewDoc, kinds)),
         ("Run", "fields", offset_of!(ViewDoc, fields)),
-        ("Run", "places", offset_of!(ViewDoc, places)),
         ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
         ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
         ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
@@ -253,7 +255,7 @@ pub fn ukl() -> String {
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
         ("Run", "placed", offset_of!(ViewDoc, placed)),
-        ("uint32_t", "places_by_index", offset_of!(ViewDoc, places_by_index)),
+        ("uint32_t", "place", offset_of!(ViewDoc, place)),
         ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
     ];
     let mut s = format!(
@@ -369,8 +371,8 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `view_child(i, col)`: column `col` of the document's `child` row `i`, of numbered node `i + 1` (every node but the
-/// root): the parent's id, the child's id, its place among the parent's children (read in the tape's auxiliary index,
-/// `tape_place`, where the entry says so; else the entry's `places`).
+/// root): the parent's id, the child's id, its place among the parent's children: read in the tape's auxiliary index
+/// (`tape_place`, or `tape_place_past_comments` where the entry says so), an outermost anchor's its rank among them.
 #[cfg(feature = "ir")]
 pub fn child(b: &mut B<'_, '_>) -> Value {
     let (i, col) = (b.arg(0), b.arg(1));
@@ -382,13 +384,21 @@ pub fn child(b: &mut B<'_, '_>) -> Value {
     }, |b| {
         let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
         b.either(I64, c, |b| b.node_id(l), |b| {
-            let by = b.word_at(I32, b.tape, at::PLACES_BY_INDEX);
-            let by = b.f.ins().icmp_imm(IntCC::NotEqual, by, 0);
-            b.either(I64, by, |b| {
-                let x = b.tape_node(l);
-                let place = b.call_tape("tape_place", &[x]);
-                b.f.ins().uextend(I64, place)
-            }, |b| b.entry_item(at::PLACES, l))
+            let x = b.tape_node(l);
+            let numbering = b.follow(b.tape, at::NUMBERING);
+            let anchor = b.c32(ANCHOR_ITEM);
+            let is = b.call_at("num_is", numbering, &[anchor, x]);
+            let is = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+            let place = b.either(I32, is, |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let anchor = b.c32(ANCHOR_ITEM);
+                b.call_at("num_rank", numbering, &[anchor, x])
+            }, |b| {
+                let kind = b.word_at(I32, b.tape, at::PLACE);
+                let past = b.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(PLACE_PAST_COMMENTS));
+                b.either(I32, past, |b| b.call_tape("tape_place_past_comments", &[x]), |b| b.call_tape("tape_place", &[x]))
+            });
+            b.f.ins().uextend(I64, place)
         })
     })
 }

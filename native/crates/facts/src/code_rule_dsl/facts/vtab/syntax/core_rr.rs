@@ -573,9 +573,9 @@ pub(super) struct Terms<'a, 'v> {
 }
 
 impl<'a, 'v> Terms<'a, 'v> {
-    /// The terms of `p`'s document, where its tape's home holds an index (`FactsIn::stored_index`).
+    /// The terms of `p`'s document, where its rows want them (a document of nodes has a tape, and its index).
     pub(super) fn of(p: &'a Projected, wanted: bool, atoms: &'v mut Vec<u32>) -> Self {
-        let index = wanted.then(|| p.f().stored_index()).flatten();
+        let index = (wanted && p.f().facts.tape.is_some()).then(|| p.f().index());
         atoms.clear();
         atoms.resize(index.map_or(0, |x| x.terms() as usize), u32::MAX);
         Terms { index, atoms }

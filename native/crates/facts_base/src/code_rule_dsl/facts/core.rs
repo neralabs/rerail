@@ -156,10 +156,6 @@ pub struct Facts {
     grammar: Option<Arc<crate::code_rule_dsl::tape::Grammar>>,
     /// The ERROR and MISSING nodes, ascending, found on first ask (a scan of the codes): few, and most files have none.
     errors: std::sync::OnceLock<Vector<u32>>,
-    /// Its index's bytes (decision 0656 step 4, `DocIndex`), built on the first read that needs it where its tape's
-    /// home holds none (a format 15 tape, one stored before layout 8); a home's own is read where it lies
-    /// (`FactsIn::index`).
-    index: std::sync::OnceLock<Vec<u8>>,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
@@ -718,7 +714,6 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
         tape: Some(Arc::clone(doc.doc_tape())),
         grammar: Some(Arc::clone(doc.grammar())),
         errors: Default::default(),
-        index: Default::default(),
         python_syntax: Default::default(),
         programs: None,
         tape_verdict: false,
@@ -738,7 +733,7 @@ pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape:
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
 fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
-    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
@@ -748,13 +743,13 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no language (`lines::terminators_of(None)`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators_of(None)));
-    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The text document of parsed file `f` (decision 0512: a file the run reads for its programs): its source and line
 /// table, shared, and no tree.
 pub fn text_of(f: &Facts) -> Facts {
-    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
@@ -972,29 +967,22 @@ impl<'a> FactsIn<'a> {
     pub fn token_text(&self, token: &Token) -> &'a str {
         &self.facts.source[token.start as usize..token.end as usize]
     }
-    /// The document's index (decision 0656 step 4): its tape home's, read where it lies, else built once for it
-    /// (`DocIndex::build`). Every count, listed code, text test and place the facts answer from it goes through it.
+    /// The document's index (decision 0656 step 4), read in its tape's home, where every tape holds one
+    /// (`TapeImage::doc_index`). Every count, listed code, text test, term and place the facts answer from it goes
+    /// through it.
     pub fn index(&self) -> rerail_tape_format::doc_index::DocIndex<'a> {
-        use rerail_tape_format::doc_index::DocIndex;
         let facts: &'a Facts = self.facts;
-        if let Some(x) = self.stored_index() {
-            return x;
-        }
-        let bytes = facts.index.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "a document's index, built (its home holds none)".into());
-            let grammar = facts.grammar.as_ref().expect("a document's index, of facts with a tape");
-            on_tape!(self, |t| {
-                let named = crate::code_rule_dsl::tape::formats::named_codes(t.table(), grammar.lang);
-                DocIndex::build(&t, facts.source.as_bytes(), &named).unwrap_or_else(|e| panic!("a document's index: {e}"))
-            })
-        });
-        DocIndex::read(bytes).expect("the index built")
+        facts.tape.as_deref().expect("a document's index, of facts with a tape").image().doc_index()
     }
-    /// The document's index where its tape's home holds it (`index`), or `None`: a reader whose other route costs no
-    /// more than building one (a leaf's text, interned) reads it only there.
-    pub fn stored_index(&self) -> Option<rerail_tape_format::doc_index::DocIndex<'a>> {
-        let facts: &'a Facts = self.facts;
-        facts.tape.as_deref().and_then(|t| t.image().aux_bytes()).and_then(|b| rerail_tape_format::doc_index::DocIndex::read(b).ok())
+    /// Named node `id`'s place among its parent's named children that are no comment (T's shape's places), read in
+    /// the document's index (`DocIndex::place_past_comments`).
+    pub fn place_past_comments(&self, id: u32) -> u32 {
+        let index = self.index();
+        on_tape!(self, |t| index.place_past_comments(&t, id))
+    }
+    /// Node `id`'s code in its tape's table (what its index keys codes by).
+    pub fn code(&self, id: u32) -> u32 {
+        on_tape!(self, |t| t.code(id as usize))
     }
     /// Named node `id`'s place among its parent's named children (0 for the first, and the root's), read in the
     /// document's index (`DocIndex::place`).

@@ -1480,6 +1480,16 @@ impl Dialect {
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
 /// (`core.rerail`'s).
+/// Which place a projection's node's is, as its tape's index reads it (`Projected::idx`; `ViewDoc::place`'s numbers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum PlaceAmong {
+    /// Among its parent's named children (core.rerail's shape).
+    Named = rerail_clif::view_reads::PLACE_NAMED,
+    /// Among its parent's named children that are no comment (T's shape, which numbers no comment).
+    PastComments = rerail_clif::view_reads::PLACE_PAST_COMMENTS,
+}
+
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
@@ -1494,13 +1504,9 @@ pub struct Projected {
     /// The tape nodes it numbers, its nodes and tokens, as a rank index (`ranks::Ranks`, decision 0353 step 2): a
     /// node's local id is its rank among the nodes. In its batch's block (decision 0289 §3), which the device reads.
     ranks: ranks::Ranks,
-    /// Each node's place among its parent's children, derived on the first point read (`idx`), where its tape's
-    /// index does not answer it (`places_by_index`).
-    idx: OnceLock<Cells<u32>>,
-    /// Whether a node's place is read in its tape's auxiliary index (decision 0656 step 4, `DocIndex::place`): its
-    /// numbered nodes are every named node under the root (core.rerail's shape, not narrowed to anchors, not
-    /// withheld), and its tape's home holds an index, which the device's reads read too (`tape_place`).
-    places_by_index: bool,
+    /// Which place a node's is (`idx`): among its named siblings, or among those that are no comment (T's shape
+    /// numbers no comment).
+    place: PlaceAmong,
     /// Walked by anchors: an outermost anchor hangs from the root, which is not its tape parent, so a walk's parent
     /// is not always the tape's (a sibling is then read off the tape, `prev_sibling`).
     anchored: bool,
@@ -1761,6 +1767,10 @@ impl Projected {
                     continue;
                 }
                 marks.mark(Item::Node, id);
+                // An outermost anchor: the root's child in the projection (its tape parent the root, or left out).
+                if ranges.len() > 1 && id != first && ranges.binary_search_by_key(&id, |r| r.0).is_ok() {
+                    marks.mark(Item::Anchor, id);
+                }
                 if n != 0 && f.field(id) != 0 {
                     marks.mark(Item::Field, id);
                 }
@@ -1799,8 +1809,7 @@ impl Projected {
             file,
             tag: f.tag,
             ranks,
-            idx: OnceLock::new(),
-            places_by_index: core_tokens && ranges.len() == 1 && f.tape.as_deref().is_some_and(|t| t.image().aux_bytes().is_some()),
+            place: if shape == Shape::T { PlaceAmong::PastComments } else { PlaceAmong::Named },
             anchored: ranges.len() > 1,
             extra: None,
             defs: None,
@@ -1895,34 +1904,27 @@ impl Projected {
     }
     /// Local id `local`'s place among its parent's children (`child`'s `i`). The tape holds no sibling's place, and
     /// hops along the siblings are as many as they are (a module's statements: a probe for each of them would be
-    /// quadratic), so a point read reads its tape's auxiliary index (decision 0656 step 4: the last every-8th named
-    /// sibling, then at most 7 named steps), as the device's reads do (`tape_place`). Where it cannot
-    /// (`places_by_index`), a derived column: the walk's places, written once into the block on the projection's
-    /// first point read (decision 0353 step 3). A scan carries the place in its walk and never makes either.
+    /// quadratic), so a read reads its tape's auxiliary index (decision 0656 step 4: the last every-8th named sibling,
+    /// then at most 7 named steps; past comments for T's shape), as the device's reads do (`tape_place`,
+    /// `tape_place_past_comments`). An outermost anchor's parent is the root, whose children are the anchors: its place
+    /// is its rank among them (`Item::Anchor`). A scan carries the place in its walk (`places`).
     #[inline]
     pub fn idx(&self, local: usize) -> u32 {
-        if self.places_by_index {
-            return if local == 0 { 0 } else { self.f().place(self.node(local as u32)) };
+        if local == 0 {
+            return 0;
         }
-        self.places_column()[local]
+        let x = self.node(local as u32);
+        if self.anchored && self.ranks.is(Item::Anchor, x) {
+            return self.ranks.rank(Item::Anchor, x);
+        }
+        match self.place {
+            PlaceAmong::Named => self.f().place(x),
+            PlaceAmong::PastComments => self.f().place_past_comments(x),
+        }
     }
-    /// Whether a node's place is read in its tape's auxiliary index (`places_by_index`): no derived column is made.
-    pub fn places_by_index(&self) -> bool {
-        self.places_by_index
-    }
-    /// Every numbered node's place (`idx`), the derived column, made on its first read.
-    pub fn places_column(&self) -> &Cells<u32> {
-        self.idx.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "projection places (derived, on a point read)".into());
-            // copy: derived (each node's place, computed once here from the walk; no block holds it)
-            Cells::build(self.block(), self.len() as usize, |out| {
-                for (l, idx, _) in self.places() {
-                    out[l as usize] = idx;
-                }
-                out.len()
-            })
-            .expect("a batch's block holds its projection")
-        })
+    /// Which place a node's is (`ViewDoc::place`).
+    pub fn place_kind(&self) -> PlaceAmong {
+        self.place
     }
     /// Every node in preorder with its place among its parent's children and its depth (`idx`, `depth`), carried in
     /// one walk of the open subtrees: `(local id, place, depth)`.
@@ -3839,7 +3841,7 @@ impl Batch {
         }
         let docs: Vec<&Projected> = group.iter().map(|&i| &self.docs[i]).collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
-            let identities: usize = docs.iter().map(|p| p.ranks().bytes() + p.idx.get().map_or(0, |v| v.len() * 4)).sum();
+            let identities: usize = docs.iter().map(|p| p.ranks().bytes()).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities}).to_string()
         });
         crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p| p.len() as usize).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p| p.len() as usize).sum::<usize>(),"strings":strings.len() - strings_from,"reads":projection.reads}).to_string());

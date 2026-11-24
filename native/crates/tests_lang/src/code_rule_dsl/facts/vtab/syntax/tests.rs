@@ -2066,7 +2066,13 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 // are the walk's.
                 let (mut next, mut depth) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
                 for (l, _, q) in p.walk().skip(1) {
-                    assert_eq!(p.idx(l as usize), next[q as usize], "{label} {format:?} {shape:?}: the place of local {l}");
+                    if p.idx(l as usize) != next[q as usize] {
+                        let x = p.node(l);
+                        let tp = f.parent(x).unwrap();
+                        let ix = f.index();
+                        let kids: Vec<String> = f.children(tp).iter().map(|&c| format!("{c}:{}:{}:{}", dialect.name(f, c), f.named(c), ix.named(f.code(c)))).collect();
+                        panic!("{label} {format:?} {shape:?}: the place of local {l} (tape {x}, parent {tp}, projection parent {:?}): {} not {}; children {kids:?}", p.node(q), p.idx(l as usize), next[q as usize]);
+                    }
                     next[q as usize] += 1;
                     depth[l as usize] = depth[q as usize] + 1;
                     assert_eq!(p.depth(l as usize), depth[l as usize], "{label} {format:?} {shape:?}: the depth of local {l}");

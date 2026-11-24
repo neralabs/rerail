@@ -46,6 +46,11 @@ prototype's rule, "never key postings to known rules".
    - **RARE**: the nodes of each code with at most one node in 256, by code.
    - **NAMED**: the language's named codes, a bit a code, as the grammar says (a code's alias's word, else its
      kind's). The tape holds a code, not whether it is named; the builder is given them (`named_codes`).
+   - **COMMENTS**: the language's comment codes (a kind named `comment`, its alias's name where it has one), a bit a
+     code, and for each SIBLINGS entry the comments among its family's named children before it. T's shape numbers
+     no comment, so its place is a place among the named children that are no comment (`place_past_comments`),
+     read as a place is: the stored eighth's count less its comments, then at most 7 steps. The builder is given the
+     code sets (`CodeSets`, `formats::code_sets`).
 2. **One set of reads, written twice and held equal.**
    - Rust: `aux_index::AuxIndex`, plus `place` and `child` over a `Tape`.
    - UKL: `<ukl/reads/aux_index.h>` (`ukl_aux_*`) and `<ukl/reads/aux_index_tape.h>` (`ukl_aux_place`, `ukl_aux_child`,
@@ -105,16 +110,16 @@ prototype's rule, "never key postings to known rules".
      index read back from the store), and `the_aux_indexes_ukl_reads_are_its_rust_reads`, whose kernel now reads the
      index in the tape's home through `ukl_aux_in_home`.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows
-   these replace are removed, and so is the work that made them. In progress: two pieces are not yet removed (below,
-   **Not yet removed**).
+   these replace are removed, and so is the work that made them. In progress: the `text` rows are not yet removed
+   (below, **Not yet removed**).
    - **One interface: `tape_format::doc_index::DocIndex`** (the user, 2026-11-23: "please put the calls behind an
      abstraction so that it's easier to switch out the design later"). The engine calls it and nothing under it:
      counts (`count`, `holds`, `counts`, `distinct`, `named_all_rooted`), listed codes (`listed`), text
      (`may_have_text`), terms (`term`, `terms`), places (`place`, `child`). Today every answer is the auxiliary index's; another design is a
      change to this file alone.
-   - **A missing index is built once, where it is read.** `FactsIn::index` reads the home's index in place; a home
-     without one (a format 15 tape, a home stored before layout 8), or without a section the facade needs, gets one
-     built for the document (`DocIndex::build`), kept by its facts in the slot the codes it held were kept in before.
+   - **Every home holds its index.** Every writer lays it (`written_16`; a tape without a presence is refused), and
+     a home read in without one, or without a section the facade needs, is refused (`TapeImage::sixteen`), so read
+     cold: layout 11. `FactsIn::index` reads it in place (`TapeImage::doc_index`); nothing builds one apart.
    - **Kind and class scans, rare kinds, the histogram.** `FactsIn::matching` (`of_kind`, `of_class`, `errors`)
      asks the index whether the document holds a code of the set, where it first scanned every code into a held
      list; where each code of the set is rare, its nodes are the index's list, with no scan. `histogram` is the
@@ -135,11 +140,12 @@ prototype's rule, "never key postings to known rules".
      (`Projected::places_by_index`, `FactsIn::place`), and its view entry says so (`ViewDoc::places_by_index`), so the
      views' reads call the CLIF read `tape_place` (`clif::reads::place`: the last stored every-8th named sibling,
      then at most 7 named steps of the tape), which the host's JIT, the CPU's vector path and every device read the
-     same. No places column is made for it.
+     same. T's shape reads its places past comments (`tape_place_past_comments`, `FactsIn::place_past_comments`).
+     An anchored projection's outermost anchors hang from the root, whose children are the anchors: an anchor's
+     place is its rank among them, a rank item of the projection's numbering (`Item::Anchor`, `ANCHOR_ITEM`), read by
+     the host and the device alike. The places column is removed, with its run in the views' entry (`ViewDoc::place`
+     says which read a node's place is).
    - **Not yet removed.**
-     - *The places column*, still made for T's shape (it numbers no comments, which the index's places count as
-       named), an anchored projection (an outermost anchor's place is its ordinal among the anchors under the root),
-       and a tape whose home holds no index (format 15, or a 16 home without a presence).
      - *The `text` rows*: still made a row a node, now with a leaf's string by its term. Removing them makes `text` a
        view of the tape and the index, which a node's text longer than one leaf does not fit as it stands.
    - **The reads take the home.** `DocTape::in_place` hands the reads the home's bytes (`extent`): the tape, its

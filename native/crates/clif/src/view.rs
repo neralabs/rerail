@@ -467,6 +467,9 @@ pub mod aux {
     /// NAMED's kind and version.
     pub const NAMED: u16 = 7;
     pub const NAMED_VERSION: u16 = 1;
+    /// COMMENTS' kind and version: the comment codes, and the comments before each SIBLINGS entry.
+    pub const COMMENTS: u16 = 8;
+    pub const COMMENTS_VERSION: u16 = 1;
     /// Every `K`-th named child is in SIBLINGS.
     pub const K: u32 = 8;
 }
