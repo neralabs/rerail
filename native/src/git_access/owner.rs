@@ -1,4 +1,4 @@
-//! The one Node-API object per process that owns the engine's in-process Git reads. The host
+//! The one Node-API object per process that owns the opener's in-process Git reads. The host
 //! makes it once, from what Rerail's Git reported, before the first read; it installs that report
 //! for every opener in the process and hands out the readers that use it. It keeps no answers yet.
 

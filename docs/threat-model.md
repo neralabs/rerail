@@ -270,8 +270,12 @@ without hooks or network.
     `git blame --contents` of a working file. The listing and the call are two Git processes (T11).
   - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
     diff.
-- **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
-  It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
+- **Git read in process** (`native/src/git_access/`): the ignore matcher and the workspace discovery open every
+  repository they read through one opener. Three reads of the code rules open gix directly instead, with its own
+  defaults (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD` tree's committed
+  sources): they read the index and objects, not ignore rules, and none of this paragraph's checks applies to them; on
+  Windows the first of them in a process can start the first `git.exe` on `PATH` to find the system config file. The
+  opener starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
   It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). Before
   gix reads them it refuses the top-level config files (system, installation, global, the repository's `config` and

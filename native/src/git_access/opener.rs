@@ -1,5 +1,5 @@
-//! The one opener every in-process Git read uses, so the engine reads a repository as the Git
-//! Rerail runs does, or not at all.
+//! The opener the ignore matcher and the workspace discovery read Git through in process, so they
+//! read a repository as the Git Rerail runs does, or not at all.
 //!
 //! - It refuses where Git refuses: a repository another user owns that `safe.directory` does not
 //!   name (`bail_if_untrusted`), and a config file Git cannot parse. A value gix cannot interpret
@@ -21,6 +21,12 @@
 //! - It refuses a config, exclude or attribute file it can name before the read when the file is
 //!   larger than [`MAX_GIT_FILE_BYTES`], so a damaged or hostile repository cannot make the daemon
 //!   read a gigabyte into memory.
+//!
+//! Three reads of the code rules open gix directly instead, with gix's own defaults, and get none
+//! of the above: `@git_tracked`, `@git_commit`, `@git_has` and `git_rev`
+//! (`code_rule_dsl/logic/strings/git.rs`), a base revision's files
+//! (`code_rule_dsl/logic/plan/corpus/inputs.rs`) and a `HEAD` tree's committed sources
+//! (`code_rule_dsl/facts/observe/roots.rs`). They read the index and objects, not ignore rules.
 
 use std::path::{Path, PathBuf};
 

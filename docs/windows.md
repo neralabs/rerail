@@ -221,12 +221,14 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 - `gitHome` takes `HOME`, else `HOMEDRIVE` and `HOMEPATH` when that folder exists (a home share), else the profile
   folder, as Git for Windows does. So Rerail reads and watches the `~/.gitconfig` and `core.excludesFile` that Git
   reads.
-- The engine reads repositories in process for the ignore rules and the code-rule store, through one opener
-  (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config file it
+- The engine reads repositories in process for the ignore rules and the code-rule store's view of a checkout, through
+  one opener (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config file it
   reads (`src/engine/native/git-access.ts`: `git var GIT_CONFIG_SYSTEM` and its config listing outside any
   repository), so the engine takes Git for Windows' `core.autocrlf=true` from that Git's `etc\gitconfig` and
   starts no `git.exe` of its own. Before, the Git library the engine links found the system file by running the first
-  `git.exe` on `PATH`, once per process, past the checks above. The engine takes its home from `HOME`, else the
+  `git.exe` on `PATH`, once per process, past the checks above. Three reads of the code rules still open the
+  repository that way (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD`
+  tree's committed sources), so the first of them in a process can start that `git.exe`. The engine takes its home from `HOME`, else the
   profile folder: with no `HOME` and a home share, its global files are the profile folder's, not the share's.
 
 </details>
