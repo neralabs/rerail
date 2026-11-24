@@ -1075,7 +1075,7 @@ pub struct KindSets {
     /// The linked library of a module lowered in its scope (`rr::Library::version`): a set it reads has the library's
     /// kinds first (`kinds_of`).
     pub library: Option<std::sync::Arc<Version>>,
-    /// The rules that take out the sets no rule reads (`rr/kind-sets.rerail`, decision 0662 §5.1).
+    /// The rules that take out the sets no rule reads (`rr/kind-sets.rerail`, decision 0679 §5.1).
     pub rules: fn() -> &'static super::rules_pass::RulesProgram,
 }
 
@@ -1172,7 +1172,7 @@ impl ProgramPass for KindSets {
             }
         }
         // A set no rule reads but its own and those of sets taken out is no relation of the program: the rules of
-        // `rr/kind-sets.rerail` over the image's view (decision 0662 §5.1). A program that holds no kind set as a
+        // `rr/kind-sets.rerail` over the image's view (decision 0679 §5.1). A program that holds no kind set as a
         // relation has none to take out and runs no rules, as the rules' own program does when it is lowered.
         let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
         if kindsets.keys().any(|set| b.fields().declares(set) || b.fields().states_facts(set) || heads_of(&gone, set)) {

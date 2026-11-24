@@ -5193,7 +5193,7 @@ fn span_patterns_are_found_on_the_version() {
 
 /// core.rerail's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
 /// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, one of the
-/// program's rules, written as an edit of the linked program (`CoreDecls`, decision 0662 §5.1: after its own rules); a debug build
+/// program's rules, written as an edit of the linked program (`CoreDecls`, decision 0679 §5.1: after its own rules); a debug build
 /// checks the image against the tree's.
 #[test]
 fn core_declarations_and_projections_are_made_on_the_version() {
@@ -6857,7 +6857,7 @@ fn source_rows(s: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<Vec<i64
     (0..s.len()).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect()
 }
 
-/// T15 (decision 0662 §1, §5.1): the view states, read off the image in place, each rule and its head, each body
+/// T15 (decision 0679 §1, §5.1): the view states, read off the image in place, each rule and its head, each body
 /// literal that names a relation, each declaration's arity, each relation with facts and each kind set given: on every
 /// pack's library tailed to just before `KindSets`, each relation's rows, their names read back as the image's atoms,
 /// are what the image's own reads give.
@@ -6910,7 +6910,7 @@ fn the_view_states_the_images_rules_literals_and_fields() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The sets the fixed point `KindSets` ran before its rules (decision 0662 §5.1) takes out of `v`: those of `sets` the
+/// The sets the fixed point `KindSets` ran before its rules (decision 0679 §5.1) takes out of `v`: those of `sets` the
 /// image holds as relations (declared, with facts, or the head of a rule) that no rule reads but their own and those
 /// of sets taken out, to a fixed point; with those of them declared and those with facts. T16's reference.
 fn unread_sets(v: &Version, sets: &BTreeSet<String>) -> [BTreeSet<String>; 3] {
@@ -6939,7 +6939,7 @@ fn unread_sets(v: &Version, sets: &BTreeSet<String>) -> [BTreeSet<String>; 3] {
     [gone, undeclared, dropped]
 }
 
-/// T16 (decision 0662 §5.1; 0639's T10): `KindSets`, through the Pipeline, takes sets out by the rules of
+/// T16 (decision 0679 §5.1; 0639's T10): `KindSets`, through the Pipeline, takes sets out by the rules of
 /// `rr/kind-sets.rerail`, run by the native engine over the image's view: on every pack's library tailed to just
 /// before the pass, it takes out what the fixed point it replaced takes out (`unread_sets`): the same sets, the same
 /// declarations undeclared and the same facts dropped. The rules' run and the fixed point are each timed per pack.
@@ -6990,7 +6990,7 @@ fn kind_sets_take_out_by_rules_what_the_fixed_point_took_out() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// T16b (decision 0662 §5.1): on the module path, programs linked on their library's union (`Version::union_on`),
+/// T16b (decision 0679 §5.1): on the module path, programs linked on their library's union (`Version::union_on`),
 /// `KindSets` takes out what the fixed point it replaced takes out, whether the run kept with the library answers a
 /// program (its frame holds over the program) or the program runs. Up to four programs a pack, those of one library
 /// linked on one union, as `rr::linked_from_plan` links them; how many the kept run answered is printed.
@@ -7073,13 +7073,13 @@ fn kind_sets_on_the_module_path_take_out_what_the_fixed_point_took_out() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Spike for decision 0662 §5.1 (T16's fixed cost): `KindSets`'s rules run over the packs named
+/// Spike for decision 0679 §5.1 (T16's fixed cost): `KindSets`'s rules run over the packs named
 /// (`RERAIL_SPIKE_PACKS`, default `sql`), `RERAIL_SPIKE_N` runs each (default 200), timed bare and then profiled,
 /// each span's own CPU a run (its time less the spans inside it, as t56 step 1 charges a walk's step: a lazy make
 /// or a wait inside it is its own span's).
 #[test]
-#[ignore = "spike for decision 0662 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
-fn spike_0662_a_rules_pass_run_profiled() {
+#[ignore = "spike for decision 0679 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0679_a_rules_pass_run_profiled() {
     use crate::code_rule_dsl::logic::profile;
     use crate::code_rule_dsl::logic::program_image::{AtomId, view};
     let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
@@ -7135,12 +7135,12 @@ fn spike_0662_a_rules_pass_run_profiled() {
     }
 }
 
-/// Spike for decision 0662 §5.1 (E16's `KindSets` a program against P1's run): the whole step through the Pipeline,
+/// Spike for decision 0679 §5.1 (E16's `KindSets` a program against P1's run): the whole step through the Pipeline,
 /// over each pack's library tailed to just before it (`RERAIL_SPIKE_PACKS`, `RERAIL_SPIKE_N` runs), each run over a
 /// twin of the input (a version whose analyses are not made yet, as a program's link is), profiled as P1 is.
 #[test]
-#[ignore = "spike for decision 0662 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
-fn spike_0662_b_kind_sets_step_profiled() {
+#[ignore = "spike for decision 0679 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0679_b_kind_sets_step_profiled() {
     use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
     use crate::code_rule_dsl::logic::profile;
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
@@ -7181,14 +7181,14 @@ fn spike_0662_b_kind_sets_step_profiled() {
     }
 }
 
-/// Spike for decision 0662 §5.1 (the frames' lever): a program's `KindSets` step on the module path, its link a union
+/// Spike for decision 0679 §5.1 (the frames' lever): a program's `KindSets` step on the module path, its link a union
 /// on its library's (`Version::union_on`), the library's run kept with the library (`view::Kept`, made by a warm
 /// step). Up to four programs a pack (`RERAIL_SPIKE_PACKS`, `RERAIL_SPIKE_N` runs each), each run over a twin of the
 /// program (its analyses not made yet, as a new program's are), timed bare and profiled; whether the kept run answered
 /// it is printed. P2 is the step that runs.
 #[test]
-#[ignore = "spike for decision 0662 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
-fn spike_0662_c_kind_sets_step_answered_by_the_library() {
+#[ignore = "spike for decision 0679 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0679_c_kind_sets_step_answered_by_the_library() {
     use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
     use crate::code_rule_dsl::logic::profile;
     use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};

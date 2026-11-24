@@ -47,7 +47,7 @@ use Class::*;
 /// are carried).
 pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
-    ("crates/corpus_prep/src/code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE", Thread, "this thread's own connection for rules passes (0662 §5.1): each run binds its inputs and forgets its relations"),
+    ("crates/corpus_prep/src/code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE", Thread, "this thread's own connection for rules passes (0679 §5.1): each run binds its inputs and forgets its relations"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/ukl_vec/src/exec.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
     ("crates/ukl_vec/src/fiber.rs", "POOL", Thread, "this thread's spare fiber stacks, each emptied at its next use"),

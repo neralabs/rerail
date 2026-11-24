@@ -2988,7 +2988,7 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<RrFile>, LibraryFile), Err
 /// A program's files, each its path and the statements of it the program reads (positions in its tape).
 pub type Files = Vec<(PathBuf, Statements)>;
 
-/// The rules `KindSets` takes sets out by (`rr/kind-sets.rerail`, decision 0662 §5.1): a constant of the engine's
+/// The rules `KindSets` takes sets out by (`rr/kind-sets.rerail`, decision 0679 §5.1): a constant of the engine's
 /// files, lowered at its first run.
 pub fn kind_set_rules() -> &'static super::plan::corpus::preparation::rules_pass::RulesProgram {
     use super::plan::corpus::preparation::rules_pass::RulesProgram;
@@ -2996,7 +2996,7 @@ pub fn kind_set_rules() -> &'static super::plan::corpus::preparation::rules_pass
     RULES.get_or_init(|| RulesProgram::new(rules_pass_text("rr/kind-sets.rerail"), |text| parse_version(text).map_err(|e| e.to_string())))
 }
 
-/// A rules pass's program (decision 0662 §5.1): library file `file` after the files it includes, each once, as one
+/// A rules pass's program (decision 0679 §5.1): library file `file` after the files it includes, each once, as one
 /// text without `core.rerail` and without its `#include`s, so the program is lowered alone.
 fn rules_pass_text(file: &str) -> Result<String, String> {
     // Each file after those it includes, each once: its path and statements, less its `#include`s.

@@ -121,7 +121,7 @@ pub mod code_rule_dsl {
             pub mod layouts;
             pub mod manager;
             pub mod passes;
-            /// The image as the engine's inputs (decision 0662 §5.1).
+            /// The image as the engine's inputs (decision 0679 §5.1).
             pub mod view;
             pub use analyses::{Edges, Strata};
         }

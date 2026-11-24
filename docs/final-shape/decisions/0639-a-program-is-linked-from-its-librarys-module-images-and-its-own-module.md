@@ -479,10 +479,10 @@ E15 and E16's times, per program on one thread (ms; the module steps here over t
    component crosses modules).
 4. **The downward steps as rules (T10).** `KindSets` becomes E10's three rules over the union's reads, evaluated
    and kept by delta as the program's own module changes (0225 §5). Their input is a relational view of a
-   program image (decision 0662), the first analysis written that way. `SourcesOnRequest` keeps its `again` until
-   decision 0662's view carries what it reads.
+   program image (decision 0679), the first analysis written that way. `SourcesOnRequest` keeps its `again` until
+   decision 0679's view carries what it reads.
 5. **The steps' places declared.** Each tail step says whether it is local, upward, downward or across
-   (decision 0662), so the module/program split above reads the declarations. It does not keep a list of its own:
+   (decision 0679), so the module/program split above reads the declarations. It does not keep a list of its own:
    `DOWNWARD` becomes the steps that declare `Downward`. T11 and T13 hold the declarations to what the steps do.
 
 **Tests, before the code.**
@@ -633,8 +633,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
 6. §6: the local and upward tail steps at module time; kind sets, then sources on request, as rules per program.
    T10. **Spiked** (§6a, E12–E16) and specified: the module steps at module time under a tail key
    (`p0_module_tailed`), the program's downward steps over the union and the steps after them on their edit, kind
-   sets as rules over decision 0662's view, the steps' places declared. T10–T14.
-   **Built (2026-11-24), T10–T14 and 0662's T15–T16 passing:**
+   sets as rules over decision 0679's view, the steps' places declared. T10–T14.
+   **Built (2026-11-24), T10–T14 and 0679's T15–T16 passing:**
    - Each module's tail at module time, under `p0_tail_key` / `p0_tail_req -> p0_module_tailed`; a program links the
      tails and runs `program_steps` (T11, T12, T14).
    - Module-time decisions that a reader decides moved to program time (`Place::Across`), each at its `TAIL`
@@ -647,9 +647,9 @@ silently. Each place a digest stands for content, what can collide, and what is 
    - Tests that plan on pool threads bind the test's store on the test thread first: two phase-0 runs at once in one
      process store wait on its atoms lease and corrupted kept facts.
    - `DOWNWARD` is `downward_steps()`, the steps that declare `Place::Downward`.
-   - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0662's view, names
+   - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0679's view, names
      `img_`) takes out the same sets, undeclarations and facts as `KindSets` in every pack; it is now the pass, and T10 is
-     0662's T16.
+     0679's T16.
    - The program's checks are of its own components (`cycles::check_within`), the relations each step changed read
      off the version it made: an overlay's or view's edit (`rr::changed_since`), or a derivation's rules by their
      sources (`rr::derived_changes`: a rule whose hash is not its source's, one with no source, a source no rule came
@@ -670,7 +670,7 @@ silently. Each place a digest stands for content, what can collide, and what is 
      that each local step ran over the edit (`Ran::Delta`). The program's steps over the link, whole against onto
      it with its checks narrowed (E15, spark2, one thread, ms a program over 6): django 40.6 against 23.3, python
      15.2 against 9.8, react 21.8 against 18.0, phases 10.1 against 7.6.
-   - `KindSets` takes sets out by rules (decision 0662 §5.1): `rr/kind-sets.rerail`, lowered once a process, run by
+   - `KindSets` takes sets out by rules (decision 0679 §5.1): `rr/kind-sets.rerail`, lowered once a process, run by
      the native engine (`run_atoms_native_over`, the corpus run's evaluator without its documents) over the image's
      view, whose relations are sources read off the `Version` in place (`program_image::view`, each rule where it lies,
      `Version::rule_places`). Its Rust fixed point is gone. The membership of each set and the axes over derived sets
@@ -680,6 +680,16 @@ silently. Each place a digest stands for content, what can collide, and what is 
      python 7.0 against 10.7, django 4.5 against 3.9, phases 4.7 against 3.6, typescript 3.9 against 3.3, react 3.2
      against 1.5, sql (42 rules) 0.8 against 0.01. The engine's run holds about 0.7 ms however small the program
      (planning each rule fresh moves no time), and the inputs' statistics a fifth of the rest.
+   - A pack's own library is a module of the program's library (§1). Django's programs include
+     `packs/django/rules/lib/django.rerail`, beside them and outside `docs/rule-syntax/lib`. The program's text wrote
+     that file in, so every Django program lowered it again as its own module. The text now keeps the `#include`,
+     named by the file's path from the library (`../packs/django/rules/lib/django.rerail`). Phase 0 resolves it as a
+     library file: its directory is a root and a `program_dir` of the bootstrap run, and the fast path without a
+     run (`composed`) leaves such a text to the run. Django is tailed by module like the other libraries. T16b
+     answers its 4 programs from the library's run. T11 unites its modules' tails as a program reads them: the
+     context pass the whole library's tail makes once over several modules' contexts is one row per module in the
+     union until `PassesOnce`. Decision 0263's closed relations admit what `DERIVED_BY` names
+     (`python/references.rerail` derives `reference_edge`), which the module path's per-file check refused.
 
 7. §5 checked by T4 on the template, and the template's fill time measured.
 8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.

@@ -1,4 +1,4 @@
-# 0662. Passes that read a program are rules over its image; rewrites are edits those rules derive
+# 0679. Passes that read a program are rules over its image; rewrites are edits those rules derive
 
 Status: proposed (2026-11-23). Feeds decision 0639 §6a (the tail's steps by place, kind sets as rules).
 
@@ -204,6 +204,18 @@ own, so each program finds the kinds of the library's sets (`kinds_of`: python 5
 50 µs). Taking the sets out (2.4 µs and 0.4 µs) and the frame read are small. The next lever is kept maintenance:
 the library's kind-set map kept with its union, so that a program finds and writes only the sets its own module
 adds.
+
+The copy is gone: `KindSets` states its fields on its edit as it goes (not measured again since). Two consequences
+of a program staying an edit of its library's union, found by the tests and fixed:
+
+- **A literal's node is its place in its own image.** A version of several images (an overlay, a union of modules)
+  gives literals of different rules the same node. The export demand's cut renamed its readers' atoms by node
+  alone, and so renamed a literal of another rule (`flag_col`'s `kind` read as `xd_called`). It now keys them by
+  rule and node (test `exports_are_cut_by_their_readers_alone_on_an_overlay`). A pass's map across rules is keyed
+  by rule too; within one rule a node is unique.
+- **An edit of a small program can fold.** `Builder::finish` folds an edit at least half its input's size. A
+  program's own module on the module path is small, so `CoreDecls`' edit of it folds. A fold records its rules'
+  sources as a derivation does, so the tail reads a step's changes off one fold as off one derivation (T13).
 
 ## Prior art
 

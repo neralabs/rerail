@@ -263,10 +263,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "NODES"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
-    // The kind set rules (0662 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
+    // The kind set rules (0679 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
     // every run.
     ("code_rule_dsl/logic/rr.rs", "RULES"),
-    // A thread's connection for rules passes (0662 §5.1): scratch, its inputs bound and its relations forgotten
+    // A thread's connection for rules passes (0679 §5.1): scratch, its inputs bound and its relations forgotten
     // within each run, nothing kept from one run for another.
     ("code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE"),
     // The frame keys of the run under way (`reuse::Naming`), bound to the run's context for its manifest to name: the

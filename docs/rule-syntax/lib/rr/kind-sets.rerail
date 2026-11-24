@@ -1,4 +1,4 @@
-// Kind sets taken out (decision 0639 §6a, E10; decision 0662 §2): a kind set the image holds as a relation, which no
+// Kind sets taken out (decision 0639 §6a, E10; decision 0679 §2): a kind set the image holds as a relation, which no
 // rule reads but its own and those of sets taken out, is no relation of the program. It stays a kind set (the
 // transducer reads it from a node's kind); its declaration and its facts go. These are rules over the image's view,
 // so a program's union keeps what they derive by delta as its own module changes.
@@ -25,7 +25,7 @@ img_kindset_live(s) :- img_reads_set(h, s), h != s, img_kindset_live(h).
 .decl img_kindset_out(s: symbol)
 img_kindset_out(s) :- img_kindset(s), !img_kindset_live(s).
 
-// The edits (decision 0662 §2).
+// The edits (decision 0679 §2).
 .decl img_undeclare(rel: symbol)
 img_undeclare(s) :- img_kindset_out(s), img_decl(s, _).
 .decl img_drop_facts(rel: symbol)

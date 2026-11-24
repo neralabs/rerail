@@ -7026,7 +7026,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
     // Not in a run in mode `here`: a nested run whose caller is already one of the pool's jobs (a rules pass, decision
-    // 0662 §5.1) runs its strata on its own thread, paying no job, ambient or board a stratum.
+    // 0679 §5.1) runs its strata on its own thread, paying no job, ambient or board a stratum.
     let mut board = (issue::on() && native.contains("program") && !native.contains("here") && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
     // Decision 0592: with strata issued ahead, a relation goes when its last reader to finish does.
     let mut reads_left = board.as_ref().filter(|_| release_finished()).map(|_| ReadsLeft::new(f0, &run_vs, &sccs, &by_stratum, &run.views));
