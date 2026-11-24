@@ -154,6 +154,8 @@
 // loop's phase, which runs no scan or sort, each SIMD group's piece's run (`lp_piece`: its stacks,
 // indexed as it goes, in the group's memory, not a thread's, which Metal keeps in device memory).
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
+// A power of two: a SIMD group's run is its slot masked by a constant (the M3's back end, G15, computes an address in
+// group memory from a computed index wrong otherwise: decision 0588).
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
     uint32_t flag;
@@ -230,7 +232,7 @@ typedef struct PpTg {
     lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),       \
            AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),                                           \
            AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl,         \
-           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS], (idle) __UKL_ARGS)
+           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u)], (idle) __UKL_ARGS)
 // A helper's reading of the loop open at `lay` (`PG_LOOP`: the tests' lines' where `is_if`), by a group with no
 // team left (`pp_teams`): the unit's items until its queue has none waiting.
 UKL_ONCE void lp_help(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg, UklGrid g, bool is_if __UKL_PARAMS)

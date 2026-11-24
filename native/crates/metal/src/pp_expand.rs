@@ -1372,6 +1372,12 @@ impl Exp {
         out
     }
 
+    /// The requests posted (`LPQ` 5).
+    pub fn posted(&self) -> u32 {
+        // SAFETY: the device finished; `lpq` holds the queue's control words.
+        unsafe { *self.lpq.host().cast::<u32>().add(5) }
+    }
+
     /// The rows the roll-up walked (`CTL` 26, `lp_roll_rows`).
     pub fn log_rows(&self) -> u32 {
         // SAFETY: the device finished; `ctl` holds 32 words.
@@ -1546,6 +1552,8 @@ pub struct Expanded {
     /// The rows the roll-up walked (`CTL` 26: each run's log, an occurrence's rows each time it is read): the
     /// logs' use of the tokens' store, as the output's is the output's.
     pub log_rows: u32,
+    /// The requests posted (`LPQ` 5): the calls read in a run of their own (decision 0613 §4).
+    pub posted: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
 }
@@ -1846,7 +1854,7 @@ impl<'u> Runs<'u> {
         };
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), posted: exp.posted(), run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {
