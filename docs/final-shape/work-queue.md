@@ -11294,3 +11294,27 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - one check over compiler, rr-aot, rr-parser, kotlin-aot, kotlin-parser, json-aot, cpu-stream, metal, parser-tests, slabs and bitlex: no errors;
   - rr-parser, whole crate at four threads: 55 pass, the eight recovery tests among them. 3 fail in tier 1's generator at `bitlex_lex_rust.rs:272` ("index 69 is not a char boundary; it is inside '_'"): a Relax defect, seen since roll-up 86. Run alone, all three pass.
   - Not run: the ignored corpus test `corpus_edited_tapes_are_the_lean_tapes` passed Relax's 580 s cap.
+
+### Q542. Roll-up 115 (final-rerail-shape fc3b677a1a onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape (9 commits, to fc3b677a1a):
+  - d154b8984f: a sorted search under key runs.
+  - 4b125c04ca: a view's probe by a node's id reuses the last id's place.
+  - t56 steps 1–7: a walk's step is charged its own time; one sorted-order search in rerail-blocks (`rerail_blocks::order`), which a relation's column index and the setfix runs share; probes by fences and prints; an order's leading key columns are exact; a lab of the join's loop.
+- The NODE hint (4b125c04ca), as the user decided: its saving is carried into the hub's per-read memo, with no thread-local.
+  - The memo is `vtab::NodeMemo`: the documents' address, the id, its document, local id and tape node, and the projection's address. It is checked against all of these, as the thread-local was.
+  - The repeats are different steps probing the same node in turn (`kind(n, k)`, then `text(n, s)`), each from inside the read of the step before. So the cursor holds a shared cell (`ProbeCursor::node`), and a join gives one cell to all its steps' cursors (`LastProbe::for_steps`). A lookup alone keeps a cell of its own, with no allocation.
+  - `Batch::node_hint` and `Batch::tape_node` read and fill it. The hub's `node(n, memo)` and `node_near` stay.
+  - The saving is not measured here.
+- A column's index: the branch's design (ids, fences and prints in the relation's block; a column pushed in order keeps no ids, searched through `rerail_blocks::order`). The hub had folded `BlockVec` into `Vector` (4de2121865), so the arrays are `Vector`s placed by `rows::collect_in`. `rows_between` returns the hub's `Vector`.
+- `exact_cols` serves the join's step and `holds` both. It has the hub's join indirection (`j.src_in`), the branch's leading key columns of an order, and the hub's test of a view by several columns. The caller says whether its probe is a membership test (the step: no binds, tests, fusion or ranges; `holds`: no tests).
+- The step clock: the hub's `Vector`, with the branch's accounted-time fields. `made.rs`: the hub's make (which returns the used rows) inside the branch's "batch: rows made" span.
+- Moved files: the branch's edits to `made.rs`, `values.rs` and `cands.rs` are carried to their crates' places (crate split 9a). `runs::split_at_pos` is `rerail_blocks::order::split_at_pos`.
+- The branch's tests on the hub's APIs:
+  - `cut_tests`' `Source::lookup` returns `Vector`;
+  - `a_text_reads_cost` admits a `vec![value]`;
+  - the loop lab takes its source from the measured join (`join_rule_with`), with the hub's `candidates` and `Rows::each`.
+- On the way: costs' `join_steps.rs` had an unused `Vector` import (since roll-up 113).
+- Checked with Relax, RERAIL_GPU=cpu:
+  - a check over blocks, prof, facts-base, facts, setfix, engine and tests-lang: no type errors in the merged code. Relax still reports its own errors: the sessions_base `translate` visibility defect (since roll-up 112), napi's constructor registry, and a Relax bus error in the engine pass.
+  - tests: setfix 137; facts-base 83; blocks 88; tests-lang `vtab::syntax` 89.

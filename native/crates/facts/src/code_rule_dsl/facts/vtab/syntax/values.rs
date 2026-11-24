@@ -504,7 +504,7 @@ impl Layered {
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
     fn base_len(&self) -> usize {
-        *self.base_len.get_or_init(|| self.base.len())
+        *crate::code_rule_dsl::logic::profile::once(&self.base_len, "batch: a layered relation's rows", || self.base.len())
     }
     /// The batch's source.
     pub fn base(&self) -> &Arc<dyn Source> {

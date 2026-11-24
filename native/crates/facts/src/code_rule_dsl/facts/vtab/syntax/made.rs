@@ -1195,8 +1195,10 @@ impl Batch {
                 need.sort_unstable();
                 need.dedup();
                 if need.is_empty() && waits {
-                    // Another thread's group: the pool's next job, else a wait for a group to end.
+                    // Another thread's group: the pool's next job, else a wait for a group to end. Its time is the
+                    // wait's span's, not the reading step's (t56 step 1); a job it runs charges its own scopes.
                     drop(s);
+                    let _waited = profile::span(|| "batch: waited for another thread's make".to_owned());
                     if rayon::yield_now() != Some(rayon::Yield::Executed) {
                         let mut s = self.rows.state.lock();
                         if want.iter().any(|&i| s.of[i].is_none() && s.claimed[i].is_some_and(|t| t != me)) {
@@ -1216,10 +1218,14 @@ impl Batch {
                 s.makers.push(me);
                 (need, waits, Claim { rows: &self.rows, me, docs })
             };
-            let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|mut m| {
-                let used: Option<Arc<[u32]>> = m.used.take().map(Arc::from);
-                self.group_rels(m, &need).map(|r| (r, used))
-            });
+            let made = {
+                // The make's own span: the reading step that asked for it is not charged it (t56 step 1).
+                let _made = profile::span(|| "batch: rows made".to_owned());
+                self.make_rows(&need, self.rows.first(), &[]).and_then(|mut m| {
+                    let used: Option<Arc<[u32]>> = m.used.take().map(Arc::from);
+                    self.group_rels(m, &need).map(|r| (r, used))
+                })
+            };
             let makes = self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             crate::code_rule_dsl::prof::count(if whole { "batch: documents made by a whole read" } else { "batch: documents made by a probe" }, need.len());
             crate::code_rule_dsl::prof::count("batch: groups made", 1);
@@ -1338,7 +1344,7 @@ impl Batch {
             return c;
         }
         self.ensure(&(0..self.docs.len()).collect::<Vec<_>>());
-        self.rows.complete.get_or_init(|| {
+        profile::once(&self.rows.complete, "batch: every relation's rows", || {
             let rels = self.rows.state.lock().rels.clone();
             // Each relation's rows as given (its kept statistics'): its `len` was answered by them.
             for (rel, r) in rels.iter().enumerate() {

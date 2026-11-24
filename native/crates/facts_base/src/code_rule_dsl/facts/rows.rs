@@ -2897,21 +2897,6 @@ impl Rows {
         std::ptr::eq(p, q).then(|| RangeRead { col: p.cols[c], add: (p.skip + i).wrapping_sub(from), _rows: std::marker::PhantomData })
     }
 
-    /// The first row whose value in column `c` is not below `key`, the column sorted over every row (`rows()` where
-    /// none is): the parts by their last values, then the one part's own search (`rerail_blocks::rows::Rows::
-    /// lower_bound`: its chunks' first values, then the chunk's encoding or slice). A bisection by `get` searched the
-    /// parts and the chunks again for every row it read.
-    pub fn lower_bound(&self, c: usize, key: i64) -> u32 {
-        let parts = self.segs.iter().map(|(first, p)| (*first, p)).chain(self.tail.as_ref().map(|t| (self.from, t)));
-        for (first, p) in parts {
-            let n = p.len();
-            if n > 0 && p.cols[c].get(n - 1) >= key {
-                return first + p.rel().rows.lower_bound(c, 0, n, key);
-            }
-        }
-        self.rows() as u32
-    }
-
     /// The relation holding row `id`, and the row's place in it.
     // Hot: a read written once (decision 0310) is inlined into its reader, across crates too.
     #[inline(always)]

@@ -4269,6 +4269,34 @@ impl Batch {
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
     }
+    /// `node_near`, and the node's tape node (`Projected::node`) where it is known: a rule's body probes several views
+    /// by the same node in turn (`kind(n, k)`, `text(n, s)`, `docof(n, d)`), and each probe searched the id's granule
+    /// and selected its tape node again, a sixth of `all`'s per-file samples. `memo` is the read's (`NodeMemo`, which
+    /// the join hands from step to step): the id it holds, where it is `n` of these documents, else `n` found and kept.
+    #[inline]
+    fn node_hint(&self, n: i64, hint: &mut u32, memo: &std::cell::Cell<super::NodeMemo>) -> Option<(usize, u32, u32)> {
+        let m = memo.get();
+        let docs = self.docs.addr();
+        if m.docs == docs && m.id == n && (m.doc as usize) < self.docs.len() && std::ptr::from_ref(&self.docs[m.doc as usize]) as usize == m.at {
+            return Some((m.doc as usize, m.local, m.x));
+        }
+        let (doc, local) = self.node_near(n, hint)?;
+        let at = std::ptr::from_ref(&self.docs[doc]) as usize;
+        memo.set(super::NodeMemo { docs, id: n, doc: doc as u32, local, x: NONE, at });
+        Some((doc, local, NONE))
+    }
+    /// Node `local` of document `doc`'s tape node, id `n`: selected, and kept in `memo` where it holds that node
+    /// (`node_hint`).
+    #[inline]
+    fn tape_node(&self, doc: usize, local: u32, n: i64, memo: &std::cell::Cell<super::NodeMemo>) -> u32 {
+        let p = &self.docs[doc];
+        let x = p.node(local);
+        let m = memo.get();
+        if m.docs == self.docs.addr() && m.id == n && m.doc as usize == doc && m.local == local && m.at == std::ptr::from_ref(p) as usize {
+            memo.set(super::NodeMemo { x, ..m });
+        }
+        x
+    }
     /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
     fn by_kind(&self, kind: i64) -> &[[u32; 3]] {
         let (Ok(tag), true) = (u8::try_from(kind / i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)), kind >= 0) else { return &[] };
@@ -4997,6 +5025,10 @@ impl Viewed {
         let plan = cursor.plan;
         let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
         let cursor_also = cursor.also;
+        // The read's node memo (`node_hint`), shared by the probe's own lookup and its matches' tape nodes; a lookup
+        // alone, its own.
+        let own_node = std::cell::Cell::new(super::NodeMemo::default());
+        let node: &std::cell::Cell<super::NodeMemo> = cursor.node.as_deref().unwrap_or(&own_node);
         let [doc_hint, granule] = &mut cursor.hint;
         let mut vals = [0i64; 8];
         let (firsts, kernel) = (b.firsts(view), self.kernel_view());
@@ -5019,7 +5051,12 @@ impl Viewed {
                 return;
             }
             let p = &b.docs[doc];
-            let x = if x == NONE && plan.needs & NEED_X != 0 { p.node(local) } else { x };
+            // A match by its own id: its tape node through the read's memo (`Batch::tape_node`).
+            let x = match id {
+                _ if x != NONE || plan.needs & NEED_X == 0 => x,
+                Some(n) => b.tape_node(doc, local, n, node),
+                None => p.node(local),
+            };
             let n = match id {
                 Some(n) => n,
                 None if plan.needs & NEED_ID != 0 => p.global_near(local, granule),
@@ -5036,8 +5073,8 @@ impl Viewed {
             each(row, &vals[..len]);
         };
         if column == self.own() {
-            if let Some((doc, local)) = b.node_near(value, doc_hint) {
-                emit(doc, local, NONE, Some(value), None, Known::default());
+            if let Some((doc, local, x)) = b.node_hint(value, doc_hint, node) {
+                emit(doc, local, x, Some(value), None, Known::default());
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
