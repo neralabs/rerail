@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { loadNativeBinding, type NativeNamedPipeServer } from "../../engine/native/native.js";
+import { loadNativeBinding, type NativeBinding, type NativeNamedPipeServer } from "../../engine/native/native.js";
 
 /**
  * What a Rerail engine pipe is on Windows: the name the engine of one Rerail database listens on, the fallback it moves
@@ -89,20 +89,34 @@ export function enginePipeListed(pipes: () => readonly string[] = listPipes): bo
 export type PipeServer = NativeNamedPipeServer;
 
 /**
+ * What {@link pipeServer} gives: the server end Windows names ({@link PipeServer}); `no-pipe` where no pipe of that name
+ * took a connection or Windows named no holder; `not-asked` where Windows could not be asked, since the native binding
+ * would not load in this process, predates the question or threw.
+ */
+export type PipeServerAnswer = PipeServer | "no-pipe" | "not-asked";
+
+/**
  * The process holding the server end of the Windows named pipe at `path` and when it started, as Windows records them
  * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
  * one to free and opens again, as Node's own client does, until `timeoutMs` has passed, on a thread of the worker pool,
  * so this process's own thread and its timers run on meanwhile. Any local user can create a pipe of any name, but not
- * one Windows records as another process's. Undefined where no such pipe takes a connection, or where the binding
- * predates the question, will not load in this process or throws: then the engine's proof decides, and with no capability
- * in daemon.json nothing can; the first load failure or throw is reported ({@link reportPipeServerFailure}).
+ * one Windows records as another process's. `no-pipe` where no such pipe takes a connection; `not-asked` where the
+ * binding (`binding`, the engine's own unless a test stands in one) predates the question, will not load in this
+ * process or throws. Either way the engine's proof decides, and with no capability in daemon.json nothing can; the
+ * first load failure or throw is reported ({@link reportPipeServerFailure}).
  */
-export async function pipeServer(path: string, timeoutMs: number): Promise<PipeServer | undefined> {
+export async function pipeServer(
+  path: string,
+  timeoutMs: number,
+  binding: () => Pick<NativeBinding, "namedPipeServer"> = loadNativeBinding,
+): Promise<PipeServerAnswer> {
   try {
-    return await loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
+    const native = binding();
+    if (native.namedPipeServer === undefined) return "not-asked";
+    return await native.namedPipeServer(path, timeoutMs) ?? "no-pipe";
   } catch (error) {
     reportPipeServerFailure(path, error);
-    return undefined;
+    return "not-asked";
   }
 }
 

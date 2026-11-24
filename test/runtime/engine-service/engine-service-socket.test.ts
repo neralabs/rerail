@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENGINE_ANSWER_WAIT_MS, engineEndpointAt } from "../../../src/runtime/daemon-control.js";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -564,15 +564,16 @@ describe("the holder of a Windows named pipe", () => {
     await new Promise<void>(resolve => server.listen(pipe, resolve));
     try {
       const holder = await pipeServer(pipe, 1_000);
-      expect(holder?.pid).toBe(process.pid);
+      expect(holder).toMatchObject({ pid: process.pid });
+      const { startedAt } = holder as PipeServer;
       // Node starts a moment after Windows creates its process.
       const nodeStarted = Date.now() - process.uptime() * 1_000;
-      expect(holder?.startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
-      expect(holder?.startedAt).toBeGreaterThan(nodeStarted - 10_000);
+      expect(startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
+      expect(startedAt).toBeGreaterThan(nodeStarted - 10_000);
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
-    expect(await pipeServer(pipe, 0)).toBeUndefined();
+    expect(await pipeServer(pipe, 0)).toBe("no-pipe");
   });
 
   it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, says so with no pid, and leaves this process's timers running meanwhile", async () => {
@@ -587,7 +588,7 @@ describe("the holder of a Windows named pipe", () => {
       const answers = [await pipeServer(pipe, 0), await pipeServer(pipe, 1_000)];
       const answeredAt = Date.now();
       // An answer with no pid, which tells a pipe kept busy from one no one holds.
-      expect(answers.map(answer => answer !== undefined && typeof answer.pid !== "number")).toEqual([true, true]);
+      expect(answers.map(answer => typeof answer === "object" && typeof answer.pid !== "number")).toEqual([true, true]);
       // The timer fired while the lookup waited for a free instance, before its answer.
       expect(fired).toHaveLength(1);
       expect(fired[0]).toBeLessThan(answeredAt);
@@ -598,7 +599,19 @@ describe("the holder of a Windows named pipe", () => {
   });
 
   it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", async () => {
-    expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBeUndefined();
+    expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBe("no-pipe");
+  });
+
+  it("is not asked of Windows where the engine's binding predates the question, which is no failure to report, and is no pipe where the binding finds none", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-${process.pid}`;
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await pipeServer(pipe, 0, () => ({}))).toBe("not-asked");
+      expect(await pipeServer(pipe, 0, () => ({ namedPipeServer: async () => null }))).toBe("no-pipe");
+      expect(written).not.toHaveBeenCalled();
+    } finally {
+      written.mockRestore();
+    }
   });
 });
 
