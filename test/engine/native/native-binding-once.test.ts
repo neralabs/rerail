@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nativeGitAccess } from "../../../src/engine/native/git-access.js";
-import { loadNativeBinding, nativeHealth } from "../../../src/engine/native/native.js";
+import { isWorkspaceBusy, loadNativeBinding, nativeHealth } from "../../../src/engine/native/native.js";
 
 vi.mock("node:fs", { spy: true });
 
@@ -47,6 +47,14 @@ describe("the engine's file", () => {
     vi.mocked(existsSync).mockClear();
     // Node's module cache hands back the same exports for the same path, so only the count shows the engine was kept.
     expect(loadNativeBinding()).toBe(binding);
+    expect(looksSinceCleared()).toBe(0);
+  });
+
+  it("is not looked for where a retry asks whether its error was the busy refusal, though RERAIL_ENGINE_PATH has changed", () => {
+    const busy = loadNativeBinding().WORKSPACE_BUSY;
+    vi.stubEnv("RERAIL_ENGINE_PATH", join(tmpdir(), "rerail-no-engine-here.node"));
+    vi.mocked(existsSync).mockClear();
+    expect(isWorkspaceBusy(new Error(busy))).toBe(true);
     expect(looksSinceCleared()).toBe(0);
   });
 });

@@ -711,8 +711,11 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
 }
 
 /**
- * The engine file of each Rerail package's engine package, once found. `loadNativeBinding` runs for every call into
- * the engine, so the package is resolved and its version read once per process, and only where `native/` has no engine.
+ * The engine file of each Rerail package's engine package, once found at Rerail's version, where `native/` has none.
+ * `loadNativeBinding` keeps the engine it loaded, yet looks again while a load fails and where `RERAIL_ENGINE_PATH`
+ * comes and goes, and each catalog read stamps the engine's file (`engineBuild`): such a look returns this file without
+ * resolving the package or reading its version again, so a process gets back the engine it loaded though an install
+ * has changed the package on disk since.
  */
 const packagedEngines = new Map<string, string>();
 
@@ -877,13 +880,6 @@ function namesRerail(manifestPath: string): boolean {
   }
 }
 
-/**
- * The engine's busy refusal, kept when the addon first loads. `isWorkspaceBusy` runs in a retry's `catch`, after the
- * failed call loaded the addon, so it reads this instead of resolving the addon there again, where a moved addon would
- * throw over the error it classifies.
- */
-let workspaceBusy: unknown;
-
 /** Whether this process has named Rerail's package to its engine (`setPackageRoot`): once, as the engine never forgets it. */
 let packageRootNamed = false;
 
@@ -902,7 +898,7 @@ export function loadNativeBinding(): NativeBinding {
   return loaded.binding;
 }
 
-/** The engine at `addonPath`, with what the process keeps from its first load. */
+/** The engine at `addonPath`; the first one this process loads is told where Rerail's package is. */
 function requireEngine(addonPath: string): NativeBinding {
   let binding: NativeBinding;
   try {
@@ -910,7 +906,6 @@ function requireEngine(addonPath: string): NativeBinding {
   } catch (error) {
     throw engineLoadFailure(error);
   }
-  workspaceBusy ??= binding.WORKSPACE_BUSY;
   if (!packageRootNamed) {
     // In an engine package of its own the engine cannot always find Rerail's package from its own file: npm can put
     // the two side by side, and a package manager that keeps a store links the engine package in from there.
@@ -920,10 +915,14 @@ function requireEngine(addonPath: string): NativeBinding {
   return binding;
 }
 
-/** Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. */
+/**
+ * Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. It runs in a retry's
+ * `catch`, after the failed call loaded the engine, so it reads the engine kept in `loaded`: a look on disk there, where
+ * `RERAIL_ENGINE_PATH` has changed since, could throw over the error it classifies.
+ */
 export function isWorkspaceBusy(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const busy = workspaceBusy ?? loadNativeBinding().WORKSPACE_BUSY;
+  const busy = (loaded?.binding ?? loadNativeBinding()).WORKSPACE_BUSY;
   if (typeof busy !== "string") {
     throw new Error("The native addon exports no WORKSPACE_BUSY, so it is older than this Rerail; rebuild or reinstall it", { cause: error });
   }
