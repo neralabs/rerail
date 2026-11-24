@@ -846,7 +846,7 @@ pub enum Round {
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
 /// bumped with any change that can make one answer differently.
-pub const PROOFS_VERSION: u32 = 5;
+pub const PROOFS_VERSION: u32 = 6;
 
 /// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1588,8 +1588,9 @@ impl Induction {
         let mut u = window.attach(ops, tables, nexts);
         let mut keep = false;
         let out = 'solve: {
-        let Window { far, reach, at_position, held, fan, base_gates, .. } = &*window;
-        let (far, reach, base_gates) = (*far, *reach, *base_gates);
+        let Window { far, reach, at_position, held, fan, base_gates, base: window_base, base_vars, start, learned, .. } = &mut *window;
+        let fan = &*fan;
+        let (far, reach, base_gates, window_base, base_vars) = (*far, *reach, *base_gates, *window_base, base_vars.unsigned_abs() as usize);
         if bounded && let Some(&b) = u.before.get(&(reach + 1)) {
             u.clauses.push(&[b]);
         }
@@ -1663,14 +1664,31 @@ impl Induction {
             break 'solve Outcome::Unknown;
         }
         let s = &mut self.solver;
-        // The window's gates as they stand (their fanout made once), its plain clauses and the solve's own.
-        s.reset(u.vars as usize);
-        for c in u.clauses.iter() {
-            s.add(c);
+        // The window at level 0, propagated once (`Start`); what its solves learned that holds without them; the
+        // solve's own clauses, each with `-sel`, a variable past the solve's, assumed (decision 0670).
+        let start = start.get_or_insert_with(|| s.start(&u.gates, fan, base_vars, u.clauses.iter().take(window_base)));
+        let sel = u.vars + 1;
+        s.resume(start, sel.unsigned_abs() as usize, u.clauses.iter().take(window_base));
+        for c in learned.iter() {
+            s.add_resumed(c);
         }
+        let mut own = Vec::new();
+        for c in u.clauses.iter().skip(window_base) {
+            own.clear();
+            own.extend_from_slice(c);
+            own.push(-sel);
+            s.add_resumed(&own);
+        }
+        let marks = s.marks();
         let before = s.conflicts;
         let t_dump = std::time::Instant::now();
-        let answer = s.solve(&u.gates, fan, base_gates, self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
+        let answer = s.solve_assuming(&u.gates, fan, base_gates, sel, self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
+        // What holds for every solve of the window, kept for its next ones (`LEARNED_KEPT` literals at most).
+        s.learned_without(&u.gates, base_gates, sel, marks, base_vars, LEARNED_LONGEST, |c| {
+            if learned.lits().len() + c.len() <= LEARNED_KEPT {
+                learned.push(c);
+            }
+        });
         // With `RERAIL_CSAT_DUMP` (a directory): each solve of over 100 ms, its formula as `Gates::dump` writes
         // it, to solve or profile it alone (decision 0670).
         if let Some(dir) = std::env::var_os("RERAIL_CSAT_DUMP") && t_dump.elapsed().as_secs_f64() > 0.1 {
@@ -1754,7 +1772,7 @@ fn cube(ops: &mut Vec<BlockOp>, lemma: &Lemma) -> u16 {
     acc
 }
 
-use crate::bitlex_csat::{Fanout, Gates, Solver};
+use crate::bitlex_csat::{Fanout, Gates, Solver, Start};
 use crate::bitlex_sat::{Answer as Sat, Clauses, Lit};
 
 /// Whether `at` is a carried value with an equation (`never_unrolled`).
@@ -1855,7 +1873,15 @@ struct Window {
     parts: Parts,
     /// Its gates and clauses hold a captured solve's own past its own (`give_back`).
     kept: bool,
+    /// Its solver at level 0, made at its first solve (decision 0670).
+    start: Option<Start>,
+    /// What its solves learned that holds for all of them: clauses over its own variables, none of a solve's own.
+    learned: Clauses,
 }
+
+/// A window's learned clauses kept: the longest, and the literals in all.
+const LEARNED_LONGEST: usize = 64;
+const LEARNED_KEPT: usize = 1 << 13;
 
 /// A window's gates, clauses and literals.
 struct Parts {
@@ -1924,7 +1950,7 @@ impl<'a> Unrolled<'a> {
         let mut held: Vec<(u16, u32)> = memo.keys().copied().collect();
         held.sort_unstable();
         let fan = Fanout::of(&gates, gates.len(), vars.unsigned_abs() as usize);
-        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, kept: false }
+        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, kept: false, start: None, learned: Clauses::default() }
     }
 }
 

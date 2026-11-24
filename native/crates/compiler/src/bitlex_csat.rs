@@ -106,6 +106,13 @@ impl Gates {
         self.rec[g][1]
     }
 
+    /// Whether the gates from `base` on each have an output of their own.
+    pub fn out_distinct(&self, base: usize) -> bool {
+        let mut outs: Vec<usize> = (base..self.len()).map(|g| var(self.out(g))).collect();
+        outs.sort_unstable();
+        outs.windows(2).all(|w| w[0] != w[1])
+    }
+
     pub fn args(&self, g: usize) -> &[Lit] {
         let r = &self.rec[g];
         let n = (r[0] >> 2) as usize;
@@ -303,6 +310,16 @@ const FIXED: u32 = 3;
 /// A literal's watch slot: `2v` for `v`, `2v + 1` for `-v`.
 fn slot(l: Lit) -> usize {
     2 * var(l) + usize::from(l < 0)
+}
+
+/// A window's solver at level 0 (`Solver::start`): what each of its solves resumes from.
+#[derive(Clone, Default)]
+pub struct Start {
+    /// The values set, in order, each with its reason.
+    set: Vec<(Lit, u32, u32)>,
+    broken: bool,
+    refuted: bool,
+    conflict: Vec<Lit>,
 }
 
 /// The solver, its memory kept from solve to solve.
@@ -730,19 +747,7 @@ impl Solver {
         if self.broken {
             return Answer::Unsat;
         }
-        // The solve's own gates, linked from their variables' heads.
-        for g in base..gates.len() {
-            let mut last = usize::MAX;
-            for v in vars_of(gates, g) {
-                if v == last {
-                    continue;
-                }
-                last = v;
-                self.gate_of.push(g as u32);
-                self.next.push(self.head_of[v]);
-                self.head_of[v] = (self.next.len() - 1) as u32;
-            }
-        }
+        self.link(gates, base);
         // The gates that imply with nothing set.
         for &g in &fan.seeds {
             if self.check(gates, g as usize) {
@@ -756,10 +761,171 @@ impl Solver {
                 return Answer::Unsat;
             }
         }
+        self.search(gates, fan, conflicts, None)
+    }
+
+    /// The solve's own gates (`base` on), linked from their variables' heads.
+    fn link(&mut self, gates: &Gates, base: usize) {
+        for g in base..gates.len() {
+            let mut last = usize::MAX;
+            for v in vars_of(gates, g) {
+                if v == last {
+                    continue;
+                }
+                last = v;
+                self.gate_of.push(g as u32);
+                self.next.push(self.head_of[v]);
+                self.head_of[v] = (self.next.len() - 1) as u32;
+            }
+        }
+    }
+
+    /// A window's solver at level 0 (decision 0670): its plain clauses added, its gates' seeds checked, all
+    /// propagated; made once, each solve of the window resumes from it (`resume`). It keeps the values set and their
+    /// reasons alone: the clauses are the window's, read again as a solve resumes.
+    pub fn start<'c>(&mut self, gates: &Gates, fan: &Fanout, vars: usize, clauses: impl Iterator<Item = &'c [Lit]>) -> Start {
+        self.reset(vars);
+        for c in clauses {
+            self.add(c);
+        }
+        if !self.broken && (fan.seeds.iter().any(|&g| self.check(gates, g as usize)) || self.propagate(gates, fan)) {
+            (self.broken, self.refuted) = (true, true);
+        }
+        Start {
+            set: self.trail.iter().map(|&l| (l, self.reason[var(l)], self.why[var(l)])).collect(),
+            broken: self.broken,
+            refuted: self.refuted,
+            conflict: self.conflict.clone(),
+        }
+    }
+
+    /// A solve of a window from its `Start`, of `vars` variables (the window's, a solve's own past them): the
+    /// window's plain clauses (those `start` read) numbered as there, each watched by two literals not false, or by
+    /// its one true literal first (a reason's, the literal it implied).
+    pub fn resume<'c>(&mut self, start: &Start, vars: usize, clauses: impl Iterator<Item = &'c [Lit]>) {
+        self.reset(vars);
+        for &(l, r, w) in &start.set {
+            self.assign(l, r, w);
+        }
+        self.head = self.trail.len();
+        (self.broken, self.refuted) = (start.broken, start.refuted);
+        self.conflict.clone_from(&start.conflict);
+        // Numbered as `start` did, broken or not: `used` reads their reasons.
+        let mut c = std::mem::take(&mut self.scratch);
+        for lits in clauses {
+            if let Some(n) = normal(lits, &mut c)
+                && n >= 2
+            {
+                c.truncate(n);
+                let rank = |l: Lit| match self.lit_value(l) {
+                    1 => 0,
+                    0 => 1,
+                    _ => 2,
+                };
+                c.sort_by_key(|&l| rank(l));
+                let i = self.clauses.len() as u32;
+                self.watches[slot(-c[0])].push(i);
+                self.watches[slot(-c[1])].push(i);
+                self.clauses.push(&c);
+            }
+        }
+        self.scratch = c;
+    }
+
+    /// A clause added after `resume`, at level 0 among the values there: satisfied, it is left out; else watched by
+    /// two literals not false, or, with one, it implies it (the clause its reason); with none, the solve is refuted.
+    pub fn add_resumed(&mut self, lits: &[Lit]) {
+        let mut c = std::mem::take(&mut self.scratch);
+        if let Some(n) = normal(lits, &mut c) {
+            c.truncate(n);
+            if !c.iter().any(|&l| self.lit_value(l) == 1) {
+                let mut k = 0;
+                for i in 0..c.len() {
+                    if self.lit_value(c[i]) != -1 {
+                        c.swap(i, k);
+                        k += 1;
+                    }
+                }
+                match (c.len(), k) {
+                    (0, _) | (1, 0) => self.broken = true,
+                    (1, _) => self.assign(c[0], NONE, 0),
+                    (_, 0) => {
+                        self.conflict.clone_from(&c);
+                        (self.broken, self.refuted) = (true, true);
+                    }
+                    (_, k) => {
+                        let i = self.clauses.len() as u32;
+                        self.watches[slot(-c[0])].push(i);
+                        self.watches[slot(-c[1])].push(i);
+                        self.clauses.push(&c);
+                        if k == 1 {
+                            self.assign(c[0], i, 0);
+                        }
+                    }
+                }
+            }
+        }
+        self.scratch = c;
+    }
+
+    /// The trail's length and the clauses' count: where a solve's own learning begins (`learned_without`).
+    pub fn marks(&self) -> (usize, usize) {
+        (self.trail.len(), self.clauses.len())
+    }
+
+    /// Whether `gates` and the clauses added hold with `assume` (decision 0670): a resumed window's solve, its own
+    /// clauses each with `-assume`. `assume` is decided first, at level 1: a conflict there, with no decision past
+    /// it, is unsatisfiable with no conflict spent, as one at level 0 is.
+    pub fn solve_assuming(&mut self, gates: &Gates, fan: &Fanout, base: usize, assume: Lit, conflicts: u32) -> Answer {
+        if self.broken {
+            return Answer::Unsat;
+        }
+        self.link(gates, base);
+        // Each of its own gates once: the values they read at level 0 were set before they were linked.
+        for g in base..gates.len() {
+            if self.check(gates, g) {
+                self.refuted = true;
+                return Answer::Unsat;
+            }
+        }
+        self.search(gates, fan, conflicts, Some(assume))
+    }
+
+    /// After `solve_assuming`, what it learned that holds without `assume`, over the variables up to `vars`: each
+    /// learned clause of at most `longest` literals without `-assume`, and each value learned at level 0, from
+    /// `marks` on. Each rests on the clauses before `marks`, `gates` and the solve's own clauses (each with
+    /// `-assume`): one without `-assume` used none of the last. The solve's own gates (`base` on) must each define a
+    /// variable past `vars` and past its arguments: then any values of the first `vars` the rest allow, they allow
+    /// too, and what was learned over those holds without them. Where they do not, nothing is taken.
+    pub fn learned_without(&self, gates: &Gates, base: usize, assume: Lit, (trail, clauses): (usize, usize), vars: usize, longest: usize, mut take: impl FnMut(&[Lit])) {
+        let defines = |g: usize| {
+            let o = var(gates.out(g));
+            gates.kind(g) != Kind::One && o > vars && gates.args(g).iter().all(|&a| var(a) < o)
+        };
+        if !(base..gates.len()).all(defines) || !gates.out_distinct(base) {
+            return;
+        }
+        let within = |c: &[Lit]| c.iter().all(|&l| var(l) <= vars) && !c.contains(&-assume);
+        for i in clauses..self.clauses.len() {
+            let c = self.clauses.get(i);
+            if c.len() <= longest && within(c) {
+                take(c);
+            }
+        }
+        let zero = self.limits.first().copied().unwrap_or(self.trail.len());
+        for &l in self.trail.get(trail..zero).unwrap_or(&[]) {
+            if self.reason[var(l)] == NONE && within(&[l]) {
+                take(&[l]);
+            }
+        }
+    }
+
+    /// The search from the values as they stand: `assume`, if any, the first decision.
+    fn search(&mut self, gates: &Gates, fan: &Fanout, conflicts: u32, assume: Option<Lit>) -> Answer {
         let mut left = conflicts;
         loop {
             if self.propagate(gates, fan) {
-                if self.limits.is_empty() {
+                if self.limits.is_empty() || (assume.is_some() && self.limits.len() == 1) {
                     self.refuted = true;
                     return Answer::Unsat;
                 }
@@ -781,6 +947,25 @@ impl Solver {
                     self.assign(first, i, 0);
                 }
                 continue;
+            }
+            // The assumption first: false at level 0, the solve is refuted by what implied it.
+            if let Some(a) = assume
+                && self.limits.is_empty()
+            {
+                match self.lit_value(a) {
+                    0 => {
+                        self.limits.push(self.trail.len());
+                        self.assign(a, NONE, 0);
+                        continue;
+                    }
+                    -1 => {
+                        self.explain(gates, var(a));
+                        self.conflict.clone_from(&self.explained);
+                        self.refuted = true;
+                        return Answer::Unsat;
+                    }
+                    _ => {}
+                }
             }
             // A decision: the most active unset variable, false first.
             let Some(v) = self.order.next(&self.value) else { return Answer::Sat };
@@ -948,6 +1133,96 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 500 && dropped > 500, "{checked} checked, {dropped} units dropped");
+    }
+
+    /// A window's solves resumed from its `Start` (decision 0670): random circuits, the clauses over the window's
+    /// gates its own, the rest and some units each solve's own, under an assumption. Each answer is `bitlex_sat`'s over
+    /// all of them, a model satisfies them, a unit `used` leaves out is not needed, and what the solves learned
+    /// for the window (`learned_without`, carried to its next solves) holds with the window's alone.
+    #[test]
+    fn a_resumed_window_answers_as_a_solve() {
+        let mut rng = Rng(0x6a09e667f3bcc908);
+        let mut s = Solver::default();
+        let (mut sat, mut unsat, mut carried, mut dropped) = (0, 0, 0, 0);
+        for i in 0..1500 {
+            let (vars, gates, base, clauses) = random(&mut rng);
+            let wvars = (0..base).filter(|&g| gates.kind(g) != Kind::One).map(|g| var(gates.out(g))).chain((0..base).flat_map(|g| gates.args(g).iter().map(|&a| var(a)))).max().unwrap_or(1).max(1);
+            let (mut window, mut rest) = (Clauses::default(), Vec::new());
+            for c in clauses.iter() {
+                if c.iter().all(|&l| var(l) <= wvars) { window.push(c) } else { rest.push(c.to_vec()) }
+            }
+            let mut wg = gates.clone();
+            wg.truncate(base);
+            let mut wcnf = window.clone();
+            wg.cnf(&mut wcnf);
+            let fan = Fanout::of(&gates, base, wvars);
+            let start = s.start(&gates, &fan, wvars, window.iter());
+            let mut learned = Clauses::default();
+            let sel = (vars + 1) as Lit;
+            for k in 0..4 {
+                let mut own: Vec<Vec<Lit>> = rest.clone();
+                for _ in 0..rng.below(6) {
+                    own.push(vec![((rng.below(vars as u64) + 1) as Lit) * if rng.below(2) == 0 { 1 } else { -1 }]);
+                }
+                s.resume(&start, vars + 1, window.iter());
+                for c in learned.iter() {
+                    s.add_resumed(c);
+                }
+                for c in &own {
+                    let mut g = c.clone();
+                    g.push(-sel);
+                    s.add_resumed(&g);
+                }
+                let marks = s.marks();
+                let got = s.solve_assuming(&gates, &fan, base, sel, u32::MAX);
+                let mut all = window.clone();
+                for c in &own {
+                    all.push(c);
+                }
+                gates.cnf(&mut all);
+                let mut r = bitlex_sat::Solver::new(vars);
+                r.add_all(&all);
+                assert_eq!(got, r.solve(u32::MAX), "formula {i}, solve {k}");
+                match got {
+                    Answer::Sat => {
+                        sat += 1;
+                        let holds = |l: Lit| s.holds(var(l)) == (l > 0);
+                        assert!(satisfies(&gates, &all, &holds), "formula {i}, solve {k}: not a model");
+                    }
+                    Answer::Unsat => {
+                        unsat += 1;
+                        if let Some(used) = s.used(&gates) {
+                            let mut kept = window.clone();
+                            for c in &own {
+                                if c.len() == 1 && !used[var(c[0])] {
+                                    dropped += 1;
+                                } else {
+                                    kept.push(c);
+                                }
+                            }
+                            gates.cnf(&mut kept);
+                            let mut r = bitlex_sat::Solver::new(vars);
+                            r.add_all(&kept);
+                            assert_eq!(r.solve(u32::MAX), Answer::Unsat, "formula {i}, solve {k}: a unit it did not use was needed");
+                        }
+                    }
+                    Answer::Unknown => unreachable!(),
+                }
+                s.learned_without(&gates, base, sel, marks, wvars, 64, |c| {
+                    // Implied by the window's: with its negation added, they are unsatisfiable.
+                    let mut w = wcnf.clone();
+                    for &l in c {
+                        w.push(&[-l]);
+                    }
+                    let mut r = bitlex_sat::Solver::new(vars);
+                    r.add_all(&w);
+                    assert_eq!(r.solve(u32::MAX), Answer::Unsat, "formula {i}, solve {k}: {c:?} learned, not the window's");
+                    learned.push(c);
+                    carried += 1;
+                });
+            }
+        }
+        assert!(sat > 300 && unsat > 300 && dropped > 100 && carried > 50, "{sat} satisfiable, {unsat} not, {dropped} units dropped, {carried} carried");
     }
 
     /// The formulas in `RERAIL_CSAT_DUMPS` (a directory of `Gates::dump`s, `RERAIL_CSAT_DUMP`), each solved

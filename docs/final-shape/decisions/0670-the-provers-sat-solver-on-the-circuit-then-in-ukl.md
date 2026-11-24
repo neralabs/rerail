@@ -182,9 +182,33 @@ and 15,000 to 30,000 gates, 550 to 9,160 conflicts, 100 to 580 ms.
   (`profiling`) is no faster.
 - **Kept: a gate is one 16-byte record** (`Gates::rec`: kind and width, output, and two arguments in place, or where
   a wider gate's begin in `args`): one load a check, about 5% on these solves, and the record step 3's kernel loads.
-- **So a hard search is the size of its proof**: the window's 30,000 gates are distinct and each decision drives a
-  large part of them. A large factor needs fewer conflicts (a different proof: the base case last, smaller windows)
-  rather than a faster check.
+- **Every gate is in the cone**: the hardest four's clauses and `One`s reach all their variables and gates through
+  the gates that define them, so nothing is left to cut there.
+- **Where the compile's solving went** (every solve of a cold Kotlin compile logged, an M3): 13,563 solves in 3,809
+  windows, 31.3 s of solving, 155,189 conflicts. Half of it, 15.7 s, was a window's second and later solves; 3.4 s
+  went to the 8,041 solves with no conflict. Each solve started the window from nothing: its clauses added, its
+  gates' seeds checked and all of it propagated again, and everything its last solves learned about the window
+  thrown away.
+
+**A window's solves resumed from its level 0** (`Solver::start`, `resume`, `solve_assuming`, `learned_without`).
+- **Its start, made once**: a window's first solve adds its plain clauses, checks its gates' seeds and propagates;
+  the values set and their reasons are kept (`Start`, a value a trail entry: none of the solver's arrays, nor the
+  clauses, which are the window's and are read again, numbered as before, each watched by two literals not false
+  or by its true one first).
+- **A solve's own clauses under an assumption**: each with `-sel`, `sel` a variable past the solve's, decided first
+  at level 1. A conflict at level 1 refutes the solve with nothing else decided, as one at level 0 did, and `used`
+  reads the same derivation back through the clauses `sel` implied through.
+- **What a solve learned for the window, kept**: a learned clause without `-sel` used none of the solve's own
+  clauses. The solve's own gates each define a variable past the window's and its arguments' (checked; where one
+  does not, nothing is kept), so any values of the window's variables the window allows, they allow too: a clause
+  over the window's variables holds for every solve of it. Those of at most 64 literals, and the units learned at
+  level 0, are added to the window's next solves (8,192 literals a window at most).
+- **Tested** (`a_resumed_window_answers_as_a_solve`): 1,500 random circuits, 4 solves a window with a random rest
+  of clauses and units its own: every answer `bitlex_sat`'s over all of them, each model satisfying them, each unit
+  `used` leaves out not needed, and every clause carried implied by the window's clauses and gates alone.
+- **Results** (cold Kotlin, the budget lifted, an M3): solving 31.3 s to 13.1 s, conflicts 155,189 to 137,346; the
+  solves with no conflict 3.4 s to 0.26 s, those with 100 or more 18.9 s to 8.3 s. `PROOFS_VERSION` 6: every
+  grammar's shipped answers blessed again, the same values as at version 5. The quick tiers: 391 tests pass.
 
 **Step 3, its first part: the solver in UKL** (the user: "Start step 3: the full solver in UKL, one SIMD group per
 formula").
