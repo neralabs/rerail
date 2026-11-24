@@ -13,8 +13,7 @@ import { renderPackPanel } from "./pack-panel.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
 import { outcomesOf } from "../history-model.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, approveLabel, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
-import { changedParts, editedTitle, pendingEditOf, undoEditPrompt } from "./rule-edits.js";
-import { commandBlock } from "./command.js";
+import { EDIT_TITLE, changedParts, editedLine, pendingEditOf } from "./rule-edits.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
 const kv = rows => rows.flatMap(([k, v, cls]) => [h("dt", null, k), h("dd", { class: cls }, v)]);
@@ -186,20 +185,21 @@ function renderNotRunning(stored) {
 }
 
 /**
- * For a rule a coding agent edited, whose copy waits (`rule-edits.js`): when it was edited, which of the sheet's parts
- * changed, the prompt that undoes it with Copy, and ✕, which dismisses it for this edit.
+ * For a rule a coding agent edited, whose copy waits (`rule-edits.js`): that the edit waits for approval, when it was
+ * made, which of the sheet's parts it changes, Review the edit, which opens the copy's sheet where it is approved, and
+ * ✕, which dismisses the notice for this edit.
  */
 function editNotice(stored, copy) {
   const parts = changedParts(stored, copy);
   return h("div.welcome.edited", { role: "status" }, icon("pencil", 16), h("div.editbody", null,
-    h("b", null, editedTitle(copy)),
+    h("b", null, EDIT_TITLE),
+    h("p", null, editedLine(copy)),
     parts.length ? h("p", null, `What changed: ${andList(parts)}.`) : null,
-    h("p", null, "To undo it, paste this into a session with your coding agent:"),
-    commandBlock(undoEditPrompt(stored.rule.id))),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "detail", "data-i": copy.rule.id }, "Review the edit"))),
   h("button.x", { "data-act": "dismissedit", "data-i": copy.approval.subject.digest, "aria-label": "Dismiss", title: "Dismiss" }, "✕"));
 }
 
-/** The notice of a rule that needs no approval itself: that it was edited, while the edit is not dismissed. */
+/** The notice of a rule that needs no approval itself: that an edit of it waits, while the notice is not dismissed. */
 function renderEdit(stored) {
   const copy = pendingEditOf(stored);
   const key = copy === null ? null : [stored.rule.id, copy.rule, copy.approval.subject.digest, copy.addedAt, stored.rule];
@@ -208,7 +208,7 @@ function renderEdit(stored) {
 
 /**
  * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
- * approves exactly the content this page read; once approved, or for a rule that needs none, whether it was edited.
+ * approves exactly the content this page read; once approved, or for a rule that needs none, whether an edit of it waits.
  */
 function renderApproval(stored) {
   const waiting = awaitingApproval(stored), subject = stored.approval?.subject;

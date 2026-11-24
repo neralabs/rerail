@@ -1,8 +1,8 @@
 /**
  * A rule a coding agent edited: the edit is saved as a copy (`copiedFromRuleId`) that waits for approval while the
- * original keeps running. The original's sheet says so once, which parts changed and how to undo it, and its row in a
- * rule table carries "Edited", until the person dismisses the notice. Dismissing is per edit (the copy's approval
- * digest) and lasts on this computer, as Overview's banner for a newer Rerail does.
+ * original keeps running. The original's sheet says so, with which parts changed and a button to the copy, where it is
+ * approved, and its row in a rule table carries "Edited", until the person dismisses the notice. Dismissing is per
+ * edit (the copy's approval digest) and lasts on this computer, as Overview's banner for a newer Rerail does.
  */
 import { awaitingApproval, isEditedCopy, messageText } from "../derive.js";
 import { data } from "../state.js";
@@ -64,11 +64,11 @@ export function changedParts(was, now) {
   ].filter(Boolean);
 }
 
-/** The notice's first line: when the edit was saved, from the copy's `addedAt`. */
-export const editedTitle = copy => (copy.addedAt === null ? "This rule was edited." : `This rule was edited ${whenLabel(copy.addedAt)}.`);
+/** The notice's title: the edit is not live until a person approves the copy. */
+export const EDIT_TITLE = "An edit of this rule waits for approval.";
 
-/** What a person pastes into a session with their coding agent to undo the edit of rule `id`. */
-export const undoEditPrompt = id => `/rerail-create undo the edit to ${id}`;
+/** The notice's first line: when the edit was saved (the copy's `addedAt`), and that the rule runs as it was meanwhile. */
+export const editedLine = copy => `${copy.addedAt === null ? "" : `Edited ${whenLabel(copy.addedAt)}. `}This rule keeps running as it was until the edit is approved.`;
 
 /** The hover of a row's "Edited". */
-export const EDITED_TIP = "This rule was edited. Open it to see what changed.";
+export const EDITED_TIP = "An edit of this rule waits for approval. Open it to see what changed.";

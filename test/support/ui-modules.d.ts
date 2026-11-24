@@ -368,8 +368,8 @@ declare module "*/ui/render/rule-edits.js" {
   export function dismissEdit(digest: string): void;
   /** The sheet's sections whose content the edit changed, in the sheet's order. */
   export function changedParts(was: object, now: object): string[];
-  export function editedTitle(copy: { addedAt: number | null }): string;
-  export function undoEditPrompt(id: string): string;
+  export const EDIT_TITLE: string;
+  export function editedLine(copy: { addedAt: number | null }): string;
   export const EDITED_TIP: string;
 }
 

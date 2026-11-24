@@ -3,7 +3,7 @@ import { ASK, ASK_OPEN, LOG_NOTE, agentSeesHint, agentSeesPrompt, askHint, askPr
 import { createSuggestions } from "../../ui/views/create.js";
 import { toStoredRules } from "../../ui/poll.js";
 import { data } from "../../ui/state.js";
-import { EDITED_TIP, changedParts, dismissEdit, editDismissed, editedTitle, pendingEditOf, undoEditPrompt } from "../../ui/render/rule-edits.js";
+import { EDITED_TIP, EDIT_TITLE, changedParts, dismissEdit, editDismissed, editedLine, pendingEditOf } from "../../ui/render/rule-edits.js";
 
 const RULE = { id: "lib:no-raw-fetch", title: "No raw fetch", scope: "src/**/*.ts", mode: "Steer" };
 
@@ -217,12 +217,12 @@ describe("a rule a coding agent edited", () => {
       expect(changedParts(ruleById("no-debugger"), ruleById("no-debugger-copy"))).toEqual([]);
     });
 
-    it("says when it was edited, the prompt that undoes it, and the row's hover", () => {
-      expect(editedTitle({ addedAt: Date.now() })).toBe("This rule was edited today.");
-      expect(editedTitle({ addedAt: Date.now() - 3 * DAY })).toBe("This rule was edited 3 days ago.");
-      expect(editedTitle({ addedAt: null })).toBe("This rule was edited.");
-      expect(undoEditPrompt("eslint-no-debugger")).toBe("/rerail-create undo the edit to eslint-no-debugger");
-      expect(EDITED_TIP).toBe("This rule was edited. Open it to see what changed.");
+    it("says the edit waits for approval and when it was made, and the row's hover says so too", () => {
+      expect(EDIT_TITLE).toBe("An edit of this rule waits for approval.");
+      expect(editedLine({ addedAt: Date.now() })).toBe("Edited today. This rule keeps running as it was until the edit is approved.");
+      expect(editedLine({ addedAt: Date.now() - 3 * DAY })).toBe("Edited 3 days ago. This rule keeps running as it was until the edit is approved.");
+      expect(editedLine({ addedAt: null })).toBe("This rule keeps running as it was until the edit is approved.");
+      expect(EDITED_TIP).toBe("An edit of this rule waits for approval. Open it to see what changed.");
     });
   });
 

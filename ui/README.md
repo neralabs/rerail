@@ -35,9 +35,10 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   On/off, as Overview's Most violations logged; "Edited" on a rule a coding agent edited) and its controls (`rules.js`,
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`; for a rule a coding
-  agent edited, a notice of when, which parts changed and the prompt that undoes it, with ✕: `rule-edits.js` finds the
-  edited copy that waits for approval, which parts it changes, and whether the notice was dismissed, per edit and on
-  this computer, as Overview's banner for a newer Rerail is), a rule pack in the
+  agent edited, a notice that the edit waits for approval, when it was made, which parts changed and Review the edit,
+  which opens the copy, with ✕: `rule-edits.js` finds the edited copy that waits for approval, which parts it changes,
+  and whether the notice was dismissed, per edit and on this computer, as Overview's banner for a newer Rerail is), a
+  rule pack in the
   sheet (`pack-panel.js`: why Rerail suggested it, and until it is added its rules under Start on and Start off), the
   session timeline (`timeline.js`), and a command to copy (`command.js`).
 - `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);

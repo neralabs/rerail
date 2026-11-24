@@ -50,13 +50,10 @@
 .pask.sees-edit{margin-top:0;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:16px 18px}
 /* A notice at the top of a rule's sheet (not running, waits for approval, edited) keeps a gap above "On a violation". */
 .pnotice > .welcome{margin-bottom:12px}
-/* A rule a coding agent edited: a neutral notice with a small pencil and ✕; the undo prompt's box has Copy at its top
- * right, as in Edit with coding agent's prompt box. */
+/* A rule a coding agent edited: a neutral notice with a small pencil, Review the edit and ✕. */
 .welcome.edited > .ico{margin-top:2px;flex:none}
 .welcome.edited .editbody{flex:1;min-width:0}
 .welcome.edited .editbody > b + p{margin-top:8px}
-.welcome.edited .cmd{align-items:flex-start}
-.welcome.edited .cmd code{padding-top:4px}
 .welcome.edited > .x{margin:-4px -6px 0 0}
 .enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--sheet-inset)}
 .enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground)}

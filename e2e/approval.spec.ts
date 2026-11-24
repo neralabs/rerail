@@ -93,15 +93,16 @@ test("rules your coding agent added wait for approval: Overview sends you to the
   await sheet(page).locator('[data-act="close"]').click();
   await expect(banner(page)).toHaveCount(0);
 
-  // The By Rerail rule the coding agent edited reads Edited on its pack's page, and its sheet says it was edited, with
-  // the prompt that undoes it; ✕ dismisses both.
+  // The By Rerail rule the coding agent edited reads Edited on its pack's page, and its sheet says the edit waits for
+  // approval, with Review the edit, which opens the copy; ✕ dismisses both.
   await page.goto(await rerail.dashboard("awaiting-approval", { hash: "pack/typescript" }));
   const original = page.locator(`#content .row[data-i="${RERAIL_RULE}"]`);
   await expect(original.locator(".badge", { hasText: "Edited" })).toBeVisible();
   await original.locator("button.t").click();
   const edited = sheet(page).locator(".welcome.edited");
-  await expect(edited).toContainText(/This rule was edited (today|yesterday)\./u);
-  await expect(edited.locator(".cmd code")).toHaveText(`/rerail-create undo the edit to ${RERAIL_RULE}`);
+  await expect(edited).toContainText("An edit of this rule waits for approval.");
+  await expect(edited).toContainText(/Edited (today|yesterday)\./u);
+  await expect(edited.locator('[data-act="detail"]')).toHaveAttribute("data-i", RERAIL_RULE_COPY);
   await edited.locator('[data-act="dismissedit"]').click();
   await expect(edited).toHaveCount(0);
   await expect(original.locator(".badge", { hasText: "Edited" })).toBeHidden();
