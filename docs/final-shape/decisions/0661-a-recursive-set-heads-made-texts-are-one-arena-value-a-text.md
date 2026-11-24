@@ -1,7 +1,7 @@
 # 0661. A recursive set head's made texts are one arena value a text
 
-Status: in progress (2026-11-23). Six of the eight strata run on the device, and `literal_key` beside them; two need the
-forms listed at the end.
+Status: in progress (2026-11-23). Seven of the eight strata run on the device, and `literal_key` beside them; `ask_c`
+needs the forms listed at the end.
 
 ## Intro
 
@@ -113,6 +113,26 @@ Placement now counts a string join among the device's forms (`DEVICE_FORMS`).
 slot of its own (past the rule's slots), then compared with the bound slot as texts (`TEXTOP`), as a compared cat of a
 made text is. Its compared slot may itself be a made text (`arena_reader`).
 
+### A made text as an atom's key
+
+`ann_private` inverts `q = cat(x, ".setter")` into `x = @str_between(q, "", ".setter")`, then reads `def_name(f, x)`:
+a membership keyed by `f` and by the made text `x`. No symbol names a made text on the device, so it cannot be
+matched by value.
+
+The atom is probed by its other keys instead. The text's column is bound into a slot of its own, and a `TEXTOP`
+compares it with the made text, as texts. Symbols are interned once, so at most one row of a binding passes, as a probe
+by value would pass it. The atom's step is counted by the comparison. The compile refuses, named: a made text as a
+negated atom's key, as an atom's only key (a probe of every row), as a key of the component's own relation, or as two
+keys of one atom. Such an atom is never taken into a witness stage (0277), which compares keys by value.
+
+An atoms find on the device (the store's table from hash to id, decision 0401) would match the text by value. It
+needs the store's hash on the device, and it misses atoms interned in memory and not yet in blocks. The comparison
+needs neither.
+
+The CPU drops a row at the function whose text is no symbol yet (`PROBE_OUT`: no atom could match it). The device does
+not read the host's interner, so it drops that row at the atom. Their rows agree, and their counts agree from the atom
+on.
+
 ## Tests
 
 - `a_recursive_set_heads_made_texts_are_one_value_a_text` (setfix::device):
@@ -124,6 +144,8 @@ made text is. Its compared slot may itself be a made text (`arena_reader`).
 - `text_functions_on_the_device_are_the_cpus` gained `str_between`, `pkg_up`, a cat of a made text compared with a
   bound name, and a head's cat of a text function's value. Then a text function's value compared with another
   relation's symbol, and `literal_key`'s shape: a function of a cat of a made text, compared with that made text.
+- `text_functions_on_the_device_are_the_cpus` has a case of a made text as one of an atom's keys: names already lower
+  case, and a range of a name that is a name. Its rows are compared, and its counts from the atom on.
 - `a_string_join_on_the_device_is_the_cpus`: groups of 0 to 6 parts at places out of order, joined with a separator,
   and copied along alias edges (a recursive set head's text column). Clean, the component runs on the device. With a
   group of 40 parts, two names at one place and a part twice, those go to the host. Both runs' rows are the CPU's,
@@ -143,7 +165,7 @@ the device can run goes to it and stays there. Its findings are the CPU run's (C
 | `qual_part` | CPU | device | 12.5 ms | 4 |
 | `qn` | CPU | device | 8.9 ms | 4 |
 | `class_chain` | CPU | device | 9.0 ms | 2 |
-| `ann_private` | CPU | CPU: refused at compile | | |
+| `ann_private` | CPU | device | 7.2 ms | 3 |
 | `literal` | CPU | device | 8.1 ms | 2 |
 | `ask_c_found_by_bbf…` | CPU | CPU: computed terms | | |
 
@@ -158,9 +180,5 @@ the intended outcome: they can run on the device; at 10 files they should not.
 
 ## Still to build
 
-- **`ann_private`: a made text as a lookup key.** The planner inverts `q = cat(x, ".setter")` into
-  `x = str_between(q, …)` and looks `def_name` up by `x`. The device refuses a made text read by an atom. The made
-  text must be found as a symbol. The atoms blocks hold a table from hash to id (decision 0478), so the lookup can read
-  them in place.
 - **The `ask_c` component**: `@rx_group` (a regex's capture group, which the device's automata do not give), and
   `@concat` and `@substr` in comparisons.

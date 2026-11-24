@@ -1410,7 +1410,15 @@
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v3 {} v2\nfunc str_concat v4 v3 {}\nfunc str_between v2 v4 {} {}\nhead v4 v1", sym("("), sym(",)"), sym("("), sym(",)")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
-        for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false)] {
+        // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
+        // a range of a name that is a name. The CPU drops a row at the function whose text is no symbol yet, which no
+        // atom could match (`PROBE_OUT`); the device, which does not read the host's interner, drops it at the atom.
+        // So their counts agree from the atom on.
+        let keyed = [
+            format!("pos {n} v0 v1\nfunc sql_lower v2 v0\npos {n} v2 v1\nhead v0 v1"),
+            format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:4\nfunc str_concat v3 v2 {}\npos {n} v3 v1\nhead v2 v1", sym("")),
+        ];
+        for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
             let mut got = Vec::new();
             for device in [true, false] {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -1426,14 +1434,19 @@
                 if device {
                     let r = report.as_ref().expect("a device report");
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
-                    if on_device {
+                    if case == "arena" {
                         assert!(r.made > 2000 && r.arena_reruns == 0 && r.remaps >= 1, "{case}: texts made in an arena that grew in place: {r:?}");
                         // Symbols' texts read in place through the atoms directory (decision 0478 step 2e): no names
                         // uploaded, no per-symbol table made.
                         assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
                     }
                 }
-                let counts = super::super::step_counts(&db, "dev_fn").unwrap();
+                let mut counts = super::super::step_counts(&db, "dev_fn").unwrap();
+                if case == "made keys" {
+                    for c in &mut counts {
+                        c.drain(..c.len() - 1);
+                    }
+                }
                 super::super::close(&db, "dev_fn").unwrap();
                 let mut rows: Vec<(String, i64)> = db
                     .prepare("SELECT sym_text(c0), c1 FROM temp.h0")

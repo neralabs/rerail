@@ -514,7 +514,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
     while i < j.steps.len() {
         let step = &j.steps[i];
         // The rest of the body as one witness per binding, where it takes that shape (decision 0277).
-        if matches!(step, Step::Atom { .. }) && let Some(w) = witness_stage(j, i, &bound) {
+        // Not where an atom is keyed by a made text, which it compares as a text (below), not by value.
+        let made_key = |s: &Step| matches!(s, Step::Atom { keys, .. } if keys.iter().any(|(_, k)| matches!(k, Key::Slot(x) if is_arena(*x) || deferred.contains_key(x))));
+        if matches!(step, Step::Atom { .. }) && !j.steps[i..].iter().any(made_key) && let Some(w) = witness_stage(j, i, &bound) {
             stages.push(w);
             i = j.steps.len();
             continue;
@@ -548,6 +550,38 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         ARENA.with_borrow_mut(|x| x.push(s));
                     }
                 }
+                // A made text as a key (an arena text, a held cat's): no symbol names it yet, so the relation is
+                // probed by its other keys, that column bound into a slot of its own (past the rule's slots), and
+                // compared with the text as texts (`TEXTOP`). Symbols are interned once, so at most one row of a
+                // binding's passes, as the probe by value would have passed it.
+                let by_text: Vec<(usize, usize)> = keys.iter().filter_map(|&(c, k)| match k {
+                    Key::Slot(x) if is_arena(x) || deferred.contains_key(&x) => Some((c, x)),
+                    _ => None,
+                }).collect();
+                let keys: Vec<(usize, Key)> = keys.iter().copied().filter(|&(c, _)| !by_text.iter().any(|&(t, _)| t == c)).collect();
+                let mut atom_binds = atom_binds.clone();
+                let mut compared = None;
+                match by_text[..] {
+                    [] => {}
+                    [(c, x)] => {
+                        if *neg {
+                            return Err("a made text as a negated atom's key has no device form".into());
+                        }
+                        if keys.is_empty() {
+                            return Err("a made text as an atom's only key has no device form".into());
+                        }
+                        if own.is_some() {
+                            return Err("a made text as a key of the component's own relation has no device form".into());
+                        }
+                        if atom_binds.len() >= mj::MAX_BINDS {
+                            return Err("an atom with more keys, tests or binds than a stage holds".into());
+                        }
+                        extra += 1;
+                        atom_binds.push((c, extra - 1));
+                        compared = Some((extra - 1, x));
+                    }
+                    _ => return Err("an atom keyed by several made texts has no device form".into()),
+                }
                 let mut d = mj::Stage { mode: if *neg { mj::ANTI } else if atom_binds.is_empty() { mj::SEMI } else { mj::JOIN }, ..mj::Stage::default() };
                 for (k, &(c, key)) in keys.iter().enumerate() {
                     d.key_rcol[k] = c as u32;
@@ -565,7 +599,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let mut span = 1;
                 let mut npassed = 0;
                 match j.fused[i].as_deref() {
-                    Some(f) if d.mode == mj::JOIN => {
+                    Some(f) if d.mode == mj::JOIN && compared.is_none() => {
                         program(&mut d, f, mj::RIGHT)?;
                         binds(&mut d, f, false);
                         for &(s, _) in &f.binds { bound[s] = true; }
@@ -577,6 +611,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                             d.bind_slot[k] = s as u32;
                             d.bind_kind[k] = mj::BIND_RIGHT;
                             d.bind_idx[k] = c as u32;
+                            if s >= bound.len() {
+                                bound.resize(s + 1, false);
+                            }
                             bound[s] = true;
                         }
                         d.nbinds = atom_binds.len() as u32;
@@ -596,7 +633,13 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     (None, Src::In(rel, _)) => Kind::Atom { rel: rel.clone(), cols },
                     (None, _) => unreachable!("an own source has its relation"),
                 };
-                stages.push(PStage { first: i, span, kind, desc: d, npassed });
+                if let Some((tmp, x)) = compared {
+                    // The step counted once, by its comparison.
+                    stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(tmp), Key::Slot(x), &deferred, &origin, &known)?);
+                } else {
+                    stages.push(PStage { first: i, span, kind, desc: d, npassed });
+                }
                 i += span;
             }
             // A min or max bounded by its probe (decision 0511): the device has no fold that reads the bound, so the
@@ -1208,6 +1251,8 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         // A cat of it, bound or compared with a bound slot (made into the arena, then compared as texts).
         Step::Cat { .. } | Step::Func { name: "str_concat", .. } => true,
         Step::Func { name, args, bind: true, .. } if caps::device_fn(name) == Some(caps::DeviceFn::RegexReplace) => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
+        // An atom keyed by it (one key of several), compared with the column as texts.
+        Step::Atom { neg: false, keys, binds, .. } => keys.iter().any(|(_, k)| me(k)) && keys.len() > 1 && !binds.iter().any(|&(_, s)| s == x),
         // A text function of it, bound or compared with a bound slot; or compared with it (as texts).
         Step::Func { name, args, out, bind, .. } => {
             text_function(name).is_some_and(|(_, nt, _)| nt > 0) && (me(&args[0]) && !args[1..].iter().any(me) || !*bind && *out == x && !args.iter().any(me))
