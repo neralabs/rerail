@@ -1,1 +1,1 @@
-The background service no longer looks for its own engine file on disk at every call into the engine. A service busy with file walks spent about a quarter of its time on those looks; it now finds the file once.
+The background service no longer looks for its own engine file on disk at every call into the engine. On Windows, a service busy with file walks across about 180 linked worktrees spent about a quarter of its CPU time on those looks; it now keeps the engine it found.
