@@ -212,7 +212,7 @@ f31f7cae0e retired 3,645–3,651 G instructions against base's 3,876 G (−6%), 
   now read off the index, made or not.
 - **`literal_str`.** The cost moved there from the made rows was not interning by the rows' reads but a text test's
   scan of the view (`Tested::scan`): it interned every text of the batch one at a time (`Atoms::intern`: a read lock,
-  and at a miss two vectors and the write lock, a sixth of the samples waiting on the lock), and copied each. It now
+  and at a miss two vectors and the write lock: 1,523 of its 6,456 samples waited on the lock), and copied each. It now
   interns a document's texts together (`Projected::text_atoms`, `Atoms::intern_all`) and tests them where they lie
   (fedd76a1a8). A first change that interned only the texts passing a test was slower (the lookups then interned the
   rest, and the scan tested a common text again in every document) and was not kept.
