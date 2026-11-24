@@ -1024,6 +1024,72 @@ process's CPU time):
 The keyed join is 9% faster than the scalar joins. The closure is 28% slower; where its time goes at opt-level 3 is
 not yet measured (a profile of this build is the next step), and that gap is the next work.
 
+### The large joins, profiled (the user's: "we should be able to do a LOT better on the larger joins, especially if we vectorize things like hash computation and the hash searches and scans", 2026-11-23)
+
+Each change was found by a profile of the build above (xctrace and `sample`, the program's thread), then measured.
+The program's own time is what the timed test prints as "its program" (waited on). The rest of a run is the host's
+work, the same for both columns: the rule's SQL and the rows' way out.
+
+**A stage's candidates as a stream** (`stage_lanes::Lanes::walk`), as a GPU's threads expand them:
+- A tile of 256 bindings has its groups found 8 bindings a step: keys hashed, screened and looked up together.
+- The tile's groups are then expanded into chunks of 512 candidates, each one a binding and a place. Every step
+  takes 8 candidates, so every lane has work, however long or short each binding's group is. Before, a lane walked
+  its own binding's group, and the step waited for the longest.
+- A count's verdicts are a chunk's exclusive prefix sums. A binding's count is the sums at its candidates' end less
+  their start.
+
+**Reads by index.** A column's rows in one chunk, an index's rows and a dedup's map are gathers from one base by
+32-bit indices, scaled by shifts (`lanes::gather64_ix`, `gather32_ix`, `scatter64_ix`). Before, each lane read
+through its own 64-bit pointer. `rerail-simd`'s pointer offsets also scale by shifts where the element's size is a
+power of two.
+
+**A scatter as a stream compaction.** A range's rows out are contiguous, from its first offset.
+- Where the range has room for 8 more rows, each column's passing lanes move to the front with one table lookup
+  (`swizzle_dyn`, NEON's `tbl`, a 256-entry table) and are stored as one 64-byte write. Later rows overwrite the
+  places past them.
+- The masked per-lane scatter is left for a range's last places.
+- The per-lane stores had been half the program's samples. Page faults were not the cause: writing every page of
+  the output first changed nothing.
+
+**Lanes built by an inlined loop.** `core::array::from_fn` stayed a call inside the walk, its array passed through
+memory. `rerail-simd` and the lane reads now build each vector with an unrolled loop.
+
+**Measured** (m3, opt-level 3, one thread, the program's time, the best of three):
+
+| | keyed join, 100 K × 100 K | closure, 400 nodes |
+|---|---|---|
+| the jobs at 8 lanes, the section above | 33.0 ms | 33.3 ms |
+| the candidates as a stream | 23.9 ms | 27.6 ms |
+| reads by index | 21.9 ms | 26.1 ms |
+| the scatter packed, lanes inlined | 19.2 ms | 24.7 ms |
+
+Whole runs, against the CPU's scalar joins: the keyed join takes 83.4 ms against 105.8 ms. The closure takes 62.0 ms
+against 51.3 ms.
+
+**Where the program's time is now** (the keyed join, `sample`, about 1,270 samples):
+
+| Phase | Samples |
+|---|---|
+| Scatter | 354 |
+| Count | 283 |
+| Dedup mark | 228 |
+| Dedup claim | 116 |
+| Kept rows' scan | 73 |
+
+The line profile is flat, no line above 6%. The time is in the reads every candidate needs:
+- its row's block and chunk (`chunk`, `rel_at`);
+- its key's and its binds' columns, by gathers;
+- its binding's slots.
+
+Two costs remain that are structure, not vector code:
+
+- **The count and the scatter each walk every candidate.** Both hash the keys, find the groups, read the rows and
+  test them: half the program's time is that walk, twice. The scatter cannot be cheaper while it repeats the count's
+  probe. Removing the second walk means the count keeps what it found: each tile's passing candidates, compacted, as
+  a derived fact of the stage, which the scatter then writes out. That changes the program's phases on Metal too.
+- **A dedup's rows are hashed twice.** The claim hashes every row, then the mark hashes it again and walks the same
+  places.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
