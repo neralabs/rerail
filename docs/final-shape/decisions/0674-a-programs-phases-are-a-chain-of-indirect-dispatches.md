@@ -68,6 +68,37 @@ launch's.
   device-side launch (a tail launch from the finisher, dynamic parallelism) is the faster re-dispatch where the
   device has it; measured before it is made the CUDA path.
 
+## The join program on chains (step 2's design)
+
+What each part of `join_run`'s queue (0603) becomes:
+
+- **The counts are a dispatch's, not a phase's.** A chain of `D` dispatches has `D + 1` count slots; the finisher of
+  dispatch `d` writes slot `d + 1`, whatever phase it runs next. So a round's end that jumps back (`ctl[7]`) is the
+  finisher writing the jumped-to phase into the phase word and its items into the next slot; no phase is encoded
+  twice by the host.
+- **A group is an item.** Dispatch `d` runs phase `ctl[0]`'s items, one group each: group `g` finds its item in
+  the phase's segments (`seg_items`, as `phase_push` counts them now). The finisher's `phase_reset` count (`target`)
+  is the next dispatch's groups. A phase whose segments have no items (`none`) is one group that runs the first,
+  as now. Seeds are phase 0's items, the host's slot 0.
+- **The queue goes**: no `slots`, no tickets (`ctl[5]`, `ctl[8]`), no `UKL_WQ_TURNS` loop. `done[p]` and `target[p]`
+  stay: they find the finisher.
+- **The launch's budget is its dispatches** (0603 point 5 bounded a launch's GPU time by its items): a chain is `D`
+  dispatches, `D` the program's phases (a program without rounds runs in one chain) and at most `CHAIN_DISPATCHES`
+  for one with rounds. A program not done when its chain is (slot `D` not 0, no flag) is launched again: the host
+  moves slot `D`'s three words to slot 0 (control words, not a block) and encodes a new chain. Each chain is a launch
+  in the ledger, as each budget's relaunch is now.
+- **Parks end the chain** (slot `d + 1` written 0) with what to resume in `ctl[9]`, as now:
+  - a size script past its arena's pages: the parked item, uncounted. The host maps the arena; the next chain's slot
+    0 is one group, which runs `ctl[9]`'s item (the item put back) and goes on as the phase's finisher would;
+  - texts that found the text arena full: the next chain's slot 0 is the phase's text items (`phase_texts` counts
+    them; group `g` runs the `g`-th);
+  - a gate's room mapped past: the next chain starts at the phase after the gate (its `phase_reset` count, the
+    host's slot 0 from the finisher's write of it into `ctl`).
+  The host's checks of `ctl[6]`'s flags in `programs_done` stay as they are; `compact` and `put_back` go with the
+  queue.
+- **The CPU executor**: `rerail_ukl_rust::join_run`'s Rust follows the same source (its digests): one launch a
+  dispatch, the counts read as it runs.
+
 ## Writing against running
 
 - A phase boundary costs a dispatch's start and a buffer barrier, a few microseconds, against the queue's ticket per
