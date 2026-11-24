@@ -246,7 +246,13 @@ describe("a repository's first events in a daemon", () => {
     }
   });
 
-  it("starts no Git once it is disposed while a session's checkout is being placed", async () => {
+  /**
+   * Disposes a runtime over a repository with twelve worktrees as soon as `open`, given the runtime and the main checkout,
+   * has led it to start a Git `picks` takes by its arguments. Resolves with the arguments of each Git started since `open`
+   * began that still runs once dispose returned, then, `open` settled, how many Git started after the dispose began, those
+   * the caller's thread waited on (`spawnSync`) apart.
+   */
+  async function disposedAtGit(open: (runtime: RerailRuntime, main: string) => Promise<unknown>, picks: (args: readonly string[]) => boolean): Promise<unknown> {
     const { root, checkouts, databasePath } = startedRepository(12);
     // Git reads each worktree's own config once this is set, so placing the worktrees asks Git for each.
     git(checkouts[0]!, ["config", "extensions.worktreeConfig", "true"]);
@@ -255,11 +261,11 @@ describe("a repository's first events in a daemon", () => {
     const { spawn: realSpawn } = await vi.importActual<typeof childProcess>("node:child_process");
     const placing = Promise.withResolvers<void>();
     spawn.mockImplementation((...args: Parameters<typeof childProcess.spawn>) => {
-      if (isGit(args)) placing.resolve();
+      if (isGit(args) && picks(args[1])) placing.resolve();
       return realSpawn(...args);
     });
     const before = spawn.mock.calls.length;
-    const opening = runtime.ingest({ kind: "session-start", eventId: "late-start", session: { host: "claude-code", sessionId: "late", cwd: checkouts[0]! } });
+    const opening = open(runtime, checkouts[0]!);
     try {
       await placing.promise;
     } finally {
@@ -268,16 +274,44 @@ describe("a repository's first events in a daemon", () => {
     const disposing = runtime.dispose();
     const [spawned, blocked] = [spawn.mock.calls.length, vi.mocked(childProcess.spawnSync).mock.calls.length];
     await disposing;
-    // Every Git the placement started has exited once dispose returns: none is left running in the checkout.
-    const running = spawn.mock.results.slice(before).filter((result, i) => {
-      const child = result.value as childProcess.ChildProcess;
-      return isGit(spawn.mock.calls[before + i]!) && child.exitCode === null && child.signalCode === null;
+    // Every Git the placement started has exited once dispose returns: none is left running in a checkout.
+    const running = spawn.mock.calls.slice(before).filter((call, i) => {
+      const child = spawn.mock.results[before + i]?.value as childProcess.ChildProcess;
+      return isGit(call) && child.exitCode === null && child.signalCode === null;
     });
-    expect(running).toEqual([]);
     await opening.catch(() => undefined);
-    expect({
+    return {
+      running: running.map(([, args]) => args),
       spawned: spawn.mock.calls.slice(spawned).filter(isGit).length,
       blocked: vi.mocked(childProcess.spawnSync).mock.calls.slice(blocked).filter(isGit).length,
-    }).toEqual({ spawned: 0, blocked: 0 });
+    };
+  }
+
+  it("starts no Git once it is disposed while a session's checkout is being placed", async () => {
+    const opened = (runtime: RerailRuntime, main: string): Promise<unknown> =>
+      runtime.ingest({ kind: "session-start", eventId: "late-start", session: { host: "claude-code", sessionId: "late", cwd: main } });
+    expect(await disposedAtGit(opened, () => true)).toEqual({ running: [], spawned: 0, blocked: 0 });
+  });
+
+  // The pass over the other worktrees waits at each linked worktree until the session's open has answered, so the Git
+  // disposed at is one the pass started in a linked worktree after the open.
+  it("ends the pass over the other worktrees, its Git exited, and starts no Git once it is disposed while that pass runs after a session's open", { timeout: 30_000 }, async () => {
+    const pass = Promise.withResolvers<void>();
+    submoduleReads.before = async checkout => {
+      if (basename(checkout).startsWith("wt-")) await pass.promise;
+    };
+    let answered = false;
+    const inWorktree = (args: readonly string[]): boolean => answered && args.some((arg, i) => args[i - 1] === "-C" && basename(arg).startsWith("wt-"));
+    const opened = async (runtime: RerailRuntime, main: string): Promise<void> => {
+      await runtime.ingest({ kind: "session-start", eventId: "own-start", session: { host: "claude-code", sessionId: "own", cwd: main } });
+      answered = true;
+      pass.resolve();
+    };
+    try {
+      expect(await disposedAtGit(opened, inWorktree)).toEqual({ running: [], spawned: 0, blocked: 0 });
+    } finally {
+      pass.resolve();
+      submoduleReads.before = () => undefined;
+    }
   });
 });
