@@ -1,6 +1,6 @@
 // Layout around a node: the code just before and just after it, and the lines it is on. For rules that port
 // ESLint's token-store questions (the token after a statement, the line of the token before a body) to tapes
-// that keep no token their grammar implies (RER-131).
+// that keep no token their grammar implies (decision 0161).
 //
 // It reads core.rerail's structural_before and structural_after: the source between a node and its stored
 // neighbours. Where that gap holds code (a `)` or `else` the tape leaves out), the answer is in the gap. Where

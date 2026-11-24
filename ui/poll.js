@@ -1,12 +1,19 @@
 /**
- * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
- * nothing changed), backing off to 30 s while the daemon is unreachable, and paused while the tab is hidden.
- * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
- * list and the daemon's health, and with a repository in scope its context; beyond that only the needs the
- * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
- * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
+ * Fetch orchestration. While the tab shows, the page follows the daemon's change stream (`GET /api/changes`: a token
+ * that moves when the database commits or the scope's rule catalog changes, a `conflicts` message at each Merge Assist
+ * conflict event, and the token again at the daemon's 5 s beat) and reads again when it says something changed: one
+ * conditional GET per resource (`If-None-Match`; 304 means nothing changed), at once after a quiet spell and at most
+ * every 5 s while changes keep coming. Nothing is read while nothing changes or the tab is hidden. When the stream
+ * ends (the daemon stopped) the page reads once, which says whether the daemon answers; while it does not, the page
+ * reads again after a pause that backs off to 30 s, as the poll did, and follows a new stream once a read answers. A
+ * stream that misses two beats before its first message (something between holds it whole) makes the page read at the
+ * 5 s pace until a message comes. Data lands in the store; the caller re-renders and
+ * reconciles in place. Every poll reads the repository list and the daemon's health, and with a repository in scope
+ * its context; beyond that only the needs the page names (`setNeeds`: the open view's, the sidebar's and an open
+ * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
+ * further pages the person loaded.
  */
-import { ACCESS_KEY, get, send } from "./api.js";
+import { ACCESS_KEY, follow, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -15,8 +22,25 @@ import { failed } from "./format.js";
 
 export { toStoredRules };
 
+/**
+ * The most often the page reads while the daemon keeps changing, the old poll's pace: the daemon never answers more of
+ * the page's reads than it did while it polled, so a busy daemon's hooks wait behind no more of them. Also the pause
+ * before the stream is opened again after it ended with the daemon answering.
+ */
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
+/**
+ * Two missed beats of the change stream (the daemon beats every 5 s): the status stops saying Live, and the stream is
+ * opened again. A daemon whose event loop is stuck, or a connection a network dropped without closing it, keeps the
+ * stream open with nothing in it, so only the beat that does not come can tell.
+ */
+export const LIVE_MS = 12_000;
+/**
+ * The most tabs of this browser that hold a stream to the daemon at once (Web Locks name the slots). A browser gives a
+ * page's origin six HTTP/1.1 connections, shared by all its tabs, and a stream holds one, so the tabs past these read
+ * at the pace as every tab did before. A tab that closes or crashes gives its slot back.
+ */
+const STREAM_SLOTS = 3;
 /** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
 const FINDINGS_PAGE = 25;
 /** Overview's Recent sessions. */
@@ -34,8 +58,39 @@ const EVENTS_PAGE = 500;
  */
 const etags = new Map();
 let onChange = () => {};
-let timer = null;
 let backoff = INTERVAL;
+/** When (`performance.now()`) a failed read last doubled `backoff`. */
+let doubledAt = -Infinity;
+/**
+ * When the last read a change asked for began (`performance.now()`, which a changed wall clock does not move), for
+ * the pace; a new stream starts it over, and the person's own reads do not count.
+ */
+let lastChangeRead = -Infinity;
+/**
+ * Where the pace's 5 s ticks count from: the stream's first message, which no change of the daemon's times. A change
+ * within the pace of the last read is read at the next tick, as the poll's ticks fell where they fell; ticks counted
+ * from that read, which a change began, fall just before a write of a source that writes once a second, each time.
+ */
+let paceOrigin = 0;
+/** The capability the page's last read went with (`ACCESS_KEY`): a beat reads again when it is gone or another. */
+let accessRead = null;
+/** The read the pace holds back, if any; the stream opened again after its end, if waiting; two missed beats. */
+let paceTimer = null;
+let retryTimer = null;
+let stallTimer = null;
+/** The open change stream's controller, and the token the page last read at. */
+let stream = null;
+let token = null;
+/**
+ * Whether the page reads at the pace, as the poll did: from when it opens, shows again or changes scope until its
+ * stream's first message, and when its last stream missed two beats before its first message. Something between the
+ * browser and the daemon may hold a streamed response until it ends (a proxy or a scanner that buffers responses), so
+ * that stream may never bring one. Decided by each stream alone, since a path that held one stream may hand on
+ * another's messages (a proxy passes on what it held when the daemon's connection closes). A message ends it.
+ */
+let atPace = false;
+/** The activity window's start (`sinceFor`) the last read asked for. */
+let windowRead = null;
 let inFlight = null;
 let queued = false;
 /** Bumped when the scope changes, so a response for the previous repository lands nowhere. */
@@ -269,11 +324,16 @@ async function loadRecentSessions(since) {
   return true;
 }
 
-/** How long the sidebar's Merge Assist count may be before it is read again, on a page other than Merge Assist's. */
-const MERGE_ASSIST_COUNT_EVERY = 30_000;
 /**
- * The last Merge Assist read: when it last answered, an error included (so the sidebar's count backs off to every
- * 30 s while the read fails), and the one in flight with the scope generation it was sent for.
+ * On a page other than Merge Assist's, the most often a read of the page also reads the sidebar's Merge Assist count,
+ * and how soon a failed count read is tried again. A conflict event reads it at once (`mergeAssistCountDue`).
+ */
+const MERGE_ASSIST_COUNT_EVERY = 30_000;
+/** The sidebar's count is read with the next read: a conflict event came, the stream opened, or the scope changed. */
+let mergeAssistCountDue = true;
+/**
+ * The last Merge Assist read: when it last answered, an error included (so the sidebar's count is tried again at most
+ * every 30 s while the read fails), and the one in flight with the scope generation it was sent for.
  */
 let mergeAssistRead = { at: 0, loading: null, generation: -1 };
 /**
@@ -307,8 +367,22 @@ function takeMergeAssist(body, request) {
   const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
   Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
   if (body === undefined) return changed;
-  data.mergeAssist = body;
+  holdMergeAssist(body);
   return true;
+}
+
+/**
+ * When the daemon reads gh's sign-in again for the Merge Assist status the page last read (`performance.now()`, the
+ * page's own clock from the moment the status came, so neither clock's time of day counts); `null` where it runs no gh.
+ * A write's answered status needs none: its commit starts a read, after which the wake is set.
+ */
+let githubDueAt = null;
+
+/** Hold a Merge Assist status a read answered, and when the daemon reads gh again for one (`readAgainInMs`). */
+function holdMergeAssist(status) {
+  data.mergeAssist = status;
+  const readAgainInMs = status.readiness?.github?.readAgainInMs;
+  githubDueAt = readAgainInMs === undefined ? null : performance.now() + readAgainInMs;
 }
 
 /**
@@ -337,6 +411,16 @@ function skipMergeAssist(maxAge) {
   const held = data.mergeAssist !== null || data.mergeAssistError !== null;
   return maxAge > 0 && held && Date.now() - mergeAssistRead.at < maxAge;
 }
+
+/** The sidebar's count: read when due, else when the last answer is 30 s old. */
+function loadMergeAssistCount() {
+  if (!mergeAssistCountDue) return loadMergeAssist(MERGE_ASSIST_COUNT_EVERY);
+  mergeAssistCountDue = false;
+  return loadMergeAssist();
+}
+
+/** Whether the sidebar's count failed and is 30 s old: a beat then reads again, though nothing else changed. */
+const mergeAssistCountRetry = () => data.mergeAssistError !== null && !skipMergeAssist(MERGE_ASSIST_COUNT_EVERY);
 
 /** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
 async function readMergeAssist(current) {
@@ -653,8 +737,9 @@ function pumpTitles() {
  * - `sessions`: the first page of the sessions list (`data.sessions`).
  * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
  * - `mergeAssist`: Merge Assist for the scoped checkout (`data.mergeAssist`), every poll.
- * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of open conflicts. Not in a scope's
- *   first poll, which the page waits on to draw, so the count never holds the page up.
+ * - `mergeAssistCount`: the same, the sidebar's count of open conflicts: read at a conflict event, a new stream or
+ *   scope, else at most every 30 s. Not in a scope's first poll, which the page waits on to draw, so the count never
+ *   holds the page up.
  */
 const NEEDS = {
   rules: () => loadRules(),
@@ -674,7 +759,7 @@ const NEEDS = {
   sessions: () => loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repositoryFilter()}`),
   selectedSession: () => (ui.selectedSession ? [loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession)] : []),
   mergeAssist: () => loadMergeAssist(),
-  mergeAssistCount: () => (data.loaded ? loadMergeAssist(MERGE_ASSIST_COUNT_EVERY) : false),
+  mergeAssistCount: () => (data.loaded ? loadMergeAssistCount() : false),
 };
 
 /** The names of what the page needs now, beyond the shared reads; set once by the page (`setNeeds`). */
@@ -709,70 +794,350 @@ async function poll() {
     // still out must not leave their failures unhandled.
     const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
     const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
-    if (started !== generation) return;
-    if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
-    data.updatedAt = Date.now();
-    data.disconnected = false;
-    data.accessRequired = false;
-    data.missing = false;
-    data.loaded = true;
-    backoff = INTERVAL;
-    onChange(results.some(Boolean));
+    if (started === generation) pollAnswered(results, since);
   } catch (error) {
-    if (started !== generation) return;
-    // A repository or checkout the daemon does not know is an answer, not a lost connection: the context or rules read
-    // answering 404, not some other read (a session that went away is handled where it is read). Neither is a 401: the
-    // daemon is up, and this browser has not opened its link.
-    data.accessRequired = error.name === "AccessRequired";
-    data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
-    data.disconnected = !data.missing && !data.accessRequired;
-    data.loaded = data.missing;
-    // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
-    // so the page that asks to connect it continues soon after `rerail manage` does.
-    backoff = data.disconnected ? Math.min(MAX_BACKOFF, backoff * 2) : INTERVAL;
-    // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
-    if (data.disconnected) console.warn("poll failed", error);
-    onChange(data.missing);
+    if (started === generation) pollFailed(error);
   }
+}
+
+/** A poll's reads all answered: the page holds what the daemon had, and the pause is the pace again. */
+function pollAnswered(results, since) {
+  if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
+  data.updatedAt = Date.now();
+  data.disconnected = false;
+  data.accessRequired = false;
+  data.missing = false;
+  data.loaded = true;
+  backoff = INTERVAL;
+  onChange(results.some(Boolean));
+}
+
+/**
+ * A poll's read failed with `error`. A repository or checkout the daemon does not know is an answer, not a lost
+ * connection: the context or rules read answering 404, not some other read (a session that went away is handled where
+ * it is read). Neither is a 401: the daemon is up, and this browser has not opened its link.
+ */
+function pollFailed(error) {
+  data.accessRequired = error.name === "AccessRequired";
+  data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
+  data.disconnected = !data.missing && !data.accessRequired;
+  data.loaded = data.missing;
+  // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
+  // so the page that asks to connect it continues soon after `rerail manage` does.
+  backoff = data.disconnected ? failedPause() : INTERVAL;
+  // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
+  if (data.disconnected) console.warn("poll failed", error);
+  onChange(data.missing);
 }
 
 /**
  * One poll: everything the current view needs, in parallel. A call during a poll joins it and
- * asks for one more afterwards, since what to fetch (the range) may have changed meanwhile.
+ * asks for one more afterwards, since what to fetch (the range) may have changed meanwhile. Whoever asked (a change,
+ * the person, a retry), the page holds a read out from its start until it answers (`data.readingSince`), so a read
+ * that hangs ends Live as a missed poll did.
  */
 export async function refresh() {
   if (inFlight) { queued = true; return inFlight; }
+  const asked = Date.now();
+  data.readingSince = asked;
+  accessRead = storedAccess();
+  windowRead = sinceFor();
   inFlight = poll();
   try { await inFlight; } finally { inFlight = null; }
+  afterRead(asked);
   if (queued) { queued = false; await refresh(); }
 }
 
-/** The tab is in the background: nothing is polled until it shows again. */
+/**
+ * What a read's outcome moves, whatever asked for it: one that failed is tried again at the poll's own pace (`backoff`),
+ * as the poll tried it, even while the stream stays open, and so is every read while the page reads at the pace
+ * (`atPace`); one that answered holds what the daemon had when it began. A read that answers once the tab hid arms
+ * nothing: showing again follows the stream, whose first message reads.
+ */
+function afterRead(asked) {
+  data.readingSince = 0;
+  if (!data.disconnected && data.behindSince <= asked) data.behindSince = 0;
+  if (hidden()) return;
+  if (data.disconnected || atPace) retryLater();
+  armGithubRead();
+}
+
+/** The tab is in the background: nothing is followed or read until it shows again. */
 const hidden = () => typeof document !== "undefined" && document.hidden;
 
-function schedule() {
-  clearTimeout(timer);
-  if (hidden()) return;
-  timer = setTimeout(async () => { await refresh(); schedule(); }, backoff);
+/** A read a change asked for, counted for the pace. */
+function changeRead() {
+  clearTimeout(paceTimer);
+  paceTimer = null;
+  lastChangeRead = performance.now();
+  void refresh();
+}
+
+/**
+ * Read again for a change: at once when the last such read began `INTERVAL` ago or more, else at the pace's next tick
+ * (`paceOrigin`), so the page reads no more often than the poll did while the daemon keeps changing.
+ */
+function readSoon() {
+  const now = performance.now();
+  if (now - lastChangeRead >= INTERVAL) changeRead();
+  else paceTimer ??= setTimeout(changeRead, paceOrigin + (Math.floor((now - paceOrigin) / INTERVAL) + 1) * INTERVAL - now);
+}
+
+/** This origin's stored capability (`ACCESS_KEY`), or null; a browser that refuses storage has none. */
+function storedAccess() {
+  try {
+    return globalThis.localStorage?.getItem(ACCESS_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A message of the stream: the daemon is alive. Its first, a new token or a conflict event reads again; a beat with
+ * nothing new renders, so relative times and the status move as they did with each poll, or retries a failed count.
+ */
+function onMessage({ event, data: next }, first) {
+  data.heardAt = Date.now();
+  endPace();
+  if (event === "conflicts") mergeAssistCountDue = true;
+  if (first) startOver(next);
+  else if (asksRead(event, next)) readFor(next);
+  else onChange(false);
+}
+
+/** A stream's message ends the pace, and the pace's next read with it, unless a read failed: that one is tried again. */
+function endPace() {
+  if (atPace && !data.disconnected) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  atPace = false;
+}
+
+/** Read for a message that asked: a new token says the page is behind the daemon until a read begun after it answers. */
+function readFor(next) {
+  if (next !== token) data.behindSince ||= Date.now();
+  token = next;
+  readSoon();
+}
+
+/**
+ * Whether a message asks for a read: a new token, a conflict event, a failed count to try again, or a capability gone or
+ * changed since the last read (another tab's change tells this one; this tab's own does not), which the poll found at its
+ * next read.
+ */
+const asksRead = (event, next) =>
+  next !== token || event === "conflicts" || mergeAssistCountRetry() || windowMoved() || mergeAssistMoves() || storedAccess() !== accessRead;
+
+/**
+ * Whether the activity window the page shows has moved past what the last read asked for: Today at local midnight, a
+ * sliding range at its next ten-minute step (`sinceFor`). Nothing commits at that moment, so the first beat past it reads.
+ */
+const windowMoved = () => windowRead !== null && sinceFor() !== windowRead;
+
+/**
+ * gh's states a person changes outside Rerail, by signing in or installing it. Not `unchecked`: Merge Assist is off
+ * there and runs no gh, and turning it on is a commit.
+ */
+const GITHUB_WAITING = new Set(["signed-out", "missing", "unavailable"]);
+
+/** The Merge Assist status the page shows, when it shows the Merge Assist page; else `null`. */
+const mergeAssistShown = () => (new Set(pageNeeds()).has("mergeAssist") ? data.mergeAssist : null);
+
+/**
+ * Whether the Merge Assist page shows what moves with no commit and no notice: a scan running (its process can end,
+ * or go stale, unheard) or gh not ready. Each beat then reads again, as the poll did, until it no longer shows.
+ */
+function mergeAssistMoves() {
+  const status = mergeAssistShown();
+  if (status === null) return false;
+  return status.scanning || GITHUB_WAITING.has(status.readiness.github.state);
+}
+
+let githubTimer = null;
+
+/**
+ * While the Merge Assist page shows gh signed in, ask for the status once when the daemon says it reads gh again for
+ * one (`githubDueAt`): a sign-out, an expired token or another account then shows as soon as the poll showed it,
+ * though nothing commits or tells of it. One wake at that moment, on that page only; at least the pace away, so a
+ * reading the daemon has not read again yet costs no more reads than the poll did.
+ */
+function armGithubRead() {
+  clearTimeout(githubTimer);
+  githubTimer = null;
+  if (mergeAssistShown()?.readiness?.github?.state !== "signed-in" || githubDueAt === null) return;
+  const wait = Math.max(INTERVAL, githubDueAt - performance.now());
+  githubTimer = setTimeout(() => { githubTimer = null; if (mergeAssistShown() !== null) void refresh(); }, wait);
+}
+
+/**
+ * A new stream's first message: what changed while none was open is not known, a conflict event included, so read
+ * now, the sidebar's count too; the pace starts over.
+ */
+function startOver(next) {
+  clearTimeout(paceTimer);
+  paceTimer = null;
+  lastChangeRead = -Infinity;
+  paceOrigin = performance.now();
+  mergeAssistCountDue = true;
+  data.behindSince ||= Date.now();
+  token = next;
+  void refresh();
+}
+
+const changesPath = () => (ui.scope?.checkout === undefined ? "/api/changes" : `/api/changes?${new URLSearchParams({ checkout: ui.scope.checkout })}`);
+
+/**
+ * Runs `run` holding one of the browser's free stream slots; `false` at once, nothing run, when none is free. Without
+ * Web Locks (a browser without them, or a page that is not a secure context, such as a daemon started with
+ * --insecure-http opened by its network address) no tab can count the others, so none holds a stream: each reads at the
+ * pace, as every tab did before, and never takes one of the six connections the browser gives the daemon's origin.
+ */
+async function inStreamSlot(run) {
+  const locks = globalThis.navigator?.locks;
+  if (locks === undefined) return false;
+  for (let slot = 0; slot < STREAM_SLOTS; slot += 1) {
+    const held = await locks.request(`rerail-changes-${slot}`, { ifAvailable: true }, async lock => {
+      if (lock === null) return false;
+      await run();
+      return true;
+    });
+    if (held) return true;
+  }
+  return false;
+}
+
+/** Watch the stream `controller` for two missed beats; `heard` says whether it brought a message yet. */
+function watchStall(controller, heard) {
+  clearTimeout(stallTimer);
+  stallTimer = setTimeout(() => stalled(controller, heard), LIVE_MS);
+}
+
+/**
+ * The stream `controller` missed two beats: the daemon's loop is stuck, a network dropped the connection unclosed, or
+ * something between holds the response until it ends. Another is opened, which reads at its first message. When this
+ * one brought none (`heard`), whatever earlier streams did, none may ever come: the page reads at the pace from now on,
+ * as it read before the stream, until a message does. One that brought messages reopens without the pace, so a page
+ * whose stream delivers never polls.
+ */
+function stalled(controller, heard) {
+  if (stream !== controller) return;
+  stream = null;
+  controller.abort();
+  if (!heard) atPace = true;
+  followChanges();
+}
+
+/**
+ * Follow the change stream while the tab shows, in a free slot; its end, or no free slot, reads once and tries again
+ * after `backoff` (the pace while the daemon answers), so a tab without a stream reads as every tab did before.
+ */
+function followChanges() {
+  if (stream !== null || hidden()) return;
+  const controller = new AbortController();
+  stream = controller;
+  let first = true;
+  const each = message => { watchStall(controller, true); onMessage(message, first); first = false; };
+  watchStall(controller, false);
+  // How it ended needs no reading here: the read after it says whether the daemon answers.
+  inStreamSlot(() => follow(changesPath(), each, controller.signal)).catch(warnUnlessEnded).then(() => changesEnded(controller));
+  keepPace();
+}
+
+/** Warns of a stream that failed for any cause but its end here (`AbortError`), a render that threw included. */
+function warnUnlessEnded(error) {
+  if (error?.name !== "AbortError") console.warn("change stream failed", error);
+}
+
+/**
+ * The pause after a failed read: doubled, to at most 30 s, once per pause, as the poll's was once per failed poll. Reads
+ * that fail within one pause (a stream's first message and its end, read at one moment when the daemon stops) count once.
+ */
+function failedPause() {
+  const now = performance.now();
+  if (now - doubledAt < backoff) return backoff;
+  doubledAt = now;
+  return Math.min(MAX_BACKOFF, backoff * 2);
+}
+
+/** A page reading at the pace (`atPace`) starts its reads again when none is out or due, as after the tab was hidden. */
+function keepPace() {
+  if (atPace && retryTimer === null && inFlight === null) void refresh();
+}
+
+/**
+ * The stream ended, or found no slot: read once unless the page reads at the pace, which says whether the daemon
+ * answers, and try again after `backoff`, which that read's outcome moves for the next time. The retry waits for no
+ * read, so a read that never answers cannot keep the stream closed.
+ */
+function changesEnded(controller) {
+  if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
+  stream = null;
+  clearTimeout(stallTimer);
+  retryLater();
+  // A page at the pace reads at the retry, as the poll did, and one with no stream to follow so reads once a pace.
+  if (!atPace) void refresh();
+}
+
+/**
+ * Try again after `backoff`, the poll's own pace (doubling to 30 s while reads fail): read again if the last read
+ * failed, as the poll did, since a stream something between holds would not say the daemon is back, and follow a new
+ * stream once that read answers; else open the stream again if it is closed, or read if the page reads at the pace. The
+ * one retry for a stream that ended, a read that failed and a stream that never brought a message.
+ */
+function retryLater() {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (data.disconnected) void refresh().then(followAnswered);
+    else if (stream === null) followChanges();
+    else if (atPace) void refresh();
+  }, backoff);
+}
+
+/** After the retry's read: follow a new stream when it answered and none is open or due (the daemon is back). */
+function followAnswered() {
+  if (!data.disconnected && stream === null && retryTimer === null) followChanges();
+}
+
+/** Stop following and reading until `followChanges` again. */
+function endChanges() {
+  const open = stream;
+  stream = null;
+  open?.abort();
+  for (const timer of [retryTimer, paceTimer, stallTimer, githubTimer]) clearTimeout(timer);
+  retryTimer = paceTimer = stallTimer = githubTimer = null;
+}
+
+/**
+ * Read now and at the pace, as the poll did when the page opened, showed again or changed scope, and follow the
+ * stream, whose first message ends the pace: something between that holds the stream's messages holds its first one
+ * too. The read is out before the stream opens, so the stream's look at the pace starts no second one.
+ */
+function readAndFollow() {
+  atPace = true;
+  void refresh();
+  followChanges();
 }
 
 export function startPolling(listener) {
   onChange = listener;
-  refresh().then(schedule);
-  document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
+  readAndFollow();
+  document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else readAndFollow(); });
   // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
-  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
+  // Outside a browser page (a test's Node) there is no window, as there is no document for `hidden`.
+  globalThis.window?.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */
 export async function refreshNow() {
   await refresh();
-  schedule();
 }
 
 /**
  * Show another repository (`scope` from `readScope`, or `null` for the page that asks for one): drop everything fetched for the
- * previous one, and poll now. A response still in flight for the previous scope is discarded.
+ * previous one, and read the new one now, through a stream of its own. A response still in flight for the previous
+ * scope is discarded.
  */
 export function changeScope(scope) {
   generation += 1;
@@ -794,9 +1159,14 @@ export function changeScope(scope) {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
-    mergeAssist: null, mergeAssistError: null,
+    mergeAssist: null, mergeAssistError: null, behindSince: 0,
   });
   mergeAssistRead = { at: 0, loading: null, generation: -1 };
+  mergeAssistCountDue = true;
   data.sessionDetail.clear();
-  refreshNow();
+  // The stream names the checkout, whose own rules it follows. The new scope's read waits only for one still out for
+  // the old scope, as the poll's did, whether the page reads at the pace or the stream's first message is held.
+  endChanges();
+  token = null;
+  readAndFollow();
 }

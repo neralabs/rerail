@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readRepositoryState, readSummaryState } from "../../src/presentation/session-presentation.js";
+import { readRepositoryState, readRerailSummary } from "../../src/presentation/session-presentation.js";
 import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -40,7 +40,9 @@ describe("the start check a hook makes before its event", () => {
     expect(await readRepositoryState(cwd, "claude-code")).toBeNull();
     expect(reads.event).toHaveBeenCalledTimes(1);
     expect(reads.command).not.toHaveBeenCalled();
-    expect(await readSummaryState(cwd, "cursor", () => "started")).toBe("not-answering");
+    // Cursor names no session: `/rerail` reads the repository's state.
+    const summary = await readRerailSummary({ host: "cursor", sessionId: undefined, cwd, startState: () => "started" });
+    expect(summary.repositoryState).toBe("not-answering");
     expect(reads.command).toHaveBeenCalledTimes(1);
     expect(reads.event).toHaveBeenCalledTimes(1);
   });

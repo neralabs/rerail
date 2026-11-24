@@ -1,0 +1,1 @@
+On Windows, with `RERAIL_ENGINE_SOCKET` set, a hook writes nothing, not even the proof's challenge, to an engine pipe Windows names as another process's: one allowed to impersonate could act as your account once it read that write. When Windows cannot be asked which process serves the pipe, as during an update, the hook and `rerail status` say so.

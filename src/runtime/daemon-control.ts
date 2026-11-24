@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, open, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
@@ -25,6 +26,7 @@ import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { BUSY_DAEMON_WAIT_MS, HOOK_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer, type EngineProofOptions } from "./daemon/engine-proof.js";
+import { untakenFor } from "../engine/storage/untaken-events.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf, pipeServer, type PipeServer, type PipeServerAnswer } from "./daemon/engine-pipe.js";
 import { processStartedAt, processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
@@ -78,6 +80,12 @@ export interface DaemonState {
    * it must hold. Absent for every other daemon.
    */
   remoteRefused?: string;
+  /**
+   * The id of the home's untaken folder (`untakenFolderId`) the daemon watches, taking each event hooks leave there as
+   * soon as its event loop runs (`untaken-events.ts`). Only for an event left in that very folder does a hook skip its
+   * wait. Absent in a state file an older daemon wrote, or while no watch runs.
+   */
+  untakenFolder?: string;
   /**
    * True where the daemon's `GET /api/presentation` takes `spelling`, the folder as a Windows host spelt it. Absent in
    * a state file an older daemon wrote: that one refuses a query value it does not know, so it is not sent one.
@@ -628,6 +636,8 @@ export interface DaemonProbeOptions {
   readonly fetchImpl?: DaemonFetch | undefined;
   /** How long it waits for the answer; a caller that can wait out a busy daemon passes more. */
   readonly timeoutMs?: number;
+  /** Ends the wait in place of `timeoutMs`: a caller whose whole call has one bound passes that bound's signal. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /**
@@ -637,11 +647,11 @@ export interface DaemonProbeOptions {
  */
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
-  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS }: DaemonProbeOptions = {},
+  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS, signal }: DaemonProbeOptions = {},
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
-    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
+    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: signal ?? AbortSignal.timeout(timeoutMs) });
     // Awaited here, so a body that cannot be read is caught below as no answer.
     return await probeAnswer(response);
   } catch {
@@ -843,10 +853,15 @@ async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, ma
 
 /**
  * What may be made now of the daemon `state` records ({@link recordedDaemon}), for a reader that tells a busy daemon
- * (`silent`, sent nothing) from one that is gone.
+ * (`silent`, sent nothing) from one that is gone. `timeoutMs` bounds the engine's proof on Windows; a caller that waits
+ * out a busy daemon passes what is left of its own bound.
  */
-export async function recordedDaemonStatus(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<RecordedDaemon> {
-  return await recordedDaemon(state, machine, { timeoutMs: PROBE_TIMEOUT_MS });
+export async function recordedDaemonStatus(
+  state: DaemonState,
+  machine: DaemonMachine = THIS_MACHINE,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<RecordedDaemon> {
+  return await recordedDaemon(state, machine, { timeoutMs });
 }
 
 /**
@@ -1001,11 +1016,6 @@ export async function findRunningDaemon(home: string, machine: DaemonMachine = T
   return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
 }
 
-export interface StartLockOptions {
-  /** Waits between tries while another start holds the lock. */
-  sleep?: (ms: number) => Promise<void>;
-}
-
 /**
  * Serialize the check-then-spawn window per home. Two sessions starting at
  * once would otherwise both see "absent" and each launch a daemon; the loser
@@ -1013,11 +1023,10 @@ export interface StartLockOptions {
  * fight over the state file. The lock is the OS lock `locks/start.lock`
  * (`withHomeLock`), free the moment a start holding it ends, however it ends.
  */
-export async function withStartLock<T>(home: string, operation: () => Promise<T>, options: StartLockOptions = {}): Promise<T> {
+export async function withStartLock<T>(home: string, operation: () => Promise<T>): Promise<T> {
   return await withHomeLock(home, {
     name: START_LOCK,
     waitMs: START_TIMEOUT_MS,
-    sleep: options.sleep,
     busy: holder => new Error(`Another Rerail start (${holder === undefined ? "starting" : `pid ${holder.pid}`}) is still in progress`),
   }, operation);
 }
@@ -1490,6 +1499,47 @@ export async function runningDaemonEngineEndpoint(deadline?: number, machine: Da
     ? engineEndpointOf(lookup.state)
     : await daemonEngineEndpoint(true, deadline, machine);
   return { status: "running", endpoint };
+}
+
+/**
+ * The daemon the home records, when a hook already waited its whole wait for it and left an event it has not taken
+ * since (`untakenFor`): its event loop has not run since then, so a hook asks it nothing and leaves its event behind
+ * that one. Only an event in the folder the daemon watches counts (`DaemonState.untakenFolder`), and only while the
+ * daemon may still run (`recordedDaemonMayRun`). Reads two files, and on Linux connects once; waits for nothing.
+ */
+export async function daemonLeftEventUntaken(machine: DaemonMachine = THIS_MACHINE): Promise<DaemonState | undefined> {
+  const home = defaultRerailHome(machine.env);
+  // A state file that cannot be read says nothing here: the hook asks the daemon, which records why it failed.
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE), machine.platform).catch(() => undefined);
+  if (state?.untakenFolder === undefined || !untakenFor(home, state.pid, state.untakenFolder)) return undefined;
+  return await recordedDaemonMayRun(state, machine) ? state : undefined;
+}
+
+/**
+ * Whether the daemon `state` records may still run, asked of the machine: its pid, then on Windows its own pipe, and on
+ * Linux its engine socket, where a refused connect says no process listens there and the pid is another's now. A full
+ * listen queue (a long silence's hooks) refuses a connect on macOS too, so there the pid alone tells.
+ */
+async function recordedDaemonMayRun(state: DaemonState, machine: DaemonMachine): Promise<boolean> {
+  if (processState(state.pid, machine.kill) === "gone") return false;
+  if (machine.platform === "win32") return enginePipeExists(state, machine);
+  return machine.platform !== "linux" || await engineSocketListens(state.kernelSocketPath);
+}
+
+/**
+ * Whether a process listens on the Unix socket at `socketPath`: false when a connect is refused or finds no file, true
+ * when it connects or fails for any other reason (a full queue answers EAGAIN). A connect to a Unix socket ends at once,
+ * so this waits for nothing.
+ */
+async function engineSocketListens(socketPath: string): Promise<boolean> {
+  const probed = Promise.withResolvers<boolean>();
+  const probe = connect(socketPath);
+  probe.once("connect", () => {
+    probe.destroy();
+    probed.resolve(true);
+  });
+  probe.once("error", (error: NodeJS.ErrnoException) => probed.resolve(error.code !== "ECONNREFUSED" && error.code !== "ENOENT"));
+  return await probed.promise;
 }
 
 /**

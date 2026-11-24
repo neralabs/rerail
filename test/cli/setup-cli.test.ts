@@ -36,7 +36,7 @@ import {
 } from "../../src/setup/index.js";
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
-import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE, STATUS_LINES_FOLDER } from "../../src/engine/index.js";
+import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE, STATUS_LINES_FOLDER, UNTAKEN_EVENTS_DIR } from "../../src/engine/index.js";
 import { AUTOSTART_CLAIM_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
@@ -298,6 +298,9 @@ describe("rerail install --root", () => {
     await mkdir(join(context.home, PROFILES_DIR, "acme"), { recursive: true });
     await mkdir(join(context.home, DEVICE_SECRETS_DIR), { recursive: true });
     await writeFile(join(context.home, DEVICE_SECRETS_DIR, "acme"), "secret");
+    // The daemon's folder for the events hooks leave while it does not read, with its mark of the newest one it took.
+    await mkdir(join(context.home, UNTAKEN_EVENTS_DIR));
+    await writeFile(join(context.home, UNTAKEN_EVENTS_DIR, "taken"), "");
     const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE, UPDATE_CHECK_FILE];
     for (const name of written) await writeFile(join(context.home, name), "");
     await writeFile(join(context.home, RERAIL_DATABASE_FILE), "rules and history");
@@ -306,7 +309,7 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
     const planned = output.mock.calls.join("");
-    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE]) {
+    for (const name of [...written, PROFILES_DIR, DEVICE_SECRETS_DIR, UNTAKEN_EVENTS_DIR, LOCKS_DIR, SEEN_AGENTS_FILE]) {
       expect(planned).toContain(`Would delete ${join(context.home, name)} (Rerail's settings, logs and records).`);
     }
     expect(planned).toContain(`Would delete ${context.home} (the Rerail home).`);

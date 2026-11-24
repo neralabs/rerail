@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // No internal reference in a tracked file's path or text. The repository is public and what these point to is not:
-// - an internal ticket ID (`NER-` and digits, any case): name the behavior, the pull request or the commit instead;
+// - an internal ticket ID (an internal Linear team key, `NER-`, `RER-`, `RES-` or `TES-`, and digits, any case): name
+//   the behavior, the decision record, the pull request or the commit instead;
 // - a `nera-` identifier (any case) that is not on PUBLIC_NAMES: Nera's private repositories and projects are named
 //   that way. Describe the project neutrally instead ("Nera's design-system source", "the internal validation
 //   gates"), or, for a name that is public, add it to PUBLIC_NAMES. The list holds only public identifiers, so the
@@ -14,8 +15,11 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** An internal ticket ID. Its source is also the `git grep -P` pattern, so paths and text match alike. */
-export const TICKET = /\bner-\d+/iu;
+/**
+ * An internal ticket ID: one of the internal Linear team keys, then digits. Its source is also the `git grep -P`
+ * pattern, so paths and text match alike.
+ */
+export const TICKET = /\b(?:ner|rer|res|tes)-\d+/iu;
 
 /** A `nera-` identifier. Its source is also the `git grep -P` pattern; a match is a problem unless it is public. */
 export const NERA_NAME = /\bnera-[a-z0-9][a-z0-9-]*/iu;

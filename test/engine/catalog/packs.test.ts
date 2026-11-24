@@ -873,12 +873,24 @@ describe("validatePack", () => {
       expect(failing(validation).rules).toEqual([expect.stringContaining("with is for a rule written in .rerail")]);
     });
 
-    it("fails check 5 once core reads .rerail rules, while the core range admits older cores", { timeout: TIMEOUT }, async () => {
-      const raised = (directory: string): void => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": raisedCoreRange(RERAIL_DOCUMENTS_SINCE) } }));
-      expect(failing(await validatePack(join(FIXTURES, "rr-sample"), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({
-        package: [`package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call, rr-sample-deprecated-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`],
-      });
-      expect(failing(await validatePack(changed("rr-sample", raised), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({});
+    // Check 5 judges the core range at core's version: the repository's own unless a case passes one, which the Release
+    // pull request moves when it bumps core. The fixture's range starts at RERAIL_DOCUMENTS_SINCE, so check 5 passes it
+    // at any version; these cases pass the version on each side of that release, so a bump changes none of them.
+    const refusal = `package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call, rr-sample-deprecated-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`;
+    /** A copy of the fixture whose core range admits every core, as a pack's did before it shipped a .rerail rule. */
+    const admittingOlderCores = (): string =>
+      changed("rr-sample", directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=0.1.0-0" } })));
+    const fixture = (): string => join(FIXTURES, "rr-sample");
+    const coreRangeCases: [string, () => string, string, Partial<Record<PackCheckName, string[]>>][] = [
+      ["passes a range admitting older cores while core is before the release that first reads .rerail rules", admittingOlderCores, "0.2.0", {}],
+      ["fails that range once core is at that release", admittingOlderCores, RERAIL_DOCUMENTS_SINCE, { package: [refusal] }],
+      ["fails it at a later release too", admittingOlderCores, "1.0.0", { package: [refusal] }],
+      ["passes the fixture's own range at that release", fixture, RERAIL_DOCUMENTS_SINCE, {}],
+      ["passes the fixture's own range at a later release", fixture, "1.0.0", {}],
+    ];
+
+    it.each(coreRangeCases)("check 5 %s", { timeout: TIMEOUT }, async (_name, directory, coreVersion, expected) => {
+      expect(failing(await validatePack(directory(), { coreVersion }))).toEqual(expected);
     });
   });
 

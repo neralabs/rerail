@@ -45,6 +45,8 @@ Each pack lives in `packs/<id>/`. A private pack publishes none of it:
 | `package.json` | npm package `@neralabs/rerail-pack-<id>`; core version range as a peer dependency; no dependencies | yes |
 | `pack.json` | The pack (`rerail.rule-pack/v1`): match, and each rule's document, title, group, mode and examples | yes |
 | `rules/<id>.json` | Rule documents, each named for its rule id ([rule ids](../docs/pack-format.md#packjson)): code rules (`rerail.policy/v1`) or [conversation rules](../docs/pack-format.md#packjson) | yes |
+| `rules/<id>.rerail`, `rules/lib/` | Code rules written in `.rerail`, and library files only the pack's rules include ([rules written in .rerail](../docs/pack-format.md#rules-written-in-rerail)) | yes |
+| `cases/<id>/` | Fixtures a `.rerail` rule's tests read | no |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md`: per upstream repository, its source, the patterns of the files taken and how, and what is not copied ([format](../docs/pack-format.md#upstreammd)) | yes |
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the ports, declared divergences, ports under evaluation (scored and reported, never gated) with `candidates/README.md`, what each candidate is waiting on and its rule details, which `README.md` leaves out, and per tool `upstream/<tool>/` with its generator, `gates.yaml` and the locks of its pack data. The tool's copied tests, expected findings and samples are not in git: one archive each in S3, which `test-data.lock` and `samples.lock` name and `npm run fixtures:pull` fetches ([pack data](../docs/pack-format.md#pack-data)) | no |

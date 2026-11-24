@@ -6,6 +6,7 @@ import { loadNativeBinding, type NativeExclusiveFileLock } from "../engine/nativ
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
+import { UNTAKEN_EVENTS_DIR, untakenWaiting, type UntakenPass } from "../engine/storage/untaken-events.js";
 
 /**
  * In the Rerail home: one JSON line per hook event Rerail could not record, so `rerail status` can say that hooks run
@@ -80,23 +81,51 @@ const PART_START_PAST_CLOCK_MS = 16 + 1;
  */
 export function recordHookFailure(
   failure: Pick<HookFailure, "host" | "event" | "reason">,
-  { home = defaultRerailHome(), now, env = process.env }: HookFailureContext = {},
+  context: HookFailureContext = {},
 ): void {
+  const env = context.env ?? process.env;
+  appendLine(at => ({ at, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() } satisfies HookFailure), context);
+}
+
+/**
+ * A line the daemon writes once it has checked, late, the events hooks left while it did not read (`untaken-events.ts`):
+ * how many, the first and last arrival, and how many it could not check. Readers that know only failures skip it.
+ */
+export interface LateCheck {
+  /** Epoch ms the checks ended. */
+  at: number;
+  lateChecked: UntakenPass;
+}
+
+/** Appends the daemon's word on events it checked late (`LateCheck`). Never throws, as `recordHookFailure`. */
+export function recordLateCheck(pass: UntakenPass, context: HookFailureContext = {}): void {
+  appendLine(at => ({ at, lateChecked: pass }) satisfies LateCheck, context);
+}
+
+/** Appends the line `lineAt` makes for its time, moving the full log aside first, within the log's bounds. Never throws. */
+function appendLine(lineAt: (at: number) => HookFailure | LateCheck, { home = defaultRerailHome(), now }: HookFailureContext): void {
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    const size = sizeOf(path);
-    const moved = size > MAX_FAILURE_BYTES && movedAside(home, path);
-    // At the cap by the size read before the lock, the log is read again: another hook may have moved it since.
-    if (!moved && size >= CAP_FAILURE_BYTES && sizeOf(path) >= CAP_FAILURE_BYTES) return;
+    const room = roomInLog(home, path);
+    if (room === undefined) return;
     // Read after the move, past it by a clock step when this hook moved the log: the hook's own failure carries the
     // time the new part starts, so it counts in that part.
-    const at = now ?? Date.now() + (moved ? PART_START_PAST_CLOCK_MS : 0);
-    const line = `${JSON.stringify({ at, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() } satisfies HookFailure)}\n`;
-    appendFileSync(path, moved ? `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}` : line, { mode: 0o600 });
+    const at = now ?? Date.now() + (room.moved ? PART_START_PAST_CLOCK_MS : 0);
+    const line = `${JSON.stringify(lineAt(at))}\n`;
+    appendFileSync(path, room.moved ? `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}` : line, { mode: 0o600 });
   } catch {
     // Nowhere left to say it.
   }
+}
+
+/** Whether the log at `path` takes one more line, and whether this hook moved the full log aside to make room for it. */
+function roomInLog(home: string, path: string): { moved: boolean } | undefined {
+  const size = sizeOf(path);
+  const moved = size > MAX_FAILURE_BYTES && movedAside(home, path);
+  // At the cap by the size read before the lock, the log is read again: another hook may have moved it since.
+  if (!moved && size >= CAP_FAILURE_BYTES && sizeOf(path) >= CAP_FAILURE_BYTES) return undefined;
+  return { moved };
 }
 
 /** The log's size: 0 when there is none, and past every limit when it cannot be told, so nothing is written unchecked. */
@@ -163,6 +192,8 @@ export interface HookFailureLog {
    * to the given time.
    */
   keptSince: number | null;
+  /** The daemon's late checks of events hooks left while it did not read, over the same period, oldest first. */
+  lateChecks: LateCheck[];
 }
 
 const iso = (at: number): string => new Date(at).toISOString();
@@ -176,7 +207,7 @@ const periodOf = (keptSince: number | null): string =>
  * recorded event was observed (`lastRecordedAt`, epoch ms; null when nothing was ever recorded). When hooks failed
  * after the last recorded event, hooks run but nothing is recorded, and the line leads with that.
  */
-export function hookFailureLines({ failures, keptSince }: HookFailureLog, lastRecordedAt: number | null): string[] {
+export function hookFailureLines({ failures, keptSince }: Pick<HookFailureLog, "failures" | "keptSince">, lastRecordedAt: number | null): string[] {
   const last = failures.at(-1);
   if (last === undefined) return [];
   const unrecorded = lastRecordedAt === null ? failures : failures.filter(failure => failure.at > lastRecordedAt);
@@ -187,6 +218,32 @@ export function hookFailureLines({ failures, keptSince }: HookFailureLog, lastRe
     return [`Hooks: ${plural(failures.length, "hook event", "hook events")} could not be recorded ${periodOf(keptSince)}; ${detail}.`];
   }
   return [`${unrecordedSince(first, unrecorded.length, { total: failures.length, keptSince })}; ${detail}.`];
+}
+
+/**
+ * What `rerail status` says of the events hooks left while the daemon did not read, over the log's period: how many,
+ * from and to when they came, that the daemon checked them late and its findings went with its next answers, and how
+ * many it could not check. Nothing when it checked none late.
+ */
+export function lateCheckLines({ lateChecks, keptSince }: Pick<HookFailureLog, "lateChecks" | "keptSince">): string[] {
+  if (lateChecks.length === 0) return [];
+  const passes = lateChecks.map(check => check.lateChecked);
+  const events = passes.reduce((sum, pass) => sum + pass.events, 0);
+  const failed = passes.reduce((sum, pass) => sum + pass.failed, 0);
+  const span = `from ${iso(Math.min(...passes.map(pass => pass.from)))} to ${iso(Math.max(...passes.map(pass => pass.to)))}`;
+  const lost = failed === 0 ? "" : `; ${plural(failed, "event", "events")} of them could not be checked and ${failed === 1 ? "was" : "were"} lost`;
+  return [`Hooks: ${plural(events, "hook event", "hook events")} came ${span} while the Rerail daemon was not reading, ${periodOf(keptSince)}; it checked them late, once it read again, and what it found went to the agent with its next answers${lost}.`];
+}
+
+/**
+ * What `rerail status` says of the events hooks left in `home` for the daemon `daemonPid` that it has not begun to
+ * check: how many, and since when it has not read. Nothing when none wait.
+ */
+export function untakenWaitingLines(home: string, daemonPid: number): string[] {
+  const waiting = untakenWaiting(home, daemonPid);
+  if (waiting === undefined) return [];
+  const events = waiting.events === 1 ? "1 hook event waits" : `${waiting.events} hook events wait`;
+  return [`Hooks: ${events} in ${UNTAKEN_EVENTS_DIR} for the Rerail daemon, which has not read since ${iso(waiting.since)}; it checks them as soon as it reads again, and its next answers carry what it finds.`];
 }
 
 /**
@@ -207,18 +264,34 @@ function unrecordedSince(first: HookFailure, count: number, { total, keptSince }
  * later than `since`. A `.1` that cannot be read holds nothing, and the count starts where the live log began.
  */
 export function readHookFailures(home: string, since: number): HookFailureLog {
+  const { live, movedAside } = readLogParts(home);
+  const keptSince = keptSinceOf(live, movedAside, since);
+  const from = keptSince ?? since;
+  const parts = [movedAside, live];
+  return { failures: linesSince(parts, part => part.failures, from), keptSince, lateChecks: linesSince(parts, part => part.lateChecks, from) };
+}
+
+/** The live log and the part moved aside to `.1`, each undefined when it is missing or cannot be read. */
+function readLogParts(home: string): { live: LogPart | undefined; movedAside: LogPart | undefined } {
   const livePath = join(home, HOOK_FAILURES_FILE);
   let live = readPart(livePath);
   const movedAside = readPart(join(home, MOVED_ASIDE_FILE));
   // A hook moved the live log to `.1` between the two reads, so `.1` is the file just read as live: read the live name
   // again, which now holds the next part, rather than count the moved one twice.
   if (live !== undefined && live.id !== undefined && live.id === movedAside?.id) live = readPart(livePath);
+  return { live, movedAside };
+}
+
+/** When the log the parts are began, where that is later than `since` and failures before it may be gone; else null. */
+function keptSinceOf(live: LogPart | undefined, movedAside: LogPart | undefined, since: number): number | null {
   const start = movedAside === undefined ? live?.startedAt : movedAside.startedAt ?? oldestOf(movedAside) ?? live?.startedAt;
-  const keptSince = start !== undefined && start > since ? start : null;
-  const from = keptSince ?? since;
+  return start !== undefined && start > since ? start : null;
+}
+
+/** The lines `of` picks from each part that can be read, from `from` (epoch ms) on, oldest first. */
+function linesSince<T extends { at: number }>(parts: readonly (LogPart | undefined)[], of: (part: LogPart) => T[], from: number): T[] {
   // Hooks read the clock before they append, so lines from hooks running at once can be a little out of order.
-  const failures = [movedAside, live].flatMap(part => part?.failures.filter(failure => failure.at >= from) ?? []).sort((left, right) => left.at - right.at);
-  return { failures, keptSince };
+  return parts.flatMap(part => (part === undefined ? [] : of(part).filter(line => line.at >= from))).sort((left, right) => left.at - right.at);
 }
 
 /** What a part of the log holds: its failures, and when it began where a hook that moved the log aside wrote that. */
@@ -226,6 +299,7 @@ interface LogPart {
   /** The file's volume and inode, which a rename keeps; undefined where the file system gives no inode. */
   id: string | undefined;
   failures: HookFailure[];
+  lateChecks: LateCheck[];
   startedAt: number | undefined;
 }
 
@@ -248,15 +322,18 @@ function readPart(path: string): LogPart | undefined {
   } finally {
     closeSync(descriptor);
   }
-  const part: LogPart = { id, failures: [], startedAt: undefined };
-  for (const line of text.split("\n")) {
-    const value = parseLine(line);
-    if (value === null) continue;
-    // A part holds one start; a second only where the mover wrote it after the part filled and moved on: the latest is its own.
-    if ("startedAt" in value) part.startedAt = Math.max(value.startedAt, part.startedAt ?? value.startedAt);
-    else part.failures.push(value);
-  }
+  const part: LogPart = { id, failures: [], lateChecks: [], startedAt: undefined };
+  for (const line of text.split("\n")) addLine(part, parseLine(line));
   return part;
+}
+
+/** Puts what one line of a part holds where it goes in `part`. */
+function addLine(part: LogPart, value: HookFailure | PartStart | LateCheck | null): void {
+  if (value === null) return;
+  // A part holds one start; a second only where the mover wrote it after the part filled and moved on: the latest is its own.
+  if ("startedAt" in value) part.startedAt = Math.max(value.startedAt, part.startedAt ?? value.startedAt);
+  else if ("lateChecked" in value) part.lateChecks.push(value);
+  else part.failures.push(value);
 }
 
 /** The time of the oldest failure in `part`, epoch ms; undefined when it holds none. */
@@ -266,17 +343,27 @@ function oldestOf(part: LogPart): number | undefined {
   return oldest;
 }
 
-/** One line of a log file: a failure or a part's start; null when it is neither. */
-function parseLine(line: string): HookFailure | PartStart | null {
+/** One line of a log file: a failure, a part's start or a late check; null when it is none of them. */
+function parseLine(line: string): HookFailure | PartStart | LateCheck | null {
   if (line.trim() === "") return null;
   try {
     // Parsed from the log's own text; each field is checked before it is used.
-    const value = JSON.parse(line) as Partial<Record<keyof (HookFailure & PartStart), unknown>>;
-    return typeof value.startedAt === "number" ? { startedAt: value.startedAt } : failureOf(value);
+    const value = JSON.parse(line) as Partial<Record<keyof (HookFailure & PartStart & LateCheck), unknown>>;
+    if (typeof value.startedAt === "number") return { startedAt: value.startedAt };
+    return value.lateChecked === undefined ? failureOf(value) : lateCheckOf(value.at, value.lateChecked);
   } catch {
     // A line cut short by a concurrent write.
     return null;
   }
+}
+
+/** The late check a parsed line holds; null when a field is missing or not a number. */
+function lateCheckOf(at: unknown, pass: unknown): LateCheck | null {
+  const fields = pass as Partial<Record<keyof UntakenPass, unknown>> | null;
+  const numbers = [at, fields?.events, fields?.from, fields?.to, fields?.failed];
+  if (!numbers.every(value => typeof value === "number")) return null;
+  const [checkedAt, events, from, to, failed] = numbers as number[];
+  return { at: checkedAt!, lateChecked: { events: events!, from: from!, to: to!, failed: failed! } };
 }
 
 /** The failure a parsed line holds, with the optional fields it lacks or holds as other than text filled in; null when it holds none. */

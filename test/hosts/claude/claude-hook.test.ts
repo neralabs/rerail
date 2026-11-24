@@ -15,7 +15,7 @@ import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/c
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { answering, countingDaemon, type CountingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -460,6 +460,22 @@ describe("Claude Code hook with a running daemon", () => {
     });
   }
 
+  it("gives the session note its link and rules from the daemon's answer to the session's start, reading neither again", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const reads = vi.spyOn(globalThis, "fetch");
+    const start = await runClaudeHook({ session_id: "noted-session", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonHookOptions(root, { keepDatabase: false }));
+    const paths = reads.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : input).pathname);
+    reads.mockRestore();
+    // The same note the daemon's HTTP API gives, read here after the hook.
+    const note = sessionStartNote(await dashboardOrigin(root), "claude-code", "noted-session", await presentedSessionNoteRules({ host: "claude-code", sessionId: "noted-session", cwd: root }));
+    expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: note } });
+    // The start check reads the presentation before the event (`hookRerailStarted`); after the answer nothing is read.
+    expect(paths.filter(path => path.startsWith("/api/"))).toEqual(["/api/presentation"]);
+  });
+
   it("ends a reply at its empty last batch and stores the whole reply, blank line kept, as one message", { timeout: 60_000 }, async () => {
     const root = await temporaryDirectory();
     startTestRepository(root);
@@ -849,6 +865,80 @@ describe("Claude Code one-shot hook", () => {
     }
   });
 
+  it("builds the session note and a steer's why? from the daemon's answer, asking it nothing more, and reads an older daemon after it", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const sessionNote = { setUp: true as const, ruleCount: 26 };
+      const start = await handleClaudeEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, answering(scriptedLoop({}), { dashboard, sessionNote }), join(root, "sessions"));
+      expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: sessionStartNote(dashboard, "claude-code", "claude-session", sessionNote) } });
+
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const result = { ...common, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: {}, tool_response: "ok" };
+      const linked = await handleClaudeEvent({ ...result, tool_use_id: "tool-1" }, answering(scriptedLoop({ result: steer }), { dashboard }), join(root, "sessions"));
+      expect(JSON.stringify(linked)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+
+      // A daemon older than these facts answers without them: the hook reads the dashboard from it, as before.
+      const older = await handleClaudeEvent({ ...result, tool_use_id: "tool-2" }, scriptedLoop({ result: steer }), join(root, "sessions"));
+      expect(JSON.stringify(older)).toContain(`${daemon.origin}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toContain("/api/repository");
+    } finally {
+      vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it("links a steer it holds with the answer that found it, so the next tool call's hook asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const storageRoot = join(root, "sessions");
+      await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard }), storageRoot);
+      await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, answering(scriptedLoop({ "user-prompt": steer }), { dashboard }), storageRoot);
+
+      // The tool call's answer links nothing of its own, so it carries no dashboard.
+      const call = await handleClaudeEvent({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} }, scriptedLoop({}), storageRoot);
+      // Either steer held unlinked would have the hook read the dashboard from the daemon.
+      expect(JSON.stringify(call)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it("links a held steer again from the daemon that answers when the daemon restarted at another origin", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    const before = await countingDaemon(home);
+    vi.stubEnv("RERAIL_HOME", home);
+    let after: CountingDaemon | undefined;
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const storageRoot = join(root, "sessions");
+      await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard: before.origin }), storageRoot);
+      // The daemon restarts on another port: its state file names the new origin, and the old one listens no more.
+      after = await countingDaemon(home);
+      await before.close();
+      const call = await handleClaudeEvent({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} }, scriptedLoop({}), storageRoot);
+      expect(JSON.stringify(call)).toContain(`${after.origin}#rule/acme%3Ano-print`);
+      expect(JSON.stringify(call)).not.toContain(before.origin);
+    } finally {
+      vi.unstubAllEnvs();
+      await before.close();
+      await after?.close();
+    }
+  });
+
   it("gives a turn-end steer to the coding agent at Stop, with the person's line and its count, and nothing at the next prompt", async () => {
     const root = await temporaryDirectory();
     const common = { session_id: "claude-session", cwd: root };
@@ -1012,5 +1102,36 @@ describe("Claude Code one-shot hook", () => {
       scriptedLoop({}),
       storageRoot,
     )).toEqual({});
+  });
+});
+
+describe("a Claude Code hook while the daemon is not reading", () => {
+  it("leaves its event and answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    // Without its own branch, the hook would route the held steer into its answer and empty the session's file.
+    const call = { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_input: {} };
+    expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-1" }, left, storageRoot)).toEqual({});
+    expect(left.events.map(event => event.kind)).toEqual(["call"]);
+    expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-2" }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" }))
+      .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: expect.stringContaining("Deferred steer.") } });
+  });
+
+  it("removes the steers held for the session at its end, as one the daemon answers does, since no later hook of it reads them", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionEnd", reason: "exit" }, left, storageRoot)).toEqual({});
+    expect(left.events).not.toEqual([]);
+    // A session resumed under the same id: before, its first answer carried the steer held for the session that ended.
+    const call = { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} };
+    expect(await handleClaudeEvent(call, scriptedLoop({}), storageRoot, { NO_COLOR: "1" })).toEqual({});
   });
 });

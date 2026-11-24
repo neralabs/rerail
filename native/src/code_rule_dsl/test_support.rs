@@ -385,7 +385,7 @@ pub(super) fn php_lossy(bytes: &[u8]) -> String {
 
 /// `0`'s patterns as tree-sitter parses them, every token kept: the reference a tape's patterns
 /// (which leave the tokens the grammar implies out, `tape::pattern_doc`) are checked against, on
-/// tree-sitter's own tree (RER-131).
+/// tree-sitter's own tree (decision 0161).
 #[derive(Clone, Copy)]
 pub(super) struct Unfiltered(pub(super) super::language::GrammarDialect);
 
