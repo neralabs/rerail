@@ -131,10 +131,10 @@ jobs:
       # violations to post; a new violation of a steer rule can be a blocker that names its rule. The review itself
       # never sees the scan. The scan result is sent to the Rerail remote (send_results), in a job that holds only
       # the remote's URL and token. To turn it off, remove these three inputs and the two RESULTS_SINK secrets.
-      # rerail_package: the published Rerail to scan with. 0.2.1 is the first that reads .rerail/packs.json and a
-      # pack's config; the reviewer's own default still pins 0.1.5, which reads neither and would run no packs here.
-      # Drop this input once the reviewer pins 0.2.1 or later. No rerail_packs or rerail_repo_packs: either would
-      # replace the file's packs.
+      # rerail_package: the published Rerail to scan with. 0.2.0 is the first that reads .rerail/packs.json and a
+      # pack's config; 0.2.1 is the current release. The reviewer's own default still pins 0.1.5, which reads neither
+      # and would run no packs here. Drop this input once the reviewer pins 0.2.0 or later. No rerail_packs or
+      # rerail_repo_packs: either would replace the file's packs.
       modules: rerail
       rerail_package: "@neralabs/rerail@0.2.1"
       send_results: true
