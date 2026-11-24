@@ -28,7 +28,8 @@
     "repository-packs.md",
     "sql-executor.md",
     "transducer-design.md",
-    "windows.md"
+    "windows.md",
+    "publishing-the-engine-packages.md"
   ],
   "rules": [
     "Install with `npx @neralabs/rerail setup` in the repository. A coding agent runs `npx @neralabs/rerail setup --relay` and asks the person each question it prints, as written.",
