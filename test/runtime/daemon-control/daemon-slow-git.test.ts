@@ -167,8 +167,11 @@ describe("a daemon whose Git is slow on its config asks", () => {
     const { asks, answered, release, env: held } = heldAsks(tools);
     const databasePath = defaultRerailDatabasePath({ RERAIL_HOME: home });
     const main = await repository(databasePath);
-    // Conversation rules are an experiment, off in every test: on for this daemon, whose check is one of them.
-    const env = { ...held, RERAIL_EXPERIMENTAL_CONVERSATION_RULES: "1" };
+    // Conversation rules are an experiment, off in every test: on for this daemon, whose check is one of them. Every
+    // test's setup sets GIT_CONFIG_NOSYSTEM, under which a clone's remote needs no system file; this daemon goes without
+    // it, as on a person's machine, so a session's open reads the remote by the system file Git's asks name.
+    const env: NodeJS.ProcessEnv = { ...held, RERAIL_EXPERIMENTAL_CONVERSATION_RULES: "1" };
+    delete env.GIT_CONFIG_NOSYSTEM;
     homes.push(home);
     const { daemon } = await startDaemon({ home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) }, { dev: true, port: 0, env });
     const endpoint = { socketPath: daemon.state.kernelSocketPath, ...(daemon.state.accessToken === undefined ? {} : { accessToken: daemon.state.accessToken }) };
