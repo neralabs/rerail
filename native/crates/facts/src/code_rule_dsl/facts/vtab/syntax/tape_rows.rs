@@ -750,9 +750,9 @@ impl TapeRows for DocRow {
     }
 }
 
-/// `visit_index(n, i)`: node `n`'s place in the language's visit order, from 0 per document (`tree::visit_order`:
-/// CPython's `ast` order in a Python document, the tape's elsewhere), of every document with a grammar, a guest's too
-/// (decision 0597). A row a node (`Item::Node`); the order is a walk of the tape that the tape holds no index of: each
+/// `visit_index(n, i)`: node `n`'s key in the language's visit order, by granule run (`tree::keys_by_run`), in
+/// `tree::visit_order`'s order (CPython's `ast` order in a Python document, the tape's elsewhere), of every document
+/// with a grammar, a guest's too (decision 0597). A row a node (`Item::Node`); the order is a walk of the tape that the tape holds no index of: each
 /// node's place is kept, 4 bytes a node of the projection, made on the document's first read (`// copy: derived`).
 /// Made as rows it was 13.7 MB of each chunk's block of sources at the M3's 300-file peak (ab200), `n` and `i` a row
 /// each.
@@ -765,10 +765,15 @@ impl VisitIndex {
             let dialect = at.batch.dialects.get(p.tag()).expect("a document with rows has a grammar");
             let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python) == Some(p.tag());
             let n = p.len() as usize;
-            // copy: derived (each node's place in the visit order, a walk the tape holds no index of)
+            // copy: derived (each node's key in the visit order, a walk the tape holds no index of)
             Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
                 out.fill(NONE);
-                super::tree::visit_order(p, dialect, python, &mut |l, i| out[l as usize] = i);
+                let mut order = Vec::with_capacity(n);
+                super::tree::visit_order(p, dialect, python, &mut |l, i| {
+                    out[l as usize] = i;
+                    order.push(l);
+                });
+                super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, out);
                 n.max(1)
             })
             .expect("a projection's block holds a view's places")

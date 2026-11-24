@@ -55,8 +55,8 @@ bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body
     kind(r, "binary_operator"), (op(r, "+") ; op(r, "-")), child(r, e, _), text(e, lt), child(r, n, _), n != e,
     bnl_number(x, n).
 // bnl_number(x, n): field x moved by step n is a number: n is an int or float literal, or a model of the run declares
-// x as a number field (python/django's dj_number_field).
-.decl bnl_number(x: symbol, n: node)
+// x as a number field (python/django's dj_number_field). Cross-file: the run's models are in any file (decision 0652).
+.decl bnl_number(x: symbol, n: node) cross_file
 bnl_number(x, n) :- attr_of(_, _, x), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
 bnl_number(x, n) :- attr_of(_, _, x), kind(n, _), dj_has_field(_, x, _, t), dj_number_field(t).
 

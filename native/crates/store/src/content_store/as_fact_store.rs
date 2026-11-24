@@ -159,4 +159,7 @@ impl FactStore for ContentStore {
     fn atom_value(&self, atom: Sym) -> StoreResult<Option<String>> {
         ContentStore::atom_value(self, atom)
     }
+    fn kept(&self) -> &dyn rerail_store_base::content_store::observer_store::base::Kept {
+        self
+    }
 }

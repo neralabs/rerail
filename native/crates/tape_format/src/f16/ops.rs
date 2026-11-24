@@ -92,6 +92,11 @@ pub struct Writer {
     /// The tape `finish` gave out: its buffer's address and the bytes of it written (its length before it was cut to
     /// the tape's), which `recycle` takes back as they are.
     given: (usize, usize),
+    /// Where its tapes go (decision 0353 step 4a, row 17): rooms every reader reads, the device too. With them the OUT
+    /// part is `region`'s free bytes, and `finish` gives the tape out where it lies; without them, or where none is
+    /// given, it is `parts[OUT]`, a vector of the writer's own.
+    rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>,
+    region: Option<Box<dyn crate::home::Region>>,
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -112,7 +117,13 @@ impl Writer {
 
     /// A writer of no document yet, its parts empty: `begin` starts each.
     pub fn empty() -> Self {
-        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), rooms: None, region: None, #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+    }
+
+    /// A writer of no document yet whose tapes go to `rooms` where it is given them (decision 0353 step 4a): each
+    /// written in a region's free bytes and given out there by `finish`, never copied into a room after.
+    pub fn placing(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>) -> Self {
+        Writer { rooms, ..Writer::empty() }
     }
 
     /// The next document, in this writer: as `new`, its parts' buffers kept from the documents before (each grown only
@@ -197,7 +208,22 @@ impl Writer {
         // The kinds' table and the newline index are their parts, made where they are computed.
         self.parts[part::KINDS as usize] = kinds;
         self.parts[part::LINES as usize] = lines;
+        // The tape's part in a region of the writer's rooms, where it has them: its free bytes kept from the document
+        // before where they hold the hint, else a region of the hint's size (the one before given back).
+        if let Some(rooms) = &self.rooms
+            && self.region.as_mut().is_none_or(|r| r.free().len() < caps[part::OUT as usize])
+        {
+            self.region = None;
+            self.region = rooms.region(caps[part::OUT as usize]);
+        }
+        #[cfg(test)]
+        if let Some(r) = self.region.as_mut() {
+            r.free().fill(FRESH);
+        }
         for (k, (buf, &cap)) in self.parts.iter_mut().zip(&caps).enumerate() {
+            if k as u32 == part::OUT && self.region.is_some() {
+                continue;
+            }
             // Kept from the document before; in tests made `FRESH`, as a byte the ops read before they write it shows.
             #[cfg(test)]
             if k as u32 != part::KINDS && k as u32 != part::LINES {
@@ -268,8 +294,16 @@ impl Writer {
     fn bind(&mut self) {
         let base = std::ptr::from_ref::<State>(&self.state) as i64;
         let mut state = *self.state;
+        let region = self.region.as_mut().map(|r| {
+            let free = r.free();
+            (free.as_mut_ptr() as i64, free.len())
+        });
         for k in 0..part::COUNT {
-            let (at, cap) = (self.parts[k].as_ptr() as i64, self.parts[k].len().saturating_sub(8) as u64);
+            let (at, len) = match region {
+                Some(r) if k as u32 == part::OUT => r,
+                _ => (self.parts[k].as_ptr() as i64, self.parts[k].len()),
+            };
+            let cap = len.saturating_sub(8) as u64;
             #[cfg(test)]
             let cap = match self.fixed {
                 Some((f, fixed)) if f as usize == k => fixed,
@@ -310,6 +344,33 @@ impl Writer {
     fn reserve(&mut self, k: u32, need: usize) {
         #[cfg(test)]
         if self.fixed.is_some_and(|f| f.0 == k) {
+            return;
+        }
+        if k == part::OUT
+            && let Some(old) = self.region.as_mut()
+        {
+            let had = old.free().len();
+            if need + 8 <= had {
+                return;
+            }
+            // Grown as a vector grows (the writer's own working room): a region twice the size, its bytes moved
+            // there, the one before given back; a refused region leaves the tape in a vector of the writer's own.
+            let cap = (need + 8).max(2 * had);
+            let mut grown = self.rooms.as_ref().and_then(|rooms| rooms.region(cap));
+            match grown.as_mut() {
+                // copy: growth
+                Some(new) => new.free()[..had].copy_from_slice(&old.free()[..had]),
+                None => {
+                    let mut own = std::mem::take(&mut self.parts[k as usize]);
+                    own.clear();
+                    // copy: growth
+                    own.extend_from_slice(old.free());
+                    own.resize(cap, FRESH);
+                    self.parts[k as usize] = own;
+                }
+            }
+            self.region = grown;
+            self.bind();
             return;
         }
         if need + 8 <= self.parts[k as usize].len() {
@@ -505,15 +566,82 @@ impl Writer {
     /// The tape and its presence (`w_finish_blocks`, then `w_finish_tail`); `Err` where an op failed, with the
     /// first failure's code (`fail`) and node.
     pub fn finish(&mut self) -> Result<Finished, String> {
+        self.finish_laid(None)
+    }
+
+    /// `finish`, with the tape's auxiliary index laid in its home after its presence where `lay` builds one from the
+    /// tape (decision 0656 step 3). In a region (decision 0353 row 17), the index is built from the tape where it lies
+    /// and laid after its presence before the region gives the room out, so the tape, its presence and its index are
+    /// one room, never written after it is given; in the tape's own bytes, by `Written::lay_aux`.
+    pub fn finish_laid(&mut self, lay: Option<super::LayAux<'_>>) -> Result<Finished, String> {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
         let faults = self.len_of(part::ERRORS);
+        let blocks = self.keep_blocks.then_some(count);
+        let mut aux = None;
+        if self.region.is_some() {
+            // The tape where it lies in its region, its presence and faults laid after it there (the room `finish_ops`
+            // reserved).
+            let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
+            let free = self.region.as_mut().expect("a region").free();
+            let len = lay_presence(free, end, &low[part::PRESENCE as usize], self.presence_words, blocks, &mut high[0][..faults]);
+            let at_tape = free.as_ptr();
+            let mut home = len;
+            if let Some(lay) = lay {
+                // The tape read where it lies, its bytes lent while the index is built from them: nothing writes the
+                // region until the reader is gone.
+                let lent: std::sync::Arc<dyn crate::home::Room> = std::sync::Arc::new(Lent(at_tape, len));
+                let built = {
+                    let tape = self.written(crate::home::Home::Placed(lent.clone()))?;
+                    lay(&tape)?
+                };
+                assert_eq!(std::sync::Arc::strong_count(&lent), 1, "a lent tape is not held past its index's build");
+                drop(lent);
+                if let Some(bytes) = built {
+                    crate::aux_index::AuxIndex::read(&bytes)?;
+                    let at = super::presence::aux_at(super::presence::at(end), len);
+                    // The region grown with its bytes, the presence among them, where the index needs the room.
+                    self.reserve(part::OUT, at + bytes.len());
+                    match self.region.as_mut() {
+                        Some(region) => {
+                            let free = region.free();
+                            free[len..at].fill(0);
+                            // copy: derived (the index built from the tape, written once into its home, as `lay_aux` does)
+                            free[at..at + bytes.len()].copy_from_slice(&bytes);
+                            home = at + bytes.len();
+                        }
+                        // A region refused as it grew: the tape in a vector of the writer's own, laid there.
+                        None => aux = Some(bytes),
+                    }
+                }
+            }
+            if let Some(region) = self.region.as_mut() {
+                let room = region.give(home);
+                let tape = self.written(crate::home::Home::Placed(room))?;
+                self.given = (0, 0);
+                return Ok(Finished { tape });
+            }
+        }
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
         self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
         let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
-        finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
+        let mut f = finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, blocks, self.z)?;
+        let aux = match (aux, lay) {
+            (Some(bytes), _) => Some(bytes),
+            (None, Some(lay)) => lay(&f.tape)?,
+            (None, None) => None,
+        };
+        if let Some(bytes) = aux {
+            f.tape.lay_aux(&bytes)?;
+        }
+        Ok(f)
+    }
+
+    /// The tape in `home`, in the writer's format (16 or 16z).
+    fn written(&self, home: crate::home::Home) -> Result<Written, String> {
+        Ok(if self.z { Written::F16Z(Tape16Z::from_bytes(home)?) } else { Written::F16(Tape16::from_bytes(home)?) })
     }
 
     /// `finish`'s ops, each with the room it can need reserved first.
@@ -542,7 +670,7 @@ impl Writer {
             };
             // And the presence's, laid after the tape (`finished`), so the tape stays where it is (R4).
             let (kw, fw) = self.presence_words;
-            let need = need + 8 + super::presence::HEAD + 8 * (kw + fw) * (1 + if self.keep_blocks { count } else { 0 });
+            let need = need + 8 + super::presence::HEAD + 8 * (kw + fw) * (1 + if self.keep_blocks { count } else { 0 }) + self.len_of(part::ERRORS);
             self.reserve(part::OUT, need);
             let desc = self.desc();
             // SAFETY: as `open`'s.
@@ -553,6 +681,47 @@ impl Writer {
         }
         Ok(())
     }
+}
+
+/// A region's bytes not yet given out, lent to a reader of the tape they hold while `finish_laid` builds its index from
+/// them: read only, and held by nothing past the build.
+#[derive(Debug)]
+struct Lent(*const u8, usize);
+
+// SAFETY: its bytes are only read, and only while the region that holds them is neither written nor given
+// (`finish_laid`, which checks that nothing holds it after).
+unsafe impl Send for Lent {}
+// SAFETY: as `Send`'s.
+unsafe impl Sync for Lent {}
+
+impl crate::home::Room for Lent {
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: `self.1` bytes of the region's free bytes, live and unwritten while it is (`Send`'s note).
+        unsafe { std::slice::from_raw_parts(self.0, self.1) }
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// A finished writer's presence and faults laid in `out` after its tape's `end` bytes, as `presence::lay_words` lays
+/// them in a vector (`finished`): the home's length.
+fn lay_presence(out: &mut [u8], end: usize, presence: &[u8], (kind_words, field_words): (usize, usize), blocks: Option<usize>, faults: &mut [u8]) -> usize {
+    let count = 1 + blocks.unwrap_or(0);
+    let at = super::presence::at(end);
+    out[end..at].fill(0);
+    in_preorder(faults);
+    for (k, v) in [kind_words, field_words, count, faults.len() / 4].into_iter().enumerate() {
+        out[at + 4 * k..at + 4 * k + 4].copy_from_slice(&(v as u32).to_le_bytes());
+    }
+    let n = 8 * (kind_words + field_words) * count;
+    let words = at + super::presence::HEAD;
+    // copy: derived (the presence the writer accumulated, written once into the tape's home, as `lay_words` does)
+    out[words..words + n].copy_from_slice(&presence[..n]);
+    let f = faults.len() / 4 * 4;
+    // copy: derived (the faults the writer listed, written once into the tape's home, as `lay_words` does)
+    out[words + n..words + n + f].copy_from_slice(&faults[..f]);
+    words + n + f
 }
 
 /// A finished writer's tape (`out`, its OUT part at its length), with its presence laid after it in its home

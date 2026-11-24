@@ -22,7 +22,7 @@
 //!
 //! A digest is four words, little-endian.
 
-use super::super::kept_facts::{BlockFlat, ChainRows, KeptPut, KeptSpace, KeptWhat, chain_rows, sorted_put, write_space};
+use super::super::kept_facts::{BlockFlat, ChainRows, KeptPut, KeptSpace, KeptWhat, sorted_put, write_space};
 use super::super::{ContentStore, StoreError, StoreResult};
 use rerail_blocks::kept::{FactKey, Kept, KeptRead};
 use rusqlite::{Connection, OptionalExtension};
@@ -233,8 +233,7 @@ fn wants(t: &Connection, view: Option<&dyn KeptRead>) -> StoreResult<Vec<Want>> 
 }
 
 fn open(store: &Path, t: &Connection) -> StoreResult<Option<KeptSpace>> {
-    let rows = chain_rows(t, &space())?;
-    if rows.is_empty() { Ok(None) } else { KeptSpace::open(store, &space(), &rows).map(Some) }
+    KeptSpace::read(store, t, &space())
 }
 
 fn kept<'v>(view: Option<&'v dyn KeptRead>, w: &Want) -> Option<Kept<'v>> {

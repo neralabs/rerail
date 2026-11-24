@@ -33,7 +33,7 @@ isc003_left_string(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _)
 .decl isc003_right_string_on_later_line(n: node, l: loc)
 isc003_right_string_on_later_line(n, L) :- isc003_demand_right_string_on_later_line(n, L),
     isc003_string_like(n), t2 = L, node(_, n, _, s5, e6), node(_, L, _, s7, e8), e8 <= s5,
-    line(n, l4), end_line(t2, l3), k1 = l4 - l3, k1 >= 1.
+    @doc(n) = @doc(L), line(n, l4), end_line(t2, l3), k1 = l4 - l3, k1 >= 1.
 isc003_right_string_on_later_line(n, L) :- isc003_demand_right_string_on_later_line(n, L),
     kind(n, "parenthesized_expression"), child(n, c9, _),
     isc003_right_string_on_later_line(c9, L).

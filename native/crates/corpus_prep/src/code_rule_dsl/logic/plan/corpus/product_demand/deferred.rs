@@ -32,6 +32,10 @@ pub struct Plans {
     pub shared: Vec<String>,
     /// The joins left as written: the chunks make them, and a cross-file reader would state their requests.
     pub cross: Vec<String>,
+    /// The joins left as written because the split holds them constants (decision 0665): of facts and settings alone,
+    /// the same for every file and made once. Read by a file's rule, the requests would be the files', and the
+    /// constant would read every file's rows. A constant only constants read is driven as any join is.
+    pub constants: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
 }
@@ -174,6 +178,8 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     let mut plans = Plans::default();
     // The join relations by the readers they could be driven by, read off the program before any rewrite (a guard
     // inserted moves the places).
+    // Each relation one document's in every row, with its location columns: a request keeps their tie.
+    let mut same_doc: BTreeMap<String, rerail_blocks::vector::Vector<usize>> = BTreeMap::new();
     let (pairs, mut guarded, mut broad, mut open_readers, recursive) = {
         let v = p.v();
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
@@ -281,7 +287,13 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
         if !pairs.is_empty() {
             let current = p.made.clone().unwrap_or_else(|| Arc::clone(input));
             let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&current)?;
+            same_doc = split.row_documents.clone();
             pairs.retain(|(rel, _, _)| {
+                // A constant a file's rule reads (decision 0665): its requests would be the files'.
+                if split.constants.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.constants.contains(p.head_rel(rules[i]))) {
+                    plans.constants.push(rel.clone());
+                    return false;
+                }
                 let cross = split.local.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.local.contains(p.head_rel(rules[i])));
                 if cross {
                     plans.cross.push(rel.clone());
@@ -293,7 +305,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {
@@ -406,6 +418,7 @@ fn share(p: &mut Program<'_>, rel: &str, n: usize) -> Result<Option<String>, Str
     for r in [&hot, &factor] {
         qualifiers.entry(r.clone()).or_default().insert("no_inline".to_owned());
     }
+    qualifiers.entry(hot.clone()).or_default().insert(crate::code_rule_dsl::typing::file_local::STRATEGY.to_owned());
     let made = p.derive(
         &mut |first, v, r, b| {
             if r.id() != id {
@@ -476,7 +489,7 @@ impl ProgramPass for DeferJoins {
         let mut program = Program::of(version);
         let plans = rewrite(&mut program, version, self.deferral.adaptive, self.deferral.cache_pairs)?;
         cx.decide("deferred joins", || {
-            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross)
+            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}; left as written, constants: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross, plans.constants)
         });
         for mut join in plans.author {
             if let Access::Factors { cache: None } = &join.access {

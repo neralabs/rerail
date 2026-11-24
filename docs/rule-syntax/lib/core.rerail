@@ -231,10 +231,10 @@
 // fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
 // reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
 // class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
-.decl reference_edge(src: node, dst: node, via: symbol)
+.decl reference_edge(src: node, dst: node, via: symbol) extensible  // a hook Python's library fills (python/references.rerail, decision 0263)
 // reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
 // is not all known.
-.decl reference_open(n: node)
+.decl reference_open(n: node) extensible  // as reference_edge
 // Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
 // file that derives them.
 
@@ -352,7 +352,7 @@
 // A definition unit's own code, hashed without positions (decision 0083 §0): the document's root, and each class and
 // function, with each nested unit standing for its kind and name. An edit to a method's body changes only the method's.
 .decl def_digest(n: node, s: symbol)
-.decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
+.decl visit_index(n: node, i: number)                    // the same order as a key per document: compared, never stepped
 .layout visit_index key(n) local values(i, within document)
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
 // def_unit(n, u): u is the definition unit holding n: the innermost function or class (any definition: a method, an

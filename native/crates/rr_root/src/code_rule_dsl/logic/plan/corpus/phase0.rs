@@ -47,6 +47,12 @@ fn bootstrap_spelling(s: &str) -> std::borrow::Cow<'_, str> {
     s.into()
 }
 
+/// A path bootstrap.rerail gives, as the host spells it: one spelling a file, its `.` and `..` taken out (a pack's
+/// table beside the library, `lib/../packs/…`, is `packs/…`), as the canonical paths a program's files are listed by
+/// (`Modules::files`). Spelled as the include resolved it, the same file under two spellings was two files: a
+/// library module's files were in no program's list that spelled them canonically (`Library::scope`), so its
+/// declarations were out of the program's scope. The library's directory is canonical, so only the include's own
+/// `..` is left to take out. An includer that is no file ("text", "engine") is as written.
 fn host_spelling(s: &str) -> String {
     #[cfg(windows)]
     if s.contains('/') && std::path::Path::new(s).is_absolute() {
@@ -55,7 +61,21 @@ fn host_spelling(s: &str) -> String {
             return path.to_string_lossy().into_owned();
         }
     }
-    s.to_owned()
+    let path = std::path::Path::new(s);
+    if !path.is_absolute() || !path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir)) {
+        return s.to_owned();
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out.to_string_lossy().into_owned()
 }
 
 fn candidate_path(dir: &str, name: &str) -> PathBuf {
@@ -167,6 +187,14 @@ impl Graph {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn holds_now(&self) -> bool {
         self.holds()
+    }
+
+    /// The graph as a store keeps it (`Images::facts`) and reads it back (`Images::graph_of`), for the engine's tests of
+    /// phase 0: none where it does not read back, or no image store is here.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn kept_as_facts(&self) -> Option<Graph> {
+        let images = Images::here()?;
+        images.graph_of(&images.facts(self), &mut Read::default())
     }
 
     /// Its includes, missing names and absent candidates, for a test's message.
@@ -686,10 +714,10 @@ impl Images {
 
     /// The graph as facts (t33 step 2), its paths as the image writes them (`rel`): `p0g_include(from, at, name,
     /// path)`, `p0g_missing(from, at, name)`, `p0g_absent(path)`, `p0g_digest(path, sha256)`, `p0g_phase(from,
-    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, and the module plan (decision 0639 §1)
-    /// `p0g_module(name, rank, key, scope)` and `p0g_lowered(key, image)`, each relation's rows in the graph's order.
-    /// Kept without the module plan (facts 1), a graph read back planned no module, so every file a program read was
-    /// "in no module of phase 0's plan" in any run whose graph came from a store.
+    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, `p0g_module(name, rank, key, scope)` (the module plan,
+    /// decision 0639 §1, its scope's names comma-separated) and `p0g_lowered(key, image)`, each relation's rows in the
+    /// graph's order: all `encode` writes, so a graph kept as facts is the graph kept as an image. Without the plan, a
+    /// graph read back from a store's facts planned no module, and a text that read it found its files in none.
     fn facts(&self, g: &Graph) -> crate::code_rule_dsl::logic::program_facts::Facts {
         use crate::code_rule_dsl::logic::front::Value;
         let s = |x: String| Value::Str(x.into());

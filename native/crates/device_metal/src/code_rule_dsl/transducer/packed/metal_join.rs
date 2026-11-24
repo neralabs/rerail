@@ -1398,6 +1398,8 @@ impl DevBytes {
 /// runs again in a batch whose arena is as big as its jobs wanted, or on the host past the device's text arena.
 pub(in crate::code_rule_dsl) struct Arena {
     reserved: Arc<rerail_device::device::Reserved>,
+    /// Its memory, held by a ledger while it lives (`tracked`): a kernel binds its buffer by address.
+    _tracked: Option<rerail_blocks::ledger::Tracked<Arc<rerail_device::device::Reserved>>>,
     cap: std::cell::Cell<usize>,
     /// Its texts kept one value a content (`Arena::canonical`, decision 0659), or none.
     canon: Option<Canon>,
@@ -1412,6 +1414,16 @@ pub(in crate::code_rule_dsl) struct Arena {
 /// arena's is, and grown between launches by the host (`Arena::grow`), its texts placed again.
 struct Canon {
     reserved: Arc<rerail_device::device::Reserved>,
+    /// As `Arena`'s.
+    _tracked: Option<rerail_blocks::ledger::Tracked<Arc<rerail_device::device::Reserved>>>,
+}
+
+/// `r`'s memory held by a ledger of its own while it lives (`Held::reserved`'s): a kernel that binds its buffer by
+/// address finds it, and a submission that bound it keeps the reservation until its work completes (decision 0491
+/// step 2). None where the host cannot address it.
+fn tracked(r: &Arc<rerail_device::device::Reserved>) -> Option<rerail_blocks::ledger::Tracked<Arc<rerail_device::device::Reserved>>> {
+    let (base, len) = r.span();
+    (!base.is_null()).then(|| rerail_blocks::ledger::Tracked::new(r.clone(), base, len))
 }
 
 /// A canonical table's places to start with, and its header's bytes.
@@ -1462,7 +1474,8 @@ impl Arena {
         let cap = cap.clamp(16, u32::MAX as usize / 2);
         let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let reserved = rerail_device::device::reserve(device, 16 + cap.max(text_arena_max()), 16 + cap, true).map_err(|_| Error::BackendCapacity)?;
-        let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap), canon: None };
+        let reserved = Arc::new(reserved);
+        let arena = Arena { _tracked: tracked(&reserved), reserved, cap: std::cell::Cell::new(cap), canon: None };
         arena.header(0, 0);
         arena.header(1, cap as u32);
         Ok(arena)
@@ -1476,7 +1489,8 @@ impl Arena {
         // At most a place a text of four bytes or more (its length is four), twice over.
         let most = (text_arena_max() / 2).next_power_of_two().max(CANON_START);
         let reserved = rerail_device::device::reserve(device, CANON_HEADER + 4 * most, CANON_HEADER + 4 * CANON_START, true).map_err(|_| Error::BackendCapacity)?;
-        let canon = Canon { reserved: Arc::new(reserved) };
+        let reserved = Arc::new(reserved);
+        let canon = Canon { _tracked: tracked(&reserved), reserved };
         // SAFETY: its first places' bytes, mapped; nothing uses the table yet.
         unsafe { std::ptr::write_bytes(canon.words(), 0, CANON_HEADER / 4 + CANON_START) };
         canon.set_header(0, (CANON_START - 1) as u32);
@@ -3187,7 +3201,7 @@ impl Batch {
                 } else {
                     room.reserved.push(r.clone());
                 }
-                Ok(Held::kept(r.buffer(), Box::new(r)))
+                Ok(Held::reserved(r))
             };
             let (a, b) = ([one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?], [one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?]);
             let hist = one(4 * (256 * tiles + 1), sort_hist_bytes(rows_now), true)?;
@@ -3410,7 +3424,7 @@ impl Batch {
                     }
                     let r = std::sync::Arc::new(r);
                     self.reserved = Some(r.clone());
-                    Held::kept(r.buffer(), Box::new(r))
+                    Held::reserved(r)
                 } else {
                     Held::new(room)?
                 };
@@ -3510,7 +3524,7 @@ impl Batch {
         if let Some(a) = &kit.reserved {
             let now = a.buffer();
             if address(&now)? != kit.rebase.ca || now.length() != kit.counts.buffer.length() {
-                let held = std::rc::Rc::new(Held::kept(now, Box::new(a.clone())));
+                let held = std::rc::Rc::new(Held::reserved(a.clone()));
                 self.pool = Some(held.clone());
                 kit.rebase(held)?;
             }

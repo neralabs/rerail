@@ -205,10 +205,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
-    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
-    // pending atoms no committed row may hold yet, not a result kept.
-    ("content_store/atoms.rs", "RESERVING"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
@@ -235,7 +231,6 @@ const STATE: &[(&str, &str)] = &[
     // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
     // (`corpus::owner`): which files are this process's, not results.
     ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
-    ("code_rule_dsl/logic/plan/corpus/owner.rs", "SLOTS"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HandedDown"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
@@ -252,6 +247,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // The dispatch queue each nameless system thread was seen serving: the profiler's registry of the process's
+    // threads, for its report's labels; no reusable results.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
+    // The run's frame keys while the run is under way (`reuse::Naming`, K4), for its manifest to name: the run's own
+    // binding, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a

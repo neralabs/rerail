@@ -164,13 +164,18 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
+    // `op` read in place (decision 0353 row 7, the hub's `Item::Op` rows): after `view_order`, as `VIEWS` has it.
+    Read { family: Family::View, name: "view_op", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::op },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
     // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
     // A named node's place among its named siblings, in the tape's auxiliary index in its home (decision 0656 step
-    // 4): `child`'s place. Last, so no other read's number moves.
+    // 4): `child`'s place. After the directory's searches, so no earlier read's number moves.
     Read { family: Family::Tape, name: "tape_place", params: &[I32], ret: I32, hot: false, body: place },
+    // A node's text read in place (decision 0287 §2): its bytes' range in its document's own source. After `tape_place`,
+    // so no earlier read's number moves.
+    Read { family: Family::View, name: "view_text_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::text_span },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

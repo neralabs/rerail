@@ -474,6 +474,19 @@ impl Held {
         Held { _lease: Lease::Kept(keep), buffer }
     }
 
+    /// A reservation's buffer (an arena that grows, `rerail_device::device::Reserved`), its memory held by a ledger of
+    /// its own while it lives, as a pooled lease's is (`shared::Pooled`): a kernel that binds it by address finds it
+    /// (`Pass::holds`), and a submission that bound it holds the reservation until its work completes (decision 0491
+    /// step 2). Every byte it can map is the ledger's (`Reserved::span`), so a buffer `map` makes later is found too.
+    pub fn reserved(r: std::sync::Arc<rerail_device::device::Reserved>) -> Held {
+        let buffer = r.buffer();
+        let (base, len) = r.span();
+        if base.is_null() {
+            return Held::kept(buffer, Box::new(r));
+        }
+        Held { _lease: Lease::Kept(Box::new(rerail_blocks::ledger::Tracked::new(r, base, len))), buffer }
+    }
+
     /// `kept`, holding the block by its own region too (`rerail_blocks::region::whole`, decision 0491 step 3): a
     /// kernel's bind of `buffer` pins that region, read or written as the kernel declares, so the block's frozenness
     /// and versions are its regions'.

@@ -104,7 +104,7 @@ impl Family {
     }
 }
 
-/// Punctuation `op_at` leaves out: brackets, quotes and separators are structure, not operators.
+/// Punctuation a node's tokens leave out (`tree_digest`'s): brackets, quotes and separators are structure, not operators.
 pub(super) fn is_punct(t: &str) -> bool {
     matches!(t, "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "." | "\"" | "'" | "`")
 }
@@ -191,6 +191,31 @@ pub fn node_str(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
         return None;
     }
     literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
+}
+
+/// Tape node `id`'s `name(n, s)` in `core.rerail`'s shape: an identifier's text, or a dotted chain's (`name`), or an
+/// rr `variable`'s text; none for a comment. What `CoreRows::node` makes and `@rr_node_name` reads (decision 0353 step 3).
+pub fn node_name(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
+    let (kind, text) = (dialect.name(f, id), f.text(id));
+    if is_comment(kind) {
+        return None;
+    }
+    name(kind, text).or_else(|| (dialect.family == Family::Rr && kind == "variable").then(|| text.to_owned()))
+}
+
+/// Tape node `id`'s `comment(n, s)`: a comment's text without its marker; none for another node (`@rr_node_comment`).
+pub fn node_comment<'f>(f: FactsIn<'f>, dialect: &Dialect, id: u32) -> Option<&'f str> {
+    is_comment(dialect.name(f, id)).then(|| comment_body(f.text(id)))
+}
+
+/// Tape node `id`'s `strprefix(n, p)`: a literal's prefix letters, lowercased; none for a comment or a node that is no
+/// literal with a prefix (`@rr_node_strprefix`).
+pub fn node_strprefix(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).prefix
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
@@ -473,12 +498,8 @@ pub(super) struct CoreRows {
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
     pub(super) text_nodes: Option<super::TextNodes>,
-    /// The nodes whose `op` and `op_at` rows are made (`Projection::op_nodes`); `None` every node.
-    pub(super) op_nodes: Option<super::TextNodes>,
-    /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
+    /// `text_nodes` as the walked document's dialect's codes (`for_dialect`).
     text_codes: Option<super::NodesOf>,
-    op_codes: Option<super::NodesOf>,
-    op_at: Vector<[i64; 3]>,
     text: Vector<[i64; 2]>,
     name: Vector<[i64; 2]>,
     str: Vector<[i64; 2]>,
@@ -501,7 +522,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -512,15 +533,13 @@ impl CoreRows {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Visits {
     All,
-    /// Those whose text (`text`, `text_nodes`) or ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
-    Read { text: bool, op: bool },
+    /// Those whose text (`text`, `text_nodes`) a rule reads: `node` makes no other row.
+    Read,
     None,
 }
 
 #[derive(Default)]
 pub(super) struct Skip {
-    /// `op`, `op_at`.
-    pub(super) ops: bool,
     pub(super) comment: bool,
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
@@ -567,44 +586,32 @@ impl CoreRows {
         })
     }
 
-    /// Whether a rule reads node `id`'s `op` or `op_at` rows (`op_nodes`).
-    fn reads_op(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
-        self.op_nodes.as_ref().is_none_or(|nodes| match self.op_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
-            Some(codes) => codes.reads(nodes, p, id, dialect),
-            None => nodes.reads(p, id, dialect),
-        })
-    }
-
-    /// `text_nodes` and `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
+    /// `text_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
     pub(super) fn for_dialect(&mut self, dialect: &Dialect) {
         if let Some(nodes) = &self.text_nodes && !self.text_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
             self.text_codes = Some(nodes.of_dialect(dialect));
         }
-        if let Some(nodes) = &self.op_nodes && !self.op_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
-            self.op_codes = Some(nodes.of_dialect(dialect));
-        }
     }
 
-    /// The nodes `node` visits. Where it makes no row but `text` and the ops, and the rules read only some nodes'
-    /// (`text_nodes`, `op_nodes`), those nodes; where it makes none, no node. A phase that reads a few names' text
-    /// (phase 1's imports) then makes its rows without a second walk of every node of every document (the main
-    /// phase's), and one reading the ops of a few kinds' nodes (`op(m, "|")` of a `binary_operator`) visits those.
+    /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
+    /// those nodes; where it makes none, no node. A phase that reads a few names' text (phase 1's imports) then makes
+    /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_these = s.comment && s.name && s.literal_rows
+        // A literal's value (`rr_value_lit`, `value`'s eager half) is made at every node too: where `name` and
+        // `comment` are node reads (decision 0353 row 7) and only it is made, a walk of no node made none.
+        let only_these = s.comment && s.name && s.literal_rows && s.literal_value
             && !(wants_parts || wants_part_starts || wants_words);
-        let (text, op) = (wants_text, !s.ops);
-        if !only_these || text && self.text_nodes.is_none() || op && self.op_nodes.is_none() {
+        if !only_these || wants_text && self.text_nodes.is_none() {
             return Visits::All;
         }
-        if !text && !op { Visits::None } else { Visits::Read { text, op } }
+        if wants_text { Visits::Read } else { Visits::None }
     }
 
     /// The per-node relations the walk makes, as the profile names them (`node rows`' spans).
     pub(super) fn making(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
         let s = &self.skip;
         let named = [
-            (!s.ops, "op"),
             (!s.comment, "comment"),
             (!s.name, "name"),
             (!s.literal, "literal"),
@@ -625,7 +632,7 @@ impl CoreRows {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::Read { text, op } => text && self.reads_text(p, dialect, id) || op && self.reads_op(p, dialect, id),
+            Visits::Read => self.reads_text(p, dialect, id),
         }
     }
 
@@ -637,36 +644,20 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op_at`: the anonymous children the tape stores that are no punctuation, in order, Python's two-word
-        // operators as one ("not in", "is not"). `op`, every anonymous child and each two-word operator, is the
-        // projection's view (`View::Op`: `Item::Op`, `Item::OpPair`): no row is made.
-        let mut ops: Vec<String> = Vec::new();
-        let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
-        for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
-            let t = dialect.name(f, c);
-            if !is_punct(t) {
-                let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
-                match ops.last_mut() {
-                    Some(last) if two => *last = format!("{last} {t}"),
-                    _ => ops.push(t.to_owned()),
-                }
-            }
-        }
-        for (i, t) in ops.iter().enumerate() {
-            self.op_at.push([n, i as i64, string(t) as i64]);
-        }
+        // `op` is the projection's view (`View::Op`: `Item::Op`), `op_at` `tree::node_operators`': no row is made.
         let mut token_like = children.is_empty();
         if is_comment(kind) {
-            if !self.skip.comment {
-                self.comment.push([n, string(comment_body(text)) as i64]);
+            if !self.skip.comment
+                && let Some(body) = node_comment(f, dialect, id)
+            {
+                self.comment.push([n, string(body) as i64]);
             }
             token_like = true;
         } else {
-            if self.skip.name {
-            } else if let Some(s) = name(kind, text) {
+            if !self.skip.name
+                && let Some(s) = node_name(f, dialect, id)
+            {
                 self.name.push([n, string(&s) as i64]);
-            } else if dialect.family == Family::Rr && kind == "variable" {
-                self.name.push([n, string(text) as i64]);
             }
             // Where only `text` reads the literal (a prefix makes a node token-like), it is read only where that decides
             // whether the node has text: a node whose text a rule reads, past the inline bound, with children. Decoded
@@ -897,7 +888,6 @@ impl CoreRows {
         let mut value_type: Vector<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
-            ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
             ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),

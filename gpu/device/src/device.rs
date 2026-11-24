@@ -945,6 +945,18 @@ impl Reserved {
         }
     }
 
+    /// The host's addresses of every byte it can map, however far `map` grows it: its pages' range (a wrap's address
+    /// is its pages'), or its buffer's where it does not grow; null where the host cannot address it (Metal's private
+    /// storage). What a ledger finds it by while it lives (`rerail_accel_gpu::gpu::join::Held::reserved`).
+    pub fn span(&self) -> (*mut u8, usize) {
+        match &self.kind {
+            ReservedKind::Host(p, _) | ReservedKind::Wrapped(_, _, p) => (p.ptr, p.len),
+            #[cfg(target_os = "macos")]
+            ReservedKind::Sparse(..) => (self.buffer.contents().cast::<u8>(), self.buffer.length() as usize),
+            ReservedKind::Fixed(n) => (self.buffer.contents().cast::<u8>(), *n),
+        }
+    }
+
     /// The bytes the kernels may use, from its start.
     pub fn mapped(&self) -> usize {
         match &self.kind {

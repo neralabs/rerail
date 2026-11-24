@@ -42,7 +42,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     let text = p.current()?.decl_of("text").is_some();
     if text {
         p.rules(&mut NodeSubjects);
-        p.rules(&mut TextByNode { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeSet::new() });
+        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() });
         p.rules(&mut Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 });
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
@@ -81,11 +81,11 @@ pub fn long_text_twins(v: Arc<Version>, matchers: &Matchers) -> Result<(Arc<Vers
     Ok((p.finish()?.0, twins.made))
 }
 
-/// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`TextByNode`, decision 0353
+/// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`NodeReads`, decision 0353
 /// step 3), `matchers` its matchers' relations: that version and the number of atoms read so.
 pub fn text_by_node(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("text by node", v);
-    let mut pass = TextByNode { matchers, nodes: HashMap::new(), made: 0, kept: BTreeSet::new() };
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
     p.rules(&mut pass);
     Ok((p.finish()?.0, pass.made))
 }
@@ -485,28 +485,120 @@ impl RulePass for NodeSubjects {
     }
 }
 
-// ---- a bound node's text is read ----
+// ---- a bound node's per-node values are read ----
 
-/// `text(v, t)` of a node `v` the rest of the body binds reads `v`'s text where the join reaches it:
-/// `t = @rr_node_text_any(v)`, at any length (decision 0353 step 3: a derived value computed on demand). No `text`
-/// row is made for it, and no walk of every node of every document makes them: on cold hogql that walk was 0.34 s of
-/// CPU, for the texts of the few nodes the rules bind.
+/// `core.rerail`'s per-node relations a node read answers (decision 0353 step 3), each with its read: `text`'s at any
+/// length, and the values `CoreRows::node` makes (`syntax::LongTexts`). (`structural_*` is a view of the tape,
+/// `tape_rows`: its lookup by node reads it in place.)
+const NODE_READ_OF: [(&str, &str); 4] = [
+    ("text", "rr_node_text_any"),
+    ("name", "rr_node_name"),
+    ("comment", "rr_node_comment"),
+    ("strprefix", "rr_node_strprefix"),
+];
+
+/// The per-node relations a program's shape states and their reads: `core.rerail`'s (`NODE_READ_OF`, and T's
+/// `intval` and `op_t`, which the batch makes in either shape), or T's (`syntax::TRel`: `text`, `name`, `str`,
+/// `strprefix`, `intval`, `op`), those of them the program takes as inputs. None for a program of neither.
+fn node_reads_of(v: &Version) -> Vec<(&'static str, &'static str)> {
+    use crate::code_rule_dsl::facts::vtab::syntax::TRel;
+    let core = crate::code_rule_dsl::facts::core::core_names();
+    let inputs: HashSet<&str> = v.inputs().map(|a| v.text(a)).collect();
+    let of: Vec<(&'static str, &'static str)> = if !core.is_empty() && core.iter().all(|r| v.declares(r)) {
+        NODE_READ_OF.into_iter().chain([TRel::Intval, TRel::Op].map(|r| (r.relation(true), r.read()))).collect()
+    } else {
+        TRel::ALL.into_iter().map(|r| (r.relation(false), r.read())).collect()
+    };
+    of.into_iter().filter(|(rel, _)| inputs.contains(rel)).collect()
+}
+
+/// `r(v, x)` of a per-node relation `r` of `core.rerail` (`NODE_READ_OF`), of a node `v` the rest of the body binds,
+/// reads `v`'s value where the join reaches it: `x = @rr_node_<r>(v)` (decision 0353 step 3: a derived value computed
+/// on demand; `text`'s at any length). No row of `r` is made for it, and no walk of every node of every document
+/// makes them: on cold hogql that walk was 0.34 s of CPU for `text` alone, for the texts of the few nodes the rules
+/// bind; on the bench's 300 files `structural_before` and `structural_after` were 27 MB of rows, for the few nodes
+/// two rules read them of.
 ///
-/// Only in `core.rerail`'s shape, where a node's `text` is its source text (T's holds some nodes' alone), and only for
-/// a `v` that is a node a base or file-local relation binds, in a column that holds nodes alone (`node_columns`): its
-/// read goes into the file's chunk (`file_local::passes::push`, decision 0292 §3), where the batch holds the document
-/// the node is of. A `v` only a cross-file relation binds is bound in the cross part, where a warm run's retraction
-/// would read the node's id in the edited file's document: its `text` stays a relation, with versions (decision 0458). A span's `text` (`src_line`'s, a
-/// match's) is no node read's, and a `text` atom that binds `v` itself (`text(v, "x")`, or `v` read only by other
-/// `text` atoms) is a lookup by text: both stay, and their rows are `text`'s.
-struct TextByNode {
+/// Only in `core.rerail`'s shape, where these are the values of a node's own source (T's holds some nodes' alone),
+/// and only for a `v` that is a node a base or file-local relation binds, in a column that holds nodes alone
+/// (`node_columns`): its read goes into the file's chunk (`file_local::passes::push`, decision 0292 §3), where the
+/// batch holds the document the node is of. A `v` only a cross-file relation binds is bound in the cross part, where a
+/// warm run's retraction would read the node's id in the edited file's document: its relation stays, with versions
+/// (decision 0458). A span's `text` (`src_line`'s, a match's) is no node read's, and an atom that binds `v` itself
+/// (`text(v, "x")`, or `v` read only by other such atoms) is a lookup by its value: both stay, and their rows are the
+/// relation's.
+struct NodeReads {
     /// The matchers' relations (`MatcherRelations`): their root and captures are tree nodes, declared `node`.
     matchers: BTreeSet<String>,
-    /// Each relation's columns that hold nodes alone; empty outside `core.rerail`'s shape.
+    /// Each relation's columns that hold nodes alone; empty outside `core.rerail`'s shape. Without the per-node
+    /// relations themselves: their atoms are what is read, and bind no node (`r(v, "x")` alone is a lookup by value).
     nodes: HashMap<String, BTreeSet<usize>>,
     made: usize,
-    /// The heads of the rules whose `text` atoms stay (their location not known to be a node), for the decision.
-    kept: BTreeSet<String>,
+    /// By relation, the heads of the rules whose atoms of it stay (their node not known to be bound), each with why
+    /// (`why_unbound`), for the decision.
+    kept: BTreeMap<&'static str, BTreeMap<String, String>>,
+    /// The split's file-local relations and its causes (`FileLocal`), for why a node is not known to be one.
+    local: BTreeSet<String>,
+    causes: BTreeMap<String, String>,
+    /// `kept` as the decision reported it, at the pass's end (`text_rows_kept`).
+    reported: BTreeMap<&'static str, BTreeMap<String, String>>,
+    /// The per-node relations and their reads, as the program's shape states them (`node_reads_of`).
+    of: Vec<(&'static str, &'static str)>,
+    /// The node tests (`node_tests`): each relation `h` whose one rule is `h(v) :- r(v, _)` of a per-node relation `r`,
+    /// and `r`. Its readers read `r(v, _)` in its place, and its rule goes.
+    tests: HashMap<String, (&'static str, Vec<(CmpOp, i64)>)>,
+}
+
+/// The relations of `v` that only test a per-node relation of their one variable: `h(v) :- r(v, _)`, `r` one of
+/// `NODE_READ_OF`, made by no other rule, no input or output, and read by positive atoms alone. An aggregate's cover
+/// is one (`rr_cover(e) :- text(e, _)`, `rr::lower`'s cover of a group that only reads `e`'s text): stored so that a
+/// join of several literals runs once, it read every node's `text` instead, 16 MB of rows on the bench for a test
+/// every node passes. Read in place of the cover, the atom is its readers' node read where they bind the node.
+fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<String, (&'static str, Vec<(CmpOp, i64)>)> {
+    let mut rules_of: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
+    for r in v.rules() {
+        rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
+    }
+    let ends: HashSet<&str> = v.inputs().chain(v.outputs()).map(|a| v.text(a)).collect();
+    let mut tests: HashMap<String, (&'static str, Vec<(CmpOp, i64)>)> = HashMap::new();
+    for (h, rules) in &rules_of {
+        let [r] = rules[..] else { continue };
+        if ends.contains(h) {
+            continue;
+        }
+        let head: Vec<TermRef<'_>> = r.head().args().collect();
+        let [TermRef::Var(x)] = head[..] else { continue };
+        // Besides the atom, only guards of the node against a constant (`$e < 5764607523034234880`, the run's nodes
+        // below its values'): its readers read them with the atom.
+        let guard = |l: &LitRef<'_>| match l.view() {
+            Lit::Cmp { l: TermRef::Var(y), op, r: TermRef::Int(c) } if y == x => Some((op, c)),
+            _ => None,
+        };
+        let guards: Vec<(CmpOp, i64)> = r.body().filter_map(|l| guard(&l)).collect();
+        let body: Vec<LitRef<'_>> = r.body().filter(|l| guard(l).is_none()).collect();
+        let [l] = body[..] else { continue };
+        let Lit::Atom(a) = l.view() else { continue };
+        let Some(&(rel, _)) = of.iter().find(|(rel, _)| v.rel_name(a.rel()) == *rel).filter(|_| !a.neg()) else { continue };
+        let a = args(a);
+        if a.len() == 2 && matches!(a[0], TermRef::Var(n) if n == x) && matches!(a[1], TermRef::Wild | TermRef::Var(_)) && !matches!(a[1], TermRef::Var(y) if y == x) {
+            tests.insert((*h).to_owned(), (rel, guards));
+        }
+    }
+    // Read only by positive atoms: a negation or an aggregate of one keeps it.
+    for r in v.rules() {
+        for l in r.body() {
+            match l.view() {
+                Lit::Atom(a) if a.neg() => {
+                    tests.remove(v.rel_name(a.rel()));
+                }
+                Lit::Agg { atom, .. } => {
+                    tests.remove(v.rel_name(atom.rel()));
+                }
+                _ => {}
+            }
+        }
+    }
+    tests
 }
 
 /// The columns of `v`'s relations that hold nodes alone: a base relation's, `core.rerail`'s declared `node`
@@ -514,7 +606,7 @@ struct TextByNode {
 /// relation's (`local`, the split's), each column every rule of it fills with a variable its body binds in such a
 /// column: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
 /// cross-file relation's: a node it binds is read in the cross part, where an edit's old document is not the batch's,
-/// so the read of a node a maintained rule retracts would read the edited file's (`TextByNode`).
+/// so the read of a node a maintained rule retracts would read the edited file's (`NodeReads`).
 fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<String>) -> HashMap<String, BTreeSet<usize>> {
     let core = crate::code_rule_dsl::facts::core::core_node_columns();
     let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
@@ -565,67 +657,248 @@ fn node_bound(v: &Version, r: RuleRef<'_>, cols: &HashMap<String, BTreeSet<usize
             }
         }
     }
-    bound
+    // `x = y` with one of them a node: the other is that node (`$n = $a`, a lowering's alias).
+    let eqs: Vec<(Slot, Slot)> = r
+        .body()
+        .filter_map(|l| match l.view() {
+            Lit::Cmp { l: TermRef::Var(x), op: CmpOp::Eq, r: TermRef::Var(y) } => Some((x, y)),
+            _ => None,
+        })
+        .collect();
+    loop {
+        let before = bound.len();
+        for &(x, y) in &eqs {
+            if bound.contains(&x) || bound.contains(&y) {
+                bound.insert(x);
+                bound.insert(y);
+            }
+        }
+        if bound.len() == before {
+            return bound;
+        }
+    }
 }
 
-impl RulePass for TextByNode {
-    const NAME: &'static str = "a bound node's text is read";
+/// What `why_unbound` reads of a `NodeReads`: its fields, borrowed apart from the ones its rules write.
+struct Known<'a> {
+    of: &'a [(&'static str, &'static str)],
+    tests: &'a HashMap<String, (&'static str, Vec<(CmpOp, i64)>)>,
+    nodes: &'a HashMap<String, BTreeSet<usize>>,
+    local: &'a BTreeSet<String>,
+    causes: &'a BTreeMap<String, String>,
+}
+
+impl Known<'_> {
+    /// Why term `t`, the node of a per-node atom of rule `r` of relation `read`, is not known to be a node (`node_bound`): each positive
+    /// atom that binds it, and why its column holds no node alone (`node_columns`). The decision names it, so a read
+    /// left as rows says what would let it be read in place.
+    fn why_unbound(&self, v: &Version, r: RuleRef<'_>, t: TermRef<'_>, read: &str) -> String {
+        let TermRef::Var(x) = t else { return "its node is not a variable".to_owned() };
+        let derived = |rel: &str| v.rules().any(|q| v.rel_name(q.head().rel()) == rel);
+        let mut binders: Vec<String> = Vec::new();
+        for l in r.body() {
+            let Lit::Atom(a) = l.view() else { continue };
+            if a.neg() {
+                continue;
+            }
+            let rel = v.rel_name(a.rel());
+            if rel == read {
+                continue;
+            }
+            for (c, term) in a.args().enumerate() {
+                if term.var() != Some(x) {
+                    continue;
+                }
+                let why = if self.of.iter().any(|(p, _)| *p == rel) || self.tests.contains_key(rel) {
+                    "a per-node value: a lookup by value".to_owned()
+                } else if derived(rel) && self.nodes.get(rel).is_some_and(|cols| !cols.contains(&c)) {
+                    format!("not every rule of it fills column {c} with a node")
+                } else if derived(rel) && !self.local.contains(rel) {
+                    format!("cross-file: {}", self.cross_root(rel))
+                } else if derived(rel) {
+                    "file-local, but not every rule of it fills it with a node".to_owned()
+                } else {
+                    format!("column {c} is not a node column")
+                };
+                binders.push(format!("{rel}[{c}]: {why}"));
+            }
+        }
+        if binders.is_empty() {
+            return format!("no positive atom binds ${}", name(v, r, x));
+        }
+        format!("${} bound by {}", name(v, r, x), binders.join(", "))
+    }
+    /// Relation `rel`'s cross-file cause, followed through the relations it reads to the one cross-file of its own:
+    /// `a <- b <- c: c's cause`.
+    fn cross_root(&self, rel: &str) -> String {
+        let (mut at, mut chain) = (rel.to_owned(), vec![rel.to_owned()]);
+        for _ in 0..32 {
+            let Some(why) = self.causes.get(&at) else { return format!("{} (no cause recorded)", chain.join(" <- ")) };
+            match why.strip_prefix("reads cross-file ").map(|r| r.split_whitespace().next().unwrap_or(r).to_owned()) {
+                Some(next) if !chain.contains(&next) => {
+                    chain.push(next.clone());
+                    at = next;
+                }
+                _ => return format!("{}: {}", chain.join(" <- "), why.lines().next().unwrap_or(why)),
+            }
+        }
+        chain.join(" <- ")
+    }
+}
+
+/// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`NodeReads`), and, by
+/// per-node relation, the heads whose atoms of it stay rows, each with why its node is not known to be one.
+pub fn text_rows_kept(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let mut p = Pipeline::new("text by node", v);
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
+    p.rules(&mut pass);
+    p.finish()?;
+    Ok(pass.reported.into_iter().map(|(rel, heads)| (rel.to_owned(), heads)).collect())
+}
+
+impl RulePass for NodeReads {
+    const NAME: &'static str = "a bound node's per-node values are read";
     fn begin(&mut self, cx: &Cx<'_>) -> Result<Select> {
         let v = cx.v();
-        // `core.rerail`'s shape, as the projection takes it (`text_demand::projection_of`).
-        let core = crate::code_rule_dsl::facts::core::core_names();
-        if core.is_empty() || !core.iter().all(|r| v.declares(r)) {
+        // The shape's per-node relations, as the projection takes the shape (`text_demand::projection_of`).
+        self.of = node_reads_of(v);
+        if self.of.is_empty() {
             return Ok(Select::Rules(crate::code_rule_dsl::logic::program_image::manager::RuleSet::new()));
         }
         let split = cx.get::<crate::code_rule_dsl::typing::file_local::FileLocal>()?;
         self.nodes = node_columns(v, &self.matchers, &split.local);
+        (self.local, self.causes) = (split.local.clone(), split.causes.iter().map(|(r, c)| (r.clone(), c.clone())).collect());
+        let of = &self.of;
+        self.nodes.retain(|rel, _| !of.iter().any(|(r, _)| r == rel));
+        self.tests = node_tests(v, &self.of);
         Ok(Select::All)
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
         let v = cx.v();
+        // A node test's rule: its readers read its atom instead (`node_tests`).
+        if self.tests.contains_key(v.rel_name(r.head().rel())) {
+            return Ok(Step::Drop);
+        }
         let body: Vec<LitRef<'_>> = r.body().collect();
         let bound = node_bound(v, r, &self.nodes);
-        let read: Vec<usize> = body
+        // Each body atom of a per-node relation, or of a node test (`h(v)`, read as `r(v, _)`): its relation, its read,
+        // and whether its node is bound.
+        let of = |l: &LitRef<'_>| match l.view() {
+            Lit::Atom(a) if !a.neg() => {
+                let name = v.rel_name(a.rel());
+                let rel = self.tests.get(name).map(|t| t.0).or_else(|| self.of.iter().find(|(rel, _)| name == *rel).map(|&(rel, _)| rel))?;
+                let read = self.of.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
+                let a = args(a);
+                let arity = if self.tests.contains_key(name) { 1 } else { 2 };
+                Some((rel, read, a.len() == arity && matches!(a[0], TermRef::Var(x) if bound.contains(&x))))
+            }
+            _ => None,
+        };
+        let tested = |l: &LitRef<'_>| matches!(l.view(), Lit::Atom(a) if self.tests.contains_key(v.rel_name(a.rel())));
+        // `op_at(n, i, o)` of a bound node at a known place, a constant or a variable another positive atom binds:
+        // `o = @rr_node_op_at(n, i), o != ""`; negated, with `o` a wildcard or a constant, `@rr_node_op_at(n, i) = ""`
+        // or `!= o` (`""`: no operator there, `core_rr::node_ops`).
+        let binds = |x: Slot, me: usize| body.iter().enumerate().any(|(j, l)| j != me && matches!(l.view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) != "op_at" && a.args().any(|t| t.var() == Some(x))));
+        let op_at: Vec<usize> = body
             .iter()
             .enumerate()
-            .filter(|(_, l)| match l.view() {
-                Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "text" => {
+            .filter(|(i, l)| match l.view() {
+                Lit::Atom(a) if v.rel_name(a.rel()) == "op_at" => {
+                    let neg = a.neg();
                     let a = args(a);
-                    a.len() == 2 && matches!(a[0], TermRef::Var(x) if bound.contains(&x))
+                    let ok = a.len() == 3
+                        && matches!(a[0], TermRef::Var(x) if bound.contains(&x))
+                        && match a[1] {
+                            TermRef::Int(_) => true,
+                            TermRef::Var(x) => binds(x, *i),
+                            _ => false,
+                        }
+                        && (!neg || matches!(a[2], TermRef::Wild | TermRef::Str(_)));
+                    if !ok {
+                        let known = Known { of: &self.of, tests: &self.tests, nodes: &self.nodes, local: &self.local, causes: &self.causes };
+                        let why = if matches!(a[0], TermRef::Var(x) if bound.contains(&x)) { "its place is not known".to_owned() } else { known.why_unbound(v, r, a[0], "op_at") };
+                        self.kept.entry("op_at").or_default().entry(v.rel_name(r.head().rel()).to_owned()).or_insert(why);
+                    }
+                    ok
                 }
                 _ => false,
             })
             .map(|(i, _)| i)
             .collect();
-        let texts = body.iter().filter(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "text")).count();
-        if texts > read.len() {
-            self.kept.insert(v.rel_name(r.head().rel()).to_owned());
+        let mut read: Vec<(usize, &'static str)> = Vec::new();
+        for (i, l) in body.iter().enumerate() {
+            match of(l) {
+                Some((_, f, true)) => read.push((i, f)),
+                Some((rel, _, false)) => {
+                    let why = match l.view() {
+                        Lit::Atom(a) => match args(a).first() {
+                            Some(&t) => Known { of: &self.of, tests: &self.tests, nodes: &self.nodes, local: &self.local, causes: &self.causes }.why_unbound(v, r, t, rel),
+                            None => "it has no node column".to_owned(),
+                        },
+                        _ => unreachable!("a per-node atom"),
+                    };
+                    self.kept.entry(rel).or_default().entry(v.rel_name(r.head().rel()).to_owned()).or_insert(why);
+                }
+                None => {}
+            }
         }
-        if read.is_empty() {
+        if read.is_empty() && op_at.is_empty() && !body.iter().any(tested) {
             return Ok(Step::Keep);
         }
-        // A fresh name for each `text(v, _)`'s text, the first a rule does not hold.
+        // A fresh name for each `r(v, _)`'s value, the first a rule does not hold.
         let mut held: HashSet<String> = r.vars().map(|a| v.text(a).to_owned()).collect();
         let mut count = 0;
         let fresh_names: Vec<String> = read.iter().map(|_| fresh(&mut held, &mut count, "rr_text_of")).collect();
         let mut w = out.rule().head_from(v, r, r.head());
         for (i, l) in body.iter().enumerate() {
-            if !read.contains(&i) {
-                w = w.lit(v, r, *l);
+            if op_at.contains(&i)
+                && let Lit::Atom(atom) = l.view()
+            {
+                let a = args(atom);
+                let call = || T::Call("rr_node_op_at", vec![t_of(r, a[0]), t_of(r, a[1])]);
+                w = match (atom.neg(), a[2]) {
+                    (true, TermRef::Wild) => w.cmp(call(), CmpOp::Eq, T::Str("")),
+                    (true, o) => w.cmp(call(), CmpOp::Ne, t_of(r, o)),
+                    (false, TermRef::Wild) => w.cmp(call(), CmpOp::Ne, T::Str("")),
+                    (false, o @ TermRef::Str(_)) => w.cmp(t_of(r, o), CmpOp::Eq, call()),
+                    (false, o) => w.cmp(t_of(r, o), CmpOp::Eq, call()).cmp(t_of(r, o), CmpOp::Ne, T::Str("")),
+                };
+                self.made += 1;
                 continue;
             }
-            let Lit::Atom(text) = l.view() else { unreachable!("a text atom") };
-            let a = args(text);
-            let TermRef::Var(node) = a[0] else { unreachable!("a bound node") };
-            let call = T::Call("rr_node_text_any", vec![T::Var(name(v, r, node))]);
-            w = match a[1] {
-                // `text(v, _)`: `v` has a text.
-                TermRef::Wild => {
-                    let k = read.iter().position(|&x| x == i).expect("read");
-                    w.cmp(T::Var(&fresh_names[k]), CmpOp::Eq, call)
+            let Some(k) = read.iter().position(|&(x, _)| x == i) else {
+                // A node test whose node is not bound reads its per-node atom as rows: `r(t, _)`.
+                if tested(l)
+                    && let Lit::Atom(atom) = l.view()
+                {
+                    let (rel, guards) = &self.tests[v.rel_name(atom.rel())];
+                    let a = args(atom);
+                    w = w.atom(*rel, &[t_of(r, a[0]), T::Wild]);
+                    for &(op, c) in guards {
+                        w = w.cmp(t_of(r, a[0]), op, T::Int(c));
+                    }
+                } else {
+                    w = w.lit(v, r, *l);
                 }
+                continue;
+            };
+            let Lit::Atom(atom) = l.view() else { unreachable!("a per-node atom") };
+            let a = args(atom);
+            let TermRef::Var(node) = a[0] else { unreachable!("a bound node") };
+            let call = T::Call(read[k].1, vec![T::Var(name(v, r, node))]);
+            // A node test (`h(v)`) has no value: `v` has one, as `r(v, _)`, and its guards.
+            w = match a.get(1).copied().unwrap_or(TermRef::Wild) {
+                // `r(v, _)`: `v` has a value.
+                TermRef::Wild => w.cmp(T::Var(&fresh_names[k]), CmpOp::Eq, call),
                 t => w.cmp(t_of(r, t), CmpOp::Eq, call),
             };
+            if let Lit::Atom(atom) = l.view()
+                && let Some((_, guards)) = self.tests.get(v.rel_name(atom.rel()))
+            {
+                for &(op, c) in guards {
+                    w = w.cmp(T::Var(name(v, r, node)), op, T::Int(c));
+                }
+            }
             self.made += 1;
         }
         w.finish()?;
@@ -633,9 +906,13 @@ impl RulePass for TextByNode {
     }
     fn finish(&mut self, cx: &Cx<'_>, b: &mut Builder<'_>) -> Result<()> {
         let (made, kept) = (self.made, std::mem::take(&mut self.kept));
-        if !kept.is_empty() {
-            cx.decide("a bound node's text is read (decision 0353 step 3)", || format!("text read as rows (a location not known to be a node) by {}", kept.into_iter().collect::<Vec<_>>().join(", ")));
+        for (rel, heads) in &kept {
+            cx.decide("a bound node's per-node values are read (decision 0353 step 3)", || {
+                let heads: Vec<String> = heads.iter().map(|(h, why)| format!("{h} ({why})")).collect();
+                format!("{rel} read as rows (a location not known to be a node) by {}", heads.join("; "))
+            });
         }
+        self.reported = kept;
         if made == 0 {
             return Ok(());
         }
@@ -647,7 +924,7 @@ impl RulePass for TextByNode {
             inputs.push("rr_long_text_node".into());
             b.fields().set_inputs(&inputs);
         }
-        cx.decide("a bound node's text is read (decision 0353 step 3)", || format!("{made} text atoms of nodes their rules bind read the node's text"));
+        cx.decide("a bound node's per-node values are read (decision 0353 step 3)", || format!("{made} atoms of per-node relations of nodes their rules bind read the node's value"));
         Ok(())
     }
 }
@@ -1003,7 +1280,7 @@ fn vocabulary_columns(v: &Version) -> (HashMap<String, HashSet<usize>>, HashSet<
                 continue;
             }
             for (column, (_, ty)) in d.cols().enumerate() {
-                if v.text(ty) != "sym" || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
+                if !matches!(v.text(ty), "sym" | "symbol") || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
                     continue;
                 }
                 // Every producer must copy a text column's symbol. One computed or constant arm is enough

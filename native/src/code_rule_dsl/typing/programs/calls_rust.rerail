@@ -41,7 +41,8 @@ nm(n, x) :- field(n, "name", i), text(i, x).
 modn(r, q) :- node(d, r, "source_file", _, _), doc(d, _, q).
 modn(m, @dot(q, x)) :- kind(m, "mod_item"), field(m, "body", _), nm(m, x), nearest(m, p, modk), modn(p, q).
 // `mod x;` names the file module `<parent>.x`; an inline `mod x { }` is its own node.
-.decl modchild(p: node, x: symbol, c: node)
+// Cross-file: `mod x;` names the module of another file, by its path (decision 0652).
+.decl modchild(p: node, x: symbol, c: node) cross_file
 modchild(p, x, c) :- kind(md, "mod_item"), !field(md, "body", _), nm(md, x), nearest(md, p, modk), modn(p, q), modn(c, cq), cq = @dot(q, x).
 modchild(p, x, m) :- kind(m, "mod_item"), field(m, "body", _), nm(m, x), nearest(m, p, modk).
 .decl modpar(c: node, p: node)
@@ -132,7 +133,8 @@ lfound(p, x, s) :- lwalk(p, x, s), bound_here(s, x).
 .decl lglob(p: node, x: symbol, m: node)
 lglob(p, x, m) :- lwalk(p, x, m), modn(m, _), !bound_here(m, x).
 
-.decl res(p: node, k: symbol, v: node)
+// Cross-file: a path resolves to what any file of the crate defines (decision 0652).
+.decl res(p: node, k: symbol, v: node) cross_file
 res(p, k, v) :- lfound(p, x, s), item(s, x, k, v).
 res(p, k, v) :- lfound(p, x, s), ures(s, x, k, v).
 res(p, k, v) :- lglob(p, x, m), globx(m, x, k, v).

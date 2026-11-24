@@ -1007,6 +1007,9 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
         return Ok(digest);
     }
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
+    if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
+        eprintln!("rerail: phase 0 lowers module {key}: {}", files.lines().collect::<Vec<_>>().join(", "));
+    }
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
     let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| module_in_waves(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
     // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include

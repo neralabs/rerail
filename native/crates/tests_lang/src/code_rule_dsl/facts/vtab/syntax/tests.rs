@@ -396,6 +396,48 @@ fn a_views_probes_read_through_a_cursor_are_its_lookups_and_rows() {
     assert!(tried >= 6, "views read as found: {tried}");
 }
 
+/// A view's membership test (`Source::test_at`, a membership step's `kind(n, k)`) is what its rows say: for every view
+/// that has the test, by its key column with each other column, every row's own values are held and a value no row
+/// of that key has is not, probed in key order, back and strided through one cursor; a node id no view has is not
+/// held; and the test keeps no state but its cursor's.
+#[test]
+fn a_views_membership_test_is_its_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("test-at")).unwrap();
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        let (n, width) = (source.len(), source.columns().len());
+        if n == 0 || width < 2 {
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        if source.test_at(0, source.value(0, 0), &[1], &[source.value(0, 1)], &mut cursor).is_none() {
+            continue;
+        }
+        // One cursor through each order: its hints (the document, the slot entry, the select's group) found again,
+        // kept, or left behind, the answers the same.
+        let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
+        for (other, order) in (1..width).flat_map(|c| orders.iter().map(move |o| (c, o))) {
+            let mut cursor = ProbeCursor::default();
+            for &r in order {
+                let (key, v) = (source.value(r, 0), source.value(r, other));
+                let rows = source.lookup(0, &[key]).expect("a tested view looks up");
+                let held = |w: i64| rows.iter().any(|&q| source.value(q, other) == w);
+                assert_eq!(source.test_at(0, key, &[other], &[v], &mut cursor), Some(true), "{name} row {r} column {other}");
+                let absent = (v + 1..).find(|&w| !held(w)).unwrap();
+                assert_eq!(source.test_at(0, key, &[other], &[absent], &mut cursor), Some(false), "{name} row {r} column {other}: {absent}");
+            }
+            let all: Vec<usize> = (1..width).collect();
+            let want: Vec<i64> = all.iter().map(|&c| source.value(n / 2, c)).collect();
+            assert_eq!(source.test_at(0, source.value(n / 2, 0), &all, &want, &mut cursor), Some(true), "{name}: every column at once");
+        }
+        let past = (0..n).map(|r| source.value(r, 0)).max().unwrap() + 1;
+        assert_eq!(source.test_at(0, past, &[1], &[source.value(0, 1)], &mut cursor), Some(false), "{name}: an id past every node's");
+        tried += 1;
+    }
+    assert!(tried >= 2, "views with a membership test: {tried}");
+}
+
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
@@ -515,6 +557,28 @@ fn visit_index_outside_python_is_the_tape_order() {
     assert!(index("object'{ x: 1, y: 2 }'") < x && x < index("property_identifier'x'") && x < y, "{:?}", rows["visit_index"]);
 }
 
+/// `visit_index` is a key of the visit order by granule run (decision 0121's, in visit order): an edit inside one
+/// function moves no other function's values, and they still compare in CPython's order (a decorator after its
+/// definition's body).
+#[test]
+fn visit_index_keys_stay_outside_the_edited_granule() {
+    let source = |extra: &str| format!("def f(a):\n    b = a{extra}\n    return b\n\n@dec\ndef g(x):\n    return x + 1\n");
+    let keys = |src: String| -> std::collections::BTreeMap<String, i64> {
+        let rows = core_rows(vec![document(1, "m.py", "python", &src)]);
+        rows["visit_index"].iter().filter_map(|r| { let (n, i) = r.rsplit_once(' ')?; Some((n.to_owned(), i.parse().ok()?)) }).collect()
+    };
+    let (before, after) = (keys(source("")), keys(source("\n    c = b * 2")));
+    let of_g: Vec<&String> = before.keys().filter(|n| n.contains("x + 1") || n.contains("dec") || n.ends_with("'x'") || n.contains("(x)")).collect();
+    assert!(of_g.len() >= 4, "{before:?}");
+    for n in &of_g {
+        assert_eq!(before[*n], after[*n], "{n}: g's nodes keep their values when f is edited");
+    }
+    assert!(after.keys().any(|n| n.contains("b * 2")), "{after:?}");
+    let at = |m: &std::collections::BTreeMap<String, i64>, n: &str| m.iter().find(|(k, _)| k.as_str() == n).map(|(_, v)| *v).unwrap_or_else(|| panic!("no {n}: {m:?}"));
+    assert!(at(&after, "binary_operator'x + 1'") < at(&after, "decorator'@dec'"), "a decorator after its definition's body: {after:?}");
+    assert!(at(&after, "binary_operator'b * 2'") < at(&after, "binary_operator'x + 1'"), "f's nodes before g's: {after:?}");
+}
+
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
@@ -556,6 +620,34 @@ fn op_is_every_anonymous_child_and_op_ats_two_word_operators() {
         assert_eq!(rows.iter().map(|&r| (op.value(r, 0), sym(op.value(r, 1)))).collect::<BTreeSet<_>>(), got, "node {n}'s rows by lookup");
     }
 }
+
+/// A text test over `op`'s strings (`op(n, o), o = "=="`, decision 0037) passes the operators of the batch's
+/// documents: `op` is a view whose strings are its tags' kind-name atoms (`Batch::op_atom`), which no document's walk
+/// interns, so the batch's vocabulary gives them too. Before, `@equals("==")` scanned the walk's strings alone and
+/// passed none (the rerail pack's NATIVE_MESSAGE_EQUALS).
+#[test]
+fn a_text_test_over_op_passes_the_batchs_operators() {
+    let store = ContentStore::open(&temp("op-test")).unwrap();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "op"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let specs = vec![("equals".to_owned(), vec!["==".to_owned()]), ("equals".to_owned(), vec!["!=".to_owned()])];
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::from_specs(&["strtest_0".to_owned(), "strtest_1".to_owned()], specs).unwrap());
+    let docs = vec![document(1, "m.py", "python", "x = a == b
+")];
+    let sources = with_nearest(&store, docs, &[], &tests, crate::code_rule_dsl::facts::nearest::Binding::Cpu, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let sym = |v: i64| store.atom_value(v as u32).unwrap().unwrap();
+    let rows = |name: &str| -> BTreeSet<String> {
+        let s = source(name);
+        (0..s.len()).map(|r| sym(s.value(r, 0))).collect()
+    };
+    assert_eq!(rows("strtest_0"), ["==".to_owned()].into(), "the operator passes");
+    assert!(rows("strtest_1").is_empty(), "no `!=` in the document");
+    // And the op rows join it: the comparison's operator is one of the test's strings.
+    let op = source("op");
+    let passing: BTreeSet<i64> = { let t = source("strtest_0"); (0..t.len()).map(|r| t.value(r, 0)).collect() };
+    assert!((0..op.len()).any(|r| passing.contains(&op.value(r, 1))), "op's `==` is the test's symbol");
+}
+
 
 /// `core.rerail`'s relations of `docs` for a program that includes `core.rerail` and reads them (`text_demand::projection_of`'s shape
 /// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
@@ -704,6 +796,55 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("last_token", "return_statement'return x' identifier'x'");
     lacks("first_token", "return_statement'return x' 'return'");
     lacks("token_after", "identifier'f' '('");
+}
+
+/// Decision 0353 step 3: a node read of `core.rerail`'s per-node relations (`@rr_node_name`, `@rr_node_comment`, `@rr_node_strprefix`, through the batch's long-text binding) answers, for every
+/// node, exactly the row the walk makes of it (`CoreRows::node`), and none where it makes none: a rule that binds the
+/// node reads it instead of the relation's rows, and must read the same. `@rr_node_op_at(n, i)` answers `op_at`'s row
+/// at each place, and `""` past the last.
+#[test]
+fn a_node_read_answers_the_row_the_walk_makes() {
+    let src = "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\\x41\"\"\"\n    x = a not in b\n    y = 1 < x is not None <= -a\n    g(*a, f\"v{a}w\", 0xff, rb'z', obj.attr.c)\n    return x\n";
+    let store = ContentStore::open(&temp("node-reads")).unwrap();
+    let reads = ["node", "name", "comment", "strprefix", "op_at", crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let docs = vec![document(1, "m.py", "python", src), document(2, "bad.py", "python", "x = (\n")];
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let sym = |v: i64| store.atom_value(v as u32).unwrap().unwrap();
+    let nodes = source("node");
+    let long = source(crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES);
+    let mut checked = 0;
+    for (rel, read) in [("name", "rr_node_name"), ("comment", "rr_node_comment"), ("strprefix", "rr_node_strprefix")] {
+        let s = source(rel);
+        let made: HashMap<i64, String> = (0..s.len()).map(|r| (s.value(r, 0), sym(s.value(r, 1)))).collect();
+        assert!(!made.is_empty(), "{rel}: the walk made rows");
+        for r in 0..nodes.len() {
+            let n = nodes.value(r, 1);
+            assert_eq!(long.node_read(read, n, &[]), made.get(&n).cloned(), "{rel} of node {n}");
+            checked += 1;
+        }
+    }
+    let s = source("op_at");
+    let mut ops: HashMap<i64, Vec<(i64, String)>> = HashMap::new();
+    for r in 0..s.len() {
+        ops.entry(s.value(r, 0)).or_default().push((s.value(r, 1), sym(s.value(r, 2))));
+    }
+    assert!(ops.values().any(|o| o.iter().any(|(_, t)| t == "not in")) && ops.values().any(|o| o.iter().any(|(_, t)| t == "is not")), "two-word operators: {ops:?}");
+    for r in 0..nodes.len() {
+        let n = nodes.value(r, 1);
+        let mut made = ops.remove(&n).unwrap_or_default();
+        made.sort();
+        for i in 0..=made.len() {
+            let want = made.get(i).map_or(String::new(), |(k, t)| {
+                assert_eq!(*k, i as i64, "op_at of node {n}: places from 0");
+                t.clone()
+            });
+            assert_eq!(long.node_read("rr_node_op_at", n, &[i as i64]), Some(want), "op_at of node {n} at {i}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "every node of both documents, {checked} reads");
 }
 
 /// The shape follows the program: one that includes `core.rerail` reads `core.rerail`'s, one that declares its base
@@ -1163,8 +1304,9 @@ fn candidate_demands_preserve_document_scope_and_receiver_independence() {
     let projection=Projection{reads:Some(["doc","node","line"].into_iter().map(str::to_owned).collect()),..Projection::core()};
     let (batch,relations,_,(strings,_))=Batch::build(&store,docs.clone(),&projection,&[],&[],false).unwrap();
     assert!(!strings.iter().any(|s|s=="url" || s=="requests" || s==source),"unrequested AST strings must not be interned");
+    // No rows: `op_at` is made only for a program that reads it (`tree::Tree`), the others are empty.
     for name in ["text","name","str","value","op_at"] {
-        assert_eq!(relations.iter().find(|(n,_)|*n==name).unwrap().1.len(),0,"{name}");
+        assert_eq!(relations.iter().find(|(n,_)|*n==name).map_or(0,|r|r.1.len()),0,"{name}");
     }
     let targets=BTreeSet::from(["requests.get".to_owned()]);
     let rows=batch.python_candidates(&[2],&targets,"async_function","open").unwrap();
@@ -1612,9 +1754,152 @@ fn text_of_a_bound_node_is_read_in_place() {
         let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
         assert_eq!(printed.matches("@rr_node_text_any(").count(), read, "{rules}: {printed}");
     }
-    // Outside `core.rerail`'s shape (T's, whose `text` holds some nodes' alone): no atom is read so.
-    let t_shape = crate::code_rule_dsl::logic::rr::parse_version(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\n.input text\n.decl out(t: symbol)\nout(t) :- kind(n, \"call\"), text(n, t).\n.output out\n").unwrap();
-    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(t_shape, Default::default()).unwrap().1, 0, "T's shape");
+    // In T's shape (whose `text` holds some nodes' alone) the read is T's (`syntax::t_value`), as are `intval`'s and
+    // `op`'s; a relation the program derives itself is no input, and stays.
+    for (rules, read, call) in [
+        ("out(t) :- kind(n, \"call\"), text(n, t).", 1, "@rr_node_t_text("),
+        ("out(\"x\") :- kind(n, \"integer\"), intval(n, 3).", 1, "@rr_node_intval("),
+        ("out(o) :- kind(n, \"binary_operator\"), op(n, o).", 1, "@rr_node_op_t("),
+        ("out(t) :- text(n, t).", 0, "@rr_node_"),
+    ] {
+        let t_shape = crate::code_rule_dsl::logic::rr::parse_version(&format!(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\n.input text\n.decl intval(n: node, v: number)\n.input intval\n.decl op(n: node, s: symbol)\n.input op\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(t_shape, Default::default()).unwrap();
+        assert_eq!(made, read, "T's shape: {rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        assert_eq!(printed.matches(call).count(), read, "T's shape: {rules}: {printed}");
+    }
+    let derived = crate::code_rule_dsl::logic::rr::parse_version(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\ntext(n, \"x\") :- kind(n, \"call\").\n.decl out(t: symbol)\nout(t) :- kind(n, \"call\"), text(n, t).\n.output out\n").unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(derived, Default::default()).unwrap().1, 0, "a derived text");
+}
+
+/// Decision 0353 step 3, row 7: T's per-node relations (`syntax::TRel`), read of a node (`@rr_node_*` in T's shape;
+/// `intval` and `op_t` in core.rerail's too), answer the rows `NodeRows` makes, node by node: one definition
+/// (`syntax::t_value`).
+#[test]
+fn t_shape_node_reads_answer_the_rows_node_rows_makes() {
+    use crate::code_rule_dsl::facts::vtab::syntax::TRel;
+    let src = "import os.path as p\nasync def f(a, b=0x1_0):\n    x = a + b * 2\n    y = obj.attr.c\n    s = rb'z' + \"q\" + f\"v{a}\"\n    async with a:\n        pass\n    return -x if not y else ~a\n";
+    let store = ContentStore::open(&temp("t-node-reads")).unwrap();
+    for core in [false, true] {
+        let rels: Vec<TRel> = TRel::ALL.into_iter().filter(|r| !core || matches!(r, TRel::Intval | TRel::Op)).collect();
+        let mut reads: Vec<String> = rels.iter().map(|r| r.relation(core).to_owned()).collect();
+        reads.extend(["node".to_owned(), "op_at".to_owned(), crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES.to_owned()]);
+        let shape = if core { Shape::Core } else { Shape::T };
+        let projection = Projection { shape, reads: Some(reads.into_iter().collect()), ..Projection::core() };
+        let docs = vec![document(1, "m.py", "python", src), document(2, "bad.py", "python", "x = (\n")];
+        let sources = shaped(&store, docs, &projection).unwrap();
+        let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+        let (nodes, long) = (source("node"), source(crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES));
+        let mut checked = 0;
+        for rel in rels {
+            let s = source(rel.relation(core));
+            let value = |v: i64| if rel == TRel::Intval { v.to_string() } else { store.atom_value(v as u32).unwrap().unwrap() };
+            let mut made: HashMap<i64, String> = HashMap::new();
+            for r in 0..s.len() {
+                assert!(made.insert(s.value(r, 0), value(s.value(r, 1))).is_none(), "{rel:?}: one row a node");
+            }
+            assert!(!made.is_empty(), "{rel:?} ({core}): the walk made rows");
+            for r in 0..nodes.len() {
+                let n = nodes.value(r, 1);
+                assert_eq!(long.node_read(rel.read(), n, &[]), made.get(&n).cloned(), "{rel:?} ({core}) of node {n}");
+                checked += 1;
+            }
+        }
+        // `op_at`, in either shape (`Tree`'s rows).
+        let s = source("op_at");
+        let mut ops: HashMap<(i64, i64), String> = HashMap::new();
+        for r in 0..s.len() {
+            ops.insert((s.value(r, 0), s.value(r, 1)), store.atom_value(s.value(r, 2) as u32).unwrap().unwrap());
+        }
+        assert!(!ops.is_empty(), "op_at ({core}): the walk made rows");
+        for r in 0..nodes.len() {
+            let n = nodes.value(r, 1);
+            for i in 0..3 {
+                assert_eq!(long.node_read("rr_node_op_at", n, &[i]), Some(ops.get(&(n, i)).cloned().unwrap_or_default()), "op_at ({core}) of node {n} at {i}");
+            }
+        }
+        assert!(checked > 100, "{checked} reads");
+    }
+}
+
+/// Decision 0353 step 3: an atom of another per-node relation of `core.rerail` (`name`, `comment`, `strprefix`) of a
+/// node the rest of the body binds reads the node's value (`@rr_node_name`, ...), as `text`'s does. (`structural_*` is
+/// a view of the tape, looked up by its node in place: no read.) Its own atom binds no node: `name(n, "x")` alone is a lookup by value,
+/// kept as rows, as is one whose node only another such atom binds.
+#[test]
+fn per_node_values_of_a_bound_node_are_read_in_place() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    for (rules, read, call) in [
+        ("out(s) :- kind(n, \"call\"), structural_after(n, s).", 0, "@rr_node_"),
+        ("out(s) :- child(m, n, 0), comment(n, s), strprefix(n, \"r\").", 2, "@rr_node_"),
+        ("out(\"x\") :- kind(n, \"identifier\"), name(n, \"x\").", 1, "@rr_node_name("),
+        ("out(s) :- kind(n, \"comment\"), comment(n, s).", 1, "@rr_node_comment("),
+        ("out(p) :- kind(n, \"string\"), strprefix(n, p).", 1, "@rr_node_strprefix("),
+        ("out(\"x\") :- name(n, \"x\").", 0, "@rr_node_"),
+        ("out(s) :- name(n, \"x\"), comment(n, s).", 0, "@rr_node_"),
+        // `op_at` at a known place: a constant, or a place another atom binds; negated with a wildcard.
+        ("out(o) :- kind(n, \"comparison_operator\"), op_at(n, 0, o).", 1, "@rr_node_op_at("),
+        ("out(\"x\") :- kind(n, \"comparison_operator\"), op_at(n, 0, \"<\"), !op_at(n, 1, _).", 2, "@rr_node_op_at("),
+        ("out(o) :- child(c, l, i), op_at(c, i, o).", 1, "@rr_node_op_at("),
+        // A place nothing binds is read as rows.
+        ("out(o) :- kind(n, \"comparison_operator\"), op_at(n, i, o).", 0, "@rr_node_"),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
+        assert_eq!(made, read, "{rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        assert_eq!(printed.matches(call).count(), read, "{rules}: {printed}");
+    }
+}
+
+/// A `text` atom left as rows says why its node is not known to be one (`text_rows_kept`, the decision's line): the
+/// atoms that bind it, each with the reason its column holds no node alone, a cross-file one with its root cause.
+#[test]
+fn a_text_read_left_as_rows_says_why_its_node_is_not_known() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    for (rules, want) in [
+        ("out(s) :- text(n, s).", "no positive atom binds $n"),
+        ("out(s) :- name(n, \"x\"), text(n, s).", "name[0]: a per-node value"),
+        ("out(s) :- kind(n, k), text(k, s).", "kind[1]: not every rule of it fills column 1 with a node"),
+        (".decl d(x: node)\nd(x) :- kind(x, \"call\").\nd(x) :- kind(_, x).\nout(s) :- d(n), text(n, s).", "d[0]: cross-file: d: reads kind with no location"),
+        (
+            ".decl def(s: symbol)\ndef(s) :- kind(d, \"function_definition\"), name(d, s).\n.decl call(c: node) cross_file\ncall(c) :- kind(c, \"call\"), name(c, s), def(s).\nout(s) :- call(n), text(n, s).",
+            "call[0]: cross-file: call",
+        ),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let kept = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_rows_kept(program, Default::default()).unwrap();
+        let why = kept.get("text").and_then(|heads| heads.get("out")).unwrap_or_else(|| panic!("{rules}: text kept by out: {kept:?}"));
+        assert!(why.contains(want), "{rules}: {why}");
+    }
+}
+
+/// A relation that only tests a per-node relation of its node (`c(e) :- text(e, _), e < 100`, an aggregate's cover)
+/// is read in its readers' place, its guards with it: where they bind the node, a read of its tape, not every node's
+/// `text` rows. A node bound through `n = a` is bound. A negated test stays a relation; a reader that binds no node
+/// reads the per-node atom as rows.
+#[test]
+fn a_node_test_and_an_alias_are_read_in_place() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let test = ".decl c(e: node)\nc(e) :- text(e, _), e < 100.\n";
+    for (rules, read, has, lacks) in [
+        (format!("{test}out(\"x\") :- kind(n, \"call\"), c(n)."), 1, vec!["@rr_node_text_any(", "< 100"], vec!["c(n)", "text(n"]),
+        ("out(t) :- kind(a, \"call\"), n = a, text(n, t).".to_owned(), 1, vec!["@rr_node_text_any("], vec!["text(n", "text(a"]),
+        (format!("{test}out(\"x\") :- kind(n, \"call\"), !c(n)."), 0, vec!["c(e) :- text(e, _)", "!c(n)"], vec!["@rr_node_"]),
+        (format!("{test}out(\"x\") :- name(n, \"y\"), c(n)."), 0, vec!["text(n, _)", "n < 100"], vec!["c(n)", "@rr_node_"]),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
+        assert_eq!(made, read, "{rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        let out: String = printed.lines().filter(|l| l.starts_with("out(") || l.starts_with("c(")).collect::<Vec<_>>().join("\n");
+        for h in has {
+            assert!(out.contains(h), "{rules}: {h} in {out}");
+        }
+        for l in lacks {
+            assert!(!out.contains(l), "{rules}: no {l} in {out}");
+        }
+    }
 }
 
 /// The nodes given `text` are the ones the rules read (decision 0110): a fixed kind, a node's field, or a matcher
@@ -1696,27 +1981,6 @@ fn nodes_read_as_codes_are_the_nodes_read_by_name() {
             }
         }
         assert!(read > 0, "{label}: the sets read no node");
-    }
-}
-
-/// The nodes given `op` and `op_at` rows are the ones the rules read, narrowed as `text`'s are: a fixed kind
-/// (python/annotations' `op(m, "|")` of a `binary_operator`), a parent's kind, a derived column; a node nothing
-/// narrows, or a program's own `op` rules, widens it to every node.
-#[test]
-fn op_rows_only_for_the_nodes_read() {
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
-    let kinds = |ks: &[&str]| Some(TextNodes { kinds: ks.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
-    for (body, op) in [
-        ("out(\"|\") :- kind(m, \"binary_operator\"), op(m, \"|\").", kinds(&["binary_operator"])),
-        ("out(o) :- kind(m, \"boolean_operator\"), op(m, o).\nout(o) :- kind(m, \"comparison_operator\"), !op(m, \"in\"), op_at(m, 0, o).", kinds(&["boolean_operator", "comparison_operator"])),
-        ("out(o) :- kind(p, \"list_splat_pattern\"), child(p, s, 0), op(s, o).", Some(TextNodes { parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
-        (".decl bin(n: node)\nbin(n) :- kind(n, \"binary_operator\").\nout(o) :- bin(n), op(n, o).", kinds(&["binary_operator"])),
-        ("out(o) :- child(_, n, 0), op(n, o).", None),
-        ("out(o) :- node(_, n, _, _, _), op(n, o).", None),
-        ("out(\"x\") :- kind(m, \"binary_operator\").", Some(TextNodes::default())),
-    ] {
-        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).op, op, "{body}");
     }
 }
 
@@ -2645,6 +2909,36 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
     assert_eq!(tried, 4 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
+/// An embedder's guest is placed by its segments (`PLACED_SEGMENTS`, `ViewDoc::segments`) in the Rust reads as
+/// `Placement::host` places it: `SegmentMap::file_ranges(s..e).primary()`, for every span of the program. The views'
+/// parity test reads files alone, so a placement it never reads went unread: the Rust reads clamped an embedder's
+/// spans as a copied stretch's, into an empty `within`, and a warm edit's guest read its file's first line.
+#[test]
+fn the_rust_reads_place_an_embedders_spans_as_its_segments_do() {
+    use crate::code_rule_dsl::embed::segments::SegmentMap;
+    use rerail_tape_format::view_reads::{Doc, Tape};
+    let mut map = SegmentMap::new();
+    // Copied, written over another anchor, an empty one, copied again, and a written one inside the first's anchor.
+    map.push(0, 10, 100..110, true, false);
+    map.push(10, 13, 200..205, false, false);
+    map.push(13, 13, 300..300, false, false);
+    map.push(13, 30, 120..137, true, false);
+    map.push(30, 34, 104..106, false, false);
+    map.index();
+    let words: Vec<[u32; 5]> = map.words().collect();
+    let mut entry = Box::new(rerail_clif::view_reads::ViewDoc { placement: rerail_clif::view_reads::PLACED_SEGMENTS, ..Default::default() });
+    // SAFETY: the run points at `words`, which outlive every read of the entry below.
+    unsafe { rerail_clif::ids::Run::set(&raw mut entry.segments, words.as_ptr(), words.len()) };
+    let view = rerail_clif::view::TapeView::default();
+    let doc = Doc { entry: &entry, tape: Tape::new(&[], &view, std::ptr::null()), lines: &[], source: &[] };
+    for s in 0..=36u32 {
+        for e in s..=36u32 {
+            let want = map.file_ranges(s as usize..e as usize).primary();
+            assert_eq!(doc.placed((s, e)), (want.start as u32, want.end as u32), "program bytes {s}..{e}");
+        }
+    }
+}
+
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
@@ -2704,6 +2998,10 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
     let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
     let (node, child, field, core_node, line) = (read_of("view_node"), read_of("view_child"), read_of("view_field"), read_of("view_core"), read_of("view_line"));
+    let view_op = read_of("view_op");
+    // The atoms the entries' names are interned in (`ViewDoc::names`, the `op` view's), as a batch reading `op` has.
+    let store = ContentStore::open(&temp("view-reads-op")).unwrap();
+    let atoms = store.atoms_handle();
     // The process's device, where its buffers have device addresses (OpenCL 1.2's have none: 0440 step C).
     let probe = rerail_gpu::shared::get().filter(|_| alloc::<u8>(1).ok().and_then(|b| b.device_address()).is_some()).map(|shared| {
         let source = format!("#include <ukl/backend.h>\n#include <ukl/reads/view.h>\n{KERNEL}");
@@ -2736,7 +3034,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
                 let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
                 let block = p.ranks().block();
-                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let entry = view_docs::ViewEntry::new(block, &p, &dialect, Some(&atoms));
                 let n = p.len();
                 let nf = p.ranks().count(Item::Field);
                 let parent = |l: u32| match p.parent(l as usize) {
@@ -2805,7 +3103,14 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, its argument.
                     let probe_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32 { unsafe { std::mem::transmute(jit.function(name)) } };
                     let (first, next, number) = (probe_of("view_child_first"), probe_of("view_child_next"), probe_of("view_number"));
+                    // SAFETY: `view_text_span`'s signature, as the probes' but an i64.
+                    let text_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_text_span")) };
                     for l in 0..n {
+                        // A node's text read where its source lies (decision 0287 §2): the JIT's range and the Rust
+                        // read's text, the projection's.
+                        let x = p.ranks().select(Item::Node, l).unwrap();
+                        assert_eq!(text_span(e, t, v, ll, l) as u64, doc.text_span(l), "{at}: node {l}'s text span, the JIT's");
+                        assert_eq!(doc.text(l), Some(p.f().text(x)), "{at}: node {l}'s text");
                         assert_eq!(doc.child_first(l), first(e, t, v, ll, l), "{at}: node {l}'s first child");
                         if l + 1 < n {
                             assert_eq!(doc.child_next(l), next(e, t, v, ll, l), "{at}: child row {l}'s next");
@@ -2822,6 +3127,18 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         let (l, _) = doc.after_sibling(i);
                         assert_eq!(doc.sibling(i, 0), p.prev_sibling(l).map_or(-1, |a| p.global(a)), "{at}: sibling row {i}'s before");
                         assert_eq!(doc.sibling(i, 1), p.global(l), "{at}: sibling row {i}'s node");
+                    }
+                    // `op`'s rows (`Item::Op`, decision 0353 row 7): each numbered node's anonymous children, its id and
+                    // their kinds' names' atoms; the Rust read, the JIT's and the projection's alike.
+                    let ops = p.ranks().count(Item::Op);
+                    assert!(shape != Shape::Core || narrowed || ops > 0, "{at}: a document with operators has op rows");
+                    for i in 0..ops {
+                        let x = p.ranks().select(Item::Op, i).unwrap();
+                        assert_eq!(doc.op_child(i), x, "{at}: op row {i}'s child");
+                        let node = p.global(p.f().parent(x).map_or(0, |q| p.local_of_node(q)));
+                        let name = i64::from(atoms.intern(dialect.name(p.f(), x)).unwrap());
+                        assert_eq!([doc.op(i, 0), doc.op(i, 1)], [node, name], "{at}: op row {i}");
+                        assert_eq!([view_op(e, t, v, ll, i, 0), view_op(e, t, v, ll, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
                     }
                 }
                 if let Some((shared, probe)) = probe {
@@ -2920,6 +3237,47 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
         assert_eq!(rows(&**s), eager[name], "{name}, made by probes then a scan");
     }
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
+}
+
+/// A made relation's membership test (`Source::test_at` by the column that names its row's document, `text(n, s)`)
+/// is what the eager batch's rows say: every row's own values held, a value no row of that key has not, through one
+/// cursor in row order, each document's group made by the probe that first needs it; another column has no test.
+#[test]
+fn a_made_relations_membership_test_is_its_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("made-test-at")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect()
+    };
+    let reads = ["node", "text", "comment", "op", "str", "name", "child", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let (_, eager, _, _) = Batch::build(&store, docs(), &projection, &[], &[], false).unwrap();
+    let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut tried = 0;
+    for (name, _, s) in made_sources(&probed) {
+        let Some((_, e)) = eager.iter().find(|(n, _)| *n == name) else { continue };
+        let width = e.columns().len();
+        if e.len() == 0 || width < 2 {
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        if s.test_at(0, e.value(0, 0), &[1], &[e.value(0, 1)], &mut cursor).is_none() {
+            assert!(s.test_at(1, e.value(0, 1), &[0], &[e.value(0, 0)], &mut cursor).is_none(), "{name}: no test by another column");
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        for r in 0..e.len() {
+            let key = e.value(r, 0);
+            let others: Vec<usize> = (1..width).collect();
+            let want: Vec<i64> = others.iter().map(|&c| e.value(r, c)).collect();
+            assert_eq!(s.test_at(0, key, &others, &want, &mut cursor), Some(true), "{name} row {r}");
+            let held = |w: i64| (0..e.len()).any(|q| e.value(q, 0) == key && e.value(q, 1) == w);
+            let absent = (e.value(r, 1) + 1..).find(|&w| !held(w)).unwrap();
+            assert_eq!(s.test_at(0, key, &[1], &[absent], &mut cursor), Some(false), "{name} row {r}: {absent}");
+        }
+        tried += 1;
+    }
+    assert!(tried >= 3, "made relations with a membership test: {tried}");
 }
 
 /// Decision 0353: core.rerail's places are the `Loc` view's with span rows only where a span relation is read
@@ -3605,10 +3963,15 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key());
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key());
+        assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
-    // The homes its rows name (fixed: a row's tape in `2i`, its lines in `2i + 1`), and the 16z cache's where it has one.
-    assert_eq!(dir.nhomes as usize, 2 * rows.len() + 1, "two homes a row, and the cache's");
-    let named = rows.iter().flat_map(|r| r.homes).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
+    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), and the
+    // 16z cache's where it has one. The device reads the directory where it reads every tape and lines; a source
+    // it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
+    assert_eq!(dir.nhomes as usize, 3 * rows.len() + 1, "three homes a row, and the cache's");
+    let sources_on_device = rows.iter().zip(batch.docs.iter()).filter(|(_, p)| p.len() > 0).all(|(r, _)| homes[r.homes[2] as usize].gpu != 0);
+    assert_eq!(views.sources, views.dir.is_some() && sources_on_device, "a node's text on the device only where it reads every source");
+    let named = rows.iter().flat_map(|r| [r.homes[0], r.homes[1]]).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
     let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && named.into_iter().all(|h| homes[h].gpu != 0);
     assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home its rows name");
 }
@@ -3848,14 +4211,23 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
             want.entry(STRUCTURAL[1]).or_default().insert(vec![n, i64::from(atoms[1])]);
         }
         let Some(dialect) = batch.dialects.get(p.tag()) else { continue };
-        // Every node's digest (`core_rr::digests`, by tape node) and place in CPython's visit order (`tree::visit_order`).
+        // Every node's digest (`core_rr::digests`, by tape node) and key in CPython's visit order (`tree::visit_order`,
+        // keyed by granule run: `tree::keys_by_run`).
         if !batch.docs.withheld(d) {
             let (hash, _) = super::core_rr::digests(f, dialect, true, false);
             for (_, id, n) in p.node_ids() {
                 let h = store.intern_atoms(&[super::core_rr::hex(&hash[id as usize]).as_str()]).unwrap()[0];
                 want.entry(DIGEST).or_default().insert(vec![n, i64::from(h)]);
             }
-            super::tree::visit_order(p, dialect, true, &mut |l, i| _ = want.entry(VISIT).or_default().insert(vec![p.global(l), i64::from(i)]));
+            let (mut order, mut keys) = (Vec::new(), vec![u32::MAX; p.len() as usize]);
+            super::tree::visit_order(p, dialect, true, &mut |l, i| {
+                keys[l as usize] = i;
+                order.push(l);
+            });
+            super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, &mut keys);
+            for &l in &order {
+                want.entry(VISIT).or_default().insert(vec![p.global(l), i64::from(keys[l as usize])]);
+            }
         }
         let mut toks: Vec<(u32, u32, i64)> = p
             .node_ids()

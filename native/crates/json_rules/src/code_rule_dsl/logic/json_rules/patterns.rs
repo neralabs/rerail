@@ -103,7 +103,8 @@ impl Patterns {
             text_str_piece: re(r#"("(?:[^"\\]|\\.)*")"#),
             souffle_flags: re(r"^\(\?[a-zA-Z]+\)"),
             souffle_stmt_tok: re(r#"(?s)"(?:[^"\\]|\\.)*"|`+|//[^\n]*|:-|=>|!=|<=|>=|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|@[A-Za-z_]\w*|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\S"#),
-            souffle_tick_var: re(r"\$\$?\$?([A-Za-z_]\w*)"),
+            // A pattern's `$X` and `$$X` bind X; a `$$$X` (a run of nodes) and a `$_X` bind nothing, as the lowering reads them.
+            souffle_tick_var: re(r"(?<!\$)\$\$?([A-Za-z]\w*)"),
             souffle_named_group: re(r"\(\?P?<([A-Za-z_]\w*)>"),
             simplify_generated: re(r"^(alt|stop|option|set)_\d+$"),
             simplify_meaningless: re(r"^[a-z]{1,2}_?\d+$"),

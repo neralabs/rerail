@@ -5,13 +5,13 @@
 98	function @replace_all/3	not on the device: no computed term	lib 33, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, sql 1, vue 1
 98	functor @replace_all/3	not on the device: no computed term	lib 33, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, sql 1, vue 1
 96	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	lib 27, data-layer 25, python-main 13, python 11, django 3, next 3, rust 3, sql 3, rerail 2, vue 2, engine 1, node 1, react 1, typescript 1
-64	aggregate min bounded by >	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, rust 2, javascript 1, node 1, rule-syntax 1
-64	aggregate min bounded by >=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, rust 2, javascript 1, node 1, rule-syntax 1
+65	aggregate min bounded by >	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, javascript 2, rust 2, node 1, rule-syntax 1
+65	aggregate min bounded by >=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, javascript 2, rust 2, node 1, rule-syntax 1
 61	aggregate max bounded by <	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
 61	aggregate max bounded by <=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
 37	function @to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
-32	aggregate join	not on the device: no string join	lib 11, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
+32	aggregate join	not on the device: refused: a string join not ordered by one number column has no device form	lib 11, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
 19	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18, lib 1
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1
 11	shipped functor @trim/1	not on the device: no computed term	data-layer (engine) 10, lib 1
@@ -20,20 +20,19 @@
 10	shipped functor @instr/2	not on the device: no computed term	data-layer (engine) 9, lib 1
 9	function @rx_extract/3	not on the device: no computed term	data-layer (engine) 8, lib 1
 8	function @count_matches/2	not on the device: no computed term	lib 4, data-layer 2, python 2
-8	function @pkg_up/2	not on the device: no computed term	lib 4, engine 2, django 1, typing 1
 7	arithmetic of floats	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
+7	function @qname/2	not on the device: no computed term	lib 4, engine 1, node 1, rule-syntax 1
+7	function @rx_replace/3	not on the device: no computed term	data-layer (engine) 5, lib 2
 7	function @to_float/1	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
+7	functor @rx_replace/3	not on the device: no computed term	data-layer (engine) 5, lib 2
 7	shipped functor @length/1	not on the device: no computed term	data-layer (engine) 7
 7	shipped functor @printf/2	not native: sqlite: error: no SQL for @printf($a, $b)	data-layer (engine) 6, lib 1
 7	shipped functor @printf/3	not native: sqlite: error: no SQL for @printf($a, $b, $c)	data-layer (engine) 6, lib 1
 7	shipped functor @printf/4	not native: sqlite: error: no SQL for @printf($a, $b, $c, $a)	data-layer (engine) 6, lib 1
 7	shipped functor @printf/5	not native: sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	data-layer (engine) 6, lib 1
 6	function @flat_bin/3	not on the device: no computed term	engine 6
-6	function @qname/2	not on the device: no computed term	lib 4, node 1, rule-syntax 1
-6	function @rx_replace/3	not on the device: no computed term	data-layer (engine) 5, lib 1
 6	function @semver_subset/2	not on the device: no computed term	node 5, lib 1
-6	functor @rx_replace/3	not on the device: no computed term	data-layer (engine) 5, lib 1
-4	function @join/2	not on the device: no computed term	lib 4
+4	function @join/2	not on the device: no computed term	lib 3, engine 1
 4	function @sha256/1	not on the device: no computed term	lib 3, data-layer 1
 4	shipped functor @cast_int/1	not on the device: no computed term	data-layer (engine) 4
 3	function @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
@@ -52,8 +51,8 @@
 2	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1, rerail 1
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
 1	function @ascii_lower/1	not on the device: no computed term	lib 1
-1	function @glob_sub/3	not on the device: no computed term	lib 1
-1	function @package_of/1	not on the device: no computed term	lib 1
+1	function @glob_sub/3	not on the device: no computed term	engine 1
+1	function @package_of/1	not on the device: no computed term	engine 1
 1	function @to_precision/2	not on the device: no computed term	lib 1
 1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @class_prefix/1	not native: sqlite: error: no SQL for @class_prefix($a)	data-layer (engine) 1
