@@ -274,6 +274,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
+    // The memory profile's bytes let go, by relation and by span: totals for its report, no reusable results.
+    ("code_rule_dsl/logic/profile/memory.rs", "BY_NAME"),
+    ("code_rule_dsl/logic/profile/memory.rs", "BY_SPAN"),
     // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
     // installed, as `FUNCTORS`.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
