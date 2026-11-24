@@ -327,3 +327,12 @@ Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers a
    `padded`; `drop_uncalled_fns` drops a function or a table nothing calls (step 7).
 6. **Tables**: `TOKEN` gives a pair's kind and code by one load (`+ 256`, `+ 512` for `<:`), `WORDS` is built at
    compile time from `WORD_LIST` (step 8), and the block's classes are one pair, lean's `LO`, `HI` (step 11).
+
+### What the refusals left reach
+
+Over the corpus the corpus tests read (2,013 `.rr` files): no string holds a `\u` escape (each `\u` in one is `\\u`,
+an escaped backslash, then `u`); no file holds four backticks; three files hold a bare number of 19 digits or more,
+four numbers in all. Two of them fit an `i64` (lean's `NUM`) and two do not (lean's `BAD`). Tier 1 sends those three
+files to the engine, and the corpus tests find its tape the engine's. Closing a refusal past this would take a mask
+of an `i64`'s bound, a reader of characters, or a region whose closer is as long as its opener in every executor, for
+cases the corpus holds three files of. That is where this work stops.
