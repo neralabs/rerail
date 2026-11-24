@@ -1482,7 +1482,8 @@ fn only_the_main_checkout_reads(name: &str, damage: fn(&Path) -> bool) {
         let lists = |checkout: &Path| git_output(checkout, &["config", "--list"], &[]).status;
         assert!(!lists(&main).success(), "Git reads the damaged file in the main checkout");
         assert!(lists(&linked).success(), "Git opens the linked worktree");
-        assert!(matches!(opener::discover(&main), Err(OpenError::Failed(_))));
+        let message = refusal(&main);
+        assert!(message.starts_with("cannot open Git repository"), "{message}");
         let (ours, git) = setting(&linked, "linked");
         assert_eq!(ours.as_deref(), Some("yes"), "test.linked in the linked worktree");
         assert_eq!(ours, git, "test.linked in the linked worktree");
@@ -1569,25 +1570,20 @@ fn an_unreadable_plain_include_refuses_the_linked_worktree_as_git_does() {
     the_linked_worktree_reads_too("plain-unreadable", unreadable);
 }
 
-/// In a linked worktree of a repository another user owns, an include only the main checkout's
-/// condition selects, which gix's open fails on, still refuses the worktree: an open with
-/// includes off would miss an included file that empties `safe.directory`, which Git reads and
-/// then refuses that worktree.
+/// In a linked worktree of a repository another user owns, the opener does not open again with no
+/// include followed where gix's open fails: that open would miss the included file that empties
+/// `safe.directory` here, which Git reads and then refuses the worktree.
 #[test]
 fn another_owners_linked_worktree_keeps_the_safe_directory_an_include_empties() {
     const NAME: &str =
         "another_owners_linked_worktree_keeps_the_safe_directory_an_include_empties";
     if in_child(NAME) {
         opener::ASSUME_ANOTHER_OWNER.store(true, std::sync::atomic::Ordering::Relaxed);
-        let opened = opener::discover(&fixture().join("linked"));
-        assert!(matches!(opened, Err(OpenError::Failed(_))), "the linked worktree opened");
+        let message = refusal(&fixture().join("linked"));
+        assert!(message.starts_with("cannot open Git repository"), "{message}");
         return;
     }
-    let (root, main, linked) = linked_fixture("owner-emptied");
-    let looped = root.join("loop.gitconfig");
-    let key = format!("includeIf.gitdir:{}.path", git_dir(&main));
-    git(&main, &["config", &key, &config_path(&looped)]);
-    std::fs::write(&looped, format!("[include]\n\tpath = {}\n", config_path(&looped))).unwrap();
+    let (root, _, linked) = linked_fixture("owner-emptied");
     let global = root.join("global-gitconfig");
     let emptied = root.join("emptied.gitconfig");
     std::fs::write(&emptied, "[safe]\n\tdirectory =\n").unwrap();
