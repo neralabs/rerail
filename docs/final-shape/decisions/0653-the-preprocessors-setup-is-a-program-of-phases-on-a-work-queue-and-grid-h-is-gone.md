@@ -105,6 +105,10 @@ the same loop, the same steps and requests, and wrote them all. With the phase i
     Passing the accumulator and the paste's result by value did not change it, nor did a deeper call stack (+2); at
     +16 Metal refuses the pipeline ("exceeds available stack space"), so the units' frames are near the M1 Max's
     stack. A whole compile (`RERAIL_METAL_UNITS=off`) takes past 10 minutes there. m3 and the CPU backend pass all.
+  - **Resolved by decision 0672** (2026-11-24): the 10 were not the stack. The G13's back end tests a loop
+    exit's number by its low byte, and `lp_loop_run`'s exits were numbered to 637: a thread past 255 left the
+    function as though it had returned, with the value its register held (the accumulator's words). With the large
+    helpers called the M1 Max and the M1 pass 47 of 47, and the engine refuses any kernel past 255 on a G13.
 - On Metal every eval test passes its 1 s (nextest's profile `second`) only past its kernels' setup: a test's process
   makes its pipelines (seconds) before its first run, so each times out at 1 s; one process (`cargo test`) runs the
   47 in 88 s on m3, its compile included.
