@@ -1330,8 +1330,17 @@ pub const TAIL: [TailStep; 27] = {
     [ContextPasses, CrossingCycles, HostCopiesOut, PassesOnce, Declared, ThreeValued, Findings, CoreDecls, SpanPatterns, GrammarNames, BuiltinsOut, WithinRead, KindSets, Unit, BooleanRelations, ScopeGlobs, SourcesOnRequest, OrderNodes, DeclareAxes, Checks, AggregateDemand, Unit, LiteralsOnce, DropSelfRules, DropRepeated, FactsOnce, Widen]
 };
 
-/// The tail's steps that read what the whole program reads (decision 0639 §6, downward).
-pub const DOWNWARD: [TailStep; 2] = [TailStep::KindSets, TailStep::SourcesOnRequest];
+/// The tail's steps that read what the whole program reads (decision 0639 §6, downward), in `TAIL`'s order: those
+/// that declare `Place::Downward` (§6a), with no list of their own.
+pub fn downward_steps() -> Vec<TailStep> {
+    let mut down: Vec<TailStep> = Vec::new();
+    for s in TAIL.iter().copied().filter(|s| s.place() == Place::Downward) {
+        if !down.contains(&s) {
+            down.push(s);
+        }
+    }
+    down
+}
 
 /// The tail's `steps` over `start`, in their order (`lowering_tail_on` runs `TAIL`).
 pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep]) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
@@ -1478,9 +1487,11 @@ pub fn module_steps() -> Vec<TailStep> {
 /// (a host's copies out, a pass's rows as one, `within` where read), so the downward steps make nothing from what
 /// the whole has taken out.
 pub fn program_steps() -> Vec<TailStep> {
-    let first = TAIL.iter().position(|s| DOWNWARD.contains(s)).unwrap_or(TAIL.len());
-    let before = TAIL[..first].iter().filter(|s| **s == TailStep::CoreDecls || s.place() == Place::Across);
-    before.chain(DOWNWARD.iter()).chain(TAIL[first..].iter().filter(|s| !DOWNWARD.contains(s))).copied().collect()
+    let down = downward_steps();
+    let first = TAIL.iter().position(|s| s.place() == Place::Downward).unwrap_or(TAIL.len());
+    let before = TAIL[..first].iter().copied().filter(|s| *s == TailStep::CoreDecls || s.place() == Place::Across);
+    let after = TAIL[first..].iter().copied().filter(|s| s.place() != Place::Downward);
+    before.chain(down.iter().copied()).chain(after).collect()
 }
 
 /// Module `m` tailed (decision 0639 §6a): the module steps over its scope's modules as lowered, `scope`, linked with

@@ -6972,8 +6972,8 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
             let own_heads: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).collect();
             let fresh = || lower::link_library(ms.clone()).unwrap().with(Some(own.clone())).unwrap();
             let m = super::tail_steps(fresh().version, true, fresh().lowered, None, &super::module_steps()).ok()?;
-            let d = super::tail_steps(Arc::clone(&m), true, fresh().lowered, None, &super::DOWNWARD).ok()?;
-            let after: Vec<super::TailStep> = super::program_steps().into_iter().filter(|s| !super::DOWNWARD.contains(s)).collect();
+            let d = super::tail_steps(Arc::clone(&m), true, fresh().lowered, None, &super::downward_steps()).ok()?;
+            let after: Vec<super::TailStep> = super::program_steps().into_iter().filter(|s| s.place() != super::Place::Downward).collect();
             let heads = |v: &Arc<Version>| -> BTreeMap<String, BTreeSet<String>> {
                 let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
                 for l in tail_lines(v) {
@@ -7006,7 +7006,7 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
 
 /// Spike for decision 0639 step 6 (the tail by module), over the packs named (`RERAIL_SPIKE_PACKS`, comma-separated
 /// pack directories or `all`; `phases` for the engine's phase programs) and `RERAIL_SPIKE_N` programs a pack at most:
-/// - E12: whether the tail's steps less the downward ones (`rr::DOWNWARD`), run on each module in its scope, give
+/// - E12: whether the tail's steps less the downward ones (`rr::downward_steps`), run on each module in its scope, give
 ///   together what they give on the whole library (the union of the parts' lines against the whole's), and where not,
 ///   the first step that makes the difference (by halving the steps run);
 /// - E13: whether a program's tail with the module steps first, then the downward ones, then the steps that follow
@@ -7018,7 +7018,8 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
 #[test]
 #[ignore = "spike for decision 0639 step 6: RERAIL_SPIKE_PACKS=python[,phases|all] RERAIL_SPIKE_N=<programs a pack>"]
 fn spike_0639_tail_by_module() {
-    use super::{DOWNWARD, TAIL, TailStep};
+    use super::{TAIL, TailStep};
+    let down = super::downward_steps();
     use std::collections::{BTreeMap, HashMap};
     use std::time::Instant;
     let lib = crate::code_rule_dsl::logic::rr::library();
@@ -7032,10 +7033,10 @@ fn spike_0639_tail_by_module() {
     packs.sort();
     packs.retain(|(n, _)| asked == "all" || asked.split(',').any(|a| a == n));
     let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
-    let module_steps: Vec<TailStep> = TAIL.iter().copied().filter(|s| !DOWNWARD.contains(s)).collect();
-    let first_down = TAIL.iter().position(|s| DOWNWARD.contains(s)).unwrap();
-    let after: Vec<TailStep> = TAIL[first_down..].iter().copied().filter(|s| !DOWNWARD.contains(s)).collect();
-    let module_first: Vec<TailStep> = module_steps.iter().chain(DOWNWARD.iter()).chain(after.iter()).copied().collect();
+    let module_steps: Vec<TailStep> = TAIL.iter().copied().filter(|s| !down.contains(s)).collect();
+    let first_down = TAIL.iter().position(|s| down.contains(s)).unwrap();
+    let after: Vec<TailStep> = TAIL[first_down..].iter().copied().filter(|s| !down.contains(s)).collect();
+    let module_first: Vec<TailStep> = module_steps.iter().chain(down.iter()).chain(after.iter()).copied().collect();
     let tail = |modules: &[lower::Module], own: Option<lower::Module>, declared: bool, steps: &[TailStep]| -> Result<Arc<Version>, String> {
         let linked = lower::link_library(modules.to_vec()).map_err(|e| e.to_string())?.with(own).map_err(|e| e.to_string())?;
         super::tail_steps(linked.version, declared, linked.lowered, None, steps).map_err(|e| e.to_string())
@@ -7233,7 +7234,7 @@ fn spike_0639_tail_by_module() {
             if let Ok(m) = moduled {
                 let linked = lower::link_library(ms.clone()).unwrap().with(Some(own.clone())).unwrap();
                 let t = Instant::now();
-                let down = super::tail_steps(Arc::clone(&m), true, linked.lowered, None, &DOWNWARD);
+                let down = super::tail_steps(Arc::clone(&m), true, linked.lowered, None, &down);
                 let t3 = t.elapsed().as_secs_f64();
                 if let Ok(d) = down {
                     let linked = lower::link_library(ms.clone()).unwrap().with(Some(own)).unwrap();
@@ -7285,7 +7286,7 @@ fn spike_0639_tail_by_module() {
             };
             let fresh = || lower::link_library(ms.clone()).unwrap().with(Some(own.clone())).unwrap();
             let Ok(m) = super::tail_steps(fresh().version, true, fresh().lowered, None, &module_steps) else { continue };
-            let Ok(d) = super::tail_steps(Arc::clone(&m), true, fresh().lowered, None, &DOWNWARD) else { continue };
+            let Ok(d) = super::tail_steps(Arc::clone(&m), true, fresh().lowered, None, &down) else { continue };
             let Ok(a) = super::tail_steps(Arc::clone(&d), true, fresh().lowered, None, &after) else { continue };
             let (hm, hd, ha) = (heads(&m), heads(&d), heads(&a));
             let changed = |x: &BTreeMap<String, BTreeSet<String>>, y: &BTreeMap<String, BTreeSet<String>>| -> BTreeSet<String> { x.keys().chain(y.keys()).filter(|k| x.get(*k) != y.get(*k)).cloned().collect() };
