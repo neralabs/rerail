@@ -565,9 +565,15 @@ UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, JSPACE const uint
     return lx == ly ? 0 : (lx < ly ? -1 : 1);
 }
 
-// Each binding's rows out (`stage_scatter` writes them at their scanned offsets).
+// A join's binding's finds (`V`, a word of two halves): its candidates' first place and a bit a candidate, set where
+// it is a row out (bit `q - lo` for place `q`), where its candidates are at most 32 consecutive places (an index's
+// group, or rows, not a view's walk); else `FINDS_WALK`, and its scatter walks its candidates again.
+#define FINDS_MAX 32u
+#define FINDS_WALK ((int64_t)NONE)
+
+// Each binding's rows out (`stage_scatter` writes them at their scanned offsets); a join's, its finds (`V`).
 UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
-                            JSPACE uint32_t* A, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
+                            JSPACE int64_t* V, JSPACE uint32_t* A, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
     if (t > s->cap_in) return;
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
@@ -596,6 +602,8 @@ UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals,
     uint32_t q_counts[16];
     for (uint32_t m = 0; m < 16; m++) q_counts[m] = 0;
     bool found = false;
+    bool kept = s->mode == 0 && s->v_has == 0u && s->v_parent == 0u && how <= 1u && hi - lo <= FINDS_MAX;
+    uint32_t finds = 0u;
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
         if (s->mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
@@ -605,9 +613,11 @@ UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals,
         uint64_t v = s->nops > 0 ? eval(s, L, t, R, r) : 0;
         for (uint32_t m = 0; m < s->npassed && m < 16; m++) q_counts[m] += s->passed[m] == NONE ? (uint32_t)ok : (uint32_t)(ok && out_bit(s, v, s->passed[m]));
         if (!ok || (s->last != NONE && !out_bit(s, v, s->last))) continue;
+        if (kept) finds |= 1u << (q - lo);
         c++;
     }
     if (exists) c = (uint32_t)(found != (s->mode == 2));
+    else if (s->mode == 0) V[t] = kept ? (int64_t)((uint64_t)lo | ((uint64_t)finds << 32)) : FINDS_WALK;
     counts[t] = c;
     if (!exists && s->counter != NONE) {
         if (p0 > 0) ukl_atomic_add(&counters[s->counter], p0);
@@ -628,7 +638,7 @@ UKL_LARGE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, JSP
 
 // Each binding's rows at its offset; the rows' count into `totals[out_slot]`.
 UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O,
-                              JSPACE uint32_t* A, JSPACE uint32_t* counters, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
+                              JSPACE const int64_t* V, JSPACE uint32_t* A, JSPACE uint32_t* counters, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
     // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
     uint32_t o0 = offsets[0];
@@ -664,6 +674,17 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSP
     if (s->mode == 1 || s->mode == 2) {
         // The count pass decided: a row out is the binding as it is.
         if ((offsets[t + 1] - o0) > at) write_row(s, L, t, R, 0, O, at);
+        return;
+    }
+    // A join's finds (`stage_count_one`'s): its rows out, each found once, none walked again.
+    uint64_t found = (uint64_t)V[t];
+    if (s->mode == 0 && (uint32_t)found != NONE) {
+        uint32_t first = (uint32_t)found, bits = (uint32_t)(found >> 32);
+        for (; bits != 0u && at < s->cap_out; bits &= bits - 1u) {
+            uint32_t q = first + ukl_ctz32(bits);
+            write_row(s, L, t, R, s->nkeys == 0u ? q : group_row(s, R, q), O, at);
+            at++;
+        }
         return;
     }
     candidates(s, L, t, R, F, kv, &lo, &hi, &how);
@@ -1265,7 +1286,9 @@ UKL_INLINE void scan_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPA
 // A rule's head rows made distinct: each row claims a place in an open-addressed table by its columns' hash (the
 // least row index of rows equal to it wins), and a row is kept when it holds its place. The kept rows keep their order.
 // `cap`: its rows' table's stride; `ocap`: its distinct rows' (a table its size script placed: as many as they are);
-// `places`: its places, `mask + 1` (its clear's count).
+// `places`: its places, `mask + 1` (its clear's count). Past them (`P + places`), each row's place: where its claim
+// ended, its own or an equal row's. Equal rows share one place (a claim stops at an equal row's), which holds the least
+// of them, so a row is kept where its place holds it: its mark one read, no hash or probe again.
 // `seen` (decision 0567): its rows less those a relation holds, through the relation's map (`h_at` in its map's
 // block, `hmask + 1` places of 3 words, a row of the relation a place, as a fold's key map is laid out); its rows out
 // placed in the map as the rows they become (its rows past `r_rows_at`'s length, in their order).
@@ -1315,10 +1338,11 @@ UKL_INLINE void dedup_claim_one(Longs T, JSPACE const uint32_t* totals, JSPACE u
     // Bounded: a place at a time.
     for (uint32_t k = 0; k <= mask; k++) {
         uint32_t seen = ukl_atomic_cas(&P[at], 0xffffffffu, x);
-        if (seen == 0xffffffffu) return;
-        if (same_row(d, T, seen, x)) { ukl_atomic_min(&P[at], x); return; }
+        if (seen == 0xffffffffu) { P[d->places + x] = at; return; }
+        if (same_row(d, T, seen, x)) { ukl_atomic_min(&P[at], x); P[d->places + x] = at; return; }
         at = (at + 1) & mask;
     }
+    P[d->places + x] = NONE;
 }
 
 // Whether the relation holds row `x` (`Dedup::seen`): its map's place for the row's key, and on, until an empty one.
@@ -1353,16 +1377,9 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
     if (x > d->cap) return;
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
     if (x >= n) { counts[x] = 0; return; }
-    uint32_t mask = dedup_mask(totals, d);
-    uint32_t at = row_hash(d, T, x, mask);
-    uint32_t keep = 0;
-    for (uint32_t k = 0; k <= mask; k++) {
-        uint32_t y = P[at];
-        if (y == 0xffffffffu) break;
-        if (y == x) { keep = 1; break; }
-        if (same_row(d, T, y, x)) break;
-        at = (at + 1) & mask;
-    }
+    // Its place (its claim's) holds the least of its equal rows.
+    uint32_t at = P[d->places + x];
+    uint32_t keep = (uint32_t)(at != NONE && P[at] == x);
     if (keep != 0u && d->seen != 0u && dedup_held(T, R, HB, d, x)) keep = 0u;
     counts[x] = keep;
 }
@@ -2055,14 +2072,14 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->totals, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
-        case PK_STAGE_COUNT: stage_count_one(L, j->R, j->totals, j->counters, c, j->A, j->D, j->F, j->s, t); break;
+        case PK_STAGE_COUNT: stage_count_one(L, j->R, j->totals, j->counters, c, V, j->A, j->D, j->F, j->s, t); break;
         case PK_SCAN_COUNT: scan_count_one(L, j->R, j->counters, c, j->totals, j->s, t); break;
         case PK_WITNESS_COUNT: witness_count_one(L, j->R, j->totals, c, j->bs, j->W[0], j->W[1], j->W[2], j->F, j->s, t); break;
         case PK_ROW_TEXT:
             row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
             break;
         case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t); break;
-        case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, j->A, j->counters, j->D, j->F, j->ws, t); break;
+        case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, V, j->A, j->counters, j->D, j->F, j->ws, t); break;
         case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->totals, c, O, j->s, t); break;
         case PK_ROW_SCATTER: row_scatter_one(L, V, j->totals, c, O, j->s, t); break;
         case PK_DEDUP_SCATTER: dedup_scatter_one(L, j->totals, c, O, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t); break;

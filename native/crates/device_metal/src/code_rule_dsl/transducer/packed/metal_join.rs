@@ -2129,6 +2129,14 @@ impl Batch {
             }
             None => job.reach(&self.dummy.buffer, 0, false)?,
         };
+        // A join's finds a binding (`stage_count_one`'s, its scatter's rows out): placed with its input where that is
+        // placed (its room its input's), as a row's values are.
+        if !from_one && stage.mode == JOIN {
+            let finds = Held::new(if left.placed() { 16 } else { 8 * n })?;
+            job.v_place = left.placed();
+            job.desc.v = job.reach(&finds.buffer, 0, true)?;
+            job.own.push(finds);
+        }
         (job.n, job.count, job.scatter) = (n, n, n);
         job.m = match (from_one, stage.r_len != 0) {
             (true, true) => (Some(job.desc.r + stage.r_at + REL_ROWS + ROWS_LEN), stage.nr as usize),
@@ -2297,14 +2305,15 @@ impl Batch {
             }
             None => None,
         };
-        // Its places placed with its input where that is placed: twice its rows, a power of two (5d).
-        let p = Held::new(if table.placed() { 16 } else { 4 * places })?;
+        // Its places placed with its input where that is placed: twice its rows, a power of two (5d); and as many
+        // again past them, each row's place (`dedup_claim_one`'s, its mark's).
+        let p = Held::new(if table.placed() { 16 } else { 2 * 4 * places })?;
         let n = table.room() + 1;
         let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
         job.dedup = Some(d);
         job.reads_placed(table, &[(3, DD_CAP)]);
         job.makes_placed(out, &[(3, DD_OCAP)]);
-        job.h_place = table.placed().then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 1 });
+        job.h_place = table.placed().then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
         job.desc.l = table.reach_by(&mut job, false)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.h = job.reach(&p.buffer, 0, true)?;

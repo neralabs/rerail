@@ -81,16 +81,6 @@ where
         Rows { v, h: h.cast::<u32>() }
     }
 
-    /// The lanes whose row is table row `y`'s (each lane's own `y`).
-    unsafe fn same(&self, d: &Dedup, t: *const i64, y: R<N>, on: W<N>) -> W<N> {
-        // Every lane's `y` is a row of the table (a lane off reads its own).
-        let mut m = on;
-        for c in 0..d.ncols.min(16) as usize {
-            m &= ln::gather64_ix(t.add(d.cols[c] as usize * d.cap as usize).cast::<u8>(), y, 3).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
-        }
-        m
-    }
-
     /// The lanes whose row the relation holds (`dedup_held`): each lane's walk of the map from its hash's place.
     unsafe fn held(&self, d: &Dedup, rel: *const u8, hb: *const u8, on: W<N>) -> W<N> {
         let m = hb.add(d.h_at as usize) as *const u32;
@@ -119,34 +109,26 @@ where
     }
 }
 
-/// Rows `x0..x1` of a dedup (all below its rows): each kept (1) where it is the first of its rows in the table's
-/// places and, less a relation's (`Dedup::seen`), the relation holds no equal row.
+/// Rows `x0..x1` of a dedup (all below its rows): each kept (1) where its place (its claim's, past the places) holds
+/// it, the least of its equal rows, and, less a relation's (`Dedup::seen`), the relation holds no equal row.
 #[allow(clippy::too_many_arguments)]
-pub(super) unsafe fn dedup_mark_lanes<const N: usize>(t: *const i64, p: *const u32, counts: *mut u32, rel: *const u8, hb: *const u8, d: &Dedup, mask: u32, x0: u32, x1: u32)
+pub(super) unsafe fn dedup_mark_lanes<const N: usize>(t: *const i64, p: *const u32, counts: *mut u32, rel: *const u8, hb: *const u8, d: &Dedup, x0: u32, x1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
     let mut x = x0;
     while x < x1 {
         let n = (x1 - x).min(N as u32);
-        let rows = Rows::<N>::of(d, t, x, n);
         let me = sr::<N>(x) + iota::<N>();
-        let (mut at, mut go, mut keep) = (rows.h & sr(mask), first::<N>(n), Mask::splat(false));
-        for _ in 0..=mask {
-            if !go.any() {
-                break;
-            }
-            let y = go.select(ln::gather32_ix(p.cast::<u8>(), at, 2), sr(NONE));
-            go &= y.simd_ne(sr(NONE));
-            let mine = go & y.simd_eq(me);
-            keep |= mine;
-            go &= !mine;
-            // Another row's place: the walk ends where it is this row's (an earlier equal row holds it).
-            go &= !rows.same(d, t, go.select(y, me), go);
-            at = (at + sr(1)) & sr(mask);
-        }
+        let mut a = [NONE; N];
+        core::ptr::copy_nonoverlapping(p.add((d.places + x) as usize), a.as_mut_ptr(), n as usize);
+        let at = Simd::from_array(a);
+        let on = at.simd_ne(sr(NONE));
+        // A lane with no place reads place 0, and is not kept.
+        let y = ln::gather32_ix(p.cast::<u8>(), on.select(at, sr(0)), 2);
+        let mut keep = on & y.simd_eq(me);
         if d.seen != 0 && keep.any() {
-            keep &= !rows.held(d, rel, hb, keep);
+            keep &= !Rows::<N>::of(d, t, x, n).held(d, rel, hb, keep);
         }
         let c: [u32; N] = keep.select(sr(1), sr(0)).to_array();
         core::ptr::copy_nonoverlapping(c.as_ptr(), counts.add(x as usize), n as usize);
@@ -166,18 +148,24 @@ where
         let at0 = (Rows::<N>::of(d, t, x, n).h & sr(mask)).to_array();
         for (i, &a0) in at0.iter().enumerate().take(n as usize) {
             let me = x + i as u32;
-            let mut a = a0;
+            let (mut a, mut ended) = (a0, NONE);
             for _ in 0..=mask {
                 let place = at(p.add(a as usize));
                 match place.compare_exchange(NONE, me, SeqCst, SeqCst) {
-                    Ok(_) => break,
+                    Ok(_) => {
+                        ended = a;
+                        break;
+                    }
                     Err(seen) if same_row(d, t, seen, me) => {
                         place.fetch_min(me, SeqCst);
+                        ended = a;
                         break;
                     }
                     Err(_) => a = (a + 1) & mask,
                 }
             }
+            // Its place, past the places: its mark's.
+            *p.add((d.places + me) as usize) = ended;
         }
         x += n;
     }

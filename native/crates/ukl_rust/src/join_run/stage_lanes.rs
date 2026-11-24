@@ -217,8 +217,8 @@ trait Visit<const N: usize>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    /// A tile of `nt` bindings begins.
-    fn tile(&mut self, _nt: u32) {}
+    /// A tile of `nt` bindings begins: each one's group's first place and length.
+    fn tile(&mut self, _nt: u32, _first: &[u32], _len: &[u32]) {}
     /// Candidates `k..k + N` of a chunk: each lane's binding and row, `m` the lanes whose row matches.
     unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32);
     /// A chunk's `n` candidates are done: the tile's bindings `lo..hi` had theirs at `sk[i]..ek[i]` of it.
@@ -414,7 +414,7 @@ impl Lanes<'_> {
                 st(len.as_mut_ptr().add(g as usize), e - a);
                 g += N as u32;
             }
-            v.tile(nt);
+            v.tile(nt, &first, &len);
             // The candidates, `CANDS` a chunk: each binding's group's places in order (a group longer than the room
             // left goes on in the next chunk).
             let (mut i, mut j) = (0u32, 0u32);
@@ -514,14 +514,36 @@ where
     run: u32,
     p0: I<N>,
     q: [I<N>; 16],
+    /// A join's finds (`V`, `stage_count_one`'s; null: none kept): the tile's bindings' first places (`NONE` where
+    /// their groups are longer than `FINDS_MAX`), their bits, their candidates in the chunks before, and the chunk's
+    /// verdicts, a bit a candidate.
+    v: *mut i64,
+    lo: [u32; TILE + SLACK],
+    bits: [u32; TILE + SLACK],
+    seen: [u32; TILE + SLACK],
+    pb: [u64; (CANDS + SLACK) / 64 + 2],
 }
 
 impl<const N: usize> Visit<N> for Count<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    fn tile(&mut self, nt: u32) {
+    fn tile(&mut self, nt: u32, first: &[u32], len: &[u32]) {
         self.cnt[..nt as usize].fill(0);
+        if self.v.is_null() {
+            return;
+        }
+        let mut i = 0;
+        while i < nt as usize {
+            // SAFETY: the tile's arrays, `SLACK` past its bindings.
+            unsafe {
+                let short = ld::<N>(len.as_ptr().add(i)).simd_le(sr(FINDS_MAX));
+                st(self.lo.as_mut_ptr().add(i), short.select(ld::<N>(first.as_ptr().add(i)), sr(NONE)));
+                st(self.bits.as_mut_ptr().add(i), sr(0));
+                st(self.seen.as_mut_ptr().add(i), sr(0));
+            }
+            i += N;
+        }
     }
 
     unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32) {
@@ -540,6 +562,10 @@ where
         let bits = pass.to_bitmask();
         st(self.pre.as_mut_ptr().add(k as usize), sr::<N>(self.run) + ranks::<N>(bits));
         self.run += bits.count_ones();
+        if !self.v.is_null() {
+            // `k` is a multiple of `N`, a power of two below 64: its bits in one word.
+            self.pb[k as usize / 64] |= bits << (k % 64);
+        }
     }
 
     unsafe fn chunk(&mut self, n: u32, lo: u32, hi: u32, sk: &[u32], ek: &[u32]) {
@@ -552,24 +578,58 @@ where
             let got = R::gather_select(&self.pre, on, e.cast::<usize>(), sr(0)) - R::gather_select(&self.pre, on, a.cast::<usize>(), sr(0));
             let c = self.cnt.as_mut_ptr().add(i as usize);
             st(c, ld::<N>(c) + got);
+            if !self.v.is_null() {
+                // Each binding's verdicts here, its candidates `a..e` of the chunk: a field of at most `FINDS_MAX`
+                // bits (a longer group's, unread), past the bits of its candidates in the chunks before.
+                let w = ln::gather64_ix(self.pb.as_ptr().cast::<u8>(), a >> sr(3), 0);
+                let n = (e - a).cast::<u64>();
+                let field = (w >> (a & sr(7)).cast::<u64>()) & ((Simd::splat(1u64) << n) - Simd::splat(1));
+                let (bp, sp) = (self.bits.as_mut_ptr().add(i as usize), self.seen.as_mut_ptr().add(i as usize));
+                let seen = ld::<N>(sp);
+                let bits = ld::<N>(bp) | (field << seen.cast::<u64>()).cast::<u32>();
+                st(bp, on.cast::<i32>().select(bits, ld::<N>(bp)));
+                st(sp, on.cast::<i32>().select(seen + (e - a), seen));
+            }
             i += N as u32;
+        }
+        if !self.v.is_null() {
+            self.pb.fill(0);
         }
     }
 
     unsafe fn tile_end(&mut self, ta: u32, nt: u32) {
         core::ptr::copy_nonoverlapping(self.cnt.as_ptr(), self.counts.add(ta as usize), nt as usize);
+        if self.v.is_null() {
+            return;
+        }
+        for i in 0..nt as usize {
+            *self.v.add(ta as usize + i) = if self.lo[i] == NONE { FINDS_WALK } else { (u64::from(self.lo[i]) | u64::from(self.bits[i]) << 32) as i64 };
+        }
     }
 }
 
 /// Bindings `t0..t1` of a relational stage (`runs_at_lanes`), all below its input's rows: each one's count of rows
 /// out (a semi-join's and an anti-join's 0 or 1) into `counts`, its rows matched and passed into `acc`.
-pub(super) unsafe fn stage_count_lanes<const N: usize>(st: &St, j: &Job, counts: *mut u32, t0: u32, t1: u32, acc: &mut [u32; 17])
+pub(super) unsafe fn stage_count_lanes<const N: usize>(st: &St, j: &Job, counts: *mut u32, v: *mut i64, t0: u32, t1: u32, acc: &mut [u32; 17])
 where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
     let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize) };
-    let mut v = Count::<N> { counts, cnt: [0; TILE + SLACK], pre: [0; CANDS + SLACK + 1], run: 0, p0: si(0), q: [si(0); 16] };
+    let v = if s.mode == 0 { v } else { core::ptr::null_mut() };
+    let mut v = Count::<N> {
+        counts,
+        cnt: [0; TILE + SLACK],
+        pre: [0; CANDS + SLACK + 1],
+        run: 0,
+        p0: si(0),
+        q: [si(0); 16],
+        v,
+        lo: [0; TILE + SLACK],
+        bits: [0; TILE + SLACK],
+        seen: [0; TILE + SLACK],
+        pb: [0; (CANDS + SLACK) / 64 + 2],
+    };
     if s.mode != 0 {
         // A semi-join's binding is 1 where its walk found a row, an anti-join's where it found none.
         struct Exists<const N: usize>(Count<N>, bool)
@@ -579,8 +639,8 @@ where
         where
             LaneCount<N>: SupportedLaneCount,
         {
-            fn tile(&mut self, nt: u32) {
-                self.0.tile(nt);
+            fn tile(&mut self, nt: u32, first: &[u32], len: &[u32]) {
+                self.0.tile(nt, first, len);
             }
             unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32) {
                 self.0.each(l, b, row, m, k);
@@ -658,7 +718,17 @@ where
         if !m.any() {
             return;
         }
-        let w = m & l.passes(b, row);
+        self.put(l, b, row, m & l.passes(b, row));
+    }
+}
+
+impl Scatter {
+    /// The rows of lanes `w` out, in their order, from the next place.
+    #[inline(always)]
+    unsafe fn put<const N: usize>(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, w: W<N>)
+    where
+        LaneCount<N>: SupportedLaneCount,
+    {
         let bits = w.to_bitmask();
         if bits == 0 {
             return;
@@ -680,7 +750,7 @@ where
 
 /// Bindings `t0..t1` of a join (`runs_at_lanes`, mode 0), all its live bindings from `t0`: their rows out from `t0`'s
 /// offset (`offsets`, less `o0`; each binding's follow the one before's), below the stage's room.
-pub(super) unsafe fn stage_scatter_lanes<const N: usize>(st: &St, j: &Job, offsets: *const u32, o: *mut i64, t0: u32, t1: u32)
+pub(super) unsafe fn stage_scatter_lanes<const N: usize>(st: &St, j: &Job, offsets: *const u32, o: *mut i64, finds: *const i64, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -689,5 +759,85 @@ where
     let o0 = *offsets;
     let end = (*offsets.add(t1 as usize)).wrapping_sub(o0).min(s.cap_out);
     let mut v = Scatter { o, run: (*offsets.add(t0 as usize)).wrapping_sub(o0), end };
-    l.walk::<N>(j.f, t0, t1, &mut v);
+    if N != 8 {
+        l.walk::<N>(j.f, t0, t1, &mut v);
+        return;
+    }
+    // A tile at a time: its bindings' finds (`stage_count_one`'s) where each has them, else its walk again.
+    let mut ta = t0;
+    while ta < t1 {
+        let nt = (t1 - ta).min(TILE as u32);
+        let f = finds.add(ta as usize);
+        if (0..nt as usize).any(|i| *f.add(i) as u32 == NONE) {
+            l.walk::<N>(j.f, ta, ta + nt, &mut v);
+        } else {
+            l.found::<N>(f, ta, nt, &mut v);
+        }
+        ta += nt;
+    }
+}
+
+/// For each byte, the places of its set bits in order (the rest 0): a binding's finds' candidates, 8 bits a read.
+const PLACES8: [[u32; 8]; 256] = {
+    let mut t = [[0u32; 8]; 256];
+    let mut bits = 0;
+    while bits < 256 {
+        let (mut k, mut i) = (0, 0);
+        while i < 8 {
+            if bits >> i & 1 != 0 {
+                t[bits][k] = i as u32;
+                k += 1;
+            }
+            i += 1;
+        }
+        bits += 1;
+    }
+    t
+};
+
+impl Lanes<'_> {
+    /// A tile's `nt` bindings from `ta` out by their finds (`f`, every one's kept): their candidates that are rows
+    /// out, expanded into chunks in their order, `N` (8) rows a step, none probed or tested again.
+    unsafe fn found<const N: usize>(&self, f: *const i64, ta: u32, nt: u32, v: &mut Scatter)
+    where
+        LaneCount<N>: SupportedLaneCount,
+    {
+        let s = self.st.s;
+        let iota = lane::<N>();
+        let (mut cb, mut cq) = ([0u32; CANDS + SLACK], [0u32; CANDS + SLACK]);
+        let mut i = 0u32;
+        while i < nt {
+            // The rows out of bindings from `i`, while a chunk has room for another's `FINDS_MAX`.
+            let mut n = 0u32;
+            while i < nt && n <= (CANDS as u32) - FINDS_MAX {
+                let w = *f.add(i as usize) as u64;
+                let (mut at, mut bits) = (w as u32, (w >> 32) as u32);
+                while bits != 0 {
+                    let byte = (bits & 255) as usize;
+                    st(cq.as_mut_ptr().add(n as usize), sr::<N>(at) + Simd::from_slice(&PLACES8[byte]));
+                    st(cb.as_mut_ptr().add(n as usize), sr::<N>(i));
+                    n += byte.count_ones();
+                    bits >>= 8;
+                    at += 8;
+                }
+                i += 1;
+            }
+            let mut k = 0;
+            while k < n {
+                let valid = (sr::<N>(k) + iota).simd_lt(sr(n));
+                let (bi, q) = (ld::<N>(cb.as_ptr().add(k as usize)), ld::<N>(cq.as_ptr().add(k as usize)));
+                let (bi, q) = (valid.select(bi, sr(bi[0])), valid.select(q, sr(q[0])));
+                let b = BindAt::new(self, sr::<N>(ta) + bi, false);
+                let id = if s.nkeys == 0 {
+                    q
+                } else if valid.all() && q.simd_eq(sr::<N>(q[0]) + iota).all() {
+                    ln::rel_group_rows(self.d, s.r_index, q[0])
+                } else {
+                    ln::rel_group_row(self.d, s.r_index, q)
+                };
+                v.put(self, &b, &Row::new(self.d, id), valid.cast::<i64>());
+                k += N as u32;
+            }
+        }
+    }
 }

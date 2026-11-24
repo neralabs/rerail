@@ -808,6 +808,11 @@ impl St<'_> {
     }
 }
 
+/// A join's binding's finds (`join_stages.uglykl`'s): its candidates' first place and a bit a candidate, where they
+/// are at most `FINDS_MAX` consecutive places; else `FINDS_WALK`.
+const FINDS_MAX: u32 = 32;
+const FINDS_WALK: i64 = NONE as i64;
+
 #[derive(Clone, core::marker::Copy)]
 struct Walk {
     lo: u32,
@@ -1376,7 +1381,11 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     let (mut c, mut p0, mut found) = (0u32, 0u32, false);
     let mut q_counts = [0u32; 16];
     let passed = s.npassed.min(16) as usize;
+    // A join's finds (`V`): a bit a candidate of at most `FINDS_MAX` consecutive places, set where it is a row out.
+    let kept = s.mode == 0 && s.v_has == 0 && s.v_parent == 0 && w.how <= 1 && w.hi.wrapping_sub(w.lo) <= FINDS_MAX;
+    let (mut finds, mut q) = (0u32, w.lo);
     st.each(w, |r| {
+        q += 1;
         if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv) } {
             return true;
         }
@@ -1391,12 +1400,17 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
             *q += (ok && (bit == NONE || st.out_bit(v, bit))) as u32;
         }
         if ok && (s.last == NONE || st.out_bit(v, s.last)) {
+            if kept {
+                finds |= 1 << (q - 1 - w.lo);
+            }
             c += 1;
         }
         true
     });
     if exists {
         c = (found != (s.mode == 2)) as u32;
+    } else if s.mode == 0 {
+        *b.v.add(t as usize) = if kept { (u64::from(w.lo) | u64::from(finds) << 32) as i64 } else { FINDS_WALK };
     }
     *counts.add(t as usize) = c;
     if !exists {
@@ -1449,6 +1463,17 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
                     // A kept row's aggregate is found: the count pass kept it for that.
                     col_put(o, s.bind_slot[0], s.cap_out, a, v.unwrap_or(0));
                 }
+            }
+        }
+        0 if *b.v.add(t as usize) as u32 != NONE => {
+            // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again.
+            let found = *b.v.add(t as usize) as u64;
+            let (first, mut bits) = (found as u32, (found >> 32) as u32);
+            while bits != 0 && a < s.cap_out {
+                let q = first + bits.trailing_zeros();
+                st.write_row(t, if s.nkeys == 0 { q } else { st.cand_row(1, q) }, o, a);
+                bits &= bits - 1;
+                a += 1;
             }
         }
         _ => {
@@ -2007,7 +2032,7 @@ unsafe fn stage_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     // The stage's counters, the range's added once.
     let mut acc = [0u32; 17];
     if stage_lanes::runs_at_lanes(s) {
-        stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }>(st, j, b.c, t0.min(live), live, &mut acc);
+        stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.v, t0.min(live), live, &mut acc);
     } else {
         for t in t0..live {
             stage_count_one(st, j, b, t, &mut acc);
@@ -2048,8 +2073,7 @@ unsafe fn dedup_mark_range(t: *const i64, totals: *const u32, p: *const u32, cou
     let x1 = x1.min(d.cap.saturating_add(1));
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     fill_u32(counts, x0.max(n), x1, 0);
-    let mask = dedup_mask(totals, d);
-    dedup_lanes::dedup_mark_lanes::<{ stage_lanes::LANES }>(t, p, counts, r, hb, d, mask, x0.min(n), x1.min(n));
+    dedup_lanes::dedup_mark_lanes::<{ stage_lanes::LANES }>(t, p, counts, r, hb, d, x0.min(n), x1.min(n));
 }
 
 unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
@@ -2059,7 +2083,7 @@ unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
         if t0 == 0 && t1 > 0 {
             *j.totals.add(s.out_slot as usize) = (*b.c.add(n as usize)).wrapping_sub(*b.c);
         }
-        stage_lanes::stage_scatter_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.o, t0.min(n), t1.min(n));
+        stage_lanes::stage_scatter_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.o, b.v, t0.min(n), t1.min(n));
         return;
     }
     if !matches!(s.mode, 1 | 2 | 7) {

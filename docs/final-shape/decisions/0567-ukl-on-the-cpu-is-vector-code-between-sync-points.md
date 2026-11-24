@@ -1090,6 +1090,56 @@ Two costs remain that are structure, not vector code:
 - **A dedup's rows are hashed twice.** The claim hashes every row, then the mark hashes it again and walks the same
   places.
 
+### The count keeps what it found (the user's: "sure, go ahead and do that", 2026-11-24)
+
+Both costs above are removed in the program itself (`join_stages.uglykl`), so Metal runs the same phases as the CPU.
+
+**A join's finds.** The count already decides each candidate's verdict, but the scan has not yet given any binding
+its offset. So it cannot write (binding, row) pairs in their order. Instead it keeps, for each binding of a join
+(mode 0), its finds in the job's `V`: a word of the group's first place and a bit a candidate, set where the
+candidate is a row out.
+- `V` is placed with the stage's input where that is placed, 8 bytes a binding, as a row job's values are
+  (`v_place`).
+- The finds are kept where a binding's candidates are at most 32 consecutive places: an index's group, or the rows
+  themselves. A view's walk (`has`, a parent's children) and a longer group keep `FINDS_WALK` instead.
+- The scatter writes a binding's rows from its finds: place to row, then the row out. It does no hash, group
+  lookup, dead-row read, key compare, column test or row program again. A binding of `FINDS_WALK` is walked as
+  before.
+- On the CPU, the count's lanes build each binding's bits from a chunk's verdicts, a field of a bitset at the
+  binding's candidates, shifted past its candidates in the chunks before. The scatter expands a tile's finds a byte
+  at a time (a table of each byte's set bits), into candidates that are all rows out. It walks a tile again only
+  where one binding of it is `FINDS_WALK`.
+
+**A dedup's places.** Equal rows share one place, because a claim stops at an equal row's place. That place holds
+the least of them, and a place never empties. So the claim keeps where each row's claim ended, past the places
+(`P + places`, the places' array twice as long). The mark is one read: a row is kept where its place holds it. Its
+hash, its probe and its rows' compares are gone. A relation's held rows (`Dedup::seen`) are still found through the
+relation's map.
+
+The join program's digests (`rerail_ukl_rust::JOIN_PROGRAM`) are this source's. Until they were brought to it,
+the CPU device ran the program's compiled C instead of its Rust: 743 ms against 15 ms for the keyed join.
+
+**Measured** (m3, opt-level 3, one thread, the program's time, the best of 10; the machine's runs differ by up to a
+tenth from one to the next):
+
+| | keyed join, 100 K × 100 K | closure, 400 nodes |
+|---|---|---|
+| the scatter packed (above) | 19.2 ms | 24.7 ms |
+| the finds and the dedup's places | 12.8 ms | 20.9 ms |
+
+Whole runs, against the CPU's scalar joins: the keyed join takes 77.6 ms against 105.7 ms, and the closure 58.0 ms
+against 50.8 ms. Of a whole run, the program is now its smaller part: the rest is the host's work (the rule's SQL,
+the rows' way out), the same for both columns.
+
+In the keyed join's program (`sample`), the count is now the largest phase (335 samples), then the claim (163), the
+scatter (113) and the kept rows' scan (73). The mark is too small to be listed.
+
+On Metal (the M1 Max; the M3 Max's GPU did not answer the farm's probe that day), the device tests pass as before. 38
+pass, and `parity_row_texts` fails in two cases of a product of two relations, then texts made per row and compared
+(`cat`, `str_cmp`): the device has 0 or 38 rows where the CPU has 14,637 and 17,140. It fails the same way with the
+source before this change, only within the whole suite and not when it runs alone, so it is not this change's; it
+is not yet found.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
