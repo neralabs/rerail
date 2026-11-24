@@ -3760,11 +3760,49 @@ impl Batch {
         DOC.with(|h| h.set((key, i)));
         Some(i)
     }
-    /// The document index and node of id `n`.
+    /// The document index and node of id `n` (the last id found tried first: `NODE`).
     pub fn node(&self, n: i64) -> Option<(usize, u32)> {
+        self.node_hint(n).map(|(doc, local, _)| (doc, local))
+    }
+    /// `node`, and the node's tape node (`Projected::node`) where it is known: a rule's body probes several views by
+    /// the same node in turn (`kind(n, k)`, `text(n, s)`, `docof(n, d)`), and each probe searched the id's granule and
+    /// selected its tape node again, a sixth of `all`'s per-file samples. The hint is the thread's last id: its
+    /// document's projection (by address), its index, local id and tape node (`NONE` until read, `tape_node`).
+    #[inline]
+    fn node_hint(&self, n: i64) -> Option<(usize, u32, u32)> {
+        let key = self.docs.addr();
+        let hit = NODE.with(|h| {
+            let (k, id, doc, local, x, p) = h.get();
+            (k == key && id == n && doc < self.docs.len() && std::ptr::from_ref(&self.docs[doc]) as usize == p).then_some((doc, local, x))
+        });
+        if hit.is_some() {
+            return hit;
+        }
         let doc = self.doc(n >> 32)?;
-        let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
-        (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
+        let p = &self.docs[doc];
+        let local = p.local_of((n & 0xffff_ffff) as u32)?;
+        if n < 0 || local >= p.len() {
+            return None;
+        }
+        NODE.with(|h| h.set((key, n, doc, local, NONE, std::ptr::from_ref(p) as usize)));
+        Some((doc, local, NONE))
+    }
+    /// Node `local` of document `doc`'s tape node, id `n`: the hint's where it is the thread's last id (`node_hint`),
+    /// else selected and kept in it.
+    #[inline]
+    fn tape_node(&self, doc: usize, local: u32, n: i64, known: u32) -> u32 {
+        if known != NONE {
+            return known;
+        }
+        let p = &self.docs[doc];
+        let x = p.node(local);
+        NODE.with(|h| {
+            let (k, id, d, l, _, q) = h.get();
+            if k == self.docs.addr() && id == n && d == doc && l == local && q == std::ptr::from_ref(p) as usize {
+                h.set((k, id, d, l, x, q));
+            }
+        });
+        x
     }
     /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
     fn by_kind(&self, kind: i64) -> &[(u32, u32, u32)] {
@@ -4340,7 +4378,11 @@ impl Viewed {
             if let Some(up) = up {
                 let _ = parent.set(up);
             }
-            let x = || *node.get_or_init(|| p.node(local));
+            // A probe by the node's own id reads its tape node through the thread's hint (`Batch::tape_node`).
+            let x = || *node.get_or_init(|| match id {
+                Some(n) => b.tape_node(doc, local, n, NONE),
+                None => p.node(local),
+            });
             for (o, &c) in vals.iter_mut().zip(columns) {
                 let at = At {
                     node: &x,
@@ -4355,8 +4397,8 @@ impl Viewed {
             each(row, &vals[..columns.len()]);
         };
         if column == self.own() {
-            if let Some((doc, local)) = b.node(value) {
-                emit(doc, local, NONE, Some(value), None);
+            if let Some((doc, local, x)) = b.node_hint(value) {
+                emit(doc, local, x, Some(value), None);
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
@@ -5194,6 +5236,9 @@ thread_local! {
     static LOCATED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// `Batch::doc`'s hint: the documents (their address) and the index last found.
     static DOC: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// `Batch::node_hint`'s hint: the documents (their address), the id last found, its document, local id, tape node
+    /// (`NONE` until read) and its document's projection (its address).
+    static NODE: std::cell::Cell<(usize, i64, usize, u32, u32, usize)> = const { std::cell::Cell::new((0, -1, 0, 0, NONE, 0)) };
 }
 
 // cratify: `candidate_spike` is rerail-lang-python's (it mounts it)
