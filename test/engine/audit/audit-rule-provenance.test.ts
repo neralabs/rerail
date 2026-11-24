@@ -232,45 +232,72 @@ function storedEmptyProvenance(path: string): number {
   }
 }
 
+/** What the reads of audits a thread prepared returned (`countAuditReads`). */
+interface AuditReads {
+  /** Every row they returned. */
+  readonly rows: number;
+  /** The UTF-8 bytes of the text those rows held: each audit's id and provenance text a read returned. */
+  readonly textBytes: number;
+}
+
+/** The UTF-8 bytes of the text one returned row holds, a plucked value or each of a row's columns. */
+function textBytesOf(row: unknown): number {
+  if (typeof row === "string") return Buffer.byteLength(row);
+  if (typeof row !== "object" || row === null) return 0;
+  return Object.values(row).reduce((sum: number, value) => sum + textBytesOf(value), 0);
+}
+
 /**
- * Times the statements this thread prepares from here on that read audits (`FROM audits`): each `get`, `all` and `run`,
- * and each row `iterate` gives. The time a write takes to commit is left out: it waits on the disk, whatever a statement
- * reads. Puts `prepare` back on `restore`. A move's thread prepares its own statements, which this does not see.
+ * Counts what the statements this thread prepares from here on that read audits (`FROM audits`) return: each row a
+ * `get` or `all` gives and each row `iterate` gives, and the text they hold (`AuditReads`). better-sqlite3 gives no
+ * count of the rows SQLite reads to answer a statement, so this counts the rows each one returns, a count no load
+ * changes. The move's statements name their index and test nothing else in a WHERE term, so each audit row SQLite
+ * reads for them is one they return. Puts `prepare` back on `restore`. A move's thread prepares its own statements,
+ * which this does not see.
  */
-function timeAuditReads(): { totalMs: () => number; restore: () => void } {
-  let total = 0;
-  const timed = <T>(run: () => T): T => {
-    const began = performance.now();
-    try {
-      return run();
-    } finally {
-      total += performance.now() - began;
-    }
+function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
+  let rows = 0;
+  let textBytes = 0;
+  const returned = (row: unknown): void => {
+    rows += 1;
+    textBytes += textBytesOf(row);
   };
   const prepare = Database.prototype.prepare;
   const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
     const statement = prepare.call(this, source);
     if (!/\bFROM audits\b/u.test(source)) return statement;
-    for (const kind of ["get", "all", "run"] as const) {
-      const original = statement[kind].bind(statement) as (...values: unknown[]) => unknown;
-      Object.assign(statement, { [kind]: (...values: unknown[]) => timed(() => original(...values)) });
-    }
+    const get = statement.get.bind(statement) as (...values: unknown[]) => unknown;
+    const all = statement.all.bind(statement) as (...values: unknown[]) => unknown[];
     const iterate = statement.iterate.bind(statement) as (...values: unknown[]) => IterableIterator<unknown>;
     Object.assign(statement, {
+      get: (...values: unknown[]) => {
+        const row = get(...values);
+        if (row !== undefined) returned(row);
+        return row;
+      },
+      all: (...values: unknown[]) => {
+        const found = all(...values);
+        found.forEach(returned);
+        return found;
+      },
       iterate: (...values: unknown[]) => {
-        const rows = iterate(...values);
+        const found = iterate(...values);
         return {
           [Symbol.iterator]() {
             return this;
           },
-          next: () => timed(() => rows.next()),
-          return: (value?: unknown) => rows.return?.(value) ?? { done: true, value },
+          next: () => {
+            const step = found.next();
+            if (step.done !== true) returned(step.value);
+            return step;
+          },
+          return: (value?: unknown) => found.return?.(value) ?? { done: true, value },
         };
       },
     });
     return statement;
   });
-  return { totalMs: () => total, restore: () => spy.mockRestore() };
+  return { reads: () => ({ rows, textBytes }), restore: () => spy.mockRestore() };
 }
 
 /**
@@ -378,13 +405,13 @@ interface LaterStart {
   readonly moved: number;
   readonly waits: readonly number[];
   readonly logged: string;
-  readonly readMs: number;
+  readonly reads: AuditReads;
 }
 
 /**
  * A later daemon start of the move on `path`, by the time `clock` gives: what it resolved to, each wait for an older
- * Rerail it asked its timer for (the first ends the start, as a stop would), what it wrote to stderr, and how long this
- * thread's reads of audits took.
+ * Rerail it asked its timer for (the first ends the start, as a stop would), what it wrote to stderr, and what this
+ * thread's reads of audits returned.
  */
 async function laterStart(path: string, clock: () => number): Promise<LaterStart> {
   const stop = new AbortController();
@@ -395,12 +422,12 @@ async function laterStart(path: string, clock: () => number): Promise<LaterStart
     return Promise.reject(new Error("stopped"));
   };
   const stderr = spyOnStderr();
-  const timed = timeAuditReads();
+  const counted = countAuditReads();
   try {
     const moved = await moveRuleProvenancesInWorker(path, stop.signal, { clock, timer });
-    return { moved, waits, logged: stderr.logged(), readMs: timed.totalMs() };
+    return { moved, waits, logged: stderr.logged(), reads: counted.reads() };
   } finally {
-    timed.restore();
+    counted.restore();
     stderr.restore();
   }
 }
@@ -1053,7 +1080,7 @@ describe("audit rule provenance", () => {
 
   it("reads no row of the audits an older Rerail recorded after the step, in its last batch or on its calling thread once nothing is left", async () => {
     const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
+    const written = writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
     openRerailDatabase(path).$client.close();
     // An older Rerail sharing the file then records 2,000 audits, each with its provenance in its row: about 200 KB,
     // with the audit's start after it.
@@ -1063,28 +1090,34 @@ describe("audit rule provenance", () => {
     // Eight days on, so the move does not wait for them.
     const clock = (): number => Date.now() + 8 * 24 * 3_600_000;
 
-    // What the move's reads of audits take, its batches and the checks before each: reading the start of each of those
-    // 2,000 rows took 125 ms in one batch, under its write lock, on Linux and 470 ms on Windows.
-    const moving = timeAuditReads();
+    // What the move's reads of audits return, its batches and the checks before each. A batch that read past the step
+    // read the start of each of those 2,000 rows, under its write lock.
+    const moving = countAuditReads();
+    let moved: number;
     try {
-      expect(await move(path, { clock })).toBe(20);
+      moved = await move(path, { clock });
     } finally {
       moving.restore();
     }
-    expect(moving.totalMs()).toBeLessThan(25);
+    // Its two batches return the 20 audits it takes, with their ids and provenance texts. The check at its start and the
+    // one before each of those batches return two rows: the first audit left to take, and the start of the last audit
+    // that names no stored copy, the older Rerail's 2,000th, which says whether that Rerail still records. The check
+    // before a third batch finds no audit left, and that batch returns none: 26 rows, and no text of the 2,000.
+    const taken = written.reduce((sum, { auditId, text: json }) => sum + Buffer.byteLength(auditId) + Buffer.byteLength(json), 0);
+    expect({ moved, reads: moving.reads() }).toEqual({ moved: 20, reads: { rows: 26, textBytes: taken } });
     expect(inlineAudits(path)).toBe(2_000);
 
     // The older Rerail goes on recording: its next audit begins an hour before the clock reads, so a start that found an
     // audit left to move would wait a week for it. A later start finds nothing left to move: it neither waits nor starts
     // a thread, and says nothing. A check that read past the last audit the step recorded would find the older Rerail's
     // audits. On the calling thread, the daemon's, which answers hooks, reading the start of each of those rows took 18
-    // to 1,134 ms on a real daemon's start.
+    // to 1,134 ms on a real daemon's start. Its check returns no row.
     recordAsOlder(path, "older-later", provenanceOf("/home/dev/app", 20), clock() - 3_600_000);
     const later = await laterStart(path, clock);
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.readMs).toBeLessThan(20);
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0 });
   }, 120_000);
 
   it("reads one audit row on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
@@ -1101,20 +1134,21 @@ describe("audit rule provenance", () => {
       return Promise.reject(new Error("stopped"));
     };
     const stderr = spyOnStderr();
-    const timed = timeAuditReads();
+    const counted = countAuditReads();
     let logged = "";
     try {
       expect(await moveRuleProvenancesInWorker(path, stop.signal, { timer })).toBe(0);
     } finally {
-      timed.restore();
+      counted.restore();
       logged = stderr.logged();
       stderr.restore();
     }
 
     expect(logged).toContain(`began at ${new Date(at).toISOString()}.`);
     // Reading the start of every audit in the week, and the row of each that began after the older Rerail's, took
-    // 69 ms on Linux and 195 ms on Windows.
-    expect(timed.totalMs()).toBeLessThan(20);
+    // 69 ms on Linux and 195 ms on Windows. The check returns two rows: the first audit left to take, and the start of
+    // the older Rerail's audit, the last recorded that names no stored copy; none of their text.
+    expect(counted.reads()).toEqual({ rows: 2, textBytes: 0 });
     expect(inlineAudits(path)).toBe(21);
   }, 60_000);
 
@@ -1138,13 +1172,15 @@ describe("audit rule provenance", () => {
     // The move runs on a thread of its own; on the calling thread, the daemon's, which answers hooks, the start's check
     // and the check once the move's thread ends each read one audit row at most. Bounded by the time the step recorded
     // alone, the move would stop at the 16th: it and the 14 after it would keep their copy for good.
-    const moving = timeAuditReads();
+    const moving = countAuditReads();
     try {
       expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(30);
     } finally {
       moving.restore();
     }
-    expect(moving.totalMs()).toBeLessThan(20);
+    // The start's check returns the first audit left to take and the start of the last that names no stored copy, the
+    // older Rerail's 2,000th; the check once the thread ends returns none.
+    expect(moving.reads()).toEqual({ rows: 2, textBytes: 0 });
     // Every audit recorded before the step reads as written. The older Rerail's stay in their rows, where it reads
     // them, the one its clock dated before the step included.
     expect(inlineAudits(path)).toBe(2_001);
@@ -1165,7 +1201,7 @@ describe("audit rule provenance", () => {
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.readMs).toBeLessThan(20);
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0 });
   }, 120_000);
 
   it.each([
