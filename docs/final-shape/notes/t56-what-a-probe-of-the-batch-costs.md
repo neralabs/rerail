@@ -81,6 +81,42 @@ batch whole, once, before any join reads it: no join runs inside it, so no read 
 Check: the rows are unchanged, and the peak is no higher than before. Measured: the per-file window's wall time and
 CPU, and the wait samples.
 
+### Step 1, done (e71074b664)
+
+One account per thread (`profile::ACCOUNTED`) holds what closed scopes (spans, walks) took. A walk's step subtracts
+it, and the makes a probe can sit inside are spans (`profile::once`). On `all` (CPU, m3 at load 30), the rows were
+unchanged:
+- `text`'s line went from 709 to 537 ns a row.
+- "batch: rows made" under the chunks is 12.9 s (25 makes, one a chunk), plus about 4.4 s more where a chunk's
+  `measure rr_long_text_node` reads the batch first.
+
+### Step 2, measured: no phase to make; the make's own work is the cost
+
+Step 1's figures answer step 2's question:
+- Every chunk makes its whole batch: 25 makes, one per chunk. Laziness saves nothing, and it costs nothing either.
+- No thread waits on another's make: no "batch: waited for another thread's make" span. The profile's blocked
+  waits total under 3 s of wall, none of them on the batch. The 12,504 wait samples in the earlier macOS sample
+  were idle pool threads, not waits for the make.
+
+So making the batch as a phase would remove neither CPU nor waits, and it is not done. The cost is the make's own
+work, per chunk (CPU s, summed over the 25 makes):
+
+| Part | CPU s |
+|---|---|
+| the matcher wave run (on the chunk's thread; 0.97 s more on the pool) | 6.92 |
+| the matcher's captures (1.55 s on the pool) | 2.39 |
+| node rows | 1.39 |
+| string annotations | 0.84 |
+| projected: identity maps, definition ids, granules | 0.84 |
+| intern atoms | 0.60 |
+
+Beside the make, each chunk counts the base relations the cross part reads (5.0 s: `docof` 1.3, `node` 1.2,
+`node_order` 1.1, `text` 0.7, the nodes its exports hold 0.7) and measures its exports (2.2 s). These are t50's item 1,
+moved from the stats phase into the chunks.
+
+Step 2 is now the make's own work, largest first: the wave run, which runs on the chunk's thread, not by parts on
+the pool.
+
 ### Step 3: one search for every relation, in its block
 
 The batch's relations (`vtab::Relation`) search a heap `ColumnIndex` (sorted ids and a fence every 64). The derived
@@ -108,6 +144,37 @@ read), from 204 ns.
 
 `Layered` collects a `Vec` a probe (its `filter`), and asks its parts per probe. Both are read in place, as
 `lookup_read` is. Measured: the lab's layered minus bare (30 ns now).
+
+### Steps 3 and 4, done (241c856165, aaaf1bb01c)
+
+The orders' search is one module, `rerail_blocks::order`: the fences, tags, prints, their spans and `find`. setfix's
+runs call it. The batch's relations keep one order a probed column in their block (`BlockVec`s: rows in value
+order, none for a column pushed in order; fences; a print a row), searched by it. The prints were setfix's already
+(derived orders are printed by default), so step 4 needed no new mechanism: the batch's relations had stayed off it.
+- The lab's `text` probe: 209 to 60.9 ns, and 102.5 ns in a second run on a busier host. `node` stayed at 48–50 ns
+  throughout.
+- On `all` (m3 at load 104): the rows were unchanged, and `text`'s line went from 537 to 399 ns a row.
+
+### Step 5, measured: small
+
+With values admitted, a layered relation's probe asks its parts (`Values::parts`' load, the name's lookup, `Parts::of`):
+30 ns in the lab, about 290 samples of a fresh 81,000-sample sample of `all`'s per-file window (head `aaaf1bb01c`, m3).
+The `Vec` under `Layered` in the older sample was the trait's default `filter_eq`, a constant-filtered view's rows
+found once per view (`View::filtered`), not per probe. Left as it is until it is a larger share.
+
+### What the per-file joins spend now
+
+The fresh sample's self samples under the joins' walk (`run_join_in_each::enter`, 21,247 inclusive):
+- the join's own loop (`cands::candidates` 1,531, `enter` 1,256, `RowRef::at` 852, `Cands::any` 373,
+  `Rows::each` 240, …): about 4,500;
+- an id's way to its place (decision 0640 B: `Projected::local_of` 786, `Projected::node` 784, `Ranks::select` 631,
+  `Numbering::granule` 359, `Batch::row_of_node` 231, `Table::low_of` 206, `Batch::offsets` 188, the node hint 164,
+  `Viewed::local_of_row` 177): about 3,500;
+- sealed chunks decoded (`IntCol::get`): 1,360. About 1,000 of them are under `cands::candidates`: a derived
+  relation's rows read by its probe's search and again by the step's read of the row. The batch's relations' share
+  is now about 190.
+
+These are the next levers, in the order of 0640's "What follows": the loop's per-candidate cost, then B.
 
 ### Step 6: `wstart` priced again
 
