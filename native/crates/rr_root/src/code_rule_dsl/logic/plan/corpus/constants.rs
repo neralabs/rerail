@@ -21,10 +21,11 @@
 //! changed constant (another Python version) misses the memo, as it must. What the constants' run read is part of
 //! the run's consulted record (`Report::consulted`).
 //!
-//! The constants' rows are kept among phase 0's run records (`constants:<key>`), under the programs, the relations, the run's
-//! options (but which documents it runs over: the constants read none), the root and the engine, with what their run
-//! consulted. A later run whose consulted things are as they were (`World::still`) takes them as they are: an edit to
-//! a workspace file derives no constant again.
+//! The constants' rows are kept as a frame (`frame`, t33 K4), under the programs, the relations, the run's options (but
+//! which documents it runs over: the constants read none), the root and the engine, with what their run consulted
+//! and the plans it used; the outer run's manifest names it. A later run whose leaves are as they were
+//! (`leaves::still`) takes them as they are: an edit to a workspace file derives no constant again. In a revision,
+//! the constants are kept by what their run read there (`revision_record`), among the observer's planned records.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -171,7 +172,7 @@ pub fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>, BTreeSet<String>)> {
+) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>, Option<[u8; 32]>)> {
     if options.get(OWN).is_some() {
         return Ok(Default::default());
     }
@@ -182,7 +183,12 @@ pub fn fold(
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, added, root, options, &wanted);
     let revision = crate::git_workspace::snapshot::contains(root);
-    let was_kept = if revision { kept_revision(&key, root, v) } else { kept(&key, root, v)? };
+    // The frame the constants are kept as, outside a revision: the outer run's manifest names it.
+    let frame = (!revision).then(|| frame_key(&key));
+    let was_kept = match &frame {
+        Some(frame) => kept(frame, root, v),
+        None => kept_revision(&key, root, v),
+    };
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
     // run that reuses them names the plans the run that derived them did, and records the same manifest (0252).
@@ -190,10 +196,12 @@ pub fn fold(
         Some(kept) => kept,
         None => {
             let (mut derived, mut plans) = derive(programs, read, root, modes, binding, chunk_nodes, typing, options, &wanted)?;
-            if revision {
-                if let Some(owner) = keep_revision(&key, root, &mut derived, &plans) { plans.push(owner); }
-            } else {
-                keep(&key, &derived.0, &derived.1, &plans)?;
+            match &frame {
+                Some(frame) => keep(frame, &derived, &plans),
+                None => {
+                    let owner = keep_revision(&key, root, &mut derived, &plans);
+                    plans.extend(owner);
+                }
             }
             (derived, plans)
         }
@@ -231,7 +239,7 @@ pub fn fold(
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
-    Ok((consulted, plans, wanted))
+    Ok((consulted, plans, frame))
 }
 
 /// The constants' outputs (one base image of the wanted relations' copies) and what their run
@@ -298,33 +306,31 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The record the constants of `key` are kept under, among phase 0's run records (`content_store::observe`): read
-/// with the observer's other records before the run, written behind it by the observer's writer (decision 0104).
+/// The frame the constants of `key` are kept as.
+fn frame_key(key: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(format!("rerail.constants-frame\0{key}").as_bytes()).into()
+}
+
+/// The constants kept as the frame `frame`, when every leaf their run read is as it was, with the plans their run
+/// used, for the outer run's manifest.
+fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vec<[u8; 32]>)> {
+    let kept = super::phases::reading_store().and_then(|store| super::frame::get(&store, frame))?;
+    let mut leaves = super::leaves::Leaves::new(root, prog);
+    kept.reads.iter().all(|c| leaves.still(c)).then(|| ((kept.image, kept.reads), kept.plans))
+}
+
+/// Keeps the constants' rows and their run's leaves and plans as the frame `frame`.
+fn keep(frame: &[u8; 32], (image, reads): &Derived, plans: &[[u8; 32]]) {
+    if let Some(store) = super::phases::reading_store() {
+        super::frame::put(&store, frame, &super::frame::Frame { reads: reads.clone(), plans: plans.to_vec(), image: image.clone(), ..Default::default() });
+    }
+}
+
+/// The family the constants of `key` in a revision are kept under, among the observer's planned records
+/// (`content_store::observe`): read before the run, written behind it by the observer's writer (decision 0104).
 fn record_key(key: &str) -> String {
     format!("constants:{key}")
-}
-
-/// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used: the
-/// record's `plan` lines, for collection (`observe::collect` drops the record once none is live) and for the outer
-/// run's manifest.
-fn kept(key: &str, root: &Path, prog: &Version) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
-    let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
-    let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
-    let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
-    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
-    let mut leaves = super::leaves::Leaves::new(root, prog);
-    if !consulted.iter().all(|c| leaves.still(c)) {
-        return Ok(None);
-    }
-    Ok(Some(((rows, consulted), plans)))
-}
-
-fn keep(key: &str, image: &[u8], consulted: &[(String, String, String)], plans: &[[u8; 32]]) -> Result<()> {
-    let mut record = consulted.to_vec();
-    record.extend(plans.iter().map(|p| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(p))));
-    let consulted = super::reuse::encode_consulted(&record);
-    super::observe(|o| o.put_run_record(&record_key(key), &consulted, image));
-    Ok(())
 }
 
 type Observation = (String, String, String);

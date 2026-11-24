@@ -3,7 +3,8 @@
 //! identity. A later process whose run of the same identity finds every leaf as it was (`leaves::still`) takes the
 //! image as the run's and evaluates nothing: the empty leaf delta stops before the program is prepared.
 //!
-//! One mechanism for every run kept this way: the whole run's (`reuse`) and phase 1's (`phases::phase_one`). Kept facts
+//! One mechanism for every run kept this way (decision 0659): the whole run's (`reuse`), phase 1's
+//! (`phases::phase_one`), the constants' (`constants`) and a command's (`reuse::command`). Kept facts
 //! of the store (`plan::kept_entry`), a partition a frame, held by a small source and the frames' plan, which the
 //! run's manifest names (`named`), so collection keeps a frame while it keeps the run.
 //!

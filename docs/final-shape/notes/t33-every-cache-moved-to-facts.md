@@ -2,9 +2,9 @@
 
 Status (2026-11-22): K1, K2 and K3 built; K4 built for the cross-file part, the per-document memo, the statistics and
 the phases, and the records it keeps beside them are kept facts (step 1, below); what is left of K4 is an unchanged
-run's fixed cost ("K4: what is left", below). The whole-run cutoff is gone (2026-11-23): its place is the run's
-frame, as phase 1's (`reuse.rs`), checked by `changes_of` as phase 1's is; the frames go in turn once an unchanged
-run costs what a framed one does. Steps 2 to 8 done (step 3's last, the session, 2026-11-23: a session is its
+run's fixed cost ("K4: what is left", below). Step 1 is closed (2026-11-23, decision 0659): an unchanged run is
+answered by its frames, K4's empty leaf delta checked before any program is prepared, one frame mechanism (the
+run's, phase 1's, the constants', a command's) and one table of leaf readers. Steps 2 to 8 done (step 3's last, the session, 2026-11-23: a session is its
 store; step 6's last, the session's plans and derived values with it): `logic::facts_only` lists no table and no map
 as not yet facts. It takes decision 0104's eight steps and says, for each
 table and map that 0104's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
@@ -152,10 +152,10 @@ removed with nothing in its place but K1–K4.
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `observed`, `observer_meta` | a path's stat; reused while `stat` is equal; a rotating validation counter | K2's base relations; the stat cache written as `file_stat(path, dev, ino, size, mtime_ns, ctime_ns, recorded_ns, digest)` in K1; the counter is one fact |
-| `run_record`, `corpus::reuse`, `World::still`, `inputs::still`, `git::still`, `unchanged`, `unchanged_phase`, `changes` | the run's text, options, root, modes and engine; each consulted read compared in Rust | goes: K4 with empty leaf deltas. **Frame** (2026-11-23): the cutoff is the run's frame (`reuse.rs`, its record `frame:` in the observer's space; a record under `cutoff:` is collection's), checked by `changes_of` as phase 1's frame is: `unchanged` and `World::still` went, `unchanged_phase` had gone. `inputs::still`, `git::still` and `World::changed` stay as the frames' observations of their leaves, until the frames go (K4: what is left). `run_record`: **moved** (2026-11-22) to `run_record(key, list, at, text)` and `run_output(key, at, word)` of the observer's space (`observe/facts.rs`), one partition a record, its texts atoms: every record it held (the Git files' listing, the cone's rounds' cursors, the Git functors' answers, the constants, the whole-run cutoff) is lists of texts and bytes. The cutoff's record goes with the cutoff |
+| `run_record`, `corpus::reuse`, `World::still`, `inputs::still`, `git::still`, `unchanged`, `unchanged_phase`, `changes` | the run's text, options, root, modes and engine; each consulted read compared in Rust | goes: K4 with empty leaf deltas. **Done** (2026-11-23, decision 0659): a run's leaves are K4's kept relation `frame_read(kind, path, digest)` of the store's frames (`frame.rs`, the space `rerail.frame`), with the run's plans, its program's summary and its output image, named in the run's manifest. The run's frame, phase 1's, the constants' and a command's (its rule files and their directory, leading to the run's) are that one mechanism, checked first: a run whose every leaf is as it was prepares no program, and a command whose rule files are reads no rule text. `unchanged`, `unchanged_phase`, `World::still`, `World::changed` and `inputs::still` went; the leaves are read through one table (`leaves.rs`), of which `git::still` is a reader. `run_record`: **moved** (2026-11-22) to `run_record(key, list, at, text)` and `run_output(key, at, word)` of the observer's space (`observe/facts.rs`); the cutoff's and the constants' records went with them onto the frames. What it still holds is journal-checked bookkeeping (the Git files' listing, the cone's rounds' cursors, the Git functors' answers) and a revision's constants, kept by the values their run read |
 | `inputs.rs` `CONSULTED` | the inputs, artifacts and `base` revisions a run read | answers to the input requests (K3), whose rows are the record |
 | `git.rs` `STATE` | the index read once per run, its file's digest | the index file is a leaf (K2); `git_tracked` and `git_has` answers are rows keyed by it |
-| `constant_rows` | the programs, relations, options, root, engine; `World::still` | relations of the constants' space (no documents), stored in K1, maintained from `env`, `dir_entry` and `file_line` deltas |
+| `constant_rows` | the programs, relations, options, root, engine; `World::still` | relations of the constants' space (no documents), stored in K1, maintained from `env`, `dir_entry` and `file_line` deltas. **Done** (2026-11-23, decision 0659): the constants' run is kept as a frame (`constants::keep`), its rows the image, its leaves checked through the leaf table; a changed leaf runs the constants again (they are one small run over no documents). A revision's constants stay keyed by the values their run read there |
 | `derivations`, `derivation_inputs`, `name_bindings` | names bound to digests; validity by a join | the corpus path's uses go (phases' granules: step 5; own counts: step 6). **Moved** (2026-11-22): the derivation graph is kept facts of the store's derivation space (`content_store/derivation.rs`), one partition a name (its store atom): `name_binding(d0..d3, revision)`, `derivation(p0..p3, status, cost)`, `derivation_input(ordinal, named, name, d0..d3)` and `derivation_reader(output)`, the reverse index the frontier reads, kept with each write. A write is one `write_space` in the store's write transaction, its changes decided against the rows it replaces; validity is a probe of each input's binding. SQL reads the three tables through virtual tables of their names and columns (`prefilter::vtab`); a store of before drops them (`RETIRED_TABLES`), its graph recomputed by the next push |
 
 ### Step 2: rule files and programs
@@ -463,3 +463,14 @@ What is left, by phase: prepare 0.87 G (the prepared program's entry, the memo's
 the cone of requests), the cross part 0.35 G, the parse before its waves 0.38 G (the kept statistics, each
 relation's sketches decoded, all of which the planner's totals read), the statistics 0.26 G (the kept inputs bound,
 which the cross part binds too).
+
+**Step 1 closed (2026-11-23, decision 0659).** The route above (cut the unframed run until it costs what the framed
+one does, then delete the frames) stopped converging at about 2.9 times the framed run. Decided with the user: the
+frame is K4's check of an empty leaf delta, made first, and it stays. Built (`cfdc9f1034`, `06bc84f2fa`, then the
+constants): one frame mechanism in kept facts (`frame.rs`) for the run, phase 1, the constants and the command line,
+and one table of leaf readers (`leaves.rs`). Cold runs, framed warm runs and one-file edits cost what they did; the
+command's frame makes an unchanged run about 3.3 times cheaper again, since the command line had read every rule
+text and derived phase 0's graphs before the run's frame was looked at. What is left of an unchanged run is spread
+thin: process start, a `stat` per leaf (the observer's journal opened for it), the recorded run's manifests owned
+again, the corpus listed to compare its documents. The cuts listed above go on as edit latency, measured on
+one-file edits.

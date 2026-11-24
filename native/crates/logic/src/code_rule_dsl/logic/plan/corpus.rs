@@ -1924,6 +1924,8 @@ fn run_observed_within(
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
     // run, its outputs are those relations.
+    // Each fold's frame (`constants`, t33 K4), for the run's manifest to name.
+    let constants_frames: std::cell::RefCell<Vec<[u8; 32]>> = Default::default();
     let fold_constants = |v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
         match options.get(constants::OWN).and_then(|v| v.as_array()) {
             Some(wanted) => {
@@ -1932,7 +1934,8 @@ fn run_observed_within(
                 Ok(Default::default())
             }
             None => {
-                let (consulted, plans, _) = constants::fold(v, programs, read, added, root, modes, binding, chunk_nodes, typing, options)?;
+                let (consulted, plans, frame) = constants::fold(v, programs, read, added, root, modes, binding, chunk_nodes, typing, options)?;
+                constants_frames.borrow_mut().extend(frame);
                 Ok((consulted, plans))
             }
         }
@@ -2344,11 +2347,11 @@ fn run_observed_within(
         memo::named_source(store, text, true, None, &late_sources);
         program_plans.push(plan);
     }
-    // Phase 1's frame and the run's (`frame`, t33 K4): phase 1's kept where this run made it, behind the run, and
-    // each named in the manifest, so collection keeps it while it keeps the run. The run's is kept as the run ends
-    // (`reuse::record`).
+    // Phase 1's frame, the constants' and the run's (`frame`, t33 K4): phase 1's kept where this run made it, behind
+    // the run, and each named in the manifest, so collection keeps it while it keeps the run. The constants' is kept
+    // as they are folded, the run's as the run ends (`reuse::record`).
     if durable.is_some() {
-        for key in reuse::naming() {
+        for key in reuse::naming().into_iter().chain(constants_frames.take()) {
             let (text, plan) = frame::named(&key);
             memo::named_source(store, text, true, None, &late_sources);
             if !program_plans.contains(&plan) {
