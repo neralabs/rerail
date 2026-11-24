@@ -2194,7 +2194,7 @@ use rerail_blocks::vector::Vector;
         let (sources, mut grower) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
         let values = Arc::new(Values::default());
         // A tape value whose key is below the chunk's: its rows past theirs, its document before theirs by key.
-        let admitted = grower.admit(&content, doc(5, "def v(p, q=[1, 2]):\n    return h(p, *q)\n"), &[], &tests, Binding::Cpu, &projection).unwrap();
+        let admitted = grower.admit(&content, vec![doc(5, "def v(p, q=[1, 2]):\n    return h(p, *q)\n")], &[], &tests, Binding::Cpu, &projection).unwrap();
         values.add(&[5], &[], admitted);
         let base = sources.iter().find(|(n, _)| n == "child").expect("the chunk's child view").1.clone();
         let child: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Layered::new("child", base, Arc::clone(&values)));

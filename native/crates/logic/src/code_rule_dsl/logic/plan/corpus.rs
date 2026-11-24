@@ -5411,26 +5411,59 @@ fn run_observed_within(
             let Some(entry) = found.entry(i64::from(key)).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(Vec::new()) };
             Ok(entry.rows.into_iter().map(|(rel, (width, flat))| (if guests::kept_input(&rel) { rel } else { format!("{rel}{}", guests::KEPT) }, flat_source(width, &flat))).collect())
         };
+        // A set of values asked together, admitted together (decision 0431 §8): their documents made as one batch
+        // (`Grower::admit`), its sources one part of each of the chunk's sources (`Values::add`), found by the values' own
+        // keys and the host nodes their rows name (their places' hosts' documents apart); then the fresh values' kept rows (rule 8), one part each, added at once. Each
+        // entry is a value's key, its place's or node's document (`owner`) and whether it was made here. The sources
+        // added, for the answer's given rows.
+        let admit_values = |made: &guests::Guests, docs: &[syntax::Document], grower: &mut syntax::Grower, values: &syntax::values::Values, admitted: &[(u32, Option<u32>, bool)]| -> Result<Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>> {
+            if admitted.is_empty() {
+                return Ok(Vec::new());
+            }
+            let wanted: BTreeSet<u32> = admitted.iter().map(|a| a.0).collect();
+            let documents: Vec<syntax::Document> = docs.iter().filter(|d| wanted.contains(&d.key)).cloned().collect();
+            if documents.len() != wanted.len() {
+                let had: BTreeSet<u32> = documents.iter().map(|d| d.key).collect();
+                return Err(Error::Plan(format!("tape values {:?} are not the chunk's", wanted.difference(&had).collect::<Vec<_>>())));
+            }
+            let own: Vec<u32> = wanted.iter().copied().collect();
+            let mut hosts: Vec<u32> = admitted.iter().filter_map(|a| a.1).collect();
+            hosts.sort_unstable();
+            hosts.dedup();
+            let made_rows = grower.admit(store, documents, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+            let mut added = made_rows.clone();
+            values.add(&own, &hosts, made_rows);
+            let mut fresh: Vec<u32> = admitted.iter().filter(|a| a.2).map(|a| a.0).collect();
+            fresh.sort_unstable();
+            fresh.dedup();
+            let mut kept = Vec::new();
+            for &k in &fresh {
+                kept.extend(kept_of(made, k)?);
+            }
+            if !kept.is_empty() {
+                added.extend(kept.iter().cloned());
+                values.add(&fresh, &[], kept);
+            }
+            Ok(added)
+        };
         // The values a chunk of partial hits' files answered before (`memo::VALUES`), admitted before its run where its
         // cone can see them (`made.admit` asks `seen`). No entry keeps their rows (decision 0458 step 4): they are made
         // again, each found by its text's sha or parsed once a run.
         if let (false, Some((made, docs)), Some(values), Some(grower)) = (asked_before.is_empty(), kept_guests.as_mut(), values.as_ref(), grower.as_mut()) {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values asked before, admitted".into());
+            let mut admitted: Vec<(u32, Option<u32>, bool)> = Vec::new();
             for asked in &asked_before {
-                // A value made here: its passes' kept rows, where its entry holds them (rule 8).
-                let mut fresh: Option<u32> = None;
-                // Its value and the keys of the nodes its rows hold, as `parse_answer` admits it.
-                let (key, owner) = match asked {
+                // Its value, the keys of the nodes its rows hold, and whether it was made here, as `parse_answer` admits it.
+                let entry = match asked {
                     memo::Answered::Embed { at, grammar } => match made.admit(docs, *at, grammar, &guest_parses).map_err(Error::Plan)? {
                         guests::Got::New(d) => {
                             values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             tape_text_made(&tape_texts, grammar, &d);
-                            fresh = Some(d.key);
-                            (d.key, Some((at >> 32) as u32))
+                            (d.key, Some((at >> 32) as u32), true)
                         }
                         guests::Got::Placed(key, _) => {
                             tape_texts.lock().entry(grammar.clone()).or_default().1 += 1;
-                            (key, Some((at >> 32) as u32))
+                            (key, Some((at >> 32) as u32), false)
                         }
                         guests::Got::Not => continue,
                     },
@@ -5441,17 +5474,13 @@ fn run_observed_within(
                             guests::Request::Parse { .. } => None,
                             guests::Request::Splice { node, .. } => Some((node >> 32) as u32),
                         };
-                        (d.key, owner)
+                        (d.key, owner, false)
                     }
                 };
                 answered.push(asked.clone());
-                let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
-                let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                values.add(&[key], &owner.into_iter().collect::<Vector<u32>>(), made_rows);
-                if let Some(k) = fresh {
-                    values.add(&[k], &[], kept_of(made, k)?);
-                }
+                admitted.push(entry);
             }
+            admit_values(made, docs, grower, values, &admitted)?;
         }
         let mut parse_answer = |req: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vector<i64>>)>> {
             let (Some((made, docs)), Some(values), Some(grower)) = (kept_guests.as_mut(), values.as_ref(), grower.as_mut()) else {
@@ -5463,33 +5492,28 @@ fn run_observed_within(
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values admitted".into());
             let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
             let mut given_rows: BTreeMap<String, Vec<Vector<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
-            // The round's values, admitted together once each is made (`Grower::admit_many`): their documents, each
-            // once, and the keys of the documents their places are in (`Values::add`); and those made here, whose
-            // passes' kept rows their entries hold (rule 8).
-            let (mut admit_keys, mut held_keys, mut fresh_keys): (Vector<u32>, Vector<u32>, Vector<u32>) = Default::default();
+            // Every row's value asked, answered (`made.admit`), then all of them admitted at once (`admit_values`).
+            let mut admitted: Vec<(u32, Option<u32>, bool)> = Vec::new();
             for row in rows.iter() {
-                // A value made here: its passes' kept rows, where its entry holds them (rule 8).
-                let mut fresh: Option<u32> = None;
-                // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
-                // document's (`Values::add`).
-                let (key, owner) = match (req, &row[..]) {
+                // The value asked, the keys of the nodes its rows hold (its own, and its place's or its node's
+                // document's, `Values::add`), and whether it was made here.
+                let entry = match (req, &row[..]) {
                     (guests::DEMAND, &[at, g]) => {
                         let Some(grammar) = text(g)? else { continue };
-                        let key = match made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)? {
+                        let (key, fresh) = match made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)? {
                             guests::Got::New(d) => {
                                 values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 tape_text_made(&tape_texts, &grammar, &d);
-                                fresh = Some(d.key);
-                                d.key
+                                (d.key, true)
                             }
                             guests::Got::Placed(key, _) => {
                                 tape_texts.lock().entry(grammar.clone()).or_default().1 += 1;
-                                key
+                                (key, false)
                             }
                             guests::Got::Not => continue,
                         };
                         answered.push(memo::Answered::Embed { at, grammar });
-                        (key, Some((at >> 32) as u32))
+                        (key, Some((at >> 32) as u32), fresh)
                     }
                     (guests::PARSE, &[at, g, x]) => {
                         let (Some(grammar), Some(text)) = (text(g)?, text(x)?) else { continue };
@@ -5497,7 +5521,7 @@ fn run_observed_within(
                         let Some(d) = made.admit_value(docs, request.clone(), &guest_parses).map_err(Error::Plan)? else { continue };
                         values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         answered.push(memo::Answered::Value(request));
-                        (d.key, None)
+                        (d.key, None, false)
                     }
                     (guests::SPLICE, &[node, t2]) => {
                         let Some(with) = text(t2)? else { continue };
@@ -5505,43 +5529,17 @@ fn run_observed_within(
                         let Some(d) = made.admit_value(docs, request.clone(), &guest_parses).map_err(Error::Plan)? else { continue };
                         values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         answered.push(memo::Answered::Value(request));
-                        (d.key, Some((node >> 32) as u32))
+                        (d.key, Some((node >> 32) as u32), false)
                     }
                     _ => continue,
                 };
-                if !admit_keys.contains(&key) {
-                    admit_keys.push(key);
-                }
-                if let Some(k) = fresh {
-                    fresh_keys.push(k);
-                }
-                if let Some(k) = owner
-                    && !held_keys.contains(&k)
-                {
-                    held_keys.push(k);
-                }
+                admitted.push(entry);
             }
-            if !admit_keys.is_empty() {
-                let round: Vec<syntax::Document> = admit_keys
-                    .iter()
-                    .map(|&key| docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's"))))
-                    .collect::<Result<_>>()?;
-                let made_rows = grower.admit_many(store, round, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the values' part, as
-                // every relation's are, and given as the answer, which a stratum above the request leaves to the binding.
-                for (name, p) in made_rows.iter().filter(|(name, _)| given.contains(name)) {
-                    let width = p.columns().len();
-                    given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
-                }
-                values.add(&admit_keys, &held_keys, made_rows);
-                for &k in fresh_keys.iter() {
-                    let kept = kept_of(made, k)?;
-                    for (name, p) in kept.iter().filter(|(name, _)| given.contains(name)) {
-                        let width = p.columns().len();
-                        given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
-                    }
-                    values.add(&[k], &[], kept);
-                }
+            // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the values' part, as
+            // every relation's are, and given as the answer, which a stratum above the request leaves to the binding.
+            for (name, p) in admit_values(made, docs, grower, values, &admitted)?.iter().filter(|(name, _)| given.contains(name)) {
+                let width = p.columns().len();
+                given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
             }
             Ok(std::mem::take(&mut given_rows).into_iter().collect())
         };

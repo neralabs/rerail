@@ -1246,6 +1246,14 @@ impl TapeImage {
         }
     }
 
+    /// The tape's auxiliary index in its home, after its presence (decision 0656 step 3), read where it lies.
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        match &self.held {
+            Held::F16(t) => t.aux_bytes(),
+            Held::F16Z(t) => t.aux_bytes(),
+        }
+    }
+
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 16 (or 16z) as stored.
     /// Nothing is copied.
     pub fn from_home(home: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {

@@ -241,8 +241,8 @@ pub fn install_languages(tests: bool) {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
-    // Every crate's vectors made with no room take the run's blocks (decision 0628 §3).
-    rerail_blocks::maps::install();
+    // Every crate's vectors and maps made with no room take the run's open relation block (decision 0628 §3, §8).
+    facts::rows::install_run_room();
     // Where the tape crate places the code tables it makes: a block (decision 0628 §2).
     rerail_tape_format::tape::place_tables_with(facts::rows::place_table);
     // The batches' relations held, for the heap report's spans (`rows`, below the batches' crate).

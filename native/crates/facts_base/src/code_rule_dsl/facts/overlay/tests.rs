@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn store(label: &str) -> (Arc<ContentStore>, PathBuf) {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let base = std::env::temp_dir().join(format!("rerail-overlay-{label}-{}-{nonce}", std::process::id()));
-    std::fs::create_dir_all(&base).unwrap();
+    // Private, as a mapped file's folder must be (decision 0574, `mapped::make_folder`).
+    rerail_blocks::mapped::make_folder(&base).unwrap();
     (Arc::new(ContentStore::open(&base.join("store.sqlite")).unwrap()), base.join("spill"))
 }
 

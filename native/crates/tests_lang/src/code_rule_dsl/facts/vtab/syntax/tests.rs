@@ -259,7 +259,7 @@ fn a_lookups_rows_by_position_are_its_rows() {
     let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g(x, *y)\n"));
     let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
     let values = Arc::new(super::values::Values::default());
-    values.add(&[5], &[], grower.admit(&store, file(5), &[], &tests, Binding::Cpu, &projection).unwrap());
+    values.add(&[5], &[], grower.admit(&store, vec![file(5)], &[], &tests, Binding::Cpu, &projection).unwrap());
     let layered = sources.iter().map(|(name, s)| (format!("{name} layered"), Arc::new(super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values))) as Arc<dyn Source>));
     let mut tried = 0;
     for (name, source) in sources.iter().map(|(n, s)| (n.to_string(), Arc::clone(s))).chain(layered).collect::<Vec<_>>() {
@@ -2104,7 +2104,8 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 let mut carried = 0;
                 let some = p.len().min(4_000);
                 for l in (0..some).chain((0..some).rev()).chain((p.len() - some..p.len()).step_by(7)) {
-                    for hint in [&mut carried, &mut 0, &mut { u32::MAX }, &mut (l / 3)] {
+                    let (mut fresh, mut out_of_range, mut near) = (0, u32::MAX, l / 3);
+                    for hint in [&mut carried, &mut fresh, &mut out_of_range, &mut near] {
                         assert_eq!(p.global_near(l, hint), p.global(l), "{label} {format:?} {shape:?}: the id of local {l} from a hint");
                     }
                 }
@@ -2676,7 +2677,7 @@ fn the_view_reads_are_the_hosts_rows() {
 // resident): no binding.
 typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint32_t n; uint32_t nf; } ViewP;
 UKL_REFLECT_STRUCT(ViewP, d, tt, ll, n, nf)
-DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[29]",
+DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[32]",
                RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, g, )
 {
     // A thread a (local, slot): each read is called once with its column a value, so the compiler makes one copy of
@@ -2687,8 +2688,8 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     uint32_t n = p.n, nf = p.nf;
     UKL_GLOBAL const uint8_t* tt = (UKL_GLOBAL const uint8_t*)p.tt;
     UKL_GLOBAL const uint8_t* ll = (UKL_GLOBAL const uint8_t*)p.ll;
-    uint32_t v[29];
-    for (uint32_t q = 0u; q < 29u; q++) v[q] = tv[q];
+    uint32_t v[32];
+    for (uint32_t q = 0u; q < 32u; q++) v[q] = tv[q];
     int64_t r = 0;
     // The lines by their buffer's base and their offset in it (none: a buffer of their own).
     if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, 0u, l, k);
@@ -3137,6 +3138,56 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
+/// Decision 0656 step 4: a read of `text` by its string makes only the documents whose index says a node or span can
+/// have the text: a name one document holds, text across a node's tokens another holds, and text none holds (no
+/// document made). Its rows are those a read of every document finds.
+#[test]
+fn a_read_of_text_by_its_string_makes_only_the_documents_that_can_hold_it() {
+    let store = ContentStore::open(&temp("text-by-string")).unwrap();
+    let docs = || -> Vec<Document> { (1..=6).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y({k})\nz = q{k} + 1\n"))).collect() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned()].into()), ..Projection::core() };
+    let atom = |t: &str| i64::from(store.atoms_handle().intern(t).unwrap());
+    // Every document's rows, made: what a routed read must find.
+    let all = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let all_text = Arc::clone(&made_sources(&all).iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let every = |s: i64| -> Vec<i64> { let mut v: Vec<i64> = (0..all_text.len()).filter(|&r| all_text.value(r, 1) == s).map(|r| all_text.value(r, 0)).collect(); v.sort(); v };
+    for (text, made) in [("q4", 1), ("q4 + 1", 1), ("z", 6), ("nowhere", 0)] {
+        let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+        let t = Arc::clone(&made_sources(&batch).iter().find(|(n, _, _)| *n == "text").unwrap().2);
+        assert_eq!(batch.docs.made_count(), 0);
+        let s = atom(text);
+        let mut found: Vec<i64> = t.lookup(1, &[s]).unwrap().iter().map(|&r| t.value(r, 0)).collect();
+        found.sort();
+        assert_eq!(found, every(s), "{text:?}'s rows");
+        assert_eq!(found.is_empty(), made == 0, "{text:?}");
+        assert_eq!(batch.docs.made_count(), made, "{text:?}: the documents that can hold it, made");
+        assert!(t.failure().is_none());
+    }
+}
+
+/// Decision 0656 step 4: in core.rerail's shape the `node` view's columns' counts are read off the documents'
+/// indexes, none made, and are the counts of the rows a made batch reads. (T's shape leaves comments out of its
+/// nodes, which the index does not count apart: its documents are made, `a_node_columns_counts_are_its_rows_counts`.)
+#[test]
+fn a_node_columns_counts_make_no_document() {
+    let store = ContentStore::open(&temp("node-counts-index")).unwrap();
+    let (_, node) = shaped(&store, documents().into_iter().take(4).collect(), &Projection::core()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let batch = node.python_batch().expect("a batch's view");
+    let counted: Vec<_> = (0..3).map(|c| node_column_counts(&batch, c).unwrap()).collect();
+    assert_eq!(batch.docs.made_count(), 0, "no document made to count");
+    for (column, got) in counted.into_iter().enumerate() {
+        let mut by: BTreeMap<i64, i64> = BTreeMap::new();
+        for r in 0..node.len() {
+            *by.entry(node.value(r, column)).or_default() += 1;
+        }
+        let counts: Vec<(i64, i64)> = by.into_iter().collect();
+        assert_eq!(got.0, counts.len() as i64, "column {column}'s distinct values");
+        if column != 1 {
+            assert_eq!(got.2, Some(counts), "column {column}'s counts");
+        }
+    }
+}
+
 /// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) finds that
 /// module's row, as one by its path does, and makes no document: the batch knows each file's module from its path and
 /// the corpus's name for it (`tape_rows::DocRow`).
@@ -3455,11 +3506,35 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     };
     let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
     read(&sources);
-    let admitted = grower.admit(&store, file(3), &[], &tests, binding, &projection).unwrap();
+    let admitted = grower.admit(&store, vec![file(3)], &[], &tests, binding, &projection).unwrap();
     assert!(!admitted.iter().any(|(n, _)| n == "rr_ast_1_1"), "a value's sources hold no matchers' rows of their own");
     let mut seen = wave.0.lock().unwrap().clone();
     seen.sort();
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
+}
+
+/// One answer's values are admitted together (decision 0431 §8): one batch of them, whose sources hold every value's
+/// rows. Admitted one at a time, each paid a batch's fixed work: on corpus0 × B-now, 13,483 values made 40 GB of the
+/// run's peak.
+#[test]
+fn an_answer_s_values_are_admitted_as_one_batch() {
+    let store = ContentStore::open(&temp("admitted-together")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return x\n"));
+    let (_, mut grower) = Grower::start(&store, vec![file(1)], &[], &Matchers::default(), &tests, binding, &projection, &HashMap::new()).unwrap();
+    let admitted = grower.admit(&store, vec![file(3), file(4)], &[], &tests, binding, &projection).unwrap();
+    let batch = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the values' batch");
+    assert_eq!(batch.docs.keys().collect::<Vec<u32>>(), [3, 4], "one batch of both values");
+    let mut keys = BTreeSet::new();
+    for (_, s) in admitted.iter().filter(|(_, s)| !s.made_on_lookup()) {
+        let width = s.columns().len();
+        for r in 0..s.len() {
+            keys.extend((0..width).map(|c| s.value(r, c)).filter(|&v| v >= 1 << 32).map(|v| v >> 32));
+        }
+    }
+    assert!(keys.contains(&3) && keys.contains(&4), "both values' rows: {keys:?}");
 }
 
 /// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
@@ -3572,6 +3647,10 @@ fn the_views_read_through_the_directory_are_the_projections() {
             let projection = Projection { shape, ..Projection::core() };
             let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
             let at = format!("{} {shape:?}", format.name());
+            // In core.rerail's shape a node's place is read in its tape's auxiliary index (decision 0656 step 4), which the
+            // host's reads read too (`view_reads::Tape::place`).
+            let by_index = (0..batch.docs.len()).filter(|&i| batch.docs.get(i).is_some_and(|p| p.places_by_index())).count();
+            assert_eq!(by_index > 0, shape == Shape::Core, "{at}: the documents whose places are read in their index");
             for (name, row, [want, read, value, whole]) in views_read_both_ways(&batch).unwrap_or_else(|e| panic!("{at}: {e}")) {
                 assert_eq!(read, want, "{at} {name}: row {row}, read through the directory");
                 assert_eq!(value, want, "{at} {name}: row {row}'s values");

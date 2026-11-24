@@ -1517,10 +1517,15 @@ pub struct Projected {
     /// The tape nodes it numbers, its nodes and tokens, as a rank index (`ranks::Ranks`, decision 0353 step 2): a
     /// node's local id is its rank among the nodes. In its batch's block (decision 0289 §3), which the device reads.
     ranks: ranks::Ranks,
-    /// Each node's place among its parent's children, derived on the first point read (`idx`).
+    /// Each node's place among its parent's children, derived on the first point read (`idx`), where its tape's
+    /// index does not answer it (`places_by_index`).
     idx: OnceLock<Cells<u32>>,
     /// The tape's rows' derived columns (`tape_rows::Derived`), each made on its first read.
     pub(super) derived: tape_rows::Derived,
+    /// Whether a node's place is read in its tape's auxiliary index (decision 0656 step 4, `DocIndex::place`): its
+    /// numbered nodes are every named node under the root (core.rerail's shape, not narrowed to anchors, not
+    /// withheld), and its tape's home holds an index, which the device's reads read too (`tape_place`).
+    places_by_index: bool,
     /// Walked by anchors: an outermost anchor hangs from the root, which is not its tape parent, so a walk's parent
     /// is not always the tape's (a sibling is then read off the tape, `prev_sibling`).
     anchored: bool,
@@ -1852,6 +1857,7 @@ impl Projected {
             ranks,
             idx: OnceLock::new(),
             derived: tape_rows::Derived::default(),
+            places_by_index: core_tokens && ranges.len() == 1 && f.tape.as_deref().is_some_and(|t| t.image().aux_bytes().is_some()),
             anchored: ranges.len() > 1,
             extra: None,
             defs: None,
@@ -1945,11 +1951,20 @@ impl Projected {
     }
     /// Local id `local`'s place among its parent's children (`child`'s `i`). The tape holds no sibling's place, and
     /// hops along the siblings are as many as they are (a module's statements: a probe for each of them would be
-    /// quadratic), so a point read reads a derived column: the walk's places, written once into the block on the
-    /// projection's first point read (decision 0353 step 3). A scan carries the place in its walk and never makes it.
+    /// quadratic), so a point read reads its tape's auxiliary index (decision 0656 step 4: the last every-8th named
+    /// sibling, then at most 7 named steps), as the device's reads do (`tape_place`). Where it cannot
+    /// (`places_by_index`), a derived column: the walk's places, written once into the block on the projection's
+    /// first point read (decision 0353 step 3). A scan carries the place in its walk and never makes either.
     #[inline]
     pub fn idx(&self, local: usize) -> u32 {
+        if self.places_by_index {
+            return if local == 0 { 0 } else { self.f().place(self.node(local as u32)) };
+        }
         self.places_column()[local]
+    }
+    /// Whether a node's place is read in its tape's auxiliary index (`places_by_index`): no derived column is made.
+    pub fn places_by_index(&self) -> bool {
+        self.places_by_index
     }
     /// Every numbered node's place (`idx`), the derived column, made on its first read.
     pub fn places_column(&self) -> &Cells<u32> {
@@ -3672,10 +3687,12 @@ impl Batch {
         let mut places: Vec<(&Projected, &Document, std::ops::Range<usize>, bool)> = Vec::new();
         for d in held.iter().map(Input::document) {
             let (Some(guest), Some((value, had, withheld))) = (d.guest.as_deref(), grown.values.get(&d.key)) else { continue };
+            // The value's projection in the batch it was admitted with: an answer's values are admitted together.
             if let Made::Tape { places: all } = &guest.made
                 && all.len() > *had
+                && let Some(at) = value.docs.position(d.key)
             {
-                places.push((&value.docs[0], d, *had..all.len(), *withheld));
+                places.push((&value.docs[at], d, *had..all.len(), *withheld));
             }
         }
         let made = batch.make_rows(&(0..batch.docs.len()).collect::<Vec<_>>(), false, &places)?;
@@ -4376,42 +4393,31 @@ impl Viewed {
     }
 }
 /// `node`'s column `column` over `batch`, counted without reading its rows (decision 0329): its distinct values, the
-/// sum of their counts' squares, and each value's count. A kind's count is its postings' (`of_kind`), a document's its
-/// nodes; `n` is the key (each value once, no counts). `None` for another column (`node_column_counted`).
+/// sum of their counts' squares, and each value's count. A kind's count is its codes' nodes, a document's its nodes;
+/// `n` is the key (each value once, no counts). `None` for another column (`node_column_counted`).
+///
+/// Each document's nodes and codes are its index's counts where they answer for its projection (decision 0656 step
+/// 4, `Docs::indexed_codes`): no document is made to count them. Else its projection's, made (`doc_codes`).
 pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Option<Vec<(i64, i64)>>)> {
     let squares = |counts: &[(i64, i64)]| counts.iter().map(|&(_, n)| n * n).sum::<i64>();
+    let docs = 0..batch.docs.len();
     match column {
         0 => {
-            let counts: Vec<(i64, i64)> = batch.docs.iter().map(|p| (i64::from(p.key()), i64::from(p.len()))).filter(|&(_, n)| n > 0).collect();
+            let counts: Vec<(i64, i64)> = docs.map(|i| (i64::from(batch.docs.key(i)), i64::from(doc_codes(batch, i, false).0))).filter(|&(_, n)| n > 0).collect();
             Some((counts.len() as i64, squares(&counts), Some(counts)))
         }
         1 => {
-            let n: i64 = batch.docs.iter().map(|p| i64::from(p.len())).sum();
+            let n: i64 = docs.map(|i| i64::from(doc_codes(batch, i, false).0)).sum();
             Some((n, n, None))
         }
         2 => {
-            // The batch's nodes (a document's tape holds tokens and nodes it leaves out), each node's code read once into
-            // its dialect's counts by code (`of_kind`, a scan of the tape a kind, took 12 s of a cold PostHog run's
-            // guests), each code read as the column reads it (`Dialect::kind`: its canonical code).
-            let mut by_code: std::collections::BTreeMap<u8, Vector<i64>> = Default::default();
-            for p in &batch.docs {
-                // A text-only document has no dialect and no nodes.
-                let Some(dialect) = batch.dialects.get(p.tag()) else { continue };
-                let counts = by_code.entry(p.tag()).or_default();
-                for (_, id) in p.nodes() {
-                    let code = usize::from(dialect.code(p.f(), id));
-                    if counts.len() <= code {
-                        counts.resize(code + 1, 0);
-                    }
-                    counts[code] += 1;
-                }
-            }
+            // Each code read as the column reads it (`Dialect::kind`: its canonical code).
             let mut by: HashMap<i64, i64> = HashMap::new();
-            for (tag, counts) in by_code {
-                let dialect = &batch.dialects[tag];
-                for (code, &n) in counts.iter().enumerate().filter(|(_, n)| **n > 0) {
-                    let code = code as u16;
-                    *by.entry(i64::from(kind_atom(tag, dialect.canonical.get(usize::from(code)).copied().unwrap_or(code)))).or_default() += n;
+            for i in docs {
+                let tag = batch.docs.tag(i);
+                let Some(dialect) = batch.dialects.get(tag) else { continue };
+                for (code, n) in doc_codes(batch, i, true).1 {
+                    *by.entry(i64::from(kind_atom(tag, dialect.canonical.get(usize::from(code)).copied().unwrap_or(code)))).or_default() += i64::from(n);
                 }
             }
             let mut counts: Vec<(i64, i64)> = by.into_iter().collect();
@@ -4422,7 +4428,28 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
     }
 }
 
-/// Whether `node_column_counts` counts `node`'s column `column`: known before it counts, which makes every document.
+/// Document `i`'s nodes, and (`codes`) each of their codes' count as the `node` view reads the code (`Dialect::code`):
+/// a made one's off its projection; else off its index where that answers for it (`Docs::indexed_codes`), else off
+/// its projection, made.
+fn doc_codes(batch: &Batch, i: usize, codes: bool) -> (u32, Vec<(u16, u32)>) {
+    if !batch.docs.is_made(i)
+        && let Some(x) = batch.docs.indexed_codes(i)
+    {
+        return x;
+    }
+    let p = batch.docs.get(i).expect("a document of the batch");
+    let mut by: std::collections::BTreeMap<u16, u32> = Default::default();
+    // A text-only document has no dialect and no nodes.
+    if let Some(dialect) = batch.dialects.get(p.tag()).filter(|_| codes) {
+        for (_, id) in p.nodes() {
+            *by.entry(dialect.code(p.f(), id)).or_default() += 1;
+        }
+    }
+    (p.len(), by.into_iter().collect())
+}
+
+/// Whether `node_column_counts` counts `node`'s column `column`: known before it counts, which makes the documents
+/// whose index does not answer for them.
 pub fn node_column_counted(column: usize) -> bool {
     column <= 2
 }
@@ -5717,26 +5744,13 @@ impl Grower {
         Ok(finish(out, &batch, sets, projection, binding))
     }
 
-    /// The sources of tape value `document` alone, admitted inside the chunk's fixpoint (decision 0431 §8): projected
-    /// into the chunk's block, its hosts' lines and its strings the growth's, its rows its own, a part of each of the
-    /// chunk's sources (`values::Layered`). A document the batch holds (a value given a place more) has the rows of
-    /// those places alone.
+    /// The sources of tape values `documents`, admitted inside the chunk's fixpoint (decision 0431 §8): one answer's
+    /// values, made together as one batch of their own, projected into the chunk's block, their hosts' lines and their
+    /// strings the growth's, their rows a part of each of the chunk's sources (`values::Layered`). A document the batch
+    /// holds (a value given a place more) has the rows of those places alone. Admitted one at a time, each value paid
+    /// a batch's fixed work (its projection, text tests, axes and a copy of the parts' keys): on corpus0 × B-now, 13,483
+    /// values made 40 GB of the run's peak and 55 s of its CPU.
     pub fn admit(
-        &mut self,
-        store: &ContentStore,
-        document: Document,
-        sets: &[(String, Vector<i64>)],
-        tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
-        binding: crate::code_rule_dsl::facts::nearest::Binding,
-        projection: &Projection,
-    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        let (out, batch) = self.sources_of(store, vec![Input::from(document)], None, tests, binding, projection, &HashMap::new(), true)?;
-        Ok(finish(out, &batch, sets, projection, binding))
-    }
-
-    /// `admit` for several tape values at once (a round's answers): one projection of them all, their rows one part
-    /// of each source, where one admission each made a batch, its nearest pass and its identity maps a value.
-    pub fn admit_many(
         &mut self,
         store: &ContentStore,
         documents: Vec<Document>,
@@ -5748,6 +5762,7 @@ impl Grower {
         let (out, batch) = self.sources_of(store, documents.into_iter().map(Input::from).collect(), None, tests, binding, projection, &HashMap::new(), true)?;
         Ok(finish(out, &batch, sets, projection, binding))
     }
+
 
     /// Tape value's relation `name`, its rows admitted (decision 0431 §8): written once, past the chunk's rows of
     /// `name` and the values' admitted before, in the same block relation (`Relation::grown`), so that the device

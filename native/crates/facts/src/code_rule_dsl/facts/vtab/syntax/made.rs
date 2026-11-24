@@ -365,6 +365,49 @@ impl Docs {
             made
         })
     }
+    /// Document `i`'s nodes as its projection would number them, by their codes as the `node` view reads them
+    /// (`Dialect::code`): `(nodes, each code's nodes)`, read off its index (decision 0656 step 4) with none made.
+    /// `None` where the index does not answer for the projection. It does where the projection numbers every named
+    /// node: core.rerail's shape with no anchors, a file's own tree (no guest), its root named, every named node under
+    /// a named parent (`DocIndex::named_all_rooted`), and the document not withheld (no verdict, as `project` asks).
+    pub(super) fn indexed_codes(&self, i: usize) -> Option<(u32, Vec<(u16, u32)>)> {
+        let projection = &*self.context.projection;
+        if projection.shape != Shape::Core || projection.node_anchors.is_some() {
+            return None;
+        }
+        let d = self.input(i);
+        let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
+        if d.guest.is_some() {
+            return None;
+        }
+        if tag == TEXT || d.facts.is_empty() {
+            return Some((0, Vec::new()));
+        }
+        let dialect = self.context.dialects.get(tag)?;
+        self.read_facts(i, |f| {
+            if !f.named(0) {
+                return None;
+            }
+            let index = f.index();
+            if !index.named_all_rooted() {
+                return None;
+            }
+            if projection.wants("syntax_error") && core_rr::verdict(f, dialect).ok()?.is_some() {
+                return None;
+            }
+            let codes: Vec<(u16, u32)> = index.counts().filter(|&(c, _)| index.named(c)).map(|(c, n)| (kind_code(f.code_entry(c).0), n)).collect();
+            Some((codes.iter().map(|c| c.1).sum(), codes))
+        })
+    }
+    /// `f` over document `i`'s facts, made or not, read through the batch's cache (or, a document whose blocks its
+    /// entries do not hold, in a batch of its own, `Facts::alone`, as `Projected::narrowed` reads them).
+    pub(super) fn read_facts<R>(&self, i: usize, f: impl FnOnce(FactsIn<'_>) -> R) -> R {
+        let facts = &self.input(i).facts;
+        match self.context.cache.as_deref().filter(|c| facts.z_tape().is_none_or(|t| c.entry_size() >= t.entry_size())) {
+            Some(cache) => f(facts.read_in(Some(cache))),
+            None => facts.alone(f),
+        }
+    }
     /// Document `i`'s projection (decision 0289 §3: in the batch's block), its verdict and its module.
     fn project(&self, i: usize) -> MadeDoc {
         let d = self.input(i);
@@ -1375,6 +1418,29 @@ impl Batch {
         Some(values.iter().filter_map(|v| by.get(v)).flatten().copied().collect())
     }
 
+    /// The keys of the documents a node or span of which can have one of the texts whose atoms are `values` (a read of
+    /// `text` by its string, decision 0656 step 4): each document's index asked (`DocIndex::may_have_text`), none
+    /// made. A text-only document's source searched. `None` where a value names no text.
+    fn keys_with_texts(&self, values: &[i64]) -> Option<Vec<u32>> {
+        let texts: Vec<String> = values.iter().map(|&v| self.atoms.value(u32::try_from(v).ok()?).ok().flatten()).collect::<Option<_>>()?;
+        Some(
+            (0..self.docs.len())
+                .filter(|&i| {
+                    let facts = &self.docs.input(i).facts;
+                    let source = facts.source.as_bytes();
+                    if facts.tape.is_none() {
+                        return texts.iter().any(|t| memchr::memmem::find(source, t.as_bytes()).is_some());
+                    }
+                    self.docs.read_facts(i, |f| {
+                        let index = f.index();
+                        texts.iter().any(|t| index.may_have_text(t.as_bytes(), source))
+                    })
+                })
+                .map(|i| self.docs.key(i))
+                .collect(),
+        )
+    }
+
     /// The keys of the documents whose `doc` rows' modules' atoms are `values` (a read of `doc` by its module): each
     /// file's module (`syntax::doc_module`, from its path and the corpus's name for it) interned once, none made. A
     /// tape value has no `doc` row. `None` where they could not be.
@@ -1621,6 +1687,11 @@ impl MadeRows {
             })
             .clone()
     }
+    /// Whether `column` is core.rerail's `text(n, s)`'s string: a read by it is routed to the documents whose index
+    /// says a node or span can have the text (`Batch::keys_with_texts`).
+    fn is_text_string(&self, column: usize) -> bool {
+        column == 1 && self.batch.rows.names[self.rel] == "text" && self.template().columns() == ["n", "s"]
+    }
     /// How the relation's first column names its row's document.
     fn by(&self) -> ByDocument {
         self.batch.rows.by[self.rel]
@@ -1718,7 +1789,10 @@ impl MadeRows {
     /// be known), a node of the row's own document, or its document's key.
     fn routes(&self, column: usize) -> bool {
         let by = self.by();
-        (by.column() == Some(column) && !matches!(by, ByDocument::Host(_))) || self.batch.rows.also[self.rel].contains(&column) || self.batch.rows.key_column[self.rel] == Some(column)
+        (by.column() == Some(column) && !matches!(by, ByDocument::Host(_)))
+            || self.batch.rows.also[self.rel].contains(&column)
+            || self.batch.rows.key_column[self.rel] == Some(column)
+            || self.is_text_string(column)
     }
     /// The documents whose rows a read of `column` by `values` can find, none made: `None` for a column that names
     /// no document.
@@ -1740,6 +1814,8 @@ impl MadeRows {
             self.batch.keys_of_paths(values)?
         } else if self.batch.rows.module_column[self.rel] == Some(column) {
             self.batch.keys_of_modules(values)?
+        } else if self.is_text_string(column) {
+            self.batch.keys_with_texts(values)?
         } else {
             return None;
         })

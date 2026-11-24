@@ -103,12 +103,10 @@ impl Pairs {
     }
 }
 
-/// A node row's run not made yet (`Within::made`).
-const UNMADE: u32 = u32::MAX;
-
-/// The run of `row`'s rows made on a side, if it is.
-fn made_run(slots: &rerail_blocks::vector::Vector<[u32; 2]>, row: u32) -> Option<(u32, u32)> {
-    slots.get(row as usize).filter(|r| r[0] != UNMADE).map(|r| (r[0], r[1]))
+/// The run of `row`'s rows made on a side, if it is: its slot holds `(start + 1) << 32 | len`, 0 where none is made.
+fn made_run(slots: &Pairs, row: u32) -> Option<(u32, u32)> {
+    let slot = slots.at(row as usize).load(Ordering::Acquire);
+    (slot != 0).then(|| (((slot >> 32) - 1) as u32, slot as u32))
 }
 
 pub struct Within {
@@ -116,10 +114,13 @@ pub struct Within {
     mode: Mode,
     /// Per side, each row: inner node row << 32 | outer node row (rows of the batch's `node`).
     chunks: [[OnceLock<Pairs>; CHUNKS]; 2],
-    /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`): `[start, len]`,
-    /// `UNMADE` where none is made yet. In the run's blocks, one slot a node row (decision 0353: a scan of every node's
-    /// containers held a map of them on the heap, 13 MB at the M3's 300-file peak, ab175).
-    made: Mutex<([usize; 2], [rerail_blocks::vector::Vector<[u32; 2]>; 2])>,
+    /// Per side, the rows made: taken under the lock when a node's run is first made.
+    made: Mutex<[usize; 2]>,
+    /// Per side, per node row, the run of its rows as inner (`0`) or outer (`1`) (`made_run`), read without a lock: a
+    /// lookup that took `made`'s lock to read a run made already queued every thread's probes on it (corpus0 × B-now:
+    /// `within` 12 µs a lookup). In the run's blocks, one slot a node row, made whole at the first lookup (decision
+    /// 0353: a scan of every node's containers held a map of them on the heap, 13 MB at the M3's 300-file peak, ab175).
+    runs: [OnceLock<Pairs>; 2],
     /// Every node's containers made (a scan): the rows they span.
     all: OnceLock<usize>,
     /// Its nodes of zero width (locals), by document: document `d`'s are `locals[starts[d]..starts[d + 1]]`.
@@ -196,7 +197,8 @@ impl Within {
         Within {
             mode,
             chunks: std::array::from_fn(|_| std::array::from_fn(|_| OnceLock::new())),
-            made: Mutex::new(([0, 0], [crate::code_rule_dsl::facts::rows::vector_in(None, 0), crate::code_rule_dsl::facts::rows::vector_in(None, 0)])),
+            made: Mutex::new([0, 0]),
+            runs: [OnceLock::new(), OnceLock::new()],
             all: OnceLock::new(),
             zero: OnceLock::new(),
             shape: OnceLock::new(),
@@ -389,7 +391,7 @@ impl Within {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn made_rows(&self) -> usize {
         let made = self.made.lock();
-        made.0[0] + made.0[1]
+        made[0] + made[1]
     }
 
     /// The first id of the rows made per looked-up `n`.
@@ -794,17 +796,18 @@ impl Within {
 
     /// The rows of node row `row` as inner (`side` 0) or outer (1), made on the first lookup.
     fn rows(&self, side: usize, row: u32) -> (u32, u32) {
-        if let Some(run) = made_run(&self.made.lock().1[side], row) {
+        let runs = self.runs[side].get_or_init(|| Pairs::new(self.batch.nodes().total().max(1)));
+        if let Some(run) = made_run(runs, row) {
             return run;
         }
         let (doc, local) = self.at(row);
         let base = self.batch.nodes().at(doc) as u32;
         let others = if side == 0 { self.containers(doc, local) } else { self.contained(doc, local) };
         let mut made = self.made.lock();
-        if let Some(run) = made_run(&made.1[side], row) {
+        if let Some(run) = made_run(runs, row) {
             return run;
         }
-        let start = made.0[side];
+        let start = made[side];
         assert!(start + others.len() <= if side == 0 && self.solvable() { OUTER - LOOKED_UP } else { OUTER }, "within: more rows than ids");
         for (i, other) in others.iter().enumerate() {
             let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
@@ -812,17 +815,13 @@ impl Within {
             let chunk = self.chunks[side][k].get_or_init(|| Pairs::new(BASE << k));
             chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
         }
-        made.0[side] += others.len();
+        made[side] += others.len();
         if side == 0 {
-            self.len.store(made.0[0], Ordering::Release);
+            self.len.store(made[0], Ordering::Release);
         }
         let run = ((start + if side == 0 { self.looked_up() } else { OUTER }) as u32, others.len() as u32);
-        let slots = &mut made.1[side];
-        if slots.len() <= row as usize {
-            let all = self.batch.nodes().total().max(row as usize + 1);
-            slots.resize(all, [UNMADE, 0]);
-        }
-        slots[row as usize] = [run.0, run.1];
+        // After its rows: a reader that finds the run reads them.
+        runs.at(row as usize).store((u64::from(run.0) + 1) << 32 | u64::from(run.1), Ordering::Release);
         run
     }
 
@@ -838,7 +837,7 @@ impl Within {
         debug_assert!(!(self.solvable() && row < LOOKED_UP), "a solved row is the relation's");
         let side = usize::from(row >= OUTER);
         let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
-        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side])).at(at).load(Ordering::Relaxed)
+        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock()[side])).at(at).load(Ordering::Relaxed)
     }
 
     fn shape(&self) -> Shape {
