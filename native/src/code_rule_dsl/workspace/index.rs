@@ -24,7 +24,8 @@ use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::{
-    CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
+    CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredLocalResult,
+    StoredPathObjects,
 };
 use crate::git_workspace;
 use napi::{Env, Result, Task};
@@ -223,6 +224,106 @@ pub fn repository_package(
     package_manifests(language)
         .then(|| manifests.of_file(&repository.worktree_root.join(repository_path)))
         .flatten()
+}
+
+/// A file a restore may take from the store.
+struct RestoreCandidate<'a> {
+    /// Its pending entry.
+    file: &'a PendingFile,
+    /// Its evaluation input.
+    input: FileInput,
+    /// The stored source its blob alias names.
+    stored: &'a StoredPathObjects,
+    /// The blob's length.
+    length: u64,
+    /// The key of its stored results.
+    key: (HashKey, HashKey),
+}
+
+/// Stored results by the key a candidate names (`RestoreCandidate`).
+type StoredResults = HashMap<(HashKey, HashKey), Arc<Vec<StoredLocalResult>>>;
+
+/// A candidate verified for a restore: its input, its stored source and its stored results.
+type VerifiedRestore<'a> = (
+    FileInput,
+    &'a StoredPathObjects,
+    &'a Arc<Vec<StoredLocalResult>>,
+);
+
+/// The blob alias of each accepted file in a reusable directory that discovery found clean.
+fn clean_aliases(
+    repository: &git_workspace::GitWorkspace,
+    accepted: &[PendingFile],
+    reusable_prefixes: &HashSet<String>,
+) -> Vec<(String, HashKey)> {
+    accepted
+        .iter()
+        .filter(|file| path_in_prefixes(&file.path, reusable_prefixes))
+        .filter_map(|file| {
+            repository
+                .clean_source_alias(&file.repository_path)
+                .map(|alias| (file.path.clone(), alias))
+        })
+        .collect()
+}
+
+/// Each accepted file the store holds a source for, with its evaluation input and the key of its
+/// stored results.
+fn restore_candidates<'a>(
+    repository: &git_workspace::GitWorkspace,
+    accepted: &'a [PendingFile],
+    stored_paths: &'a HashMap<String, (StoredPathObjects, u64)>,
+    manifests: &mut dyn RepositoryContext,
+) -> Result<Vec<RestoreCandidate<'a>>> {
+    let mut prepared = Vec::with_capacity(stored_paths.len());
+    for file in accepted {
+        let Some((stored, length)) = stored_paths.get(&file.path) else {
+            continue;
+        };
+        let module = repository_module(repository, &file.repository_path, &file.language);
+        let package =
+            repository_package(manifests, repository, &file.repository_path, &file.language);
+        let input = FileInput::new(
+            file.path.clone(),
+            file.language.clone(),
+            Arc::new(String::new()),
+            module.as_ref(),
+            package,
+            &file.path,
+        )?;
+        let key = (stored.source_hash, file_context(&input));
+        prepared.push(RestoreCandidate {
+            file,
+            input,
+            stored,
+            length: *length,
+            key,
+        });
+    }
+    Ok(prepared)
+}
+
+/// The candidates whose stored results cover the catalog and whose worktree file holds the blob's
+/// bytes now.
+fn holding_blob_bytes<'a>(
+    repository: &git_workspace::GitWorkspace,
+    prepared: Vec<RestoreCandidate<'a>>,
+    result_manifest: &'a StoredResults,
+) -> Vec<VerifiedRestore<'a>> {
+    // Discovery found these files clean at scan start, but a file may change after it, and a
+    // checkout conversion keeps a file clean in Git while its bytes differ from the blob's
+    // (whose stored source and results another worktree may have published). Restore only a
+    // file that holds the blob's bytes now; verify before taking the workspace lock, since a
+    // changed stat costs a hash.
+    prepared
+        .into_iter()
+        .filter_map(|candidate| {
+            let results = result_manifest.get(&candidate.key)?;
+            repository
+                .holds_blob_bytes(&candidate.file.repository_path, candidate.length)
+                .then_some((candidate.input, candidate.stored, results))
+        })
+        .collect()
 }
 
 fn restore_prepared_file(
@@ -547,15 +648,7 @@ impl WorkspaceIndexTask {
         catalog: CandidateCatalogIdentity,
         manifests: &mut dyn RepositoryContext,
     ) -> Result<HashSet<String>> {
-        let aliases = accepted
-            .iter()
-            .filter(|file| path_in_prefixes(&file.path, reusable_prefixes))
-            .filter_map(|file| {
-                repository
-                    .clean_source_alias(&file.repository_path)
-                    .map(|alias| (file.path.clone(), alias))
-            })
-            .collect::<Vec<_>>();
+        let aliases = clean_aliases(repository, accepted, reusable_prefixes);
         if aliases.is_empty() {
             return Ok(HashSet::new());
         }
@@ -563,47 +656,21 @@ impl WorkspaceIndexTask {
             .store
             .stored_sources_by_alias(&aliases)
             .map_err(|error| invalid(error.to_string()))?;
-        let mut prepared = Vec::with_capacity(stored_paths.len());
-        for file in accepted {
-            let Some((stored, length)) = stored_paths.get(&file.path) else {
-                continue;
-            };
-            let module = repository_module(repository, &file.repository_path, &file.language);
-            let package =
-                repository_package(manifests, repository, &file.repository_path, &file.language);
-            let input = FileInput::new(
-                file.path.clone(),
-                file.language.clone(),
-                Arc::new(String::new()),
-                module.as_ref(),
-                package,
-                &file.path,
-            )?;
-            let key = (stored.source_hash, file_context(&input));
-            prepared.push((file, input, stored, *length, key));
-        }
+        let prepared = restore_candidates(repository, accepted, &stored_paths, manifests)?;
         let keys = prepared
             .iter()
-            .map(|(_, _, _, _, key)| *key)
+            .map(|candidate| candidate.key)
             .collect::<Vec<_>>();
         let result_manifest = storage
             .store
             .local_check_results_by_key(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
-        // Discovery found these files clean at scan start, but a file may change after it, and a
-        // checkout conversion keeps a file clean in Git while its bytes differ from the blob's
-        // (whose stored source and results another worktree may have published). Restore only a
-        // file that holds the blob's bytes now; verify before taking the workspace lock, since a
-        // changed stat costs a hash.
-        let verified = prepared
-            .into_iter()
-            .filter_map(|(file, input, stored, length, key)| {
-                let results = result_manifest.get(&key)?;
-                repository
-                    .holds_blob_bytes(&file.repository_path, length)
-                    .then_some((input, stored, results))
-            })
-            .collect::<Vec<_>>();
+        let verified = holding_blob_bytes(repository, prepared, &result_manifest);
+        self.restore_verified(verified)
+    }
+
+    /// Restores each verified file into the workspace; returns the paths it restored.
+    fn restore_verified(&self, verified: Vec<VerifiedRestore<'_>>) -> Result<HashSet<String>> {
         let mut state = self.lock()?;
         let mut restored = HashSet::new();
         for (input, stored, results) in verified {
