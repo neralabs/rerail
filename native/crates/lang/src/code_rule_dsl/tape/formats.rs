@@ -429,18 +429,15 @@ impl DocTape {
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts
-    /// from, and the view. Format 16's arrays as held; a 16z tape's blocks as stored, which a reader reads through its
-    /// batch's cache (`ZCache::view_for`: a block decoded where a read falls, 0353
-    /// step 4b).
+    /// from, and the view. Its home's bytes (`extent`): the tape, its presence and its auxiliary index, which its view
+    /// names (`presence`) and its reads read in place (`tape_has_kind`, `tape_place`). Format 16's arrays as held; a
+    /// 16z tape's blocks as stored, which a reader reads through its batch's cache (`ZCache::view_for`: a block
+    /// decoded where a read falls, 0353 step 4b).
     pub fn in_place(&self) -> Result<(&[u8], rerail_clif::view::TapeView), String> {
-        fn sixteen<'a>(t: &'a f16::Tape16, lang: Option<&Lang>) -> Result<(&'a [u8], rerail_clif::view::TapeView), String> {
-            let lang = lang.ok_or("a format 16 tape of a language without its table")?;
-            Ok((t.as_bytes(), f16::placement(t.as_bytes())?.view(lang, 0)?))
-        }
         let lang = self.image.lang();
         match self.image.held() {
-            Held::F16(t) => sixteen(t, lang),
-            Held::F16Z(z) => Ok((z.as_bytes(), z.view(lang.ok_or("a 16z tape of a language without its table")?)?)),
+            Held::F16(t) => Ok((t.extent(), t.placement().view(lang.ok_or("a format 16 tape of a language without its table")?, 0)?)),
+            Held::F16Z(z) => Ok((z.extent(), z.view(lang.ok_or("a 16z tape of a language without its table")?)?)),
         }
     }
 

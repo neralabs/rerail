@@ -125,6 +125,20 @@ prototype's rule, "never key postings to known rules".
    - **`text` by its string.** A read of `text(n, s)` by `s` is routed (`MadeRows::route`, `keys_with_texts`) to
      the documents whose index says a node or span can have the text: a name of its vocabulary, else text its source
      holds. It made every document of the batch before.
+   - **A child's place** (`child`'s `i`). A projection whose numbered nodes are every named node under the root
+     (core.rerail's shape, one range, not withheld) over a home that holds an index reads a place in it
+     (`Projected::places_by_index`, `FactsIn::place`), and its view entry says so (`ViewDoc::places_by_index`), so the
+     views' reads call the CLIF read `tape_place` (`clif::reads::place`: the last stored every-8th named sibling,
+     then at most 7 named steps of the tape), which the host's JIT, the CPU's vector path and every device read the
+     same. No places column is made for it. The places column stays where the index cannot answer a place: T's shape
+     (it numbers no comments, and the index's places count them as named), an anchored projection (its places are
+     among anchors), and a tape whose home holds no index (format 15, or a 16 home without a presence).
+   - **The reads take the home.** `DocTape::in_place` hands the reads the home's bytes (`extent`): the tape, its
+     presence and its index, which the view names (`presence`). A home ends where its index ends
+     (`AuxIndex::extent`; `presence::find` refuses bytes past it).
    - **Tests:** `a_documents_index_answers_as_the_document_says` (the facade, on a home's index and a built one; one
      without a section refused), `a_read_of_text_by_its_string_makes_only_the_documents_that_can_hold_it`,
-     `a_node_columns_counts_make_no_document`, and the facts' tests of every format (`every_format_reads_the_same_facts_off_the_tape`).
+     `a_node_columns_counts_make_no_document`, `the_clif_read_of_a_place_is_the_rust_read` (`tape_place` through the
+     JIT, every node), `the_view_reads_are_the_hosts_rows` (the view reads on the JIT and a device, core.rerail's
+     shape now reading places in the index), and the facts' tests of every format
+     (`every_format_reads_the_same_facts_off_the_tape`).

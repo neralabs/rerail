@@ -614,7 +614,7 @@ UKL_REFLECT_STRUCT(ReadArgs, n, pad)
 DEFINE_KERNEL2(tests, t_reads,
                ARGS,     ReadArgs, args,      ,
                RWBUFFER, uint8_t,  tape,      "[bytes]",
-               ROBUFFER, uint32_t, view,      "[29]",
+               ROBUFFER, uint32_t, view,      "[32]",
                ROBUFFER, uint32_t, parentEnd, "[n]",
                RWBUFFER, uint32_t, out,       "[n * 23]",
                GID0,     uint32_t, i,         )
@@ -650,7 +650,7 @@ UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
 DEFINE_KERNEL2(tests, t_random,
                ARGS,     RandomArgs, args,  ,
                RWBUFFER, uint8_t,    tape,  "[bytes]",
-               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   view,  "[32]",
                ROBUFFER, uint32_t,   want,  "[n * 4]",
                RWBUFFER, uint32_t,   out,   "[threads * 2]",
                GID0,     uint32_t,   i,     )
@@ -928,7 +928,10 @@ pub mod presence {
         if aux >= buf.len() || buf[past..aux].iter().any(|&b| b != 0) {
             return Err(bad());
         }
-        crate::aux_index::AuxIndex::read(&buf[aux..]).map_err(|e| format!("a tape's auxiliary index in its home: {e}"))?;
+        let index = crate::aux_index::AuxIndex::read(&buf[aux..]).map_err(|e| format!("a tape's auxiliary index in its home: {e}"))?;
+        if aux + index.extent() != buf.len() {
+            return Err("a tape's home with bytes past its auxiliary index".into());
+        }
         Ok((at, aux))
     }
 

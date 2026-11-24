@@ -58,8 +58,12 @@ pub struct ViewDoc {
     /// guest's placement gives its span (`Placement::host`; u64s). A placement no word maps (an embedder's segments,
     /// a string's normalized pieces): its spans placed once, as the host places them.
     pub placed: Run,
+    /// 1 where a node's place is read in its tape's auxiliary index (`tape_place`, decision 0656 step 4), with no
+    /// `places`: a projection of core.rerail's shape, not narrowed to anchors, whose tape's home holds an index.
+    pub places_by_index: u32,
+    pub pad: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 8);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
@@ -207,6 +211,7 @@ pub mod at {
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
     pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
+    pub const PLACES_BY_INDEX: i32 = offset_of!(ViewDoc, places_by_index) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -229,7 +234,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 18] = [
+    let fields: [(&str, &str, usize); 20] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -248,6 +253,8 @@ pub fn ukl() -> String {
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
         ("Run", "placed", offset_of!(ViewDoc, placed)),
+        ("uint32_t", "places_by_index", offset_of!(ViewDoc, places_by_index)),
+        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
@@ -362,7 +369,8 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `view_child(i, col)`: column `col` of the document's `child` row `i`, of numbered node `i + 1` (every node but the
-/// root): the parent's id, the child's id, its place among the parent's children.
+/// root): the parent's id, the child's id, its place among the parent's children (read in the tape's auxiliary index,
+/// `tape_place`, where the entry says so; else the entry's `places`).
 #[cfg(feature = "ir")]
 pub fn child(b: &mut B<'_, '_>) -> Value {
     let (i, col) = (b.arg(0), b.arg(1));
@@ -373,7 +381,15 @@ pub fn child(b: &mut B<'_, '_>) -> Value {
         b.parent_id(l, x)
     }, |b| {
         let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
-        b.either(I64, c, |b| b.node_id(l), |b| b.entry_item(at::PLACES, l))
+        b.either(I64, c, |b| b.node_id(l), |b| {
+            let by = b.word_at(I32, b.tape, at::PLACES_BY_INDEX);
+            let by = b.f.ins().icmp_imm(IntCC::NotEqual, by, 0);
+            b.either(I64, by, |b| {
+                let x = b.tape_node(l);
+                let place = b.call_tape("tape_place", &[x]);
+                b.f.ins().uextend(I64, place)
+            }, |b| b.entry_item(at::PLACES, l))
+        })
     })
 }
 

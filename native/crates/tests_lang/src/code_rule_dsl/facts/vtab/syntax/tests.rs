@@ -2625,7 +2625,7 @@ fn the_view_reads_are_the_hosts_rows() {
 // resident): no binding.
 typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint32_t n; uint32_t nf; } ViewP;
 UKL_REFLECT_STRUCT(ViewP, d, tt, ll, n, nf)
-DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[29]",
+DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[32]",
                RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, g, )
 {
     // A thread a (local, slot): each read is called once with its column a value, so the compiler makes one copy of
@@ -2636,8 +2636,8 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     uint32_t n = p.n, nf = p.nf;
     UKL_GLOBAL const uint8_t* tt = (UKL_GLOBAL const uint8_t*)p.tt;
     UKL_GLOBAL const uint8_t* ll = (UKL_GLOBAL const uint8_t*)p.ll;
-    uint32_t v[29];
-    for (uint32_t q = 0u; q < 29u; q++) v[q] = tv[q];
+    uint32_t v[32];
+    for (uint32_t q = 0u; q < 32u; q++) v[q] = tv[q];
     int64_t r = 0;
     if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, l, k);
     else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, l, k - 5u) : 0;

@@ -63,3 +63,18 @@ UKL_INLINE uint32_t ukl_aux_child(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t parent, ui
     }
     return CLIF_T_NONE;
 }
+
+// `tape_place(node)` (decision 0656 step 4): the CLIF read's UKL, which the views' reads call (`view_child`'s place,
+// `CLIF_F(place)` in the generated `<ukl/reads/view.h>`): `ukl_aux_place` over the index in the tape's home, through
+// the tape's public reads, so one body serves every format. `CLIF_T_NONE` for a tape without presence.
+UKL_INLINE uint32_t clif_tape_place(CLIF_T_ARGS, uint32_t node)
+{
+    if (clif_view(v, CLIF_T_PRESENCE) == 0u)
+        return CLIF_T_NONE;
+    return ukl_aux_place(t, v, t + ukl_aux_in_home(t, v), node);
+}
+UKL_INLINE uint32_t clif_f15_place(CLIF_T_ARGS, uint32_t node) { return clif_tape_place(t, v, node); }
+UKL_INLINE uint32_t clif_f16_place(CLIF_T_ARGS, uint32_t node) { return clif_tape_place(t, v, node); }
+#if defined(CLIF_READS_TAPE_Z)
+UKL_INLINE uint32_t clif_f16z_place(CLIF_T_ARGS, uint32_t node) { return clif_tape_place(t, v, node); }
+#endif

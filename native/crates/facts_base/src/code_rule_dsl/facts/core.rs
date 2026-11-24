@@ -990,6 +990,12 @@ impl<'a> FactsIn<'a> {
         });
         DocIndex::read(bytes).expect("the index built")
     }
+    /// Named node `id`'s place among its parent's named children (0 for the first, and the root's), read in the
+    /// document's index (`DocIndex::place`).
+    pub fn place(&self, id: u32) -> u32 {
+        let index = self.index();
+        on_tape!(self, |t| index.place(&t, id))
+    }
     /// The nodes whose code is in the set `codes` makes of the tape's table, by id. The set is a kind's or a class's
     /// numbers from the table's index (`CodeTable::of_kind`), not a test of every entry: on format 16 the table is the
     /// language's (decision 0336 §7). The document's index (`index`) answers whether it holds one, and lists the nodes

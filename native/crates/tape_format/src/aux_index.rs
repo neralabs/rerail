@@ -65,7 +65,7 @@ impl Kind {
     pub const ALL: [Kind; 7] = [Kind::Leaves, Kind::Names, Kind::Vocab, Kind::Siblings, Kind::Counts, Kind::Rare, Kind::Named];
     /// The section's version, in its directory entry: a reader refuses a version it does not read. SIBLINGS' 2: of
     /// named children (1 was of every child). COUNTS' 2: with its strays (1 had none).
-    pub fn version(self) -> u16 {
+    pub const fn version(self) -> u16 {
         match self {
             Kind::Siblings | Kind::Counts => 2,
             _ => 1,
@@ -114,6 +114,15 @@ pub fn text_hash(text: &[u8]) -> u64 {
     h = h.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
     h ^ (h >> 33)
 }
+
+// The numbers the tape's CLIF read of a place (`tape_place`) reads the index by.
+const _: () = assert!(
+    rerail_clif::view::aux::SIBLINGS == Kind::Siblings as u16
+        && rerail_clif::view::aux::NAMED == Kind::Named as u16
+        && rerail_clif::view::aux::K == K
+        && rerail_clif::view::aux::SIBLINGS_VERSION == Kind::Siblings.version()
+        && rerail_clif::view::aux::NAMED_VERSION == Kind::Named.version()
+);
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
@@ -365,6 +374,15 @@ impl<'a> AuxIndex<'a> {
 
     pub fn bytes(&self) -> &'a [u8] {
         self.b
+    }
+    /// The bytes the index spans, as its writer lays it: its header and directory, and each section, each padded to
+    /// 16. A home's index ends its home (`presence::find`).
+    pub fn extent(&self) -> usize {
+        let count = u16_at(self.b, 6) as usize;
+        (0..count).fold((HEADER + ENTRY * count).next_multiple_of(16), |end, e| {
+            let d = HEADER + ENTRY * e;
+            end.max((u32_at(self.b, d + 8) as usize + u32_at(self.b, d + 12) as usize).next_multiple_of(16))
+        })
     }
     pub fn nodes(&self) -> u32 {
         u32_at(self.b, 8)
@@ -966,6 +984,38 @@ mod tests {
             bad[at] ^= 1;
             assert!(held(&bad).is_err(), "z {z}: a home whose index does not read");
         }
+    }
+
+    /// Decision 0656 step 4: the CLIF read of a place (`tape_place`, which the views' reads call, through the JIT here)
+    /// is `place`, every node of a format 16 home holding its auxiliary index; a tape without presence reads `NONE`.
+    #[test]
+    fn the_clif_read_of_a_place_is_the_rust_read() {
+        let d = sample::Doc::new();
+        let lang = crate::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
+        let number: Vec<u32> = crate::f16::numbers(&lang, &d.table).unwrap();
+        let named = sample::named();
+        let named_r = named_codes(number.iter().max().map_or(0, |&m| m as usize + 1), |x| number.iter().position(|&y| y == x).is_some_and(|c| bit(&named, c as u32)));
+        let mut w = crate::f16::write_from_with_presence(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, false).unwrap().tape;
+        let crate::f16::Written::F16(t) = &w else { panic!("format 16") };
+        let aux = build(&t.reader(&lang).unwrap(), &d.source, 7, &named_r, Sections::ALL).unwrap();
+        w.lay_aux(&aux).unwrap();
+        let home = w.extent().to_vec();
+        let t = crate::f16::Tape16::from_bytes(crate::Vector::from(&home[..])).unwrap();
+        let r = t.reader(&lang).unwrap();
+        let x = AuxIndex::read(t.aux_bytes().unwrap()).unwrap();
+        let v = crate::f16::placement(&home).unwrap().view(&lang, 0).unwrap();
+        let jit = rerail_clif::jit::Reads::new();
+        let mut far = 0;
+        for i in 0..r.len() {
+            let want = place(&r, &x, i as u32);
+            assert_eq!(jit.one("tape_place", &home, &v, i), want, "node {i}'s place");
+            far += usize::from(want >= 2 * K);
+        }
+        assert!(far > 100, "places past the every-8th: {far}");
+        let bare = crate::f16::write_from(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, false).unwrap();
+        let crate::f16::Written::F16(bare) = bare else { panic!("format 16") };
+        let v = crate::f16::placement(bare.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        assert_eq!(jit.one("tape_place", bare.as_bytes(), &v, 5), NONE, "no presence");
     }
 
     /// Sections are chosen: one made without others reads `NONE` for theirs; names bring their vocabulary and leaves.
