@@ -7534,38 +7534,47 @@ fn run_observed_within(
                 }
                 let columns = source.columns();
                 let width = columns.len();
-                // A version: its source, in the corpus batch's columns (the same projection's), and its rows.
-                let version = |batch: &HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>| -> Result<Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<Vector<i64>>)>> {
+                // A version: its source, in the corpus batch's columns (the same projection's), and its rows' hashes
+                // (`RowHashes`): each row read once where it lies, none copied. Copied into a row vector each and a
+                // set of them, the move's 16 changed files' versions took 0.99 s of corpus0's move, against the whole
+                // of a cold run's statistics' 0.26 s.
+                let version = |batch: &HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>| -> Result<Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, RowHashes)>> {
                     let Some(s) = batch.get(rel) else { return Ok(None) };
                     if s.columns() != columns {
                         return Err(Error::Plan(format!("{rel}: a version's columns {:?}, the corpus batch's {columns:?}", s.columns())));
                     }
-                    Ok(Some((Arc::clone(s), (0..s.len()).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect())))
+                    Ok(Some((Arc::clone(s), RowHashes::of(s.as_ref(), width))))
                 };
-                let (old, new) = (version(&old_batch)?, version(&new_batch)?);
+                let (old, new) = {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "a version's rows, hashed".into());
+                    (version(&old_batch)?, version(&new_batch)?)
+                };
                 base_wholes.insert(rel.clone(), (old.as_ref().map(|(s, _)| Arc::clone(s)), new.as_ref().map(|(s, _)| Arc::clone(s))));
-                let set = |v: &Option<(_, Vec<Vector<i64>>)>| -> BTreeSet<Vector<i64>> { v.as_ref().map_or_else(BTreeSet::new, |(_, rows)| rows.iter().cloned().collect()) };
-                let (old_set, new_set) = (set(&old), set(&new));
                 let names = |suffix: &str| { let name = format!("{rel}__{suffix}"); (0..width).map(|c| super::sql_col(&name, c)).collect::<Vec<_>>() };
-                // Read where they lie (0364 R2): the rows of one version the other does not hold, picked.
-                let picked = |v: Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<Vector<i64>>)>, other: &BTreeSet<Vector<i64>>, suffix: &str| match v {
-                    Some((s, rows)) => crate::code_rule_dsl::logic::native::component::InRel::picked(s, (0..rows.len() as u32).filter(|&r| !other.contains(&rows[r as usize])).collect(), names(suffix)),
+                // Read where they lie (0364 R2): the rows of one version the other does not hold, picked; both
+                // found in one merge of the two versions' hashes, each pair of rows alike compared once.
+                let (plus_rows, minus_rows) = RowHashes::apart(new.as_ref().map(|(s, h)| (s.as_ref(), h)), old.as_ref().map(|(s, h)| (s.as_ref(), h)), width);
+                let picked = |v: &Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, RowHashes)>, rows: Vector<u32>, suffix: &str| match v {
+                    Some((s, _)) => crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(s), rows, names(suffix)),
                     None => crate::code_rule_dsl::logic::native::component::columns_source(names(suffix), vec![Some(rerail_blocks::vector::Vector::new()); width]),
                 };
                 // The changed documents' rows now, through the batch's index of their documents; a relation with none
                 // is read through for them.
                 // Where the batch knows where they lie (decision 0494: by group, by offset), there.
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the changed documents' rows now".into());
                 let found = source.rows_of_documents(&changed_documents).map(|rows| rows.into_iter().map(|r| r as u32).collect());
                 let skip: Vector<u32> = match found.or_else(|| input_delta::rows_of_documents(source.as_ref(), &changed_keys)) {
                     Some(rows) => rows,
                     None => {
                         crate::code_rule_dsl::logic::profile::decision("the base relations' versions (decision 0458)", || format!("{rel}: no index of its documents, read through for the changed ones"));
                         let by_document = columns.first().is_some_and(|c| c == "d" || c == "n" || c == "p");
-                        (0..source.len() as u32).filter(|&r| if by_document { changed_keys.contains(&memo::document_of(source.value(r as usize, 0))) } else { new_set.contains(&(0..width).map(|c| source.value(r as usize, c)).collect::<Vector<_>>()) }).collect()
+                        (0..source.len() as u32).filter(|&r| if by_document { changed_keys.contains(&memo::document_of(source.value(r as usize, 0))) } else { new.as_ref().is_some_and(|(n, nh)| nh.holds(n.as_ref(), source.as_ref(), r, width)) }).collect()
                     }
                 };
+                drop(_s);
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the version before, and the picks".into());
                 base_olds.insert(rel.clone(), Arc::new(input_delta::Before::new(Arc::clone(source), skip, old.as_ref().map(|(s, _)| Arc::clone(s)))));
-                versions.insert(rel.clone(), (picked(new, &old_set, "plus"), picked(old, &new_set, "minus")));
+                versions.insert(rel.clone(), (picked(&new, plus_rows, "plus"), picked(&old, minus_rows, "minus")));
             }
             versions
         }
@@ -11698,3 +11707,79 @@ fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, 
     }
 }
 
+
+/// A version of a base relation's rows, each as its hash with its row, sorted (decision 0458's versions): its rows
+/// compared with another version's where they lie, each read once to hash, a hash's rows read again only to tell two
+/// of them apart. Nothing of a row is copied.
+struct RowHashes(Vec<(u64, u32)>);
+
+impl RowHashes {
+    fn of(s: &dyn crate::code_rule_dsl::facts::vtab::Source, width: usize) -> RowHashes {
+        let mut h: Vec<(u64, u32)> = (0..s.len() as u32).map(|r| (row_hash(s, r, width), r)).collect();
+        h.sort_unstable();
+        RowHashes(h)
+    }
+
+    /// Whether this version (rows of `s`) holds row `r` of `x`.
+    fn holds(&self, s: &dyn crate::code_rule_dsl::facts::vtab::Source, x: &dyn crate::code_rule_dsl::facts::vtab::Source, r: u32, width: usize) -> bool {
+        let h = row_hash(x, r, width);
+        let from = self.0.partition_point(|&(k, _)| k < h);
+        self.0[from..].iter().take_while(|&&(k, _)| k == h).any(|&(_, o)| (0..width).all(|c| s.value(o as usize, c) == x.value(r as usize, c)))
+    }
+
+    /// The rows of each of two versions (`a`, `b`, each its rows' source and hashes) that the other does not hold, each
+    /// in row order: one merge of their hashes, a row of one compared with the other's rows of its hash only.
+    fn apart(a: Option<(&dyn crate::code_rule_dsl::facts::vtab::Source, &RowHashes)>, b: Option<(&dyn crate::code_rule_dsl::facts::vtab::Source, &RowHashes)>, width: usize) -> (Vector<u32>, Vector<u32>) {
+        let all = |v: Option<(&dyn crate::code_rule_dsl::facts::vtab::Source, &RowHashes)>| -> Vec<u32> { v.map_or_else(Vec::new, |(_, h)| h.0.iter().map(|&(_, r)| r).collect()) };
+        let (mut only_a, mut only_b) = match (a, b) {
+            (Some((sa, ha)), Some((sb, hb))) => {
+                let (mut only_a, mut only_b) = (Vec::new(), Vec::new());
+                let (mut i, mut j) = (0, 0);
+                let mut compared = 0;
+                while i < ha.0.len() || j < hb.0.len() {
+                    let h = match (ha.0.get(i), hb.0.get(j)) {
+                        (Some(&(x, _)), Some(&(y, _))) => x.min(y),
+                        (Some(&(x, _)), None) => x,
+                        (None, Some(&(y, _))) => y,
+                        (None, None) => break,
+                    };
+                    let ga = i + ha.0[i..].iter().take_while(|&&(k, _)| k == h).count();
+                    let gb = j + hb.0[j..].iter().take_while(|&&(k, _)| k == h).count();
+                    let mut held_b = vec![false; gb - j];
+                    for &(_, r) in &ha.0[i..ga] {
+                        let mut held = false;
+                        for (q, &(_, o)) in hb.0[j..gb].iter().enumerate() {
+                            compared += 1;
+                            if (0..width).all(|c| sa.value(r as usize, c) == sb.value(o as usize, c)) {
+                                held = true;
+                                held_b[q] = true;
+                            }
+                        }
+                        if !held {
+                            only_a.push(r);
+                        }
+                    }
+                    only_b.extend(hb.0[j..gb].iter().zip(&held_b).filter(|&(_, &h)| !h).map(|(&(_, o), _)| o));
+                    (i, j) = (ga, gb);
+                }
+                crate::code_rule_dsl::prof::count("logic.base_versions_rows", (ha.0.len() + hb.0.len()) as _);
+                crate::code_rule_dsl::prof::count("logic.base_versions_rows_compared", compared);
+                (only_a, only_b)
+            }
+            _ => (all(a), all(b)),
+        };
+        only_a.sort_unstable();
+        only_b.sort_unstable();
+        (only_a.into_iter().collect(), only_b.into_iter().collect())
+    }
+}
+
+/// Row `r` of `s`'s hash over its first `width` columns.
+fn row_hash(s: &dyn crate::code_rule_dsl::facts::vtab::Source, r: u32, width: usize) -> u64 {
+    use std::hash::Hasher as _;
+    let mut h = rustc_hash::FxHasher::default();
+    for c in 0..width {
+        h.write_i64(s.value(r as usize, c));
+    }
+    h.finish()
+}
