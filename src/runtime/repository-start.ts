@@ -21,6 +21,7 @@ import { checkouts, events, repositories, sessions } from "../engine/storage/sch
 import { holdsTable } from "../engine/storage/table-probe.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
+import { conversationRulesEnabled } from "../engine/experimental-features.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
@@ -227,10 +228,12 @@ function checkoutRules(database: RerailDatabase, checkout: CheckoutContext): rea
 }
 
 /**
- * Whether a rule switched on runs: not when its options do not apply (`configError`) or this Rerail no longer runs its
- * pack's document (`notRun`), as the compiled catalog the session note counts leaves both out.
+ * Whether a rule switched on runs: not when its options do not apply (`configError`), this Rerail no longer runs its
+ * pack's document (`notRun`), or it is a conversation rule while this process runs without them, as the compiled
+ * catalog and conversation rules the session note counts leave each out.
  */
-const runs = (rule: EffectiveRule): boolean => rule.on && rule.configError === null && rule.notRun === null;
+const runs = (rule: EffectiveRule): boolean => rule.on && rule.configError === null && rule.notRun === null
+  && (rule.document.kind !== "conversation" || conversationRulesEnabled());
 
 /** The rules that are on and run in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
 export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {

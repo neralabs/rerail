@@ -1,0 +1,1 @@
+While conversation rules are off, a conversation rule switched on shows as Not running in the dashboard, and Overview, Settings, pack pages, the status line and set-up's summary no longer count it as on or steering, so they agree with the session note. The API marks it `inactive` with code `experimental-off`.
