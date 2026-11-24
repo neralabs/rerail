@@ -916,6 +916,48 @@ fn held_module(key: &str) -> Option<(lower::Module, String)> {
     held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(image_store_path(), k)).map(|(m, d, _)| (m.clone(), d.clone()))
 }
 
+/// The module images the image store held when phase 0's run began, by the store's path and their alias, each where
+/// its bytes lie in the store's segments (`ContentStore::pinned_sources_placed`). Read before the run's first wave
+/// (decision 0104: no statement inside the waves), so its answer reads a module the process does not hold where the
+/// store's segment, a block, holds it (`module_in_waves`), and lowers only what the store does not hold (decision
+/// 0639 §3, §5: a copy of the template lowers no module).
+#[derive(Default)]
+struct PlacedModules(std::sync::Mutex<std::collections::HashMap<Option<PathBuf>, std::sync::Arc<std::collections::HashMap<crate::content_store::HashKey, crate::content_store::SourcePlace>>>>);
+
+/// Reads the image store's index of the images it keeps (`PlacedModules`): one statement, before phase 0's run.
+pub fn read_placed_modules() {
+    let Some(store) = image_store() else { return };
+    let Ok(rows) = store.pinned_sources_placed(IMAGE_OWNER) else { return };
+    let placed = std::sync::Arc::new(rows.into_iter().collect());
+    crate::code_rule_dsl::logic::profile::shared::<PlacedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(image_store_path(), placed);
+}
+
+/// The module of plan key `key`, with its image's digest, inside phase 0's waves: as the process holds it, else read
+/// where the image store's segment holds it, found by the index read before the run (`PlacedModules`), with no
+/// statement; its lease renewed behind the run where it runs down. `None` where neither holds it.
+fn module_in_waves(key: &str) -> Option<(lower::Module, String)> {
+    if let Some(found) = held_module(key) {
+        return Some(found);
+    }
+    let k = planned_key(key)?;
+    let at = image_store_path();
+    let place = {
+        let placed = crate::code_rule_dsl::logic::profile::shared::<PlacedModules>();
+        let placed = placed.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *placed.get(&at)?.get(&k)?
+    };
+    let store = image_store()?;
+    let bytes: super::program_image::SharedBytes = std::sync::Arc::new(store.source_at(&place)?);
+    let digest = image_digest((*bytes).as_ref());
+    let m = module_image::decode(bytes).ok()?;
+    if place.lease_until - (image_lease() - IMAGE_LEASE_SECS) <= IMAGE_LEASE_SECS / 2 {
+        queue_renewal(&store, place.id);
+    }
+    crate::code_rule_dsl::prof::count("rr.module_image_read_in_place", 1);
+    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((at, k), (m.clone(), digest.clone(), false));
+    Some((m, digest))
+}
+
 /// The module of plan key `key`, with its image's digest: made or read in this process, else read from the image
 /// store (`image_store`) and decoded. `None` where no store holds it.
 fn planned_module(key: &str) -> Option<(lower::Module, String)> {
@@ -945,6 +987,10 @@ pub fn planned_module_held(key: &str) -> bool {
     if crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(&(image_store_path(), k)) {
         return true;
     }
+    // In the index read before phase 0's run (`PlacedModules`): no statement.
+    if crate::code_rule_dsl::logic::profile::shared::<PlacedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&image_store_path()).is_some_and(|p| p.contains_key(&k)) {
+        return true;
+    }
     images::read_image(image_store().as_deref(), k).is_some()
 }
 
@@ -957,12 +1003,12 @@ pub fn planned_module_held(key: &str) -> bool {
 /// in tens of milliseconds, decision 0639), and its image kept behind the run. Its scope's modules rank below it in
 /// the same wave's requests, answered first, so the process holds them.
 pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
-    if let Some((_, digest)) = held_module(key) {
+    if let Some((_, digest)) = module_in_waves(key) {
         return Ok(digest);
     }
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
-    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
+    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| module_in_waves(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
     // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
     // each other are one module, and write each other's relations.
     let mut open = std::collections::HashMap::new();
@@ -985,6 +1031,9 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
     })?;
     let bytes: crate::content_store::record::Bytes = std::sync::Arc::new(module_image::encode(&m).map_err(Error::Syntax)?);
     let digest = image_digest((*bytes).as_ref());
+    // The module held is its image, read where the image is (its block), as every other reader of it reads it: not
+    // the lowering's own structures beside it.
+    let m = module_image::decode(std::sync::Arc::clone(&bytes)).map_err(Error::Syntax)?;
     let store = image_store();
     keep_image(store.as_deref(), "a module image", k, bytes);
     crate::code_rule_dsl::prof::count("rr.module_lowered_for_the_plan", 1);
@@ -1207,11 +1256,16 @@ pub(in crate::code_rule_dsl) fn renew_images(store: &crate::content_store::Conte
 }
 
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
-    use crate::content_store::write_back::Syms;
     let now = image_lease() - IMAGE_LEASE_SECS;
     if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
         return;
     }
+    queue_renewal(store, id);
+}
+
+/// Queues the renewal of image `id`'s lease to the store's writer, behind the run: no statement here.
+fn queue_renewal(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
+    use crate::content_store::write_back::Syms;
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
         let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
         cx.store.pin_source(id, IMAGE_OWNER, image_lease())

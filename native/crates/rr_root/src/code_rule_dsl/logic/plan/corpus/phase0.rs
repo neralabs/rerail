@@ -1091,6 +1091,9 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     // The library is already a permitted input root. Phase zero only loads the files its seeds request.
     let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
     let mut image = Vec::new();
+    // The image store's module images and where they lie, read before the run's first wave: its answer to a module's
+    // lowering reads one the store holds in place, with no statement inside the waves (decisions 0104, 0639 §3).
+    crate::code_rule_dsl::logic::rr::read_placed_modules();
     let phase_0 = in_phase_0();
     let run = super::run_handed(&[&text], None, None, &lib, None, std::path::Path::new(""), "program",
         crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options, Some(&mut image), Default::default());

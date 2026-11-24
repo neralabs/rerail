@@ -118,6 +118,18 @@ impl ObjectMaps {
     }
 }
 
+/// Where a source's bytes lie (`ContentStore::pinned_sources_placed`): its segment, the range there, its length, and
+/// when its pin ends; read with no statement (`ContentStore::source_at`).
+#[derive(Clone, Copy, Debug)]
+pub struct SourcePlace {
+    pub id: SourceId,
+    length: i64,
+    seg: i64,
+    at: i64,
+    len: i64,
+    pub lease_until: i64,
+}
+
 /// A tape (with its source) this process queued and the store has not written: read in memory until it is placed,
 /// then in its segment (`ContentStore::queued_tape`).
 pub struct QueuedTape(pub ObjectBytes);
@@ -442,6 +454,34 @@ impl ContentStore {
             out.push(Some((frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?, SourceId(source))));
         }
         Ok(out)
+    }
+
+    /// Every source `owner` pins, under each of its aliases, and where its bytes lie in their segment, with when the
+    /// pin ends: one statement, read before a run's waves, so a source found inside them is read where it lies
+    /// (`source_at`) with none (decision 0104). An archived source (decision 0450 step 4) is not placed: it has no
+    /// place here.
+    pub fn pinned_sources_placed(&self, owner: &str) -> StoreResult<Vec<(HashKey, SourcePlace)>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached(
+            "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.source_id, s.raw_length, s.seg, s.seg_at, s.seg_len, p.lease_until \
+             FROM object_pins p JOIN strings o ON o.string_id = p.owner_string_id \
+             JOIN source_objects s ON s.source_id = p.object_id \
+             JOIN source_aliases a ON a.source_id = s.source_id JOIN hashes h ON h.hash_id = a.alias_hash_id \
+             WHERE p.object_kind_id = ?1 AND o.domain_id = ?2 AND o.value = ?3 AND s.seg > 0",
+        )?;
+        let rows = st.query_map(params![super::reclamation::OBJECT_SOURCE, super::STRING_OWNER, owner], |r| {
+            let key = HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] };
+            Ok((key, SourcePlace { id: SourceId(r.get(5)?), length: r.get(6)?, seg: r.get(7)?, at: r.get(8)?, len: r.get(9)?, lease_until: r.get(10)? }))
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StoreError::from)
+    }
+
+    /// The bytes of the source at `place` (`pinned_sources_placed`), read where its segment, a block, lies, mapped: no
+    /// statement. `None` where the segment is not there, or holds no such range (reclaimed or moved since).
+    pub fn source_at(&self, place: &SourcePlace) -> Option<ObjectBytes> {
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let frame = row_frame(&mut maps, place.seg, place.at, place.len)?;
+        frame.bytes(usize::try_from(place.length).ok()?).ok()
     }
 
     /// The source `alias` names, read where the store holds it (`sources_by_alias_in_place`).

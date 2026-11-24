@@ -164,6 +164,17 @@ and key (`rr::planned_module`). A library file or a phase program as a seed is a
 so its graph holds its own module and the template plans and lowers every one; a program file of the run's own is
 no module.
 
+**Read in place, with no statement inside the waves (2026-11-24, the user's choice B).** The answer is given inside
+the run's waves, where a run sends no SQL (decision 0104), so the hub's aec6f2539e had it read no store and lower
+every module the process did not hold; a copy of the template then lowered the library again, and T4 failed once the
+template was filled. Now, before phase 0's run, one statement reads the image store's index of the images it pins:
+each alias and where its bytes lie in the store's segments (`ContentStore::pinned_sources_placed`, `rr::PlacedModules`).
+Inside the waves a module the process does not hold is read where its segment, a block, holds it, mapped
+(`ContentStore::source_at`, `rr::module_in_waves`), and decoded in place; its lease is renewed behind the run where
+it runs down. Only a module the store does not hold is lowered. A module lowered here is held as its image's decode,
+read where the image is, as every other reader reads it. `Graph::holds` and the reuse check look in the index before
+the store. An archived image has no place in the index and is lowered again.
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.
