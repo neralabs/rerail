@@ -234,7 +234,7 @@ impl Block {
     }
 
     /// It, a chunk freed under `bytes` keeping its pages for the next chunk of its size: a block whose chunks are
-    /// made and freed often (a thread's large regions, `maps::LargeRoom`), where giving each one's pages to the OS and
+    /// made and freed often (a thread's large regions, `maps::FreeRoom::large`), where giving each one's pages to the OS and
     /// marking them in use again cost two calls a chunk. Larger chunks' pages still go back as they are freed.
     pub fn keeping_pages_below(mut self, bytes: usize) -> Block {
         self.resident_below = bytes;

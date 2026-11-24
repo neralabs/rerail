@@ -51,7 +51,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/maps.rs", "STACK", Thread, "this thread's handle on its stack's room (`scratch::StackRoom`): the same on any thread"),
     ("crates/blocks/src/maps.rs", "WITHIN", Call, "the owner's room of the structures a call makes while it runs (`maps::within`); work it hands to another thread takes that thread's stack"),
     ("crates/blocks/src/scratch.rs", "ID", Thread, "this thread's number, the owner a stack's regions are popped by"),
-    ("crates/blocks/src/scratch.rs", "LARGE_ROOM", Thread, "this thread's free-listed blocks for its large regions (`maps::LargeRoom`)"),
+    ("crates/blocks/src/scratch.rs", "LARGE_ROOM", Thread, "this thread's free-listed blocks for its large regions (`maps::FreeRoom::large`)"),
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's stack (decision 0342, amended 2026-11-24): its small structures' and its scratch uses' memory"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/ukl_vec/src/exec.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),

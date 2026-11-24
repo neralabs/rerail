@@ -234,6 +234,9 @@ pub struct Values {
     /// (`Within::solved_with`), and the parts it was made with.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     solved: parking_lot::Mutex<FxHashMap<String, (usize, Option<crate::code_rule_dsl::facts::rows::Part>)>>,
+    /// Where its parts' keys are made (decision 0342 amended): its own blocks, held while the chunk holds it. Made on
+    /// whichever thread answered a request, they held that thread's stack under them for the chunk.
+    room: rerail_blocks::maps::OwnerRoom,
 }
 
 /// A views' directory of a chunk's batch and its values, with what its rows' entries and tapes are kept by.
@@ -251,6 +254,10 @@ impl Values {
     /// The next `parts` is made from the last: a relation the value adds rows to is made again from its last (its
     /// last block of parts and the shards of the keys it adds copied, `Blocks`, `Keys`), the others shared.
     pub fn add(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
+        self.room.within(|| self.add_within(own, hosts, sources))
+    }
+
+    fn add_within(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
         let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
         // The keys a part is found by in a lookup by document (`Parts::of`): the values' and their hosts', and its

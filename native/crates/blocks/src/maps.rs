@@ -68,22 +68,56 @@ impl Room for InBlock {
     }
 }
 
-/// The room of a thread's large regions (`scratch::LARGE` bytes and more; `scratch::StackRoom` sends them here):
-/// blocks with a free list (decision 0342: big pieces, not millions of small ones), the next leased when one is full;
-/// a block goes when its last region does. One a thread, so its lock is its own thread's but for a free from another.
-#[derive(Default)]
-pub struct LargeRoom {
+/// Free-listed blocks a holder keeps (decision 0342: big pieces, not millions of small ones), the next leased when
+/// one is full; a block goes when its last region does. A thread's large regions (`scratch::LARGE` bytes and more,
+/// which `scratch::StackRoom` sends to its thread's, `FreeRoom::large`), and an owner's family (`FreeRoom::owner`:
+/// the structures an owner keeps past what a stack's order holds, made `within` it). Its lock is its holder's: a
+/// thread's but for a free from another, an owner's shared by the threads that make its structures.
+pub struct FreeRoom {
     open: std::sync::Mutex<Option<Arc<Block>>>,
+    /// The bytes each block reserves (address space; pages are touched as used).
+    block: usize,
 }
 
-/// A large region freed under this many bytes keeps its pages for the next (`Block::keeping_pages_below`): a growing
+/// A freed chunk under this many bytes keeps its pages for the next (`Block::keeping_pages_below`): a growing
 /// vector's regions, made and freed in turn, gave theirs to the OS and took them back at every step.
 const LARGE_RESIDENT: usize = 256 << 10;
 
-/// The bytes a large room's block reserves (address space; pages are touched as used).
+/// The bytes a thread's large room's block reserves.
 const LARGE_BLOCK: usize = 64 << 20;
 
-impl Room for LargeRoom {
+/// The bytes an owner's room's block reserves: an owner's family is a few thousand small regions a run.
+const OWNER_BLOCK: usize = 4 << 20;
+
+impl FreeRoom {
+    /// A thread's room for its large regions.
+    pub fn large() -> Self {
+        FreeRoom { open: std::sync::Mutex::new(None), block: LARGE_BLOCK }
+    }
+
+    /// An owner's room, held as long as it holds what is made in it.
+    pub fn owner() -> Arc<dyn Room> {
+        Arc::new(FreeRoom { open: std::sync::Mutex::new(None), block: OWNER_BLOCK })
+    }
+}
+
+/// An owner's room as a field of its structure (`FreeRoom::owner`, made with it: `Default`).
+pub struct OwnerRoom(pub Arc<dyn Room>);
+
+impl Default for OwnerRoom {
+    fn default() -> Self {
+        OwnerRoom(FreeRoom::owner())
+    }
+}
+
+impl OwnerRoom {
+    /// `f`, what it makes with no room made in this room (`within`).
+    pub fn within<R>(&self, f: impl FnOnce() -> R) -> R {
+        within(&self.0, f)
+    }
+}
+
+impl Room for FreeRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region {
         let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(b) = &*open
@@ -95,7 +129,7 @@ impl Room for LargeRoom {
         // `ALIGN_MAX` past the block's first byte, and a page.
         let size = crate::free::class_of(bytes).1;
         let need = size + align.max(size.min(crate::free::ALIGN_MAX)) + 4096;
-        let b = Arc::new(Block::anon(crate::block::kind::FACTS, LARGE_BLOCK.max(need)).with_free_list().keeping_pages_below(LARGE_RESIDENT));
+        let b = Arc::new(Block::anon(crate::block::kind::FACTS, self.block.max(need)).with_free_list().keeping_pages_below(LARGE_RESIDENT));
         let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
         *open = Some(b);
         region_of(r, None)
@@ -1338,6 +1372,32 @@ mod tests {
         assert!(!in_owner(), "a panic's end restores the scope before");
     }
 
+    /// An owner's room (decision 0342 amended): its regions lie in its own blocks, a chunk freed is taken again, two
+    /// threads make regions in it at once, and its block goes with the owner and its last region, not before.
+    #[test]
+    fn an_owners_room_holds_its_regions_in_its_own_blocks() {
+        let room = FreeRoom::owner();
+        let block_of = |r: &Region| Arc::downgrade(place_of(r).expect("placed").0);
+        let first = room.region(64, 8, "a test's");
+        let block = block_of(&first);
+        let at = place_of(&first).unwrap().1;
+        assert!(within(&room, || Arc::ptr_eq(&block.upgrade().unwrap(), place_of(&default_room().region(64, 8, "a test's")).unwrap().0)), "made within it: its block");
+        drop(first);
+        let again = room.region(64, 8, "a test's");
+        assert_eq!(place_of(&again).unwrap().1, at, "the chunk freed, taken again");
+        let made: Vec<Region> = std::thread::scope(|s| {
+            let hs: Vec<_> = (0..2).map(|_| s.spawn(|| (0..500).map(|i| room.region(64 + i % 200, 8, "a test's")).collect::<Vec<_>>())).collect();
+            hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+        });
+        let mut spans: Vec<(usize, usize, usize)> = made.iter().map(|r| { let (b, at) = place_of(r).unwrap(); (Arc::as_ptr(b) as usize, at, r.len()) }).collect();
+        spans.sort();
+        assert!(spans.windows(2).all(|w| w[0].0 != w[1].0 || w[0].1 + w[0].2 <= w[1].1), "two threads' regions do not overlap");
+        drop((room, made));
+        assert!(block.upgrade().is_some(), "a region outliving the owner keeps its block");
+        drop(again);
+        assert!(block.upgrade().is_none(), "the block goes with the owner and its last region");
+    }
+
     /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
     /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
     /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
@@ -1374,7 +1434,7 @@ mod tests {
     /// a block of its own that holds the free list's chunk for it, aligned to its size.
     #[test]
     fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
-        let room = LargeRoom::default();
+        let room = FreeRoom::large();
         for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
             let r = room.region(bytes, 8, "a test's region");
             assert_eq!(r.len(), bytes);

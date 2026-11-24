@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 const ANON: usize = 1 << 36;
 #[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
-/// The least bytes of a large region: it goes to the thread's free-listed blocks (`maps::LargeRoom`), not the stack.
+/// The least bytes of a large region: it goes to the thread's free-listed blocks (`maps::FreeRoom::large`), not the stack.
 /// A large array is freed out of the stack's order (a writer's parts, a tape) and would hold every region under it; in
 /// the census of an edit, regions of a page and more are about 2% of them, and kept off the stack they leave its
 /// footprint at about a third of what it is with them (decision 0342, amended 2026-11-24).
@@ -214,8 +214,8 @@ pub struct StackRoom;
 impl crate::maps::Room for StackRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
         if bytes >= LARGE {
-            thread_local! { static LARGE_ROOM: crate::maps::LargeRoom = crate::maps::LargeRoom::default(); }
-            return LARGE_ROOM.try_with(|r| r.region(bytes, align, name)).unwrap_or_else(|_| crate::maps::LargeRoom::default().region(bytes, align, name));
+            thread_local! { static LARGE_ROOM: crate::maps::FreeRoom = crate::maps::FreeRoom::large(); }
+            return LARGE_ROOM.try_with(|r| r.region(bytes, align, name)).unwrap_or_else(|_| crate::maps::FreeRoom::large().region(bytes, align, name));
         }
         let stack = mine(bytes + align);
         let (head, at) = stack.push(bytes, align, LIVE);

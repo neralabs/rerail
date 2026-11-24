@@ -268,13 +268,42 @@ Item 6's families have two owners, not one. The census's long-lived regions by t
    corpus run; a value cloned out of it keeps only its own region's block.
 3. **The planner run's room** (`Run::room`): a strand's run is given its parent's (`Run::strand`), so a map made on a
    strand's thread lies where the parent that takes it holds it. `Fx::stats` and `stats_changed` read the native
-   engine's statistics within it; `Fx::open` and the prefetch's `join_rule_bound` encode within it.
+   engine's statistics within it. `Fx::open` does not: it builds the whole component (its loaded inputs, its
+   indexes, which the component's life places), and its sections were a few kilobytes in the census.
 4. **Not `LifeRoom(Life::Run)`.** Inside a chunk's evaluation it places a structure in that chunk's open relation
    block (`open_chunk`'s `current_chunk`): a spec the memo keeps past the chunk would hold the chunk's block, and its
    relations' bytes with it. Its one mutex a life is also every thread's.
 5. **Nothing is copied into a room.** A family is made where it will live; no region moves from a stack to an owner.
 
 Tests: an owner room's region lies in its blocks, and the blocks go with the owner and its last region; a chunk freed
-is taken again; two threads make regions in one owner's room; a kept join spec lies in the memo's room, not a
-thread's stack; a strand's live statistics lie in its parent run's room. Then the census again (expect about 1.8 times
+is taken again; two threads make regions in one owner's room (`an_owners_room_holds_its_regions_in_its_own_blocks`);
+what the memo keeps is made in its room, not a thread's stack (`a_kept_value_is_made_in_the_memos_room`). The
+planner run's statistics are checked by the census: no `LiveRel` family left on a stack. Then the census again (expect about 1.8 times
 live, the replay's figure) and the edit's footprint against the pre-merge engine.
+
+A third owner came from the census once the first two were in: a chunk's syntax values (`facts::vtab::syntax::Values`)
+keep their key shards (`Keys::add`) for the chunk, and they are made in the `Values`' own room (`OwnerRoom`).
+
+Measured (2026-11-24, the edit of 15 files, two runs each, against the pre-merge engine):
+
+| Engine | Instructions | Peak resident | The census replay: the stacks' peak |
+|---|---|---|---|
+| Before the owner rooms (`d64e9f890a`) | 1.07 | 1.22 | |
+| The memo's and the planner run's rooms | 1.08 | 1.20 | 1 |
+| And the `Values`' rooms | 1.09 | 1.23 to 1.25 | 0.83 |
+
+The rooms hold what they were made for, and the stacks' replayed peak falls by a sixth, but the edit's peak resident
+does not move. Three trials found the same, each reverted:
+
+- the stack keeping 1 MB of pages above its top, not 16 MB: the same peak resident;
+- the run's plans' priced sizes (`Priced::sizes`, `live_sizes_at`) and the run's observations (`Obs::rule_mut`) in
+  owners' rooms: in the replay they were most of the dead bytes left at the stacks' peak (it falls to about five
+  times live), but the peak resident is the same, and the edit takes about 4% more instructions;
+- the component's open (`Fx::open`) in the run's room as well (the replay: about 2.4 times live): the same peak
+  resident, and the edit's CPU about 1.5 times, every input it loads a zeroed region under the room's mutex.
+
+So the stacks' dead bytes are not what raises the edit's peak. At the run's exit, the pre-merge engine's anonymous
+blocks (its anonymous room's, tagged) hold about as much as this engine's tagged blocks and its untagged stacks and
+free-listed blocks together, give or take a tenth of the footprint. The peak's excess lies in the census's blind spot:
+the regions of `scratch::LARGE` and more, which go to the threads' free-listed blocks and are not counted. Next: count
+them in the census (their sizes, sites and lives), and find what the peak holds there.
