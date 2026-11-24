@@ -11115,3 +11115,15 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - Checked with Relax, RERAIL_GPU=cpu: metal, c-directives, 0 errors. Tests:
   - c-directives 67 (eval, Go/C's new tests and dc71's `A` hits included);
   - metal `pp_` 9.
+
+### Q535. Roll-up 108 (Typing-support-final-shape 15a352a29a onto Pulling-it-all-together): what the merge chose
+
+- Typing-support-final-shape 15a352a29a (decision 0659, the user's approval): the constants' rows, leaves and plans are a frame (`frame.rs`), checked through the leaf table; `fold` returns the frame's key and the run's manifest names it. A revision's constants stay the observer's records.
+- `fold` returns the frame's key where the hub returned the folded relations' names, which its one caller dropped. Its plans stay the hub's `Vector` (`frame::Frame::plans`), so the frame's `kept` and `keep` read and write `Vector`s. The record-based `kept`/`keep` are gone, as the branch has it.
+- Found on the way:
+  - rr-root's test binary had no private folders (0574), and two `combined` tests refused their fixture's 755 folder. It now includes `test_private_folders`, as 43 crates do.
+  - `a_linked_folder_in_a_work_tree_is_no_input_file` staged with `git add -A`, which an agent's guard on `git` refuses. It now names its two folders.
+- Checked with Relax: rr-root and logic, 0 errors. Tests:
+  - tests-corpus frame, reuse, constants, warm, collect and revision 20;
+  - logic's 16;
+  - rr-root 53, all of them.
