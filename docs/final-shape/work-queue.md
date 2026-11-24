@@ -11494,3 +11494,14 @@ rr-parser 58, kotlin-parser 70 (red before: it now runs under Relax
 5b2d68c26a51-128339291b98, built with the fix rolled up in 121 but not yet
 installed), compiler 46, bitlex 11 (without its oracle: Relax's --allow-c
 does not run tree-sitter-json's build script), parser-tests rr_tests 4.
+
+### Q551. Roll-up 123 (Go-C-and-C-support af00dd2818 onto Pulling-it-all-together): what the merge chose
+
+0613: a refused unit's pieces stop at their next step and the queue drains.
+On 0653's shape: the piece's refusal check (each 16 steps) beside the hub's
+work spend (each 256), and the queue's loop spends an item's work and drains,
+where roll-up 120 had carried the first form (leaving the queue on a
+refusal, which Go-C found left end words unread: CUDA error 700).
+
+Checked under Relax (RERAIL_GPU=cpu): rerail-metal 22/22 (the bound test
+asks for the new check), c-directives eval::tests 50.

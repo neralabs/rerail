@@ -259,6 +259,7 @@ fn the_expansions_loops_are_bounded_by_the_units_work() {
     let queue = src.split("for (;;)").nth(2).expect("the queue's loop");
     let body = &queue[..queue.find("\n    }\n").expect("its end")];
     assert!(body.contains("lp_spend(a, trn, LP_ITEM_WORK)"), "the queue's loop spends work per item");
+    assert!(src.contains("if ((step & 15u) == 0u && ukl_atomic_load(&a.ctl[2]) != 0u)"), "a refused unit's pieces stop at their first step");
     assert!(src.contains("for (uint32_t turn = 0u; ; turn++)") && src.contains("if (turn == LP_WORK)"), "lp_lex's turns are bounded");
     assert!(src.contains("if (++rounds >= LP_WORK"), "a piece's rounds are bounded");
 }
