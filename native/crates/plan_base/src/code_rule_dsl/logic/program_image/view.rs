@@ -5,7 +5,7 @@
 //! counts none. A name is the image's own atom, a rule its id.
 
 use super::Version;
-use super::handles::Lit;
+use super::handles::{Lit, RuleRef};
 use super::manager::{Analysis, Cx, Reads};
 use super::{AtomId, RelId};
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -79,6 +79,20 @@ impl Table {
     }
 }
 
+/// Rule `r`'s `img_lit` rows: each body literal that names a relation, an atom or an aggregate's (`what` 0 or 1), by
+/// its place in the body; `name` gives a relation's name.
+fn lit_rows<'v>(r: RuleRef<'v>, name: impl Fn(RelId) -> i64 + 'v) -> impl Iterator<Item = [i64; 5]> + 'v {
+    let id = i64::from(r.id().0);
+    r.body().enumerate().filter_map(move |(i, l)| {
+        let (agg, a) = match l.view() {
+            Lit::Atom(a) => (0, a),
+            Lit::Agg { atom: a, .. } => (1, a),
+            _ => return None,
+        };
+        Some([id, i as i64, agg, name(a.rel()), i64::from(a.neg())])
+    })
+}
+
 impl ImageView {
     /// `v`'s view, by one walk of its rules, declarations and facts.
     pub fn of(v: &Version) -> ImageView {
@@ -88,16 +102,10 @@ impl ImageView {
         let mut lit: [Vector<i64>; 5] = Default::default();
         for p in 0..places.len() {
             let r = places.get(p);
-            let id = i64::from(r.id().0);
-            rule[0].push(id);
+            rule[0].push(i64::from(r.id().0));
             rule[1].push(names[r.head().rel().index()]);
-            for (i, l) in r.body().enumerate() {
-                let (agg, a) = match l.view() {
-                    Lit::Atom(a) => (0, a),
-                    Lit::Agg { atom: a, .. } => (1, a),
-                    _ => continue,
-                };
-                for (c, x) in [id, i as i64, agg, names[a.rel().index()], i64::from(a.neg())].into_iter().enumerate() {
+            for row in lit_rows(r, |rel| names[rel.index()]) {
+                for (c, x) in row.into_iter().enumerate() {
                     lit[c].push(x);
                 }
             }
@@ -128,12 +136,88 @@ impl Analysis for ImageView {
     }
 }
 
-/// One `img_` relation read off the view in place, `img_lit`'s `what` as the pass's constants.
+/// What a run read of a view (decision 0662 §5.1), as a run's frame holds the leaves it read (decision 0659): each
+/// probe, a relation's column and a value, with the digest of the rows it found, and whether the run read a row no
+/// probe found (a scan). A run over another version whose every probe finds the same rows, and that scans nothing,
+/// reads what this run read, so its outputs are this run's: the plan the run took is an evaluation of either.
+#[derive(Default)]
+pub struct Frame {
+    probes: std::sync::Mutex<rustc_hash::FxHashMap<(usize, usize, i64), u64>>,
+    scanned: std::sync::atomic::AtomicBool,
+}
+
+impl Frame {
+    /// Whether a run over `v` reads what the run of this frame read: each probe found again by `v`'s own indexes
+    /// (`found`), no view of `v` made.
+    pub fn holds(&self, v: &Version) -> bool {
+        if self.scanned.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let probes = self.probes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        probes.iter().all(|(&(at, column, value), &digest)| found(v, at, column, value).is_some_and(|rows| digest_of(rows.iter().map(Vec::as_slice)) == digest))
+    }
+    /// Why it does not hold over `v` (`holds`): that its run scanned a relation, or its first probes (up to `n`) that
+    /// find other rows in `v`, each with its rows there.
+    pub fn misses(&self, v: &Version, n: usize) -> Vec<String> {
+        if self.scanned.load(std::sync::atomic::Ordering::Relaxed) {
+            return vec!["its run read a row no probe found".to_owned()];
+        }
+        let probes = self.probes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out: Vec<String> = probes
+            .iter()
+            .filter_map(|(&(at, column, value), &digest)| {
+                let rows = found(v, at, column, value);
+                (rows.as_ref().map(|r| digest_of(r.iter().map(Vec::as_slice))) != Some(digest)).then(|| format!("{}({column} = {value}): {rows:?}", RELATIONS[at].0))
+            })
+            .collect();
+        out.sort();
+        out.truncate(n);
+        out
+    }
+}
+
+/// The digest of a relation's rows, whatever their order: the sum of each row's hash.
+fn digest_of<'r>(rows: impl Iterator<Item = &'r [i64]>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    rows.fold(0u64, |d, row| {
+        let mut h = rustc_hash::FxHasher::default();
+        row.hash(&mut h);
+        d.wrapping_add(h.finish())
+    })
+}
+
+/// The rows of `v`'s view relation `at` whose `column` is `value`, as `ImageView::of` makes them (`img_lit`'s `what`
+/// stored), found by `v`'s own indexes: a rule by its id, the rules of a head, the readers of a relation, a
+/// declaration, a relation's facts. `None` for a column the view is not probed by.
+fn found(v: &Version, at: usize, column: usize, value: i64) -> Option<Vec<Vec<i64>>> {
+    let name = |rel: RelId| i64::from(v.rel_atom(rel).0);
+    let atom = u32::try_from(value).ok().map(AtomId);
+    let rule = u32::try_from(value).ok().and_then(|k| v.rule(super::RuleId(k)));
+    Some(match (at, column) {
+        (0, 0) => rule.map(|r| vec![value, name(r.head().rel())]).into_iter().collect(),
+        (0, 1) => v.rel_of(atom?).map(|rel| v.heads(rel).map(|r| vec![i64::from(r.id().0), value]).collect()).unwrap_or_default(),
+        (1, 0) => rule.map(|r| lit_rows(r, name).map(Vec::from).collect()).unwrap_or_default(),
+        (1, 3) => {
+            let Some(rel) = v.rel_of(atom?) else { return Some(Vec::new()) };
+            let mut readers: Vec<RuleRef<'_>> = v.readers(rel).map(|(r, _)| r).collect();
+            readers.sort_by_key(|r| r.id());
+            readers.dedup_by_key(|r| r.id());
+            readers.into_iter().flat_map(|r| lit_rows(r, name).filter(|row| row[3] == value).map(Vec::from).collect::<Vec<_>>()).collect()
+        }
+        (2, 0) => v.decl(atom?).map(|d| vec![value, d.arity() as i64]).into_iter().collect(),
+        (3, 0) => v.facts(atom?).map(|_| vec![value]).into_iter().collect(),
+        _ => return None,
+    })
+}
+
+/// One `img_` relation read off the view in place, `img_lit`'s `what` as the pass's constants; with a frame, what a
+/// run reads of it recorded there (`framed_sources`), each row a probe found marked `handed`.
 struct ViewRel {
     view: Arc<ImageView>,
     at: usize,
     name: &'static str,
     what: [i64; 2],
+    frame: Option<(Arc<Frame>, std::sync::Mutex<Vec<bool>>)>,
 }
 
 impl ViewRel {
@@ -141,8 +225,24 @@ impl ViewRel {
         &self.view.tables[self.at]
     }
     fn read(&self, row: usize, column: usize) -> i64 {
+        if let Some((frame, handed)) = &self.frame
+            && !handed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(row).copied().unwrap_or(false)
+        {
+            frame.scanned.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let x = self.table().columns[column][row];
         if self.at == 1 && column == WHAT { self.what[x as usize] } else { x }
+    }
+    /// A probe's rows, recorded in the frame.
+    fn probed(&self, column: usize, value: i64, rows: &[u32]) {
+        let Some((frame, handed)) = &self.frame else { return };
+        let t = self.table();
+        let stored: Vec<Vec<i64>> = rows.iter().map(|&r| t.columns.iter().map(|c| c[r as usize]).collect()).collect();
+        frame.probes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((self.at, column, value), digest_of(stored.iter().map(Vec::as_slice)));
+        let mut handed = handed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for &r in rows {
+            handed[r as usize] = true;
+        }
     }
 }
 
@@ -166,6 +266,7 @@ impl Source for ViewRel {
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         let s = self.table().sorted.get(column)?.as_ref()?;
         let (lo, hi) = (s.values.partition_point(|&x| x < value), s.values.partition_point(|&x| x <= value));
+        self.probed(column, value, &s.rows[lo..hi]);
         Some(&s.rows[lo..hi])
     }
     fn sorts_rows(&self, column: usize) -> bool {
@@ -224,8 +325,87 @@ impl Source for Given {
 /// `ImageView`, made once for the version), and `img_kindset` of `kindsets` (the pass's kind sets, which are not yet
 /// the image's). `what` is the pass's program's constants `"atom"` and `"agg"`, which `img_lit` states each literal as.
 pub fn sources(v: &Arc<Version>, kindsets: &[AtomId], what: [i64; 2]) -> Result<Vec<(&'static str, Arc<dyn Source>)>, String> {
+    made_sources(v, kindsets, what, None)
+}
+
+/// `sources`, what a run reads of them recorded in a frame (`Frame`).
+pub fn framed_sources(v: &Arc<Version>, kindsets: &[AtomId], what: [i64; 2]) -> Result<(Vec<(&'static str, Arc<dyn Source>)>, Arc<Frame>), String> {
+    let frame = Arc::new(Frame::default());
+    Ok((made_sources(v, kindsets, what, Some(&frame))?, frame))
+}
+
+fn made_sources(v: &Arc<Version>, kindsets: &[AtomId], what: [i64; 2], frame: Option<&Arc<Frame>>) -> Result<Vec<(&'static str, Arc<dyn Source>)>, String> {
     let view = super::manager::analysis::<ImageView>(v)?;
-    let mut out: Vec<(&'static str, Arc<dyn Source>)> = RELATIONS.iter().enumerate().map(|(at, &(name, _, _))| (name, Arc::new(ViewRel { view: Arc::clone(&view), at, name, what }) as Arc<dyn Source>)).collect();
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = RELATIONS
+        .iter()
+        .enumerate()
+        .map(|(at, &(name, _, _))| {
+            let frame = frame.map(|f| (Arc::clone(f), std::sync::Mutex::new(vec![false; view.tables[at].columns.first().map_or(0, Vector::len)])));
+            (name, Arc::new(ViewRel { view: Arc::clone(&view), at, name, what, frame }) as Arc<dyn Source>)
+        })
+        .collect();
+    // The kind sets are given, not the image's: a run over another version is given the same ones (`Kept`'s key).
     out.push(("img_kindset", Arc::new(Given { sets: kindsets.iter().map(|a| i64::from(a.0)).collect() })));
     Ok(out)
+}
+
+/// The runs of rules passes over a library's union, kept with it (decision 0662 §5.1): each by its key (the pass's
+/// program, the kind sets it was given, its outputs), with its frame and its outputs' rows. A program linked on the
+/// union (`Version::extends`) whose version the frame holds over has those outputs, and runs nothing.
+#[derive(Default)]
+pub struct Kept {
+    runs: std::sync::Mutex<Vec<(u64, Arc<Frame>, Arc<Vec<Vec<Vec<i64>>>>)>>,
+}
+
+impl Kept {
+    /// The run kept under `key`.
+    pub fn get(&self, key: u64) -> Option<(Arc<Frame>, Arc<Vec<Vec<Vec<i64>>>>)> {
+        self.runs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().find(|(k, _, _)| *k == key).map(|(_, f, o)| (Arc::clone(f), Arc::clone(o)))
+    }
+    /// Whether it keeps no run: no rules pass ran over the union.
+    pub fn is_empty(&self) -> bool {
+        self.runs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+    }
+    /// Whether a run it keeps answers `v` (its frame holds over `v`).
+    pub fn answers(&self, v: &Version) -> bool {
+        self.runs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|(_, f, _)| f.holds(v))
+    }
+    /// Why each run it keeps does not answer `v` (`Frame::misses`), up to `n` reasons a run.
+    pub fn misses(&self, v: &Version, n: usize) -> Vec<String> {
+        self.runs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().flat_map(|(_, f, _)| f.misses(v, n)).collect()
+    }
+    /// Keeps a run under `key`.
+    pub fn keep(&self, key: u64, frame: Arc<Frame>, outputs: Arc<Vec<Vec<Vec<i64>>>>) {
+        let mut runs = self.runs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !runs.iter().any(|(k, _, _)| *k == key) {
+            runs.push((key, frame, outputs));
+        }
+    }
+}
+
+impl Kept {
+    fn keys(&self) -> Vec<u64> {
+        self.runs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|(k, _, _)| *k).collect()
+    }
+}
+
+impl std::fmt::Debug for Kept {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Kept {{ runs: {:?} }}", self.keys())
+    }
+}
+
+/// Two hold the same runs when they hold runs of the same keys.
+impl PartialEq for Kept {
+    fn eq(&self, other: &Kept) -> bool {
+        self.keys() == other.keys()
+    }
+}
+
+impl Analysis for Kept {
+    const NAME: &'static str = "the rules passes' runs kept with a library (decision 0662)";
+    const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS);
+    fn compute(_cx: &Cx<'_>) -> Result<Kept, String> {
+        Ok(Kept::default())
+    }
 }

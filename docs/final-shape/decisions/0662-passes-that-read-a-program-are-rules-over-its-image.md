@@ -172,6 +172,36 @@ replaces the pass's Rust fixed point. The pass undeclares each `img_undeclare` a
 `img_rule` and `img_lit` number their rules (`r: number`), and `img_decl` gives its relation's arity, which the
 image holds, not its columns' text. The view's relations are the program's `.input`s.
 
+**A column the view counts by value prices its probes.** Each indexed column hands the planner its counts
+(`JoinCounts::of_counts`, decision 0488), so a probe is priced by the rows it joins. Without them, the planner's
+skew-weighted fan started `img_reads_set`'s join from the literals: on python's library it read 8,625 literals for 9
+rows. It now starts from the 30 kind sets.
+
+**The library's run is kept with the library, and answers a program it holds over.** A program on the module path
+is linked as a union on its library's union (`Version::union_on`, which reuses the library's parts, size and
+digest). The steps before `KindSets` write edits, not derivations (`CoreDecls`, `HostCopiesOut`, `Passes`: a rule
+the renaming leaves as it is stays in place), so `Version::extends` walks the program back to the library's union.
+`RulesProgram::run_on` runs a rules pass over that union once. It runs through a frame (`view::Frame`, 0659's
+frames at probe granularity): each probe the engine makes (relation, column, key) is recorded with a digest of the
+rows it found, and the frame notes any row a scan read that no probe handed out. The run is kept as an analysis of
+the union (`view::Kept`), keyed by the pass's program, the kind sets it was given and its outputs. For a program, the
+frame's probes are read again through the program's own indexes. If every digest matches and nothing was scanned,
+the kept outputs are the program's, and the program runs nothing. Otherwise the program runs over its own view. A
+program that declares or states facts of a kind set the library reads misses by design (node's `n-callback-return`,
+a phases program).
+
+Measured on spark2 (pinned to a big core, 100 runs each; spikes P2 and P3), the step costs per program:
+
+| Pack | The step run over the program | Answered by the library's run | Of which the frame read |
+|---|---|---|---|
+| python (765 rules) | 3,843 µs | 207 µs | 8 µs |
+| react (539–923 rules) | 2,357 µs | 175–234 µs | 7–11 µs |
+| sql (53–63 rules) | 1,110 µs | 87 µs | 0.8 µs |
+
+What is left is the step's own edit, the same for every program of a library: writing it (python 91 µs, sql
+53 µs), the fields and kind sets read (52 µs and 7 µs), and the axes over derived sets (41 µs and 16 µs). Kept
+maintenance, the library's edit kept with the library and a program's applied over it, is the next lever.
+
 ## Prior art
 
 - **ISLE** (Cranelift's instruction-selection DSL, vendored at `native/vendor/cranelift-codegen-0.125.4/src/*.isle`,
@@ -215,6 +245,12 @@ image holds, not its columns' text. The view's relations are the program's `.inp
   0639's step 6. T15 passes for the relations §5.1 states (`img_rule`, the literals that name a relation, `img_decl`,
   `img_facts`, `img_kindset`), each compared with the image's own reads. The arguments (`img_arg`, `img_head_arg`)
   and the literals that name no relation are not yet in the view, so an image is not yet printed from its rows.
+- **T16b.** On the module path, `KindSets` takes out what the fixed point took out, whether the library's kept run
+  answers the program or the program runs, and every program reaches `KindSets` still a union on its library's.
+
+  **Built (2026-11-24):** it passes on every pack, up to four programs each. The kept run answered every program of
+  complexity, javascript, next, python, python-main, react, sql and vue, three of node's and typescript's four, and
+  one of phases'. blade, php, rerail and rust hold no kind set as a relation, and run no rules.
 - **T17.** Each analysis moved (§5 item 2) gives its Rust pass's edits on every pack program.
 - **T18.** Each rewrite moved (§5 item 3) gives its Rust pass's rule on every pack program, and a clash of two
   `img_subst` rows is refused.

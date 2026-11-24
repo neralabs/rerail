@@ -479,6 +479,12 @@ impl Renaming<'_> {
         // context reads by its own name (`ann_in`), which the made library holds as the instance alone.
         held_instance(self.v, self.d, self.pass, rel)
     }
+
+    /// Whether the renaming writes rule `r` other than it is: a relation it names renamed, or a literal left out.
+    fn changes(&mut self, r: RuleRef<'_>) -> bool {
+        let renamed = |s: &Self, a: AtomRef<'_>| s.rename(s.v.rel_name(a.rel())).is_some_and(|n| n != s.v.rel_name(a.rel()));
+        renamed(self, r.head()) || r.body().any(|l| l.atom().is_some_and(|a| renamed(self, a)) || !self.keep(l))
+    }
 }
 
 impl Rewrite for Renaming<'_> {
@@ -601,23 +607,35 @@ fn write_nodes(v: &Version, d: &Declared, c: &Context, b: &mut Builder<'_>) -> R
     Ok(())
 }
 
-/// The passes of `v` made or completed into `b`, a derivation of `v` (`plan`): the host's rules with its `.from`
-/// names read from their passes; each pass's instance, made, or completed with what it reaches; the relations only a
-/// pass holds taken from the host; and each pass a `.pass` setting, none to make again.
-fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<(), Error> {
+/// The passes of `v` made or completed into `b`, a derivation of `v` (`plan`), or an edit of it (`edit`, a rule the
+/// renaming leaves as it is left in place): the host's rules with its `.from` names read from their passes; each
+/// pass's instance, made, or completed with what it reaches; the relations only a pass holds taken from the host; and
+/// each pass a `.pass` setting, none to make again.
+fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>, edit: bool) -> Result<(), Error> {
     let finish = |r: Result<super::program_image::RuleId, String>| r.map(|_| ()).map_err(Error::Syntax);
     for r in v.rules() {
         let head = v.rel_name(r.head().rel());
-        if plan.host.contains(head) {
-            if !reads_unseen(v, d, &d.language, r) {
-                finish(b.rewrite(v, r, &mut Renaming { v, d, pass: &d.language, own: None }).finish())?;
-            }
+        let mut renaming = if plan.host.contains(head) {
+            Renaming { v, d, pass: &d.language, own: None }
         } else if of_a_context(head) {
             // A made pass's instance, completed: its reads of what it makes its own now read that.
             let pass = d.pass_of(head);
-            if !reads_unseen(v, d, pass, r) {
-                finish(b.rewrite(v, r, &mut Renaming { v, d, pass, own: plan.new.get(pass) }).finish())?;
+            Renaming { v, d, pass, own: plan.new.get(pass) }
+        } else {
+            if edit {
+                b.remove(r.id());
             }
+            continue;
+        };
+        if reads_unseen(v, d, renaming.pass, r) {
+            if edit {
+                b.remove(r.id());
+            }
+        } else if !edit {
+            finish(b.rewrite(v, r, &mut renaming).finish())?;
+        } else if renaming.changes(r) {
+            b.remove(r.id());
+            finish(b.rewrite(v, r, &mut renaming).finish())?;
         }
     }
     for c in d.contexts.values().filter(|c| !c.made) {
@@ -668,7 +686,7 @@ pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
         return Ok(Arc::clone(v));
     }
     let mut b = Builder::derive(v);
-    write(v, &d, &plan, &mut b)?;
+    write(v, &d, &plan, &mut b, false)?;
     let out = b.finish().map_err(Error::Syntax)?.0;
     refuse_crossing_cycles(&out, &declared(&out)?)?;
     Ok(out)
@@ -791,9 +809,10 @@ impl super::program_image::manager::ProgramPass for HostCopiesOut {
         if gone.is_empty() {
             return Ok(());
         }
-        let b = w.derive()?;
-        for r in v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel()))) {
-            b.keep(v, r);
+        // An edit of the input: the copies' rules removed (a derivation copied the program to leave them out).
+        let b = w.on()?;
+        for r in v.rules().filter(|r| gone.contains(v.rel_name(r.head().rel()))) {
+            b.remove(r.id());
         }
         for rel in &gone {
             if ProgramFields::declares(&**v, rel) {
@@ -824,7 +843,7 @@ impl super::program_image::manager::ProgramPass for Passes {
             return Ok(());
         }
         let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the instances written (write)".to_owned());
-        write(v, &d, &plan, w.derive()?).map_err(|e| e.to_string())
+        write(v, &d, &plan, w.on()?, true).map_err(|e| e.to_string())
     }
 }
 

@@ -37,8 +37,9 @@ pub enum Version {
     /// The union of versions encoded apart (decision 0639 §4, a program linked from its modules' images): `header`, a
     /// version of no rules, holds every name of every part and the program's fields, and its ids are the union's;
     /// each part's kept rules are the union's, read through its `IdMap`, part `k`'s rule `j` the union's rule
-    /// `base_k + j`. No rule is copied.
-    Union { header: Arc<Version>, parts: Vec<(Arc<UnionPart>, u32)>, end: u32, size: usize, digest: u64, analyses: Held },
+    /// `base_k + j`. No rule is copied. `extends`: the union whose parts this one's begin with (a program's link of
+    /// its library's union and its own module, `Version::union_on`), by which what is kept of the library is found.
+    Union { header: Arc<Version>, parts: Vec<(Arc<UnionPart>, u32)>, end: u32, size: usize, digest: u64, analyses: Held, extends: Option<Arc<Version>> },
 }
 
 /// A part of a union (`Version::Union`): a version of ids of its own, the ranges of its rule ids the union keeps
@@ -334,7 +335,43 @@ impl Version {
             end += p.version.rule_end();
             out.push((p, base));
         }
-        Ok(Arc::new(Version::Union { header, parts: out, end, size, digest, analyses: Held::default() }))
+        Ok(Arc::new(Version::Union { header, parts: out, end, size, digest, analyses: Held::default(), extends: None }))
+    }
+    /// The union of `parts` named by `header` (`union`) whose parts begin with union `base`'s, the same parts: a
+    /// program's link of its library's union and its own module. Its size and digest are `base`'s with its own parts'
+    /// added, and it `extends` `base`.
+    pub fn union_on(base: &Arc<Version>, header: Arc<Version>, parts: Vec<Arc<UnionPart>>) -> Result<Arc<Version>, String> {
+        let Version::Union { parts: had, end: had_end, size: had_size, digest: had_digest, header: had_header, .. } = &**base else { return Err(bad("a union on a version that is no union")) };
+        if parts.len() < had.len() || !had.iter().zip(&parts).all(|((a, _), b)| Arc::ptr_eq(a, b)) {
+            return Err(bad("a union on another whose parts are not its first"));
+        }
+        if header.size() != 0 {
+            return Err(bad("a union's header holds no rules"));
+        }
+        let mut digest = had_digest.wrapping_sub(had_header.digest()).wrapping_add(header.digest());
+        let (mut size, mut end) = (*had_size, *had_end);
+        let mut out: Vec<(Arc<UnionPart>, u32)> = had.clone();
+        for p in parts.into_iter().skip(had.len()) {
+            if p.map.atoms.iter().any(|&a| a >= header.atom_end()) || p.map.rels.iter().any(|&r| r >= header.rel_end()) {
+                return Err(bad("a union's part's map is past its header"));
+            }
+            for r in p.version.rules().filter(|r| p.kept(r.id())) {
+                size += 1;
+                digest = digest.wrapping_add(r.hash());
+            }
+            let base = end;
+            end += p.version.rule_end();
+            out.push((p, base));
+        }
+        Ok(Arc::new(Version::Union { header, parts: out, end, size, digest, analyses: Held::default(), extends: Some(Arc::clone(base)) }))
+    }
+    /// The union this version's union extends (`union_on`): of this version, or of the version it is an edit of.
+    pub fn extends(&self) -> Option<&Arc<Version>> {
+        match self {
+            Version::Union { extends, .. } => extends.as_ref(),
+            Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.extends(),
+            Version::Base { .. } => None,
+        }
     }
     /// A union's header and parts (`Version::union`); `None` for any other version.
     pub fn union_parts(&self) -> Option<(&Arc<Version>, impl Iterator<Item = &Arc<UnionPart>>)> {
@@ -360,7 +397,7 @@ impl Version {
             Version::Overlay { parent, delta, size, depth, digest, .. } => {
                 Version::Overlay { parent: parent.clone(), delta: delta.clone(), size: *size, depth: *depth, digest: *digest, analyses: Held::default() }
             }
-            Version::Union { header, parts, end, size, digest, .. } => Version::Union { header: header.clone(), parts: parts.clone(), end: *end, size: *size, digest: *digest, analyses: Held::default() },
+            Version::Union { header, parts, end, size, digest, extends, .. } => Version::Union { header: header.clone(), parts: parts.clone(), end: *end, size: *size, digest: *digest, analyses: Held::default(), extends: extends.clone() },
         })
     }
     /// Whether rule id `k` is in `ranges`.

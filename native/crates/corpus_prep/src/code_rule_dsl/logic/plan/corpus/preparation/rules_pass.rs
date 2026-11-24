@@ -75,6 +75,45 @@ impl RulesProgram {
         Ok(p.constants.get(name).copied().unwrap_or(i64::from(CONSTANTS) + p.constants.len() as i64))
     }
 
+    /// The program run over image `v`'s view (`view::sources`), given kind sets `given`: the live rows of each of
+    /// `outputs`. A program linked on a library's union (`Version::extends`) is first answered by the run kept with the
+    /// library (`view::Kept`, made over the library's union at its first program, given the same kind sets): where
+    /// that run's frame holds over `v` (each of its probes finds the same rows in `v`, `view::Frame::holds`), its
+    /// outputs are `v`'s, and nothing runs. A program pays for its own module: what it adds or takes away that the
+    /// library's run read.
+    pub fn run_on(&self, v: &Arc<Version>, given: &[crate::code_rule_dsl::logic::program_image::AtomId], outputs: &[&str]) -> Result<Arc<OutputRows>, String> {
+        use crate::code_rule_dsl::logic::program_image::{manager, view};
+        use crate::code_rule_dsl::logic::profile::span;
+        let what = [self.constant("atom")?, self.constant("agg")?];
+        if let Some(library) = v.extends() {
+            let kept = manager::analysis::<view::Kept>(library)?;
+            let key = {
+                use std::hash::{Hash, Hasher};
+                let mut h = rustc_hash::FxHasher::default();
+                (self.text(), given.iter().map(|a| a.0).collect::<Vec<u32>>(), outputs).hash(&mut h);
+                h.finish()
+            };
+            let (frame, out) = match kept.get(key) {
+                Some(got) => got,
+                None => {
+                    let _s = span(|| "a rules pass run over the library's union, framed".into());
+                    let (sources, frame) = view::framed_sources(library, given, what)?;
+                    let out = Arc::new(self.run(sources, outputs)?);
+                    kept.keep(key, Arc::clone(&frame), Arc::clone(&out));
+                    (frame, out)
+                }
+            };
+            let holds = {
+                let _s = span(|| "the library's run's frame read over the program".into());
+                frame.holds(v)
+            };
+            if holds {
+                return Ok(out);
+            }
+        }
+        Ok(Arc::new(self.run(view::sources(v, given, what)?, outputs)?))
+    }
+
     /// The program run over `inputs` (each bound by its relation's name): the live rows of each of `outputs`.
     pub fn run(&self, inputs: Vec<(&str, Arc<dyn Source>)>, outputs: &[&str]) -> Result<OutputRows, String> {
         use crate::code_rule_dsl::logic::profile::span;

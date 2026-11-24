@@ -1677,6 +1677,9 @@ pub struct LinkedVersions {
 pub struct LinkedLibrary {
     header: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     state: LinkState,
+    /// The library's union alone, made at its first link: a program's link is a union on it (`Version::union_on`),
+    /// so what is kept of the library (its analyses) is found from every program linked from it.
+    union: std::sync::OnceLock<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 /// What a link knows as it adds modules: the lowerer (the first module's, the rest linked into it), the parts, the
@@ -1735,28 +1738,44 @@ pub fn link_library(modules: Vec<Module>) -> Result<LinkedLibrary, Error> {
     for m in modules {
         state.add(&mut header, m)?;
     }
-    Ok(LinkedLibrary { header: header.base_version().map_err(Error::Syntax)?, state })
+    Ok(LinkedLibrary { header: header.base_version().map_err(Error::Syntax)?, state, union: std::sync::OnceLock::new() })
 }
 
 impl LinkedLibrary {
     /// The library's union, and `own` linked after its modules (a program's own module): its header an overlay of the
     /// library's with the module's names and fields, so only its own are interned and stated, and no rule is copied.
+    /// With a module, the union is one on the library's own (`Version::union_on`).
     pub fn with(&self, own: Option<Module>) -> Result<LinkedVersions, Error> {
+        use crate::code_rule_dsl::logic::program_image::Version;
         let mut state = self.state.clone();
-        let header = match own {
-            Some(m) => {
-                let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&self.header);
-                state.add(&mut b, m)?;
-                b.finish_overlay().map_err(Error::Syntax)?
-            }
-            None => std::sync::Arc::clone(&self.header),
+        let Some(m) = own else {
+            let lowered = whole_front(state.l)?;
+            return Ok(LinkedVersions { version: self.union()?, lowered });
+        };
+        let header = {
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&self.header);
+            state.add(&mut b, m)?;
+            b.finish_overlay().map_err(Error::Syntax)?
         };
         let lowered = whole_front(state.l)?;
-        if state.parts.is_empty() {
-            return Ok(LinkedVersions { version: empty_version()?, lowered });
+        let version = match self.state.parts.is_empty() {
+            true => Version::union(header, state.parts),
+            false => Version::union_on(&self.union()?, header, state.parts),
         }
-        let version = crate::code_rule_dsl::logic::program_image::Version::union(header, state.parts).map_err(Error::Syntax)?;
+        .map_err(Error::Syntax)?;
         Ok(LinkedVersions { version, lowered })
+    }
+
+    /// The library's union alone (an empty version for a library of no module), made once.
+    fn union(&self) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+        if let Some(u) = self.union.get() {
+            return Ok(std::sync::Arc::clone(u));
+        }
+        let made = match self.state.parts.is_empty() {
+            true => empty_version()?,
+            false => crate::code_rule_dsl::logic::program_image::Version::union(std::sync::Arc::clone(&self.header), self.state.parts.clone()).map_err(Error::Syntax)?,
+        };
+        Ok(std::sync::Arc::clone(self.union.get_or_init(|| made)))
     }
 }
 
@@ -2440,7 +2459,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
 /// nodes): rules, which the planner reads from `node` in place, not inputs, where a rule reads them (the prelude
 /// declares both for every program). `core.rerail`'s `docof(x: loc, d)` stays an input, for spans have a document
 /// too. (`precedes` is core.rerail's tree arithmetic, `core::rewrite`.)
-/// The rules to add go first, each where `projection_at` puts it; `read` is what the rules read (`reads`), `derives_node`
+/// Returns the projections to write (`write_projection`); `read` is what the rules read (`reads`), `derives_node`
 /// whether a rule derives `node`. `prog` may be a header alone (a version's).
 pub fn projections(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: bool, derives_node: bool) -> Vec<&'static str> {
     let mut made = Vec::new();
@@ -2467,12 +2486,6 @@ pub fn write_projection(b: &mut crate::code_rule_dsl::logic::program_image::Buil
         other => unreachable!("no projection {other}"),
     };
     b.rule().head(rel, &head).atom("node", &node).finish()
-}
-
-/// Where `projections` puts its rule of `rel`, given the program's first rule's head: first, kind before docof (where
-/// T's programs wrote them).
-pub fn projection_at(rel: &str, first_head: Option<&str>) -> usize {
-    usize::from(rel == "docof" && first_head == Some("kind"))
 }
 
 /// The three-valued relations: those declared so, and every relation a rule of which reads one (`rules`: each rule's

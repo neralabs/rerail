@@ -5158,8 +5158,9 @@ fn span_patterns_are_found_on_the_version() {
 }
 
 /// core.rerail's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
-/// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, the program's
-/// first rule, as the tree's `lower::core_and_projections` makes it; a debug build checks the image against the tree's.
+/// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, one of the
+/// program's rules, written as an edit of the linked program (`CoreDecls`, decision 0662 §5.1: after its own rules); a debug build
+/// checks the image against the tree's.
 #[test]
 fn core_declarations_and_projections_are_made_on_the_version() {
     let src = concat!("#include \"python/compare.rerail\"\n", ".decl r(n: node)\n.output r\n", "r(n) :- kind(n, \"call\").\n");
@@ -5168,7 +5169,7 @@ fn core_declarations_and_projections_are_made_on_the_version() {
     let scoped = library.scoped(&files);
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
-    assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
     assert!(!v.input_names().iter().any(|i| i == "kind"), "{:?}", v.input_names());
 }
 
@@ -6959,6 +6960,89 @@ fn kind_sets_take_out_by_rules_what_the_fixed_point_took_out() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// T16b (decision 0662 §5.1): on the module path, programs linked on their library's union (`Version::union_on`),
+/// `KindSets` takes out what the fixed point it replaced takes out, whether the run kept with the library answers a
+/// program (its frame holds over the program) or the program runs. Up to four programs a pack, those of one library
+/// linked on one union, as `rr::linked_from_plan` links them; how many the kept run answered is printed.
+#[test]
+fn kind_sets_on_the_module_path_take_out_what_the_fixed_point_took_out() {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::{manager, view};
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let at = super::program_steps().iter().position(|s| *s == super::TailStep::KindSets).unwrap();
+    let before: Vec<super::TailStep> = super::program_steps()[..at].to_vec();
+    let libraries = tail_libraries();
+    let results: Vec<(String, usize, usize, usize, Vec<String>)> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        use rayon::prelude::*;
+        libraries
+            .par_iter()
+            .map(|(pack, _, texts)| {
+                let (mut programs, mut answered, mut idle, mut failures) = (0, 0, 0, Vec::new());
+                // One union a library, as `rr::LinkedLibraries` holds them.
+                let mut linked: std::collections::BTreeMap<Vec<PathBuf>, (Vec<lower::Module>, Vec<lower::Module>, lower::LinkedLibrary)> = std::collections::BTreeMap::new();
+                for (path, src, files) in texts.iter().take(4) {
+                    let lib = match linked.entry(files.clone()) {
+                        std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
+                        std::collections::btree_map::Entry::Vacant(e) => {
+                            let plan = super::planned_library(files).unwrap_or_else(|e| panic!("{pack}: {}: its library's plan: {e}", path.display()));
+                            let modules: Vec<lower::Module> = plan.iter().map(|m| m.module().unwrap()).collect();
+                            let tailed = tailed_modules(&plan);
+                            let union = lower::link_library(tailed.clone()).unwrap();
+                            e.insert((modules, tailed, union))
+                        }
+                    };
+                    let (modules, tailed, union) = &*lib;
+                    let own: from_tape::Statements = from_tape::RrFile::read(src.as_str()).unwrap().statements().into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect();
+                    let scope: Vec<&lower::Module> = modules.iter().collect();
+                    // A program the lowering refuses (its own module, or its tail: a match not lowered yet) has no link.
+                    let Ok(own) = lower::lower_module_in_written(own, &scope) else { continue };
+                    let Ok(own) = super::tail_module(modules, tailed, own) else { continue };
+                    let l = union.with(Some(own)).unwrap();
+                    assert!(l.version.extends().is_some(), "{pack}: {}: the program's link is no union on its library's", path.display());
+                    let sets = l.lowered.sets.clone();
+                    let input = super::tail_steps(l.version, false, l.lowered, None, &before).unwrap_or_else(|e| panic!("{pack}: {}: the steps before kind sets: {e}", path.display()));
+                    let mut p = manager::Pipeline::new("T16b: kind sets", Arc::clone(&input));
+                    p.program(&mut KindSets { sets, library: None, rules: super::kind_set_rules });
+                    let output = Arc::clone(p.current().unwrap_or_else(|e| panic!("{pack}: {}: kind sets: {e}", path.display())));
+                    programs += 1;
+                    let Some(library) = input.extends() else {
+                        failures.push(format!("{pack}: {}: the steps before kind sets left no union on the library's (a new base)", path.display()));
+                        continue;
+                    };
+                    let kept = manager::analysis::<view::Kept>(library).unwrap();
+                    match kept.answers(&input) {
+                        _ if kept.is_empty() => idle += 1,
+                        true => answered += 1,
+                        false if programs == 1 => println!("T16b {pack}: {}: not answered: {:?}", path.display(), kept.misses(&input, 3)),
+                        false => {}
+                    }
+                    let kindsets: BTreeSet<String> = output.kindset_map().unwrap().into_keys().collect();
+                    let held = |v: &Version, s: &str| v.declares(s) || ProgramFields::states_facts(v, s) || v.rel(s).is_some_and(|rel| v.heads(rel).next().is_some());
+                    let by_pass: [BTreeSet<String>; 3] = [
+                        kindsets.iter().filter(|s| held(&input, s) && !held(&output, s)).cloned().collect(),
+                        kindsets.iter().filter(|s| input.declares(s) && !output.declares(s)).cloned().collect(),
+                        kindsets.iter().filter(|s| ProgramFields::states_facts(&*input, s) && !ProgramFields::states_facts(&*output, s)).cloned().collect(),
+                    ];
+                    let reference = unread_sets(&input, &kindsets);
+                    for (i, what) in ["sets taken out", "declarations undeclared", "facts dropped"].iter().enumerate() {
+                        if by_pass[i] != reference[i] {
+                            failures.push(format!("{pack}: {}: {what}: only the rules {:?}; only the fixed point {:?}", path.display(), by_pass[i].difference(&reference[i]).collect::<Vec<_>>(), reference[i].difference(&by_pass[i]).collect::<Vec<_>>()));
+                        }
+                    }
+                }
+                (pack.clone(), programs, answered, idle, failures)
+            })
+            .collect()
+    });
+    let mut failures = Vec::new();
+    for (pack, programs, answered, idle, f) in results {
+        println!("T16b {pack}: {programs} programs, {answered} answered by the run kept with their library, {idle} ran no rules (no kind set to take out)");
+        failures.extend(f);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// Spike for decision 0662 §5.1 (T16's fixed cost): `KindSets`'s rules run over the packs named
 /// (`RERAIL_SPIKE_PACKS`, default `sql`), `RERAIL_SPIKE_N` runs each (default 200), timed bare and then profiled,
 /// each span's own CPU a run (its time less the spans inside it, as t56 step 1 charges a walk's step: a lazy make
@@ -7063,6 +7147,72 @@ fn spike_0662_b_kind_sets_step_profiled() {
         println!("P2 {pack}: {} rules, {} sets; µs a step: bare {bare:.1}, the spans' own CPU {own:.1}", input.rules().count(), sets.len());
         for (path, t) in spans.iter().take(40) {
             println!("P2 {pack}:   {:>8.1} µs own {:>8.1} µs in all {:>7.2} calls a run  {path}", t.own * 1e6 / f64::from(runs), t.total * 1e6 / f64::from(runs), t.calls as f64 / f64::from(runs));
+        }
+    }
+}
+
+/// Spike for decision 0662 §5.1 (the frames' lever): a program's `KindSets` step on the module path, its link a union
+/// on its library's (`Version::union_on`), the library's run kept with the library (`view::Kept`, made by a warm
+/// step). Up to four programs a pack (`RERAIL_SPIKE_PACKS`, `RERAIL_SPIKE_N` runs each), each run over a twin of the
+/// program (its analyses not made yet, as a new program's are), timed bare and profiled; whether the kept run answered
+/// it is printed. P2 is the step that runs.
+#[test]
+#[ignore = "spike for decision 0662 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0662_c_kind_sets_step_answered_by_the_library() {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
+    use crate::code_rule_dsl::logic::profile;
+    use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};
+    use crate::code_rule_dsl::logic::program_image::view;
+    let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
+    let asked = std::env::var("RERAIL_SPIKE_PACKS").unwrap_or_else(|_| "sql".into());
+    let runs: u32 = std::env::var("RERAIL_SPIKE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+    let at = super::program_steps().iter().position(|s| *s == super::TailStep::KindSets).unwrap();
+    let before: Vec<super::TailStep> = super::program_steps()[..at].to_vec();
+    let step = |input: &Arc<Version>, sets: &BTreeSet<String>| {
+        let mut p = Pipeline::new("P3: kind sets", input.twin());
+        p.program(&mut KindSets { sets: sets.clone(), library: None, rules: super::kind_set_rules });
+        Arc::clone(p.current().unwrap())
+    };
+    for (pack, _, texts) in tail_libraries().into_iter().filter(|(p, _, _)| asked.split(',').any(|a| a == p)) {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        let mut linked: std::collections::BTreeMap<Vec<PathBuf>, (Vec<lower::Module>, Vec<lower::Module>, lower::LinkedLibrary)> = std::collections::BTreeMap::new();
+        for (path, src, files) in texts.iter().take(4) {
+            let (modules, tailed, union) = &*linked.entry(files.clone()).or_insert_with(|| {
+                let plan = super::planned_library(files).unwrap();
+                let modules: Vec<lower::Module> = plan.iter().map(|m| m.module().unwrap()).collect();
+                let tailed = tailed_modules(&plan);
+                let union = lower::link_library(tailed.clone()).unwrap();
+                (modules, tailed, union)
+            });
+            let own: from_tape::Statements = from_tape::RrFile::read(src.as_str()).unwrap().statements().into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect();
+            let scope: Vec<&lower::Module> = modules.iter().collect();
+            let Ok(own) = lower::lower_module_in_written(own, &scope) else { continue };
+            let Ok(own) = super::tail_module(modules, tailed, own) else { continue };
+            let l = union.with(Some(own)).unwrap();
+            let sets = l.lowered.sets.clone();
+            let input = super::tail_steps(l.version, false, l.lowered, None, &before).unwrap();
+            // Warm: the library's run kept (the first program of a library), the pass's program lowered.
+            step(&input, &sets);
+            let answered = input.extends().is_some_and(|lib| manager::analysis::<view::Kept>(lib).unwrap().answers(&input));
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let t = std::time::Instant::now();
+            for _ in 0..runs {
+                step(&input, &sets);
+            }
+            let bare = t.elapsed().as_secs_f64() * 1e6 / f64::from(runs);
+            profile::set(true);
+            profile::reset();
+            for _ in 0..runs {
+                let _s = profile::span(|| "P3: the step".into());
+                step(&input, &sets);
+            }
+            let mut spans: Vec<(String, profile::SpanTotal)> = profile::spans().into_iter().collect();
+            profile::set(false);
+            spans.sort_by(|a, b| b.1.own.total_cmp(&a.1.own));
+            println!("P3 {pack} {name}: {} rules, answered {answered}; µs a step: bare {bare:.1}", input.rules().count());
+            for (path, t) in spans.iter().take(12) {
+                println!("P3 {pack} {name}:   {:>8.1} µs own {:>8.1} µs in all {:>7.2} calls a run  {path}", t.own * 1e6 / f64::from(runs), t.total * 1e6 / f64::from(runs), t.calls as f64 / f64::from(runs));
+            }
         }
     }
 }

@@ -1177,8 +1177,7 @@ impl ProgramPass for KindSets {
         if kindsets.keys().any(|set| head.declares(set) || head.states_facts(set) || heads_of(&gone, set)) {
             let rules = (self.rules)();
             let sets: Vec<AtomId> = kindsets.keys().filter_map(|s| v.find(s)).collect();
-            let what = [rules.constant("atom")?, rules.constant("agg")?];
-            let out = rules.run(crate::code_rule_dsl::logic::program_image::view::sources(&input, &sets, what)?, &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
+            let out = rules.run_on(&input, &sets, &["img_kindset_out", "img_undeclare", "img_drop_facts"])?;
             let name = |row: &Vec<i64>| v.text(AtomId(row[0] as u32)).to_owned();
             for row in &out[1] {
                 head.b.fields().undeclare(&name(row));
@@ -1473,7 +1472,7 @@ impl ProgramPass for CoreDecls {
         vec![u8::from(self.docof_of_locs)]
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections, write_projection};
+        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projections, write_projection};
         let input = std::sync::Arc::clone(w.input());
         let v: &Version = &input;
         // The fields' edit, staged and stated on the edit or the derivation at the end.
@@ -1496,26 +1495,13 @@ impl ProgramPass for CoreDecls {
             }
             return Ok(());
         }
-        // The program's order, the projections inserted where the tree inserts them.
-        enum Item<'r> {
-            Old(crate::code_rule_dsl::logic::program_image::RuleRef<'r>),
-            New(&'static str),
-        }
-        let mut order: Vec<Item<'_>> = input.rules().map(Item::Old).collect();
-        for rel in made {
-            let first = order.first().map(|x| match x {
-                Item::Old(r) => input.rel_name(r.head().rel()),
-                Item::New(r) => r,
-            });
-            order.insert(projection_at(rel, first), Item::New(rel));
-        }
-        let b = w.derive()?;
+        // An edit of the input: the projections' rules added. (A derivation copied every rule of the program to put
+        // them where the tree puts them, an order no reader reads; it was a new base, so a program linked on its
+        // library's union was no longer one, and nothing kept with the library was found from it.)
+        let b = w.on()?;
         b.fields().state_fields_of(&head.b);
-        for x in order {
-            match x {
-                Item::Old(r) => drop(b.keep(&input, r)),
-                Item::New(rel) => drop(write_projection(b, rel)?),
-            }
+        for rel in made {
+            write_projection(b, rel)?;
         }
         Ok(())
     }
