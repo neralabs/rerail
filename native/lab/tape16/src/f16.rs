@@ -79,9 +79,25 @@ pub fn grammar_codes(tag: u8) -> usize {
 /// revision. One number covers every choice a reader must share with the writer: the layout, the code table
 /// and its numbering, the widths, K and N, the dictionaries. 1–254 are revisions; 0 is never written (zeroed
 /// bytes are not a tape); 255 says the revision goes on in the next two bytes.
+/// The line terminators of tag `tag`'s language (decision 0612), as the engine's adapters name them: the tape's
+/// line index's.
+pub fn terminators(tag: u8) -> rerail_tape_format::newlines::Terminators {
+    use rerail_tape_format::newlines::Terminators;
+    match tag {
+        2 | 3 | 6 | 12 | 31 => Terminators::Eslint,
+        9 | 27 => Terminators::Lf,
+        19 => Terminators::Roslyn,
+        21 => Terminators::Css,
+        _ => Terminators::Newlines,
+    }
+}
+
+/// Every table's revision: 4 since the grammars' tables are numbered by the counts of two corpora, the spike's and
+/// 520 repositories' HEAD trees (decision 0638); 3 was the spike's alone; 2 the grammar's order (decision 0631); 1
+/// was ordered by captures and bounded by them.
 pub fn revision(tag: u8) -> u8 {
     let _ = tag;
-    1
+    4
 }
 pub const MARK_LONG: u8 = 255;
 
@@ -439,9 +455,9 @@ pub struct Report {
     pub codes: usize,
     pub cut: u32,
     pub widths: [u32; 3],
-    /// Measured files, B: by array (codes, slots, gaps, lengths, checkpoints) in memory, and F15's image.
+    /// Measured files, B: by array (codes, slots, gaps, lengths, checkpoints) in memory, and the captured tape's.
     pub mem: [u64; 5],
-    pub f15_mem: u64,
+    pub captured_mem: u64,
     /// Nodes past the cutoff; escaped slots, gaps, lengths.
     pub escapes: [u64; 4],
     /// At rest, B per stream (main + side): zstd 3 + dict, whole file; LZ4 HC + dict, whole; fixed blocks of N
@@ -450,8 +466,8 @@ pub struct Report {
     pub lz4: [u64; 5],
     pub blocked: [u64; 5],
     pub index: u64,
-    /// F15's image, zstd 3 + dict.
-    pub f15_zstd: u64,
+    /// The captured tape (the engine's format 16), zstd 3 + dict.
+    pub captured_zstd: u64,
     /// Loading, ns: zstd of every stream, whole; every fixed block decoded (LZ4 or copied).
     pub load_zstd: u64,
     pub load_blocks: u64,
@@ -464,7 +480,7 @@ pub struct Report {
 type Streams = [(Vec<u8>, Vec<u8>); 5];
 
 pub fn run(files: &[&File]) -> Report {
-    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let mut codes = Codes::default();
     for f in files {
         codes.learn(&read(f));
@@ -486,7 +502,7 @@ pub fn run(files: &[&File]) -> Report {
         Dictionary::train(&samples, DICT)
     };
     let dicts: Vec<Dictionary> = (0..5).map(dict_of).collect();
-    let f15_dict = if split { Dictionary::train(&train_idx.iter().map(|&i| files[i].image.clone()).collect::<Vec<_>>(), DICT) } else { Dictionary::none() };
+    let captured_dict = if split { Dictionary::train(&train_idx.iter().map(|&i| files[i].image.clone()).collect::<Vec<_>>(), DICT) } else { Dictionary::none() };
     drop(train);
     let mut lz: Vec<Lz4> = dicts.iter().map(|d| Lz4::new(true, &d.bytes)).collect();
     let (mut block_ns, mut blocks_lz) = (0u64, 0u64);
@@ -501,8 +517,8 @@ pub fn run(files: &[&File]) -> Report {
         for (k, e) in t.escapes().iter().enumerate() {
             r.escapes[k] += *e as u64;
         }
-        r.f15_mem += files[i].image.len() as u64;
-        r.f15_zstd += codec::compress(Codec::Zstd, &files[i].image, &f15_dict, 0).len() as u64;
+        r.captured_mem += files[i].image.len() as u64;
+        r.captured_zstd += codec::compress(Codec::Zstd, &files[i].image, &captured_dict, 0).len() as u64;
         let s = t.streams();
         // Whole, zstd and LZ4 HC with the dictionary; the load decodes every stream.
         let mut zs: Vec<Vec<u8>> = Vec::new();
@@ -642,7 +658,7 @@ impl AtRest {
 }
 
 pub fn at_rest(files: &[&File]) -> AtRest {
-    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let mut codes = Codes::default();
     for f in files {
         codes.learn(&read(f));
@@ -737,8 +753,8 @@ pub fn print(title: &str, r: &Report) {
     );
     println!("| B a node | codes | slots | gaps | lengths | checkpoints | total |");
     println!("|---|---|---|---|---|---|---|");
-    println!("| in memory | {} | {} | {} | {} | {} | **{}** (F15 {}) |", b(r.mem[0]), b(r.mem[1]), b(r.mem[2]), b(r.mem[3]), b(r.mem[4]), b(sum(&r.mem)), b(r.f15_mem));
-    println!("| zstd 3 + dict, whole | {} | {} | {} | {} | {} | **{}** (F15 {}) |", b(r.zstd[0]), b(r.zstd[1]), b(r.zstd[2]), b(r.zstd[3]), b(r.zstd[4]), b(sum(&r.zstd)), b(r.f15_zstd));
+    println!("| in memory | {} | {} | {} | {} | {} | **{}** (captured {}) |", b(r.mem[0]), b(r.mem[1]), b(r.mem[2]), b(r.mem[3]), b(r.mem[4]), b(sum(&r.mem)), b(r.captured_mem));
+    println!("| zstd 3 + dict, whole | {} | {} | {} | {} | {} | **{}** (captured {}) |", b(r.zstd[0]), b(r.zstd[1]), b(r.zstd[2]), b(r.zstd[3]), b(r.zstd[4]), b(sum(&r.zstd)), b(r.captured_zstd));
     println!("| LZ4 HC + dict, whole | {} | {} | {} | {} | {} | **{}** |", b(r.lz4[0]), b(r.lz4[1]), b(r.lz4[2]), b(r.lz4[3]), b(r.lz4[4]), b(sum(&r.lz4)));
     println!("| fixed blocks of {N}, LZ4 HC + dict (index {}) | {} | {} | {} | {} | {} | **{}** |", b(r.index), b(r.blocked[0]), b(r.blocked[1]), b(r.blocked[2]), b(r.blocked[3]), b(r.blocked[4]), b(sum(&r.blocked) + r.index));
     println!();

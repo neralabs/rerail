@@ -112,9 +112,22 @@ pub const CHECK: u8 = 0x66;
 /// lost: of no width, after the token (decision 0451, the lean lexer's `asi`). `m=19`, and
 /// `m=20+F` where flag `F` is set (`mark … , refuses …`): where gap pattern `operand` holds, the
 /// file is refused (what the lean lexer's `asi` reads there the grammar does not say yet).
+/// `m=36`, and `m=37+F` where flag `F` is set (`mark … , loses since …`): where gap pattern
+/// `operand` holds, the first extra pending is of no width at the start of the one after it, in
+/// its place (the lean lexer's `asi` reads a block comment through to another comment, loses its
+/// bytes there, and is asked again after that one).
 pub const SETTLE: u8 = 0x84;
 /// `SETTLE`'s first refusing mode (`m=19`; `m=20+F` with a flag).
 pub const SETTLE_REFUSE: u8 = 19;
+/// `SETTLE`'s first moving mode (`m=36`; `m=37+F` with a flag).
+pub const SETTLE_MOVE: u8 = 36;
+/// A statement starts here: right after the `TOKEN` of each of the root's states between statements (where it may
+/// end), where the grammar recovers (`recover`, decision 0650; `Words::recover`). The statement before it ends here:
+/// one that holds a provisional field fails (the lean parser's literal fails there). Then the state a statement
+/// changes is marked, as the lean parser's `mark`: a statement that fails by its syntax is cut back to it, the
+/// statement before closed, one ERROR leaf made to the resume point (`Words::recover`'s patterns), and read on from
+/// there at the root's first state. A limit (the depth, a count, a check) still refuses the file.
+pub const STATEMENT: u8 = 0x85;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
 // sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
@@ -253,8 +266,7 @@ pub fn split(word: u32) -> (u8, u8, u16) {
 
 /// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
 /// field F "N"`, `name token K "N"`, `name mark K "N"`): each rule's (by its place among
-/// `Words::rules`), each node kind's and field's (rising by number: what `rust_stream`'s labels
-/// are named by too), each record kind's (the token kinds tier 1's records give), and each mark's
+/// `Words::rules`), each node kind's and field's (rising by number; no word reads them), each record kind's (the token kinds tier 1's records give), and each mark's
 /// in the records' code (`Records::marks`, by its bit).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Names {
@@ -268,10 +280,10 @@ pub struct Names {
 /// A program's words and the tables they index.
 #[derive(Clone, Default)]
 pub struct Words {
-    pub words: Vec<u32>,
+    pub words: rerail_blocks::vector::Vector<u32>,
     pub strings: Vec<Vec<u8>>,
-    pub labels: Vec<u16>,
-    pub longs: Vec<u64>,
+    pub labels: rerail_blocks::vector::Vector<u16>,
+    pub longs: rerail_blocks::vector::Vector<u64>,
     pub tree_sitter_query: bool,
     /// Set mode (t1 spec-transducer §1, list step 14): the program's consumer reads its output
     /// as a set of (task, label) keys, so an executor may stop a label at its first emit in a
@@ -318,6 +330,10 @@ pub struct Words {
     /// its offset from the token (`gap_pattern_holds`): the lean lexer's `asi`, which reads on
     /// past a comment after a line break. Rising by pattern.
     pub gap_patterns: Vec<TokenMark>,
+    /// Where a statement that fails resumes (`recover`, decision 0650; `recover at|past [first] oO kK …`): the
+    /// patterns tested at each record after its first, the extras skipped, as a token mark's elements. Empty: no
+    /// statement recovers.
+    pub recover: Vec<Recover>,
     /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
     pub counts: Vec<u16>,
     /// Checks of a few bytes at each bit of a sparse mask (`localcheck`): tier 1's escape or
@@ -497,6 +513,16 @@ pub struct TokenMark {
     /// An `unless before` (decision 0416): the mark holds where it does not. A mark's entries
     /// share its order (`patterns_hold`).
     pub unless: bool,
+}
+
+/// One of `recover`'s patterns (`Words::recover`, decision 0650): its elements (a token mark's, from offset 0),
+/// whether the resume point is past its first record (`past`) or at it, and whether that record must be first on its
+/// line (`first`: a line terminator among the bytes since the record before, or none before it).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recover {
+    pub past: bool,
+    pub first: bool,
+    pub elems: Vec<TokenElem>,
 }
 
 /// Whether the token marks of one order hold (`Words::token_marks` from `first`, the entries

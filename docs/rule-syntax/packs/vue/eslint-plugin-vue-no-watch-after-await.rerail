@@ -14,7 +14,7 @@
 .violation watch_after_await(at: node) code "vue/no-watch-after-await"
     "Move this watch call above the first await in setup(), or keep its stop handle and call it on unmount."
     suppress eslint "vue/no-watch-after-await"
-watch_after_await(c) :- vsetup(_, f), watcher(c), own(c, f), kind(w, "await_expression"), own(w, f), earlier(w, c),
+watch_after_await_in(c) :- vsetup(_, f), watcher(c), own(c, f), kind(w, "await_expression"), own(w, f), earlier(w, c),
     !handle_kept(c).
 .decl watcher(c: node)
 watcher(c) :- vvue_import_call(c, x), (x = "watch" ; x = "watchEffect").
@@ -27,3 +27,10 @@ handle_kept(c) :- watcher(c), holder(c, p), kind(p, k), keeps(k).
 holder(c, p) :- watcher(c), estree_parent(c, p).
 .decl keeps(k: symbol)
 keeps("variable_declarator"). keeps("assignment_expression"). keeps("arguments"). keeps("pair"). keeps("array").
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl watch_after_await_in(at: node)
+.context script of vue roots vscript_root exports watch_after_await_in
+.from script watch_after_await_in
+watch_after_await(at) :- watch_after_await_in(at).

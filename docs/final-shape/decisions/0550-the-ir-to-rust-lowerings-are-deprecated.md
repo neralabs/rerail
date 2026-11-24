@@ -1,8 +1,8 @@
 # 0550: The lowerings of an intermediate form into Rust are deprecated
 
-Status: decided (the user, 2026-11-21, merging the hub into Swift-Kotlin-Scala-support: "please keep them
-in, at a minimum, but clearly mark them deprecated. I will tell the other trees to merge and then remove
-their use"). Follows 0415 (Kotlin's generated parser in the lean parser's shape).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-21, merging the hub into Swift-Kotlin-Scala-support:
+"please keep them in, at a minimum, but clearly mark them deprecated. I will tell the other trees to merge and then
+remove their use"). Follows 0415 (Kotlin's generated parser in the lean parser's shape).
 
 ## What
 
@@ -30,5 +30,5 @@ Kotlin's are gone (rust_block, kotlin_aot's IR build): Kotlin is the direct gene
 - The JIT shares analyses with `rust_stream` that are not a lowering: `WordForm`, `word_form`, `marks`,
   `direct_keys` and `open_bound` (the last two from `rust_stream`'s facts of a program). Before the modules
   go they move to `native_cpu_direct`, the JIT's own: after Parser-generators' merge, which still changes
-  them (0541-0546, 0557, 0558).
+  them (0541-0546, 0577, 0578).
 - Each deprecated module says so in its first line, with this record's number.

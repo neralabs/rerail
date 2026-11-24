@@ -1,6 +1,6 @@
 # 0033: A label pass's roots are a rule over each document's codes, not a node list
 
-Status: accepted (2026-11-04, list step 28, after decision 0032)
+Status: built (audited 2026-11-23). Accepted (2026-11-04, list step 28, after decision 0032)
 
 ## Context
 

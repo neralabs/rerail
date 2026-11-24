@@ -241,7 +241,7 @@ fn record_finish(file: &std::path::Path, name: &str) {
 
 /// A maintenance job. `due` is called at every poll and must be cheap; `step` does a bounded part of the work.
 pub trait Job: Send {
-    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v9.sqlite`). The kind is
+    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v10.sqlite`). The kind is
     /// the part before the first space: what `RERAIL_UPKEEP_JOBS` names.
     fn name(&self) -> String;
     fn due(&mut self) -> Due;
@@ -865,7 +865,10 @@ fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Opt
     let file = e.job.file();
     let st_ = upkeep();
     let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &st_.stop, file: file.clone(), yields, background: qos != Qos::Utility };
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|_| Err("panicked".into()));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|p| {
+        crate::exec::abort_over_budget(p);
+        Err("panicked".into())
+    });
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), crate::score::thread_cpu() - c0);
     if scheduler && qos != Qos::Background {
         set_thread_qos(Qos::Background);
@@ -1034,8 +1037,8 @@ mod tests {
     #[test]
     fn settings_parse_and_name_kinds() {
         let s = Settings { only: Some(vec!["sqlite".into()]), without: vec!["collect".into()], ..Default::default() };
-        assert!(s.runs("sqlite content-v9.sqlite"));
-        assert!(!s.runs("collect content-v9.sqlite"));
+        assert!(s.runs("sqlite content-v10.sqlite"));
+        assert!(!s.runs("collect content-v10.sqlite"));
         assert!(!s.runs("cost-model"));
         let all = Settings::default();
         assert!(all.runs("cost-model") && all.cpu > 0.0 && all.memory > 0);

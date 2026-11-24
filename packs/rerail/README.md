@@ -331,7 +331,7 @@ budgets with the same number; the message says to leave names not about walking 
 
 Flags Rust in `native/` that reaches the fixtures directory by a relative path (`../fixtures/…`, in `include_str!` and
 the like) or through the oracles variable. It runs on `native/**/*.rs`, leaving out `native/build.rs`,
-`native/src/code_rule_dsl/fixtures.rs` (where the two macros read the variable) and `native/target/**`. Use the
+`native/crates/lang/src/code_rule_dsl/fixtures.rs` (where the two macros read the variable) and `native/target/**`. Use the
 `fixtures_dir!` and `oracle!` macros, which follow the fixtures directory override.
 
 History: Built on #56 and the later breaks it caught in their first drafts (an async oracle, two pre-convention imports
@@ -496,8 +496,9 @@ History: caught the first draft of #50 and each self-review round's new copy; #5
 maintainers merged and kept, and #196's deletion of one drops a match; quiet on 14 other merged PRs that touched `ui/`.
 
 Gaps: Log because the API cannot yet say which folders a setting would decide and the settings write returns no
-deciders, so the only compliant change today would delete the optimistic update; main has 10 matches today, in
-`packSettingDecides` (`ui/derive.js`) and the client-built `decider` (`ui/settings-writes.js`). An `if` that renders
+deciders, so the only compliant change today would delete the optimistic update. Main has no matches since #1007
+removed the pack sheet's suppression-comments switch, and with it `packSettingDecides` (`ui/derive.js`) and the
+client-built `decider` (`ui/settings-writes.js`), the 10 matches it had before. An `if` that renders
 text from `source.by` is flagged. Misses ranking under names it doesn't know and an optimistic update that drops the
 decider.
 

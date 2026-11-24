@@ -324,11 +324,11 @@ fn a_kernel_compiled_once_is_loaded_from_the_store() {
     let (first, counts) = compile();
     assert_eq!(counts, (0, 1), "compiled the first time");
     run(&first);
-    // The entry the second compile loaded (`store::recording`): the one a test damages.
-    let ((second, counts), looked) = store::recording(compile);
+    // The entry the second compile loaded (`store::recording`: the entries a compile looked up).
+    let ((second, counts), entries) = store::recording(compile);
     assert_eq!(counts, (1, 0), "loaded from the store the second time");
     run(&second);
-    let entry = looked.last().cloned().expect("the entry");
+    let entry = entries.last().cloned().expect("the entry");
     // The CPU's entry is a library this process has open: `dlopen` gives it again whatever the file holds now, so a
     // damaged one is a later process's to compile again. CUDA's and OpenCL's are bytes each compile loads.
     if shared.device.is_cpu() {
@@ -342,4 +342,152 @@ fn a_kernel_compiled_once_is_loaded_from_the_store() {
     run(&third);
     assert_ne!(std::fs::read(&entry).unwrap(), b"not a kernel", "and replaced");
     let _ = std::fs::remove_file(&entry);
+}
+
+/// Decision 0645 §4: a kernel compiled ahead of time for a target the device runs (`Target::runs`: its own, then
+/// lower ones) is loaded from where it ships, and runs, where it was compiled from the device's own text; another
+/// target's text is not taken.
+#[test]
+fn a_kernel_shipped_for_a_target_the_device_runs_is_loaded() {
+    use crate::Preprocessing;
+    let Some(shared) = crate::shared::get() else { return };
+    let own = shared.device.target();
+    if own.form().is_none() {
+        return;
+    }
+    let name = "device_tests_ship.uglykl";
+    let source = crate::kernels::preprocess(name, KERNELS).unwrap();
+    let dir = std::env::temp_dir().join(format!("rerail-ship-test-{}-{}", std::process::id(), rerail_device::store::unique()));
+    let run = |lib: &crate::device::ComputeFunctionLibrary| {
+        let f = Box::leak(Box::new(lib.get_function(&shared.device, "d_in_place").unwrap()));
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Args {
+            n: u32,
+            add: u32,
+        }
+        unsafe impl crate::Pod for Args {}
+        let b = crate::kernels::buffer_of(&[5u32; 64]).unwrap();
+        let mut q = crate::device::ComputeQueue::new(&shared.queue);
+        launch(&q, f).value("args", &Args { n: 64, add: 1 }).buffer("w", &b).run(&[1], &[64]).unwrap();
+        q.flush().await_().unwrap();
+        assert_eq!(read::<u32>(&b, 64), [11u32; 64]);
+    };
+    assert!(crate::kernels::shipped(&shared.device, &dir, &source).is_none(), "nothing ships yet");
+    for t in own.runs().iter().map(|n| rerail_ukl::Target::named(n).unwrap()) {
+        // The target's own text, compiled for it, as a build ships it.
+        let text = crate::kernels::preprocess_for(&t, name, KERNELS, &[]).unwrap();
+        let version = match t.backend {
+            rerail_ukl::Backend::Metal { version } => Some(version),
+            _ => None,
+        };
+        // The device's own target compiles with its own compiler; a lower one may need a toolkit this machine lacks
+        // (CUDA 13 compiles no sm_70: a build names a 12.x one; the HIP SDK compiles no generic AMD target).
+        let code = match rerail_device::device::compile_offline(&t.name, version, &text, name) {
+            Ok(code) => code,
+            Err(e) if t != own && (e.contains("no NVRTC found compiles for it") || e.contains("cannot find ROCm device library")) => {
+                eprintln!("{} under {}: not compiled here: {e}", t.name, own.name);
+                continue;
+            }
+            Err(e) => panic!("{}: {e}", t.name),
+        };
+        let path = crate::kernels::shipped_path(&dir, &t, &text).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &code).unwrap();
+        let found = crate::kernels::shipped(&shared.device, &dir, &source);
+        eprintln!("{} under {}: its text the device's: {}; taken: {}", t.name, own.name, text == source, found.is_some());
+        assert_eq!(found.is_some(), text == source, "{}: taken exactly where its text is the device's", t.name);
+        if let Some(lib) = found {
+            run(&lib);
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0645 step 3: every CUDA and AMD target a release ships compiles without a GPU, from its own text
+/// (Windows' with its 32-bit `long`): CUDA's by the newest of the build's toolkits that compiles for it, where they
+/// are named (`RERAIL_SHIP_CUDA_HOMES`, as the release job names NVIDIA's NVRTC 13 and 12); AMD's by hiprtc, where
+/// ROCm or the HIP SDK is named (`ROCM_PATH`, `HIP_PATH`).
+#[test]
+fn every_shipped_cuda_and_amd_target_compiles_without_a_gpu() {
+    let named = |v: &str| std::env::var_os(v).is_some_and(|v| !v.is_empty());
+    let cuda = named("RERAIL_SHIP_CUDA_HOMES");
+    let amd = named("ROCM_PATH") || named("HIP_PATH");
+    let name = "device_tests_ship.uglykl";
+    for n in rerail_ukl::target::SHIPPED {
+        let t = rerail_ukl::Target::named(n).unwrap();
+        let form = t.form().unwrap();
+        if !(cuda && matches!(form, "cubin" | "ptx") || amd && form == "hsaco") {
+            continue;
+        }
+        // The clock's text too: its CUDA form (PTX's `globaltimer`) once reached HIP.
+        for source in [KERNELS, CLOCK] {
+            let text = crate::kernels::preprocess_for(&t, name, source, &[]).unwrap();
+            let code = rerail_device::device::compile_offline(n, None, &text, name).unwrap_or_else(|e| panic!("{n}: {e}"));
+            let ok = if form == "ptx" { code.starts_with(b"//") } else { code.starts_with(b"\x7fELF") };
+            assert!(ok, "{n}: {} bytes, not {form}", code.len());
+            eprintln!("{n}: {} bytes", code.len());
+        }
+    }
+}
+
+const CLOCK: &str = r#"
+#include <ukl/backend.h>
+
+typedef struct Slot {
+    uint32_t i;
+    uint32_t pad;
+} Slot;
+UKL_REFLECT_STRUCT(Slot, i, pad)
+
+// The device's clock (`ukl_clock_ns`), into the slot's two words, low first.
+DEFINE_KERNEL2(device_tests, d_clock,
+               ARGS,     Slot,     args, ,
+               RWBUFFER, uint32_t, t,    "[4]",
+               GID0,     uint32_t, g,    )
+{
+    if (g == 0u) {
+        uint64_t now = ukl_clock_ns();
+        t[2u * args.i] = (uint32_t)now;
+        t[2u * args.i + 1u] = (uint32_t)(now >> 32);
+    }
+}
+"#;
+
+/// The device's clock (`ukl_clock_ns`) counts nanoseconds: two launches a measured host sleep apart read times as far
+/// apart as the host's clock says, within the launches' own time. CUDA's and HIP's kernels have a clock; Metal's,
+/// OpenCL's and the CPU's read 0.
+#[test]
+fn the_device_clock_counts_nanoseconds() {
+    let Some(_) = crate::shared::get() else { return };
+    let p = program("device_tests_clock.uglykl", CLOCK).unwrap_or_else(|e| panic!("{e}"));
+    let f = p.function("d_clock").unwrap();
+    let t = crate::kernels::buffer_of(&[0u32; 4]).unwrap();
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Slot {
+        i: u32,
+        pad: u32,
+    }
+    unsafe impl crate::Pod for Slot {}
+    let run = |i: u32| {
+        let mut q = crate::device::ComputeQueue::new(&crate::shared::get().unwrap().queue);
+        launch(&q, f).value("args", &Slot { i, pad: 0 }).buffer("t", &t).run(&[1], &[1]).unwrap();
+        q.flush().await_().unwrap();
+    };
+    run(0);
+    let start = std::time::Instant::now();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    run(1);
+    let host = start.elapsed().as_nanos() as u64;
+    let w = read::<u32>(&t, 4);
+    let (a, b) = (w[0] as u64 | (w[1] as u64) << 32, w[2] as u64 | (w[3] as u64) << 32);
+    if !matches!(crate::device::backend(), "CUDA" | "HIP") {
+        assert_eq!((a, b), (0, 0), "{} has no kernel clock", crate::device::backend());
+        return;
+    }
+    let dt = b.saturating_sub(a);
+    eprintln!("{}: the device's clock advanced {dt} ns over the host's {host} ns", crate::device::backend());
+    assert!(dt >= 190_000_000 && dt <= host + 20_000_000, "{dt} ns on the device against {host} ns on the host");
 }

@@ -1,6 +1,6 @@
 # 0141: `core.rr`'s names are the engine's
 
-Status: accepted (2026-11-06)
+Status: built (audited 2026-11-23). Accepted (2026-11-06)
 
 Numbered 0047 where it was written; renumbered 0141 in the hub (2026-11-13) because another record had 0047.
 

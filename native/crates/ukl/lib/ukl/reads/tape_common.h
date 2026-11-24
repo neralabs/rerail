@@ -32,7 +32,7 @@
 #define CLIF_T_LINE_COUNT 100u
 #define CLIF_T_PRESENCE 120u
 
-// ---- the formats (`view::F16_*`, `F15_*`; `rerail_tape_format::newlines`) ---------------------------------------
+// ---- the formats (`view::F16_*`; `rerail_tape_format::newlines`) ------------------------------------------------
 #define CLIF_T_NONE 4294967295u
 #define CLIF_T_F16Z_FORMAT 1016u
 // Format 16: a checkpoint every K nodes, side lists in parts of PART nodes, of SUB blocks of BLOCK nodes.
@@ -40,9 +40,6 @@
 #define CLIF_T_BLOCK 256u
 #define CLIF_T_PART 1024u
 #define CLIF_T_SUB 4u
-// Format 15: a checkpoint every 16 nodes; tails measured from the node's own start.
-#define CLIF_T_F15_STRIDE_SHIFT 4u
-#define CLIF_T_F15_TAIL_FROM_START 4096u
 // Format 16's newline index: its first fields' bytes; every 256th zero and one of its high bits sampled.
 #define CLIF_T_LINES_HEAD 20u
 #define CLIF_T_LINES_SAMPLE_SHIFT 8u
@@ -52,7 +49,7 @@
 #define CLIF_T_Z_PIECES 4u
 // In an entry: the block's view at SLOT_VIEW, its bytes from SLOT_BYTES, and SLACK bytes of room after them.
 #define CLIF_T_SLOT_VIEW 16u
-#define CLIF_T_SLOT_BYTES 144u
+#define CLIF_T_SLOT_BYTES 160u
 #define CLIF_T_SLACK 64u
 // A piece's kind: its bytes, one LZ4 block, or a repeat of the piece its payload names.
 #define CLIF_T_RAW 0u
@@ -93,6 +90,7 @@
 #define CLIF_T_C_CLEARING 4294967295u
 #define CLIF_T_C_WRITING 2147483648u
 #define CLIF_T_C_PROBES 16u
+#define CLIF_T_C_SLOTS_MAX 131072u
 #define CLIF_T_C_TRIES 4u
 #define CLIF_T_C_SPIN 65536u
 // A slot: the key's tag above TAG_SHIFT, its entry's number plus one below (0: pending, no entry yet).
@@ -108,17 +106,13 @@
 
 // ---- the one load of the tape in place ------------------------------------------------------------------------------
 
-// `w` bytes (1, 2, 4 or 8), little-endian, at byte `base + off` of the tape.
-UKL_CALLED uint64_t clif_t_ld(UKL_GLOBAL const uint8_t* t, uint32_t base, uint32_t off, uint32_t w)
+// `w` bytes (1, 2, 4 or 8), little-endian, at byte `base + off` of the tape: one read of the words that hold them,
+// whatever the width (a load a width, the width known only at run time, put four loads in each of a read's 38 copies:
+// the interpreter's `tape_end` compiled 152 of them on an Arc 140V).
+UKL_FUNC uint64_t clif_t_ld(UKL_GLOBAL const uint8_t* t, uint32_t base, uint32_t off, uint32_t w)
 {
-    uint64_t a = (uint64_t)base + (uint64_t)off;
-    if (w == 1u)
-        return ukl_ld_u8(t, a);
-    if (w == 2u)
-        return ukl_ld_u16(t, a);
-    if (w == 4u)
-        return ukl_ld_u32(t, a);
-    return ukl_ld_u64(t, a);
+    uint64_t x = ukl_ld_window(t, (uint64_t)base + (uint64_t)off, w);
+    return w >= 8u ? x : x & ukl_mask64(8u * w);
 }
 
 // ---- small helpers ---------------------------------------------------------------------------------------------------
@@ -149,8 +143,8 @@ UKL_INLINE uint32_t clif_t_select_in_word(uint64_t x, uint32_t r)
 // ---- the reads no format changes ----------------------------------------------------------------------------------
 
 // Whether the tape's block `block` (its nodes `PART * block ..`; NONE: the whole document) has a node of kind
-// `kind`, by its presence (the view's `presence`, decision 0434 §4): 1 where the tape has none to tell by (format 15,
-// or one stored without it), and the document's answer where its blocks' presences are not held.
+// `kind`, by its presence (the view's `presence`, decision 0434 §4): 1 where the tape has none to tell by (one stored
+// without it), and the document's answer where its blocks' presences are not held.
 UKL_INLINE uint32_t clif_tape_has_kind(CLIF_T_ARGS, uint32_t block, uint32_t kind)
 {
     uint32_t at = clif_view(v, CLIF_T_PRESENCE);

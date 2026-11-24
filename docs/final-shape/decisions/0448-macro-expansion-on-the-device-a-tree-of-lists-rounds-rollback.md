@@ -1,11 +1,10 @@
 # 0448: Macro expansion on the device: a tree of lists, rounds, rollback
 
-Status: accepted (2026-11-19). Follows 0436 step 4. The user: "I want you to work on parallel,
-recursive macro expansion. Both the GPU-based setup phase, and the GPU-based execution phase.
-I want to get that part solid first; do just enough of the rest of P1 to be able to test it";
-"We need memory management to be clearly part of the design"; "We need to do everything in
-parallel and I need to see how this maps both to warp threads and the kernel grid". Numbered
-past the highest in any worktree (0447).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0436 step 4. The user: "I want you to work on
+parallel, recursive macro expansion. Both the GPU-based setup phase, and the GPU-based execution phase. I want to get
+that part solid first; do just enough of the rest of P1 to be able to test it"; "We need memory management to be
+clearly part of the design"; "We need to do everything in parallel and I need to see how this maps both to warp
+threads and the kernel grid". Numbered past the highest in any worktree (0447).
 
 ## Intro
 
@@ -182,7 +181,7 @@ outermost call becomes the queue's first items.
 | R5 | Object-like calls and calls without arguments, with recursion and painting, give the serial pass's tokens. | `object_like_expansion_is_the_serial_passes` |
 | R6 | Arguments, `#`, `##`, placemarkers, GNU's comma, `__VA_OPT__`: the serial pass's tokens (C17 §6.10.3.5's examples and a case each). | `calls_with_arguments_are_the_serial_passes` |
 | R7 | A call past its list's end, with rollback: `f(2)(9)`, DEFER/EMPTY/OBSTRUCT, the spike's merges. | `calls_past_an_end_are_the_serial_passes` |
-| R8 | A unit past its rung's room refuses (`room`), and at the next rung gives the serial pass's tokens. | `a_unit_past_its_room_runs_again_larger` |
+| R8 | A unit past its rung's room refuses (`room`), and at the next rung gives the serial pass's tokens. | `a_unit_past_its_token_room_runs_again_larger`, `a_unit_past_its_scratch_room_runs_again_larger` |
 | R9 | No host read between passes or rounds. | a guard over the encoder |
 | R10 | On the corpus, every unit not refused gives the serial pass's tokens; refusals are counted by reason. | `the_corpus_preprocesses_on_the_device` (ignored) |
 

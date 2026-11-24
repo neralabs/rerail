@@ -555,9 +555,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const starting = this.#options.startingCheckout;
     const registry = worktreeRegistry(starting);
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
-    return (registry?.worktrees ?? [])
-      .map(worktree => storedPath(worktree))
-      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+    const listed = (registry?.worktrees ?? []).map(worktree => storedPath(worktree)).filter(root => root !== starting && existsSync(root));
+    // Git's list, read now, is a point for the folders it names (`CheckoutOwners.lookAgain`): a folder looked up while
+    // it was plain, or before Git wrote its `.git` file, is a worktree from here on.
+    if (!this.#closing) this.#options.owners.lookAgain(listed);
+    return listed.filter(root => this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
@@ -611,6 +613,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /** Every lane checks in the router's scope: in repository scope a steering wait waits for a walk's audits too. */
   steeringWaitsForLog(): boolean {
     return this.#settings.scope === "repository";
+  }
+
+  turnEnded(): void {
+    for (const lane of this.#lanes.values()) lane.enforcer.turnEnded();
   }
 
   async settle(): Promise<void> {

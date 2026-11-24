@@ -63,6 +63,8 @@ pub struct TreeDecl {
     /// Each `choice`: name, supertype, alternatives.
     pub choices: Vec<(String, Option<String>, crate::syntax::Gram)>,
     pub extra: Vec<String>,
+    /// The tokens no rule takes (`untaken K`): `any` and `balanced` neither.
+    pub untaken: Vec<String>,
     /// The root spans the whole file (`node K whole`): from byte 0, and it may hold no token.
     pub whole: bool,
     /// The marks (`hidden K`) taken where the grammar can take them, skipped elsewhere.
@@ -84,6 +86,8 @@ pub struct TreeDecl {
     pub remember: Vec<String>,
     /// The flags a level runs with (`flag F`, `with F A`, `unless F A`).
     pub flags: Vec<String>,
+    /// Each `ending RULE K …`: what a nested level does with the node made last at it where it ends (decision 0668).
+    pub endings: Vec<(String, String, crate::syntax::Ending)>,
 }
 
 pub struct Output {
@@ -109,6 +113,9 @@ struct TokDef {
     start: Mask,
     through: Option<Mask>,
     last: Option<Mask>,
+    /// A `read`'s regions with `open K`: each `K`, and the byte where a token ends open at the file's end
+    /// (`TokenRule::open_ends`): there the token is a `K`.
+    opens: Vec<(String, Mask)>,
 }
 
 pub struct Ev<'a> {
@@ -413,7 +420,7 @@ impl<'a> Ev<'a> {
                     self.vars.insert(name.clone(), Val::M(m));
                 }
             }
-            Stmt::Token { kind, start, through, last, .. } => {
+            Stmt::Token { kind, start, through, last, rule } => {
                 let start = self.mask(start)?;
                 let through = match through {
                     Some(t) => Some(self.mask(t)?),
@@ -423,7 +430,11 @@ impl<'a> Ev<'a> {
                     Some(l) => Some(self.mask(l)?),
                     None => None,
                 };
-                self.toks.push(TokDef { kind: kind.clone(), start, through, last });
+                let mut opens = Vec::new();
+                for (k, e) in rule.as_ref().map(|r| r.open_ends()).unwrap_or_default() {
+                    opens.push((k, self.mask(&e)?));
+                }
+                self.toks.push(TokDef { kind: kind.clone(), start, through, last, opens });
             }
             Stmt::Keywords { kind, words, soft, required } => {
                 self.keywords.push((kind.clone(), words.clone(), soft.clone(), *required));
@@ -434,11 +445,13 @@ impl<'a> Ev<'a> {
             }
             // Read at the start (`stream`).
             Stmt::Prefix(_) => {}
+            // A fact of the token loop: no mask of its own (decision 0607).
+            Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, nested, whole, body } => {
+            Stmt::Node { kind, nested, whole, body, .. } => {
                 let tree = self.tree.get_or_insert_with(TreeDecl::default);
                 if tree.rules.is_empty() {
                     tree.whole = *whole;
@@ -459,6 +472,7 @@ impl<'a> Ev<'a> {
             }
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
+            Stmt::Untaken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untaken.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
             Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
@@ -466,6 +480,9 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
+            // The executors' (decision 0650): this evaluator refuses a file whose statement fails, as before.
+            Stmt::Recover { .. } => {}
+            Stmt::Ending { rule, kind, ending } => self.tree.get_or_insert_with(TreeDecl::default).endings.push((rule.clone(), kind.clone(), ending.clone())),
             Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, loses, refuses, refuses_taken, .. } => {
                 let m = self.mask(at)?;
                 if !refuses_taken.is_empty() {
@@ -1141,11 +1158,13 @@ impl<'a> Ev<'a> {
         let mut kinds: Vec<String> = vec![];
         let mut throughs: Vec<Option<Mask>> = vec![];
         let mut lasts: Vec<Option<Mask>> = vec![];
+        let mut opens: Vec<&[(String, Mask)]> = vec![];
         let mut overlap: Option<String> = None;
         for t in &self.toks {
             kinds.push(t.kind.clone());
             throughs.push(t.through.clone());
             lasts.push(t.last.clone());
+            opens.push(&t.opens);
             let k = kinds.len() as u32;
             for i in t.start.ones_iter() {
                 if kind_at[i] != 0 && overlap.is_none() {
@@ -1180,7 +1199,9 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None, lose: vec![], refuse: vec![], refuse_taken: false });
+            // A region open at the file's end: its `open` kind's token (`Region::open`).
+            let kind = opens[k].iter().find(|(_, m)| end == n && m.get(n - 1)).map_or(&kinds[k], |(o, _)| o).clone();
+            toks.push(Token { kind, start: i, end, soft: None, mark: false, settle: None, lose: vec![], refuse: vec![], refuse_taken: false });
         }
         // A token that starts inside the one before (tier 2 refuses it too).
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {

@@ -23,6 +23,7 @@ import {
   type Stats,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { isRepositoryVariable } from "../../git.js";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
 import { checkoutRealpath, realpathNamesInTurn, storedForm, storedPath } from "../checkout-control.js";
 
@@ -67,9 +68,12 @@ export interface LinkedPlacement {
 }
 
 /**
- * The environment variables that move Git's lookup away from the folder's own `.git` entry, or make Git refuse every
- * folder: with any of them set nothing is read from files or kept, and Git is asked each time. `GIT_CEILING_DIRECTORIES`
- * is not one: it stops Git's search above a folder, and Git reads a folder's own `.git` entry before it looks above.
+ * The environment variables that move the lookup of a Git Rerail starts away from the folder's own `.git` entry, or
+ * make it refuse every folder: with any of them set nothing is read from files or kept, and Git is asked each time.
+ * Of those that can move Git's lookup, the ones a Git hook names a repository by (`GIT_DIR`, `GIT_WORK_TREE`, ...)
+ * never reach Rerail's Git ({@link isRepositoryVariable}: every read is of the checkout it names), so they move
+ * nothing here. `GIT_CEILING_DIRECTORIES` is not one: it stops Git's search above a folder, and Git reads a folder's
+ * own `.git` entry before it looks above.
  */
 const LOOKUP_VARIABLES = [
   "GIT_DIR",
@@ -78,7 +82,7 @@ const LOOKUP_VARIABLES = [
   "GIT_OBJECT_DIRECTORY",
   "GIT_IMPLICIT_WORK_TREE",
   "GIT_TEST_ASSUME_DIFFERENT_OWNER",
-];
+].filter(name => !isRepositoryVariable(name));
 
 function environmentMovesLookup(): boolean {
   return LOOKUP_VARIABLES.some(name => process.env[name] !== undefined);

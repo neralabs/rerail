@@ -1,18 +1,20 @@
 // The preprocessor's searches over its sorted and scanned stores: a lower bound, and an output
-// element's item. The scans, segmented scans and sorts are the persistent grid's (`ukl/grid.h`,
-// decision 0468 §4).
+// element's item. The scans, segmented scans and sorts are the program's stages (`ukl/stages.h`,
+// decision 0653).
 
 // --- Search and expand -------------------------------------------------------------------------------
 
-// The first place in `sorted[0..n)` whose key is at least `q`.
-UKL_INLINE uint32_t pb_lower_bound(PP_GLOBAL const uint64_t* sorted, uint32_t n, uint64_t q) {
-    uint32_t lo = 0u, hi = n;
+// The first place in `sorted[lo..hi)` whose key is at least `q` (`hi` where none is).
+UKL_INLINE uint32_t pb_lower_bound_in(PP_GLOBAL const uint64_t* sorted, uint32_t lo, uint32_t hi, uint64_t q) {
     for (uint32_t k = 0u; k < 32u && lo < hi; k++) {
         uint32_t mid = (lo + hi) / 2u;
         if (sorted[mid] < q) lo = mid + 1u; else hi = mid;
     }
     return lo;
 }
+
+// The first place in `sorted[0..n)` whose key is at least `q`.
+UKL_INLINE uint32_t pb_lower_bound(PP_GLOBAL const uint64_t* sorted, uint32_t n, uint64_t q) { return pb_lower_bound_in(sorted, 0u, n, q); }
 
 // The item that output element `j` comes from: the last of `n` items whose first (`offsets`,
 // an exclusive scan of their counts) is at or before `j`.

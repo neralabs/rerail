@@ -1,6 +1,7 @@
 # 0483. The reference graph is rules: `python/references.rerail`, per file and then linked
 
-Status: accepted (2026-11-19). Follows 0476 and 0477 (their next step "the summary as a tape pass").
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0476 and 0477 (their next step "the summary as a
+tape pass").
 
 ## Intro
 

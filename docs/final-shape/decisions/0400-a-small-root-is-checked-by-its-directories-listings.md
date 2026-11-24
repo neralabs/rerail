@@ -1,9 +1,9 @@
 # 0400 (was 0399): A small root is checked by its directories' listings, and the observer keeps its own journal of what changed
 
-Status: decided by the user (2026-11-18, Q189's question 3, option (a): "use directory listing where possible to avoid
-bombarding with individual stat calls"); built: step 1 (`content_store/observe/listing.rs`, `Observer::check_listed`),
-step 2 (`journal::fsevents::start`'s marker, `Since::Behind`, `Observer::check_behind`). Amends decision 0105.
-Evidence: t46.
+Status: built (audited 2026-11-23). Decided by the user (2026-11-18, Q189's question 3, option (a): "use directory
+listing where possible to avoid bombarding with individual stat calls"); built: step 1
+(`content_store/observe/listing.rs`, `Observer::check_listed`), step 2 (`journal::fsevents::start`'s marker,
+`Since::Behind`, `Observer::check_behind`). Amends decision 0105. Evidence: t46.
 
 ## Intro
 

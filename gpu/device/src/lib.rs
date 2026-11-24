@@ -1,5 +1,6 @@
-//! The device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA elsewhere (OpenCL's GPU
-//! on Windows where no CUDA device is), an OpenCL GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu`
+//! The device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA elsewhere (HIP's where
+//! there is no CUDA driver, or `RERAIL_GPU=hip`; OpenCL's GPU on Windows where neither is), an OpenCL GPU when
+//! `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu`
 //! (`device`); MLDB's compute-kernel runtime (the
 //! argument types, the grid launcher that binds a kernel's parameters by name, and each backend's runtime, at their
 //! upstream paths under `mldb/`); and the process's shared device (`shared`).
@@ -26,7 +27,7 @@ pub mod compute_kernel_cpu;
 pub mod compute_kernel_opencl;
 pub mod device;
 pub mod os;
-mod rows;
+pub mod rows;
 pub mod store;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
@@ -117,16 +118,27 @@ pub mod shared {
         })
     }
 
-    /// Windows' GPU: CUDA's where the machine has a CUDA device, else OpenCL's (`OpenCL.dll`, the ICD loader every
-    /// GPU driver installs): an Intel or AMD GPU.
+    /// Windows' GPU: CUDA's where the machine has a CUDA device, else HIP's (an AMD GPU with AMD's HIP runtime), else
+    /// OpenCL's (`OpenCL.dll`, the ICD loader every GPU driver installs): an Intel GPU, or an AMD one without HIP.
     #[cfg(windows)]
     fn open() -> Option<Shared> {
-        open_cuda().or_else(|| opencl().ok())
+        open_cuda().or_else(|| opencl().ok()).or_else(say_needs)
     }
 
     #[cfg(target_os = "linux")]
     fn open() -> Option<Shared> {
-        open_cuda()
+        open_cuda().or_else(say_needs)
+    }
+
+    /// A process left without a GPU says what the user must install for one, where it found a GPU it could not use
+    /// (decision 0645: no GPU compiler ships with Rerail; `compute_kernel_cuda::needs`). Once a process: the device
+    /// is opened once.
+    #[cfg(not(target_os = "macos"))]
+    fn say_needs() -> Option<Shared> {
+        if let Some(needs) = crate::compute_kernel_cuda::needs() {
+            eprintln!("rerail: GPU support: {needs}");
+        }
+        None
     }
 
     #[cfg(not(target_os = "macos"))]

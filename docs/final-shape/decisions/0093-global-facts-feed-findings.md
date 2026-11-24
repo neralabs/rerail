@@ -1,7 +1,8 @@
 # 0093: A fact over every document feeds findings, not rules; lints for the forms that have a better rule
 
-Status: accepted (2026-11-08). Decided, not built. The census (§1) is measured; the check (§2), the lints (§3) and
-the engine fixes (§4) are not built.
+Status: partly built (audited 2026-11-23). Left: §2 the check that a global fact feeds only findings; §3 lints for
+forms 1 and 5; findings assembly leak. Accepted (2026-11-08). Decided, not built. The census (§1) is measured; the
+check (§2), the lints (§3) and the engine fixes (§4) are not built.
 
 ## Intro
 

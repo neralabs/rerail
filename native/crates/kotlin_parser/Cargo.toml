@@ -7,10 +7,11 @@ description = "Kotlin's Bitlex grammar, compiled to tier 1 and tier 2: tree-sitt
 
 [features]
 # The compiler's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
-test-hooks = ["rerail-kotlin-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks"]
+test-hooks = ["rerail-kotlin-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
+rerail-rir = { path = "../rir" }
 rerail-bitlex = { path = "../bitlex" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-stream = { path = "../cpu_stream" }
@@ -22,6 +23,8 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-kotlin-parser = { path = ".", features = ["test-hooks"] }
+# The block runs' outputs the tests print (`BlockRun`, decision 0353).
+rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
 # Tier 2 as Rust, as the Bitlex compiler writes it (`tier2_rust`): every text the tests check is
 # read through it too.
 rerail-kotlin-aot = { path = "../kotlin_aot" }

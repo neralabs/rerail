@@ -219,7 +219,8 @@ function answersInputs(folder: string, inputs: PlacementInputs, located: Located
 /** Whether `location` is in Git and names `folder` as its own top level; false when a real path cannot be read. */
 function namesItself(folder: string, location: RepositoryIdentityLocation): boolean {
   try {
-    return location.git && physicalPath(location.workspaceRoot) === physicalPath(folder);
+    // As stored: on macOS a folder asked in another letter case is still the top level Git names in the stored case.
+    return location.git && storedPath(location.workspaceRoot) === storedPath(folder);
   } catch {
     return false;
   }
@@ -282,8 +283,9 @@ function gitFindsNone(requested: string, gitFolderThere = false): "outside" | "g
 const GIT_MARKERS = [".git", "HEAD"];
 
 /**
- * Whether Git, asked about `folder`, finds no repository, read from the disk without starting Git: `GIT_DIR` is unset in
- * the environment Rerail runs Git in, and no folder from `folder` up to its root holds one of {@link GIT_MARKERS}, by
+ * Whether Git, asked about `folder`, finds no repository, read from the disk without starting Git: no folder from
+ * `folder` up to its root holds one of {@link GIT_MARKERS} (Rerail's Git never gets this process's `GIT_DIR`, which
+ * `gitEnvironment` drops with every repository variable, so it leads that Git nowhere), by
  * the path as written and by its real path (Git searches up from the folder it changed into, and whether that folder's
  * name keeps a link's path or resolves it differs by system). False wherever the disk cannot tell: a folder that does
  * not resolve, an entry that cannot be read. So it skips Git only where Git has nothing to find; where a `.git` is there
@@ -291,7 +293,6 @@ const GIT_MARKERS = [".git", "HEAD"];
  * asked as before.
  */
 export function outsideGit(folder: string): boolean {
-  if (process.env.GIT_DIR !== undefined) return false;
   const written = resolve(folder);
   let real: string;
   try {

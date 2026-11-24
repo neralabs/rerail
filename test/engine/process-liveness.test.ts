@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { exitedEveryThread, processStartedAt, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
+import { cmdletsWithoutModule, commandScript, MODULE_QUALIFIED_ONLY, withCommandPrefix } from "../support/platform/powershell-commands.js";
 import { exitedEveryThread as removalExitedEveryThread } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell.
@@ -137,6 +138,51 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     const started = processStartedAt(process.pid, 30_000);
     expect(started).toBeDefined();
     expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
+  });
+
+  // A cmdlet named alone makes Windows PowerShell read every installed module it has not read yet before it runs: 46 s
+  // with 40 large ones, past every limit a caller gives the read.
+  it("names the module of the cmdlet it runs, so PowerShell reads no other installed module first", async () => {
+    const scripts: Array<string | undefined> = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((_program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      scripts.push(commandScript(args));
+      return runSync(process.execPath, ["-e", "process.stdout.write('133444736000001234')"], options);
+    }) as unknown as typeof childProcess.spawnSync);
+    expect(processStartedAt(process.pid, 30_000, "win32")).toBe(1_700_000_000_000);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toMatch(/\\Get-Process /u);
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("reads when this process started while PowerShell loads only the modules a command names", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) =>
+      runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options)) as unknown as typeof childProcess.spawnSync);
+    const started = processStartedAt(process.pid, 30_000);
+    expect(started).toBeDefined();
+    expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
+  });
+
+  // The setting stands in for a machine with many modules only while a cmdlet named alone is then not found. Were
+  // Microsoft.PowerShell.Management loaded before the command starts, the case above, and the stop's case in
+  // daemon-control.test.ts, would pass with the module's name taken out of the read.
+  it.runIf(process.platform === "win32")("reads nothing under that setting when the cmdlet is named alone, as before its module was named", async () => {
+    const scripts: Array<string | undefined> = [];
+    const results: Array<childProcess.SpawnSyncReturns<string | Buffer>> = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      const alone = args.map(arg => arg.replace("Microsoft.PowerShell.Management\\Get-Process", "Get-Process"));
+      scripts.push(commandScript(alone));
+      const result = runSync(program, withCommandPrefix(alone, MODULE_QUALIFIED_ONLY), options);
+      results.push(result);
+      return result;
+    }) as unknown as typeof childProcess.spawnSync);
+    expect(processStartedAt(process.pid, 30_000)).toBeUndefined();
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual(["Get-Process"]);
+    // PowerShell ran and did not find the cmdlet: the read failed for that, not for a start that failed or ran out of time.
+    expect(results).toHaveLength(1);
+    expect(String(results[0]?.stderr)).toMatch(/CommandNotFoundException/u);
   });
 
   it("ends a PowerShell that does not answer at its bound and reads nothing", async () => {

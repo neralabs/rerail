@@ -1,0 +1,549 @@
+//! The `.rerail` parser as Rust (`rerail-rr-aot`, written by the Bitlex compiler from the grammar, decision 0560)
+//! against the JIT's compile of the same grammar: the files are the compiler's output, and tier 1's records are the
+//! interpreter's.
+
+use crate::{Compiled, SAMPLES, compiled};
+
+/// `rerail_rr_aot`'s `tier1.rs`, `tier2.rs` and `tier2_loop.rs` are the Bitlex compiler's output for the grammar, in the compile
+/// `compiled` makes (its codes and ids are the JIT's); `RERAIL_BLESS=1` writes them again.
+#[test]
+fn rust_is_current() {
+    let c = compiled().expect("the grammar compiles");
+    let tier1 = c.lexer_rust.clone().unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
+    let tier2 = c.rust.clone().unwrap_or_else(|e| panic!("tier 2 as calls: {e}"));
+    let tier2_loop = c.rust_loop.clone().unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2), ("tier2_loop.rs", tier2_loop)] {
+        let path = format!("{}/../rr_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "rr_aot's {file} is not the compiler's: RERAIL_BLESS=1");
+    }
+}
+
+/// A float is its record's (decision 0655 step 14), as the lean lexer's number arm writes `FLOAT` where it read a `.`:
+/// tier 1 as Rust's number arm writes `float_at`'s bit from its run's one `.` (`once`), and tier 2 reads the bit from
+/// the record, no test of the token's bytes asked again (`TESTED`).
+#[test]
+fn a_float_is_its_records() {
+    let c = compiled().expect("the grammar compiles");
+    let tier1 = c.lexer_rust.clone().expect("tier 1 as Rust");
+    assert!(tier1.contains("let (pick, kind1, word1) = TOKEN["), "the lean lexer's loop");
+    assert!(tier1.contains("(l, u32::from(kind1) | u32::from(once) << 16, false, 0)"), "the number arm writes the float's bit");
+    assert!(!tier1.contains("// `float_at`\n"), "a token test of `float_at` asked of the bytes");
+    assert!(tier1.contains("pub const TESTED: u32 = 0x2000;"), "`TESTED` holds `json_bad` alone");
+    let text = "a(1.5, 2, 3.25).\n";
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+    let floats: Vec<&str> = lx.recs.iter().filter(|r| r.code >> 16 & 1 == 1).map(|r| &text[r.start as usize..=r.last as usize]).collect();
+    assert_eq!(floats, ["1.5", "3.25"]);
+}
+
+/// Tier 1 as Rust tests a byte as the lean lexer does (decision 0655 step 15): a class of more than one byte by its bit
+/// in the byte's `CLASS` entry, one load; a number's digits, then its `.` and fraction, two runs of digits, as lean's
+/// number arm.
+#[test]
+fn tier1_tests_bytes_as_lean() {
+    let c = compiled().expect("the grammar compiles");
+    let tier1 = c.lexer_rust.clone().expect("tier 1 as Rust");
+    assert!(tier1.contains("static CLASS: [u8; 256] = {"), "lean's `CLASS` table");
+    let lexing = &tier1[..tier1.find("/// A run of pairs' first bytes").expect("the loop's end")];
+    assert!(!lexing.contains("matches!(src[l + 1]"), "a class tested by its ranges in the loop");
+    let digits = "while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; }";
+    let arm = format!("let (l, once) = {{ let mut l = s; {digits} let once = (l + 1 < n && (src[l + 1] == b'.')) && (l + 2 < n && CLASS[usize::from(src[l + 2])] & C_DIGIT != 0); if once {{ l += 2; {digits} }} (l, once) }};");
+    assert!(tier1.contains(&arm), "the number arm as lean's: two runs of digits");
+    let text = "a(1.2.3, 45, 6.75x).\n";
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+    let numbers: Vec<&str> = lx.recs.iter().filter(|r| text.as_bytes()[r.start as usize].is_ascii_digit()).map(|r| &text[r.start as usize..=r.last as usize]).collect();
+    assert_eq!(numbers, ["1.2", "3", "45", "6.75"]);
+}
+
+/// A tape's nodes, in order: each one's number in the `.rerail` table, start, end and size.
+type Nodes = Vec<(u32, u64, u64, usize)>;
+
+/// The parser as Rust's tape of `buf[..n]` (`rerail_rr_aot::parse`, `buf` padded), in format 16 through the lean
+/// parser's sink; or the byte it refused the file at.
+fn aot_tape(buf: &[u8], n: usize) -> Result<crate::Tape, u32> {
+    rerail_rr_aot::parse(buf, n, &mut rerail_rr_syntax::lean::Sink16::new(false, true)).map(|t| crate::written(t.expect("a format 16 tape").tape).expect("format 16"))
+}
+
+/// `aot_tape` by tier 2's device form, the one loop (`rerail_rr_aot::parse_loop`): the same tape.
+fn aot_loop_tape(buf: &[u8], n: usize) -> Result<crate::Tape, u32> {
+    rerail_rr_aot::parse_loop(buf, n, &mut rerail_rr_syntax::lean::Sink16::new(false, true)).map(|t| crate::written(t.expect("a format 16 tape").tape).expect("format 16"))
+}
+
+/// The tape compiled parser `p` (its tiers as the JIT runs them) writes of `text`, its keys numbered in the `.rerail`
+/// table (as `Compiled::image`), or why it wrote none.
+fn parser_tape(p: &rerail_cpu_stream::native_cpu_stream::Parser, text: &str) -> Result<crate::Tape, String> {
+    crate::written(p.image16(text.as_bytes(), crate::rr::syntax::TERMINATORS, crate::rr::tape::lang(), &p.tier2.numbers(crate::rr::tape::lang()), false)?)
+}
+
+/// A format 16 tape's nodes, read in place.
+fn tape_nodes(t: &crate::Tape) -> Nodes {
+    use rerail_tape_format::tape::Tape as _;
+    let r = t.reader(rerail_rr_syntax::tape::lang()).expect("a .rerail tape");
+    (0..r.len()).map(|i| (r.code(i), r.start(i), r.end(i), r.subtree_end(i) - i)).collect()
+}
+
+/// `text` as the lean parser reads what the parser as Rust read in `ours` (its tape): its leaves'
+/// (`rr::as_lean_reads`).
+fn as_lean_reads(text: &str, ours: &Nodes) -> String {
+    crate::rr::as_lean_reads(text, ours.iter().filter(|n| n.3 == 1).map(|n| (n.1 as usize, n.2 as usize)))
+}
+
+/// The first node where tapes `a` and `b` of `text` differ, each named by its text.
+fn node_differs(text: &str, a: &Nodes, b: &Nodes, an: &str, bn: &str) -> Option<String> {
+    // The first node whose kind or span differs (a size differs at every node around it), else whose size does.
+    let span = |n: Option<&(u32, u64, u64, usize)>| n.map(|n| (n.0, n.1, n.2));
+    let k = (0..a.len().max(b.len())).find(|&k| span(a.get(k)) != span(b.get(k))).or_else(|| (0..a.len().max(b.len())).find(|&k| a.get(k) != b.get(k)))?;
+    let at = |n: Option<&(u32, u64, u64, usize)>| n.map_or(String::new(), |n| text[n.1 as usize..].chars().take(40).collect::<String>().replace('\n', "⏎"));
+    Some(format!("node {k} of {}/{}: {an} {:x?} `{}`, {bn} {:x?} `{}`", a.len(), b.len(), a.get(k), at(a.get(k)), b.get(k), at(b.get(k))))
+}
+
+/// Where the parser as Rust's tape is not the lean parser's or the JIT's. A tape it writes is the lean parser's: a
+/// statement that fails is one ERROR leaf (decision 0650). A file the JIT takes, it takes, with the JIT's tape. The
+/// device's form (the one loop) takes what the calls take, a statement recovered or none, with their tape.
+fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
+    let theirs = c.image(text.as_bytes()).ok().map(|t| tape_nodes(&t));
+    let buf = rerail_rr_aot::padded(text.as_bytes());
+    let ours = aot_tape(&buf, text.len()).ok().map(|t| tape_nodes(&t));
+    let looped = aot_loop_tape(&buf, text.len()).ok().map(|t| tape_nodes(&t));
+    if looped != ours {
+        if let (Some(l), Some(o)) = (&looped, &ours)
+            && let Some(d) = node_differs(text, o, l, "the calls", "the one loop")
+        {
+            return Some(format!("the one loop's tape is not the calls': {d}"));
+        }
+        return Some(format!("the one loop's tape is not the calls': {} nodes, {} nodes", looped.map_or(0, |l| l.len()), ours.as_ref().map_or(0, |o| o.len())));
+    }
+    if let Some(b) = &ours {
+        let lean = tape_nodes(&crate::rr::lean::tape(text).expect("a .rerail tape"));
+        if let Some(d) = node_differs(text, &lean, b, "the lean parser", "the parser as Rust") {
+            return Some(d);
+        }
+    }
+    match (theirs, ours) {
+        (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
+        (Some(a), Some(b)) => node_differs(text, &a, &b, "the JIT", "the parser as Rust"),
+        _ => None,
+    }
+}
+
+/// The marks no record of tier 1's holds (`tier1::UNRECORDED`, decision 0623): those tier 2 asks of the bytes or of the
+/// tokens, by their bits.
+fn tier2_asked_marks() -> u32 {
+    let tier1 = std::fs::read_to_string(format!("{}/../rr_aot/src/tier1.rs", env!("CARGO_MANIFEST_DIR"))).expect("reads");
+    let Some(at) = tier1.find("pub const UNRECORDED: u32 = 0x") else { return 0 };
+    let rest = &tier1[at + 30..];
+    u32::from_str_radix(&rest[..rest.find(';').expect("the constant's end")], 16).expect("the bits")
+}
+
+/// The mark bits of the hidden marks only refused (`refuse M in L`): the lowering checks their local token tests in
+/// tier 2, in the refusing levels (`bitlex_masks`, `kind_checks`), so the interpreter's records lack those bits; tier
+/// 1 as Rust tests them in the token loop and records them. Each bit is the one tier 1 as Rust gives the mark.
+fn tier2_checked_marks() -> u32 {
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let tier1 = std::fs::read_to_string(format!("{}/../rr_aot/src/tier1.rs", env!("CARGO_MANIFEST_DIR"))).expect("reads");
+    let mut out = 0;
+    for s in &stmts {
+        let ::bitlex::syntax::Stmt::Tree { body, .. } = s else { continue };
+        for t in body {
+            let ::bitlex::syntax::Stmt::Refuse { mark, .. } = t else { continue };
+            // Its bit: the loop's (`marks |= 1 << B`), or the arm of a function that asks it (`B => …`).
+            let at = tier1.find(&format!("// `{mark}`\n")).unwrap_or_else(|| panic!("mark {mark} in tier1.rs"));
+            let rest = &tier1[at..];
+            let next = rest.lines().nth(1).unwrap_or_default().trim();
+            let b = match next.strip_prefix("if ").and_then(|_| rest.find("marks |= 1 << ")) {
+                Some(i) => rest[i + 14..].split(';').next().and_then(|b| b.parse::<u32>().ok()),
+                None => next.split(" =>").next().and_then(|b| b.parse::<u32>().ok()),
+            };
+            out |= 1 << b.expect("the mark's bit");
+        }
+    }
+    out
+}
+
+/// A file nested too deep ends in a refusal, never in a stack that grows without end: tier 1 counts no brackets, and
+/// tier 2's one loop refuses a level past its stack's depth (decision 0623). Nested a little past the grammar's 127, it
+/// may parse where the JIT refuses it; both refuse it far past.
+#[test]
+fn deep_nesting_ends_in_a_refusal() {
+    for n in [128, 200, 3_000, 100_000] {
+        // `[` starts no term: its statement fails, and is recovered as the lean parser recovers it (decision 0650).
+        let text = format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n));
+        if let Ok(t) = aot_tape(&rerail_rr_aot::padded(text.as_bytes()), text.len()) {
+            assert!(tape_nodes(&t) == tape_nodes(&crate::rr::lean::tape(&text).expect("a .rerail tape")), "{n} deep `[`: the lean parser's tape");
+        }
+        // A JSON document's levels past the depth: a limit, refused whole.
+        let text = format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n));
+        let got = aot_tape(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+        if n >= 3_000 {
+            assert!(got.is_err(), "{n} deep: refused");
+        }
+    }
+}
+
+/// Where tier 1 as Rust (`rerail_rr_aot::lex`) is not the interpreter's tier 1: whether it sends the file to the
+/// engine, and where neither does, each token's first and last byte and code. In the bits of the marks tier 2 checks
+/// (`tier2_checked_marks`), the Rust's are the interpreter's and those tier 2 tests.
+fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
+    // The marks tier 2 asks of the bytes or the tokens (decision 0623) are in no record of tier 1's: the tapes test them.
+    let asked = tier2_asked_marks() << 16;
+    let late = tier2_checked_marks() << 16 & !asked;
+    let run = c.program.block_programs[0].run(text.as_bytes());
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+    let refused = run.totals.first().is_some_and(|&t| t != 0);
+    // An escape the lowering makes a check of tier 2's at a token (`pending_checks`): the interpreter's tier 1 does
+    // not refuse there, tier 1 as Rust does; either way the file is refused.
+    if lx.refused && !refused && c.image(text.as_bytes()).is_err() {
+        return None;
+    }
+    if refused != lx.refused {
+        return Some(format!("refused: the interpreter {refused}, tier 1 as Rust {}", lx.refused));
+    }
+    if refused {
+        return None;
+    }
+    let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+    // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
+    // by where they start.
+    // An extra's bit is the list it is in (0655 step 9), as the lean lexer's comments: the interpreter's record has it.
+    let extra_bit = c.native.records.as_ref().and_then(|r| r.extra).map_or(0, |e| 1u32 << (16 + u32::from(e)));
+    let extras = lx.extras.iter().map(|r| (r.start, r.last, r.code | extra_bit));
+    let mut recs: Vec<(u32, u32, u32)> = lx.recs.iter().map(|r| (r.start, r.last, r.code)).chain(extras).collect();
+    recs.sort_by_key(|r| r.0);
+    for k in 0..starts.len().max(recs.len()) {
+        let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
+        let rec = recs.get(k);
+        let ours = (rec.map(|r| &r.0), rec.map(|r| &r.1), rec.map(|r| &r.2));
+        let kept = |c: Option<&u32>| c.map(|&c| c & !late & !asked);
+        let late_ok = run.codes.get(k).zip(ours.2).is_none_or(|(&t, &o)| t & late & !o == 0);
+        if (theirs.0, theirs.1, kept(theirs.2)) != (ours.0, ours.1, kept(ours.2)) || !late_ok {
+            let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
+            return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
+        }
+    }
+    None
+}
+
+/// Files that reach tier 1's rules one at a time: the depth's count at and past its bound, the floats (`toggle`'s
+/// parity of a chain's dots, and a float the file ends with: a mark's `else escape`), the regions (an empty
+/// backtick literal: a region's `else`), the marks.
+fn cases() -> Vec<String> {
+    let mut out: Vec<String> = SAMPLES.iter().map(|s| (*s).to_owned()).collect();
+    // Lean's `Bad` tokens (decision 0650 step 5): a statement recovered.
+    out.extend(crate::bad_token_cases().into_iter().chain(crate::lattice_cases()));
+    // A region whose closer is blocks past its opener: tier 1's one pass reads the token again as stage 1 makes them
+    // (decision 0619), and a `` `` `` with its closer there is no empty literal (`else e_t2`).
+    for n in [60, 200, 700] {
+        out.push(format!("a(b) :- r(c, ``{}``).\n", "x".repeat(n)));
+        out.push(format!("a(\"{}\").\n", "y".repeat(n)));
+        out.push(format!("/* {} */ a(1).\n", "z".repeat(n)));
+    }
+    // Past the grammar's 127 the JIT refuses; the parser as Rust refuses past its own stack's depth
+    // (`deep_nesting_ends_in_a_refusal`).
+    for n in [126, 127] {
+        out.push(format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n)));
+        out.push(format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n)));
+    }
+    for t in [
+        "a(X) :- b(X), X = 1.5.\n",
+        "a(X) :- b(X), X = 1.5",
+        "a(X) :- b(X), X = 1.2.3.4.\n",
+        "a(X) :- X = 12.\n",
+        "a(1.5, 2.25, 3).\n",
+        "a(X) :- X = 1.",
+        "a(\"s\\u00e9\\u{1F600}\", `x`, ``y``, ```z```).\n",
+        "a(````q````).\n",
+        "a(\"open\n",
+        "/* open\n",
+        "a(X) :- b(X). // line\n/* block */ c(Y) :- d(Y).\n",
+        "#include \"x.rerail\"\n.decl a(x: number)\n",
+        ".type T = <a: number>\n.input a, b(x)\n.output c\n",
+        ".violation v(x: number) code \"C1\" tag {t} \"message\" fix safe r \"d\" suppress tool \"r\", \"s\" over {o}\n",
+        "a(X) :- count(Y) : { b(Y) } = X, min(Z) by (W) : { c(Z, W) } > 1.\n",
+        // An aggregate's call read again inside it (`min(…) : {…}`) takes the aggregate's word (`remember`): its own
+        // again after an aggregate in its arguments has set its own.
+        "a(X) :- X = min(Y) : { b(Y) }.\n",
+        "a(X) :- X = min(max(Y) : { c(Y) }) : { b(Y) }.\n",
+        "a(X) :- X = sum(Y, mean(Z) : { c(Z) }) : { b(Y) }.\n",
+        "a(X) :- min(max(Y) : { c(Y) }, Z) : { b(Z) } = X.\n",
+        // A second argument there: its `,` dropped, a dead node the reading reaches, refused (`drop`).
+        "a(X) :- X = sum(Y, Z) : { b(Y) }.\n",
+        "a(X) :- !b(X), (c(X); d(X)), X ~ `p`.\n",
+        "a(1234567890123456789).\n",
+        "a(123456789012345678).\n",
+        "\u{0c}a(1).\n",
+        // A string's escapes a JSON document refuses (`json_bad`, refused in its levels only): in a clause, and in a
+        // policy's document.
+        "a(\"\\q\", 1).\n",
+        "a(\"\\u12\", 1).\n",
+        "a(\"\\u{1F600}\").\n",
+        ".policy {\"a\": \"\\q\"}\n",
+        ".policy {\"a\": \"\\u{1F600}\"}\n",
+        ".policy {\"a\": \"x\", \"b\": [1, {\"c\": \"\\q\"}]}\n",
+        ".policy {\"a\": \"x\"}\na(\"\\q\").\n",
+        // `else e_t2 bytes 2`: two backticks with no closer after them, a token of their two bytes.
+        "a(b) :- r(c, ``).\n",
+        "a(b) :- r(o, ` `), r(c, ``), r(d, ``x``).\n",
+    ] {
+        out.push(t.to_owned());
+    }
+    out
+}
+
+#[test]
+fn tier1s_records_are_the_interpreters() {
+    let c = compiled().expect("the grammar compiles");
+    let (mut same, mut refused) = (0, 0);
+    for (k, t) in cases().iter().enumerate() {
+        if let Some(d) = tier1_differs(c, t) {
+            panic!("case {k} ({:?}): {d}", &t[..t.len().min(60)]);
+        }
+        if rerail_rr_aot::lex(&rerail_rr_aot::padded(t.as_bytes()), t.len()).refused { refused += 1 } else { same += 1 }
+    }
+    eprintln!("{same} files' records the interpreter's, {refused} refused by both");
+    assert!(same > 0 && refused > 0);
+}
+
+#[test]
+fn tapes_are_the_jits() {
+    let c = compiled().expect("the grammar compiles");
+    let (mut same, mut refused) = (0, 0);
+    // Every case that differs, each named, so that a run counts them all.
+    let mut differ = Vec::new();
+    let cases = cases();
+    for (k, t) in cases.iter().enumerate() {
+        if let Some(d) = tape_differs(c, t) {
+            eprintln!("differs: case {k} ({:?}): {d}", &t[..t.len().min(60)]);
+            differ.push(format!("case {k} ({:?}): {d}", &t[..t.len().min(60)]));
+            continue;
+        }
+        if c.image(t.as_bytes()).is_ok() { same += 1 } else { refused += 1 }
+    }
+    assert!(differ.is_empty(), "{} of {} cases differ; the first: {}", differ.len(), cases.len(), differ[0]);
+    eprintln!("{same} tapes the JIT's, {refused} refused by both");
+    assert!(same > 0 && refused > 0);
+}
+
+/// `tier1s_records_are_the_interpreters` over the repository's `.rerail` files.
+#[test]
+#[ignore = "the corpus: run by name"]
+fn corpus_tier1s_records_are_the_interpreters() {
+    let c = compiled().expect("the grammar compiles");
+    let files = crate::tests::corpus();
+    for (k, t) in files.iter().enumerate() {
+        if let Some(d) = tier1_differs(c, t) {
+            if let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS") {
+                std::fs::write(format!("{dir}/differs.rerail"), t).expect("writes");
+            }
+            panic!("file {k}: {d}");
+        }
+    }
+    eprintln!("{} files", files.len());
+}
+
+/// A statement that fails is one ERROR leaf, from its first token to where the next can start, and the parse goes on
+/// (decision 0650): the lean parser's tape, wherever the failure is (a token no state takes, a bare term held to the
+/// statement's end, a reading that refuses, a `.end` outside a block, a block that does not end), with comments
+/// inside the leaf and around it, at each resume point (a `#` word, a `.` first on its line before a name, past
+/// another `.`). A file nested past the calls' depth is refused whole: a limit, not its syntax.
+#[test]
+fn a_statement_that_fails_is_one_error_leaf() {
+    let cases = [
+        "a(x) :- b(x) c(x).\nd(1).\n",
+        "a(x) :- b.\nd(1).\n",
+        "B409(n) :- bl.acklisted(n, \"B409\").\n",
+        "a(X) :- X = sum(Y, Z) : { b(Y) }.\nc(1).\n",
+        ".end\na(1).\n",
+        ".test t exactly\n    a(1).\nb(2).\n",
+        "a(x) :- /* c */ b(x) @ c(x). // d\n// e\nd(1).\n",
+        "a(x) :- b(x) ) .decl c(x: number)\n.decl d(y: number)\n",
+        "a(x) :- b(x) ) #include \"x\"\nd(1).\n",
+        "a(x) :- b(x) )\n  .decl d(y: number)\n",
+        "a(x) :- b(x) ) /* c */ .decl d(y: number)\n",
+        // `line_dot`: a block comment over a line's end, then the `.` on its last line; a `\r` line end; the file's start.
+        "a(x) :- b(x) ) /* c\n d */ .decl d(y: number)\n.decl e(y: number)\n",
+        "a(x) :- b(x) )\r \t.decl d(y: number)\n",
+        ".decl d(y number)\n  .decl e(y: number)\n",
+        "a(1) b(2) c(3)",
+        "n\n// a comment\n.decl d(y: number)\n",
+        ".mode{ steer\n.scope include \"*\"\na(1).\n",
+        // A suppress line ends at a `,` before anything but a string: the violation is whole, the `,` the next statement's.
+        ".violation v(n: number) \"m\" suppress t \"a\", \"b\", .\"c\"\nd(1).\n",
+    ];
+    for text in cases {
+        let buf = rerail_rr_aot::padded(text.as_bytes());
+        let ours = aot_tape(&buf, text.len()).unwrap_or_else(|at| panic!("{text:?}: refused at {at}"));
+        let lean = crate::rr::lean::tape(text).expect("a .rerail tape");
+        if let Some(d) = node_differs(text, &tape_nodes(&lean), &tape_nodes(&ours), "the lean parser", "the parser as Rust") {
+            panic!("{text:?}: {d}");
+        }
+        assert_eq!(aot_loop_tape(&buf, text.len()).ok(), Some(ours), "{text:?}: the one loop's tape is the calls'");
+    }
+    let deep = format!("a(X) :- b(X), X = {}1{}.\nc(1).\n", "(".repeat(500), ")".repeat(500));
+    assert!(aot_tape(&rerail_rr_aot::padded(deep.as_bytes()), deep.len()).is_err(), "past the depth: refused");
+}
+
+/// The lean parser's edited copies of the corpus (`edited_corpus`): a tape the parser as Rust writes, a statement
+/// recovered or none, is the lean parser's (of the text as it reads the parser's strings and numbers, `as_lean_reads`), and the one loop's is the calls'. Counts the files taken whole, those taken with a statement recovered, and
+/// those refused (tier 1's errors, a limit).
+#[test]
+#[ignore = "the corpus: run by name"]
+fn corpus_edited_tapes_are_the_lean_tapes() {
+    let texts = crate::tests::edited_corpus();
+    let c = compiled().expect("the grammar compiles");
+    let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+    let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+    native.tag = rerail_tape_format::RR_TAG;
+    let one = rerail_cpu_stream::native_cpu_stream::Parser::with_cut(&native, &rerail_compiler::native_cpu_clusters::Cut::one(native.structural.len())).expect("compiles as one function");
+    let (mut whole, mut recovered, mut refused) = (0, 0, 0);
+    let mut differ = Vec::new();
+    for (k, text) in texts.iter().enumerate() {
+        let buf = rerail_rr_aot::padded(text.as_bytes());
+        let got = aot_tape(&buf, text.len());
+        if aot_loop_tape(&buf, text.len()) != got {
+            eprintln!("differs: text {k}: the one loop's tape is not the calls'");
+            differ.push(format!("text {k}: the one loop's tape is not the calls'"));
+            continue;
+        }
+        // The interpreter's (`stream::run`, its `STATEMENT`): the calls form's tape, taken, recovered or refused.
+        let run = c.program.block_programs[0].run(text.as_bytes());
+        let interp = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).map(|n| crate::interpreted(&n, &c.program.readings.extras, text.as_bytes()));
+        let same = match (&interp, &got) {
+            (Ok(a), Ok(b)) => node_differs(text, &tape_nodes(b), &tape_nodes(a), "the calls form", "the interpreter").map_or(Ok(()), Err),
+            (Err(_), Err(_)) => Ok(()),
+            (Ok(_), Err(_)) => Err("the interpreter takes it, the calls form refuses it".to_owned()),
+            (Err(r), Ok(_)) => Err(format!("the interpreter refuses it ({}), the calls form takes it", r.why)),
+        };
+        // The JIT's (`native_cpu_stream`, its `STATEMENT`), a function a rule, one function and one machine: the
+        // interpreter's, taken, recovered or refused alike.
+        let same = [("the JIT", &c.parser), ("one function", &one), ("the machine", &machine.parser)].into_iter().fold(same, |same, (who, p)| {
+            same.and_then(|()| match (&interp, parser_tape(p, text)) {
+                (Ok(a), Ok(b)) => node_differs(text, &tape_nodes(a), &tape_nodes(&b), "the interpreter", who).map_or(Ok(()), Err),
+                (Err(_), Err(_)) => Ok(()),
+                (Ok(_), Err(e)) => Err(format!("the interpreter takes it, {who} refuses it ({e:?})")),
+                (Err(r), Ok(_)) => Err(format!("the interpreter refuses it ({}), {who} takes it", r.why)),
+            })
+        });
+        if let Err(d) = same {
+            eprintln!("differs: text {k}: {d}");
+            if differ.len() < 3 {
+                eprintln!("  {:?}", &text[..text.len().min(300)]);
+            }
+            differ.push(format!("text {k}: {d}"));
+            continue;
+        }
+        let Ok(ours) = got else {
+            refused += 1;
+            continue;
+        };
+        let lean = crate::rr::lean::tape(&as_lean_reads(text, &tape_nodes(&ours))).expect("a .rerail tape");
+        let nodes = tape_nodes(&lean);
+        if let Some(d) = node_differs(text, &nodes, &tape_nodes(&ours), "the lean parser", "the parser as Rust") {
+            if differ.is_empty()
+                && let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS")
+            {
+                std::fs::write(format!("{dir}/differs.rerail"), text).expect("writes");
+            }
+            eprintln!("differs: text {k}: {d}");
+            if differ.len() < 4 {
+                let first = tape_nodes(&ours).iter().zip(&nodes).find(|(a, b)| (a.0, a.1, a.2) != (b.0, b.1, b.2)).map_or(0, |(a, b)| a.1.min(b.1) as usize);
+                let to = (first + 400..=text.len()).find(|&i| text.is_char_boundary(i)).unwrap_or(text.len());
+                eprintln!("  {:?}", &text[first..to]);
+            }
+            differ.push(format!("text {k}: {d}"));
+            continue;
+        }
+        if nodes.iter().any(|n| n.0 >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0) { recovered += 1 } else { whole += 1 }
+    }
+    eprintln!("{} texts: {whole} taken whole, {recovered} with a statement recovered, {refused} refused", texts.len());
+    assert!(differ.is_empty(), "{} texts differ; the first: {}", differ.len(), differ[0]);
+}
+
+/// `tapes_are_the_jits` over the repository's `.rerail` files. `RERAIL_RR_DIFFERS=<dir>`: the first file that
+/// differs written there.
+#[test]
+#[ignore = "the corpus: run by name"]
+fn corpus_tapes_are_the_jits() {
+    let c = compiled().expect("the grammar compiles");
+    let files = crate::tests::corpus();
+    let mut parsed = 0;
+    // Every file that differs, each named, so that a run counts them all.
+    let mut differ = Vec::new();
+    for (k, t) in files.iter().enumerate() {
+        if let Some(d) = tape_differs(c, t) {
+            if differ.is_empty()
+                && let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS")
+            {
+                std::fs::write(format!("{dir}/differs.rerail"), t).expect("writes");
+            }
+            eprintln!("differs: file {k}: {d}");
+            differ.push(format!("file {k}: {d}"));
+            continue;
+        }
+        parsed += usize::from(c.image(t.as_bytes()).is_ok());
+    }
+    assert!(differ.is_empty(), "{} of {} files differ; the first: {}", differ.len(), files.len(), differ[0]);
+    eprintln!("{} files, {parsed} parsed", files.len());
+}
+
+/// CPU time over the corpus (this thread's, the least of `RR_ROUNDS` rounds, 7 by default), the parsers in turns each
+/// round: the parser as Rust (`rerail_rr_aot`), tier 1 alone (`lex`) and the whole (`parse`, tier 2 the difference);
+/// the JIT (`Compiled::image`); and the engine's hand-written reader (`engine_tape`), for scale. Each from the
+/// text, the buffers padded before. Build optimized (`--profile profiling`) and run alone, at nice 19; the load is
+/// printed.
+#[test]
+#[ignore = "a benchmark: run by hand"]
+fn rr_aot_against_jit() {
+    let c = compiled().expect("the grammar compiles");
+    let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+    let files = crate::tests::corpus();
+    let bufs: Vec<Vec<u8>> = files.iter().map(|t| rerail_rr_aot::padded(t.as_bytes())).collect();
+    let bytes: usize = files.iter().map(String::len).sum();
+    let time = |f: &dyn Fn() -> usize| {
+        let t = rerail_prof::thread_cpu();
+        std::hint::black_box(f());
+        rerail_prof::thread_cpu() - t
+    };
+    let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
+    let aot = || bufs.iter().zip(&files).map(|(b, t)| aot_tape(b, t.len()).map_or(0, |c| c.len())).sum::<usize>();
+    let jit = || files.iter().map(|t| c.image(t.as_bytes()).map_or(0, |i| i.len())).sum::<usize>();
+    let engine = || files.iter().map(|t| crate::engine_tape(t).len()).sum::<usize>();
+    // The JIT's tier 1 alone: its batch made and called, as `image` makes it.
+    let jit_lex = || {
+        files
+            .iter()
+            .map(|t| {
+                let mut batch = rerail_cpu_block::native_cpu_block::Batch::new(&c.parser.tier1, &[t.as_bytes()]);
+                batch.call(&c.parser.tier1);
+                batch.counts.len()
+            })
+            .sum::<usize>()
+    };
+    // The lean parser (`rr_syntax::lean`, hand-written Rust): the shape the generated Rust is to have.
+    let lean_lex = || files.iter().map(|t| crate::rr::lean::token_count(t)).sum::<usize>();
+    let lean = || files.iter().map(|t| crate::rr::lean::tape(t).map_or(0, |t| t.len())).sum::<usize>();
+    let mut best = [std::time::Duration::MAX; 7];
+    for _ in 0..rounds {
+        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex, &lean_lex, &lean].into_iter().enumerate() {
+            best[k] = best[k].min(time(f));
+        }
+    }
+    let refused = |f: &dyn Fn(&str, &[u8]) -> bool| files.iter().zip(&bufs).filter(|(t, b)| f(t, b)).count();
+    let (aot_refused, jit_refused) = (refused(&|t, b| aot_tape(b, t.len()).is_err()), refused(&|t, _| c.image(t.as_bytes()).is_err()));
+    let mb = bytes as f64 / 1e6;
+    let row = |name: &str, d: std::time::Duration| eprintln!("  {name:<44} {:>9.3} ms  {:>8.1} MB/s  {:>6.2} ns/byte", d.as_secs_f64() * 1e3, mb / d.as_secs_f64(), d.as_secs_f64() * 1e9 / bytes as f64);
+    eprintln!("{} files, {:.2} MB; refused: the parser as Rust {aot_refused}, the JIT {jit_refused}; least of {rounds} rounds", files.len(), mb);
+    row("the parser as Rust, tier 1 (lex)", best[0]);
+    row("the parser as Rust, tier 2 (parse - lex)", best[1].saturating_sub(best[0]));
+    row("the parser as Rust, whole (parse)", best[1]);
+    row("the JIT, tier 1 (the batch)", best[4]);
+    row("the JIT, tier 2 (image - batch)", best[2].saturating_sub(best[4]));
+    row("the JIT, whole (image)", best[2]);
+    row("the lean parser, its lexer (token_count)", best[5]);
+    row("the lean parser, its parse (tape - lexer)", best[6].saturating_sub(best[5]));
+    row("the lean parser, whole (tape)", best[6]);
+    row("the engine's hand-written reader", best[3]);
+    let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+    eprintln!("  load: {load}");
+}

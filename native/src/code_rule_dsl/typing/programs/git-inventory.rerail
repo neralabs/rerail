@@ -1,4 +1,4 @@
-// The engine embeds the selected-tree library before this program.
+// The engine includes `git/selected-tree.rerail` (and `git.rerail`, `source-language.rerail`) before this program.
 .decl inventory_file(path: symbol, mode: number, blob: symbol)
 inventory_file(p, m, b) :- git_inventory_file(_, _, p, m, b).
 source_language_request(path) :- inventory_file(path, _, _).

@@ -1,7 +1,7 @@
 # 0536: The relations' and the numbering's reads in Rust are written directly
 
-Status: decided (the user's standing rule: all generated Rust is written directly, never translated from CLIF; 0534's
-"Left"). Follows 0325, 0353 step 2, 0534.
+Status: built (audited 2026-11-23). Decided (the user's standing rule: all generated Rust is written directly, never
+translated from CLIF; 0534's "Left"). Follows 0325, 0353 step 2, 0534.
 
 ## Intro
 

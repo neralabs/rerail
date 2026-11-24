@@ -121,6 +121,12 @@ export interface RerailDaemonOptions {
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
   /**
+   * Starts the daily update check `/healthz.update` reports, stopped when the daemon closes. The entry point of a
+   * managed install passes set-up's (`startUpdateChecks`); omitted, as for a checkout's daemon and in tests, nothing
+   * asks npm and `update` is null.
+   */
+  updateChecks?: () => { newest(): DaemonHealth["update"]; stop(): void };
+  /**
    * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
    * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
    * daemon's; omitted, nothing is drawn ahead.
@@ -497,6 +503,8 @@ export class RerailDaemon {
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
   #checkoutPruning: CheckoutPruning | undefined;
+  /** What `RerailDaemonOptions.updateChecks` started, once nothing can fail the start. */
+  #updateChecks: ReturnType<NonNullable<RerailDaemonOptions["updateChecks"]>> | undefined;
   #recordCheck: NodeJS.Timeout | undefined;
   /** The check of the state file in flight, which a close waits for before it removes the file. */
   #recordChecked: Promise<void> = Promise.resolve();
@@ -616,6 +624,7 @@ export class RerailDaemon {
       await daemon.#announce(remembered);
       daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
+      daemon.#startUpdateChecks();
       daemon.#startProvenanceMove();
       let collecting = false;
       const releaseScopes = async () => {
@@ -652,6 +661,11 @@ export class RerailDaemon {
   #startCheckoutPruning(): void {
     const pruning = this.#options.checkoutPruning;
     if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
+  }
+
+  /** Once nothing can fail the start: the daily ask for a newer Rerail, where the entry point passes one. */
+  #startUpdateChecks(): void {
+    this.#updateChecks = this.#options.updateChecks?.();
   }
 
   /**
@@ -770,6 +784,7 @@ export class RerailDaemon {
       workspaceRoot: this.#workspaceRoot,
       installedAt: this.#stores.installedAt(),
       experiments: enabledExperiments(),
+      update: this.#updateChecks?.newest() ?? null,
     };
   }
 
@@ -777,6 +792,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
+    this.#updateChecks?.stop();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     clearInterval(this.#scopeReleaseTimer);
@@ -1332,7 +1348,7 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "statusLines" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "updateChecks" | "statusLines" | "recordCheck" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
@@ -1342,7 +1358,9 @@ type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "statusLi
  * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
  * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
  * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
- * for the lock for a second.
+ * for the lock for a second. From the lock to the end of its start, the record beside the lock says it is starting
+ * (`homeDaemonStarting`), so a start that finds it then waits for it rather than taking it for a daemon that does not
+ * answer or launching a second one.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
@@ -1350,6 +1368,9 @@ export async function runHomeDaemon(argv: readonly string[], services: Omit<Rera
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
   await serveRerailDaemon(argv, { ...services, recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() } });
+  // Its start is over: it has recorded itself, said where it listens, and its one thread is free to answer. Until now
+  // its record beside the lock said it was starting, and a start that found it waited for this.
+  homeLock.started();
 }
 
 /**

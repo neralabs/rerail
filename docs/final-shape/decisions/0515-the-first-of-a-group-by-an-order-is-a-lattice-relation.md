@@ -1,6 +1,6 @@
 # 0515. The first of a group by an order is a lattice relation, not a self-join
 
-Status: accepted (2026-11-20), built. t50 step 2; follows 0511.
+Status: built (audited 2026-11-23). Accepted (2026-11-20), built. t50 step 2; follows 0511.
 
 ## Intro
 

@@ -159,7 +159,8 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let open = f.ins().band_imm(state, (1 << WalkState::SKIP) - 1);
         let skip = f.ins().ushr_imm(state, i64::from(WalkState::SKIP));
         let skip = f.ins().band_imm(skip, 3);
-        // The last kind with no `after` opened, plus one (0: none), past the kinds' flags.
+        // The last kind with no `after` whose region closed at its second closer (a template's
+        // `$`), plus one (0: none), past the kinds' flags.
         let last_at = i64::from(WalkState::NONE) + kinds as i64;
         let conditioned = walk.kinds.iter().any(|k| k.after != 0);
         let last0 = if conditioned {
@@ -302,7 +303,28 @@ fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer
     let to = closer_end(&mut *f, kind, c, second);
     let h = low(&mut *f, to);
     or(&mut *f, hidden, h);
+    let last = template_last(&mut *f, kind, k, c, second, last);
     f.ins().jump(head, &[to.into(), last.into()]);
+}
+
+/// The last plain kind with a template from a close at `c`: this kind, where it has no `after`
+/// and its second closer holds at `c` (a template's `$`); none where it resumes and closes at
+/// its own closer; else as before.
+fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: usize, c: Value, second: Value, last: Value) -> Value {
+    // A kind that resumes, closed at its own closer: the string ended, none (decision 0600).
+    if kind.resumes {
+        let at = f.ins().ushr(second, c);
+        let at = f.ins().band_imm(at, 1);
+        let none = f.ins().iconst(types::I64, 0);
+        return f.ins().select(at, last, none);
+    }
+    if kind.after != 0 || kind.or.is_none() {
+        return last;
+    }
+    let at = f.ins().ushr(second, c);
+    let at = f.ins().band_imm(at, 1);
+    let me = f.ins().iconst(types::I64, k as i64 + 1);
+    f.ins().select(at, me, last)
 }
 
 /// The place after a closer at `c`: its bytes on (`outside`: `c`), or the second closer's
@@ -337,8 +359,6 @@ fn emit_kind(
     heads: &mut Vec<(Block, Step)>,
 ) {
     let past = after(&mut *f, t);
-    // The last plain kind from here: this one, if plain (an `empty` opens none).
-    let now = if kind.after == 0 { f.ins().iconst(types::I64, k as i64 + 1) } else { last };
     let cm = f.ins().band(closer, past);
     let (close, through) = (f.create_block(), f.create_block());
     // No closer in the block: open through it, or (an `else`) look past it first.
@@ -357,6 +377,7 @@ fn emit_kind(
     let upto = low(&mut *f, to);
     let h = f.ins().band(upto, past);
     or(&mut *f, hidden, h);
+    let now = template_last(&mut *f, kind, k, c, second, last);
     f.ins().jump(head, &[to.into(), now.into()]);
 
     f.switch_to_block(through);
@@ -368,7 +389,7 @@ fn emit_kind(
     or(&mut *f, hidden, past2);
     let open = f.ins().iconst(types::I64, k as i64 + 1);
     let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(exit, &[open.into(), zero.into(), now.into()]);
+    f.ins().jump(exit, &[open.into(), zero.into(), last.into()]);
 
     let (Some(tests), Some((e, m))) = (scan, kind.empty) else { return };
     let flags = MemFlags::trusted();

@@ -1,7 +1,7 @@
 # 0085: The tree section is a grammar; tier 2 is its state machine
 
-Status: accepted (user, 2026-11-07: "yes, please make that change, then complete all of the
-updates to all of the artifacts, designs and plans that it entails"). The design is
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "yes, please make that change, then complete all of
+the updates to all of the artifacts, designs and plans that it entails"). The design is
 `docs/parser-generators/18-tree-as-grammar.md`.
 
 ## Intro

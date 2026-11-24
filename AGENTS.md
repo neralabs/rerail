@@ -125,7 +125,7 @@ the file there are no hosts, and every command below runs here instead.
 
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not; each one's compile speed
-scripts/build/farm/bench [HOST...]                 # measure compile speed again (a clean gix build at 1, 4 and 8 jobs)
+scripts/build/farm/bench [HOST...]                 # measure compile speed again (a clean gix build at 1, 4, 8 jobs and the host's own cores)
 scripts/build/farm/features [FEATURE...]           # each host's CPU and vector units; who has FEATURE
 scripts/build/farm/bench --table                   # every host's saved figures, against this Mac
 scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
@@ -135,10 +135,10 @@ scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
 ```
 
-The hosts differ in speed by up to 5 times (`status` shows each one's measured compile times; the farm's
-README, "How fast each host compiles"). The Linux sides (the VMs on the Macs, the Sparks) are the
-fastest, about this Mac's speed. A Windows build takes 2 to 2.5 times the Linux side of the same PC, and
-the M1 Max and the mini about twice this Mac's time. So send a command that needs neither Windows nor
+The hosts differ in speed by up to 7 times, each at its own cores (`status` shows each one's measured
+compile times; the farm's README, "How fast each host compiles"). The Sparks and the M3's Linux VM are the
+fastest, about this Mac's speed. A Windows build takes about twice the Linux side of the same PC, and
+the M1 Max about twice this Mac's time, the mini more. So send a command that needs neither Windows nor
 macOS to Linux (`--os linux`), and judge a slow run by its host's figure there before suspecting the code.
 
 Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
@@ -219,10 +219,9 @@ hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 - Both build outside every worktree, under `~/Library/Caches`, with the repository's toolchain.
   Don't build them in a worktree's `tmp/`, and don't run binaries from there.
 
-`rerail-rr-aot` is deprecated (decision 0550), as `rerail-pp-aot`, `rust_stream` and `clif_rust` are:
-no new use. Its generated tiers (about 700 KB of Rust) are written by its build script only
-with the `generated` feature, so a workspace build leaves them out. To test them:
-`nice -n 19 cargo test -p rerail-rr-aot --features generated --profile profiling`.
+`rerail-pp-aot`, `rust_stream` and `clif_rust` are removed (decisions 0565, 0569). A
+grammar's Rust is the Bitlex compiler's (`bitlex_lex_rust`, `bitlex_rust`), checked in, as
+`rerail-kotlin-aot`, `rerail-json-aot` and `rerail-rr-aot` hold theirs (decision 0560).
 
 ## Merging branches
 

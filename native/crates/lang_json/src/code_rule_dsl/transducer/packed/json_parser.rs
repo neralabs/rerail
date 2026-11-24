@@ -1,0 +1,85 @@
+//! JSON's parser: the JSONC grammar (`crates/json_parser/jsonc.bitlex`, JSON with `//` and
+//! `/* */` comments, as tree-sitter-json reads it), compiled once per process through the Bitlex
+//! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
+//!
+//! The grammar's kinds, fields and supertype take tree-sitter-json's ids by name, and tier 2 writes
+//! the engine's tape of a JSON file itself, in format 16 through the writer's ops as it parses (decisions 0140,
+//! 0434 §6: no node table, no conversion), each key numbered in JSON's table. A file the grammar refuses (invalid JSON,
+//! an empty file, a comment holding a quote) goes to tree-sitter-json.
+
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
+use rerail_cpu_stream::native_cpu_stream;
+
+/// The grammar: JSONC.
+const GRAMMAR: &str = include_str!("../../../../../json_parser/jsonc.bitlex");
+
+/// The compiled parser, and its format 16 tier 2's keys numbered in JSON's table (`CompiledStream::numbers`).
+struct Compiled {
+    parser: native_cpu_stream::Parser,
+    numbers: native_cpu_stream::Numbers,
+}
+
+// SAFETY: as `rr_parser::Compiled`: nothing changes a compiled parser once it is made; `parse`
+// takes `&self` and writes only buffers it allocates for the call.
+unsafe impl Send for Compiled {}
+unsafe impl Sync for Compiled {}
+
+static PARSER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
+
+fn compiled() -> Result<&'static Compiled, &'static str> {
+    PARSER.get_or_init(compile).as_ref().map_err(String::as_str)
+}
+
+/// tree-sitter-json's id of a kind: a named kind's, else an anonymous token's, else a supertype's
+/// (named and hidden). `None` for a name it does not have, which the compiler refuses.
+fn kind_id(language: &tree_sitter::Language, name: &str) -> Option<u16> {
+    if name == "ERROR" {
+        return Some(u16::MAX);
+    }
+    [true, false].into_iter().map(|named| language.id_for_node_kind(name, named)).find(|&id| id != 0)
+}
+
+fn compile() -> Result<Compiled, String> {
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use ast_grep_language::LanguageExt;
+    let language = GrammarDialect::Json.get_ts_language();
+    let stmts = ::bitlex::syntax::parse(GRAMMAR)?;
+    let kind = |n: &str| kind_id(&language, n);
+    let field = |n: &str| language.field_id_for_name(n.trim_start_matches("field ")).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: crate::code_rule_dsl::lines::terminators(GrammarDialect::Json) };
+    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
+    let program = rir::assemble(&compiled.text())?;
+    let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    native.tag = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Json).ok_or("JSON has no tape tag")?;
+    let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
+    let lang = crate::code_rule_dsl::tape::f16::lang(native.tag).ok_or("JSON has no format 16 table")?;
+    let numbers = parser.tier2.numbers(lang);
+    Ok(Compiled { parser, numbers })
+}
+
+// Its tape (`tape::TreeParser`).
+pub mod tape;
+// The engine's JSON parser: simdjson's stage 1 (the source hashed in it) and a stage 2 of ours, which
+// writes the tape in place (0134). On MSVC its C++ is compiled by clang-cl (`rerail-simdjson-native`).
+#[cfg(not(target_family = "wasm"))]
+pub mod simdjson;
+// What simdjson refuses: the Bitlex parser, then tree-sitter-json past trailing commas.
+#[cfg(not(target_family = "wasm"))]
+pub mod fallback;
+
+/// `src`'s tape as tier 2 wrote it, in the run's format (16, or 16z), with tree-sitter-json's ids; `None` where the
+/// grammar refuses the file (or did not compile: the reason is [`compile_error`]).
+pub fn image(src: &str) -> Option<crate::code_rule_dsl::tape::f16::Finished> {
+    use crate::code_rule_dsl::language::GrammarDialect;
+    let c = compiled().ok()?;
+    let (lang, _, z) = crate::code_rule_dsl::tape::formats::run_16(GrammarDialect::Json).ok()?;
+    let tape = c.parser.image16(src.as_bytes(), crate::code_rule_dsl::lines::terminators(GrammarDialect::Json), lang, &c.numbers, z).ok()?;
+    Some(crate::code_rule_dsl::tape::f16::Finished { tape })
+}
+
+/// Why the grammar did not compile, if it did not.
+pub fn compile_error() -> Option<&'static str> {
+    compiled().err()
+}

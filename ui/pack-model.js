@@ -1,7 +1,7 @@
 /**
  * What the pack pages (`#pack/<id>`, `#created`), the catalog (`#packs`) and the pack sheet derive from the rules and
- * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, and the catalog's kinds
- * and order. Nothing here touches the DOM.
+ * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, the catalog's kinds,
+ * order and the packs suggested for the repository, and the sheet's rules. Nothing here touches the DOM.
  */
 import { categoryLabel, isLog, isRunning } from "./derive.js";
 import { activityOf, fires, matches, ruleSections, titleOf, ui } from "./state.js";
@@ -76,6 +76,25 @@ export function catalogPacks(packs, kind) {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
+/**
+ * Why Rerail suggested pack `packId` for this repository, from `GET /api/rule-packs/recommendations` (`""` when it gave
+ * no reason), or `null` when it did not suggest it or the recommendations are not read yet.
+ */
+export function suggestedReason(recommendations, packId) {
+  const pick = (recommendations ?? []).find(r => r.packId === packId);
+  return pick === undefined ? null : pick.reason ?? "";
+}
+
+/**
+ * The catalog's packs in two groups, the ones the recommendations suggest for this repository first, each group in
+ * the order given; `null` while the recommendations are not read or suggest no pack, when the catalog is one list.
+ */
+export function suggestedSplit(packs, recommendations) {
+  if (!recommendations?.length) return null;
+  const picked = new Set(recommendations.map(r => r.packId));
+  return { suggested: packs.filter(p => picked.has(p.id)), others: packs.filter(p => !picked.has(p.id)) };
+}
+
 /** A pack sheet gets a filter box once its pack has more rules than this. */
 export const SHEET_FILTER_AT = 30;
 
@@ -85,3 +104,6 @@ export function sheetRules(pack, query) {
   return pack.rules.filter(r => q === "" || `${r.title} ${r.id}`.toLowerCase().includes(q))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
+
+/** A sheet's rows for a pack not added yet, by how each starts once it is: on, then off, each in the order given. */
+export const startGroups = rows => ({ on: rows.filter(r => r.on), off: rows.filter(r => !r.on) });

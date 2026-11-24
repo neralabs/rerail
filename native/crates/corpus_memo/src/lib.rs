@@ -3,7 +3,7 @@
 //! statistics, and the small leaves under them. It is over typing and the planner and under the preparation
 //! (`plan::corpus::preparation`), which reads the memo and the guests; the corpus's root is `rerail-logic`'s.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items under the same names:
 // the glob's name and the private one are one item. The mounts also widen what the crates above read (the split's
 // facades, not a design).
@@ -15,14 +15,15 @@
 extern crate cranelift_jit_wasm as cranelift_jit;
 pub use rerail_typing::{content_store, git_access, git_workspace, threads};
 extern crate self as rerail_corpus_memo;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
-    pub use rerail_typing::code_rule_dsl::*;
+    pub use rerail_planner::code_rule_dsl::*;
+    pub use rerail_typing::code_rule_dsl::typing;
     #[path = "logic"]
     pub mod logic {
-        pub use rerail_typing::code_rule_dsl::logic::*;
+        pub use rerail_planner::code_rule_dsl::logic::*;
         pub mod plan {
-            pub use rerail_typing::code_rule_dsl::logic::plan::*;
+            pub use rerail_planner::code_rule_dsl::logic::plan::*;
             // `plan.rs`'s imports, for the corpus root' `use super::*`.
             #[allow(unused_imports)]
             use super::front::Value;
@@ -138,3 +139,9 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

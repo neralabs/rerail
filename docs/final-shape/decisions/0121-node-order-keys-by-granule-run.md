@@ -1,7 +1,7 @@
 # 0121: Node order keys by granule run, and where the rest of the order cost lies
 
-Status: decided and built (2026-11-12): §2 (`facts/vtab/syntax/granules.rs`, `order`). §4 is open.
-It builds on 0094 §2–2a (node ids per definition, and comparisons of nodes rewritten to read `node_order`).
+Status: built (audited 2026-11-23). Decided and built (2026-11-12): §2 (`facts/vtab/syntax/granules.rs`, `order`). §4
+is open. It builds on 0094 §2–2a (node ids per definition, and comparisons of nodes rewritten to read `node_order`).
 
 ## Intro
 

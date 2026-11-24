@@ -21,7 +21,7 @@ pub fn metal_buffer_limit() -> usize {
 }
 /// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, and
 /// the allocations' lock. The compiled pipelines are the store of compiled kernels'
-/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// (`rerail_accel_gpu::gpu::kernels`, decision 0395).
 /// A reservation holds the ledger it charged, so its drop on any thread goes back to it. A test build's ledgers
 /// are its threads' (`test_pool`): off macOS it has none of it, on macOS only the lock Metal's driver is weighed under.
 #[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
@@ -439,24 +439,22 @@ pub fn evaluation_scope() -> launch::LaunchScope {
 }
 
 /// Releases the compiled pipelines and libraries (the residency's drop): the process's; the store keeps them
-/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// (`rerail_accel_gpu::gpu::kernels`, decision 0395). The serial block programs' own are released by
+/// `rerail_metal_programs::drop_kernels`, which the residency's drop calls with this.
 pub fn drop_pipelines() {
-    rerail_accel::gpu::kernels::release();
-    if let Ok(mut kernels) = crate::block_program::serial::kernels().0.lock() {
-        kernels.clear();
-    }
+    rerail_accel_gpu::gpu::kernels::release();
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipeline_cache_len() -> usize {
-    rerail_accel::gpu::kernels::held()
+    rerail_accel_gpu::gpu::kernels::held()
 }
 
 /// The kernels this thread has made, not found in the process's memory (on any backend: `rerail_accel`'s
 /// `made_here`): a test's own, whatever other tests make.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipelines_compiled_here() -> usize {
-    rerail_accel::gpu::kernels::made_here() as usize
+    rerail_accel_gpu::gpu::kernels::made_here() as usize
 }
 
 #[cfg(test)]
@@ -494,7 +492,7 @@ mod memory_budget_tests {
     /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.
     #[test]
     fn the_budget_left_counts_relational_leases() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let before = relational_bytes_left();

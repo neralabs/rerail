@@ -1,7 +1,7 @@
 # 0267. A climb is file-local, and a cut trial is a floor of its work
 
-Status: decided (2026-11-15). Closes O-cold-seed-join. Amends the file-local split (list step 29,
-`typing::file_local`, decision 0052's locations) and decision 0207's trials.
+Status: built (audited 2026-11-23). Decided (2026-11-15). Closes O-cold-seed-join. Amends the file-local split (list
+step 29, `typing::file_local`, decision 0052's locations) and decision 0207's trials.
 
 ## Intro
 

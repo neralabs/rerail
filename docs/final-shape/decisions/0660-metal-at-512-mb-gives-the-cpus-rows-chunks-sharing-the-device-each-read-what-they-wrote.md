@@ -85,3 +85,36 @@ and none by a copy (0353). The run is now right in every run: ten of ten at 512 
 - The device crate's test binary registers what the engine's boot does (`device_metal::test_load`: carriers, core
   names, strict mode, languages). Without the carriers, `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts`
   panicked under nextest ("was the program booted?").
+
+## In the hub (roll-up 110, 2026-11-23)
+
+The hub had already fixed some of these defects with its own mechanisms. Where it had, its mechanism is kept, and the
+branch's fix is not added beside it as a second one:
+
+- 1: `Batch::again` (B023's closures, 2026-11-22) finds an index again from the key the `DevIndex` keeps (`cols`),
+  and `Run::indexes_again` calls it for every stage encoded again. `Batch::index_again` and its `moved` are not taken.
+- 2: a taker of another batch's build waits for the builder's work to complete before it encodes a read
+  (`Batch::index`'s `taken`). A probe of this batch's own build in flight binds the builder's buffer
+  (`Building::buffer`). No probe reads through a wrap the builder did not bind, so `InFlight::buffer` and `as_built`
+  are not taken.
+- 3: `Building::misread` is taken. It folds into the hub's `InFlight::whole`, so a taker of a misread build fails as
+  a taker of a build its program stopped before does. At `finish`, its room goes back.
+- 4: a commit that fails spoils the batch (`Batch::spoil`, the hub's way for an encoding that failed partway), and
+  its `finish` fails. `Batch::lost` is not taken.
+- 5: the hub's `device_view` gives no view at all where it has no home, so nothing is read in place without one.
+- 6: taken, with the hub's third kind of lot, `Placed::Wave`, read as its slots of the wave's room
+  (`DevRel::in_block_from`).
+- 7: taken as the hub's `Edit::Index` on the plan's section, which now applies to scalars and string joins too.
+- 8: taken on the hub's self-relative directory. `ViewDir::by_key` is an offset in the block. A batch's own directory
+  writes the identity order (its documents are in key order); `views_over` writes the layered directory's order.
+  `doc_of_key` and its CLIF (`dir_doc_of_key`, in `<ukl/reads/relation.h>`) bisect it, and the memo stays a row.
+  With `views_over`'s order left as row order, the walk test fails.
+- 9: taken (`Source::lookup_seq`, `Seq` over the hub's `Vector`). `Viewed::lookup_runs` carries every one of the
+  hub's lookups (the end points', the anonymous children's, the units', the places by file) and the directory's
+  memo.
+- 10: taken.
+- t50 step 7's split at the last "." (`last_splits`) is an analysis of the plan's view whose edits (`Edit::Last`,
+  `Edit::Unused`) are made before the sums' (`analysed`).
+- The device crate's test binary already registers the carriers, core names, strict mode and languages, from the
+  hub's `device_metal::test_load` in `code_rule_dsl/device_metal.rs`. The branch's second loader registered them
+  twice, which aborts at load, so it is not taken.

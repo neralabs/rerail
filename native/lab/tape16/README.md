@@ -49,7 +49,7 @@ target/debug/tape16 scan   <cap>
 target/debug/tape16 writer <cap>             # --features lean adds the lean parse (E6 A)
 target/debug/tape16 base   <cap> [--dump <dir>]
 target/debug/tape16 textrel <cap>
-target/debug/tape16 inplace <cap> [--f11]    # the in-place candidates, read on the CPU (t38 E10)
+target/debug/tape16 inplace <cap>            # the in-place candidates, read on the CPU (t38 E10)
 target/debug/tape16 prim   <cap>
 target/debug/tape16 repeat <cap>
 target/debug/tape16 relative <cap>
@@ -75,7 +75,7 @@ the test half is measured shard by shard, the rows summed.
 
 | Command | Tradeoffs | What it measures |
 |---|---|---|
-| `grid` | T1–T5, E1, E6 | B/node at rest (against format 15 as stored, with the store's dictionary and with one trained on this corpus, and against the stored source), placement bytes, the order-0 entropy of the LZ codecs' output, dictionary size, duplicate blocks, encode and decode instructions and ns per node, the positions pass alone, the latency of one random read, and round-trip errors. One axis moves at a time from the base (byte planes, literal-pool LZ, whole file, 64 KB dictionary, K 64). `--full` takes the product of layout × codec × cut × dictionary. |
+| `grid` | T1–T5, E1, E6 | B/node at rest (against the captured format 16 tape as stored, with the store's dictionary and with one trained on this corpus, and against the stored source), placement bytes, the order-0 entropy of the LZ codecs' output, dictionary size, duplicate blocks, encode and decode instructions and ns per node, the positions pass alone, the latency of one random read, and round-trip errors. One axis moves at a time from the base (byte planes, literal-pool LZ, whole file, 64 KB dictionary, K 64). `--full` takes the product of layout × codec × cut × dictionary. |
 | `text` | T6, E5 | The piece stream at the names level (leaves) and the source level (every piece), with piece tables of 0, 4096 and 65536 entries: B/node, the ratio to the stored source, the share of gaps and leaves the table covers, and whether the source rebuilds exactly. |
 | `edits` | T7, E4, T3 | Per block size: the share of blocks and block bytes an edit makes new, and the share of rows whose key or parent link changes under each identity (A ordinal, B block + local, C content path, D ordinal + shift map). |
 | `keys` | E8, U5 | The largest value every key and field takes, in bits. |
@@ -85,8 +85,8 @@ the test half is measured shard by shard, the rows summed.
 | `scan` | T5, E3 | Positions, depth, parents and subtree ends derived on Metal from events and placements (a pass per block, per file, per node), per block size, against the CPU pass, checked. |
 | `base` | T8, E9 | The engine's base relations (`node`, `child`, `field`, `line`, `span_within`) as the store encodes them (`cross_rows`), a block per document and per corpus, against the tape; the cost to rebuild each side's probe form on one thread; ns a probe for each join pattern. |
 | `textrel` | T6, T8, E9 | `text` and `token` as copied rows with their atoms (bytes + the store's 22.6 B an atom), against the tape's names stream and the stored source; text read back from each; interning on demand; an atom compared against the bytes compared. `base --dump` writes the rows for the engine's probe test (`setfix/base_probe.rs`). |
-| `inplace` | T9, E10 | Each in-place candidate (X, M, XE, B, BM, BE, BH, XF, MF; `--f11` adds format 11) built over the capture: bytes a node, and each question's ns and instructions on one CPU thread, every answer checked against the tree. |
-| `prim` | T9, E10, E24 | The bulk and point primitives (match, nearest, outermost, has, spans, line) on format 15, XF, MF, BE and format 16, checked against the tree. |
+| `inplace` | T9, E10 | Each in-place candidate (X, M, XE, B, BM, BE, BH, XF, MF, XR, format 16, against the captured tape read by the engine's reads, E16) built over the capture: bytes a node, and each question's ns and instructions on one CPU thread, every answer checked against the tree. |
+| `prim` | T9, E10, E24 | The bulk and point primitives (match, nearest, outermost, has, spans, line) on the captured tape (E16), XF, MF, BE, XR and format 16, checked against the tree. |
 | `repeat` | E15 | Same structure, same bits: the share of repeated subtrees and CDC blocks whose bytes are identical, under one width a language with escapes. |
 | `relative` | E16 | The leaf slot by sibling and positions by gap, per K: bytes and the point and in-order costs. |
 | `disk` | E18 | Each form's bytes under zstd and LZ4, with and without a dictionary. |
@@ -94,13 +94,13 @@ the test half is measured shard by shard, the rows summed.
 | `code8` | E20, E21, E23 | Codes in 8 bits: overloaded by the previous code, numbered by frequency with one cutoff, and the cutoff's branch. |
 | `nofield` | E22 | The field taken out of the code: the base's width, the misses, the table, the read. |
 | `f16` | E24, E27 | Format 16 as one form (0156 §1–2): bytes by array, at rest (whole arrays under zstd, fixed LZ4 blocks with their side parts and index), load, and every question and rule mix in place, checked. |
-| `f16w` | E28 | Format 16's writer driven as a parser makes nodes, checked byte for byte against the reader's tape, against format 15's writer. |
+| `f16w` | E28 | Format 16's writer driven as a parser makes nodes, checked byte for byte against the reader's tape. |
 | `f16-gpu` | E26 | Format 16's fixed LZ4 blocks decoded on Metal (one thread and one SIMD group a block), every language in one dispatch, against the CPU, checked byte for byte. |
 | `gcodes` | E25 | Every code each grammar allows, from its node-types.json, and every captured node checked against them. |
 | `inplace-gpu` | T9, E10, E29 | Each in-place question as a Metal kernel, one thread a question, on each candidate's one-buffer image (format 16's included), checked against the CPU reader. |
 | `prim-gpu` | T9, E10, E30, E31 | The bulk primitives as Metal kernels on XF, MF, BE and format 16, checked; outermost by a prefix max and nearest by a bounded climb or back over the S-nodes too. |
 | `climb` | E31 | Under each leaf-slot rule (K = 4, 8, 16; parent distances named up to 7, 15, 31 or the width): slot bytes, escapes and zstd size a language, slots a point parent reads, and the slots each 64-node group's carry climb reads, full and bounded. |
-| `writer` | E6 | Instructions per node of format 15's writer, format 16's one-pass byte-plane writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
+| `writer` | E6 | Instructions per node of the one-pass byte-plane event writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
 
 `cargo test` runs the round trips: every codec whole and through `read_at` at random ranges, every
 layout and cut through blocks and back to the tree, and a source past 8 GiB (U5).

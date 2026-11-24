@@ -1,8 +1,8 @@
 # 0345: A part is prepared alone, against its interface, and the parts are linked
 
-Status: proposed (2026-11-17). The second answer to work queue Q18, beside 0333 (Typing-support's step P), to
-compare on ep2. Builds on 0089 (the parts of a combined program: the library, each program's `p<i>_`, each request's
-`q<k>_`), 0225 §7 (a prepared program per module) and 0103 (caches are two rules).
+Status: built (audited 2026-11-23). Proposed (2026-11-17). The second answer to work queue Q18, beside 0333
+(Typing-support's step P), to compare on ep2. Builds on 0089 (the parts of a combined program: the library, each
+program's `p<i>_`, each request's `q<k>_`), 0225 §7 (a prepared program per module) and 0103 (caches are two rules).
 
 ## Intro
 

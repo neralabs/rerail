@@ -37,16 +37,19 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = ["rerail-context/test-hooks", "rerail-rr-syntax/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-context/test-hooks"]
 
 [target.'cfg(unix)'.dependencies]
 mimalloc = { version = "=0.1.52", default-features = false }
 libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 
 [dependencies]
+# Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
+rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 rerail-accel = { path = "../../../accel" }
 rerail-context = { path = "../context" }
 base64 = "=0.22.1"
@@ -91,8 +94,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
-rerail-rr-syntax = { path = "../rr_syntax" }
+zstd = "=0.14.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

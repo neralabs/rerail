@@ -9,7 +9,7 @@ the Python-only long-lived (reactor) build first ("A long-lived engine" there):
     . native/wasm/env.sh
     CARGO_TARGET_DIR=target/wasm-reactor \\
     CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="${CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS/crt1-command.o/crt1-reactor.o}" \\
-      cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python
+      cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python,lang-rr
 
 python.json holds every hand-written Python pack rule (its .rerail, its part files, its description) and the library
 files they include, transitively: the page mounts them where `logic` looks for them (/lib, and beside the rule). It

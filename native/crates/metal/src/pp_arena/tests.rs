@@ -1,6 +1,6 @@
 //! R1 of decision 0448: the searches equal a host reference, across SIMD-group and group edges.
-//! The scans, segmented scans and sorts are the persistent grid's, tested with UKL's library
-//! (`gpu/src/library_tests.rs`: `the_grid_*`).
+//! The scans, segmented scans and sorts are UKL's stages (`ukl/stages.h`), tested with UKL's library
+//! (`gpu/src/library_tests.rs`: `the_stages_*`).
 
 use super::*;
 use crate::lane::Pod;
@@ -202,179 +202,62 @@ fn an_evaluation_is_one_command_buffer() {
     assert!(two.is_err(), "a second command in one evaluation");
 }
 
-/// A measurement, not a check: the grid's sort alone, a few keys, one group.
+/// A unit's tiles a phase are one a `TILE_ITEMS` of its items, at least one, at most `TILES_MOST`, and 1 on the CPU
+/// (its one worker): `TILE_ITEMS` is `ukl/stages.h`'s `UKL_STAGE_SMALL` (a stage of one tile), `TILES_MOST` the
+/// program's `PP_TLIB` (the most tiles `SUMS` holds a stage's sums of).
 #[test]
-#[ignore = "a measurement"]
-fn the_grid_sort_alone_is_fast() {
-    // Hashed keys (a definitions' rows), and the closes' (a depth by 2^15 over a position).
-    let hashed = |n: usize| (0..n as u64).map(|k| k.wrapping_mul(0x9e37_79b9_7f4a_7c15)).collect::<Vec<u64>>();
-    let closes = |n: usize| (0..n as u64).map(|k| ((32767 + k % 5) << 24) | (k * 7)).collect::<Vec<u64>>();
-    for (what, n, low, bits) in [("hashed", 500usize, 0u32, 64u32), ("hashed", 1000, 0, 64), ("closes", 1600, 0, 40), ("closes", 1600, 24, 40), ("closes", 6000, 24, 40)] {
-        let keys = if what == "hashed" { hashed(n) } else { closes(n) };
-        for groups in [1u64, 32] {
-            let z32 = zeroed::<u32>;
-            let t = (0..5)
-                .map(|_| {
-                    let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), zeroed::<u64>(n), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(4 * groups as usize + 4));
-                    let rows: [(&str, &dyn Bound); 7] = [("ctl", &ctl), ("keys", &kb), ("values", &va), ("keys2", &k2), ("values2", &v2), ("hist", &hist), ("sums", &sums)];
-                    crate::pp_eval::run_timed(|e| {
-                        e.run("pb_sort_alone", &rows, Some(ProbeArgs([n as u32, bits, low, 0])), groups);
-                        Ok(())
-                    })
-                    .unwrap()
-                    .1
-                })
-                .fold(f64::MAX, f64::min);
-            eprintln!("sort alone: {n} {what} keys, bits {low}..{bits}, {groups} groups: {:.1} us", t * 1e6);
-        }
+fn a_units_tiles_are_one_a_stages_small_items() {
+    let header = rerail_ukl::LIBRARY.iter().find(|(p, _)| *p == "ukl/stages.h").expect("UKL's stages header").1;
+    assert!(header.contains(&format!("#define UKL_STAGE_SMALL {TILE_ITEMS}u")), "UKL_STAGE_SMALL is TILE_ITEMS");
+    assert!(include_str!("../pp_grid.uglykl").contains(&format!("#define PP_TLIB {TILES_MOST}u")), "PP_TLIB is TILES_MOST");
+    if matches!(lane::device(), Ok(lane::Device::Cpu(_))) {
+        assert_eq!((tiles_for(0), tiles_for(usize::MAX / 2), workers()), (1, 1, 1), "the CPU's one worker, a tile a phase");
+        return;
     }
+    assert_eq!(tiles_for(0), 1);
+    assert_eq!(tiles_for(TILE_ITEMS), 1);
+    assert_eq!(tiles_for(TILE_ITEMS + 1), 2);
+    assert_eq!(tiles_for(usize::MAX / 2), TILES_MOST);
 }
 
-/// `<ukl/pool.h>` over a grid (decision 0486 §10): the pieces of ranges given, taken by every
-/// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
-/// round, each lies inside one given range and fits its class, and where the takers ask for
-/// more than a class holds, every block of it is taken.
+/// Decision 0653: no persistent grid. The evaluator's source names no grid barrier, join or residency (`ukl/grid.h`
+/// is gone), and a launch's ring holds its budget's pushes, a phase's tiles a worker past it, and the tiles queued.
 #[test]
-fn the_pool_gives_each_block_once() {
-    use std::collections::BTreeMap;
-    let size = |c: u32| 1u32 << c;
-    let floor = |n: u32| 31 - n.leading_zeros();
-    let mut r = Rng(29);
-    // Ranges of 1 to 300 units, apart.
-    let (mut ranges, mut at) = (Vec::new(), 5u32);
-    for _ in 0..3000 {
-        let n = 1 + (r.next() % 300) as u32;
-        ranges.extend([at, n]);
-        at += n + 1 + (r.next() % 3) as u32;
+fn the_setup_is_a_program_on_a_queue() {
+    for gone in ["grid.h", "ukl_grid_", "UKL_GRID_", "UklGrid", "pp_setup", "pp_teams", "pp_check"] {
+        assert!(!source().contains(gone), "the evaluator's source names {gone}");
     }
-    // The pieces, as the pool gives them.
-    let mut supply: BTreeMap<u32, usize> = BTreeMap::new();
-    let mut owner = vec![u32::MAX; at as usize];
-    for (i, w) in ranges.chunks(2).enumerate() {
-        let mut n = w[1];
-        while n > 0 {
-            let c = floor(n);
-            *supply.entry(c).or_default() += 1;
-            n -= size(c);
-        }
-        for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
-    }
-    let groups = 8u64;
-    let threads = groups as usize * tg() as usize;
-    let per = 4usize;
-    // Classes the pieces have, so the takers ask for more than some hold and less than others.
-    let have: Vec<u32> = supply.keys().copied().collect();
-    let classes: Vec<u32> = (0..threads * per).map(|_| have[(r.next() % have.len() as u64) as usize]).collect();
-    let mut demand: BTreeMap<u32, usize> = BTreeMap::new();
-    for &c in &classes { *demand.entry(c).or_default() += 1; }
-    for rounds in [1u32, 3] {
-        let (ctl, rb, cb) = (zeroed::<u32>(4), buf(&ranges), buf(&classes));
-        let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
-        run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 0])), groups));
-        assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
-        let got = read::<u32>(&out, threads * per);
-        let mut used = vec![false; at as usize];
-        let mut taken: BTreeMap<u32, usize> = BTreeMap::new();
-        for (k, &s) in got.iter().enumerate() {
-            if s == u32::MAX { continue; }
-            let c = classes[k];
-            *taken.entry(c).or_default() += 1;
-            let o = owner[s as usize];
-            for u in s..s + size(c) {
-                assert!(o != u32::MAX && owner[u as usize] == o, "rounds {rounds}: a block of class {c} at {s} is not inside one given range");
-                assert!(!std::mem::replace(&mut used[u as usize], true), "rounds {rounds}: unit {u} taken twice");
-            }
-        }
-        for (&c, &d) in &demand {
-            let s = supply.get(&c).copied().unwrap_or(0);
-            assert_eq!(taken.get(&c).copied().unwrap_or(0), d.min(s), "rounds {rounds}: class {c}'s blocks taken ({d} asked, {s} held)");
-        }
-    }
+    assert!(source().contains("#include <ukl/stages.h>") && source().contains("#include <ukl/workqueue.h>"));
+    let tiles = [1, 7, TILES_MOST];
+    assert_eq!(queue_slots(&tiles), BUDGET as usize + workers() as usize * TILES_MOST as usize + (8 + TILES_MOST as usize) + 64);
+    assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit");
 }
 
-/// `<ukl/pool.h>`'s split takes over a grid (decision 0486 §10): every thread of 8 groups takes
-/// blocks of one class from pieces of every class, a larger piece split and its rest pushed back
-/// while others take; then they are given back and taken again. No unit is taken twice, each block
-/// lies inside one given range, and the takes met are the demand or the pieces' room in blocks of
-/// the class (a piece of class `k` at least `c` holds 2^(k-c)), whichever is less.
+/// The setup's Metal source splits one unit a barriered phase function (decision 0571): the program's phases
+/// (`pp_step`, decision 0653), the stages it calls and `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
+/// 16z's block (`clif_z_block`; decision 0576 checks 16z in the public read, with no `_z` read between); the small
+/// tape reads stay in their callers. The loop's look for a `(` (`lp_next_is_lparen`) is called, never inlined
+/// (inlined, it crashed the M3's back end); small, it is kept in its callers' units.
 #[test]
-fn the_pool_splits_a_larger_block() {
-    let size = |c: u32| 1u32 << c;
-    let floor = |n: u32| 31 - n.leading_zeros();
-    let mut r = Rng(31);
-    let (mut ranges, mut at) = (Vec::new(), 5u32);
-    for _ in 0..400 {
-        let n = 1 + (r.next() % 300) as u32;
-        ranges.extend([at, n]);
-        at += n + 1 + (r.next() % 3) as u32;
+fn the_setup_splits_one_unit_a_barriered_function() {
+    let msl = rerail_ukl::metal_source(&rerail_ukl::Target::named("apple7").unwrap(), "pp_run", source()).expect("the setup's source preprocesses");
+    let split = rerail_ukl::split::split(&msl).expect("the setup has barriered functions");
+    for (l, units) in split.levels().iter().enumerate() {
+        eprintln!("level {l}: {}", units.iter().map(|u| format!("{}({})", u.name, u.calls.join(","))).collect::<Vec<_>>().join(" "));
     }
-    let mut pieces = Vec::new();
-    let mut owner = vec![u32::MAX; at as usize];
-    for (i, w) in ranges.chunks(2).enumerate() {
-        let mut n = w[1];
-        while n > 0 {
-            let c = floor(n);
-            pieces.push(c);
-            n -= size(c);
-        }
-        for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
-    }
-    let groups = 8u64;
-    let threads = groups as usize * tg() as usize;
-    let per = 4usize;
-    for c in [0u32, 1, 3] {
-        let room: usize = pieces.iter().filter(|&&k| k >= c).map(|&k| 1usize << (k - c)).sum();
-        let classes = vec![c; threads * per];
-        for rounds in [1u32, 3] {
-            let (ctl, rb, cb) = (zeroed::<u32>(4), buf(&ranges), buf(&classes));
-            let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
-            run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 1])), groups));
-            assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
-            let got = read::<u32>(&out, threads * per);
-            let mut used = vec![false; at as usize];
-            let mut met = 0usize;
-            for &s in &got {
-                if s == u32::MAX { continue; }
-                met += 1;
-                let o = owner[s as usize];
-                for u in s..s + size(c) {
-                    assert!(o != u32::MAX && owner[u as usize] == o, "class {c}, rounds {rounds}: a block at {s} is not inside one given range");
-                    assert!(!std::mem::replace(&mut used[u as usize], true), "class {c}, rounds {rounds}: unit {u} taken twice");
-                }
-            }
-            assert_eq!(met, (threads * per).min(room), "class {c}, rounds {rounds}: the takes met ({} asked, room for {room})", threads * per);
-        }
-    }
-}
-
-/// A measurement, not a check: what a grid barrier, a device fence, a threadgroup barrier and a
-/// dependent coherent load each cost.
-#[test]
-#[ignore = "a measurement"]
-fn what_a_barrier_costs() {
-    let names = ["grid barrier", "device fence", "tg barrier (device)", "coherent load chain", "plain load chain"];
-    for what in 0..5u32 {
-        for groups in [1u64, 32] {
-            let time = |n: u32| {
-                (0..5)
-                    .map(|_| {
-                        let (ctl, data) = (zeroed::<u32>(8), zeroed::<u32>(512));
-                        crate::pp_eval::run_timed(|e| {
-                            e.run("pb_barriers_alone", &[("ctl", &ctl), ("data", &data)], Some(ProbeArgs([n, what, 0, 0])), groups);
-                            Ok(())
-                        })
-                        .unwrap()
-                        .1
-                    })
-                    .fold(f64::MAX, f64::min)
-            };
-            let (t0, t1) = (time(0), time(1000));
-            if what == 0 {
-                eprintln!("empty run, {groups} groups: {:.1} us", t0 * 1e6);
-            }
-            eprintln!("{}, {groups} groups: {:.3} us each", names[what as usize], (t1 - t0) * 1e6 / 1000.0);
-        }
-    }
+    eprintln!("local: {}; depth {}", split.local.join(" "), split.depth);
+    assert!(split.units.iter().any(|u| u.name == "pp_step"), "pp_step is a unit");
+    assert!(split.local.iter().any(|n| n.starts_with("node_")), "the tape's reads stay local");
+    // The look for a `(` is called, never inlined (inlined with the node frames' reads it crashed the M3's back end):
+    // a `UKL_ONCE` function, a unit of its own or, small and barrier-free, kept noinline in its callers' units.
+    assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen") || split.local.iter().any(|n| n == "lp_next_is_lparen"), "the look for a `(` is called");
+    // The loop's phase is a unit of its own (`lp_loop_run`): inlined into `pp_step`, the M3's back end miscompiled it.
+    assert!(split.units.iter().any(|u| u.name == "lp_loop_run"), "the loop's phase is a unit");
+    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase,
+    // `pp_step` and `pp_advance`, which runs the afters.
+    assert_eq!(split.units.len(), 14);
+    assert_eq!(split.depth, 6);
+    assert!(split.kernel.contains("kernel void pp_run") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 
 /// The evaluator's kernels compile (a failed compile is fatal: its message is the panic's).
@@ -382,9 +265,9 @@ fn what_a_barrier_costs() {
 fn the_source_compiles() {
     // `RERAIL_PP_DUMP`: the source as Metal's front end takes it, written there (its errors' lines).
     if let Some(path) = std::env::var_os("RERAIL_PP_DUMP") {
-        std::fs::write(path, rerail_ukl::metal_source("pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
+        std::fs::write(path, rerail_ukl::metal_source(&rerail_ukl::Target::named("apple7").unwrap(), "pp_run", source()).unwrap_or_else(|e| e.to_string())).unwrap();
     }
-    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone", "pb_pool"] {
+    for name in ["pp_run", "pp_rebase", "pb_search", "pb_expand", "pd_relex_test"] {
         kernel(name);
     }
 }
@@ -409,27 +292,4 @@ fn the_source_is_opencl_c_1_2() {
         std::fs::remove_file(&file).ok();
     }
     assert!(o.status.success(), "the evaluator is not OpenCL C 1.2 ({}):\n{errors}", file.display());
-}
-
-/// §4 of decision 0468: the grid is the device's resident count at the grid kernels' threadgroup
-/// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
-/// that gives no cores. On the CPU it is one group (decision 0527 §3: its groups are coroutines
-/// on one host thread).
-#[test]
-fn the_grid_is_the_devices_resident_count() {
-    let device = lane::device().unwrap();
-    if matches!(device, lane::Device::Cpu(_)) {
-        assert_eq!(groups(), 1, "the CPU's grid");
-        return;
-    }
-    let local = kernel("pp_setup").threadgroup_bytes();
-    match device.gpu_cores() {
-        Some(cores) => {
-            eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
-            let resident = device.resident_groups(tg() as u32, local).unwrap();
-            assert_eq!(groups(), resident.min(GROUPS_MOST), "the resident count, capped");
-            assert!(resident >= cores as u64, "a core holds a group at least");
-        }
-        None => assert_eq!(groups(), GROUPS_UNKNOWN),
-    }
 }

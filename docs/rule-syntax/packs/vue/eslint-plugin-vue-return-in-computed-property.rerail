@@ -16,9 +16,9 @@
 //   computed: { foo() { return a ? 1 : 2 } }   computed(() => a)                     not reported
 .violation no_return(at: node, msg: symbol) code "vue/return-in-computed-property" "{msg}"
     suppress eslint "vue/return-in-computed-property"
-no_return(at, cat("Expected to return a value in \"", x, "\" computed property.")) :- vcomputed(_, x, f),
+no_return_in(at, cat("Expected to return a value in \"", x, "\" computed property.")) :- vcomputed(_, x, f),
     lacks_return(f), report_at(f, at).
-no_return(at, "Expected to return a value in computed function.") :- vcomputed_fn(_, f), lacks_return(f),
+no_return_in(at, "Expected to return a value in computed function.") :- vcomputed_fn(_, f), lacks_return(f),
     report_at(f, at).
 .decl lacks_return(f: node)
 lacks_return(f) :- getter(f), vfalls_off(f).
@@ -32,3 +32,10 @@ getter(f) :- vcomputed(_, _, f) ; vcomputed_fn(_, f).
 .decl report_at(f: node, at: node)
 report_at(f, f) :- getter(f), !kind(f, "method_definition").
 report_at(f, p) :- getter(f), kind(f, "method_definition"), field(f, "parameters", p).
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl no_return_in(at: node, msg: symbol)
+.context script of vue roots vscript_root exports no_return_in
+.from script no_return_in
+no_return(at, msg) :- no_return_in(at, msg).

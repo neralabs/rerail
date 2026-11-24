@@ -1,5 +1,6 @@
 //! The learned cost model in the prices (decision 0100 §14): `rerail-forest`'s two regression forests over the
-//! executor's samples, asked once per batch for every launch on every lane that can run it ([`predict_batch`]),
+//! executor's samples (rerail-accel-gpu's, through [`crate::models`]), asked once per batch for every launch on every
+//! lane that can run it ([`predict_batch`]),
 //! and placement then weighs each lane by the model's cost where it gave one ([`crate::price::Prices::cost_predicted`]),
 //! by the rates elsewhere.
 //!
@@ -11,7 +12,8 @@
 //! **Read without a lock.** Each thread keeps its copy of the installed model, taken again only when the version
 //! moves, as the learned rates are.
 //!
-//! **No strings, no trees, on the placement path.** With its copy a thread keeps, for that model: each (kernel name,
+//! **No strings, no trees, on the placement path.** With its copy a thread keeps, for that model (the model's own
+//! memo, `LearnedCost::predict_batch`): each (kernel name,
 //! lane)'s job key, found by the name's address (`Kernel::name` is a `&'static str`) the first time it is asked;
 //! and a memo of predictions by the job's buckets (`CostMemo`): the forests see a job only through its buckets, and
 //! a batch's jobs share all but their units'. A launch is a lookup by address, its units' bucket (a binary search)
@@ -19,8 +21,9 @@
 
 use crate::kernel::Kernel;
 use crate::lanes::Lane;
-#[cfg(target_os = "macos")]
+use crate::models::{LearnedCost, models};
 use crate::score::Sample;
+use std::sync::{Arc, RwLock};
 
 /// A launch's cost on a lane, as the model predicts it: its one-launch job's wall and host CPU seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,214 +106,105 @@ impl std::fmt::Display for Comparison {
     }
 }
 
-#[cfg(target_os = "macos")]
-mod on {
-    use super::*;
-    use rerail_forest::cost_model::{CostConfig, CostMemo, CostModel, CostQuery, CostSample, JobKey};
-    use std::sync::{Arc, RwLock};
+/// The machine's learned model (decision 0442), and its version: 0 before one is installed, else a number no other
+/// machine's model has (`NEXT`), so a thread's copy (`COPY`) and the model's memo of it are never another machine's.
+#[derive(Default)]
+struct Model {
+    model: RwLock<Option<Arc<dyn LearnedCost>>>,
+    version: std::sync::atomic::AtomicU64,
+}
+static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-    /// The machine's learned model (decision 0442), and its version: 0 before one is installed, else a number no
-    /// other machine's model has (`NEXT`), so a thread's copy (`COPY`, `PRICED`) is never another machine's.
-    #[derive(Default)]
-    struct Model {
-        model: RwLock<Option<Arc<CostModel>>>,
-        version: std::sync::atomic::AtomicU64,
-    }
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-    fn model() -> Arc<Model> {
-        rerail_context::machine::<Model>()
-    }
-
-    thread_local! {
-        static COPY: std::cell::RefCell<(u64, Option<Arc<CostModel>>)> = const { std::cell::RefCell::new((0, None)) };
-        /// This thread's keys and memo, for the model of the version it holds.
-        static PRICED: std::cell::RefCell<Priced> = std::cell::RefCell::new(Priced::default());
-    }
-
-    /// A thread's job keys by (kernel name's address, lane), and its memo of predictions, for one model version.
-    #[derive(Default)]
-    struct Priced {
-        version: u64,
-        jobs: Vec<((usize, usize, u8), Option<JobKey>)>,
-        memo: CostMemo,
-    }
-
-    impl Priced {
-        /// The job key of `name` on `lane`, found by address (the string looked up once).
-        fn job(&mut self, model: &CostModel, name: &'static str, lane: Lane) -> Option<JobKey> {
-            let key = (name.as_ptr() as usize, name.len(), lane.index() as u8);
-            if let Some((_, j)) = self.jobs.iter().find(|(k, _)| *k == key) {
-                return *j;
-            }
-            let j = model.job(lane.name(), name);
-            self.jobs.push((key, j));
-            j
-        }
-    }
-
-    pub fn sample(s: &Sample) -> CostSample {
-        CostSample { lane: s.lane.name().to_owned(), forms: s.forms.clone(), launches: s.launches, units: s.units, cold: s.cold, ok: s.ok, load: s.load, threads: s.threads, wall: s.wall, cpu: s.cpu }
-    }
-
-    pub fn current() -> Option<Arc<CostModel>> {
-        crate::price::first_price();
-        let held = model();
-        let version = held.version.load(std::sync::atomic::Ordering::Acquire);
-        if version == 0 {
-            return None;
-        }
-        COPY.with_borrow_mut(|(seen, copy)| {
-            if *seen != version {
-                *copy = held.model.read().ok().and_then(|m| m.clone());
-                *seen = version;
-            }
-            copy.clone()
-        })
-    }
-
-    pub fn install(model: Option<Arc<CostModel>>) {
-        let held = self::model();
-        if let Ok(mut m) = held.model.write() {
-            *m = model;
-            held.version.store(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Release);
-        }
-    }
-
-    pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; Lane::COUNT]> {
-        let mut out = vec![[None; Lane::COUNT]; kernels.len()];
-        let Some(model) = current() else { return out };
-        let version = self::model().version.load(std::sync::atomic::Ordering::Acquire);
-        let shared = model.shared_buckets(1, false, load, crate::exec::threads() as u32);
-        PRICED.with_borrow_mut(|priced| {
-            if priced.version != version {
-                *priced = Priced { version, ..Default::default() };
-            }
-            for (i, (k, lanes)) in kernels.iter().enumerate() {
-                let (name, units) = (k.name(), k.units());
-                for &l in lanes {
-                    let Some(job) = priced.job(&model, name, l) else { continue };
-                    // A failed prediction leaves the rates' price: placement never fails on the model.
-                    if let Ok(p) = priced.memo.get(&model, model.key(job, shared, units)) {
-                        out[i][l.index()] = Some(Predicted { wall: p.wall, cpu: p.cpu });
-                    }
-                }
-            }
-        });
-        out
-    }
-
-    /// The comparison of a model trained on all but the newest fifth of `samples` (oldest first), on that fifth;
-    /// and the model.
-    pub fn compare(samples: &[Sample], config: &CostConfig) -> Result<(Comparison, CostModel), String> {
-        compare_unless(samples, config, &|| false)?.ok_or_else(|| "stopped".into())
-    }
-
-    /// `compare`, `None` once `stop` says so between its model's forests.
-    pub fn compare_unless(samples: &[Sample], config: &CostConfig, stop: &dyn Fn() -> bool) -> Result<Option<(Comparison, CostModel)>, String> {
-        let cut = samples.len() - samples.len() / 5;
-        let (train, test) = samples.split_at(cut);
-        let Some(model) = CostModel::train_unless(&train.iter().map(sample).collect::<Vec<_>>(), config, stop)? else { return Ok(None) };
-        let rates = crate::price::fit_rates(train);
-        let prices = crate::price::Prices::default();
-        let test: Vec<&Sample> = test.iter().filter(|s| s.ok && !s.cold && s.wall > 0.0).collect();
-        let qs: Vec<CostSample> = test.iter().map(|s| sample(s)).collect();
-        let queries: Vec<CostQuery> = qs.iter().map(|s| CostQuery { lane: &s.lane, forms: &s.forms, launches: s.launches, units: s.units, cold: s.cold, load: s.load, threads: s.threads }).collect();
-        let predicted = model.predict(&queries)?;
-        let (mut rated, mut wall, mut cpu) = ((Vec::new(), Vec::new(), Vec::new()), (Vec::new(), Vec::new()), (Vec::new(), Vec::new()));
-        for (s, p) in test.iter().zip(&predicted) {
-            let Some(p) = p else { continue };
-            wall.0.push((p.wall, s.wall));
-            wall.1.push((s.estimate, s.wall));
-            cpu.0.push((p.cpu, s.cpu));
-            cpu.1.push((s.host_estimate, s.cpu));
-            // The medians' job: the lane's submission and launches, and the rate times the units (`fit_rates`).
-            let name = s.forms.split(',').next().unwrap_or("");
-            if s.forms.split(',').all(|f| f == name)
-                && let Some(r) = rates.iter().find(|r| r.lane == s.lane && r.name == name)
-            {
-                let f = prices.fixed[s.lane.index()];
-                rated.0.push((p.wall, s.wall));
-                rated.1.push((f.submission + (f.launch + r.per_launch) * f64::from(s.launches) + r.per_unit * s.units, s.wall));
-                rated.2.push((s.estimate, s.wall));
-            }
-        }
-        let c = Comparison {
-            trained_on: model.trained_on,
-            held_out: test.len(),
-            model_covers: wall.0.len(),
-            rated_model: Errors::of(&rated.0),
-            rated_medians: Errors::of(&rated.1),
-            rated_recorded: Errors::of(&rated.2),
-            wall_model: Errors::of(&wall.0),
-            wall_recorded: Errors::of(&wall.1),
-            cpu_model: Errors::of(&cpu.0),
-            cpu_recorded: Errors::of(&cpu.1),
-        };
-        Ok(Some((c, model)))
-    }
+fn model() -> Arc<Model> {
+    rerail_context::machine::<Model>()
 }
 
-#[cfg(target_os = "macos")]
-pub use on::{compare, compare_unless, current, install, sample};
+thread_local! {
+    static COPY: std::cell::RefCell<(u64, Option<Arc<dyn LearnedCost>>)> = const { std::cell::RefCell::new((0, None)) };
+}
 
-#[cfg(target_os = "macos")]
-pub use rerail_forest::cost_model::{CostConfig, CostModel};
+/// The model in place, if one is.
+pub fn current() -> Option<Arc<dyn LearnedCost>> {
+    crate::price::first_price();
+    let held = model();
+    let version = held.version.load(std::sync::atomic::Ordering::Acquire);
+    if version == 0 {
+        return None;
+    }
+    COPY.with_borrow_mut(|(seen, copy)| {
+        if *seen != version {
+            *copy = held.model.read().ok().and_then(|m| m.clone());
+            *seen = version;
+        }
+        copy.clone()
+    })
+}
 
-/// The forests' training settings ([`CostConfig::forest`]).
-#[cfg(target_os = "macos")]
-pub use rerail_forest::randomforest_procedure::RandomForestProcedureConfig as ForestConfig;
-
-/// Puts the calling thread at a quality of service (the model's training runs at utility).
-#[cfg(target_os = "macos")]
-pub use rerail_forest::randomforest_procedure::{Qos, set_qos};
+/// Puts `model` in place, or takes the one in place out.
+pub fn install(model: Option<Arc<dyn LearnedCost>>) {
+    let held = self::model();
+    if let Ok(mut m) = held.model.write() {
+        *m = model;
+        held.version.store(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Release);
+    }
+}
 
 /// Every launch's predicted cost on each of its lanes (by lane index), one model call for the batch: `None` where
 /// there is no model, it does not know the launch's lane and name, or the prediction failed.
 pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; Lane::COUNT]> {
-    #[cfg(target_os = "macos")]
-    return on::predict_batch(kernels, load);
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = load;
-        vec![[None; Lane::COUNT]; kernels.len()]
+    let Some(model) = current() else { return vec![[None; Lane::COUNT]; kernels.len()] };
+    let version = self::model().version.load(std::sync::atomic::Ordering::Acquire);
+    model.predict_batch(version, kernels, load, crate::exec::threads() as u32)
+}
+
+/// A saved model, read again (`LearnedCost::to_bytes`).
+pub fn from_bytes(bytes: &[u8]) -> Result<Arc<dyn LearnedCost>, String> {
+    models()?.cost_from_bytes(bytes)
+}
+
+/// The comparison of a model trained on all but the newest fifth of `samples` (oldest first), on that fifth; and the
+/// model. Nothing is put in place.
+pub fn compare(samples: &[Sample]) -> Result<(Comparison, Arc<dyn LearnedCost>), String> {
+    models()?.compare_cost(samples, &|| false)?.ok_or_else(|| "stopped".into())
+}
+
+/// Puts the calling thread at the quality of service the models train at (utility); nothing without models.
+pub fn utility() {
+    if let Ok(m) = models() {
+        m.utility();
     }
 }
 
 /// What [`train`] did.
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
 pub struct Trained {
     pub comparison: Comparison,
     /// The model installed (trained on every sample), when it won; else none is.
-    pub model: Option<std::sync::Arc<CostModel>>,
+    pub model: Option<Arc<dyn LearnedCost>>,
 }
 
 /// Compares a model with the rates on `samples` (oldest first) and, when it wins, trains it on all of them and
 /// installs it. With fewer than `min` samples, nothing is trained.
-#[cfg(target_os = "macos")]
-pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trained, String> {
-    train_until(samples, config, min, &|| false)
+pub fn train(samples: &[Sample], min: usize) -> Result<Trained, String> {
+    train_until(samples, min, &|| false)
 }
 
-/// [`train`], given up between its phases (the comparison, the training, the kernels' compile) once `stop` says so:
-/// upkeep's retraining yields to a run that begins (`upkeep::Slice::stopper`). Nothing is put in place then.
-#[cfg(target_os = "macos")]
-pub fn train_until(samples: &[Sample], config: &CostConfig, min: usize, stop: &dyn Fn() -> bool) -> Result<Trained, String> {
+/// [`train`], given up once `stop` says so: between its phases (the comparison, the training, the kernels' compile)
+/// and between a model's forests (`Models::compare_cost`, `train_cost`). Upkeep's retraining yields to a run that
+/// begins, or one that is finishing (`upkeep::Slice::stopper`). Nothing is put in place then.
+pub fn train_until(samples: &[Sample], min: usize, stop: &dyn Fn() -> bool) -> Result<Trained, String> {
     const STOPPED: &str = "stopped: a run began, or one is finishing";
     if samples.len() < min {
         return Err(format!("{} samples, fewer than {min}", samples.len()));
     }
-    let Some((comparison, _)) = compare_unless(samples, config, stop)? else { return Err(STOPPED.into()) };
+    let models = models()?;
+    let Some((comparison, _)) = models.compare_cost(samples, stop)? else { return Err(STOPPED.into()) };
     if !comparison.model_wins() {
         return Ok(Trained { comparison, model: None });
     }
     if stop() {
         return Err(STOPPED.into());
     }
-    let all: Vec<_> = samples.iter().map(sample).collect();
-    let Some(model) = CostModel::train_unless(&all, config, stop)? else { return Err(STOPPED.into()) };
-    let model = std::sync::Arc::new(model);
+    let Some(model) = models.train_cost(samples, stop)? else { return Err(STOPPED.into()) };
     if stop() {
         return Err(STOPPED.into());
     }

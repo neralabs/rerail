@@ -4,7 +4,7 @@
 //! A UKL kernel is C (a C++20 subset) whose GPU-specific parts are macros: address spaces (`ROBUFFER(T)`),
 //! kernel signatures (`DEFINE_KERNEL2`'s rows of access, type, name and bounds), barriers, atomics and SIMD-group
 //! operations. A backend's shim header turns the macros into that backend's language: MSL for Metal, CUDA C++
-//! for NVRTC. The shims live at their upstream paths under `forest/src/mldb/` (MLDB's layout, as REUSE.toml
+//! for NVRTC. The shims live at their upstream paths under this crate's `mldb/` (MLDB's layout, as REUSE.toml
 //! records) and are carried in the binary here, so that a kernel, written by hand or generated, is preprocessed
 //! at run time with no C compiler on the machine.
 //!
@@ -27,6 +27,8 @@
 use rerail_c_pp::files::{DirKind, Search};
 use rerail_c_pp::sink::{At, Diag, Sink, TextSink};
 use rerail_c_pp::{Config, Options, Pp};
+/// A frontend's input (`Preprocess::expanded`).
+pub use rerail_c_pp::tokens::Expanded;
 use std::collections::HashMap;
 
 /// The root the carried headers are found under; no file system path starts so.
@@ -36,7 +38,11 @@ include!("carried.rs");
 
 /// The Metal front end's own headers, which it includes in every source itself: empty when a source that names them
 /// (a hand-written MSL kernel that takes the library's headers) is preprocessed ahead of it.
-const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic"];
+const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic", "metal_tensor", METAL_MPP];
+
+/// Metal 4's tensor operations (`matmul2d`, decision 0617's M5 form): a header of the front end's that it does not
+/// include by itself, so a preprocessed text that included it names it again, first (`Preprocess::run`).
+const METAL_MPP: &str = "MetalPerformancePrimitives/MetalPerformancePrimitives.h";
 
 /// A fingerprint of everything a kernel can include from here (the shims and the library): a kernel's text names its
 /// headers, not their contents, so a store of compiled kernels keys a kernel by its text and this.
@@ -54,12 +60,12 @@ pub fn takes_library(text: &str) -> bool {
     text.contains("#include <ukl")
 }
 
-/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end: the library's
-/// headers in place, the source's own text and macros as written. A hand-written MSL kernel includes the generated
-/// reads so (decision 0440 §3.3) until it is UKL itself.
-pub fn metal_source(name: &str, text: &str) -> Result<String, Error> {
+/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end and `target` (a
+/// Metal tier, `Target`): the library's headers in place, the source's own text and macros as written. A
+/// hand-written MSL kernel includes the generated reads so (decision 0440 §3.3) until it is UKL itself.
+pub fn metal_source(target: &Target, name: &str, text: &str) -> Result<String, Error> {
     let path = format!("/<kernels>/{name}");
-    Preprocess::new(Backend::Metal { version: 310 }).file(&path, text).run(&path)
+    target.preprocess().file(&path, text).run(&path)
 }
 
 /// A GPU backend a kernel is preprocessed for.
@@ -69,28 +75,43 @@ pub enum Backend {
     Metal { version: u32 },
     /// CUDA; `sm` is the compute capability as two or three digits (121: 12.1). The output is CUDA C++ for NVRTC.
     Cuda { sm: u32 },
+    /// HIP (AMD's GPUs); `wave` is the wavefront's lanes (32 on RDNA, 64 on CDNA and GCN). The output is HIP C++ for
+    /// hiprtc, through the CUDA shim (HIP's language is CUDA's) with HIP's SIMD-group operations
+    /// (`ukl_cuda_shim.h`, `ukl/backend.h`'s `UKL_HIP`).
+    Hip { wave: u32 },
     /// The CPU: C++ for the host's compiler, each threadgroup's threads coroutines (`ukl_cpu_shim.h`), for this
     /// process's architecture and system.
     Cpu,
     /// OpenCL: OpenCL C 1.2 for the device's driver (`ukl_opencl_shim.h`). The device's SIMD width is a define
     /// (`UKL_SIMD_WIDTH`, 32 by default: emulated through threadgroup memory on a device without subgroups).
     OpenCl,
+    /// The CPU's vector code (`rerail-ukl-vec`, decision 0567): C whose every UKL operation is one `__ukl_*` intrinsic
+    /// (`ukl_vec_shim.h`, `ukl/backend.h`'s `UKL_VEC` section), which its compiler knows by name.
+    Vec,
 }
 
 impl Backend {
-    /// Whether the backend's compiler has a 32-bit `long`: the host compiler on Windows (LLP64), and NVRTC there,
-    /// whose device types match the host's.
+    /// Whether the backend's language is C (OpenCL C, the vector code's): every other's is C++.
+    pub fn is_c(self) -> bool {
+        matches!(self, Backend::OpenCl | Backend::Vec)
+    }
+}
+
+impl Backend {
+    /// Whether the backend's compiler has a 32-bit `long`: the host compiler on Windows (LLP64), and NVRTC and hiprtc
+    /// there, whose device types match the host's.
     fn long_is_32(self) -> bool {
-        cfg!(windows) && matches!(self, Backend::Cpu | Backend::Cuda { .. })
+        cfg!(windows) && matches!(self, Backend::Cpu | Backend::Cuda { .. } | Backend::Hip { .. })
     }
 
     /// The shim directory's name under `mldb/builtin/`.
     fn dir(self) -> &'static str {
         match self {
             Backend::Metal { .. } => "metal",
-            Backend::Cuda { .. } => "cuda",
+            Backend::Cuda { .. } | Backend::Hip { .. } => "cuda",
             Backend::Cpu => "cpu",
             Backend::OpenCl => "opencl",
+            Backend::Vec => "vec",
         }
     }
 
@@ -110,6 +131,15 @@ impl Backend {
                 d("__CUDACC_RTC__", "1".into()),
                 d("__UKL_CUDA_PREPROCESSING", "1".into()),
             ],
+            // hip-clang's device compile's, which the shims test: no `__CUDA_ARCH__` (HIP has none).
+            Backend::Hip { wave } => vec![
+                d("__HIP__", "1".into()),
+                d("__HIPCC_RTC__", "1".into()),
+                d("__HIP_DEVICE_COMPILE__", "1".into()),
+                d("__AMDGCN__", "1".into()),
+                d("__AMDGCN_WAVEFRONT_SIZE", wave.to_string()),
+                d("__UKL_HIP_PREPROCESSING", "1".into()),
+            ],
             // The host compiler's own predefines that the shim tests (its context switch is per architecture and
             // system), and the backend's choice, which UKL's `ukl_shim.h` takes when no GPU compiler's is set.
             Backend::Cpu => {
@@ -123,6 +153,7 @@ impl Backend {
                 d("__OPENCL_C_VERSION__", "120".into()),
                 d("__UKL_OPENCL_PREPROCESSING", "1".into()),
             ],
+            Backend::Vec => vec![d("__UKL_VEC_PREPROCESSING", "1".into())],
         }
     }
 }
@@ -147,9 +178,9 @@ pub struct Preprocess {
     defines: Vec<(String, Option<String>)>,
 }
 
-/// The output text, and the paths of the files diagnostics name (by file id).
-struct Out {
-    text: TextSink,
+/// The output (text, or the frontends' tokens), and the paths of the files diagnostics name (by file id).
+struct Out<S> {
+    text: S,
     paths: Vec<String>,
     errors: Vec<(u32, u32, String)>,
     /// The compiler's `long` is 32 bits (`long_is_32`): an integer literal's `l` suffix is written `ll`.
@@ -177,7 +208,7 @@ fn long_long(text: &[u8]) -> Option<Vec<u8>> {
     Some([number, if unsigned { b"ull" } else { b"ll" }].concat())
 }
 
-impl Sink for Out {
+impl<S: Sink> Sink for Out<S> {
     fn wants_lines(&self) -> bool {
         true
     }
@@ -247,8 +278,38 @@ impl Preprocess {
 
     /// `main` preprocessed: the backend's source text, with line markers to the original files.
     pub fn run(&self, main: &str) -> Result<String, Error> {
+        let (text, paths) = self.pass(main, TextSink::default())?;
+        let text = String::from_utf8_lossy(&text.out).into_owned();
+        if matches!(self.backend, Backend::Metal { .. }) && paths.iter().any(|p| p.ends_with(METAL_MPP)) {
+            return Ok(format!("#include <metal_tensor>\n#include <{METAL_MPP}>\n{text}"));
+        }
+        Ok(text)
+    }
+
+    /// `main` preprocessed for a frontend (decision 0327, mode (b)): the expanded text, the C parser's tokens over
+    /// it and where each part came from (no line markers), and the paths of the files those name, by file id.
+    pub fn expanded(&self, main: &str) -> Result<(rerail_c_pp::tokens::Expanded, Vec<String>), Error> {
+        let (tokens, paths) = self.pass(main, rerail_c_pp::tokens::TokenSink::new(!self.backend.is_c()))?;
+        Ok((tokens.finish(), paths))
+    }
+
+    /// The text of file `path` as a pass reads it, a given file's or a carried header's (a path the files of an
+    /// `expanded` name): for telling a place's line.
+    pub fn text_of(&self, path: &str) -> Option<Vec<u8>> {
+        if let Some(t) = self.files.get(path) {
+            return Some(t.clone());
+        }
+        let carried = HEADERS.iter().find(|(p, _)| format!("{ROOT}/{p}") == path).or_else(|| LIBRARY.iter().find(|(p, _)| format!("{ROOT}/lib/{p}") == path));
+        if let Some((_, t)) = carried {
+            return Some(t.as_bytes().to_vec());
+        }
+        if path.starts_with(ROOT) { None } else { std::fs::read(path).ok() }
+    }
+
+    /// One pass of the preprocessor over `main` into `sink`: the sink, and the paths of the files, by file id.
+    fn pass<S: Sink>(&self, main: &str, sink: S) -> Result<(S, Vec<String>), Error> {
         // OpenCL C is C (C99 with clang's extensions); every other backend's language is C++.
-        let mut cfg = if self.backend == Backend::OpenCl {
+        let mut cfg = if self.backend.is_c() {
             Config::new(Options::c(99, true))
         } else {
             let mut c = Config::new(Options::cpp(20, true));
@@ -281,7 +342,7 @@ impl Preprocess {
         };
         let mut io = Search::new(self.search(), read);
         let long_32 = self.backend.long_is_32();
-        let mut out = Out { text: TextSink::default(), paths: Vec::new(), errors: Vec::new(), long_32 };
+        let mut out = Out { text: sink, paths: Vec::new(), errors: Vec::new(), long_32 };
         // A `__has_*` test the configuration does not answer reads as 0, as on a compiler without the feature.
         let ok = Pp::new(cfg, &mut io, &mut out).run(main);
         if !ok || !out.errors.is_empty() {
@@ -295,9 +356,13 @@ impl Preprocess {
             }
             return Err(Error(msgs));
         }
-        Ok(String::from_utf8_lossy(&out.text.out).into_owned())
+        Ok((out.text, out.paths))
     }
 }
+
+pub mod split;
+pub mod target;
+pub use target::Target;
 
 #[cfg(test)]
 mod tests;

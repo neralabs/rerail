@@ -2,7 +2,7 @@
 
 Numbered 0373 on wolfeel; renumbered at the hub's merge (2026-11-18), where 0373 is the combine's kept link.
 
-Status: accepted (2026-11-17)
+Status: built (audited 2026-11-23). Accepted (2026-11-17)
 
 ## Intro
 

@@ -7,7 +7,6 @@
 use crate::structure;
 use std::fs::File;
 #[cfg(any(unix, windows))]
-use std::fs::OpenOptions;
 use std::io;
 use std::ops::Deref;
 #[cfg(unix)]
@@ -187,7 +186,8 @@ impl Block {
     #[cfg(any(unix, windows))]
     pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
         let reserved = round_up(reserved.max(PAGE), PAGE);
-        let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
+        // The user's alone (decision 0574): its folder checked, the file made `0600`.
+        let f = crate::mapped::open_write(path, true, true)?;
         // NTFS allocates a file's length unless it is sparse; a Unix file system leaves a hole.
         #[cfg(windows)]
         crate::windows::sparse(&f)?;
@@ -418,6 +418,16 @@ impl Block {
         self.gpu.lock().unwrap().take();
     }
 
+    /// The wrap `device_buffer` keeps as it is now, and its length (none made yet, or a slab's block): what a program
+    /// bound before the block grew, for a remap to find again (decision 0603).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn kept_device_buffer(&self) -> Option<(rerail_device::device::Buffer, usize)> {
+        if self.backing.as_ref().is_some_and(|b| b.buffer().is_some()) {
+            return None;
+        }
+        self.gpu.lock().unwrap().clone()
+    }
+
     /// The device buffer to bind this block with: its slab's own, or a wrap of its used extent in place
     /// (`rerail_device::device::wrap_host_memory`: no copy, decision 0353) made once and kept (remade, twice as long,
     /// only when the block has outgrown it).
@@ -568,6 +578,7 @@ impl Block {
     }
 
     /// Bytes used so far (the frozen length, once frozen).
+    #[inline]
     pub fn used(&self) -> usize {
         self.ext.top.load(Acquire)
     }
@@ -580,6 +591,7 @@ impl Block {
         unsafe { &*(self.base.add(self.header().root as usize) as *const T) }
     }
 
+    #[inline]
     pub fn bytes(&self, start: usize, end: usize) -> &[u8] {
         assert!(start <= end && end <= self.used());
         unsafe { std::slice::from_raw_parts(self.base.add(start), end - start) }
@@ -612,6 +624,8 @@ impl Block {
         }
         if let Some(f) = &self.file {
             cut(f, len as u64).expect("truncate a journal block");
+            // Frozen: read-only on disk too (`mapped`, decision 0574).
+            crate::mapped::mark_frozen(f).expect("mark a frozen block's file read-only");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
             // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
@@ -673,7 +687,8 @@ impl Block {
     /// (`bytes`). On Windows a view's length is the file's, which a frozen block's may pass (`cut`).
     pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
-        let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
+        // The file and its folder the user's (`mapped`): an open block's may be its writer's to write still.
+        let f = if writable { crate::mapped::open_write(path, false, false)? } else { crate::mapped::open_read(path, false)? };
         let len = f.metadata()?.len() as usize;
         if len < size_of::<Header>() {
             return Err(invalid(format!("{len} bytes, shorter than a header")));
@@ -754,7 +769,8 @@ impl Block {
     /// Maps a block's file read-only, valid only if it was frozen whole: magic, kind, state, and the length its
     /// header says is the file's.
     pub fn open_file(path: &Path, kind: u32) -> Result<Frozen, String> {
-        let f = File::open(path).map_err(|e| e.to_string())?;
+        // Frozen: read-only, the user's, in a folder of the user's alone (`mapped`).
+        let f = crate::mapped::open_read(path, true).map_err(|e| e.to_string())?;
         let len = f.metadata().map_err(|e| e.to_string())?.len() as usize;
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
@@ -855,6 +871,7 @@ pub struct Frozen(Arc<Block>);
 
 impl Deref for Frozen {
     type Target = Block;
+    #[inline]
     fn deref(&self) -> &Block {
         &self.0
     }
@@ -993,7 +1010,7 @@ mod tests {
     fn frozen_file_blocks_hold_no_descriptor() {
         const N: usize = 256;
         let dir = std::env::temp_dir().join(format!("rerail-block-descriptors-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::mapped::make_folder(&dir).unwrap();
         let before = open_descriptors();
         let mut held = Vec::new();
         for i in 0..N {

@@ -328,7 +328,8 @@ fn failed_batch_reports_each_policy_in_argument_order() {
                 failed_run["error"]
                     .as_str()
                     .unwrap()
-                    .contains("unknownParameter")
+                    .contains("unknownParameter"),
+                "{failed_run}"
             );
             assert!(good_run.get("error").is_none());
         }
@@ -945,7 +946,7 @@ fn the_documented_head_queries_preserve_the_worktree_in_answers_and_errors() {
             .map(|(program, _)| program).find(|program| program.lines().any(|line| line == format!(".output {relation}"))).unwrap()
     };
     let view_tip = example(include_str!("../../docs/rule-syntax/git.md"), "view_tip");
-    let empty = example(include_str!("../../docs/final-shape/notes/git-inputs/library.md"), "empty_head_message");
+    let empty = example(include_str!("../../docs/rule-syntax/git.md"), "empty_head_message");
     let main_row = evaluate(&f.repo, view_tip, "view_tip");
     let link_row = evaluate(&linked, view_tip, "view_tip");
     let main: Vec<_> = main_row.trim_end().split('\t').collect();

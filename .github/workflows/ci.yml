@@ -69,9 +69,11 @@ concurrency:
 # decides, from the pull request's whole diff against its base, so a pull request that ever touched an input runs the
 # job on every later push; a push to main, and any other event, runs everything. A job may be skipped only when nothing
 # it reads changed: each filter is derived from its jobs' imports and runtime reads, and
-# scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data,
-# build and unit jobs (on Linux and on Windows), and the tools job's script tests and reference examples, run on every
-# pull request: the unit tests read nearly the whole tree, docs included.
+# scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data
+# and build jobs, and the tools job's script tests and reference examples, run on every pull request. The unit jobs (on
+# Linux and on Windows) run the test files the change can affect (the select-tests job), and Windows' none for a change
+# of prose alone (scripts/check/ci/prose.mjs: changesets, changelog entries, the root's and docs/'s Markdown), which
+# changes no code and reads the same on Windows.
 #
 # The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
 # core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
@@ -440,8 +442,9 @@ jobs:
   # Which unit test files a pull request can affect (scripts/check/ci/test-selection.mjs): those whose import closure, or
   # the paths its files name, hold a changed file. The unit jobs run only those, on as many shards as their share needs
   # (`unit-shards`, `windows-shards`), or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
-  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. Its own job, so
-  # the `npm ci` it needs is off the path of the jobs that need `changes` alone.
+  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. A change of prose
+  # alone (scripts/check/ci/prose.mjs) gets no Windows shard: Linux's run what it selects. Its own job, so the `npm ci`
+  # it needs is off the path of the jobs that need `changes` alone.
   select-tests:
     name: Select the unit tests
     needs: changes
@@ -533,11 +536,8 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "true"
 
-      - uses: ./.github/actions/pack-test-data
-        with:
-          pack: data-layer
-          tool: lint
-          fetch: "true"
+      # The data-layer packs are disabled (packs/data-layer/DISABLED.md): their tests do not run, so their test data
+      # is not fetched.
 
   # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
   # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
@@ -658,8 +658,9 @@ jobs:
 
   # The engine's browser build (native/wasm/README.md): no other job builds the engine for wasm32-wasip1, so a change
   # that broke it failed no check. Checks, not builds: the library with its default features, then the shape a page
-  # ships, the rule explorer's (the binary and its library, `headless` and one language, without `tape-cache` or
-  # `dump-cli`), since code gated on those features compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
+  # ships, the rule explorer's (the binary and its library, `headless`, one language and the rules' own (`lang-rr`, which
+  # phase 0 reads the rule files with), without `tape-cache` or `dump-cli`), since code gated on those features
+  # compiles only there. wasi-sdk brings the clang, llvm-ar, wasi-libc
   # and libc++ that native/wasm/env.sh takes from Homebrew on macOS. Gated as rust-windows is, when the change reaches
   # the engine (`rust-engine`). A job of its own with no compile cache: its failure, or a failed download for it, leaves
   # what rust-clippy saves as it was. Cold, at 4 jobs, the check takes 2.5 to 7 minutes.
@@ -713,7 +714,7 @@ jobs:
           export WASI_SDK_PATH="$RUNNER_TEMP/$WASI_SDK"
           . native/wasm/env.sh
           cargo check -p rerail-engine --lib --target wasm32-wasip1
-          cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python
+          cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python,lang-rr
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
@@ -801,10 +802,10 @@ jobs:
           dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The engine's tests, in the legs scripts/check/ci/native-test-legs.mjs names, each running the binaries the
-  # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Four read pack
+  # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Three read pack
   # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
-  # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
-  # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
+  # fixtures and eslint-plugin-vue's fixtures (the data-layer port's are not: its packs are disabled,
+  # packs/data-layer/DISABLED.md), restored from what the test-data job saved, so the job runs where that job does (the note
   # at the top). Each leg runs 3 to 8 minutes of tests; taking the binaries took 16 s to 4.4 minutes in 44383070532, so
   # the artifact holds only binaries with tests, packed with a long window (1.46 to 0.79 GB). The slowest leg, the
   # waves', is bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
@@ -856,11 +857,8 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "false"
 
-      - uses: ./.github/actions/pack-test-data
-        with:
-          pack: data-layer
-          tool: lint
-          fetch: "false"
+      # The data-layer packs are disabled (packs/data-layer/DISABLED.md): their tests do not run, so their test data
+      # is not fetched.
 
       # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
       - name: Set up uv
@@ -1009,7 +1007,7 @@ jobs:
           cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
           cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
-  # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
+  # The tree watch's FSEvents adapter (native/crates/tree_watch/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
   # tests and the tree watch's shared tests run here, when the change reaches its crate (rerail-tree-watch, which builds
   # without the engine: a minute or two cold, where the engine's test target took 16). They read no pack test data. A
   # debug build, as in the rust job.
@@ -1307,13 +1305,13 @@ jobs:
           mode: save
 
   # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch, the path
-  # owner read) are compiled out on Linux, where the rust job runs every other test; these filters select them and the
-  # Windows-neutral tests beside them: the process and path owner tests are the engine's, the tree watch's
-  # rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's
-  # canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here
-  # too. A debug build, as in the rust job, through its own compile cache. Its own job, beside build-windows and the
-  # shards rather than on one of them. Gated as the rust job is, and only when the change selects the engine's tests
-  # (`rust-engine`).
+  # owner read, the named pipe lookup's open) are compiled out on Linux, where the rust job runs every other test;
+  # these filters select them and the Windows-neutral tests beside them: the process, path owner and pipe lookup
+  # tests are the engine's, the tree watch's rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts
+  # `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
+  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
+  # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
+  # only when the change selects the engine's tests (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1368,7 +1366,7 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-tests-logic -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-tests-rr -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: pipe_server:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}

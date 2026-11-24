@@ -1,9 +1,9 @@
 # 0071: Two tiers, as simdjson's two stages
 
-Status: accepted (user, 2026-11-07: "the loop instructions needs to drop by at least an order of
-magnitude … You need to implement the essence"; the plan, "okay, I agree with that plan"; the
-tier-2 form, "Yes, this form"; numbers, "try them in tier 1 and tier 2. We should have a builtin
-set of validators that lower to good code for integers, floats, numbers, etc")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "the loop instructions needs to drop by at least an
+order of magnitude … You need to implement the essence"; the plan, "okay, I agree with that plan"; the tier-2 form,
+"Yes, this form"; numbers, "try them in tier 1 and tier 2. We should have a builtin set of validators that lower to
+good code for integers, floats, numbers, etc")
 
 ## Intro
 

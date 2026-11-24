@@ -1,6 +1,6 @@
 //! The .rerail front end: parsing to programs, magic sets, lowering, printing, checking.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -13,11 +13,11 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::content_store;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_rr;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
@@ -62,6 +62,9 @@ pub mod code_rule_dsl {
             pub mod check;
             pub mod clause;
             pub mod from_tape;
+            pub mod library;
+            /// The library `#include` reads from (a function, beside its module of the same name).
+            pub use library::library;
             pub mod lower;
             pub mod print;
             pub mod tape_type;
@@ -100,8 +103,6 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
@@ -151,3 +152,9 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

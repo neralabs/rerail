@@ -104,15 +104,27 @@ pub fn basic_type(code: u64, size: u64) -> Option<KernelBaseType> {
 
 /// A list's items at its top level: split at commas outside quotes, parentheses and brackets, each trimmed.
 pub fn split_top(s: &str) -> Vec<&str> {
-    let (mut out, mut depth, mut quoted, mut start) = (Vec::new(), 0i32, false, 0);
+    // `<` and `>` are a template's brackets outside parentheses only: inside them they are comparisons, as in a size
+    // expanded before it is stringized (`(A > B ? A : B)`, `UKL_SORT_WORDS`).
+    let (mut out, mut depth, mut parens, mut quoted, mut start) = (Vec::new(), 0i32, 0i32, false, 0);
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
         match b[i] {
             b'\\' if quoted => i += 1,
             b'"' => quoted = !quoted,
-            b'(' | b'[' | b'<' if !quoted => depth += 1,
-            b')' | b']' | b'>' if !quoted => depth -= 1,
+            b'(' if !quoted => {
+                depth += 1;
+                parens += 1;
+            }
+            b')' if !quoted => {
+                depth -= 1;
+                parens -= 1;
+            }
+            b'[' if !quoted => depth += 1,
+            b']' if !quoted => depth -= 1,
+            b'<' if !quoted && parens == 0 => depth += 1,
+            b'>' if !quoted && parens == 0 => depth -= 1,
             b',' if !quoted && depth == 0 => {
                 out.push(s[start..i].trim());
                 start = i + 1;
@@ -133,5 +145,12 @@ mod tests {
     fn rows_split_at_their_top_level_commas() {
         let v = split_top(r#"ARGS, A, args, , ROBUFFER, uint32_t, x, "[a, b]", GID0, uint32_t, id,"#);
         assert_eq!(v, ["ARGS", "A", "args", "", "ROBUFFER", "uint32_t", "x", "\"[a, b]\"", "GID0", "uint32_t", "id", ""]);
+    }
+
+    /// A size expanded before it is stringized holds comparisons, which are not a template's brackets.
+    #[test]
+    fn a_comparison_in_parentheses_is_no_bracket() {
+        let v = split_top("SHARED, uint32_t, big, (A > B ? A : B), SHARED, V<uint32_t, 2>, s, (C < D), GSZ0, uint32_t, gsz,");
+        assert_eq!(v, ["SHARED", "uint32_t", "big", "(A > B ? A : B)", "SHARED", "V<uint32_t, 2>", "s", "(C < D)", "GSZ0", "uint32_t", "gsz", ""]);
     }
 }

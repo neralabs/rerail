@@ -17,14 +17,14 @@
 // read: their runtime types need type inference.
 .violation invalid(at: node, x: symbol, t: symbol) code "vue/require-valid-default-prop"
     "Type of the default value for '{x}' prop must be a {t}." suppress eslint "vue/require-valid-default-prop"
-invalid(e, x, t) :- dflt(p, e, src), fn_type(e, _), !native(p, _, "Function"), src = "assignment", says(p, "plain", x, t).
-invalid(b, x, t) :- dflt(p, e, _), fn_type(e, "expression"), !native(p, _, "Function"), field(e, "body", w),
+invalid_in(e, x, t) :- dflt(p, e, src), fn_type(e, _), !native(p, _, "Function"), src = "assignment", says(p, "plain", x, t).
+invalid_in(b, x, t) :- dflt(p, e, _), fn_type(e, "expression"), !native(p, _, "Function"), field(e, "body", w),
     deparen(w, b), default_type(b, y), !native(p, _, y), src_not_assignment(p, e), says(p, "plain", x, t).
-invalid(a, x, t) :- dflt(p, e, _), fn_type(e, "block"), !native(p, _, "Function"), src_not_assignment(p, e),
+invalid_in(a, x, t) :- dflt(p, e, _), fn_type(e, "block"), !native(p, _, "Function"), src_not_assignment(p, e),
     returns(e, a), default_type(a, y), !native(p, _, y), says(p, "plain", x, t).
-invalid(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), !native(p, _, y), mode(src, m),
+invalid_in(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), !native(p, _, y), mode(src, m),
     says(p, m, x, t).
-invalid(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), native(p, _, y), src != "assignment",
+invalid_in(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), native(p, _, y), src != "assignment",
     factory_type(y), says(p, "factory", x, t).
 .decl src_not_assignment(p: node, e: node)
 src_not_assignment(p, e) :- dflt(p, e, src), src != "assignment".
@@ -121,3 +121,10 @@ joined(p, m, j, cat(t, " or ", u)) :- joined(p, m, i, t), once(p, j, y), j > i, 
 shown("plain", y, @lower(y)) :- native_type(y).
 shown("factory", y, "function") :- factory_type(y).
 shown("factory", y, @lower(y)) :- native_type(y), !factory_type(y).
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl invalid_in(at: node, x: symbol, t: symbol)
+.context script of vue roots vscript_root exports invalid_in
+.from script invalid_in
+invalid(at, x, t) :- invalid_in(at, x, t).

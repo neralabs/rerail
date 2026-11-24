@@ -14,7 +14,7 @@
 // through what the typing phase (types.rerail, P2, over struct.rerail's P1) hands on, keyed by symbol.
 //
 // So values are of two sorts. A workspace value is a node, as in calls_cx (`pt_pv(n, k, v)`): this phase parses the
-// workspace. A library value is a symbol (`pt_lv(n, k, s)`: n may be the library's s, of kind k):
+// workspace, and reads another document's values by symbol (`pt_wres`). A library value is a symbol (`pt_lv(n, k, s)`: n may be the library's s, of kind k):
 //   - a name an import binds, resolved through `types__binds` (`lres`), whose module is not the workspace's;
 //   - a builtin name, a literal (`builtins.int`), an attribute of a library module, class or instance
 //     (`types__attr`, through the class's bases), a library class's call (its instance), a library function's call
@@ -33,12 +33,13 @@
 // calls_cx.rerail (P3's source): calls.rerail with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
 // so its fixpoint can be memoised per import component. Generated from calls.rerail by
 // fixtures/python/calls/make_cx.py; edit calls.rerail and regenerate. What differs:
-// - a module's bindings (`qv`, `tqv`, `qopen`) are keyed by the module, and a reader sees those of its closure
-//   (`rr_cx_reach`); "is q a module" is `rr_cx_sees`;
+// - a module's bindings (`qv`, `tqv`, `qopen`) are keyed by the module's symbols. Here (t32 stage 8) a reader finds
+//   them by the symbol P2 resolves its name to (`pt_wres`), with no import closure of P3's own;
 // - attribute lookups are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class asked, and
 //   `found` is not cut to the names some reader asks for;
-// - closed-world `self` and annotations reach the subclasses in the reader's closure, not every importer's;
-// - subtyping (`tsub`, `tsup_open`) is per node, over the classes its closure names;
+// - closed-world `self` and annotations reach the subclasses in the reader's closure (here: every workspace
+//   subclass);
+// - subtyping (`tsub`, `tsup_open`) is per node;
 // - generics' heads (`ghead`, `ghcls`) are made for every subscript argument, an instance attribute's assignment
 //   (`iattr`) is keyed by the assignment, and a star import binds every public name, not what importers want.
 // Call-target resolution and call chains for Python, in Rerail's Datalog dialect.
@@ -57,11 +58,14 @@
 // Its cross-file part is one fixpoint over every loaded document, as any program's is (decision 0065).
 
 // Guests (decision 0055): parsed(s, "annotation", r) asks for string s's code, rooted at r; host_node(n, h): h is
-// the innermost host node over guest node n.
+// the innermost host node over guest node n. A quoted annotation's code is the annotation context's (decision 0597,
+// python/annotation): its instance of these rules reads its trees, and the host reads what it exports (below
+// pt_aopen).
 // The run's settings (the Python version and platform a branch is decided by, python/conditions.rerail). No library
 // is loaded: the imports are resolved, and the libraries loaded, by phase 1 (sources.rerail).
 #include "core.rerail"
 #include "python/conditions.rerail"
+#include "python/annotation.rerail"
 // What the earlier phases hand on (struct.rerail, types.rerail): every document's structure, the workspace's and the
 // libraries' its imports reach, by symbol.
 .decl struct__def(s: symbol, k: symbol)
@@ -86,8 +90,9 @@
 .decl types__anc(c: symbol, a: symbol)
 .decl types__proto(c: symbol)
 .decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
-// The import closure, components.rerail's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
-// d's closure; rr_cx_sees(d, q), q is a module of d's closure.
+// No import closure (t32 stage 8): a name another document binds is resolved by P2 (`types__binds`, `types__attr`) to
+// a symbol, and read by that symbol (`pt_wres`). A class's late-bound `self`, and a declared class's values, are the
+// class and each workspace subclass.
 
 .decl pt_scope(kind: symbol)
 pt_scope("module"). pt_scope("function_definition"). pt_scope("class_definition"). pt_scope("lambda").
@@ -205,14 +210,19 @@ pt_bound_in(s, x) :- pt_ibind(s, x, _).
 // LEGB: from the nearest scope outwards, skipping class scopes, to the first that binds the name.
 .decl pt_walk(n: node, x: symbol, s: node)
 pt_walk(n, x, s) :- pt_nameref(n, x), nearest(n, s, pt_scope), !host_node(n, _).
-// A name in a guest (a quoted annotation's code) is looked up from the string that holds it.
-pt_walk(n, x, s) :- pt_nameref(n, x), host_node(n, h), nearest(h, s, pt_scope).
-pt_walk(n, x, p) :- pt_walk(n, x, s), !pt_bound_in(s, x), nearest(s, p, pt_fscope).
+// A name in a guest (a quoted annotation's code) is looked up from the string that holds it (pt_hstart), and steps
+// through the host's scopes (pt_up: a module has no step), which the annotation context reads finished.
+pt_walk(n, x, s) :- pt_nameref(n, x), host_node(n, h), pt_hstart(h, s).
+pt_walk(n, x, p) :- pt_walk(n, x, s), !pt_bound_in(s, x), pt_up(s, p).
+.decl pt_hstart(h: node, s: node)
+pt_hstart(h, s) :- ann_host(h, t), nearest(t, s, pt_scope).   // h: a tree's host node (python/annotation)
+.decl pt_up(s: node, p: node)
+pt_up(s, p) :- kind(s, k), pt_scope(k), nearest(s, p, pt_fscope).
 .decl pt_look(n: node, x: symbol, s: node)
 pt_look(n, x, s) :- pt_walk(n, x, s), pt_bound_in(s, x).
 // Bound nowhere: a builtin, or (a star import, `globals()`) unknown.
 .decl pt_miss(n: node, x: symbol)
-pt_miss(n, x) :- pt_walk(n, x, m), kind(m, "module"), !pt_bound_in(m, x).
+pt_miss(n, x) :- pt_walk(n, x, m), !pt_up(m, _), !pt_bound_in(m, x).
 .decl pt_builtin_ref(n: node, x: symbol)
 pt_builtin_ref(n, x) :- pt_miss(n, x), pt_builtin(x), docof(n, d), pt_modnode(d, m), !pt_star(m).
 
@@ -307,8 +317,8 @@ pt_outside_dec(e) :- pt_dpart(e, h), pt_nameref(h, x), pt_look(h, x, s), pt_ext_
 // pt_run_import(s, x): scope s imports x from a module of the run too (`try: from lib import x` / `except ImportError:
 // from .compat import x`): the decorator may be the run's, read through `pt_decfn`.
 .decl pt_run_import(s: node, x: symbol)
-pt_run_import(s, x) :- pt_rifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m).
-pt_run_import(s, x) :- pt_ribind(s, x, q), !pt_rifrom(s, x, _, _), docof(s, d9), rr_cx_sees(d9, q).
+pt_run_import(s, x) :- pt_rifrom(s, x, m, _), pt_wsmod(m).
+pt_run_import(s, x) :- pt_ribind(s, x, q), !pt_rifrom(s, x, _, _), pt_wsmod(q).
 // pt_inner_dec(f): f has a decorator neither transparent nor from outside the run.
 .decl pt_inner_dec(f: node)
 pt_inner_dec(f) :- pt_opaque_dec(f, e), !pt_outside_dec(e).
@@ -364,8 +374,11 @@ pt_ann(t, e) :- kind(t, "type"), child(t, e, 0).
 // pt_qann(s, e): string s is an annotation's whole expression, and e is its code's expression: the fragment
 // "annotation" is rooted at a `type`, as tree-sitter writes an annotation (decision 0466), whose child is the
 // expression (T's shape rooted it at a module of one statement, `(…)`; before 0466 the root was the expression).
+// pt_qstr(s): string s is an annotation's whole expression, quoted, with a tree (python/annotation's ann_parse).
+.decl pt_qstr(s: node)
+pt_qstr(s) :- kind(t, "type"), child(t, s, 0), kind(s, "string"), ann_parse(s, _).
 .decl pt_qann(s: node, e: node)
-pt_qann(s, e) :- kind(t, "type"), child(t, s, 0), kind(s, "string"), parsed(s, "annotation", r),
+pt_qann(s, e) :- pt_qstr(s), ann_parse(s, r),
     (kind(r, "type"), child(r, e, 0) ; !kind(r, "type"), e = r).
 .decl pt_union_q(q: symbol)
 pt_union_q("typing.Optional"). pt_union_q("typing.Union"). pt_union_q("typing_extensions.Optional"). pt_union_q("typing_extensions.Union").
@@ -378,14 +391,14 @@ pt_amem(t, e) :- pt_ann(t, e).
 pt_amem(t, m) :- pt_amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "left", m).
 pt_amem(t, m) :- pt_amem(t, e), kind(e, "binary_operator"), op(e, "|"), field(e, "right", m).
 pt_amem(t, m) :- pt_amem(t, e), kind(e, "parenthesized_expression"), child(e, m, 0).
-pt_amem(t, r) :- pt_amem(t, s), pt_qann(s, r).
+pt_amem(t, r) :- pt_amem(t, s), host_node(s, _), pt_qann(s, r).   // a string nested in a quoted annotation's code
 pt_amem(t, m) :- pt_amem(t, e), kind(e, "union_type"), child(e, u, _), child(u, m, 0).
 pt_amem(t, m) :- pt_amem(t, e), pt_uhead(e), kind(e, "generic_type"), child(e, p, 1), child(p, u, _), child(u, m, 0).
 pt_amem(t, m) :- pt_amem(t, e), pt_uhead(e), kind(e, "subscript"), field(e, "subscript", m).
 .decl pt_asplit(e: node)
 pt_asplit(e) :- kind(e, "binary_operator"), op(e, "|").
 pt_asplit(e) :- kind(e, "parenthesized_expression").
-pt_asplit(s) :- pt_qann(s, _).
+pt_asplit(s) :- pt_qstr(s).
 pt_asplit(e) :- kind(e, "union_type").
 pt_asplit(e) :- pt_uhead(e).
 // A member that is not split further, and the name it is headed by (`LazyResult` in `LazyResult[T]`).
@@ -431,6 +444,20 @@ pt_aknown(t, m) :- pt_aleaf(t, m), pt_ahead(m, h), pt_lv(h, "cls", c), !pt_lprot
 pt_aknown(t, m) :- pt_aleaf(t, m), pt_ahead(m, h), pt_builtin_ref(h, "type"), pt_aarg(m, a), pt_lv(a, "cls", _).
 .decl pt_aopen(t: node)
 pt_aopen(t) :- pt_aleaf(t, m), !pt_aknown(t, m).
+// A quoted annotation (`x: "Node"`) is its code's members: the annotation context's leaves of the string's tree, and
+// what the context finds of each: its head, a `type[C]`'s argument, a builtin's or None's type, `Self`, and its names'
+// lookups and qualified names, which the host's bindings give values (rule 5 of decision 0597).
+pt_aleaf(t, m) :- pt_amem(t, s), pt_qstr(s), ann_parse(s, r), pt_q_aleaf(r, m).
+pt_ahead(m, h) :- pt_q_ahead(m, h).
+pt_aarg(m, a) :- pt_q_aarg(m, a).
+pt_dtype(m, x) :- pt_q_dtype(m, x).
+pt_aself(m) :- pt_q_aself(m).
+pt_look(n, x, s) :- pt_q_look(n, x, s).
+pt_qn(n, q) :- pt_q_qn(n, q).
+pt_builtin_ref(n, x) :- pt_q_builtin_ref(n, x).
+.context annotation of python roots ann_tree exports pt_aleaf, pt_ahead, pt_aarg, pt_dtype, pt_aself, pt_look, pt_qn, pt_builtin_ref
+.from python pt_hstart, pt_up, pt_bound_in, pt_ibind, pt_modnode, pt_star for annotation
+.from annotation pt_aleaf as pt_q_aleaf, pt_ahead as pt_q_ahead, pt_aarg as pt_q_aarg, pt_dtype as pt_q_dtype, pt_aself as pt_q_aself, pt_look as pt_q_look, pt_qn as pt_q_qn, pt_builtin_ref as pt_q_builtin_ref
 // Parameters: `x: T` and `x: T = v` (the default's own value is added as an assignment's is).
 .decl pt_pann(f: node, x: symbol, t: node)
 pt_pann(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, id, 0), kind(id, "identifier"),
@@ -453,9 +480,9 @@ pt_uann(t) :- pt_pann(f, x, t), pt_pread(f, x).
 pt_uann(t) :- pt_cann(c, x, t), pt_cread(c, x).
 .decl pt_uinst(t: node, c: node)
 pt_uinst(t, c) :- pt_uann(t), pt_ainst(t, c).
-pt_bv(f, x, "inst", s) :- pt_pann(f, x, t), pt_pread(f, x), pt_uinst(t, c), pt_anc(s, c), docof(f, d9), docof(s, e9), rr_cx_reach(d9, e9).
-pt_bv(f, x, "cls", s) :- pt_pann(f, x, t), pt_pread(f, x), pt_acls(t, c), pt_anc(s, c), docof(f, d9), docof(s, e9), rr_cx_reach(d9, e9).
-pt_bv(f, x, "inst", s) :- pt_pann(f, x, t), pt_pread(f, x), pt_aleaf(t, m), pt_aself(m), pt_method(f, c), pt_anc(s, c), docof(f, d9), docof(s, e9), rr_cx_reach(d9, e9).
+pt_bv(f, x, "inst", s) :- pt_pann(f, x, t), pt_pread(f, x), pt_uinst(t, c), pt_anc(s, c).
+pt_bv(f, x, "cls", s) :- pt_pann(f, x, t), pt_pread(f, x), pt_acls(t, c), pt_anc(s, c).
+pt_bv(f, x, "inst", s) :- pt_pann(f, x, t), pt_pread(f, x), pt_aleaf(t, m), pt_aself(m), pt_method(f, c), pt_anc(s, c).
 pt_bv(f, x, k, v) :- pt_pdefault(f, x, d), pt_pv(d, k, v).
 pt_tbv(f, x, "decl", m) :- pt_pann(f, x, t), pt_aleaf(t, m), pt_dtype(m, _).
 pt_tbv(f, x, k, v) :- pt_pdefault(f, x, d), pt_tv(d, k, v).
@@ -474,7 +501,7 @@ pt_rret(f, "inst", k) :- pt_rann(f, t), !pt_isasync(f), pt_aleaf(t, m), pt_aself
 // only the calls declared to return its base.
 .decl pt_cret(c: node, w: symbol, k: node)
 pt_cret(c, w, k) :- pt_cfn(c, e, f), pt_rret(f, w, k), !pt_rgen(f, _).
-pt_pv(c, w, s) :- pt_cret(c, w, k), pt_anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
+pt_pv(c, w, s) :- pt_cret(c, w, k), pt_anc(s, k).
 // pt_awaitf(w, c, f): `await c`, where call c runs the async def f (not an async generator, which is not awaited). Its
 // value is what f returns, declared (`async def f() -> K`: the coroutine's result, not the call's) or returned.
 .decl pt_awaitf(w: node, c: node, f: node)
@@ -612,7 +639,7 @@ pt_ghead(x, x) :- pt_sarg(_, _, x), !kind(x, "subscript"), !kind(x, "generic_typ
 // bound to its base, not every class's value.
 .decl pt_gcls(c: node, x: node, k: node)
 pt_gcls(c, x, k) :- pt_gbind(c, x), pt_ghead(x, h), pt_pv(h, "cls", k).
-pt_pv(c, "inst", s) :- pt_gcls(c, _, k), pt_anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
+pt_pv(c, "inst", s) :- pt_gcls(c, _, k), pt_anc(s, k).
 pt_pv(c, "gen", x) :- pt_gcls(c, x, k), pt_ghead(x, h), x != h, pt_cparam(k, _, _).
 // A function's own type variable, from the argument its parameter is given (a method's arguments follow `self`).
 pt_pv(c, k, v) :- pt_cfn(c, e, f), !pt_method(f, _), pt_rpvar(f, i, _), pt_posarg(c, i, a), pt_pv(a, k, v).
@@ -701,8 +728,8 @@ pt_bound_in(c, x) :- pt_cann(c, x, _).
 .decl pt_cread(c: node, x: symbol)
 pt_cread(c, x) :- pt_cann(c, x, _).
 pt_cread(c, x) :- pt_cann(c, x, _), pt_look(_, x, c).
-pt_bv(c, x, "inst", s) :- pt_cann(c, x, t), pt_cread(c, x), pt_uinst(t, k), pt_anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
-pt_bv(c, x, "cls", s) :- pt_cann(c, x, t), pt_cread(c, x), pt_acls(t, k), pt_anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
+pt_bv(c, x, "inst", s) :- pt_cann(c, x, t), pt_cread(c, x), pt_uinst(t, k), pt_anc(s, k).
+pt_bv(c, x, "cls", s) :- pt_cann(c, x, t), pt_cread(c, x), pt_acls(t, k), pt_anc(s, k).
 pt_tbv(c, x, "decl", m) :- pt_cann(c, x, t), pt_aleaf(t, m), pt_dtype(m, _).
 // An attribute declared closed: assignments elsewhere (`self.x = ...`) conform to it.
 .decl pt_adeclared(c: node, a: symbol)
@@ -741,18 +768,28 @@ pt_callee(c, e) :- kind(c, "call"), field(c, "function", e), !host_node(c, _).
 .decl pt_qn(n: node, q: symbol)
 pt_qn(n, q) :- pt_look(n, x, s), pt_ibind(s, x, q).
 pt_qn(n, @dot(q, a)) :- pt_attr_of(n, o, a), pt_qn(o, q).
-// What a workspace qualified name denotes: a module, or a module-level binding of one.
+// What a workspace symbol denotes, by its symbol: a module, or a module-level binding of one (`m.x`). A reader in
+// another document finds it by symbol only: the name it reads is resolved by P2 (`pt_lres`, through `types__binds`'
+// imports and re-exports) to the symbol that binds it, and that symbol's binding (`pt_wkey`: `m.x#k`, x's k-th
+// definition, is a binding of `m.x`) is looked up here. P3 follows no import across documents itself.
 .decl pt_qv(m: node, q: symbol, k: symbol, v: node)
 pt_qv(m, q, "mod", m) :- pt_modname(m, q).
 pt_qv(m, @dot(q, x), k, v) :- pt_modname(m, q), pt_bv(m, x, k, v).
-// `from n import *` at a module's top level: the module binds each public name of n it does not bind itself
-// (`collections.abc` is `_collections_abc`'s names). Only the names asked of it (`wantx`), so no name is made.
+// pt_wkey(d, w): symbol d, as P2 names it, is workspace binding w of `qv`, `lqv`, `tqv`, `qopen`.
+.decl pt_wkey(d: symbol, w: symbol)
+pt_wkey(d, w) :- pt_lres(_, d), w = @replace_all(d, "#[0-9]+$", "").
+pt_wkey(d, w) :- pt_starx(_, _, d), w = @replace_all(d, "#[0-9]+$", "").
+// pt_wres(q, w): the name q a document reads is workspace binding w.
+.decl pt_wres(q: symbol, w: symbol)
+pt_wres(q, w) :- pt_lres(q, d), pt_wkey(d, w).
+// `from n import *` at a module's top level: the module binds each name P2 binds it to that it does not bind itself
+// (n's `__all__`, or its public names: `types__binds`), each to the symbol P2 resolves it to.
 .decl pt_star_from(m: node, n: symbol)
 pt_star_from(m, n) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"), nearest(i, m, pt_scope),
     pt_modname(m, _), pt_impmod(i, n).
-.decl pt_starx(m: node, x: symbol, m2: node)
-pt_starx(m, x, m2) :- pt_star_from(m, n), pt_modname(m2, n), pt_bv(m2, x, _, _), !prefix("_", x), !pt_rbound(m, x).
-pt_bv(m, x, k, v) :- pt_starx(m, x, m2), pt_bv(m2, x, k, v).
+.decl pt_starx(m: node, x: symbol, d: symbol)
+pt_starx(m, x, d) :- pt_star_from(m, _), pt_modname(m, q), types__binds(q, x, d), x != "*", !pt_rbound(m, x).
+pt_bv(m, x, k, v) :- pt_starx(m, x, d), pt_wkey(d, w), pt_qv(_, w, k, v).
 
 // Binding values: what name x of scope s may hold.
 .decl pt_bv(s: node, x: symbol, k: symbol, v: node)
@@ -785,14 +822,15 @@ pt_gann_head(e, h) :- kind(e, "generic_type"), child(e, h, 0).
 pt_gann_head(e, h) :- kind(e, "subscript"), field(e, "value", h).
 pt_bv(s, x, "wfn", f) :- pt_live_def(s, x, f), pt_decfn(f, g), pt_wrap(g, _, _), !pt_ident_dec(g).
 pt_bv(s, x, k, v) :- pt_live_asg(s, x, r), pt_pv(r, k, v).
-pt_bv(s, x, k, v) :- pt_ibind(s, x, q), pt_qv(m9, q, k, v), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
-// `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound.
-pt_bv(f, x, "inst", s) :- pt_method(f, c), pt_param(f, x, 0), !pt_isstatic(f), !pt_classmeth(f), pt_anc(s, c), docof(f, d9), docof(s, e9), rr_cx_reach(d9, e9).
-pt_bv(f, x, "cls", s) :- pt_method(f, c), pt_param(f, x, 0), pt_classmeth(f), pt_anc(s, c), docof(f, d9), docof(s, e9), rr_cx_reach(d9, e9).
+pt_bv(s, x, k, v) :- pt_ibind(s, x, q), pt_wres(q, w), pt_qv(_, w, k, v).
+// `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound: the
+// class and each of its workspace subclasses.
+pt_bv(f, x, "inst", s) :- pt_method(f, c), pt_param(f, x, 0), !pt_isstatic(f), !pt_classmeth(f), pt_anc(s, c).
+pt_bv(f, x, "cls", s) :- pt_method(f, c), pt_param(f, x, 0), pt_classmeth(f), pt_anc(s, c).
 
 .decl pt_pv(n: node, k: symbol, v: node)
 pt_pv(n, k, v) :- pt_look(n, x, s), pt_bv(s, x, k, v).
-pt_pv(n, k, v) :- pt_qn(n, q), pt_qv(m9, q, k, v), docof(n, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_pv(n, k, v) :- pt_qn(n, q), pt_wres(q, w), pt_qv(_, w, k, v).
 pt_pv(n, k, v) :- pt_alook(n, c, a), pt_fv(n, c, a, k, v).
 // pt_fv(c, a, k, v): attribute a of class c, where it is found (on c or a base), may hold a k v.
 .decl pt_fv(n: node, c: node, a: symbol, k: symbol, v: node)
@@ -922,6 +960,7 @@ pt_wsown(d) :- types__owner(d, m), pt_wsmod(m).
 // module's name (through its imports and re-exports, `types__binds`), else a class's (through its bases).
 .decl pt_lwant(q: symbol)
 pt_lwant(q) :- pt_qn(_, q).
+pt_lwant(q) :- pt_ibind(_, _, q).
 pt_lwant(q) :- pt_bq(_, q).
 pt_lwant(q) :- pt_litq(_, q).
 pt_lwant(q) :- pt_star_from(_, q).
@@ -965,10 +1004,10 @@ pt_lwrap(g, b) :- types__sig(g, 0, _, a, _), match("^([A-Za-z_.]*\\.)?Callable\\
 .decl pt_lbv(s: node, x: symbol, k: symbol, v: symbol)
 .decl pt_lqv(m: node, q: symbol, k: symbol, v: symbol)
 pt_lbv(s, x, k, v) :- pt_ibind(s, x, q), pt_lres(q, d), pt_lval(d, k, v).
-pt_lbv(s, x, k, v) :- pt_ibind(s, x, q), pt_lqv(m9, q, k, v), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_lbv(s, x, k, v) :- pt_ibind(s, x, q), pt_wres(q, w), pt_lqv(_, w, k, v).
 pt_lbv(s, x, k, v) :- pt_live_asg(s, x, r), pt_lv(r, k, v).
-pt_lbv(m, x, k, v) :- pt_starx(m, x, m2), pt_lbv(m2, x, k, v).
-pt_lbv(m, x, k, v) :- pt_star_from(m, n), pt_lres(n, n2), !pt_wsmod(n2), types__binds(n2, x, d), x != "*", !prefix("_", x), !pt_rbound(m, x), pt_lval(d, k, v).
+pt_lbv(m, x, k, v) :- pt_starx(m, x, d), pt_wkey(d, w), pt_lqv(_, w, k, v).
+pt_lbv(m, x, k, v) :- pt_starx(m, x, d), pt_lval(d, k, v).
 pt_lqv(m, @dot(q, x), k, v) :- pt_modname(m, q), pt_lbv(m, x, k, v).
 // Annotations naming a library's class (`p: Path`, `-> ContextVar[bool]`, `x: Pattern[str]` in a class body): its
 // instances; `type[C]`: its class.
@@ -1200,7 +1239,7 @@ pt_umem(e, m) :- kind(e, "parenthesized_expression"), child(e, m, 0).
 .decl pt_lgxu(c: node, m: node)
 pt_lgxu(c, m) :- pt_lgx(c, e), pt_umem(e, m).
 pt_lgxu(c, m) :- pt_lgxu(c, e), pt_umem(e, m).
-pt_pv(c, "inst", s) :- pt_lgxu(c, m), pt_pv(m, "cls", k), pt_anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
+pt_pv(c, "inst", s) :- pt_lgxu(c, m), pt_pv(m, "cls", k), pt_anc(s, k).
 pt_lv(c, "inst", k) :- pt_lgxu(c, m), pt_lv(m, "cls", k).
 pt_lv(c, "inst", k) :- pt_lgx(c, x), pt_ghead(x, h), pt_lv(h, "cls", k).
 pt_pv(c, "gen", x) :- pt_lgx(c, x), pt_lghcls(x, _).
@@ -1281,7 +1320,7 @@ pt_iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), pt_attr_of(t, o,
 .decl pt_extb(e: node)
 pt_extb(e) :- pt_basex(_, e), pt_qn(e, q), !pt_xknown(e, q).
 .decl pt_xknown(e: node, q: symbol)
-pt_xknown(e, q) :- pt_basex(_, e), pt_qn(e, q), pt_qv(m9, q, _, _), docof(e, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_xknown(e, q) :- pt_basex(_, e), pt_qn(e, q), pt_wres(q, w), pt_qv(_, w, _, _).
 pt_extb(e) :- pt_basex(_, e), pt_builtin_ref(e, _).
 // A library class, or its generic as a subscript (`AbstractContextManager[None]`, `lgbase`): `lbase` answers for it.
 pt_extb(e) :- pt_basex(_, e), pt_lv(e, "cls", _).
@@ -1312,7 +1351,7 @@ pt_base_open(c) :- pt_basex(c, e), !pt_pv(e, "cls", _), !pt_extb(e), !pt_gbase(e
 .decl pt_attr_open(n: node, c: node, a: symbol)
 pt_attr_open(n, c, a) :- pt_asks(n, c, a), pt_found(c, a, at), pt_bopen(at, a).
 pt_attr_open(n, c, a) :- pt_asks(n, c, a), pt_anc(c, b), pt_base_open(b).
-pt_attr_open(n, c, a) :- pt_asks(n, c, a), pt_anc(c, b), pt_iattr(t9, b, a), docof(n, d9), docof(t9, e9), rr_cx_reach(d9, e9), !pt_adeclared(c, a).
+pt_attr_open(n, c, a) :- pt_asks(n, c, a), pt_anc(c, b), pt_iattr(_, b, a), !pt_adeclared(c, a).
 // Neither bound by a workspace class nor reachable through an external base: set dynamically, or an AttributeError.
 pt_attr_open(n, c, a) :- pt_asks(n, c, a), !pt_found(c, a, _), !pt_ext_base_up(c), a != "__init__", a != "__call__".
 // An attribute an external base supplies: calling it runs no workspace definition, but as a value (a receiver, an
@@ -1326,12 +1365,13 @@ pt_bopen(s, x) :- pt_otgt(s, x).
 pt_bopen(f, x) :- pt_param(f, x, i), !pt_selfparam(f, i), !pt_pclosed(f, x).
 pt_bopen(f, x) :- pt_pdefault(f, x, v), pt_vopen(v).
 pt_bopen(s, x) :- pt_live_asg(s, x, r), pt_vopen(r).
-pt_bopen(s, x) :- pt_ifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m), pt_ibind(s, x, q), pt_qopen(m9, q), docof(m9, e9), rr_cx_reach(d9, e9).
-pt_bopen(s, x) :- pt_ifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m), pt_ibind(s, x, q), !pt_bknown(s, q).
+pt_bopen(s, x) :- pt_ifrom(s, x, m, _), pt_wsmod(m), pt_ibind(s, x, q), pt_wres(q, w), pt_qopen(_, w).
+pt_bopen(s, x) :- pt_ifrom(s, x, m, _), pt_wsmod(m), pt_ibind(s, x, q), !pt_bknown(s, q).
 .decl pt_bknown(s: node, q: symbol)
-pt_bknown(s, q) :- pt_ibind(s, _, q), pt_qv(m9, q, _, _), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_bknown(s, q) :- pt_ibind(s, _, q), pt_wres(q, w), pt_qv(_, w, _, _).
 // Or a library's value it holds (`_ctx = contextvars.ContextVar(...)`): `lqv`, as P3 keeps no library node.
-pt_bknown(s, q) :- pt_ibind(s, _, q), pt_lqv(m9, q, _, _), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_bknown(s, q) :- pt_ibind(s, _, q), pt_wres(q, w), pt_lqv(_, w, _, _).
+pt_bknown(s, q) :- pt_ibind(s, _, q), pt_lres(q, d), pt_lval(d, _, _).
 pt_bopen(s, x) :- pt_live_def(s, x, f), pt_opaque_dec(f, _), !pt_dec1(f, _).
 pt_bopen(s, x) :- pt_live_def(s, x, f), pt_dec1(f, e), !pt_pv(e, "fn", _), !pt_ldec_known(f).
 pt_bopen(s, x) :- pt_live_def(s, x, f), pt_dec1(f, e), pt_vopen(e).
@@ -1349,10 +1389,10 @@ pt_qopen(m, @dot(q, x)) :- pt_modname(m, q), pt_bopen(m, x).
 pt_vopen(n) :- pt_vpos(n), kind(n, k), !pt_tracked(k).
 pt_vopen(n) :- pt_vpos(n), pt_look(n, x, s), pt_bopen(s, x).
 pt_vopen(n) :- pt_vpos(n), pt_miss(n, x), !pt_builtin_ref(n, x).
-pt_vopen(n) :- pt_vpos(n), pt_qn(n, q), pt_qopen(m9, q), docof(n, d9), docof(m9, e9), rr_cx_reach(d9, e9).
-pt_vopen(n) :- pt_vpos(n), pt_attr_of(n, o, _), pt_qn(o, q), docof(n, d9), rr_cx_sees(d9, q), pt_qn(n, q2), !pt_vknown(n, q2).
+pt_vopen(n) :- pt_vpos(n), pt_qn(n, q), pt_wres(q, w), pt_qopen(_, w).
+pt_vopen(n) :- pt_vpos(n), pt_attr_of(n, o, _), pt_qn(o, q), pt_wsmod(q), pt_qn(n, q2), !pt_vknown(n, q2).
 .decl pt_vknown(n: node, q: symbol)
-pt_vknown(n, q) :- pt_vpos(n), pt_attr_of(n, _, _), pt_qn(n, q), pt_qv(m9, q, _, _), docof(n, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_vknown(n, q) :- pt_vpos(n), pt_attr_of(n, _, _), pt_qn(n, q), pt_wres(q, w), pt_qv(_, w, _, _).
 pt_vopen(n) :- pt_vpos(n), pt_attr_of(n, o, _), pt_vopen(o).
 pt_vopen(n) :- pt_vpos(n), pt_attr_of(n, o, _), kind(o, k), !pt_tracked(k).
 pt_vopen(n) :- pt_vpos(n), pt_alook(n, c, a), pt_attr_open(n, c, a).
@@ -1465,8 +1505,8 @@ call_open(c) :- pt_callee(c, e), pt_pv(e, "mod", _).
 call_open(c) :- pt_callee(c, e), pt_pv(e, "super", _).
 call_open(c) :- pt_callee(c, e), pt_mro_ambiguous(e).
 .decl pt_ext_import(s: node, x: symbol)
-pt_ext_import(s, x) :- pt_rifrom(s, x, m, _), docof(s, d9), !rr_cx_sees(d9, m).
-pt_ext_import(s, x) :- pt_ribind(s, x, q), !pt_rifrom(s, x, _, _), docof(s, d9), !rr_cx_sees(d9, q).
+pt_ext_import(s, x) :- pt_rifrom(s, x, m, _), !pt_wsmod(m).
+pt_ext_import(s, x) :- pt_ribind(s, x, q), !pt_rifrom(s, x, _, _), !pt_wsmod(q).
 
 // ---- call chains ----------------------------------------------------------------------------------------------
 // The function whose body holds a call (a lambda's or a nested class body's calls are the enclosing function's).
@@ -1580,10 +1620,10 @@ pt_tv(n, "ext", n) :- pt_vpos(n), pt_lv(n, _, _).
 pt_tv(n, "ext", n) :- pt_vpos(n), pt_attr_of(n, o, _), pt_tv(o, "ext", _).
 pt_tbv(s, x, "ext", s) :- pt_ext_import(s, x).
 pt_tbv(s, x, k, v) :- pt_live_asg(s, x, r), pt_tv(r, k, v).
-pt_tbv(s, x, k, v) :- pt_ibind(s, x, q), pt_tqv(m9, q, k, v), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_tbv(s, x, k, v) :- pt_ibind(s, x, q), pt_wres(q, w), pt_tqv(_, w, k, v).
 pt_tqv(m, @dot(q, x), k, v) :- pt_modname(m, q), pt_tbv(m, x, k, v).
 pt_tv(n, k, v) :- pt_look(n, x, s), pt_tbv(s, x, k, v).
-pt_tv(n, k, v) :- pt_qn(n, q), pt_tqv(m9, q, k, v), docof(n, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+pt_tv(n, k, v) :- pt_qn(n, q), pt_wres(q, w), pt_tqv(_, w, k, v).
 pt_tv(n, k, v) :- pt_alook(n, c, a), pt_found(c, a, at), pt_tbv(at, a, k, v).
 pt_tv(n, k, v) :- pt_pass(n, c), pt_tv(c, k, v).
 pt_tv(c, k, v) :- pt_cfn(c, e, f), !pt_isasync(f), !pt_isgen(f), pt_retval(f, r), pt_tv(r, k, v).
@@ -1627,14 +1667,14 @@ type_open(c) :- pt_vpos(c), pt_callee(c, e), pt_pv(e, "cls", k), pt_anc(k, b), p
 pt_tsub(n, t, t) :- type_of(n, t).
 pt_tsub(n, t, "object") :- type_of(n, t).
 pt_tsub(n, "bool", "int") :- type_of(n, "bool").
-pt_tsub(n, t, u) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_cls_q(b, u).
-pt_tsub(n, t, u) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_basex(b, e), pt_qn(e, u), !pt_xknown(e, u).
-pt_tsub(n, t, x) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_basex(b, e), pt_builtin_ref(e, x).
+pt_tsub(n, t, u) :- type_of(n, t), pt_cls_q(c, t), pt_anc(c, b), pt_cls_q(b, u).
+pt_tsub(n, t, u) :- type_of(n, t), pt_cls_q(c, t), pt_anc(c, b), pt_basex(b, e), pt_qn(e, u), !pt_xknown(e, u).
+pt_tsub(n, t, x) :- type_of(n, t), pt_cls_q(c, t), pt_anc(c, b), pt_basex(b, e), pt_builtin_ref(e, x).
 // A listed class some of whose superclasses are unknown: a base that is no known class, or an external base
 // (whose own bases the program does not read).
 .decl pt_tsup_open(n: node, t: symbol)
-pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_base_open(b).
-pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_basex(b, e), pt_extb(e), !pt_builtin_ref(e, "object").
+pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), pt_anc(c, b), pt_base_open(b).
+pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), pt_anc(c, b), pt_basex(b, e), pt_extb(e), !pt_builtin_ref(e, "object").
 .decl pt_type_miss(n: node, u: symbol)
 // u is a supertype of one of n's types and not of another. Every type of a proven n is a subtype of u, so
 // u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0483).
