@@ -1,13 +1,18 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadNativeBinding } from "../../src/engine/index.js";
 import { withStartLock } from "../../src/runtime/daemon-control.js";
+import { boundWaitedWith, watchLockWaits } from "../support/processes/lock-waits.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
 
+vi.mock("../../src/engine/native/native.js", { spy: true });
+
 const homes: string[] = [];
 afterEach(async () => {
+  vi.mocked(loadNativeBinding).mockReset();
   await Promise.all(homes.splice(0).map(home => removeFolder(home)));
 });
 
@@ -23,6 +28,7 @@ describe("a daemon start taking the start lock", () => {
     const events: string[] = [];
     const otherHolds = Promise.withResolvers<void>();
     const otherMayEnd = Promise.withResolvers<void>();
+    const takes = watchLockWaits();
     const other = withStartLock(home, async () => {
       events.push("the other start runs");
       otherHolds.resolve();
@@ -30,12 +36,14 @@ describe("a daemon start taking the start lock", () => {
       events.push("the other start ends");
     });
     await otherHolds.promise;
-    // This start finds the lock held; its first wait lets the other end. No real time passes.
-    const start = withStartLock(home, async () => { events.push("this start runs"); }, {
-      sleep: async () => { otherMayEnd.resolve(); await other; },
-    });
+    const start = withStartLock(home, async () => { events.push("this start runs"); });
+    // The other lets go only once this start waits on the engine, so this start meets a held lock.
+    const waited = await boundWaitedWith(takes, start);
+    otherMayEnd.resolve();
 
     await Promise.all([other, start]);
+    expect(waited).toBe(15_000);
+    expect(takes.asked).toEqual([15_000, 15_000]);
     expect(events).toEqual(["the other start runs", "the other start ends", "this start runs"]);
   });
 });

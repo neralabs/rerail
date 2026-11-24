@@ -414,7 +414,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node, where set-up finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`); elsewhere, a folder on a server before node's on PATH included, `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone, one Node a hook event, in two processes with `cmd.exe`, whatever PATH Claude Code has; `node <hook launcher> <recorded node> <hook>` where set-up finds no `cmd.exe` by its full System32 path, where that `cmd.exe` runs no command (`cmd.exe /d /c exit 0` started at set-up does not end with exit 0), or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`) | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
@@ -427,6 +427,24 @@ cache is on whatever node PATH has and the hook gets no environment variable it 
 a Node that loads the hook's script of over 2 MB; with the cache, V8 reads the code it compiled at an earlier event
 instead of parsing and compiling the script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off. Codex's and Cursor's
 entries start the hook without the launcher, so they compile it at each event.
+
+A company policy can leave `cmd.exe` in System32 and keep it from running commands, so set-up starts
+`cmd.exe /d /c exit 0` once before it writes Claude Code's `cmd.exe` entry, and writes the `node` entry where that
+start fails or ends with another exit code. Under the `DisableCMD` policy at 1 ("Prevent access to the command prompt",
+with script processing disabled too), `cmd.exe` answers every command within about 30 ms with exit 255 and "The
+command prompt has been disabled by your administrator." On a Windows 11 test machine, a `cmd.exe` entry written before
+the policy then failed every hook event of a Claude Code 2.1.322 session that way: Claude Code recorded each as a hook
+error that does not block, showed "Stop hook error occurred" in print mode, and ran every tool call; no hook reached
+Rerail. Set-up run under the policy wrote the `node` entry, and the same session ran every hook with no error. At 2,
+which leaves scripts on, `cmd.exe /c` runs commands as it does without the policy, and set-up keeps the `cmd.exe`
+entry. Where set-up writes the `node` entry because that start failed or timed out (10 s), it says so in one line:
+hooks then start the `node` Claude Code's `PATH` finds, a second Node each event where that is not the recorded one,
+and `rerail install --refresh` starts `cmd.exe` again. The check behind `rerail status` and the dashboard's Settings
+starts no program: it counts Claude Code as connected while its settings hold either entry, so a start of `cmd.exe`
+that fails once never shows working hooks as not connected, and no dashboard request waits on `cmd.exe`. So a policy
+set after set-up shows only as Claude Code's own hook error on every event, not in `rerail status`, until set-up,
+`rerail install --refresh` or `rerail update` runs again and writes the `node` entry. An AppLocker or WDAC rule that
+refuses `cmd.exe` was not tried; set-up reads a start that fails as it reads one that ends with another exit code.
 
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
@@ -505,12 +523,20 @@ the one node started.
 
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
 launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, `cmd.exe` for
-Claude Code where its entry starts `cmd.exe`, and the hook launcher where the `node` entry finds another node on PATH.
-Where that node is the recorded one, the launcher runs the hook in the process Claude Code ends, as on macOS and Linux.
+Claude Code, whose entry set-up writes through `cmd.exe` wherever `cmd.exe` can start its paths, and the hook launcher
+where a `node` entry finds another node on PATH. Where a `node` entry finds the recorded one, the launcher runs the
+hook in the process Claude Code ends, as on macOS and Linux.
 Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
-holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
+holder's pid to another process. The watch checks the parent once a second, so a Claude Code hook whose `cmd.exe`
+parent was killed runs on until its next check. On a Windows 11 machine, 10 runs each with the kill falling across
+that second, such a hook ended 16 to 933 ms after the kill (median 480 ms), where the hook of a `node` entry that
+finds the recorded node, which the kill ends itself, ended within 4 to 20 ms. A Claude Code hook lets go of its
+session's lock while the daemon checks its event, the wait a timeout usually cuts short: the session's next hook,
+started at the kill, then took the lock within 16 ms with either entry. A hook killed while it held the lock holds it
+until it ends: the next hook then waited 2 to 878 ms for it (median 427 ms), where after such an entry's kill it took
+the lock from the ended holder in 3 to 10 ms. Since the watch does nothing
 off Windows, `test/harness/hook-entries.test.ts` checks that `serveHookEntry` ends a hook whose parent is gone while
 the hook still runs, and that each entry module serves its hook through `serveHookEntry`.
 
