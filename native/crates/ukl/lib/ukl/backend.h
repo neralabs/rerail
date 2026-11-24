@@ -56,7 +56,15 @@ typedef uint32_t ukl_mask_t;
 // here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
 // backend but OpenCL: `UKL_RARE`.
 #define UKL_SHARED UKL_INLINE
+// On the Apple G13 (the M1s: the `apple7-g13` target's `UKL_METAL_G13`, decision 0645) a large body is a call:
+// inlined, the interpreter's task, steps and evaluators numbered their loops' exits past 255 in one function (412 in
+// `run_batch`, 807 in `label_sweep`), and the G13's back end tests an exit's number by its low byte, so a thread past
+// 255 left its loop as though it had returned (decision 0672). Called, each function's highest is under 190.
+#if defined(UKL_METAL_G13)
+#define UKL_LARGE UKL_ONCE
+#else
 #define UKL_LARGE UKL_INLINE
+#endif
 #define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)

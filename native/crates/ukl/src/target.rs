@@ -10,7 +10,9 @@
 //!
 //! - **Metal**, by feature tier (`METAL`): `apple7`, the M1-M4 (`simdgroup_matrix`; bf16 from Metal 3.1); `apple10`,
 //!   the M5 (Metal 4's `matmul2d`, `UKL_HAS_MATMUL2D`). A tier is added only where its text differs: the back end
-//!   still compiles for the exact GPU.
+//!   still compiles for the exact GPU. `apple7-g13`, the M1s (the G13), is `apple7` with its large bodies called
+//!   (`UKL_METAL_G13`, decision 0672: its back end tests a loop exit's number by its low byte); its text is one
+//!   GPU's, so no other tier runs its code, nor it another's (`METAL_APART`).
 //! - **CUDA**, `sm_<N>`: the compiler's architecture (`__CUDA_ARCH__`, which the kernels' features test).
 //! - **HIP**, the `gfx` target (`gfx1035`, `gfx11-generic`): its wave (64 on gfx9's, the CDNA parts; 32 on RDNA's)
 //!   and, on the exact RDNA2 targets (`gfx103*`), its dot-product instructions (`UKL_HIP_AMD_DOT`).
@@ -22,7 +24,11 @@
 use crate::{Backend, Preprocess};
 
 /// Metal's tiers: name, the Metal version the text is prepared for (`__METAL_VERSION__`), and its features.
-pub const METAL: &[(&str, u32, &[&str])] = &[("apple7", 310, &[]), ("apple10", 400, &["UKL_HAS_MATMUL2D"])];
+pub const METAL: &[(&str, u32, &[&str])] = &[("apple7", 310, &[]), ("apple7-g13", 310, &["UKL_METAL_G13"]), ("apple10", 400, &["UKL_HAS_MATMUL2D"])];
+
+/// Metal's tiers whose text is one GPU's back end's (`apple7-g13`): a device of the tier runs its own code alone, and
+/// no other tier runs it as a lower tier's.
+pub const METAL_APART: &[&str] = &["apple7-g13"];
 
 /// The targets a release ships (decision 0645 §3): Metal's tiers; CUDA's SASS from the V100 (sm_70) on, and PTX for
 /// GPUs newer than the table (`compute_<N>`, which the driver compiles); AMD's exact targets, RDNA2 to RDNA4 and the
@@ -30,7 +36,7 @@ pub const METAL: &[(&str, u32, &[&str])] = &[("apple7", 310, &[]), ("apple10", 4
 /// ("cannot find ROCm device library for gfx10-3-generic"). A generic one shipped would still be taken
 /// (`Target::runs`).
 pub const SHIPPED: &[&str] = &[
-    "apple7", "apple10", //
+    "apple7", "apple7-g13", "apple10", //
     "sm_70", "sm_75", "sm_80", "sm_86", "sm_89", "sm_90", "sm_100", "sm_120", "sm_121", "compute_70", "compute_80", //
     "gfx1030", "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035", "gfx1036", //
     "gfx1100", "gfx1101", "gfx1102", "gfx1103", "gfx1150", "gfx1151", "gfx1200", "gfx1201", //
@@ -127,8 +133,8 @@ impl Target {
         }
         let mut v = vec![self.name.clone()];
         match self.backend {
-            Backend::Metal { version } => {
-                v.extend(METAL.iter().rev().filter(|&&(n, ver, _)| ver < version && n != self.name).map(|(n, _, _)| n.to_string()));
+            Backend::Metal { version } if !METAL_APART.contains(&self.name.as_str()) => {
+                v.extend(METAL.iter().rev().filter(|&&(n, ver, _)| ver < version && n != self.name && !METAL_APART.contains(&n)).map(|(n, _, _)| n.to_string()));
             }
             Backend::Cuda { sm } if self.name.starts_with("sm_") => {
                 let shipped = |prefix: &str| -> Vec<u32> {

@@ -470,29 +470,36 @@ UKL_INLINE bool lp_rq_owns(UKL_LOCAL const LpRun* r, Ar a, uint32_t x, uint32_t 
 UKL_INLINE void lp_spare(UKL_LOCAL LpRun* r, uint32_t base, uint32_t cap) {
     if (cap > r->sp_cap) { r->sp_base = base; r->sp_cap = cap; }
 }
+// Region `x` moved to one twice as large, with room for `n` more tokens: false where the store has none (the
+// run stops, refused for room). A rare case's body, called (`UKL_RARE`): inlined at `lp_alloc`'s sites (34 in
+// `lp_piece`), its copy loop's exits counted past 255 there on the M1 (decision 0672). Its region's words read
+// once and written back by its masked index, no pointer into the run kept (`lp_lex`'s note).
+UKL_RARE bool lp_grow(UKL_LOCAL LpRun* r, Ar a, uint32_t x, uint32_t n) {
+    uint32_t g = LP_RG(x), base = r->mem[g].base, top = r->mem[g].top, have = r->mem[g].cap;
+    uint32_t cap = ukl_max(ukl_max(2u * have, top + n), LP_REGION_MIN), nb;
+    bool rq = r->rq != LP_NONE;
+    if (rq && r->sp_cap >= cap) {
+        nb = r->sp_base; cap = r->sp_cap; r->sp_cap = 0u;
+    } else {
+        // A request's run claims a chunk at least: its room past what it keeps is its group's next ones'.
+        if (rq) cap = ukl_max(cap, LP_RQ_CHUNK);
+        nb = ukl_atomic_add(&a.ctl[0], cap);
+        if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return false; }
+    }
+    for (uint32_t k = 0u; k < top; k++) {
+        a.psrc[nb + k] = a.psrc[base + k]; a.pst[nb + k] = a.pst[base + k]; a.pn[nb + k] = a.pn[base + k]; a.pexp[nb + k] = a.pexp[base + k]; a.pxp[nb + k] = a.pxp[base + k];
+    }
+    if (rq && lp_rq_owns(r, a, x, base)) lp_spare(r, base, have);
+    r->mem[g].base = nb; r->mem[g].cap = cap;
+    return true;
+}
 // `n` tokens of region `x`: their offset there, or `LP_NONE` where the store has no room (the run
-// stops, refused for room). A region past its room moves to one twice as large.
+// stops, refused for room). A region past its room moves to one twice as large (`lp_grow`).
 // Inline at every use, the region's words read once and written back by its masked index, no pointer into the run
 // kept (`lp_lex`'s note).
 UKL_INLINE __attribute__((always_inline)) uint32_t lp_alloc(UKL_LOCAL LpRun* r, Ar a, uint32_t x, uint32_t n) {
-    uint32_t g = LP_RG(x), base = r->mem[g].base, top = r->mem[g].top, have = r->mem[g].cap;
-    if (top + n > have) {
-        uint32_t cap = ukl_max(ukl_max(2u * have, top + n), LP_REGION_MIN), nb;
-        bool rq = r->rq != LP_NONE;
-        if (rq && r->sp_cap >= cap) {
-            nb = r->sp_base; cap = r->sp_cap; r->sp_cap = 0u;
-        } else {
-            // A request's run claims a chunk at least: its room past what it keeps is its group's next ones'.
-            if (rq) cap = ukl_max(cap, LP_RQ_CHUNK);
-            nb = ukl_atomic_add(&a.ctl[0], cap);
-            if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return LP_NONE; }
-        }
-        for (uint32_t k = 0u; k < top; k++) {
-            a.psrc[nb + k] = a.psrc[base + k]; a.pst[nb + k] = a.pst[base + k]; a.pn[nb + k] = a.pn[base + k]; a.pexp[nb + k] = a.pexp[base + k]; a.pxp[nb + k] = a.pxp[base + k];
-        }
-        if (rq && lp_rq_owns(r, a, x, base)) lp_spare(r, base, have);
-        r->mem[g].base = nb; r->mem[g].cap = cap;
-    }
+    uint32_t g = LP_RG(x), top = r->mem[g].top;
+    if (top + n > r->mem[g].cap && !lp_grow(r, a, x, n)) return LP_NONE;
     r->mem[g].top = top + n;
     return top;
 }
@@ -1213,7 +1220,9 @@ UKL_INLINE LpTok lp_stringize(UKL_LOCAL LpRun* r, Ux u, Ar a, LpCall c, uint32_t
 // argument expanded, an empty one a placemarker; GNU's `, ## __VA_ARGS__`; then the pastes left to
 // right, the placemarkers dropped, and the first token takes the name's space (`name_sp`). A list
 // read next with its macro disabled.
-UKL_INLINE void lp_substitute(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t name_sp) {
+// Compiled once and called (`UKL_ONCE`): inlined at its three sites, its loop exits (each paste's) counted past
+// 255 in its callers, which the M1's back end miscompiles (decision 0672).
+UKL_ONCE void lp_substitute(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t name_sp) {
     LpCall c = r->calls[(r->nc - 1u) & (LP_CALLS - 1u)];
     PpDef d = u.defs[c.def];
     bool fn = (d.flags & D_FNLIKE) != 0u;
@@ -1742,7 +1751,9 @@ UKL_INLINE bool lp_arg_occ(UKL_LOCAL LpRun* r, Ar a, LpCall c, uint32_t q, uint3
 // The call on top's next argument expanded, or its substitution (`_Pragma`'s: its operand read). Its arguments
 // are posted at its first (`lp_args_post`); at its turn, one done is the table's, one not claimed yet is read here,
 // and one another group is reading is read here too (`LP_BI_DUP`).
-UKL_INLINE void lp_call_next(UKL_LOCAL LpRun* r, Ux u, Ar a) {
+// Compiled once and called (`UKL_ONCE`): inlined at its three sites, its loop exits counted past 255 in its
+// callers (decision 0672).
+UKL_ONCE void lp_call_next(UKL_LOCAL LpRun* r, Ux u, Ar a) {
     UKL_LOCAL LpCall* c = &r->calls[(r->nc - 1u) & (LP_CALLS - 1u)];
     if (c->def == L_PRAGMA) { lp_pragma_done(r, u, a); return; }
     if ((c->bi & LP_BI_POSTED) == 0u) {
@@ -1828,16 +1839,19 @@ UKL_INLINE bool lp_collect_run(UKL_LOCAL LpRun* r, Ar a, PP_GLOBAL uint32_t* lob
             if (r->line) r->state[f->at + j] = 2u;
         }
     }
-    uint32_t n = ukl_min(k, 3u);
+    // The frame's place held here and stored once per exit: the M1 Max's back end (G13) lost the `+= rest` after the
+    // loop's increments of the threadgroup word (2026-11-23: the frame 2 tokens behind, `F((a,b))`'s call closed at
+    // its argument's nested `)`; 8 eval tests failed on m1max for it).
+    uint32_t n = ukl_min(k, 3u), at = f->at;
     for (uint32_t i = 0u; i < n; i++) {
-        LpTok t = lp_frame_tok(r, a, *f, f->at);
+        LpTok t = lp_frame_tok(r, a, *f, at);
         if (FR_KIND(*f) == FK_SPAN && FR_NSP(*f) != 0u) { t.flags = FR_NSP(*f); FR_SET_NSP(*f, 0u); }
-        f->at++;
-        if (!lp_push(r, a, 0u, r->cl_astart, t)) return false;
+        at++;
+        if (!lp_push(r, a, 0u, r->cl_astart, t)) { f->at = at; return false; }
     }
     uint32_t rest = k - n;
+    f->at = at + rest;
     if (rest != 0u) {
-        f->at += rest;
         uint32_t x = r->mem[0].top - 1u;
         LpTok l = lp_get(r, a, 0u, x);
         l.flags += 16u * rest;

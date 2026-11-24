@@ -11398,3 +11398,30 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - tests-rr module link and sum_and_join_lower: 6.
   - accel-gpu a_started_batch_of_joins_is_charged_on_a_thread_with_no_evaluation.
   - Check over rr-root, device-metal, clif, facts, ukl-rust and tests-corpus: 0 errors.
+
+### Q547. Roll-up 119 (cost-classifier-metal-rf ce36d5dbc8 onto Pulling-it-all-together): what the merge chose
+
+Decision 0672 (the M1's back end tests a loop exit's number by its low byte)
+meets 0645 (kernels are prepared for a named target). The user's choice
+(roll-up 119): the G13 is a Metal target of its own, `apple7-g13` (Metal
+3.1, `UKL_METAL_G13`), so its text and its shipped AIR are keyed by that
+target like any other tier's. It runs only its own AIR (`METAL_APART`), and
+no other tier runs its. A device takes it where `is_g13` holds
+(`target_name`). 0672's exit-number checks stay: the binary archive aid and
+the final compile read them (`refuse_exit_codes_in`, `checked_pipeline`), as
+do a kept unit's dynamic library and an archived pipeline.
+
+Not carried, since the target replaces them: `metal_source_for(.., g13)` and
+`msl(.., device)` (text through `msl_for(target)`), and
+`<library>.g13.metallib` (the target's key names the file).
+
+pp_if: the hub's lane-0 evaluation over the group's window (0588, 1175006048),
+now `UKL_ONCE` as 0672 asks. pp_loop: `lp_grow` as the feeder split it out
+(`UKL_RARE`), written with the hub's masked-index accesses and no pointer into
+the run (lp_lex's note, the M3's lost writes). The decisions README keeps both
+sides' rows.
+
+Checked under Relax (RERAIL_GPU=cpu): check of accel-gpu, device, ukl and
+metal, 0 errors; ukl's target tests; rerail-metal (20 tests);
+c-directives eval::tests (50). The Metal-only tests (the G13 refusal and the
+archive reads) wait for the farm Mac run.
