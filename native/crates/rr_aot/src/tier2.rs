@@ -350,8 +350,6 @@ pub struct P<'a, L: Layout> {
     depth: u32,
     /// A limit refused the file (the depth), not its syntax: no statement recovers (`recover`).
     limited: bool,
-    /// A mark taken last, no token or rule's end since (`G::after_mark`).
-    marked: bool,
     /// The marks whose questions a level that may end at them asks (`ask_M`), by order: those
     /// of the caller's level, as the lean parser's `stmt`.
     asks: u64,
@@ -371,7 +369,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, limited: false, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, limited: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -529,7 +527,6 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         self.taken = 0;
-        self.marked = false;
         let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
@@ -819,7 +816,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::HASH_INCLUDE_34)?;
         self.tk_as::<false, false>(self.at_string(), k::STRING, f::PATH)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -981,7 +977,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -993,44 +988,33 @@ impl<L: Layout> P<'_, L> {
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         if self.m_end_on() {
         } else {
-            match self.word() {
-                w::EXACTLY_63 => {
-                    self.tk_as::<false, false>(true, k::IDENTIFIER, f::MODIFIER)?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::EXACTLY_63 {
+                self.tk_as::<false, false>(true, k::IDENTIFIER, f::MODIFIER)?;
             }
         }
         if self.m_end_on() {
         } else {
-            match self.word() {
-                w::USES_64 => {
-                    self.skip_as::<false, false>(true)?;
-                    self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
-                    loop {
-                        if self.m_end_on() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::COMMA_12 => {
-                                    self.skip_as::<false, false>(true)?;
-                                    self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
-                                }
-                                _ => {
-                                    break;
-                                }
+            if self.word() == w::USES_64 {
+                self.skip_as::<false, false>(true)?;
+                self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
+                loop {
+                    if self.m_end_on() {
+                        break;
+                    } else {
+                        match self.word() {
+                            w::COMMA_12 => {
+                                self.skip_as::<false, false>(true)?;
+                                self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
+                            }
+                            _ => {
+                                break;
                             }
                         }
                     }
                 }
-                _ => {
-
-                }
             }
         }
         self.block_body()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1041,7 +1025,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::FIXTURES_66)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.block_body()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1080,7 +1063,6 @@ impl<L: Layout> P<'_, L> {
         self.mark_end_on()?;
         self.word_skip_as::<true, false>(w::DOT_13)?;
         self.word_skip_as::<false, false>(w::END_65)?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1108,7 +1090,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1121,7 +1102,6 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1166,7 +1146,6 @@ impl<L: Layout> P<'_, L> {
                 }
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1178,7 +1157,6 @@ impl<L: Layout> P<'_, L> {
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
-        self.marked = false;
         Ok(())
     }
 
@@ -1217,7 +1195,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.mark_line()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1227,30 +1204,24 @@ impl<L: Layout> P<'_, L> {
         self.open(UNSET);
         self.retag(k::TYPE);
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
-        match self.word() {
-            w::LT_17 => {
-                self.tk_as::<false, false>(true, k::LT, 0)?;
-                match self.word() {
-                    w::GT_18 => {
-                        self.angle_close()?;
-                    }
-                    _ if self.at_identifier() => {
-                        self.drop_made()?;
-                        self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
-                        self.word_skip_as::<false, false>(w::GT_18)?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+        if self.word() == w::LT_17 {
+            self.tk_as::<false, false>(true, k::LT, 0)?;
+            match self.word() {
+                w::GT_18 => {
+                    self.angle_close()?;
                 }
-            }
-            _ => {
-
+                _ if self.at_identifier() => {
+                    self.drop_made()?;
+                    self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
+                    self.word_skip_as::<false, false>(w::GT_18)?;
+                }
+                _ => {
+                    return self.refuse();
+                }
             }
         }
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1289,7 +1260,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1330,7 +1300,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.mark_line()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1352,22 +1321,14 @@ impl<L: Layout> P<'_, L> {
         if self.at_identifier() {
             self.io_relation()?;
             self.field_made(f::RELATION);
-            loop {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.skip_as::<false, false>(true)?;
-                        self.io_relation()?;
-                        self.field_made(f::RELATION);
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+            while self.word() == w::COMMA_12 {
+                self.skip_as::<false, false>(true)?;
+                self.io_relation()?;
+                self.field_made(f::RELATION);
             }
         } else {
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1375,46 +1336,40 @@ impl<L: Layout> P<'_, L> {
     fn io_relation(&mut self) -> R {
         self.open(k::IO_RELATION);
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
-        match self.word() {
-            w::LPAREN_10 => {
-                self.tk_as::<true, false>(true, k::LPAREN, 0)?;
-                let arm: usize;
-                match self.word() {
-                    w::HASH_INCLUDE_34 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::LBRACE_20 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::LPAREN_10 => {
-                        arm = 0;
-                    }
-                    w::RPAREN_11 => {
-                        arm = 1;
-                    }
-                    _ if self.at_string() || self.at_code_literal() || self.at_hash_word() || self.at_identifier() || self.at_number() => {
-                        arm = 0;
-                    }
-                    _ => {
-                        arm = usize::MAX;
-                    }
+        if self.word() == w::LPAREN_10 {
+            self.tk_as::<true, false>(true, k::LPAREN, 0)?;
+            let arm: usize;
+            match self.word() {
+                w::HASH_INCLUDE_34 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::LBRACE_20 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::LPAREN_10 => {
+                    arm = 0;
                 }
-                match arm {
-                    0 => {
-                        self.drop_made()?;
-                        self.io_parameters()?;
-                        self.field_made(f::PARAMETERS);
-                        self.word_skip_as::<false, false>(w::RPAREN_11)?;
-                    }
-                    1 => {
-                        self.relabel_field(f::PARAMETERS)?;
-                        self.paren_close()?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+                w::RPAREN_11 => {
+                    arm = 1;
+                }
+                _ if self.at_string() || self.at_code_literal() || self.at_hash_word() || self.at_identifier() || self.at_number() => {
+                    arm = 0;
+                }
+                _ => {
+                    arm = usize::MAX;
                 }
             }
-            _ => {
-
+            match arm {
+                0 => {
+                    self.drop_made()?;
+                    self.io_parameters()?;
+                    self.field_made(f::PARAMETERS);
+                    self.word_skip_as::<false, false>(w::RPAREN_11)?;
+                }
+                1 => {
+                    self.relabel_field(f::PARAMETERS)?;
+                    self.paren_close()?;
+                }
+                _ => {
+                    return self.refuse();
+                }
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1460,7 +1415,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1489,7 +1443,6 @@ impl<L: Layout> P<'_, L> {
         }
         self.merge_as::<false, false>(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1505,7 +1458,6 @@ impl<L: Layout> P<'_, L> {
                 break;
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1525,22 +1477,14 @@ impl<L: Layout> P<'_, L> {
         if self.at_identifier() {
             self.lattice_operation()?;
             self.field_made(f::OPERATION);
-            loop {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.skip_as::<false, false>(true)?;
-                        self.lattice_operation()?;
-                        self.field_made(f::OPERATION);
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+            while self.word() == w::COMMA_12 {
+                self.skip_as::<false, false>(true)?;
+                self.lattice_operation()?;
+                self.field_made(f::OPERATION);
             }
         } else {
         }
         self.word_skip_as::<false, false>(w::RBRACE_21)?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1580,7 +1524,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1591,7 +1534,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::AT_23)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1606,7 +1548,6 @@ impl<L: Layout> P<'_, L> {
         self.json_document()?;
         self.refusing = refusing;
         self.field_made(f::DOCUMENT);
-        self.marked = false;
         Ok(())
     }
 
@@ -1616,22 +1557,14 @@ impl<L: Layout> P<'_, L> {
         self.word_leaf_as::<false, true>(w::LBRACE_20, k::JSON_OBJECT)?;
         if self.at_string() {
             self.json_member()?;
-            loop {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
-                        self.json_member()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+            while self.word() == w::COMMA_12 {
+                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                self.json_member()?;
             }
         } else {
         }
         self.merge_as::<false, true>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1640,7 +1573,6 @@ impl<L: Layout> P<'_, L> {
         self.merge_as::<false, true>(self.at_string(), k::JSON_OBJECT)?;
         self.merge_as::<false, true>(self.word() == w::COLON_15, k::JSON_OBJECT)?;
         self.json_value()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1673,7 +1605,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1683,22 +1614,14 @@ impl<L: Layout> P<'_, L> {
         self.merge_as::<false, true>(self.word() == w::LBRACE_20, k::JSON_OBJECT)?;
         if self.at_string() {
             self.json_member()?;
-            loop {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
-                        self.json_member()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+            while self.word() == w::COMMA_12 {
+                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                self.json_member()?;
             }
         } else {
         }
         self.merge_as::<false, true>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1721,16 +1644,9 @@ impl<L: Layout> P<'_, L> {
         match arm {
             0 => {
                 self.json_value()?;
-                loop {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
-                            self.json_value()?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                while self.word() == w::COMMA_12 {
+                    self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                    self.json_value()?;
                 }
             }
             _ => {
@@ -1738,7 +1654,6 @@ impl<L: Layout> P<'_, L> {
         }
         self.merge_as::<false, true>(self.word() == w::RBRACK_26, k::JSON_OBJECT)?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -1774,7 +1689,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.mark_line()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1818,7 +1732,6 @@ impl<L: Layout> P<'_, L> {
                 break;
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1851,14 +1764,9 @@ impl<L: Layout> P<'_, L> {
                 self.wrap(k::CODE_COLUMN, 0)?;
                 self.drop_made()?;
                 self.braced_column()?;
-                match self.word() {
-                    w::IN_38 => {
-                        self.skip_as::<false, false>(true)?;
-                        self.tk_as::<false, false>(self.at_string(), k::STRING, f::CODES)?;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::IN_38 {
+                    self.skip_as::<false, false>(true)?;
+                    self.tk_as::<false, false>(self.at_string(), k::STRING, f::CODES)?;
                 }
                 self.close()?;
             }
@@ -1866,7 +1774,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1878,7 +1785,6 @@ impl<L: Layout> P<'_, L> {
         self.drop_made()?;
         self.braced_column()?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1900,7 +1806,6 @@ impl<L: Layout> P<'_, L> {
                 }
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1908,7 +1813,6 @@ impl<L: Layout> P<'_, L> {
     fn raw_braces(&mut self) -> R {
         self.word_leaf_as::<false, false>(w::LBRACE_20, k::RAW_TEXT)?;
         self.raw_text_x_0()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1939,7 +1843,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1982,7 +1885,6 @@ impl<L: Layout> P<'_, L> {
         } else {
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1990,7 +1892,6 @@ impl<L: Layout> P<'_, L> {
     fn json(&mut self) -> R {
         self.word_leaf_as::<false, false>(w::LBRACE_20, k::JSON_OBJECT)?;
         self.json_object_x_1()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2001,23 +1902,15 @@ impl<L: Layout> P<'_, L> {
         if self.at_identifier() {
             self.column()?;
             self.field_made(f::COLUMN);
-            loop {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.skip_as::<false, false>(true)?;
-                        self.column()?;
-                        self.field_made(f::COLUMN);
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+            while self.word() == w::COMMA_12 {
+                self.skip_as::<false, false>(true)?;
+                self.column()?;
+                self.field_made(f::COLUMN);
             }
         } else {
         }
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2029,7 +1922,6 @@ impl<L: Layout> P<'_, L> {
         self.r_type()?;
         self.field_made(f::TYPE);
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2037,29 +1929,23 @@ impl<L: Layout> P<'_, L> {
     fn r_type(&mut self) -> R {
         self.open(k::TYPE);
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
-        match self.word() {
-            w::LT_17 => {
-                self.tk_as::<false, false>(true, k::LT, 0)?;
-                match self.word() {
-                    w::GT_18 => {
-                        self.angle_close()?;
-                    }
-                    _ if self.at_identifier() => {
-                        self.drop_made()?;
-                        self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
-                        self.word_skip_as::<false, false>(w::GT_18)?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+        if self.word() == w::LT_17 {
+            self.tk_as::<false, false>(true, k::LT, 0)?;
+            match self.word() {
+                w::GT_18 => {
+                    self.angle_close()?;
                 }
-            }
-            _ => {
-
+                _ if self.at_identifier() => {
+                    self.drop_made()?;
+                    self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
+                    self.word_skip_as::<false, false>(w::GT_18)?;
+                }
+                _ => {
+                    return self.refuse();
+                }
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2074,7 +1960,6 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2083,53 +1968,28 @@ impl<L: Layout> P<'_, L> {
         self.open(k::CLAUSE);
         self.head()?;
         self.field_made(f::HEAD);
-        loop {
-            match self.word() {
-                w::COMMA_12 => {
-                    self.skip_as::<false, false>(true)?;
-                    self.head()?;
-                    self.field_made(f::HEAD);
-                }
-                _ => {
-                    break;
-                }
-            }
+        while self.word() == w::COMMA_12 {
+            self.skip_as::<false, false>(true)?;
+            self.head()?;
+            self.field_made(f::HEAD);
         }
-        match self.word() {
-            w::COLON_MINUS_3 => {
-                self.skip_as::<false, false>(true)?;
-                self.body()?;
-                self.field_made(f::BODY);
-            }
-            _ => {
-
-            }
+        if self.word() == w::COLON_MINUS_3 {
+            self.skip_as::<false, false>(true)?;
+            self.body()?;
+            self.field_made(f::BODY);
         }
-        match self.word() {
-            w::EQ_GT_4 => {
+        if self.word() == w::EQ_GT_4 {
+            self.skip_as::<false, false>(true)?;
+            self.term()?;
+            self.field_made(f::EDIT);
+            while self.word() == w::COMMA_12 {
                 self.skip_as::<false, false>(true)?;
                 self.term()?;
                 self.field_made(f::EDIT);
-                loop {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.skip_as::<false, false>(true)?;
-                            self.term()?;
-                            self.field_made(f::EDIT);
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-            }
-            _ => {
-
             }
         }
         self.word_skip_as::<true, false>(w::DOT_13)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2177,7 +2037,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2202,17 +2061,10 @@ impl<L: Layout> P<'_, L> {
             0 => {
                 self.term()?;
                 self.field_made(f::ARGUMENT);
-                loop {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.skip_as::<false, false>(true)?;
-                            self.term()?;
-                            self.field_made(f::ARGUMENT);
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                while self.word() == w::COMMA_12 {
+                    self.skip_as::<false, false>(true)?;
+                    self.term()?;
+                    self.field_made(f::ARGUMENT);
                 }
             }
             _ => {
@@ -2221,7 +2073,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2247,18 +2098,11 @@ impl<L: Layout> P<'_, L> {
             0 => {
                 self.term()?;
                 self.field_made(f::ARGUMENT);
-                loop {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.tk_as::<false, false>(true, k::COMMA, 0)?;
-                            self.drop_made()?;
-                            self.term()?;
-                            self.field_made(f::ARGUMENT);
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                while self.word() == w::COMMA_12 {
+                    self.tk_as::<false, false>(true, k::COMMA, 0)?;
+                    self.drop_made()?;
+                    self.term()?;
+                    self.field_made(f::ARGUMENT);
                 }
             }
             _ => {
@@ -2267,7 +2111,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2277,37 +2120,24 @@ impl<L: Layout> P<'_, L> {
         self.flags = self.flags & !FLAG_NO_NAMED;
         self.conjunction()?;
         self.flags = flags;
-        match self.word() {
-            w::SEMI_14 => {
-                self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
-                self.word_skip_as::<false, false>(w::SEMI_14)?;
+        if self.word() == w::SEMI_14 {
+            self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
+            self.word_skip_as::<false, false>(w::SEMI_14)?;
+            let flags = self.flags;
+            self.flags = self.flags & !FLAG_NO_NAMED;
+            self.conjunction()?;
+            self.flags = flags;
+            self.field_made(f::ALTERNATIVE);
+            while self.word() == w::SEMI_14 {
+                self.skip_as::<false, false>(true)?;
                 let flags = self.flags;
                 self.flags = self.flags & !FLAG_NO_NAMED;
                 self.conjunction()?;
                 self.flags = flags;
                 self.field_made(f::ALTERNATIVE);
-                loop {
-                    match self.word() {
-                        w::SEMI_14 => {
-                            self.skip_as::<false, false>(true)?;
-                            let flags = self.flags;
-                            self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.conjunction()?;
-                            self.flags = flags;
-                            self.field_made(f::ALTERNATIVE);
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-                self.close()?;
             }
-            _ => {
-
-            }
+            self.close()?;
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2322,26 +2152,18 @@ impl<L: Layout> P<'_, L> {
         self.word = word;
         self.flags = flags;
         self.field_made(f::LITERAL);
-        loop {
-            match self.word() {
-                w::COMMA_12 => {
-                    self.skip_as::<false, false>(true)?;
-                    let flags = self.flags;
-                    self.flags = self.flags & !FLAG_NEGATING;
-                    let word = self.word;
-                    self.literal()?;
-                    self.word = word;
-                    self.flags = flags;
-                    self.field_made(f::LITERAL);
-                }
-                _ => {
-                    break;
-                }
-            }
+        while self.word() == w::COMMA_12 {
+            self.skip_as::<false, false>(true)?;
+            let flags = self.flags;
+            self.flags = self.flags & !FLAG_NEGATING;
+            let word = self.word;
+            self.literal()?;
+            self.word = word;
+            self.flags = flags;
+            self.field_made(f::LITERAL);
         }
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2355,7 +2177,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2365,37 +2186,24 @@ impl<L: Layout> P<'_, L> {
         self.flags = self.flags & !FLAG_NO_NAMED;
         self.group_conjunction()?;
         self.flags = flags;
-        match self.word() {
-            w::SEMI_14 => {
-                self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
-                self.word_skip_as::<false, false>(w::SEMI_14)?;
+        if self.word() == w::SEMI_14 {
+            self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
+            self.word_skip_as::<false, false>(w::SEMI_14)?;
+            let flags = self.flags;
+            self.flags = self.flags & !FLAG_NO_NAMED;
+            self.conjunction()?;
+            self.flags = flags;
+            self.field_made(f::ALTERNATIVE);
+            while self.word() == w::SEMI_14 {
+                self.skip_as::<false, false>(true)?;
                 let flags = self.flags;
                 self.flags = self.flags & !FLAG_NO_NAMED;
                 self.conjunction()?;
                 self.flags = flags;
                 self.field_made(f::ALTERNATIVE);
-                loop {
-                    match self.word() {
-                        w::SEMI_14 => {
-                            self.skip_as::<false, false>(true)?;
-                            let flags = self.flags;
-                            self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.conjunction()?;
-                            self.flags = flags;
-                            self.field_made(f::ALTERNATIVE);
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-                self.close()?;
             }
-            _ => {
-
-            }
+            self.close()?;
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2411,27 +2219,19 @@ impl<L: Layout> P<'_, L> {
         self.word = word;
         self.flags = flags;
         self.field_made(f::LITERAL);
-        loop {
-            match self.word() {
-                w::COMMA_12 => {
-                    self.tk_as::<false, false>(true, k::COMMA, 0)?;
-                    self.drop_made()?;
-                    let flags = self.flags;
-                    self.flags = self.flags & !FLAG_NEGATING;
-                    let word = self.word;
-                    self.literal()?;
-                    self.word = word;
-                    self.flags = flags;
-                    self.field_made(f::LITERAL);
-                }
-                _ => {
-                    break;
-                }
-            }
+        while self.word() == w::COMMA_12 {
+            self.tk_as::<false, false>(true, k::COMMA, 0)?;
+            self.drop_made()?;
+            let flags = self.flags;
+            self.flags = self.flags & !FLAG_NEGATING;
+            let word = self.word;
+            self.literal()?;
+            self.word = word;
+            self.flags = flags;
+            self.field_made(f::LITERAL);
         }
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2656,7 +2456,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2674,7 +2473,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2730,7 +2528,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2744,35 +2541,21 @@ impl<L: Layout> P<'_, L> {
                 self.primary()?;
                 self.field_made(f::RIGHT);
                 self.close()?;
-                loop {
-                    match self.word() {
-                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.multiplicative()?;
-                            self.field_made(f::OPERATOR);
-                            self.primary()?;
-                            self.field_made(f::RIGHT);
-                            self.close()?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                while matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30) {
+                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+                    self.multiplicative()?;
+                    self.field_made(f::OPERATOR);
+                    self.primary()?;
+                    self.field_made(f::RIGHT);
+                    self.close()?;
                 }
-                loop {
-                    match self.word() {
-                        w::PLUS_28 | w::MINUS_27 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.additive()?;
-                            self.field_made(f::OPERATOR);
-                            self.product()?;
-                            self.field_made(f::RIGHT);
-                            self.close()?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                while matches!(self.word(), w::PLUS_28 | w::MINUS_27) {
+                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+                    self.additive()?;
+                    self.field_made(f::OPERATOR);
+                    self.product()?;
+                    self.field_made(f::RIGHT);
+                    self.close()?;
                 }
             }
             w::PLUS_28 | w::MINUS_27 => {
@@ -2782,27 +2565,19 @@ impl<L: Layout> P<'_, L> {
                 self.product()?;
                 self.field_made(f::RIGHT);
                 self.close()?;
-                loop {
-                    match self.word() {
-                        w::PLUS_28 | w::MINUS_27 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.additive()?;
-                            self.field_made(f::OPERATOR);
-                            self.product()?;
-                            self.field_made(f::RIGHT);
-                            self.close()?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+                while matches!(self.word(), w::PLUS_28 | w::MINUS_27) {
+                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+                    self.additive()?;
+                    self.field_made(f::OPERATOR);
+                    self.product()?;
+                    self.field_made(f::RIGHT);
+                    self.close()?;
                 }
             }
             _ => {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2820,7 +2595,6 @@ impl<L: Layout> P<'_, L> {
         self.field_made(f::OPERAND);
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -2832,7 +2606,6 @@ impl<L: Layout> P<'_, L> {
         self.term()?;
         self.field_made(f::RIGHT);
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -2848,43 +2621,27 @@ impl<L: Layout> P<'_, L> {
         } else {
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
     /// `more`.
     fn more(&mut self) -> R {
-        loop {
-            match self.word() {
-                w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
-                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                    self.multiplicative()?;
-                    self.field_made(f::OPERATOR);
-                    self.primary()?;
-                    self.field_made(f::RIGHT);
-                    self.close()?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30) {
+            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+            self.multiplicative()?;
+            self.field_made(f::OPERATOR);
+            self.primary()?;
+            self.field_made(f::RIGHT);
+            self.close()?;
         }
-        loop {
-            match self.word() {
-                w::PLUS_28 | w::MINUS_27 => {
-                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                    self.additive()?;
-                    self.field_made(f::OPERATOR);
-                    self.product()?;
-                    self.field_made(f::RIGHT);
-                    self.close()?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while matches!(self.word(), w::PLUS_28 | w::MINUS_27) {
+            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+            self.additive()?;
+            self.field_made(f::OPERATOR);
+            self.product()?;
+            self.field_made(f::RIGHT);
+            self.close()?;
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2913,7 +2670,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2921,45 +2677,29 @@ impl<L: Layout> P<'_, L> {
     fn term(&mut self) -> R {
         self.deeper()?;
         self.product()?;
-        loop {
-            match self.word() {
-                w::PLUS_28 | w::MINUS_27 => {
-                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                    self.additive()?;
-                    self.field_made(f::OPERATOR);
-                    self.product()?;
-                    self.field_made(f::RIGHT);
-                    self.close()?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while matches!(self.word(), w::PLUS_28 | w::MINUS_27) {
+            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+            self.additive()?;
+            self.field_made(f::OPERATOR);
+            self.product()?;
+            self.field_made(f::RIGHT);
+            self.close()?;
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
     /// `product`.
     fn product(&mut self) -> R {
         self.primary()?;
-        loop {
-            match self.word() {
-                w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
-                    self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                    self.multiplicative()?;
-                    self.field_made(f::OPERATOR);
-                    self.primary()?;
-                    self.field_made(f::RIGHT);
-                    self.close()?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30) {
+            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+            self.multiplicative()?;
+            self.field_made(f::OPERATOR);
+            self.primary()?;
+            self.field_made(f::RIGHT);
+            self.close()?;
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2976,7 +2716,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -2996,7 +2735,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -3030,7 +2768,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -3048,7 +2785,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -3134,16 +2870,11 @@ impl<L: Layout> P<'_, L> {
                             self.agg_argument_list()?;
                             self.field_made(f::ARGUMENTS);
                             self.close()?;
-                            match self.word() {
-                                w::COLON_15 => {
-                                    self.wrap(k::AGGREGATE, 0)?;
-                                    self.reread_aggregate_value()?;
-                                    self.agg_body()?;
-                                    self.close()?;
-                                }
-                                _ => {
-
-                                }
+                            if self.word() == w::COLON_15 {
+                                self.wrap(k::AGGREGATE, 0)?;
+                                self.reread_aggregate_value()?;
+                                self.agg_body()?;
+                                self.close()?;
                             }
                         }
                         _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -3192,7 +2923,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -3239,7 +2969,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -3251,7 +2980,6 @@ impl<L: Layout> P<'_, L> {
         self.field_made(f::EXPRESSION);
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -3263,7 +2991,6 @@ impl<L: Layout> P<'_, L> {
         self.argument_list()?;
         self.field_made(f::ARGUMENTS);
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -3568,7 +3295,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -3597,7 +3323,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -3607,7 +3332,6 @@ impl<L: Layout> P<'_, L> {
         self.drop_made()?;
         self.agg_body()?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -3617,7 +3341,6 @@ impl<L: Layout> P<'_, L> {
         self.retype_moved(self.word);
         self.aggregated()?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -3654,20 +3377,13 @@ impl<L: Layout> P<'_, L> {
                         self.term()?;
                         self.flags = flags;
                         self.field_made(f::KEY);
-                        loop {
-                            match self.word() {
-                                w::COMMA_12 => {
-                                    self.skip_as::<false, false>(true)?;
-                                    let flags = self.flags;
-                                    self.flags = self.flags & !FLAG_NO_NAMED;
-                                    self.term()?;
-                                    self.flags = flags;
-                                    self.field_made(f::KEY);
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
+                        while self.word() == w::COMMA_12 {
+                            self.skip_as::<false, false>(true)?;
+                            let flags = self.flags;
+                            self.flags = self.flags & !FLAG_NO_NAMED;
+                            self.term()?;
+                            self.flags = flags;
+                            self.field_made(f::KEY);
                         }
                         self.word_leaf_as::<false, false>(w::RPAREN_11, k::RPAREN)?;
                         self.keyed_body()?;
@@ -3692,23 +3408,16 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
     /// `agg_tail`.
     fn agg_tail(&mut self) -> R {
-        match self.word() {
-            w::SEP_46 => {
-                self.tk_as::<false, false>(true, k::SEP, 0)?;
-                self.tk_as::<false, false>(self.at_string(), k::STRING, f::SEPARATOR)?;
-            }
-            _ => {
-
-            }
+        if self.word() == w::SEP_46 {
+            self.tk_as::<false, false>(true, k::SEP, 0)?;
+            self.tk_as::<false, false>(self.at_string(), k::STRING, f::SEPARATOR)?;
         }
         self.agg_body()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -3731,7 +3440,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -3742,7 +3450,6 @@ impl<L: Layout> P<'_, L> {
         self.body()?;
         self.field_made(f::BODY);
         self.word_skip_as::<false, false>(w::RBRACE_21)?;
-        self.marked = false;
         Ok(())
     }
 
@@ -3799,17 +3506,12 @@ impl<L: Layout> P<'_, L> {
             }
             1 => {
                 self.tk_as::<false, false>(self.at_identifier(), k::VARIABLE, 0)?;
-                match self.word() {
-                    w::LPAREN_10 => {
-                        self.wrap(k::CALL, f::FUNCTION)?;
-                        self.retype_moved(k::IDENTIFIER);
-                        self.argument_list()?;
-                        self.field_made(f::ARGUMENTS);
-                        self.close()?;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::LPAREN_10 {
+                    self.wrap(k::CALL, f::FUNCTION)?;
+                    self.retype_moved(k::IDENTIFIER);
+                    self.argument_list()?;
+                    self.field_made(f::ARGUMENTS);
+                    self.close()?;
                 }
                 self.more()?;
             }
@@ -3826,7 +3528,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -3851,7 +3552,6 @@ impl<L: Layout> P<'_, L> {
         }
         self.more()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -3905,16 +3605,11 @@ impl<L: Layout> P<'_, L> {
                     self.agg_argument_list()?;
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
-                    match self.word() {
-                        w::COLON_15 => {
-                            self.wrap(k::AGGREGATE, 0)?;
-                            self.reread_aggregate_value()?;
-                            self.agg_body()?;
-                            self.close()?;
-                        }
-                        _ => {
-
-                        }
+                    if self.word() == w::COLON_15 {
+                        self.wrap(k::AGGREGATE, 0)?;
+                        self.reread_aggregate_value()?;
+                        self.agg_body()?;
+                        self.close()?;
                     }
                 }
                 _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -3927,7 +3622,6 @@ impl<L: Layout> P<'_, L> {
         }
         self.more()?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -4034,21 +3728,18 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
     /// `angle_close`.
     fn angle_close(&mut self) -> R {
         self.word_leaf_as::<false, false>(w::GT_18, k::GT)?;
-        self.marked = false;
         Ok(())
     }
 
     /// `paren_close`.
     fn paren_close(&mut self) -> R {
         self.word_leaf_as::<false, false>(w::RPAREN_11, k::RPAREN)?;
-        self.marked = false;
         Ok(())
     }
 
@@ -4077,7 +3768,6 @@ impl<L: Layout> P<'_, L> {
         }
         self.merge_as::<false, false>(self.word() == w::RBRACE_21, k::RAW_TEXT)?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -4106,7 +3796,6 @@ impl<L: Layout> P<'_, L> {
         }
         self.merge_as::<false, false>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
         self.depth -= 1;
-        self.marked = false;
         Ok(())
     }
 
@@ -4132,7 +3821,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_float_at() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_float_at()
     }
 
@@ -4158,7 +3846,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_line() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_line()
     }
 
@@ -4184,7 +3871,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_fix_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_fix_on()
     }
 
@@ -4210,7 +3896,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_suppress_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_suppress_on()
     }
 
@@ -4236,7 +3921,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_options_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_options_on()
     }
 
@@ -4262,7 +3946,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_over_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_over_on()
     }
 
@@ -4288,7 +3971,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_policy_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_policy_on()
     }
 
@@ -4314,7 +3996,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_one_name() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_one_name()
     }
 
@@ -4340,7 +4021,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_empty_parens() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_empty_parens()
     }
 
@@ -4366,7 +4046,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_at_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_at_on()
     }
 
@@ -4392,7 +4071,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_no_value() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_no_value()
     }
 
@@ -4418,7 +4096,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_newline() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_newline()
     }
 
@@ -4444,7 +4121,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_end_on() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_end_on()
     }
 
@@ -4470,7 +4146,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_json_bad() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_json_bad()
     }
 
@@ -4496,7 +4171,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_io_bare() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_io_bare()
     }
 
@@ -4522,7 +4196,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_comma_rule() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_comma_rule()
     }
 
@@ -4548,7 +4221,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_bare_functor() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_bare_functor()
     }
 
@@ -4980,7 +4652,6 @@ struct Mark {
     last_end: u32,
     flags: u32,
     depth: u32,
-    marked: bool,
     word: u16,
     asks: u64,
     refusing: u32,
@@ -4994,7 +4665,7 @@ const TERMINATORS: &[u8] = &[0x0a, 0x0d];
 impl<L: Layout> P<'_, L> {
     /// The statement's mark (the lean parser's `mark`).
     fn mark(&self) -> Mark {
-        Mark { i: self.i, pend: self.pend, xi: self.xi, next_x: self.next_x, w: self.w.len(), levels: self.levels.len(), top: self.top, last_end: self.last_end, flags: self.flags, depth: self.depth, marked: self.marked, word: self.word, asks: self.asks, refusing: self.refusing, strings: self.strings }
+        Mark { i: self.i, pend: self.pend, xi: self.xi, next_x: self.next_x, w: self.w.len(), levels: self.levels.len(), top: self.top, last_end: self.last_end, flags: self.flags, depth: self.depth, word: self.word, asks: self.asks, refusing: self.refusing, strings: self.strings }
     }
 
     /// Back at mark `m` (the lean parser's `reset`): its token and comments, the tape and the levels as they were.
@@ -5009,7 +4680,6 @@ impl<L: Layout> P<'_, L> {
         self.last_end = m.last_end;
         self.flags = m.flags;
         self.depth = m.depth;
-        self.marked = m.marked;
         self.word = m.word;
         self.asks = m.asks;
         self.refusing = m.refusing;

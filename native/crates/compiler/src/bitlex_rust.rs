@@ -1827,6 +1827,14 @@ impl<'a> G<'a> {
         }
         // The leaves' fields, then each take's tests (`takes`), before the helpers no code calls are dropped.
         out = one_arm_a_take(&takes(&leaf_fields(&out), self.mark_words.borrow().as_ref()));
+        // The calls form in the lean parser's forms (decision 0668 step 1): a decision of one arm an `if`, a loop of one a
+        // `while`; and no `marked` where no decision reads it.
+        if !stack {
+            out = ifs_and_whiles(&out);
+            if !out.contains("!self.marked") {
+                out = no_marked(&out);
+            }
+        }
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
@@ -1985,6 +1993,107 @@ fn one_arm_a_take(code: &str) -> String {
         out.pop();
     }
     out
+}
+
+/// A `match self.word()` arm's pattern as a condition: `self.word() == w::A`, `matches!(self.word(), w::A | w::B)`, a
+/// guard joined by `&&`; a kind's guard (`_ if c`) its condition.
+fn pattern_cond(pat: &str) -> String {
+    if let Some(c) = pat.strip_prefix("_ if ") {
+        return c.to_owned();
+    }
+    let (words, guard) = match pat.split_once(" if ") {
+        Some((w, g)) => (w, Some(g)),
+        None => (pat, None),
+    };
+    let test = if words.contains(" | ") { format!("matches!(self.word(), {words})") } else { format!("self.word() == {words}") };
+    match guard {
+        Some(g) => format!("{test} && {g}"),
+        None => test,
+    }
+}
+
+/// `lines[from..to]` four spaces a level to the left `levels` times (an empty line stays empty).
+fn dedented(lines: &[&str], levels: usize) -> String {
+    let cut = " ".repeat(4 * levels);
+    lines.iter().map(|l| format!("{}\n", l.strip_prefix(cut.as_str()).unwrap_or(l.trim_start()))).collect()
+}
+
+/// `code` with each decision of one arm in the lean parser's form (decision 0668 step 1): a `match self.word()` of one
+/// arm and an empty `_` is an `if`, as lean's `if self.is_p(X)`; a `loop` around one whose `_` breaks is a `while`.
+fn ifs_and_whiles(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    // The one arm of the `match self.word()` at line `m`: its pattern, its body's lines, and the line of its `_`'s body
+    // and the line after the match. None where it has more arms.
+    let one_arm = |m: usize| -> Option<(String, usize, usize, usize)> {
+        let l = lines[m];
+        if l.trim_start() != "match self.word() {" {
+            return None;
+        }
+        let p = &l[..l.len() - l.trim_start().len()];
+        let q = format!("{p}    ");
+        let pat = lines.get(m + 1)?.strip_prefix(q.as_str())?.strip_suffix(" => {")?;
+        if pat.starts_with(' ') || pat == "_" {
+            return None;
+        }
+        let close_a = format!("{q}}}");
+        let mut j = m + 2;
+        while *lines.get(j)? != close_a {
+            j += 1;
+        }
+        // The `_`: one line of its body, then the match's end.
+        if *lines.get(j + 1)? != format!("{q}_ => {{") || *lines.get(j + 3)? != close_a || *lines.get(j + 4)? != format!("{p}}}") {
+            return None;
+        }
+        Some((pat.to_owned(), j, j + 2, j + 5))
+    };
+    while i < lines.len() {
+        let l = lines[i];
+        let p = &l[..l.len() - l.trim_start().len()];
+        // `loop { match self.word() { P => {…} _ => { break; } } }`: `while`.
+        if l.trim_start() == "loop {"
+            && let Some((pat, close, default, after)) = one_arm(i + 1)
+            && lines[default].trim() == "break;"
+            && lines.get(after) == Some(&format!("{p}}}").as_str())
+        {
+            let _ = write!(out, "{p}while {} {{\n{}{p}}}\n", pattern_cond(&pat), ifs_and_whiles(&dedented(&lines[i + 3..close], 2)));
+            i = after + 1;
+            continue;
+        }
+        // `match self.word() { P => {…} _ => {} }`: `if`.
+        if let Some((pat, close, default, after)) = one_arm(i)
+            && lines[default].trim().is_empty()
+        {
+            let _ = write!(out, "{p}if {} {{\n{}{p}}}\n", pattern_cond(&pat), ifs_and_whiles(&dedented(&lines[i + 2..close], 1)));
+            i = after;
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
+        i += 1;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// `code` with no `marked` (decision 0668 step 1): no decision reads it (`!self.marked`, `after_mark`), so its writes,
+/// its field and its place in a statement's mark go.
+fn no_marked(code: &str) -> String {
+    let gone = ["self.marked = false;", "self.marked = true;", "self.marked = m.marked;", "marked: bool,", "/// A mark taken last, no token or rule's end since (`G::after_mark`)."];
+    let mut out = String::with_capacity(code.len());
+    for l in code.lines() {
+        if !gone.contains(&l.trim()) {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out.replace("marked: false, ", "").replace("marked: self.marked, ", "")
 }
 
 /// The arms of the `match self.word()` at line `i`: each its pattern and its code (its lines, each ended, the nested

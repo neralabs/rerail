@@ -1253,24 +1253,14 @@ impl<L: Layout> P<'_, L> {
         }
         if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
         } else {
-            match self.word() {
-                w::PACKAGE_7 => {
-                    self.package_header()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::PACKAGE_7 {
+                self.package_header()?;
             }
         }
         if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
         } else {
-            match self.word() {
-                w::IMPORT_8 => {
-                    self.import_list()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::IMPORT_8 {
+                self.import_list()?;
             }
         }
         loop {
@@ -1589,13 +1579,8 @@ impl<L: Layout> P<'_, L> {
             self.word_skip_as::<true, false>(w::DOT_32)?;
             self.word_leaf_as::<true, false>(w::STAR_9, k::WILDCARD_IMPORT)?;
         } else {
-            match self.word() {
-                w::AS_10 => {
-                    self.import_alias()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::AS_10 {
+                self.import_alias()?;
             }
         }
         self.ask_semi(false)?;
@@ -1740,13 +1725,8 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(true)?;
                 if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 } else {
-                    match self.word() {
-                        w::EQ_12 | w::PLUS_EQ_64 | w::MINUS_EQ_65 | w::STAR_EQ_66 | w::SLASH_EQ_67 | w::PERCENT_EQ_68 => {
-                            self.assign_tail()?;
-                        }
-                        _ => {
-
-                        }
+                    if matches!(self.word(), w::EQ_12 | w::PLUS_EQ_64 | w::MINUS_EQ_65 | w::STAR_EQ_66 | w::SLASH_EQ_67 | w::PERCENT_EQ_68) {
+                        self.assign_tail()?;
                     }
                 }
             }
@@ -2063,13 +2043,8 @@ impl<L: Layout> P<'_, L> {
             self.modifiers()?;
         } else if self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
         } else {
-            match self.word() {
-                w::AT_2 => {
-                    self.modifiers()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::AT_2 {
+                self.modifiers()?;
             }
         }
         self.declaration_rest()?;
@@ -2148,13 +2123,8 @@ impl<L: Layout> P<'_, L> {
         if self.m_generic() {
             self.type_parameters()?;
         } else {
-            match self.word() {
-                w::LT_26 => {
-                    self.type_parameters()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LT_26 {
+                self.type_parameters()?;
             }
         }
         self.word_skip_as::<true, false>(w::EQ_12)?;
@@ -2173,13 +2143,8 @@ impl<L: Layout> P<'_, L> {
             self.type_parameters()?;
         } else if self.m_recv() {
         } else {
-            match self.word() {
-                w::LT_26 => {
-                    self.type_parameters()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LT_26 {
+                self.type_parameters()?;
             }
         }
         if self.m_recv() {
@@ -2191,41 +2156,26 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.tk_as::<true, false>(true, k::COLON, 0)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x8;
-                    self.r_type()?;
-                    self.asks = asks;
-                }
-                _ => {
-
-                }
+            if self.word() == w::COLON_4 {
+                self.tk_as::<true, false>(true, k::COLON, 0)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x8;
+                self.r_type()?;
+                self.asks = asks;
             }
         }
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::WHERE_28 => {
-                    self.type_constraints()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::WHERE_28 {
+                self.type_constraints()?;
             }
         }
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LBRACE_17 | w::EQ_12 => {
-                    self.function_body()?;
-                }
-                _ => {
-
-                }
+            if matches!(self.word(), w::LBRACE_17 | w::EQ_12) {
+                self.function_body()?;
             }
         }
         self.marked = false;
@@ -2239,13 +2189,8 @@ impl<L: Layout> P<'_, L> {
             self.type_parameters()?;
         } else if self.m_recv() {
         } else {
-            match self.word() {
-                w::LT_26 => {
-                    self.type_parameters()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LT_26 {
+                self.type_parameters()?;
             }
         }
         if self.m_recv() {
@@ -2269,13 +2214,8 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::WHERE_28 => {
-                    self.type_constraints()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::WHERE_28 {
+                self.type_constraints()?;
             }
         }
         self.ask_semi(false)?;
@@ -2355,13 +2295,8 @@ impl<L: Layout> P<'_, L> {
             } else if self.m_generic() {
                 self.type_parameters()?;
             } else {
-                match self.word() {
-                    w::LT_26 => {
-                        self.type_parameters()?;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::LT_26 {
+                    self.type_parameters()?;
                 }
             }
             self.ask_semi(false)?;
@@ -2375,54 +2310,39 @@ impl<L: Layout> P<'_, L> {
             } else if self.m_decl_mod() {
                 self.primary_constructor()?;
             } else {
-                match self.word() {
-                    w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19 => {
-                        self.primary_constructor()?;
-                    }
-                    _ => {
-
-                    }
+                if matches!(self.word(), w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19) {
+                    self.primary_constructor()?;
                 }
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else {
-                match self.word() {
-                    w::COLON_4 => {
-                        self.skip_as::<true, false>(true)?;
-                        self.delegation_specifier()?;
-                        loop {
-                            self.ask_semi(false)?;
-                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                break;
-                            } else {
-                                match self.word() {
-                                    w::COMMA_20 => {
-                                        self.skip_as::<true, false>(true)?;
-                                        self.delegation_specifier()?;
-                                    }
-                                    _ => {
-                                        break;
-                                    }
+                if self.word() == w::COLON_4 {
+                    self.skip_as::<true, false>(true)?;
+                    self.delegation_specifier()?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                            break;
+                        } else {
+                            match self.word() {
+                                w::COMMA_20 => {
+                                    self.skip_as::<true, false>(true)?;
+                                    self.delegation_specifier()?;
+                                }
+                                _ => {
+                                    break;
                                 }
                             }
                         }
                     }
-                    _ => {
-
-                    }
                 }
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else {
-                match self.word() {
-                    w::LBRACE_17 => {
-                        self.enum_class_body()?;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::LBRACE_17 {
+                    self.enum_class_body()?;
                 }
             }
         } else if self.m_fun_iface() {
@@ -2435,13 +2355,8 @@ impl<L: Layout> P<'_, L> {
             } else if self.m_generic() {
                 self.type_parameters()?;
             } else {
-                match self.word() {
-                    w::LT_26 => {
-                        self.type_parameters()?;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::LT_26 {
+                    self.type_parameters()?;
                 }
             }
             self.ask_semi(false)?;
@@ -2455,54 +2370,39 @@ impl<L: Layout> P<'_, L> {
             } else if self.m_decl_mod() {
                 self.primary_constructor()?;
             } else {
-                match self.word() {
-                    w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19 => {
-                        self.primary_constructor()?;
-                    }
-                    _ => {
-
-                    }
+                if matches!(self.word(), w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19) {
+                    self.primary_constructor()?;
                 }
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else {
-                match self.word() {
-                    w::COLON_4 => {
-                        self.skip_as::<true, false>(true)?;
-                        self.delegation_specifier()?;
-                        loop {
-                            self.ask_semi(false)?;
-                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                break;
-                            } else {
-                                match self.word() {
-                                    w::COMMA_20 => {
-                                        self.skip_as::<true, false>(true)?;
-                                        self.delegation_specifier()?;
-                                    }
-                                    _ => {
-                                        break;
-                                    }
+                if self.word() == w::COLON_4 {
+                    self.skip_as::<true, false>(true)?;
+                    self.delegation_specifier()?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                            break;
+                        } else {
+                            match self.word() {
+                                w::COMMA_20 => {
+                                    self.skip_as::<true, false>(true)?;
+                                    self.delegation_specifier()?;
+                                }
+                                _ => {
+                                    break;
                                 }
                             }
                         }
                     }
-                    _ => {
-
-                    }
                 }
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else {
-                match self.word() {
-                    w::LBRACE_17 => {
-                        self.class_body()?;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::LBRACE_17 {
+                    self.class_body()?;
                 }
             }
         } else {
@@ -2525,13 +2425,8 @@ impl<L: Layout> P<'_, L> {
                     } else if self.m_generic() {
                         self.type_parameters()?;
                     } else {
-                        match self.word() {
-                            w::LT_26 => {
-                                self.type_parameters()?;
-                            }
-                            _ => {
-
-                            }
+                        if self.word() == w::LT_26 {
+                            self.type_parameters()?;
                         }
                     }
                     self.ask_semi(false)?;
@@ -2545,66 +2440,46 @@ impl<L: Layout> P<'_, L> {
                     } else if self.m_decl_mod() {
                         self.primary_constructor()?;
                     } else {
-                        match self.word() {
-                            w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19 => {
-                                self.primary_constructor()?;
-                            }
-                            _ => {
-
-                            }
+                        if matches!(self.word(), w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19) {
+                            self.primary_constructor()?;
                         }
                     }
                     self.ask_semi(false)?;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                     } else {
-                        match self.word() {
-                            w::COLON_4 => {
-                                self.skip_as::<true, false>(true)?;
-                                self.delegation_specifier()?;
-                                loop {
-                                    self.ask_semi(false)?;
-                                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                        break;
-                                    } else {
-                                        match self.word() {
-                                            w::COMMA_20 => {
-                                                self.skip_as::<true, false>(true)?;
-                                                self.delegation_specifier()?;
-                                            }
-                                            _ => {
-                                                break;
-                                            }
+                        if self.word() == w::COLON_4 {
+                            self.skip_as::<true, false>(true)?;
+                            self.delegation_specifier()?;
+                            loop {
+                                self.ask_semi(false)?;
+                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                                    break;
+                                } else {
+                                    match self.word() {
+                                        w::COMMA_20 => {
+                                            self.skip_as::<true, false>(true)?;
+                                            self.delegation_specifier()?;
+                                        }
+                                        _ => {
+                                            break;
                                         }
                                     }
                                 }
                             }
-                            _ => {
-
-                            }
                         }
                     }
                     self.ask_semi(false)?;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                     } else {
-                        match self.word() {
-                            w::WHERE_28 => {
-                                self.type_constraints()?;
-                            }
-                            _ => {
-
-                            }
+                        if self.word() == w::WHERE_28 {
+                            self.type_constraints()?;
                         }
                     }
                     self.ask_semi(false)?;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                     } else {
-                        match self.word() {
-                            w::LBRACE_17 => {
-                                self.class_body()?;
-                            }
-                            _ => {
-
-                            }
+                        if self.word() == w::LBRACE_17 {
+                            self.class_body()?;
                         }
                     }
                 }
@@ -2690,90 +2565,85 @@ impl<L: Layout> P<'_, L> {
                     self.mark_semi_close()?;
                 } else {
                 }
-                match self.word() {
-                    w::SEMI_33 => {
-                        self.skip_as::<true, false>(true)?;
-                        self.ask_semi(false)?;
-                        if self.m_semi() {
-                            self.mark_semi()?;
-                        } else if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
-                        } else {
-                        }
-                        let arm: usize;
-                        if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
-                            arm = 0;
-                        } else {
-                            match self.word() {
-                                w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
-                                    arm = 0;
-                                }
-                                _ => {
-                                    arm = usize::MAX;
-                                }
-                            }
-                        }
-                        match arm {
-                            0 => {
-                                let asks = self.asks;
-                                self.asks = asks & 0x0 | 0x8;
-                                self.class_member()?;
-                                self.asks = asks;
-                                loop {
-                                    self.ask_semi(false)?;
-                                    let arm: usize;
-                                    if self.m_semi() {
-                                        arm = 0;
-                                    } else if self.m_semi_close() {
-                                        arm = 1;
-                                    } else {
-                                        match self.word() {
-                                            w::SEMI_33 => {
-                                                arm = 0;
-                                            }
-                                            _ => {
-                                                arm = usize::MAX;
-                                            }
-                                        }
-                                    }
-                                    match arm {
-                                        0 => {
-                                            self.ask_semi(false)?;
-                                            if self.m_semi() {
-                                                self.mark_semi()?;
-                                            } else {
-                                                match self.word() {
-                                                    w::SEMI_33 => {
-                                                        self.skip_as::<true, false>(true)?;
-                                                    }
-                                                    _ => {
-                                                        return self.refuse();
-                                                    }
-                                                }
-                                            }
-                                            let asks = self.asks;
-                                            self.asks = asks & 0x0 | 0x8;
-                                            self.class_member()?;
-                                            self.asks = asks;
-                                        }
-                                        1 => {
-                                            break;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                                if self.m_semi_close() {
-                                    self.mark_semi_close()?;
-                                } else {
-                                }
+                if self.word() == w::SEMI_33 {
+                    self.skip_as::<true, false>(true)?;
+                    self.ask_semi(false)?;
+                    if self.m_semi() {
+                        self.mark_semi()?;
+                    } else if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                    } else {
+                    }
+                    let arm: usize;
+                    if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                        arm = 0;
+                    } else {
+                        match self.word() {
+                            w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
+                                arm = 0;
                             }
                             _ => {
+                                arm = usize::MAX;
                             }
                         }
                     }
-                    _ => {
-
+                    match arm {
+                        0 => {
+                            let asks = self.asks;
+                            self.asks = asks & 0x0 | 0x8;
+                            self.class_member()?;
+                            self.asks = asks;
+                            loop {
+                                self.ask_semi(false)?;
+                                let arm: usize;
+                                if self.m_semi() {
+                                    arm = 0;
+                                } else if self.m_semi_close() {
+                                    arm = 1;
+                                } else {
+                                    match self.word() {
+                                        w::SEMI_33 => {
+                                            arm = 0;
+                                        }
+                                        _ => {
+                                            arm = usize::MAX;
+                                        }
+                                    }
+                                }
+                                match arm {
+                                    0 => {
+                                        self.ask_semi(false)?;
+                                        if self.m_semi() {
+                                            self.mark_semi()?;
+                                        } else {
+                                            match self.word() {
+                                                w::SEMI_33 => {
+                                                    self.skip_as::<true, false>(true)?;
+                                                }
+                                                _ => {
+                                                    return self.refuse();
+                                                }
+                                            }
+                                        }
+                                        let asks = self.asks;
+                                        self.asks = asks & 0x0 | 0x8;
+                                        self.class_member()?;
+                                        self.asks = asks;
+                                    }
+                                    1 => {
+                                        break;
+                                    }
+                                    _ => {
+                                        break;
+                                    }
+                                }
+                            }
+                            if self.m_semi_close() {
+                                self.mark_semi_close()?;
+                            } else {
+                            }
+                        }
+                        _ => {
+                        }
                     }
                 }
                 self.word_skip_as::<true, false>(w::RBRACE_18)?;
@@ -2793,24 +2663,14 @@ impl<L: Layout> P<'_, L> {
         self.name()?;
         if !self.marked && self.m_semi_close() || self.m_trail() {
         } else {
-            match self.word() {
-                w::LPAREN_19 => {
-                    self.value_arguments()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LPAREN_19 {
+                self.value_arguments()?;
             }
         }
         if !self.marked && self.m_semi_close() || self.m_trail() {
         } else {
-            match self.word() {
-                w::LBRACE_17 => {
-                    self.class_body()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LBRACE_17 {
+                self.class_body()?;
             }
         }
         self.close()?;
@@ -2825,42 +2685,32 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.delegation_specifier()?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::COMMA_20 => {
-                                    self.skip_as::<true, false>(true)?;
-                                    self.delegation_specifier()?;
-                                }
-                                _ => {
-                                    break;
-                                }
+            if self.word() == w::COLON_4 {
+                self.skip_as::<true, false>(true)?;
+                self.delegation_specifier()?;
+                loop {
+                    self.ask_semi(false)?;
+                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                        break;
+                    } else {
+                        match self.word() {
+                            w::COMMA_20 => {
+                                self.skip_as::<true, false>(true)?;
+                                self.delegation_specifier()?;
+                            }
+                            _ => {
+                                break;
                             }
                         }
                     }
-                }
-                _ => {
-
                 }
             }
         }
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LBRACE_17 => {
-                    self.class_body()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LBRACE_17 {
+                self.class_body()?;
             }
         }
         self.marked = false;
@@ -2893,17 +2743,12 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.tk_as::<true, false>(true, k::COLON, 0)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x8;
-                    self.r_type()?;
-                    self.asks = asks;
-                }
-                _ => {
-
-                }
+            if self.word() == w::COLON_4 {
+                self.tk_as::<true, false>(true, k::COLON, 0)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x8;
+                self.r_type()?;
+                self.asks = asks;
             }
         }
         self.close()?;
@@ -2916,16 +2761,9 @@ impl<L: Layout> P<'_, L> {
         self.open(k::MULTI_VARIABLE_DECLARATION);
         self.word_leaf_as::<true, false>(w::LPAREN_19, k::LPAREN)?;
         self.variable_declaration()?;
-        loop {
-            match self.word() {
-                w::COMMA_20 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.variable_declaration()?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while self.word() == w::COMMA_20 {
+            self.skip_as::<true, false>(true)?;
+            self.variable_declaration()?;
         }
         self.word_skip_as::<true, false>(w::RPAREN_21)?;
         self.close()?;
@@ -2996,28 +2834,18 @@ impl<L: Layout> P<'_, L> {
 
     /// `function_value_parameter`.
     fn function_value_parameter(&mut self) -> R {
-        match self.word() {
-            w::AT_2 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105 => {
-                self.parameter_modifiers()?;
-            }
-            _ => {
-
-            }
+        if matches!(self.word(), w::AT_2 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) {
+            self.parameter_modifiers()?;
         }
         self.parameter()?;
         if self.m_trail() {
         } else {
-            match self.word() {
-                w::EQ_12 => {
-                    self.skip_as::<true, false>(true)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_expression()?;
-                    self.asks = asks;
-                }
-                _ => {
-
-                }
+            if self.word() == w::EQ_12 {
+                self.skip_as::<true, false>(true)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x0;
+                self.r_expression()?;
+                self.asks = asks;
             }
         }
         self.marked = false;
@@ -3120,13 +2948,8 @@ impl<L: Layout> P<'_, L> {
                 if self.m_decl_mod() {
                     self.modifiers()?;
                 } else {
-                    match self.word() {
-                        w::AT_2 => {
-                            self.modifiers()?;
-                        }
-                        _ => {
-
-                        }
+                    if self.word() == w::AT_2 {
+                        self.modifiers()?;
                     }
                 }
                 self.word_skip_as::<true, false>(w::CONSTRUCTOR_36)?;
@@ -3200,22 +3023,12 @@ impl<L: Layout> P<'_, L> {
         if self.m_cp_mod() {
             self.class_parameter_modifiers()?;
         } else {
-            match self.word() {
-                w::AT_2 => {
-                    self.class_parameter_modifiers()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::AT_2 {
+                self.class_parameter_modifiers()?;
             }
         }
-        match self.word() {
-            w::VAL_22 | w::VAR_23 => {
-                self.binding_pattern_kind()?;
-            }
-            _ => {
-
-            }
+        if matches!(self.word(), w::VAL_22 | w::VAR_23) {
+            self.binding_pattern_kind()?;
         }
         self.name()?;
         self.word_skip_as::<true, false>(w::COLON_4)?;
@@ -3225,17 +3038,12 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks;
         if self.m_trail() {
         } else {
-            match self.word() {
-                w::EQ_12 => {
-                    self.skip_as::<true, false>(true)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_expression()?;
-                    self.asks = asks;
-                }
-                _ => {
-
-                }
+            if self.word() == w::EQ_12 {
+                self.skip_as::<true, false>(true)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x0;
+                self.r_expression()?;
+                self.asks = asks;
             }
         }
         self.close()?;
@@ -3333,30 +3141,25 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(false)?;
                 if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 } else {
-                    match self.word() {
-                        w::QUEST_40 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_40 => {
-                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
+                    if self.word() == w::QUEST_40 {
+                        self.wrap(k::NULLABLE_TYPE, 0)?;
+                        self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                        loop {
+                            self.ask_semi(false)?;
+                            if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                                break;
+                            } else {
+                                match self.word() {
+                                    w::QUEST_40 => {
+                                        self.tk_as::<true, false>(true, k::QUEST, 0)?;
+                                    }
+                                    _ => {
+                                        break;
                                     }
                                 }
                             }
-                            self.close()?;
                         }
-                        _ => {
-
-                        }
+                        self.close()?;
                     }
                 }
             }
@@ -3369,15 +3172,10 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(false)?;
                 if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 } else {
-                    match self.word() {
-                        w::LPAREN_19 => {
-                            self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                            self.value_arguments()?;
-                            self.close()?;
-                        }
-                        _ => {
-
-                        }
+                    if self.word() == w::LPAREN_19 {
+                        self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+                        self.value_arguments()?;
+                        self.close()?;
                     }
                 }
             }
@@ -3480,13 +3278,8 @@ impl<L: Layout> P<'_, L> {
             self.modifiers()?;
         } else if self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
         } else {
-            match self.word() {
-                w::AT_2 => {
-                    self.modifiers()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::AT_2 {
+                self.modifiers()?;
             }
         }
         self.member_rest()?;
@@ -3570,27 +3363,17 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LPAREN_19 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.word_skip_as::<true, false>(w::RPAREN_21)?;
-                    match self.word() {
-                        w::COLON_4 => {
-                            self.tk_as::<true, false>(true, k::COLON, 0)?;
-                            let asks = self.asks;
-                            self.asks = asks & 0x0 | 0x0;
-                            self.r_type()?;
-                            self.asks = asks;
-                        }
-                        _ => {
-
-                        }
-                    }
-                    self.function_body()?;
+            if self.word() == w::LPAREN_19 {
+                self.skip_as::<true, false>(true)?;
+                self.word_skip_as::<true, false>(w::RPAREN_21)?;
+                if self.word() == w::COLON_4 {
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x0;
+                    self.r_type()?;
+                    self.asks = asks;
                 }
-                _ => {
-
-                }
+                self.function_body()?;
             }
         }
         self.marked = false;
@@ -3603,28 +3386,18 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LPAREN_19 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.parameter_with_optional_type()?;
-                    self.word_skip_as::<true, false>(w::RPAREN_21)?;
-                    match self.word() {
-                        w::COLON_4 => {
-                            self.tk_as::<true, false>(true, k::COLON, 0)?;
-                            let asks = self.asks;
-                            self.asks = asks & 0x0 | 0x0;
-                            self.r_type()?;
-                            self.asks = asks;
-                        }
-                        _ => {
-
-                        }
-                    }
-                    self.function_body()?;
+            if self.word() == w::LPAREN_19 {
+                self.skip_as::<true, false>(true)?;
+                self.parameter_with_optional_type()?;
+                self.word_skip_as::<true, false>(w::RPAREN_21)?;
+                if self.word() == w::COLON_4 {
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x0;
+                    self.r_type()?;
+                    self.asks = asks;
                 }
-                _ => {
-
-                }
+                self.function_body()?;
             }
         }
         self.marked = false;
@@ -3635,17 +3408,12 @@ impl<L: Layout> P<'_, L> {
     fn parameter_with_optional_type(&mut self) -> R {
         self.open(k::PARAMETER_WITH_OPTIONAL_TYPE);
         self.name()?;
-        match self.word() {
-            w::COLON_4 => {
-                self.tk_as::<true, false>(true, k::COLON, 0)?;
-                let asks = self.asks;
-                self.asks = asks & 0x0 | 0x0;
-                self.r_type()?;
-                self.asks = asks;
-            }
-            _ => {
-
-            }
+        if self.word() == w::COLON_4 {
+            self.tk_as::<true, false>(true, k::COLON, 0)?;
+            let asks = self.asks;
+            self.asks = asks & 0x0 | 0x0;
+            self.r_type()?;
+            self.asks = asks;
         }
         self.close()?;
         self.marked = false;
@@ -3674,42 +3442,32 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.delegation_specifier()?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::COMMA_20 => {
-                                    self.skip_as::<true, false>(true)?;
-                                    self.delegation_specifier()?;
-                                }
-                                _ => {
-                                    break;
-                                }
+            if self.word() == w::COLON_4 {
+                self.skip_as::<true, false>(true)?;
+                self.delegation_specifier()?;
+                loop {
+                    self.ask_semi(false)?;
+                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                        break;
+                    } else {
+                        match self.word() {
+                            w::COMMA_20 => {
+                                self.skip_as::<true, false>(true)?;
+                                self.delegation_specifier()?;
+                            }
+                            _ => {
+                                break;
                             }
                         }
                     }
-                }
-                _ => {
-
                 }
             }
         }
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LBRACE_17 => {
-                    self.class_body()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LBRACE_17 {
+                self.class_body()?;
             }
         }
         self.marked = false;
@@ -3731,14 +3489,9 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_blk() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.constructor_delegation_call()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::COLON_4 {
+                self.skip_as::<true, false>(true)?;
+                self.constructor_delegation_call()?;
             }
         }
         self.ask_semi(false)?;
@@ -3843,28 +3596,18 @@ impl<L: Layout> P<'_, L> {
     /// `type_parameter`.
     fn type_parameter(&mut self) -> R {
         self.open(k::TYPE_PARAMETER);
-        match self.word() {
-            w::REIFIED_106 | w::IN_43 | w::OUT_93 => {
-                self.type_parameter_modifiers()?;
-            }
-            _ => {
-
-            }
+        if matches!(self.word(), w::REIFIED_106 | w::IN_43 | w::OUT_93) {
+            self.type_parameter_modifiers()?;
         }
         self.type_name()?;
         if self.m_trail() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.tk_as::<true, false>(true, k::COLON, 0)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_type()?;
-                    self.asks = asks;
-                }
-                _ => {
-
-                }
+            if self.word() == w::COLON_4 {
+                self.tk_as::<true, false>(true, k::COLON, 0)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x0;
+                self.r_type()?;
+                self.asks = asks;
             }
         }
         self.close()?;
@@ -3901,18 +3644,11 @@ impl<L: Layout> P<'_, L> {
     /// `type_constraint`.
     fn type_constraint(&mut self) -> R {
         self.open(k::TYPE_CONSTRAINT);
-        loop {
-            match self.word() {
-                w::AT_2 => {
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.annotation()?;
-                    self.asks = asks;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while self.word() == w::AT_2 {
+            let asks = self.asks;
+            self.asks = asks & 0x0 | 0x0;
+            self.annotation()?;
+            self.asks = asks;
         }
         self.type_name()?;
         self.word_skip_as::<true, false>(w::COLON_4)?;
@@ -4298,15 +4034,10 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(true)?;
         if self.m_ann_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LPAREN_19 => {
-                    self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                    self.value_arguments()?;
-                    self.close()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LPAREN_19 {
+                self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+                self.value_arguments()?;
+                self.close()?;
             }
         }
         self.ask_semi(true)?;
@@ -4369,15 +4100,10 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() {
         } else {
-            match self.word() {
-                w::LPAREN_19 => {
-                    self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                    self.value_arguments()?;
-                    self.close()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LPAREN_19 {
+                self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+                self.value_arguments()?;
+                self.close()?;
             }
         }
         self.close()?;
@@ -4393,13 +4119,8 @@ impl<L: Layout> P<'_, L> {
             self.type_modifiers()?;
         } else if self.m_fn_recv() {
         } else {
-            match self.word() {
-                w::AT_2 => {
-                    self.type_modifiers()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::AT_2 {
+                self.type_modifiers()?;
             }
         }
         self.type_core()?;
@@ -4441,30 +4162,25 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 } else {
-                    match self.word() {
-                        w::QUEST_40 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_40 => {
-                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
+                    if self.word() == w::QUEST_40 {
+                        self.wrap(k::NULLABLE_TYPE, 0)?;
+                        self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                        loop {
+                            self.ask_semi(false)?;
+                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                                break;
+                            } else {
+                                match self.word() {
+                                    w::QUEST_40 => {
+                                        self.tk_as::<true, false>(true, k::QUEST, 0)?;
+                                    }
+                                    _ => {
+                                        break;
                                     }
                                 }
                             }
-                            self.close()?;
                         }
-                        _ => {
-
-                        }
+                        self.close()?;
                     }
                 }
             }
@@ -4477,30 +4193,25 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 } else {
-                    match self.word() {
-                        w::QUEST_40 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_40 => {
-                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
+                    if self.word() == w::QUEST_40 {
+                        self.wrap(k::NULLABLE_TYPE, 0)?;
+                        self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                        loop {
+                            self.ask_semi(false)?;
+                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                                break;
+                            } else {
+                                match self.word() {
+                                    w::QUEST_40 => {
+                                        self.tk_as::<true, false>(true, k::QUEST, 0)?;
+                                    }
+                                    _ => {
+                                        break;
                                     }
                                 }
                             }
-                            self.close()?;
                         }
-                        _ => {
-
-                        }
+                        self.close()?;
                     }
                 }
             }
@@ -4550,13 +4261,8 @@ impl<L: Layout> P<'_, L> {
         } else if self.m_generic() {
             self.type_arguments()?;
         } else {
-            match self.word() {
-                w::LT_26 => {
-                    self.type_arguments()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LT_26 {
+                self.type_arguments()?;
             }
         }
         loop {
@@ -4571,13 +4277,8 @@ impl<L: Layout> P<'_, L> {
                         } else if self.m_generic() {
                             self.type_arguments()?;
                         } else {
-                            match self.word() {
-                                w::LT_26 => {
-                                    self.type_arguments()?;
-                                }
-                                _ => {
-
-                                }
+                            if self.word() == w::LT_26 {
+                                self.type_arguments()?;
                             }
                         }
                     }
@@ -4679,25 +4380,13 @@ impl<L: Layout> P<'_, L> {
     fn receiver_type(&mut self) -> R {
         self.open(k::RECEIVER_TYPE);
         self.recv_type()?;
-        match self.word() {
-            w::QUEST_40 => {
-                self.wrap(k::NULLABLE_TYPE, 0)?;
-                self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
-                loop {
-                    match self.word() {
-                        w::QUEST_40 => {
-                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-                self.close()?;
+        if self.word() == w::QUEST_40 {
+            self.wrap(k::NULLABLE_TYPE, 0)?;
+            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+            while self.word() == w::QUEST_40 {
+                self.tk_as::<true, false>(true, k::QUEST, 0)?;
             }
-            _ => {
-
-            }
+            self.close()?;
         }
         self.close()?;
         self.marked = false;
@@ -4713,13 +4402,8 @@ impl<L: Layout> P<'_, L> {
             self.type_arguments()?;
         } else if self.m_dotted() {
         } else {
-            match self.word() {
-                w::LT_26 => {
-                    self.type_arguments()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LT_26 {
+                self.type_arguments()?;
             }
         }
         loop {
@@ -4731,13 +4415,8 @@ impl<L: Layout> P<'_, L> {
                     self.type_arguments()?;
                 } else if self.m_dotted() {
                 } else {
-                    match self.word() {
-                        w::LT_26 => {
-                            self.type_arguments()?;
-                        }
-                        _ => {
-
-                        }
+                    if self.word() == w::LT_26 {
+                        self.type_arguments()?;
                     }
                 }
             } else {
@@ -4758,13 +4437,8 @@ impl<L: Layout> P<'_, L> {
         } else if self.m_generic() {
             self.type_arguments()?;
         } else {
-            match self.word() {
-                w::LT_26 => {
-                    self.type_arguments()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LT_26 {
+                self.type_arguments()?;
             }
         }
         loop {
@@ -4781,13 +4455,8 @@ impl<L: Layout> P<'_, L> {
                         } else if self.m_generic() {
                             self.type_arguments()?;
                         } else {
-                            match self.word() {
-                                w::LT_26 => {
-                                    self.type_arguments()?;
-                                }
-                                _ => {
-
-                                }
+                            if self.word() == w::LT_26 {
+                                self.type_arguments()?;
                             }
                         }
                     }
@@ -4869,13 +4538,8 @@ impl<L: Layout> P<'_, L> {
             0 => {
                 if self.m_fn_paren() || self.m_ty_susp() || self.m_fn_recv() {
                 } else {
-                    match self.word() {
-                        w::IN_43 | w::OUT_93 => {
-                            self.type_projection_modifiers()?;
-                        }
-                        _ => {
-
-                        }
+                    if matches!(self.word(), w::IN_43 | w::OUT_93) {
+                        self.type_projection_modifiers()?;
                     }
                 }
                 let asks = self.asks;
@@ -5217,13 +4881,8 @@ impl<L: Layout> P<'_, L> {
             self.type_modifiers()?;
         } else if self.m_fn_recv() {
         } else {
-            match self.word() {
-                w::AT_2 => {
-                    self.type_modifiers()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::AT_2 {
+                self.type_modifiers()?;
             }
         }
         self.as_core()?;
@@ -5264,30 +4923,25 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_ge() || self.m_generic() {
                 } else {
-                    match self.word() {
-                        w::QUEST_40 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_ge() || self.m_generic() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_40 => {
-                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
+                    if self.word() == w::QUEST_40 {
+                        self.wrap(k::NULLABLE_TYPE, 0)?;
+                        self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                        loop {
+                            self.ask_semi(false)?;
+                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_ge() || self.m_generic() {
+                                break;
+                            } else {
+                                match self.word() {
+                                    w::QUEST_40 => {
+                                        self.tk_as::<true, false>(true, k::QUEST, 0)?;
+                                    }
+                                    _ => {
+                                        break;
                                     }
                                 }
                             }
-                            self.close()?;
                         }
-                        _ => {
-
-                        }
+                        self.close()?;
                     }
                 }
             }
@@ -5300,30 +4954,25 @@ impl<L: Layout> P<'_, L> {
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_ge() || self.m_generic() {
                 } else {
-                    match self.word() {
-                        w::QUEST_40 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_ge() || self.m_generic() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_40 => {
-                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
+                    if self.word() == w::QUEST_40 {
+                        self.wrap(k::NULLABLE_TYPE, 0)?;
+                        self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                        loop {
+                            self.ask_semi(false)?;
+                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_ge() || self.m_generic() {
+                                break;
+                            } else {
+                                match self.word() {
+                                    w::QUEST_40 => {
+                                        self.tk_as::<true, false>(true, k::QUEST, 0)?;
+                                    }
+                                    _ => {
+                                        break;
                                     }
                                 }
                             }
-                            self.close()?;
                         }
-                        _ => {
-
-                        }
+                        self.close()?;
                     }
                 }
             }
@@ -5512,13 +5161,8 @@ impl<L: Layout> P<'_, L> {
     /// `check_op`.
     fn check_op(&mut self) -> R {
         self.wrap(k::CHECK_EXPRESSION, 0)?;
-        match self.word() {
-            w::BANG_49 => {
-                self.tk_as::<true, false>(true, k::BANG, 0)?;
-            }
-            _ => {
-
-            }
+        if self.word() == w::BANG_49 {
+            self.tk_as::<true, false>(true, k::BANG, 0)?;
         }
         match self.word() {
             w::IN_43 => {
@@ -6439,16 +6083,9 @@ impl<L: Layout> P<'_, L> {
     fn lambda_parameters(&mut self) -> R {
         self.open(k::LAMBDA_PARAMETERS);
         self.lambda_parameter()?;
-        loop {
-            match self.word() {
-                w::COMMA_20 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.lambda_parameter()?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while self.word() == w::COMMA_20 {
+            self.skip_as::<true, false>(true)?;
+            self.lambda_parameter()?;
         }
         self.close()?;
         self.marked = false;
@@ -6463,17 +6100,12 @@ impl<L: Layout> P<'_, L> {
             }
             w::LPAREN_19 => {
                 self.multi_variable_declaration()?;
-                match self.word() {
-                    w::COLON_4 => {
-                        self.tk_as::<true, false>(true, k::COLON, 0)?;
-                        let asks = self.asks;
-                        self.asks = asks & 0x0 | 0x0;
-                        self.r_type()?;
-                        self.asks = asks;
-                    }
-                    _ => {
-
-                    }
+                if self.word() == w::COLON_4 {
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x0;
+                    self.r_type()?;
+                    self.asks = asks;
                 }
             }
             _ if self.at_simple_identifier() || self.at_backtick_name() => {
@@ -7300,48 +6932,38 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::COLON_4 => {
-                    self.tk_as::<true, false>(true, k::COLON, 0)?;
-                    let flags = self.flags;
-                    self.flags = self.flags | FLAG_NO_LAMBDA;
-                    self.delegation_specifier()?;
-                    self.flags = flags;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::COMMA_20 => {
-                                    self.skip_as::<true, false>(true)?;
-                                    let flags = self.flags;
-                                    self.flags = self.flags | FLAG_NO_LAMBDA;
-                                    self.delegation_specifier()?;
-                                    self.flags = flags;
-                                }
-                                _ => {
-                                    break;
-                                }
+            if self.word() == w::COLON_4 {
+                self.tk_as::<true, false>(true, k::COLON, 0)?;
+                let flags = self.flags;
+                self.flags = self.flags | FLAG_NO_LAMBDA;
+                self.delegation_specifier()?;
+                self.flags = flags;
+                loop {
+                    self.ask_semi(false)?;
+                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                        break;
+                    } else {
+                        match self.word() {
+                            w::COMMA_20 => {
+                                self.skip_as::<true, false>(true)?;
+                                let flags = self.flags;
+                                self.flags = self.flags | FLAG_NO_LAMBDA;
+                                self.delegation_specifier()?;
+                                self.flags = flags;
+                            }
+                            _ => {
+                                break;
                             }
                         }
                     }
-                }
-                _ => {
-
                 }
             }
         }
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::LBRACE_17 => {
-                    self.class_body()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::LBRACE_17 {
+                self.class_body()?;
             }
         }
         self.close()?;
@@ -7541,13 +7163,8 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::FINALLY_58 => {
-                    self.finally_block()?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::FINALLY_58 {
+                self.finally_block()?;
             }
         }
         self.close()?;
@@ -7643,14 +7260,9 @@ impl<L: Layout> P<'_, L> {
     fn when_expression(&mut self) -> R {
         self.open(k::WHEN_EXPRESSION);
         self.word_skip_as::<true, false>(w::WHEN_55)?;
-        match self.word() {
-            w::LPAREN_19 => {
-                self.when_subject()?;
-                self.mark_blk()?;
-            }
-            _ => {
-
-            }
+        if self.word() == w::LPAREN_19 {
+            self.when_subject()?;
+            self.mark_blk()?;
         }
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
         loop {
@@ -7682,15 +7294,10 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<true, false>(w::LPAREN_19)?;
         if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
         } else {
-            match self.word() {
-                w::VAL_22 => {
-                    self.skip_as::<true, false>(true)?;
-                    self.variable_declaration()?;
-                    self.word_skip_as::<true, false>(w::EQ_12)?;
-                }
-                _ => {
-
-                }
+            if self.word() == w::VAL_22 {
+                self.skip_as::<true, false>(true)?;
+                self.variable_declaration()?;
+                self.word_skip_as::<true, false>(w::EQ_12)?;
             }
         }
         let asks = self.asks;
@@ -7902,15 +7509,10 @@ impl<L: Layout> P<'_, L> {
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
-            match self.word() {
-                w::ELSE_54 => {
-                    self.tk_as::<true, false>(true, k::ELSE, 0)?;
-                    self.control_structure_body()?;
-                    self.field_made(f::ALTERNATIVE);
-                }
-                _ => {
-
-                }
+            if self.word() == w::ELSE_54 {
+                self.tk_as::<true, false>(true, k::ELSE, 0)?;
+                self.control_structure_body()?;
+                self.field_made(f::ALTERNATIVE);
             }
         }
         self.close()?;
