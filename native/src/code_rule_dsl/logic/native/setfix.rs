@@ -648,7 +648,7 @@ impl Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
-              idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: keys::RowSet::default(),
+              idx: vec![Index::led((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: keys::RowSet::default(),
               sketches: vec![Sketch::default(); k], dead: BlockVec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
               level: BlockVec::new(), lbase: 0, leveled: true, stats: None, stats_dead: BlockVec::new(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new() }
     }
@@ -772,7 +772,7 @@ impl Rel {
         let whole: Vec<bool> = old.chains.iter().map(|o| o.rows() == old.n).collect();
         let held = old.chains.first().is_some_and(|o| o.cols.len() == k && o.rows() == old.n) && old.sketches.len() == k;
         let made: Option<(Index, Vec<Sketch>)> = (!held).then(|| {
-            let mut ix = Index::new((0..k).collect());
+            let mut ix = Index::led((0..k).collect());
             ix.add_run_in(&old.rows, k, 0, old.n, 0, &old.sorted.within(&ix.cols, k, 0, old.n as u32));
             let mut sketches = vec![Sketch::default(); k];
             for id in (0..old.n as u32).filter(|&id| !is_dead(&old.dead, id)) {
@@ -889,7 +889,7 @@ impl Rel {
             self.idx[i].reorder(data, k, cols, &self.sorted);
         } else {
             let cols = chained(std::slice::from_ref(&set), k);
-            let mut ix = Index::new(cols);
+            let mut ix = Index::led(cols);
             charge(Unit::IndexEntry, self.indexed as u64);
             // The rows already in runs: those before the delta as of wave 0, the delta's as of its wave; the rest are
             // indexed with the others' at the next `set_delta`.
@@ -4391,10 +4391,10 @@ impl Csr {
                 let _index = crate::code_rule_dsl::logic::profile::span(|| "probe: order of a derived input".into());
                 let c0 = thread_cpu();
                 charge(Unit::IndexEntry, rel.len() as u64);
-                // A ranged probe's order holds the range's column after the key's; its prints would be of both, and a
-                // probe gives the key alone, so it is searched by its rows.
+                // A ranged probe's order holds the range's column after the key's; it prints the key's columns alone,
+                // which every probe gives.
                 let cols: Vec<usize> = self.cols.iter().copied().chain(self.then).collect();
-                let mut order = if printed && self.then.is_none() { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
+                let mut order = Index::printed_on(cols.clone(), if printed { self.cols.len() } else { 0 });
                 order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&cols, rel.k, 0, rel.n as u32));
                 run_counts().orders_made.fetch_add(1, AtomicOrdering::Relaxed);
                 loaded(1, thread_cpu() - c0, 0);
@@ -8887,8 +8887,9 @@ pub mod posted_tests {
         let old = InRel::moved(rel);
         assert!(old.chains.iter().all(|ix| ix.runs() <= FROZEN_RUNS), "a frozen order holds a few runs");
         for ix in &old.chains {
-            // The full-row order keeps a 16-bit tag an id instead of fences (`runs::tagged`).
-            let most = if runs::tagged(&ix.cols, old.k) { 6.5 } else { 4.5 };
+            // The full-row order keeps a 16-bit tag an id instead of fences (`runs::tagged`); each order a print of
+            // its lead an id (`Index::led`, t56 step 7 C).
+            let most = if runs::tagged(&ix.cols, old.k) { 7.5 } else { 5.5 };
             assert!((ix.bytes() as f64) < most * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
         }
         let based = Rel::based("t", b"iii", &old, None).expect("a kept relation to start from");

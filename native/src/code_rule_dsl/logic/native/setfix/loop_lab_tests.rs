@@ -139,10 +139,23 @@ fn a_joins_candidates_cost() {
     let src = Src::In(Arc::clone(&on1), Arc::clone(&ix));
     let spec = [(0usize, Key::Slot(0))];
     let need = 0b11u64;
-    time("parts: the order's search (find_at)", keys.len(), &|| {
-        let mut hints = [0u32; runs::HINTS];
-        keys.iter().map(|&k| order.find_at(&on1.rows, on1.k, &[k], None, &mut hints).len() as i64).sum()
-    });
+    // The keys as the scan orders them for a tagged order (`scan_order`): by the lead's tag, then by value.
+    let mut by_tag = keys.clone();
+    by_tag.sort_unstable_by_key(|&k| (runs::tag(k), k));
+    for (what, ks) in [("by value", &keys), ("by tag", &by_tag)] {
+        let search = || {
+            let mut hints = [0u32; runs::HINTS];
+            ks.iter().map(|&k| order.find_at(&on1.rows, on1.k, &[k], None, &mut hints).len() as i64).sum()
+        };
+        runs::probe_reads::ON.store(true, AtomicOrdering::Relaxed);
+        runs::probe_reads::take();
+        search();
+        let [probes, rows, marks] = runs::probe_reads::take();
+        runs::probe_reads::ON.store(false, AtomicOrdering::Relaxed);
+        println!("parts: keys {what}: a probe {:.2} rows compared, {:.2} tags or fences read", rows as f64 / probes.max(1) as f64, marks as f64 / probes.max(1) as f64);
+        time(&format!("parts: the order's search, keys {what}"), ks.len(), &search);
+    }
+    let keys = by_tag;
     time("parts: candidates", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], None);
         keys.iter().map(|&k| { let (_, c) = cands::candidates(&src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()

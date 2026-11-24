@@ -1736,7 +1736,7 @@ impl Relation {
     /// the span's prints, then the rows whose print is the value's).
     fn equal(&self, column: usize, value: i64) -> Range<usize> {
         let ix = self.index(column);
-        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, &[value], true, |p| self.value(ix.row(p) as usize, column).cmp(&value));
+        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
         s..e
     }
     /// The rows with values in `lo..=hi`, in value order.
