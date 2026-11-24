@@ -236,10 +236,22 @@ impl Readers {
     }
 }
 
+/// The file-local relations a helper cannot read and stay file-local (`placeless`): those with no location column
+/// (`FileLocal::locations`), not constants or filters, which the split lets any rule read. Each file's rows of one are
+/// part of a relation of every file's, so a rule that reads one joins no document by it and is cross-file ("reads r
+/// with no location"): a join pushed with it is refused every round, and its reader left reading the base relations.
+fn placeless(split: &FileLocal) -> BTreeSet<String> {
+    let located = |rel: &String| split.locations.get(rel).is_some_and(|c| !c.is_empty());
+    split.local.iter().filter(|rel| !located(rel) && !split.constants.contains(*rel) && !split.filters.contains(*rel)).cloned().collect()
+}
+
 /// A round of `PushLocalJoins`: the relations made, and the split of the program as it is left; `None` where it makes
-/// nothing.
+/// nothing. `split`'s placeless relations (`placeless`) are the reader's, as a cross-file relation is.
 /// `rounds`: the rounds it took, each a split of the whole program.
-fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
+fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
+    let local = &split.local;
+    let placeless = placeless(split);
+    let joinable = |rel: &str| local.contains(rel) && !placeless.contains(rel);
     let equal_columns = push_equal_columns();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
@@ -266,7 +278,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 continue;
             }
             let body: Vec<LitRef<'v>> = rule.body().collect();
-            let candidate = |l: LitRef<'_>| matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(v.rel_name(a.rel())) && (base(v.rel_name(a.rel())) || local.contains(v.rel_name(a.rel()))));
+            let candidate = |l: LitRef<'_>| matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(v.rel_name(a.rel())) && (base(v.rel_name(a.rel())) || joinable(v.rel_name(a.rel()))));
             let idx: Vector<usize> = (0..body.len()).filter(|&j| candidate(body[j])).collect();
             let equal: Vec<(String, String)> = var_equalities_in(v, rule).into_iter().map(|(a, b)| (name(v, rule, a), name(v, rule, b))).collect();
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
@@ -328,7 +340,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 for (j, l) in body.iter().enumerate() {
                     let with = match l.view() {
                         L::Cmp { .. } => true,
-                        L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && local.contains(rel(&a)))),
+                        L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && joinable(rel(&a)))),
                         _ => false,
                     };
                     let lv = lit_vars(v, rule, *l);
@@ -503,7 +515,7 @@ impl ProgramPass for PushLocalJoins {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let inputs: BTreeSet<&str> = f.inputs().collect();
-        let first = push_with(v, f, &split.local, false, &mut self.rounds)?;
+        let first = push_with(v, f, &split, false, &mut self.rounds)?;
         let reads_base = match &first {
             Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
             None => cross_reads_base(v, &inputs, &split.local),
@@ -519,7 +531,7 @@ impl ProgramPass for PushLocalJoins {
         // A part pushes in the run's mode (decision 0345 stage 2): every part's reads together decide it.
         use crate::code_rule_dsl::logic::plan::fields::{PART_WHOLE, PUSH_BASE, PUSH_DECIDED};
         let mode = if f.qualified(PART_WHOLE, PUSH_DECIDED) { f.qualified(PART_WHOLE, PUSH_BASE) } else { reads_base };
-        let pushed = if mode { push_with(v, f, &split.local, true, &mut self.rounds)? } else { first };
+        let pushed = if mode { push_with(v, f, &split, true, &mut self.rounds)? } else { first };
         if let Some(p) = pushed {
             self.made = p.made;
             write(w.derive()?, v, &p.round)?;
