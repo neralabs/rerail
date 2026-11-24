@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { commandLine } from "../engine/command-line.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
-import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
+import { readRerailSummary, readRulesDashboard } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { BROWSER_OFF_NOTE, nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
 import { bugReportInstructions, createRuleInstructions, RERAIL_COMMANDS, showMeInstructions, type RerailCommandName } from "./rerail-commands.js";
@@ -179,27 +179,12 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
 
   const summary: CommandAction = async ctx => {
     const cwd = options.cwd();
-    const host = options.host ?? "omp";
-    const sessionId = options.sessionId?.();
-    // Nothing autostarts where Rerail is off, so with no daemon answering the launcher says whether it is on here.
-    const startState = (): Promise<RepositoryStartState> => launcherStartState(options);
-    const presentation = sessionId === undefined
-      ? null
-      : await readPresentation({ sessionId, host, cwd, onDemand: true, startState });
-    // No session is attached where Rerail is stopped or never started.
-    const repositoryState = presentation === null ? await readSummaryState(cwd, host, startState) : presentation.repositoryState;
-    // A daemon that just gave no answer in time is not asked again for the dashboard link: that read would wait out its
-    // own 2 seconds, and the summary shows no link then.
-    const notAnswering = (presentation === null ? repositoryState : presentation.status) === "not-answering";
-    ctx.ui.notify(renderRerailSummary({
-      presentation,
-      repositoryState,
-      ruleCount: null,
-      awaitingApproval: null,
-      rulesUrl: notAnswering ? null : (await readRulesDashboard({ cwd })).url,
-      repositoryName: repositoryName(cwd),
-      sigil: "/",
-    }), "info");
+    // No session is attached where Rerail is stopped or never started. Nothing autostarts where Rerail is off, so with
+    // no daemon answering the launcher says whether it is on here.
+    const read = await readRerailSummary({
+      host: options.host ?? "omp", sessionId: options.sessionId?.(), cwd, startState: () => launcherStartState(options),
+    });
+    ctx.ui.notify(renderRerailSummary({ ...read, ruleCount: null, awaitingApproval: null, repositoryName: repositoryName(cwd), sigil: "/" }), "info");
   };
   register("rerail", summary);
   register("rerail-help", summary);

@@ -31,7 +31,8 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 /**
  * How long walks trust change notices for a worktree: a walk reads one whose last read began this long ago, and one is
  * timed for it though every session watching it is idle. A write no notice tells of (through a hard link, a memory
- * map, a file another program holds open on Windows, or one the system lost without saying so) is found then.
+ * map, on Linux only one its program still holds, a file another program holds open on Windows, or one the system
+ * lost without saying so) is found then.
  */
 export const WORKTREE_FULL_WALK_MS = 600_000;
 
@@ -514,11 +515,13 @@ export class WorktreeWalks {
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
   readonly #onWatching: ((watching: boolean) => void) | undefined;
+  readonly #sessionWatch: (() => TreeWatch | undefined) | undefined;
 
   /**
    * `notices`: none by default, so every worktree is read on every walk; `RepositoryWorktreeWalks` gives each walk the
    * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`). `onWatching`: told `true` as a
-   * first session starts watching, and `false` as the last stops.
+   * first session starts watching, and `false` as the last stops. `sessionWatch`: a watch of a session folder through
+   * the engine watch the notices come from, none by default (`sessionWatch()`).
    */
   constructor(options: {
     gapMs?: number;
@@ -526,12 +529,19 @@ export class WorktreeWalks {
     notices?: WorktreeNotices;
     looks?: WorktreeLooks;
     onWatching?: (watching: boolean) => void;
+    sessionWatch?: () => TreeWatch | undefined;
   } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
     this.#fullWalkMs = options.fullWalkMs ?? WORKTREE_FULL_WALK_MS;
     this.#notices = options.notices ?? new WorktreeNotices();
     this.#looks = options.looks ?? new WorktreeLooks();
     this.#onWatching = options.onWatching;
+    this.#sessionWatch = options.sessionWatch;
+  }
+
+  /** A watch of a session folder through the engine watch these walks take their notices from; undefined without one. */
+  sessionWatch(): TreeWatch | undefined {
+    return this.#sessionWatch?.();
   }
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {
@@ -1141,6 +1151,8 @@ export class RepositoryWorktreeWalks {
     const walks: WorktreeWalks = new WorktreeWalks({
       ...this.#options,
       notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }),
+      // A session folder's watch is one more user of the engine watch the walks share (`SessionNotices`).
+      sessionWatch: () => this.#treeWatch?.user(),
       // A session handed this walk before it was dropped brings it back while no other took its place.
       onWatching: watching => {
         if (!watching && this.#walks.get(repository) === walks) this.#walks.delete(repository);
