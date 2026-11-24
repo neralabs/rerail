@@ -482,6 +482,15 @@ impl LongTexts {
         values.get(&local).cloned()
     }
 
+    /// Node `n`'s preorder key, `node_order(n, k)`'s `k` (`view_reads::Doc::order_row`): its document's key and its
+    /// order key in the document. None for a span or a document not in the batch.
+    pub fn order_any(&self, n: i64) -> Option<i64> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let local = p.local_of(low).filter(|&l| l < p.len())?;
+        Some(i64::from(key) << 32 | i64::from(p.order(local)))
+    }
+
     /// Node `n`'s string literal's content, as the batch's shape states `str(n, s)`: `core.rerail`'s literal reading
     /// (`core_rr::node_str`), or T's (a string node's content between its quotes, `NodeRows`). It answers `str`'s
     /// requests (decisions 0174, 0353 step 3): only the nodes a rule asks for are read and interned.
@@ -506,12 +515,14 @@ impl Source for LongTexts {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
-    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
+        use rusqlite::types::Value;
         match name {
-            "rr_node_text" => self.long_text(n),
-            "rr_node_text_any" => self.text_any(n),
-            "rr_node_value" => self.value_any(n),
-            "rr_node_str" => self.str_any(n),
+            "rr_node_text" => self.long_text(n).map(Value::Text),
+            "rr_node_text_any" => self.text_any(n).map(Value::Text),
+            "rr_node_value" => self.value_any(n).map(Value::Text),
+            "rr_node_str" => self.str_any(n).map(Value::Text),
+            "rr_node_order" => self.order_any(n).map(Value::Integer),
             _ => None,
         }
     }

@@ -9137,7 +9137,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                             node_read(name, nodes.as_deref(), val(slots, args[0]))
                         }
                     };
-                    read.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text)
+                    read.unwrap_or(rusqlite::types::Value::Null)
                 } else {
                     let mut strs = Vec::new();
                     let mut numbers = Vec::new();

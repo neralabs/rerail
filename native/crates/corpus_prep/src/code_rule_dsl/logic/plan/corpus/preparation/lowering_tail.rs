@@ -710,7 +710,9 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 /// Rules that order nodes, under node ids per definition (decision 0094 §2). An id follows preorder only inside its
 /// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
 /// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
-/// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
+/// - `x < y`, both nodes: `kx = @rr_node_order(x), ky = @rr_node_order(y), kx < ky` (`<=`, `>`, `>=` likewise):
+///   each node's key read off the tape where its batch holds it, as `node_order`'s `k` is, not two joins with
+///   `node_order` (t57 §8, E2);
 /// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…, _, k) }, r_ord(…, v, kv)`, where
 ///   `r_ord(…, x, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered<k>`, written after the program's rules.
 ///   `v` is the aggregated row's own node, read back from the helper at the key, not `node_order(v, kv)`: the key
@@ -722,10 +724,13 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 /// variables are numbered over the program in rule order.
 pub struct OrderNodes;
 
+/// The node read of a node's preorder key (`vtab::NODE_READS`).
+const NODE_ORDER_READ: &str = "rr_node_order";
+
 /// What a literal of a rule becomes.
 enum Ordered {
     Keep(u32),
-    /// `x op y` over nodes: `node_order(x, kx), node_order(y, ky), kx op ky`.
+    /// `x op y` over nodes: `kx = @rr_node_order(x), ky = @rr_node_order(y), kx op ky`.
     Cmp { x: Slot, y: Slot, op: crate::code_rule_dsl::logic::program_image::CmpOp, k: usize },
     /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, _, k) }, helper(args', var, kv)`, `args'`
     /// the arguments bound outside the aggregate (`outer`), the others `_`.
@@ -875,6 +880,9 @@ impl ProgramPass for OrderNodes {
             let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
             b.fields().declare(rel, &pairs);
         }
+        // Declared as T's front end declares it (`front::tests::t_programs_match_t_front_end`): an ordered aggregate's
+        // helper reads it; a comparison reads the key in place (`@rr_node_order`), and an input no rule reads is
+        // never made.
         b.fields().declare_absent(node_order, &[("n", "node"), ("k", "int")]);
         b.fields().add_input(node_order);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
@@ -887,9 +895,14 @@ impl ProgramPass for OrderNodes {
             for o in plan {
                 rb = match o {
                     Ordered::Keep(n) => rb.lit(&input, r, lit_at(&input, r.id(), *n)),
+                    // Each node's key read where the node lies (`@rr_node_order`), then compared: no join. A key read
+                    // into a variable is a node read the split moves to the per-file part with its node (`push`), as
+                    // it moved `node_order`'s row: a position stays there (decision 0649).
                     Ordered::Cmp { x, y, op, k } => {
                         let (kx, ky) = (ord(*k), ord(k + 1));
-                        rb.atom(node_order, &[T::VarAtom(r.var(*x)), T::Var(&kx)]).atom(node_order, &[T::VarAtom(r.var(*y)), T::Var(&ky)]).cmp(T::Var(&kx), *op, T::Var(&ky))
+                        rb.cmp(T::Var(&kx), CmpOp::Eq, T::Call(NODE_ORDER_READ, vec![T::VarAtom(r.var(*x))]))
+                            .cmp(T::Var(&ky), CmpOp::Eq, T::Call(NODE_ORDER_READ, vec![T::VarAtom(r.var(*y))]))
+                            .cmp(T::Var(&kx), *op, T::Var(&ky))
                     }
                     Ordered::Agg { var, op, k, helper, args, outer, .. } => {
                         let (kk, kv) = (ord(*k), ord(k + 1));

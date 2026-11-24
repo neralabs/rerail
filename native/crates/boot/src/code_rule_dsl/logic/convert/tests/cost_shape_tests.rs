@@ -390,8 +390,10 @@ fn a_qualified_name_does_not_list_a_scopes_descendants() {
 #[test]
 fn a_comparison_of_nodes_is_no_join() {
     let (c, _) = case();
-    let joined: Vec<&String> = c.plans.keys().filter(|p| p.contains("node_order(")).collect();
-    let units: u64 = c.plans.iter().filter(|(p, _)| p.contains("node_order(")).map(|(_, s)| profile::plan_work(s)).sum();
+    // A `node_order` atom, not a read of a node's key (`@rr_node_order`).
+    let atom = |p: &str| p.split_once(": ").map_or(p, |x| x.1).split(" , ").any(|l| l.trim_start_matches('!').starts_with("node_order("));
+    let joined: Vec<&String> = c.plans.keys().filter(|p| atom(p)).collect();
+    let units: u64 = c.plans.iter().filter(|(p, _)| atom(p)).map(|(_, s)| profile::plan_work(s)).sum();
     assert!(joined.is_empty(), "{} plans join node_order to compare nodes ({units} units of work):\n{}", joined.len(), joined.iter().map(|p| profile::short(p, 300)).collect::<Vec<_>>().join("\n"));
 }
 

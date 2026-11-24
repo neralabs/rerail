@@ -136,6 +136,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // A node's string literal's content (the syntax table's `LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
+    // A node's preorder key (the syntax table's `LongTexts::order_any`): `node_order`'s `k`, which a comparison of two
+    // nodes reads (`lowering_tail::OrderNodes`).
+    ("rr_node_order", &[Number], Number),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -202,8 +205,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
     for name in NODE_READS {
         let data = std::sync::Arc::clone(&data);
         db.create_scalar_function(name, 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
-            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n));
-            Ok(text.map_or(Value::Null, Value::Text))
+            let read = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n));
+            Ok(read.unwrap_or(Value::Null))
         })?;
     }
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
@@ -213,7 +216,7 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
 /// A node read (`vtab::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
 /// `@rr_node_text_any`'s text at any length, `@rr_node_value`'s value, read through `nodes`, the run's binding of the
 /// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
-pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<String> {
+pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<Value> {
     nodes?.node_read(name, n)
 }
 
@@ -381,7 +384,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" => None,
+        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" | "rr_node_order" => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {
