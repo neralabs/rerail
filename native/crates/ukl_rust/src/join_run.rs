@@ -1325,6 +1325,8 @@ unsafe fn text_range(f: u32, x: &Txt, n0: i64, n1: i64) -> (u32, u32, bool) {
 // ---- The stages' functions, a thread a binding (or a candidate row). ----
 
 /// The buffers an item's job reaches (`Job`, its words placed in the arena where its size script placed them).
+mod stage_lanes;
+
 struct Bufs {
     l: *const i64,
     o: *mut i64,
@@ -2088,8 +2090,12 @@ unsafe fn stage_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     }
     // The stage's counters, the range's added once.
     let mut acc = [0u32; 17];
-    for t in t0..live {
-        stage_count_one(st, j, b, t, &mut acc);
+    if stage_lanes::runs_at_lanes(s) {
+        stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }>(st, j, b.c, t0.min(live), live, &mut acc);
+    } else {
+        for t in t0..live {
+            stage_count_one(st, j, b, t, &mut acc);
+        }
     }
     if s.counter != NONE {
         for (m, &a) in acc.iter().enumerate().filter(|(_, a)| **a > 0) {
@@ -2134,6 +2140,14 @@ unsafe fn dedup_mark_range(rd: Reads, t: *const i64, totals: *const u32, p: *con
 
 unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     let s = st.s;
+    if s.mode == 0 && stage_lanes::runs_at_lanes(s) {
+        let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
+        if t0 == 0 && t1 > 0 {
+            *j.totals.add(s.out_slot as usize) = (*b.c.add(n as usize)).wrapping_sub(*b.c);
+        }
+        stage_lanes::stage_scatter_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.o, t0.min(n), t1.min(n));
+        return;
+    }
     if !matches!(s.mode, 1 | 2 | 7) {
         for t in t0..t1 {
             stage_scatter_one(st, j, b, t);
