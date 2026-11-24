@@ -53,12 +53,18 @@ pub struct ViewDoc {
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
+    /// `PLACED_SEGMENTS`' segments (`SEGMENT_WORDS` u32s each, in program order): an embedder's program's map.
+    pub segments: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
 pub const PLACED_AT: u32 = 2;
+/// An embedder's program (`Placement::Segments`): a span stands where `SegmentMap::file_ranges(..).primary()` puts it.
+pub const PLACED_SEGMENTS: u32 = 3;
+/// A segment's u32s: its program range, its host range, and 1 where it is copied (`SegmentMap::words`).
+pub const SEGMENT_WORDS: i64 = 5;
 
 /// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU): its
 /// entry's offset in the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and
@@ -200,6 +206,7 @@ pub mod at {
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
+    pub const SEGMENTS: i32 = offset_of!(ViewDoc, segments) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -222,7 +229,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 17] = [
+    let fields: [(&str, &str, usize); 18] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -240,6 +247,7 @@ pub fn ukl() -> String {
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("Run", "segments", offset_of!(ViewDoc, segments)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
@@ -549,32 +557,178 @@ impl B<'_, '_> {
         })
     }
     /// A guest's span `start << 32 | end` where it stands in its host (`Placement::host`): copied, each end moved by
-    /// `delta` and kept within `within`; at `within`. A file's own, as it is.
+    /// `delta` and kept within `within`; at `within`; an embedder's, by its segments (`placed_segments`). A file's
+    /// own, as it is.
     fn placed(&mut self, span: Value) -> Value {
         let placement = self.word_at(I32, self.tape, at::PLACEMENT);
         let own = self.f.ins().icmp_imm(IntCC::Equal, placement, 0);
         self.either(I64, own, |_| span, |b| {
-            let lo = b.entry_u32(at::WITHIN_LO);
-            let hi = b.entry_u32(at::WITHIN_HI);
-            let at_ = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_AT));
-            b.either(I64, at_, |b| {
-                let s = b.f.ins().ishl_imm(lo, 32);
-                b.f.ins().bor(s, hi)
-            }, |b| {
-                let delta = b.word_at(I64, b.tape, at::DELTA);
-                let clamp = |b: &mut Self, x: Value| {
-                    let x = b.f.ins().iadd(x, delta);
-                    let x = b.f.ins().smax(x, lo);
-                    b.f.ins().smin(x, hi)
-                };
-                let s = b.f.ins().ushr_imm(span, 32);
-                let e = b.f.ins().band_imm(span, 0xffff_ffff);
-                let s = clamp(b, s);
-                let e = clamp(b, e);
-                let s = b.f.ins().ishl_imm(s, 32);
-                b.f.ins().bor(s, e)
+            let segments = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_SEGMENTS));
+            b.either(I64, segments, |b| b.placed_segments(span), |b| b.placed_stretch(placement, span))
+        })
+    }
+    /// `placed` of a copied stretch or a point.
+    fn placed_stretch(&mut self, placement: Value, span: Value) -> Value {
+        let b = self;
+        let lo = b.entry_u32(at::WITHIN_LO);
+        let hi = b.entry_u32(at::WITHIN_HI);
+        let at_ = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_AT));
+        b.either(I64, at_, |b| {
+            let s = b.f.ins().ishl_imm(lo, 32);
+            b.f.ins().bor(s, hi)
+        }, |b| {
+            let delta = b.word_at(I64, b.tape, at::DELTA);
+            let clamp = |b: &mut Self, x: Value| {
+                let x = b.f.ins().iadd(x, delta);
+                let x = b.f.ins().smax(x, lo);
+                b.f.ins().smin(x, hi)
+            };
+            let s = b.f.ins().ushr_imm(span, 32);
+            let e = b.f.ins().band_imm(span, 0xffff_ffff);
+            let s = clamp(b, s);
+            let e = clamp(b, e);
+            let s = b.f.ins().ishl_imm(s, 32);
+            b.f.ins().bor(s, e)
+        })
+    }
+    /// An embedder's program's span `s..e` where it stands in its host: `SegmentMap::file_ranges(s..e).primary()`,
+    /// read off its segments where they lie (`ViewDoc::segments`). The segment holding `s` (or the last before it)
+    /// and those starting before `e` give one piece each, a copied one's overlapped part, a written one's whole
+    /// anchor, pieces of no bytes left out; the span stands for the run of pieces, overlapping or touching, that holds
+    /// the first one (`FileRanges::union`'s primary range), or, with none, for the point `s` maps to.
+    fn placed_segments(&mut self, span: Value) -> Value {
+        let segs = self.follow(self.tape, at::SEGMENTS);
+        let n = self.word_at(I64, self.tape, at::SEGMENTS + 8);
+        let n = self.f.ins().ireduce(I32, n);
+        let s = self.f.ins().ushr_imm(span, 32);
+        let s = self.f.ins().ireduce(I32, s);
+        let e = self.f.ins().ireduce(I32, span);
+        let none = self.f.ins().icmp_imm(IntCC::Equal, n, 0);
+        self.either(I64, none, |_| span, |b| {
+            let first = b.segments_partition(segs, n, |b, seg| {
+                let end = b.word_at(I32, seg, 4);
+                b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, s)
+            });
+            let last_one = b.f.ins().iadd_imm(n, -1);
+            let first = b.f.ins().umin(first, last_one);
+            let at = b.segment_point(segs, first, s);
+            let point = b.pair(at, at);
+            let empty = b.f.ins().icmp(IntCC::Equal, s, e);
+            b.either(I64, empty, |_| point, |b| {
+                let last = b.segments_partition(segs, n, |b, seg| {
+                    let start = b.word_at(I32, seg, 0);
+                    b.f.ins().icmp(IntCC::UnsignedLessThan, start, e)
+                });
+                b.segments_run(segs, [first, last], [s, e], point)
             })
         })
+    }
+    /// The first of the `n` segments at `segs` for which `pred` (of a segment's address) fails, where it holds for
+    /// a prefix of them (`partition_point`).
+    fn segments_partition(&mut self, segs: Value, n: Value, pred: impl Fn(&mut Self, Value) -> Value) -> Value {
+        let (head, body, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(done, I32);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[zero.into(), n.into()]);
+        self.f.switch_to_block(head);
+        let (lo, hi) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+        self.f.ins().brif(more, body, &[], done, &[lo.into()]);
+        self.f.switch_to_block(body);
+        let sum = self.f.ins().iadd(lo, hi);
+        let mid = self.f.ins().ushr_imm(sum, 1);
+        let seg = self.item(segs, mid, 4 * SEGMENT_WORDS);
+        let yes = pred(self, seg);
+        let past = self.f.ins().iadd_imm(mid, 1);
+        let lo = self.f.ins().select(yes, past, lo);
+        let hi = self.f.ins().select(yes, hi, mid);
+        self.f.ins().jump(head, &[lo.into(), hi.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+    /// The host position program byte `at` maps to in segment `i` (`SegmentMap::point`): its copy, kept within the
+    /// segment, or the start of a written segment's anchor.
+    fn segment_point(&mut self, segs: Value, i: Value, at_: Value) -> Value {
+        let seg = self.item(segs, i, 4 * SEGMENT_WORDS);
+        let (start, end) = (self.word_at(I32, seg, 0), self.word_at(I32, seg, 4));
+        let (from, copied) = (self.word_at(I32, seg, 8), self.word_at(I32, seg, 16));
+        let x = self.f.ins().umax(at_, start);
+        let x = self.f.ins().umin(x, end);
+        let x = self.f.ins().isub(x, start);
+        let x = self.f.ins().iadd(from, x);
+        let copied = self.f.ins().icmp_imm(IntCC::NotEqual, copied, 0);
+        self.f.ins().select(copied, x, from)
+    }
+    /// The run of pieces holding the first one, of segments `first..last` over the program bytes `s..e`
+    /// (`placed_segments`), as `start << 32 | end`; `point` where no segment gives a piece. Passes over the pieces
+    /// grow the run by each one it overlaps or touches, until a pass grows it no more.
+    fn segments_run(&mut self, segs: Value, [first, last]: [Value; 2], [s, e]: [Value; 2], point: Value) -> Value {
+        let (head, body, after, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        // `head`'s: the segment, the run's start and end, whether it has its first piece, whether this pass grew it.
+        for _ in 0..5 {
+            self.f.append_block_param(head, I32);
+        }
+        for _ in 0..4 {
+            self.f.append_block_param(after, I32);
+        }
+        self.f.append_block_param(done, I64);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[first.into(), zero.into(), zero.into(), zero.into(), zero.into()]);
+        self.f.switch_to_block(head);
+        let p = self.f.block_params(head).to_vec();
+        let (i, cs, ce, have, grew) = (p[0], p[1], p[2], p[3], p[4]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, last);
+        self.f.ins().brif(more, body, &[], after, &[cs.into(), ce.into(), have.into(), grew.into()]);
+        self.f.switch_to_block(body);
+        let seg = self.item(segs, i, 4 * SEGMENT_WORDS);
+        let (start, end) = (self.word_at(I32, seg, 0), self.word_at(I32, seg, 4));
+        let (from, to, copied) = (self.word_at(I32, seg, 8), self.word_at(I32, seg, 12), self.word_at(I32, seg, 16));
+        let (ps, pe) = (self.segment_point(segs, i, s), self.segment_point(segs, i, e));
+        let copied = self.f.ins().icmp_imm(IntCC::NotEqual, copied, 0);
+        let ps = self.f.ins().select(copied, ps, from);
+        let pe = self.f.ins().select(copied, pe, to);
+        let wide = self.f.ins().icmp(IntCC::NotEqual, start, end);
+        let some = self.f.ins().icmp(IntCC::UnsignedLessThan, ps, pe);
+        let piece = self.f.ins().band(wide, some);
+        let has = self.f.ins().icmp_imm(IntCC::NotEqual, have, 0);
+        let not_has = self.f.ins().icmp_imm(IntCC::Equal, have, 0);
+        let first_piece = self.f.ins().band(piece, not_has);
+        let before_end = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, ps, ce);
+        let after_start = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, cs, pe);
+        let touches = self.f.ins().band(before_end, after_start);
+        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, ps, cs);
+        let above = self.f.ins().icmp(IntCC::UnsignedGreaterThan, pe, ce);
+        let outside = self.f.ins().bor(below, above);
+        let grows = self.f.ins().band(piece, has);
+        let grows = self.f.ins().band(grows, touches);
+        let grows = self.f.ins().band(grows, outside);
+        let lo = self.f.ins().umin(cs, ps);
+        let hi = self.f.ins().umax(ce, pe);
+        let cs2 = self.f.ins().select(grows, lo, cs);
+        let ce2 = self.f.ins().select(grows, hi, ce);
+        let cs2 = self.f.ins().select(first_piece, ps, cs2);
+        let ce2 = self.f.ins().select(first_piece, pe, ce2);
+        let one = self.c32(1);
+        let have2 = self.f.ins().select(first_piece, one, have);
+        let grew2 = self.f.ins().select(grows, one, grew);
+        let next = self.f.ins().iadd_imm(i, 1);
+        self.f.ins().jump(head, &[next.into(), cs2.into(), ce2.into(), have2.into(), grew2.into()]);
+        // A pass's end: another while it grew the run.
+        self.f.switch_to_block(after);
+        let p = self.f.block_params(after).to_vec();
+        let (cs, ce, have, grew) = (p[0], p[1], p[2], p[3]);
+        let again = self.f.ins().icmp_imm(IntCC::NotEqual, grew, 0);
+        let (fin, zero) = (self.f.create_block(), self.c32(0));
+        self.f.ins().brif(again, head, &[first.into(), cs.into(), ce.into(), have.into(), zero.into()], fin, &[]);
+        self.f.switch_to_block(fin);
+        let run = self.pair(cs, ce);
+        let has = self.f.ins().icmp_imm(IntCC::NotEqual, have, 0);
+        let got = self.f.ins().select(has, run, point);
+        self.f.ins().jump(done, &[got.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
     }
     /// `s << 32 | e`, of u32s.
     fn pair(&mut self, s: Value, e: Value) -> Value {

@@ -458,6 +458,12 @@ impl SegmentMap {
         self.segments.len()
     }
 
+    /// Each segment as the views' reads find it in a block (`rerail_clif::view_reads::SEGMENT_WORDS`): its program
+    /// range, its host range, and 1 where it is copied.
+    pub fn words(&self) -> impl Iterator<Item = [u32; 5]> + '_ {
+        self.segments.iter().map(|s| [s.at, s.end, s.from, s.to, u32::from(s.copied)])
+    }
+
     /// Appends the segments' persisted form: per segment its program and host ranges, then a byte
     /// of flags (1: copied, 2: omitted).
     pub(crate) fn write(&self, bytes: &mut Vec<u8>) {

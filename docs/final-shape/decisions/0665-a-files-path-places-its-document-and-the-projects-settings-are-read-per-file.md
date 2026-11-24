@@ -231,6 +231,16 @@ farm host, so it is in the slow tier.
   appears later is such a question. An unchanged run, or one after a source edit, reads no configuration file
   (`kept_settings_are_not_read_again_while_their_files_are_unchanged`).
 
+- **An embedder's program's places are read in place.** `cpu_and_metal_read_the_same_tape_values` failed on Linux
+  hosts (and at this branch's base) with a stratum past its launch budget (0603): 6 `join_run`s and 2 `view_expand`s.
+  The two were the `line` and `docof` views of an HTML file's script, made into device relations (0353 step 4's copy)
+  because the views' directory refuses the `Loc` views of a guest placed by an embedder's segments
+  (`views.refused.locs.guest_segments`). The views' reads now read that placement (`PLACED_SEGMENTS`): the segments
+  are written once in the batch's block beside the entry (`ViewDoc::segments`), and the read in CLIF finds the
+  segment holding a span's start, takes each segment's piece, and grows the run of pieces holding the first until no
+  piece grows it (`SegmentMap::file_ranges(..).primary()`). The test now also pins the calls' host lines (3 and 5);
+  it passes on Linux and on Metal.
+
 ## Left open
 
 - **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through every
@@ -248,9 +258,3 @@ farm host, so it is in the slow tier.
   each run: the tree walk and each `package.json` (cheap, and 0660 reads a project's configuration once per run). A
   source file's edit leaves their digest the same and misses no other file. Skipping the walk itself needs the
   configuration files' digests kept between runs.
-- `cpu_and_metal_read_the_same_tape_values` fails on Linux hosts with a stratum past its launch budget (0603). It
-  fails the same way on this branch's base (`872f3a300b`), so this change did not cause it. Its 8 dispatches, named
-  launch by launch, are 6 `join_run`s (3 programs, 3 relaunches) and 2 `view_expand`s: two views made into device
-  relations for the stratum (`expand_view`, 0353 step 4's copy), views with no read in place (`device_chunk::
-  read_kind` reads node, child, field, core, line, the places, tape, depth and order). The fix is 0353 step 4's:
-  those views' reads, written once in CLIF (0310).

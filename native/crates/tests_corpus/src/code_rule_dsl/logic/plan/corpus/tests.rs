@@ -2718,6 +2718,11 @@ calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p),
     assert!(bytes <= base + q266(2), "a file's programs are read where they lie ({bytes} bytes uploaded, {base} with none)");
     assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
     assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");
+    // Each call's line is its host's: `f(1)` on line 3, `g(2)` on line 5 (an embedded program's places read through its
+    // segments, decision 0665).
+    let mut lines: Vec<&str> = on_cpu.iter().map(|r| r[2].as_str()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, ["3", "5"], "the calls' host lines: {on_cpu:?}");
     assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");
 }
 

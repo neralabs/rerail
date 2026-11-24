@@ -57,8 +57,9 @@ typedef struct ViewDoc {
     int64_t delta;
     uint32_t within_lo;
     uint32_t within_hi;
+    Run segments;
 } ViewDoc;
-UKL_STATIC_ASSERT(sizeof(ViewDoc) == 120, "ViewDoc: size");
+UKL_STATIC_ASSERT(sizeof(ViewDoc) == 136, "ViewDoc: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, key) == 0, "ViewDoc.key");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, tag) == 4, "ViewDoc.tag");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, preorder) == 8, "ViewDoc.preorder");
@@ -76,6 +77,7 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, file) == 100, "ViewDoc.file");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, delta) == 104, "ViewDoc.delta");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, within_lo) == 112, "ViewDoc.within_lo");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, within_hi) == 116, "ViewDoc.within_hi");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, segments) == 120, "ViewDoc.segments");
 UKL_COLD uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);

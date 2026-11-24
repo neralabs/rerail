@@ -13,6 +13,7 @@ pub struct ViewEntry {
     desc: Desc<ViewDoc>,
     _kinds: Cells<u32>,
     _fields: Cells<u32>,
+    _segments: Option<Cells<u32>>,
 }
 
 impl ViewEntry {
@@ -35,6 +36,20 @@ impl ViewEntry {
             n
         })
         .expect("a batch's block holds its entries");
+        // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
+        // in the batch's block beside the entry)
+        let segments = Self::locs(p).and_then(|x| match &x.host {
+            Some((_, Placement::Segments(map))) => Some(
+                Cells::build(block, (map.words().count() * 5).max(1), |out| {
+                    for (k, w) in map.words().flatten().enumerate() {
+                        out[k] = w;
+                    }
+                    map.words().count() * 5
+                })
+                .expect("a batch's block holds its entries"),
+            ),
+            _ => None,
+        });
         let desc = Desc::<ViewDoc>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the entry is this build's alone, and its runs point at cells of the same block (the numbering's
@@ -69,19 +84,24 @@ impl ViewEntry {
                             (*d).placement = rerail_clif::view_reads::PLACED_AT;
                             ((*d).within_lo, (*d).within_hi) = (at[0], at[1]);
                         }
+                        Placement::Segments(_) => {
+                            (*d).placement = rerail_clif::view_reads::PLACED_SEGMENTS;
+                            let words = segments.as_ref().expect("an embedder's segments, laid out above");
+                            Run::set(&raw mut (*d).segments, words.as_ptr(), words.len() / 5);
+                        }
                         _ => unreachable!("`locs` takes these placements alone"),
                     }
                 }
             }
         }
-        ViewEntry { desc, _kinds: kinds, _fields: fields }
+        ViewEntry { desc, _kinds: kinds, _fields: fields, _segments: segments }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's
-    /// lines, where its placement is a copied stretch or a point (a string's normalized pieces and an embedder's
-    /// segments are read apart from any block: its places are made).
+    /// lines, where its placement is a copied stretch, a point or an embedder's segments (a string's normalized
+    /// pieces are read apart from any block: its places are made).
     pub fn locs(p: &Projected) -> Option<&super::Locs> {
-        p.extra.as_deref().filter(|x| matches!(&x.host, None | Some((_, Placement::Copied { .. } | Placement::At(_)))))
+        p.extra.as_deref().filter(|x| matches!(&x.host, None | Some((_, Placement::Copied { .. } | Placement::At(_) | Placement::Segments(_)))))
     }
 
     /// The entry's address, for the reads written once.
