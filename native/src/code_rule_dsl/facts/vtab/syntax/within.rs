@@ -362,10 +362,10 @@ impl Within {
     /// rows (that ancestor, or for `inside` the chain of them). Shared with the batch's other axes over its set
     /// (`Solves`): an `inside` whose set nests nowhere reads its `nearest`'s rows.
     fn solved(&self) -> &Solved {
-        self.solved.get_or_init(|| {
+        crate::code_rule_dsl::logic::profile::once::<Arc<Solved>>(&self.solved, "axis: solved", || {
             let Some(solves) = &self.solves else { return self.solve(None) };
             let slot = if matches!(self.mode, Mode::Axis(Axis::Inside)) { &solves.inside } else { &solves.nearest };
-            Arc::clone(slot.get_or_init(|| self.solve(Some(&solves.nearest))))
+            Arc::clone(crate::code_rule_dsl::logic::profile::once(slot, "axis: solved (shared)", || self.solve(Some(&solves.nearest))))
         })
     }
 

@@ -7143,27 +7143,10 @@ pub fn plan_cpu(from: &[usize], plan_steps: usize, c: &[f64]) -> Vec<f64> {
     out
 }
 
-/// The processor's tick counter: the virtual counter on ARM (24 MHz on Apple's), the time-stamp counter on x86.
-/// Read at every step a profiled walk enters and leaves, where a thread-CPU clock read (a few hundred ns) would
-/// cost more than the steps it times. Its unit cancels: a walk's ticks are scaled to its thread's CPU (`StepClock`).
+/// The processor's tick counter (`profile::ticks`).
 #[inline(always)]
 fn ticks() -> u64 {
-    #[cfg(target_arch = "aarch64")]
-    {
-        let t: u64;
-        // SAFETY: reads the virtual counter, which user code may read on every platform the engine runs on.
-        unsafe { std::arch::asm!("mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack, preserves_flags)) };
-        t
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        // SAFETY: the time-stamp counter is readable from user code.
-        unsafe { core::arch::x86_64::_rdtsc() }
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    {
-        0
-    }
+    crate::code_rule_dsl::logic::profile::ticks()
 }
 
 /// A profiled walk's CPU per step (Q36: a view's row can cost far more than a unit of work, and the stratum's CPU
@@ -7171,29 +7154,41 @@ fn ticks() -> u64 {
 /// charge to the step the walk was in, so a step's time is its own, its source's lookups and tests included, the
 /// steps after it not. At the end the ticks are scaled to the thread's CPU over the walk: a thread descheduled
 /// mid-walk spreads that time over the steps in proportion, not onto the one it stopped in.
-struct StepClock { ticks: Vec<u64>, at: usize, last: u64, t0: u64, cpu0: f64 }
+struct StepClock { ticks: Vec<u64>, at: usize, last: u64, t0: u64, cpu0: f64, acc: u64, acc0: (u64, f64) }
 impl StepClock {
     /// Off unless profiling. `steps + 2` places: each step, the head's rows made, and the walk outside any step.
     fn start(steps: usize) -> Option<Box<StepClock>> {
-        crate::code_rule_dsl::logic::profile::on().then(|| {
+        use crate::code_rule_dsl::logic::profile;
+        profile::on().then(|| {
             let t = ticks();
-            Box::new(StepClock { ticks: vec![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: crate::code_rule_dsl::logic::profile::now() })
+            let acc0 = profile::accounted();
+            Box::new(StepClock { ticks: vec![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: profile::now(), acc: acc0.0, acc0 })
         })
     }
+    /// Charges the ticks since the last switch to the step the walk was in, less those a scope inside it accounted
+    /// for (`profile::accounted_ticks`: a span, another walk), and enters step `at`.
     #[inline(always)]
     fn to(&mut self, at: usize) -> usize {
         let t = ticks();
-        self.ticks[self.at] += t.wrapping_sub(self.last);
-        self.last = t;
+        let acc = crate::code_rule_dsl::logic::profile::accounted_ticks();
+        self.ticks[self.at] += t.wrapping_sub(self.last).saturating_sub(acc.wrapping_sub(self.acc));
+        (self.last, self.acc) = (t, acc);
         std::mem::replace(&mut self.at, at)
     }
-    /// The walk's CPU, by step, added to the join's (`JoinRule::step_ns`).
+    /// The walk's CPU, by step, added to the join's (`JoinRule::step_ns`): its own ticks scaled to its own CPU, both
+    /// less what the scopes inside it accounted for (t56 step 1). The walk then accounts for its whole time, for a
+    /// scope around it.
     fn end(mut self, j: &JoinRule) {
+        use crate::code_rule_dsl::logic::profile;
         let outside = self.ticks.len() - 1;
         self.to(outside);
-        let (span, cpu) = (self.last.wrapping_sub(self.t0), crate::code_rule_dsl::logic::profile::now() - self.cpu0);
-        if span == 0 || cpu <= 0.0 { return; }
-        let ns = cpu * 1e9 / span as f64;
+        let (cpu1, acc1) = (profile::now(), profile::accounted());
+        let (span, cpu) = (self.last.wrapping_sub(self.t0), cpu1 - self.cpu0);
+        profile::account_scope(self.acc0, span, cpu);
+        let own_span = span.saturating_sub(acc1.0.wrapping_sub(self.acc0.0));
+        let own_cpu = cpu - (acc1.1 - self.acc0.1);
+        if own_span == 0 || own_cpu <= 0.0 { return; }
+        let ns = own_cpu * 1e9 / own_span as f64;
         for (c, &t) in j.step_ns.iter().zip(&self.ticks) { c.add((t as f64 * ns) as u64); }
     }
 }

@@ -1686,7 +1686,7 @@ impl Relation {
     /// The rows in their block: the staged ones written there at the first read, in one relation of their size.
     #[inline]
     fn cells(&self) -> &super::rows::Rows {
-        self.cells.get_or_init(|| {
+        crate::code_rule_dsl::logic::profile::once(&self.cells, "relation: staged rows written", || {
             let staged = std::mem::take(&mut *self.staged.lock().unwrap_or_else(|e| e.into_inner()));
             let mut cells = super::rows::Rows::living(self.columns.len(), super::rows::Life::Source);
             cells.reserve(staged.len());
@@ -1695,7 +1695,7 @@ impl Relation {
         })
     }
     fn index(&self, column: usize) -> &ColumnIndex {
-        self.indexes[column].get_or_init(|| {
+        crate::code_rule_dsl::logic::profile::once(&self.indexes[column], "relation: a column's index built", || {
             // Each value read once, and the pairs sorted (ties by row, as a stable sort by value): a sort reading the
             // rows' values at every comparison read each of them about 2 log n times.
             let mut pairs: Vec<(i64, u32)> = (0..self.len()).map(|r| (self.value(r, column), r as u32)).collect();
