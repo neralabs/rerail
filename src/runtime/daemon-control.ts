@@ -893,12 +893,12 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, wait: 
 }
 
 /**
- * {@link proofVerdict} for a lookup, by `deadline` (epoch ms): the start of the process an engine with no proof runs in,
- * read by `readDeadline`, the lookup's own limit, decides whether it is the daemon that wrote the record
+ * {@link proofVerdict} for a lookup, the proof given `timeoutMs`: the start of the process an engine with no proof runs
+ * in, read by `readDeadline`, the lookup's own limit, decides whether it is the daemon that wrote the record
  * ({@link olderDaemon}).
  */
-async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, deadline: number, readDeadline: number): Promise<RecordedEngine> {
-  const recorded = await proofVerdict(state, machine, { timeoutMs: deadline - Date.now() });
+async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, timeoutMs: number, readDeadline: number): Promise<RecordedEngine> {
+  const recorded = await proofVerdict(state, machine, { timeoutMs });
   return recorded === "no-proof" ? olderDaemon(state, machine, readDeadline) : recorded;
 }
 
@@ -1089,7 +1089,7 @@ export async function lookupDaemon(
  */
 async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number, readDeadline: number): Promise<DaemonLookup> {
   const deadline = Date.now() + probeTimeoutMs;
-  const recorded = await lookedUpEngine(state, machine, deadline, readDeadline);
+  const recorded = await lookedUpEngine(state, machine, probeTimeoutMs, readDeadline);
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe or
   // fails its engine's proof: the state is stale, and its URL is never probed.
   if (recorded === "gone") {

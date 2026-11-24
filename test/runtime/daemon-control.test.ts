@@ -2146,6 +2146,29 @@ describe("a state file Windows left behind", () => {
     });
   });
 
+  // The clock moves a millisecond at each read, as on a busy machine: the proof's wait is not cut by the lookup's work.
+  it("gives the engine's proof of a recorded daemon its whole wait however long the lookup took before it", async () => {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" })));
+    await holdHome(home, DEAD_PID);
+    const waits: number[] = [];
+    const machine: DaemonMachine = {
+      ...windows([PIPE_NAME]),
+      homeDaemonLockHeld: () => true,
+      capabilityProof: async (_socketPath, _accessToken, timeoutMs) => {
+        waits.push(timeoutMs);
+        return "silent";
+      },
+    };
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1));
+    try {
+      expect((await lookupDaemon(home, machine)).status).toBe("unresponsive");
+    } finally {
+      clock.mockRestore();
+    }
+    expect(waits).toEqual([2_000]);
+  });
+
   it("waits for a daemon whose engine is silent to the proof, as for a busy one, and sends it nothing", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" });
