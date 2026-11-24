@@ -82,7 +82,7 @@ fn word_setters(g: &G<'_>) -> HashSet<String> {
 /// The rules `g` names (`Gram::Sym`), itself and inside.
 fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
     match g {
-        Gram::Sym(n) => out.push(n),
+        Gram::Sym(n) | Gram::Leaf { rule: n, .. } => out.push(n),
         Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| names(g, out)),
         Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => names(a, out),
         Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => names(body, out),
@@ -174,6 +174,7 @@ impl Rl<'_, '_> {
             }
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.holds_call(a)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.holds_call(body)?,
+            Gram::Leaf { rule, .. } => self.holds_call(&Gram::Sym(rule.clone()))?,
             _ => false,
         })
     }
@@ -327,6 +328,8 @@ impl Rl<'_, '_> {
                 }
                 format!("self.reread_{}()?;\n{}", super::super::ident(reading), self.walk(body, rest, rule, k)?)
             }
+            // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them (`leaf_open` holds where it starts).
+            Gram::Leaf { kind, rule: r } => format!("self.leaf_open();\n{}", self.walk(&Gram::Sym(r.clone()), rest, rule, format!("self.leaf_close({})?;\n{k}", self.g.kind_const(kind)?))?),
             other => return self.err(format!("rule {rule}: a level's call inside {other:?} is not written yet")),
         })
     }

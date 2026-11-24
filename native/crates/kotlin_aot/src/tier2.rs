@@ -1653,7 +1653,6 @@ impl<L: Layout> P<'_, L> {
         if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() {
         } else if self.m_semi_close() {
             self.mark_semi_close()?;
-        } else {
         }
         self.close()?;
         self.depth -= 1;
@@ -1917,7 +1916,6 @@ impl<L: Layout> P<'_, L> {
         }
         if self.m_recv() {
             self.receiver()?;
-        } else {
         }
         self.name()?;
         self.function_value_parameters()?;
@@ -1963,7 +1961,6 @@ impl<L: Layout> P<'_, L> {
         }
         if self.m_recv() {
             self.receiver()?;
-        } else {
         }
         match self.word() {
             w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 => {
@@ -2019,7 +2016,6 @@ impl<L: Layout> P<'_, L> {
             1 => {
                 if self.m_by_lf() {
                     self.mark_by_lf()?;
-                } else {
                 }
                 self.property_delegate()?;
             }
@@ -2070,7 +2066,6 @@ impl<L: Layout> P<'_, L> {
             if self.m_head_ctor() {
                 self.mark_head_ctor()?;
             } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) {
-            } else {
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2129,7 +2124,6 @@ impl<L: Layout> P<'_, L> {
             if self.m_head_ctor() {
                 self.mark_head_ctor()?;
             } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) {
-            } else {
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2199,7 +2193,6 @@ impl<L: Layout> P<'_, L> {
                     if self.m_head_ctor() {
                         self.mark_head_ctor()?;
                     } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) {
-                    } else {
                     }
                     self.ask_semi(false)?;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2275,7 +2268,6 @@ impl<L: Layout> P<'_, L> {
                             self.ask_semi(false)?;
                             if self.m_semi() {
                                 self.mark_semi()?;
-                            } else {
                             }
                             self.enum_entry()?;
                         }
@@ -2289,7 +2281,6 @@ impl<L: Layout> P<'_, L> {
         if self.m_semi_close() || matches!(self.word(), w::SEMI_33 | w::RBRACE_18) {
             if self.m_semi_close() {
                 self.mark_semi_close()?;
-            } else {
             }
             if self.word() == w::SEMI_33 {
                 self.skip_as::<true, false>(true)?;
@@ -2297,7 +2288,6 @@ impl<L: Layout> P<'_, L> {
                 if self.m_semi() {
                     self.mark_semi()?;
                 } else if (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) || self.word() == w::ENUM_16 && self.word_at(self.i + 1) == w::CLASS_13 || self.word() == w::FUN_14 && self.word_at(self.i + 1) == w::INTERFACE_15 || self.m_acc() {
-                } else {
                 }
                 if (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) || self.word() == w::ENUM_16 && self.word_at(self.i + 1) == w::CLASS_13 || self.m_acc() || matches!(self.word(), w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36) {
                     let asks = self.asks;
@@ -2351,7 +2341,6 @@ impl<L: Layout> P<'_, L> {
                     }
                     if self.m_semi_close() {
                         self.mark_semi_close()?;
-                    } else {
                     }
                 }
             }
@@ -2745,7 +2734,6 @@ impl<L: Layout> P<'_, L> {
                 self.wrap(k::EXPLICIT_DELEGATION, 0)?;
                 if self.m_by_lf() {
                     self.mark_by_lf()?;
-                } else {
                 }
                 self.word_skip_as::<true, false>(w::BY_25)?;
                 let flags = self.flags;
@@ -3106,7 +3094,6 @@ impl<L: Layout> P<'_, L> {
                 self.asks = asks;
             }
             self.word_skip_as::<true, false>(w::RBRACE_18)?;
-        } else {
         }
         self.marked = false;
         Ok(())
@@ -3137,7 +3124,6 @@ impl<L: Layout> P<'_, L> {
         self.open(k::TYPE_PARAMETERS);
         if self.m_generic() {
             self.mark_generic()?;
-        } else {
         }
         self.word_skip_as::<true, false>(w::LT_26)?;
         self.type_parameter()?;
@@ -3587,7 +3573,6 @@ impl<L: Layout> P<'_, L> {
         self.word_leaf_as::<true, false>(w::AT_2, k::AT)?;
         if self.i > 0 && self.word_at(self.i - 1) == w::AT_2 && (self.word() == w::FIELD_109 || self.word() == w::PROPERTY_110 || self.word() == w::GET_34 || self.word() == w::SET_35 || self.word() == w::RECEIVER_111 || self.word() == w::PARAM_112 || self.word() == w::SETPARAM_113 || self.word() == w::DELEGATE_114) && self.word_at(self.i + 1) == w::COLON_4 {
             self.use_site_target()?;
-        } else {
         }
         self.user_type()?;
         self.ask_semi(true)?;
@@ -3603,7 +3588,6 @@ impl<L: Layout> P<'_, L> {
         if self.m_ann_lf() {
             self.mark_ann_lf()?;
         } else if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-        } else {
         }
         self.close()?;
         self.depth -= 1;
@@ -4007,7 +3991,6 @@ impl<L: Layout> P<'_, L> {
         self.open(k::TYPE_ARGUMENTS);
         if self.m_generic() {
             self.mark_generic()?;
-        } else {
         }
         self.word_skip_as::<true, false>(w::LT_26)?;
         self.type_projection()?;
@@ -5367,7 +5350,6 @@ impl<L: Layout> P<'_, L> {
         } else if self.flags & FLAG_NO_LAMBDA == 0 && self.i > 0 && (self.word_at(self.i - 1) == w::RPAREN_21 || self.word_at(self.i - 1) == w::ELSE_54 || self.word_at(self.i - 1) == w::DO_45 || self.word_at(self.i - 1) == w::TRY_56 || self.word_at(self.i - 1) == w::FINALLY_58 || self.word_at(self.i - 1) == w::MINUS_GT_41) && self.word() == w::LBRACE_17 {
             self.annotated_lambda()?;
         } else if self.word() == w::LBRACE_17 && self.word_at(self.i + 1) == w::MINUS_GT_41 || self.m_lam_params() || self.m_generic() {
-        } else {
         }
         self.close()?;
         self.marked = false;
@@ -5400,7 +5382,6 @@ impl<L: Layout> P<'_, L> {
             self.mark_lab_lam()?;
             self.label()?;
         } else if self.word() == w::LBRACE_17 && self.word_at(self.i + 1) == w::MINUS_GT_41 || self.m_lam_params() {
-        } else {
         }
         self.lambda_literal()?;
         self.close()?;
@@ -5917,7 +5898,6 @@ impl<L: Layout> P<'_, L> {
         self.open(k::CALLABLE_REFERENCE);
         if self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) && self.word_at(self.i + 1) == w::COLON_COLON_63 {
             self.type_name()?;
-        } else {
         }
         self.word_skip_as::<true, false>(w::COLON_COLON_63)?;
         match self.word() {
@@ -5955,7 +5935,6 @@ impl<L: Layout> P<'_, L> {
                     } else if self.flags & FLAG_NO_LAMBDA == 0 && self.i > 0 && (self.word_at(self.i - 1) == w::RPAREN_21 || self.word_at(self.i - 1) == w::ELSE_54 || self.word_at(self.i - 1) == w::DO_45 || self.word_at(self.i - 1) == w::TRY_56 || self.word_at(self.i - 1) == w::FINALLY_58 || self.word_at(self.i - 1) == w::MINUS_GT_41) && self.word() == w::LBRACE_17 {
                         self.annotated_lambda()?;
                     } else if self.word() == w::LBRACE_17 && self.word_at(self.i + 1) == w::MINUS_GT_41 || self.m_lam_params() || self.m_generic() {
-                    } else {
                     }
                 }
                 w::LBRACE_17 if self.flags & FLAG_NO_LAMBDA == 0 => {
@@ -6000,7 +5979,6 @@ impl<L: Layout> P<'_, L> {
             self.uni_escape()?;
         } else if self.kind() == t::CHAR_CONTENT {
             self.skip_as::<true, false>(self.kind() == t::CHAR_CONTENT)?;
-        } else {
         }
         self.skip_as::<true, false>(matches!(self.kind(), t::TICK | t::TICK__CLOSE))?;
         self.close()?;
@@ -6107,7 +6085,6 @@ impl<L: Layout> P<'_, L> {
         self.skip_as::<true, false>(matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE))?;
         if self.kind() == t::QUOTE_QUOTE {
             self.skip_as::<true, false>(self.kind() == t::QUOTE_QUOTE)?;
-        } else {
         }
         loop {
             if self.kind() == t::STRING_CONTENT {
@@ -6500,7 +6477,6 @@ impl<L: Layout> P<'_, L> {
                 }
                 if self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41) {
                     self.when_trail()?;
-                } else {
                 }
             }
             1 => {
@@ -6719,7 +6695,6 @@ impl<L: Layout> P<'_, L> {
         self.word_leaf_as::<true, false>(w::COMMA_20, k::COMMA)?;
         if self.m_semi_close() {
             self.mark_semi_close()?;
-        } else {
         }
         self.word_leaf_as::<true, false>(w::RBRACE_18, k::RBRACE)?;
         self.marked = false;

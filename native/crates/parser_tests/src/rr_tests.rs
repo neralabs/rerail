@@ -391,13 +391,13 @@ fn rr_cases_parse() {
 fn a_refused_mark_is_checked() {
     let source = grammar().remove(0).1;
     assert_eq!(rerail_cpu_stream::ladder::compile_error(&source), None);
-    let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
+    let refuse = "refuse json_bad in json_document json_array";
     for (from, to, why) in [
-        (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
-        (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
-        (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
+        (refuse, "refuse json_bad in json_document", "calls one that does not"),
+        (refuse, "refuse json_bad in json_document json_member json_array", "no nested level"),
+        (refuse, "refuse json_bad in source_file json_document json_array", "the root"),
         ("agg_word json_bad fix_on", "agg_word fix_on", "no hidden mark"),
-        ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
+        ("(',' json_value)*] ']'", "(',' json_value)*] ']' ['.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
         let e = rerail_cpu_stream::ladder::compile_error(&source.replace(from, to));

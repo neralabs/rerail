@@ -689,6 +689,10 @@ pub enum Gram {
     Flag { flag: String, set: bool, body: Box<Gram> },
     /// `unless F A`: `A` where flag `F` is clear; where it is set, as if `A` were not there.
     Unless { flag: String, body: Box<Gram> },
+    /// `leaf K R`: one leaf of kind `K` over the tokens rule `R` reads, as the lean parser reads a JSON object's braces
+    /// and checks its text. `R` and the rules it reaches are choices of tokens and rules, and make no node
+    /// (`desugar_leaves`).
+    Leaf { kind: String, rule: String },
 }
 
 /// What a `reading` does with a node of a kind it names.
@@ -944,7 +948,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
                 }
             }
             // A token given a kind of its own, or merged, is a node's: not implied.
-            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
@@ -1587,6 +1591,11 @@ impl P {
                 let open = self.kind()?;
                 let close = self.kind()?;
                 Ok(Gram::Balanced { kind, open, close })
+            }
+            "leaf" => {
+                let kind = self.kind()?;
+                let rule = self.ident()?;
+                Ok(Gram::Leaf { kind, rule })
             }
             _ => Ok(Gram::Sym(name)),
         }
@@ -2704,6 +2713,138 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
         out.push(st);
         out.append(&mut p.after);
         p.nls();
+    }
+    Ok(out)
+}
+
+/// A tree's statements with each `leaf K R` as the grammar's other elements say it, for the machine and the reference
+/// (decision 0673 step 6): `R` read again with its first token a leaf of `K` and every token after it merged into that
+/// leaf, a copy of each rule it reaches with its tokens merged, fields dropped. A `refuse M in L` holds in `L`'s copies
+/// too. The Rust writer keeps `leaf`: the rules then read the tokens and make nothing, and the leaf is made after them.
+pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    fn walk(g: &Gram, f: &mut dyn FnMut(&Gram)) {
+        f(g);
+        match g {
+            Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| walk(x, f)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => walk(body, f),
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
+        }
+    }
+    let mut any = false;
+    for s in stmts {
+        if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = s {
+            walk(body, &mut |g| any |= matches!(g, Gram::Leaf { .. }));
+        }
+    }
+    if !any {
+        return Ok(stmts.to_vec());
+    }
+    let rule = |n: &str| -> Option<(&Gram, bool, bool)> {
+        stmts.iter().find_map(|s| match s {
+            Stmt::Node { kind, nested, body, .. } if kind == n => Some((body, *nested, true)),
+            Stmt::Choice { name, nested, body, .. } if name == n => Some((body, *nested, false)),
+            _ => None,
+        })
+    };
+    let name = |r: &str, k: &str, first: bool| format!("{r}\u{0}{} {k}", if first { "first" } else { "leaf" });
+    // Each copy to write: the rule, the leaf's kind, whether the copy's first token opens the leaf.
+    let mut todo: Vec<(String, String, bool)> = Vec::new();
+    struct Cx<'b> {
+        kind: &'b str,
+        todo: &'b mut Vec<(String, String, bool)>,
+    }
+    fn copy<'s>(g: &Gram, first: bool, cx: &mut Cx<'_>, rule: &dyn Fn(&str) -> Option<(&'s Gram, bool, bool)>, name: &dyn Fn(&str, &str, bool) -> String) -> Result<Gram, String> {
+        let k = cx.kind.to_owned();
+        let token = |t: Gram| if first { Gram::As(k.clone(), Box::new(t)) } else { Gram::Merge(k.clone(), Box::new(t)) };
+        Ok(match g {
+            Gram::Lit(_) => token(g.clone()),
+            Gram::Sym(n) => match rule(n) {
+                Some((_, _, true)) => return Err(format!("leaf {k}: rule `{n}` makes a node")),
+                Some(_) => {
+                    if !cx.todo.iter().any(|t| t.0 == *n && t.2 == first) {
+                        cx.todo.push((n.clone(), k.clone(), first));
+                    }
+                    Gram::Sym(name(n, &k, first))
+                }
+                None => token(g.clone()),
+            },
+            Gram::Seq(v) => {
+                let mut out = Vec::new();
+                for (i, x) in v.iter().enumerate() {
+                    out.push(copy(x, first && i == 0, cx, rule, name)?);
+                }
+                Gram::Seq(out)
+            }
+            Gram::Alt(v) => Gram::Alt(v.iter().map(|x| copy(x, first, cx, rule, name)).collect::<Result<_, _>>()?),
+            Gram::Opt(_) | Gram::Star(_) if first => return Err(format!("leaf {k}: its first token may be none")),
+            Gram::Opt(a) => Gram::Opt(Box::new(copy(a, false, cx, rule, name)?)),
+            Gram::Star(a) => Gram::Star(Box::new(copy(a, false, cx, rule, name)?)),
+            Gram::Plus(a) if first => Gram::Seq(vec![copy(a, true, cx, rule, name)?, Gram::Star(Box::new(copy(a, false, cx, rule, name)?))]),
+            Gram::Plus(a) => Gram::Plus(Box::new(copy(a, false, cx, rule, name)?)),
+            // The leaf's kind is every token's; a field is the leaf's caller's.
+            Gram::Field(_, a) | Gram::As(_, a) | Gram::Merge(_, a) => copy(a, first, cx, rule, name)?,
+            Gram::Flag { flag, set, body } => Gram::Flag { flag: flag.clone(), set: *set, body: Box::new(copy(body, first, cx, rule, name)?) },
+            Gram::Unless { flag, body } => Gram::Unless { flag: flag.clone(), body: Box::new(copy(body, first, cx, rule, name)?) },
+            _ => return Err(format!("leaf {k}: its rules make nodes")),
+        })
+    }
+    let mut out = Vec::new();
+    for s in stmts {
+        out.push(match s {
+            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
+            Stmt::Choice { name: n, supertype, nested, body } => Stmt::Choice { name: n.clone(), supertype: supertype.clone(), nested: *nested, body: leaves_in(body, &mut todo, &name)? },
+            s => s.clone(),
+        });
+    }
+    // `leaf K R` in `g`: the first copy of `R`.
+    fn leaves_in(g: &Gram, todo: &mut Vec<(String, String, bool)>, name: &dyn Fn(&str, &str, bool) -> String) -> Result<Gram, String> {
+        let mut d = |x: &Gram| leaves_in(x, todo, name);
+        Ok(match g {
+            Gram::Leaf { kind, rule } => {
+                if !todo.iter().any(|t| t.0 == *rule && t.1 == *kind && t.2) {
+                    todo.push((rule.clone(), kind.clone(), true));
+                }
+                Gram::Sym(name(rule, kind, true))
+            }
+            Gram::Seq(v) => Gram::Seq(v.iter().map(&mut d).collect::<Result<_, _>>()?),
+            Gram::Alt(v) => Gram::Alt(v.iter().map(&mut d).collect::<Result<_, _>>()?),
+            Gram::Opt(a) => Gram::Opt(Box::new(d(a)?)),
+            Gram::Star(a) => Gram::Star(Box::new(d(a)?)),
+            Gram::Plus(a) => Gram::Plus(Box::new(d(a)?)),
+            Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a)?)),
+            Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
+            Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
+            Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
+            Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)?) },
+            Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)?) },
+            Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)?) },
+            Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)?) },
+            Gram::Flag { flag, set, body } => Gram::Flag { flag: flag.clone(), set: *set, body: Box::new(d(body)?) },
+            Gram::Unless { flag, body } => Gram::Unless { flag: flag.clone(), body: Box::new(d(body)?) },
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) => g.clone(),
+        })
+    }
+    let mut done = 0;
+    let mut copies: Vec<(String, String)> = Vec::new();
+    while done < todo.len() {
+        let (r, k, first) = todo[done].clone();
+        done += 1;
+        let Some((body, nested, node)) = rule(&r) else { return Err(format!("leaf {k}: no rule `{r}`")) };
+        if node {
+            return Err(format!("leaf {k}: rule `{r}` makes a node"));
+        }
+        let mut cx = Cx { kind: &k, todo: &mut todo };
+        let body = copy(body, first, &mut cx, &rule, &name)?;
+        copies.push((r.clone(), name(&r, &k, first)));
+        out.push(Stmt::Choice { name: name(&r, &k, first), supertype: None, nested, body });
+    }
+    // A mark refused in a rule is refused in its copies.
+    for s in &mut out {
+        if let Stmt::Refuse { levels, .. } = s {
+            let more: Vec<String> = copies.iter().filter(|(r, _)| levels.contains(r)).map(|(_, c)| c.clone()).collect();
+            levels.extend(more);
+        }
     }
     Ok(out)
 }

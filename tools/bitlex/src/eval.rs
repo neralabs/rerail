@@ -447,7 +447,8 @@ impl<'a> Ev<'a> {
             Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
-                self.exec(body)?;
+                // `leaf K R` as the grammar's other elements say it (`desugar_leaves`).
+                self.exec(&crate::syntax::desugar_leaves(body).map_err(|e| e.to_string())?)?;
             }
             Stmt::Node { kind, nested, whole, body, .. } => {
                 let tree = self.tree.get_or_insert_with(TreeDecl::default);
@@ -1537,7 +1538,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 

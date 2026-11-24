@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 5 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: in progress, steps 1 to 6 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -201,3 +201,28 @@ Tests:
 rr's `tier2.rs` is 3,293 lines, from 3,582. Kotlin's is 8,503 lines, from 9,099: 15 of its marks are peeks now, and one
 fewer decision numbers its arms (14). Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11,
 clippy.
+
+## Step 6: a policy document is JSON's grammar read into one leaf (done)
+
+The lean parser reads a policy document's `{…}` as balanced braces into one `json_object` leaf, then checks that its
+text is JSON. Tier 2 read JSON's grammar with `merge json_object` on every token: five rules, each written twice, one
+for the outermost object and one for those inside.
+
+Bitlex now has `leaf K R`. Rule `R` reads the tokens, and they are one leaf of kind `K`, from the first token's start to
+the last token's end. rr's policy document is `document: leaf json_object json_document`, and the JSON rules are JSON's
+own: `json_document`, `json_member`, `json_value`, `json_array`, with no merges.
+
+- **The reference and the machine.** Both read `leaf K R` through one rewrite (`desugar_leaves`, in Bitlex's
+  `syntax.rs`). It makes two derived copies of the rules `R` reaches. The first takes its first token `as K`, and the
+  second merges every token into `K`. A refusal (`refuse M in L`) on a level reaches its copies too. A rule that
+  `leaf` reaches may make no node.
+- **The Rust writer** keeps `leaf` as the lean parser's `json` does: `self.leaf_open(); self.json_document()?;
+  self.leaf_close(k::JSON_OBJECT)?;`. The rules `R` reaches take each token with `pass` (`word_pass` for a word). A
+  pass refuses a token as a take does, and writes no leaf and no comment. `leaf_close` makes the one leaf, and the
+  comments inside it are its text, as a merge's are. Reading JSON's grammar is the check that lean does with
+  `serde_json`. The loop form (`one_loop`) writes the same.
+- **No empty `else`.** A decision whose default did nothing but clear `marked` kept an empty `else {}` once
+  `no_marked` removed that line. `no_empty_elses` drops it: 25 of them in Kotlin, 6 in rr.
+
+rr's `tier2.rs` is 3,308 lines; the JSON rules are four, each written once. Kotlin's is 8,478 lines, from 8,503 (the
+empty `else`s). Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.

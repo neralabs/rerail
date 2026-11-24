@@ -136,6 +136,9 @@ struct G<'a> {
     peek_marks: std::cell::Cell<Option<u64>>,
     /// The words a choice of tokens taken where it is used (`anon_choice`) may be, and each one's leaf's kind (`ANON`).
     anon: std::cell::RefCell<std::collections::BTreeMap<u8, String>>,
+    /// The rules a `leaf K R` reaches (`R` and those it calls): they read the tokens and make nothing, the leaf made
+    /// over them after (decision 0673 step 6).
+    recognizers: HashSet<String>,
 }
 
 /// `s`'s lines at `p`.
@@ -253,7 +256,32 @@ impl<'a> G<'a> {
             }
         }
         let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default() }
+        // The rules each `leaf K R` reaches.
+        let mut recognizers: HashSet<String> = HashSet::new();
+        let mut todo: Vec<String> = Vec::new();
+        fn syms(g: &Gram, leaves: bool, out: &mut Vec<String>) {
+            match g {
+                Gram::Leaf { rule, .. } if leaves => out.push(rule.clone()),
+                Gram::Sym(n) if !leaves => out.push(n.clone()),
+                Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| syms(x, leaves, out)),
+                Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => syms(a, leaves, out),
+                Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => syms(body, leaves, out),
+                _ => {}
+            }
+        }
+        for st in rules.values() {
+            if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = st {
+                syms(body, true, &mut todo);
+            }
+        }
+        while let Some(n) = todo.pop() {
+            if let Some(Stmt::Node { body, .. } | Stmt::Choice { body, .. }) = rules.get(n.as_str())
+                && recognizers.insert(n.clone())
+            {
+                syms(body, false, &mut todo);
+            }
+        }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -374,6 +402,7 @@ impl<'a> G<'a> {
                 let (f, e) = self.first(body)?;
                 (f.into_iter().map(|(t, _)| (t, Some(flag.clone()))).collect(), e)
             }
+            Gram::Leaf { rule, .. } => self.rule_first(rule)?,
             other => return Err(format!("not written yet: {other:?}")),
         })
     }
@@ -870,6 +899,7 @@ impl<'a> G<'a> {
             }
             Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.sites(a, rest, caller, out)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.sites(body, rest, caller, out)?,
+            Gram::Leaf { rule, .. } => self.sites(&Gram::Sym(rule.clone()), rest, caller, out)?,
             _ => {}
         }
         Ok(())
@@ -879,6 +909,21 @@ impl<'a> G<'a> {
     fn code(&self, g: &Gram, rest: &[&Gram], rule: &str, pad: &str) -> Result<String, String> {
         let deeper = format!("{pad}    ");
         Ok(match g {
+            // A token a `leaf`'s rule reads: into the leaf, no leaf of its own.
+            Gram::Lit(_) | Gram::Sym(_) | Gram::As(_, _) | Gram::Merge(_, _) if self.recognizers.contains(rule) && self.token_of(g).or_else(|| if let Gram::As(_, a) | Gram::Merge(_, a) = g { self.token_of(a) } else { None }).is_some() => {
+                let t = self.token_of(g).or_else(|| if let Gram::As(_, a) | Gram::Merge(_, a) = g { self.token_of(a) } else { None }).expect("a token");
+                match t.0 {
+                    Test::Word(w) => format!("{pad}self.word_pass(w::{})?;\n", self.word_const(w)),
+                    test => format!("{pad}self.pass({})?;\n", self.token_cond(&test)),
+                }
+            }
+            Gram::Field(_, a) if self.recognizers.contains(rule) => self.code(a, rest, rule, pad)?,
+            // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them, as the lean parser's `json` reads the
+            // braces and makes its leaf.
+            Gram::Leaf { kind, rule: r } => {
+                let call = self.code(&Gram::Sym(r.clone()), rest, rule, pad)?;
+                format!("{pad}self.leaf_open();\n{call}{pad}self.leaf_close({})?;\n", self.kind_const(kind)?)
+            }
             Gram::Lit(_) | Gram::Sym(_) if self.token_of(g).is_some() => {
                 let (test, kind) = self.token_of(g).expect("a token");
                 self.take_token(&test, Some(&kind), pad)?
@@ -1663,6 +1708,7 @@ impl<'a> G<'a> {
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => {
                 self.walk_asks(body, after, follow, read)
             }
+            Gram::Leaf { rule, .. } => *follow.entry(rule.as_str()).or_default() |= after,
             _ => {}
         }
     }
@@ -1706,6 +1752,7 @@ impl<'a> G<'a> {
             Gram::Opt(a) | Gram::Star(a) => (self.first_asks(a, seen).0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first_asks(a, seen),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.first_asks(body, seen),
+            Gram::Leaf { rule, .. } => self.first_asks(&Gram::Sym(rule.clone()), seen),
             Gram::Lit(_) | Gram::Balanced { .. } | Gram::Any(_) => (0, false),
         }
     }
@@ -2218,6 +2265,15 @@ impl<'a> G<'a> {
         if let Some((_, clauses)) = self.recover.filter(|_| rules.contains("self.recover(")) {
             out = self.recovery(out, clauses)?;
         }
+        // `leaf K R`: the record its first token is, held while `R` reads (a leaf holds no leaf).
+        if rules.contains("self.leaf_open(") {
+            for (a, b) in [("    /// The last token's end.\n    last_end: u32,\n", "    /// The last token's end.\n    last_end: u32,\n    /// A `leaf`'s first token's record (`leaf_open`).\n    leaf_from: usize,\n"), ("last_end: 0, ", "last_end: 0, leaf_from: 0, ")] {
+                if out.matches(a).count() != 1 {
+                    return Err(format!("tier 2 as Rust: `leaf`'s place in the runtime: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
         // The helpers only some grammars' rules call, each written where it is called.
         let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
         if !used.is_empty() {
@@ -2260,6 +2316,7 @@ impl<'a> G<'a> {
             if !out.contains("!self.marked") {
                 out = no_marked(&out);
             }
+            out = no_empty_elses(&out);
         }
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
@@ -2330,7 +2387,7 @@ fn plain_writer(code: &str) -> String {
 /// only where its token may be one of their words (`marks`: `w` none of them, or a kind no such word is of), and the
 /// marks the level refuses only in a rule a refusing level reaches (a take that is not `_nf`, `records::no_refusing`).
 fn takes(code: &str, marks: Option<&(HashSet<String>, HashSet<String>)>) -> String {
-    const NAMES: [&str; 5] = ["tk", "word_leaf", "word_skip", "skip", "merge"];
+    const NAMES: [&str; 7] = ["tk", "word_leaf", "word_skip", "skip", "merge", "pass", "word_pass"];
     // Whether a mark no rule takes may hold at the token a take's first argument `a` says it is.
     let may = |a: &str| -> bool {
         let Some((words, free)) = marks else { return true };
@@ -2539,6 +2596,30 @@ fn ifs_and_whiles(code: &str) -> String {
     out
 }
 
+/// `code` with no `else` that does nothing, as the lean parser writes none: one whose lines all went (`no_marked`).
+fn no_empty_elses(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        let p = &l[..l.len() - l.trim_start().len()];
+        if l.trim() == "} else {" && lines.get(i + 1).is_some_and(|n| n.len() == p.len() + 1 && n.ends_with('}') && n.starts_with(p)) {
+            out.push_str(p);
+            out.push_str("}\n");
+            i += 2;
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
+        i += 1;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
 /// `code` with no `marked` (decision 0668 step 1): no decision reads it (`!self.marked`, `after_mark`), so its writes,
 /// its field and its place in a statement's mark go.
 fn no_marked(code: &str) -> String {
@@ -2639,6 +2720,7 @@ fn untested(body: &str, cond: &str, word: Option<&str>) -> String {
     let new = match (name, word) {
         ("word_leaf", Some(w)) => args.strip_prefix(&format!("{w}, ")).map(|k| format!("self.tk_as::<{generics}>(true, {}", k.replacen(")?;", ", 0)?;", 1))),
         ("word_skip", Some(w)) => args.strip_prefix(&format!("{w})?;")).map(|_| format!("self.skip_as::<{generics}>(true)?;")),
+        ("word_pass", Some(w)) => args.strip_prefix(&format!("{w})?;")).map(|_| format!("self.pass_as::<{generics}>(true)?;")),
         _ => args.strip_prefix(&format!("{cond}, ")).or_else(|| args.strip_prefix(&format!("{cond})"))).map(|r| {
             if args.starts_with(&format!("{cond})")) { format!("self.{name}_as::<{generics}>(true){r}") } else { format!("self.{name}_as::<{generics}>(true, {r}") }
         }),
@@ -2691,6 +2773,43 @@ fn leaf_fields(code: &str) -> String {
 /// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser
 /// whose rules call it.
 const MORE: &[(&str, &str)] = &[
+    (
+        "leaf_open",
+        r#"    /// `leaf K R` starts: the comments before it written, its first token's record kept (`leaf_from`).
+    fn leaf_open(&mut self) {
+        self.flush();
+        self.leaf_from = self.i;
+    }
+
+    /// `leaf K R`'s leaf, after `R` read the tokens: one leaf of `kind` from the first token's start to the last's end,
+    /// the comments between them its text (as a merge's), those after it still pending.
+    fn leaf_close(&mut self, kind: u16) -> R {
+        while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
+            self.pend += 1;
+        }
+        let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
+        self.set_made(at as u32);
+        Ok(())
+    }
+
+    /// The token, which must be word `w`: read into a `leaf`, no leaf of its own.
+    #[inline(always)]
+    fn word_pass_as<const M: bool, const F: bool>(&mut self, w: u32) -> R {
+        self.pass_as::<M, F>(self.word() == w)
+    }
+
+    /// The token, which must pass `ok`: read into a `leaf`, no leaf of its own; the comments before it stay pending,
+    /// the leaf's text (`leaf_close`).
+    #[inline(always)]
+    fn pass_as<const M: bool, const F: bool>(&mut self, ok: bool) -> R {
+        if !ok {
+            return self.refuse();
+        }
+        self.take::<M, F>()?;
+        Ok(())
+    }
+"#,
+    ),
     (
         "made_kind",
         r#"    /// `ending … K refused`: the kind of the node made last at this level, `NONE` where it made none.

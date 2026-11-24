@@ -304,6 +304,8 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
+            // Desugared before (`desugar_leaves`).
+            Gram::Leaf { .. } => (0, false),
             Gram::Any(_) => (0, false),
         }
     }
@@ -333,6 +335,7 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
+            Gram::Leaf { .. } => (Starts::default(), false),
             Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
         }
     }
@@ -375,7 +378,7 @@ impl<'a> Parser<'a> {
                 (s, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts_flagged(a, flags).0, true),
-            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) => self.starts(g),
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => self.starts(g),
         }
     }
 
@@ -552,6 +555,8 @@ impl<'a> Parser<'a> {
                 self.ask(at + 1, follow);
                 self.past_marks(at + 1, follow)
             }
+            // Desugared before (`desugar_leaves`).
+            Gram::Leaf { .. } => None,
             Gram::Balanced { kind, open, close } => {
                 // The opener's leaf, then every token to its matching closer, marks skipped:
                 // one leaf of `kind`.

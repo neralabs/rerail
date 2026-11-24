@@ -375,6 +375,8 @@ pub struct P<'a, L: Layout> {
     levels: Vec<(u32, u32)>,
     /// The last token's end.
     last_end: u32,
+    /// A `leaf`'s first token's record (`leaf_open`).
+    leaf_from: usize,
     /// The marks taken or passed at this token, by their order.
     taken: u64,
     /// The marks found at this token (`held`): which, and whether each holds.
@@ -405,7 +407,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, depth: 0, limited: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, depth: 0, limited: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -1255,7 +1257,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<false, false>(w::LT_17)?;
         if self.kind() == t::IDENTIFIER {
             self.tk_as::<false, false>(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::BASE)?;
-        } else {
         }
         self.word_skip_as::<false, false>(w::GT_18)?;
         self.word_skip_as::<false, false>(w::LBRACE_20)?;
@@ -1267,7 +1268,6 @@ impl<L: Layout> P<'_, L> {
                 self.lattice_operation()?;
                 self.field_made(f::OPERATION);
             }
-        } else {
         }
         self.word_skip_as::<false, false>(w::RBRACE_21)?;
         self.close()?;
@@ -1279,10 +1279,12 @@ impl<L: Layout> P<'_, L> {
         self.open(k::POLICY_DOCUMENT);
         self.word_skip_as::<false, false>(w::DOT_13)?;
         self.word_skip_as::<false, false>(w::POLICY_66)?;
+        self.leaf_open();
         let refusing = self.refusing;
         self.refusing = 0x800;
         self.json_document()?;
         self.refusing = refusing;
+        self.leaf_close(k::JSON_OBJECT)?;
         self.field_made(f::DOCUMENT);
         self.close()?;
         Ok(())
@@ -1539,24 +1541,23 @@ impl<L: Layout> P<'_, L> {
     /// `json_document`.
     fn json_document(&mut self) -> R {
         self.deeper()?;
-        self.word_leaf_as::<false, true>(w::LBRACE_20, k::JSON_OBJECT)?;
+        self.word_pass_as::<false, true>(w::LBRACE_20)?;
         if self.kind() == t::STRING {
             self.json_member()?;
             while self.word() == w::COMMA_12 {
-                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                self.pass_as::<false, true>(true)?;
                 self.json_member()?;
             }
-        } else {
         }
-        self.merge_as::<false, true>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
+        self.word_pass_as::<false, true>(w::RBRACE_21)?;
         self.depth -= 1;
         Ok(())
     }
 
     /// `json_member`.
     fn json_member(&mut self) -> R {
-        self.merge_as::<false, true>(self.kind() == t::STRING, k::JSON_OBJECT)?;
-        self.merge_as::<false, true>(self.word() == w::COLON_15, k::JSON_OBJECT)?;
+        self.pass_as::<false, true>(self.kind() == t::STRING)?;
+        self.word_pass_as::<false, true>(w::COLON_15)?;
         self.json_value()?;
         Ok(())
     }
@@ -1565,60 +1566,43 @@ impl<L: Layout> P<'_, L> {
     fn json_value(&mut self) -> R {
         match self.word() {
             w::MINUS_27 => {
-                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
-                self.merge_as::<false, true>(self.kind() == t::NUMBER, k::JSON_OBJECT)?;
+                self.pass_as::<false, true>(true)?;
+                self.pass_as::<false, true>(self.kind() == t::NUMBER)?;
             }
             w::TRUE_61 | w::FALSE_62 | w::NULL_63 => {
-                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                self.pass_as::<false, true>(true)?;
             }
             w::LBRACE_20 => {
                 let refusing = self.refusing;
                 self.refusing = 0x800;
-                self.json_inner_object()?;
+                self.json_document()?;
                 self.refusing = refusing;
             }
             _ if self.kind() == t::STRING || self.kind() == t::NUMBER => {
-                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                self.pass_as::<false, true>(true)?;
             }
             _ => {
                 let refusing = self.refusing;
                 self.refusing = 0x800;
-                self.json_inner_array()?;
+                self.json_array()?;
                 self.refusing = refusing;
             }
         }
         Ok(())
     }
 
-    /// `json_inner_object`.
-    fn json_inner_object(&mut self) -> R {
+    /// `json_array`.
+    fn json_array(&mut self) -> R {
         self.deeper()?;
-        self.merge_as::<false, true>(self.word() == w::LBRACE_20, k::JSON_OBJECT)?;
-        if self.kind() == t::STRING {
-            self.json_member()?;
-            while self.word() == w::COMMA_12 {
-                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
-                self.json_member()?;
-            }
-        } else {
-        }
-        self.merge_as::<false, true>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
-        self.depth -= 1;
-        Ok(())
-    }
-
-    /// `json_inner_array`.
-    fn json_inner_array(&mut self) -> R {
-        self.deeper()?;
-        self.merge_as::<false, true>(self.word() == w::LBRACK_25, k::JSON_OBJECT)?;
+        self.word_pass_as::<false, true>(w::LBRACK_25)?;
         if matches!(self.word(), w::MINUS_27 | w::TRUE_61 | w::FALSE_62 | w::NULL_63 | w::LBRACE_20 | w::LBRACK_25) || self.kind() == t::STRING || self.kind() == t::NUMBER {
             self.json_value()?;
             while self.word() == w::COMMA_12 {
-                self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
+                self.pass_as::<false, true>(true)?;
                 self.json_value()?;
             }
         }
-        self.merge_as::<false, true>(self.word() == w::RBRACK_26, k::JSON_OBJECT)?;
+        self.word_pass_as::<false, true>(w::RBRACK_26)?;
         self.depth -= 1;
         Ok(())
     }
@@ -1754,7 +1738,6 @@ impl<L: Layout> P<'_, L> {
                 }
             }
         } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-        } else {
         }
         self.close()?;
         Ok(())
@@ -1779,7 +1762,6 @@ impl<L: Layout> P<'_, L> {
                 self.column()?;
                 self.field_made(f::COLUMN);
             }
-        } else {
         }
         self.word_skip_as::<false, false>(w::RPAREN_11)?;
         self.close()?;
@@ -2102,7 +2084,6 @@ impl<L: Layout> P<'_, L> {
         if self.word() == w::AT_64 && self.kind_at(self.i + 1) == t::STRING {
             self.word_skip_as::<false, false>(w::AT_64)?;
             self.tk_as::<false, false>(self.kind() == t::STRING, k::STRING, f::SELECTOR)?;
-        } else {
         }
         self.close()?;
         Ok(())
@@ -3153,6 +3134,40 @@ const ERROR: u32 = (rerail_tape_format::CODE_ERROR as u32) << 16;
 
 #[allow(clippy::all, dead_code)]
 impl<L: Layout> P<'_, L> {
+    /// `leaf K R` starts: the comments before it written, its first token's record kept (`leaf_from`).
+    fn leaf_open(&mut self) {
+        self.flush();
+        self.leaf_from = self.i;
+    }
+
+    /// `leaf K R`'s leaf, after `R` read the tokens: one leaf of `kind` from the first token's start to the last's end,
+    /// the comments between them its text (as a merge's), those after it still pending.
+    fn leaf_close(&mut self, kind: u16) -> R {
+        while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
+            self.pend += 1;
+        }
+        let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
+        self.set_made(at as u32);
+        Ok(())
+    }
+
+    /// The token, which must be word `w`: read into a `leaf`, no leaf of its own.
+    #[inline(always)]
+    fn word_pass_as<const M: bool, const F: bool>(&mut self, w: u32) -> R {
+        self.pass_as::<M, F>(self.word() == w)
+    }
+
+    /// The token, which must pass `ok`: read into a `leaf`, no leaf of its own; the comments before it stay pending,
+    /// the leaf's text (`leaf_close`).
+    #[inline(always)]
+    fn pass_as<const M: bool, const F: bool>(&mut self, ok: bool) -> R {
+        if !ok {
+            return self.refuse();
+        }
+        self.take::<M, F>()?;
+        Ok(())
+    }
+
     /// `ending … K refused`: the kind of the node made last at this level, `NONE` where it made none.
     fn made_kind(&self) -> u16 {
         let at = self.top.1;

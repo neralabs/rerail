@@ -354,7 +354,7 @@ tree rr {
   node io_directive nested = '.' (merge '.input' 'input' | merge '.output' 'output') (io_none | relation: io_relation (',' relation: io_relation)*)
   node pragma           = '.' 'pragma' (argument: string)*
   node lattice_declaration = '.' 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
-  node policy_document  = '.' 'policy' document: json_document
+  node policy_document  = '.' 'policy' document: leaf json_object json_document
   node violation_declaration = '.' 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
   # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
   # the type first).
@@ -369,15 +369,13 @@ tree rr {
   # the engine reads it.
   node lattice_operation = name: identifier '->' (bare_functor value: lattice_functor | value: term)
   node lattice_functor  = retag functor_call '@' function: identifier
-  # JSON, every token merged into the document's leaf.
-  choice json_document nested = '{' as json_object [json_member (merge json_object ',' json_member)*] merge json_object '}'
-  choice json_member    = merge json_object string merge json_object ':' json_value
-  choice json_value     = merge json_object string | merge json_object number | merge json_object '-' merge json_object number
-                        | merge json_object 'true' | merge json_object 'false' | merge json_object 'null'
-                        | json_inner_object | json_inner_array
-  choice json_inner_object nested = merge json_object '{' [json_member (merge json_object ',' json_member)*] merge json_object '}'
-  choice json_inner_array nested = merge json_object '[' [json_value (merge json_object ',' json_value)*] merge json_object ']'
-  refuse json_bad in json_document json_inner_object json_inner_array
+  # A policy document is JSON: JSON's grammar, read into one leaf (`leaf json_object json_document`), as the lean
+  # parser reads its braces and checks the text is JSON. JSON refuses `json_bad`.
+  choice json_document nested = '{' [json_member (',' json_member)*] '}'
+  choice json_member    = string ':' json_value
+  choice json_value     = string | number | '-' number | 'true' | 'false' | 'null' | json_document | json_array
+  choice json_array nested = '[' [json_value (',' json_value)*] ']'
+  refuse json_bad in json_document json_array
   # `code "X"`; `code {c}`, the word and the column in a node, which takes the word's field.
   choice code_part      = 'code' (drop code: string | relabel code (wrap code_column _ drop braced_column ['in' codes: string]))
   choice tag_part       = 'tag' relabel tag (wrap tag_column _ drop braced_column)
