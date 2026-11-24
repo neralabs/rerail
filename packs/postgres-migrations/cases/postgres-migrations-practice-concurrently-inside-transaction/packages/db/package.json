@@ -1,0 +1,7 @@
+{
+  "name": "@shop/db",
+  "private": true,
+  "scripts": { "migrate": "drizzle-kit migrate" },
+  "dependencies": { "drizzle-orm": "^0.44.0", "pg": "^8.13.0" },
+  "devDependencies": { "drizzle-kit": "^0.31.0" }
+}

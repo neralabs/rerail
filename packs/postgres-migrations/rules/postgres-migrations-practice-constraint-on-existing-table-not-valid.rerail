@@ -1,0 +1,87 @@
+.policy "postgres-migrations-practice-constraint-on-existing-table-not-valid" revision 1
+.description "In a migration, add a foreign key or CHECK constraint to a table that already exists with NOT VALID and validate it in a later migration, so adding it does not scan the table under a lock."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/node_modules/**", "**/.next/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/__tests__/**", "**/__mocks__/**", "**/*.test.*", "**/*.spec.*", "**/*.stories.*", "**/test/**", "**/tests/**", "**/e2e/**", "**/fixtures/**"
+// Rerail's own rule, not a port. `ALTER TABLE t ADD CONSTRAINT … FOREIGN KEY …` or `… CHECK (…)` without NOT VALID
+// checks every existing row of t before it commits, holding SHARE ROW EXCLUSIVE on t and on the referenced table
+// (a foreign key: writes to both wait) or ACCESS EXCLUSIVE on t (a CHECK: reads wait too). On a large table that is
+// an outage for the length of the scan. With NOT VALID the ADD commits at once and only new writes are checked;
+// `VALIDATE CONSTRAINT` later checks the old rows under SHARE UPDATE EXCLUSIVE, which lets reads and writes run.
+// Prisma writes every relation as a separate `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY` after its CREATE TABLE, so
+// the rule leaves a table alone when the same migration file creates it (empty: nothing to scan). sqlfluff PG02
+// (packs/sql) reports those too; this rule does not.
+//   ALTER TABLE "Comment" ADD CONSTRAINT "Comment_postId_fkey" FOREIGN KEY ("postId") REFERENCES "Post"("id")   reported
+//   ALTER TABLE "Comment" ADD CONSTRAINT "Comment_body_len" CHECK (length("body") <= 10000)                     reported
+//   ALTER TABLE orders ADD FOREIGN KEY (user_id) REFERENCES users (id)   (no constraint name)                  reported
+//   DROP CONSTRAINT then ADD CONSTRAINT … FOREIGN KEY (Prisma changing onDelete): re-checks every row           reported
+//   ADD COLUMN x (nullable or with a default), then ADD CONSTRAINT … FOREIGN KEY (x) or CHECK: the check still scans
+//   every row                                                                                                  reported
+//   … FOREIGN KEY … NOT VALID, … CHECK (…) NOT VALID                                                           not reported
+//   ALTER TABLE … VALIDATE CONSTRAINT …                                                                         not reported
+//   the table is created (or TRUNCATEd) earlier in the same file (Prisma init, drizzle-kit, pg_dump `ALTER TABLE
+//   ONLY`)                                                                                                     not reported
+//   the same file or statement adds a NOT NULL column without a default to the table first (Prisma's "required
+//   column" warning): PostgreSQL only runs that on an empty table                                              not reported
+//   ADD CONSTRAINT … UNIQUE / PRIMARY KEY / EXCLUDE (an index build: the index rule's)                          not reported
+//   a migrations folder of another database: Prisma's migration_lock.toml names another provider (mysql, sqlite,
+//   sqlserver), its path names one, or its statements quote names with backticks (MySQL)                    not reported
+//   Only a pending migration is read (lib/postgres-migrations' pgm_pending): with a Git base, one the base lacks;
+//   without one (a repository audit), the newest of each migrations folder. With a base, a constraint on a table
+//   that a pending migration creates is not reported either.
+// Gaps: without a Git base a table created by an earlier migration of the same change counts as existing. A
+// column-level `ADD COLUMN x int REFERENCES t` is not reported. A known-small table cannot be told from a large one.
+// Statements in an ERROR node are skipped. The Git-base exemptions are not covered by the cases: test-rr runs with no
+// base.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation ForeignKeyScan(at: node) "Adding this foreign key to a table that already exists checks every existing row while it holds a SHARE ROW EXCLUSIVE lock on this table and on the referenced one, so writes to both wait until the scan ends: an outage on a large table. Add it with `NOT VALID` at the end of the statement (it then checks only new rows and commits at once), and run `ALTER TABLE … VALIDATE CONSTRAINT …` in a later migration file, not in this one, where it would run in the same transaction and keep the lock: with Prisma, which runs each migration file on its own, the next file is enough, even in the same deploy; with Drizzle, which runs every pending migration in one transaction, ship it in a later deploy. Leave it as is if the table was created earlier in this same deploy or is known to stay small; on PostgreSQL 17 or older a partitioned table does not accept a NOT VALID foreign key."
+.violation CheckScan(at: node) "Adding this CHECK constraint to a table that already exists checks every existing row while it holds an ACCESS EXCLUSIVE lock, so reads and writes of the table wait until the scan ends: an outage on a large table. Add it with `NOT VALID` at the end of the statement (it then checks only new rows and commits at once), and run `ALTER TABLE … VALIDATE CONSTRAINT …` in a later migration file, not in this one, where it would run in the same transaction and keep the lock: with Prisma, which runs each migration file on its own, the next file is enough, even in the same deploy; with Drizzle, which runs every pending migration in one transaction, ship it in a later deploy. Leave it as is if the table was created earlier in this same deploy or is known to stay small."
+
+ForeignKeyScan(s) :- cnv_unchecked(s, a), cnv_constraint_is(a, "keyword_foreign").
+CheckScan(s) :- cnv_unchecked(s, a), cnv_constraint_is(a, "keyword_check"), !cnv_constraint_is(a, "keyword_foreign").
+
+// cnv_unchecked(s, a): ALTER TABLE s adds constraint a without NOT VALID, to a table that may hold rows, in a
+// PostgreSQL migration that has not run yet.
+.decl cnv_unchecked(s: node, a: node)
+cnv_unchecked(s, a) :- kind(s, "alter_table"), child(s, a, _), kind(a, "add_constraint"),
+    count : { has(a, _, "keyword_valid") } = 0, pgm_target(s, x), !pgm_fresh_table(s, x), docof(s, d), pgm_pending(d),
+    !inside(s, _, "ERROR").
+// cnv_constraint_is(a, k): the constraint added by a has keyword k (FOREIGN, CHECK) at its top level.
+.decl cnv_constraint_is(a: node, k: symbol)
+cnv_constraint_is(a, k) :- kind(a, "add_constraint"), child(a, c, _), kind(c, "constraint"), child(c, w, _), kind(w, k).
+cnv_constraint_is(a, k) :- kind(a, "add_constraint"), child(a, w, _), kind(w, k).
+
+// The cases, `cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/`, read as one repository: each
+// line ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as
+// `.git`, so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case
+// migration pending (a run with no base would read only each folder's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/prisma/migrations/migration_lock.toml"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20240301000000_comment_post_fk/migration.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/prisma/migrations/20240301000000_comment_post_fk/migration.sql"
+    .fixture "prisma/migrations/20240401000000_tags/migration.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/prisma/migrations/20240401000000_tags/migration.sql"
+    .fixture "prisma/migrations/20240501000000_post_owner/migration.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/prisma/migrations/20240501000000_post_owner/migration.sql"
+    .fixture "drizzle/0000_init.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/drizzle/0000_init.sql"
+    .fixture "drizzle/0001_order_total.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/drizzle/0001_order_total.sql"
+    .fixture "legacy/prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/legacy/prisma/migrations/migration_lock.toml"
+    .fixture "legacy/prisma/migrations/20230101000000_init/migration.sql" from "../cases/postgres-migrations-practice-constraint-on-existing-table-not-valid/legacy/prisma/migrations/20230101000000_init/migration.sql"
+    .expect _ at "prisma/migrations/20240301000000_comment_post_fk/migration.sql":5
+    .expect _ at "prisma/migrations/20240301000000_comment_post_fk/migration.sql":14
+    .expect _ at "prisma/migrations/20240401000000_tags/migration.sql":15
+    .expect _ at "prisma/migrations/20240501000000_post_owner/migration.sql":14
+    .expect _ at "drizzle/0001_order_total.sql":2
+    .expect _ at "drizzle/0001_order_total.sql":3
+.end

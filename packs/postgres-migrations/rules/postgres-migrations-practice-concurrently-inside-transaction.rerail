@@ -1,0 +1,150 @@
+.policy "postgres-migrations-practice-concurrently-inside-transaction" revision 1
+.description "Run CREATE INDEX CONCURRENTLY, DROP INDEX CONCURRENTLY, REINDEX CONCURRENTLY and DETACH PARTITION CONCURRENTLY only where the migration runner puts no transaction around them."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+// Rerail's own rule, not a port. PostgreSQL refuses these four statements inside a transaction block ("cannot run
+// inside a transaction block"), so a migration that puts them in one fails on deploy: a failed Prisma migration
+// blocks every later `prisma migrate deploy` (P3018, then P3009) until someone resolves it by hand, and a Drizzle
+// deploy rolls back every pending migration. It is the usual result of adding CONCURRENTLY to a generated
+// `CREATE INDEX` without moving it. Who adds the transaction depends on the runner, read from the layout and
+// package.json (the nearest one to the migration that lists `prisma`/`@prisma/client`, or the root one):
+//   BEGIN; CREATE INDEX CONCURRENTLY "a_idx" ON "a"("x"); COMMIT;           reported, any runner
+//   prisma/migrations/<dir>/migration.sql with another statement next to it,
+//     Prisma before 7.4 (or a version range Rerail cannot read), and a
+//     package.json script runs `prisma migrate deploy` or `migrate dev`        reported: the file is one batch,
+//                                                                               which PostgreSQL runs as a transaction
+//   drizzle/0007_x.sql beside drizzle/meta/_journal.json, or drizzle-kit 1.0's
+//     drizzle/<ts>_x/migration.sql beside a snapshot.json                       reported: drizzle's migrator runs all
+//                                                                               pending migrations in one transaction
+//   DROP INDEX CONCURRENTLY, REINDEX … CONCURRENTLY, ALTER TABLE … DETACH PARTITION … CONCURRENTLY: the same
+//   CREATE INDEX CONCURRENTLY alone in its Prisma migration (comments aside)   not reported: one statement, no batch
+//   the same next to other statements with "prisma": "^7.4.0" or later         not reported: 7.4 runs each statement
+//                                                                               on its own
+//   the same where neither a package.json script nor a Dockerfile, shell script, compose file or CI workflow runs
+//   `prisma migrate deploy`/`migrate dev`                                      not reported: the team applies its
+//                                                                               migrations another way (by hand)
+//   REFRESH MATERIALIZED VIEW CONCURRENTLY                                    not reported: allowed in a transaction
+//   a .sql migration of another runner (no Prisma layout, no drizzle journal)  not reported unless in BEGIN … COMMIT
+//   a migration that is not pending (lib/postgres-migrations' pgm_pending: with a Git base, one the base has; without
+//   one, any but the newest of its folder), or of another database's folder   not reported: it has run already
+// Gaps: a Drizzle project that applies its .sql files with its own non-transactional script is reported. A Prisma
+// project that runs `prisma migrate deploy` only from a JS/TS script, or from a file deeper than four folders, is not
+// reported. A Prisma version given as `catalog:`, `workspace:` or a tag is read as before 7.4.
+// Prisma 7.5's shadow database was reported to still reject a mixed file on `migrate dev`; that is not reported for
+// 7.4+. Formbricks-style `migration/` folders are outside the scope. Prisma 8 `ops.json` migrations and
+// other runners' wrapping (node-pg-migrate, Supabase CLI, golang-migrate) are not read. The Git-base exemption is
+// not covered by the cases: test-rr runs with no base.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation ConcurrentlyInTransactionBlock(at: node, what: symbol) "`{what}` runs between `BEGIN` and `COMMIT`, and PostgreSQL refuses it inside a transaction block (\"cannot run inside a transaction block\"), so this migration fails on deploy (a failed Prisma migration blocks every later deploy until it is resolved by hand). Move it out of the `BEGIN … COMMIT`, after the `COMMIT`; if the runner wraps each file in a transaction (Prisma before 7.4 with other statements in the file, Drizzle), put it alone in its own migration or run it outside the migrator. Keep the transaction and drop `CONCURRENTLY` only when the table is created in this migration or is small enough to lock while the index builds."
+.violation ConcurrentlyInPrismaBatch(at: node, what: symbol) "`{what}` shares this migration.sql with other statements. Prisma before 7.4 sends the whole file as one batch, which PostgreSQL runs as one transaction, and it refuses `{what}` there (\"cannot run inside a transaction block\", P3018); the failed migration then blocks every later `prisma migrate deploy` (P3009) until it is resolved by hand. Put this statement alone in its own migration (`prisma migrate dev --create-only` makes an empty one; comments may stay) and keep the other statements where they are. This does not apply if the project runs Prisma 7.4 or later, which sends each statement on its own (say so in package.json: `\"prisma\": \"^7.4.0\"`), or if these migrations are applied by hand statement by statement rather than by `prisma migrate`."
+.violation ConcurrentlyInDrizzleMigration(at: node, what: symbol) "`{what}` is in a Drizzle migration, and drizzle-kit `migrate` and drizzle-orm's `migrate()` run every pending migration inside one transaction, where PostgreSQL refuses it (\"cannot run inside a transaction block\"), so the deploy fails and rolls back. Drizzle cannot run it concurrently: build it before the deploy outside the migrator (psql or a one-off script, `CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and leave the migration a plain `CREATE INDEX IF NOT EXISTS …` that then finds it built. If this project applies these files with its own runner that does not wrap them in a transaction, this does not apply."
+
+ConcurrentlyInTransactionBlock(s, w) :- cit_conc(s, w), kind(t, "transaction"), within(s, t), docof(s, d),
+    pgm_pending(d).
+ConcurrentlyInPrismaBatch(s, w) :- cit_conc(s, w), !cit_in_tx(s), docof(s, d), doc(d, p, _), pgm_runner(d, "prisma"),
+    cit_prisma_migrates(), !cit_prisma_74(p), cit_units(d, n), n > 1, pgm_pending(d).
+ConcurrentlyInDrizzleMigration(s, w) :- cit_conc(s, w), !cit_in_tx(s), docof(s, d), pgm_runner(d, "drizzle"),
+    pgm_pending(d).
+
+// cit_conc(s, what): statement node s takes CONCURRENTLY, which PostgreSQL runs only outside a transaction block.
+// REFRESH MATERIALIZED VIEW CONCURRENTLY is allowed inside one, so it is not here.
+.decl cit_conc(s: node, what: symbol)
+cit_conc(s, w) :- cit_kind(k, w), kind(s, k), child(s, c, _), kind(c, "keyword_concurrently"), !routine_body(s).
+.decl cit_kind(k: symbol, what: symbol)
+cit_kind("create_index", "CREATE INDEX CONCURRENTLY"). cit_kind("drop_index", "DROP INDEX CONCURRENTLY").
+cit_kind("reindex_statement", "REINDEX … CONCURRENTLY"). cit_kind("detach_partition", "DETACH PARTITION … CONCURRENTLY").
+.decl cit_in_tx(s: node)  // inside an explicit BEGIN … COMMIT: reported by the first clause only
+cit_in_tx(s) :- cit_conc(s, _), kind(t, "transaction"), within(s, t).
+// cit_units(d, n): the top-level statements and BEGIN … COMMIT blocks of document d; comments do not count.
+.decl cit_unit(d: number, x: node)
+cit_unit(d, x) :- kind(r, "program"), child(r, x, _), (kind(x, "statement") ; kind(x, "transaction")), docof(x, d).
+.decl cit_units(d: number, n: number)
+cit_units(d, n) :- cit_conc(s, _), docof(s, d), n = count : { cit_unit(d, _) }.
+// cit_prisma_74(p): the package that runs migration p pins Prisma 7.4 or later, which sends each statement on its
+// own (prisma-engines#5767). The nearest package.json that lists Prisma, else the root one.
+.decl cit_prisma_74(p: symbol)
+cit_prisma_74(p) :- cit_prisma_range(p, r), @semver_valid(r) = 1, @semver_subset(r, ">=7.4.0") = 1.
+.decl cit_prisma_range(p: symbol, r: symbol)
+cit_prisma_range(p, r) :- doc(_, p, _), package_for(p, dir), package_field(dir, k, r), cit_prisma_key(k).
+cit_prisma_range(p, r) :- doc(_, p, _), package_for(p, dir), !cit_lists_prisma(dir), package_field("", k, r),
+    cit_prisma_key(k).
+.decl cit_lists_prisma(dir: symbol)
+cit_lists_prisma(dir) :- package_field(dir, k, _), cit_prisma_key(k).
+.decl cit_prisma_key(k: symbol)
+cit_prisma_key("dependencies/prisma"). cit_prisma_key("devDependencies/prisma").
+cit_prisma_key("dependencies/@prisma~1client"). cit_prisma_key("devDependencies/@prisma~1client").
+// cit_prisma_migrates(): Prisma's migrator (`prisma migrate deploy`, `migrate dev`) runs here: a package.json script
+// runs it, or a Dockerfile, shell script, compose file or CI workflow does (lib's pgm_config, its JS/TS files aside:
+// dossier and customermates run it only from their Dockerfile and CI). Without one the team applies migration.sql
+// files another way (civitai: "We do not use `prisma migrate deploy`. Migrations are applied by hand"; its
+// `scripts/prisma-migrate-with-views-workaround.mjs` wraps `migrate dev` for local schema work only), statement by
+// statement, where the batch rule does not hold.
+.decl cit_prisma_migrates()
+cit_prisma_migrates() :- package_field(_, k, v), match("scripts/.*", k), match(".*migrate +(deploy|dev).*", v).
+cit_prisma_migrates() :- pgm_config(p), !match(".*\\.(?:[cm]?[jt]s|json)", p), file_line(p, _, t),
+    match("(?i).*\\bprisma(?:@\\S+)?\\s+migrate\\s+(?:deploy|dev)\\b.*", t).
+
+// The cases, `cases/postgres-migrations-practice-concurrently-inside-transaction/`, read as one repository: each
+// line ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as
+// `.git`, so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case
+// migration pending (a run with no base would read only each folder's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/package.json"
+    .fixture "prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/prisma/migrations/migration_lock.toml"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20261120093000_user_nickname/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/prisma/migrations/20261120093000_user_nickname/migration.sql"
+    .fixture "prisma/migrations/20261121100000_order_email_idx/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/prisma/migrations/20261121100000_order_email_idx/migration.sql"
+    .fixture "prisma/migrations/20261122100000_swap_index/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/prisma/migrations/20261122100000_swap_index/migration.sql"
+    .fixture "prisma/migrations/20261123100000_stats_view/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/prisma/migrations/20261123100000_stats_view/migration.sql"
+    .fixture "apps/api/package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/apps/api/package.json"
+    .fixture "apps/api/prisma/migrations/20261120093000_invoice_idx/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/apps/api/prisma/migrations/20261120093000_invoice_idx/migration.sql"
+    .fixture "apps/api/prisma/migrations/20261121093000_invoice_tx/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/apps/api/prisma/migrations/20261121093000_invoice_tx/migration.sql"
+    .fixture "packages/db/package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/packages/db/package.json"
+    .fixture "packages/db/drizzle/meta/_journal.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/packages/db/drizzle/meta/_journal.json"
+    .fixture "packages/db/drizzle/0007_user_email_idx.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/packages/db/drizzle/0007_user_email_idx.sql"
+    .fixture "packages/v1/drizzle/20250201000000_users_email_idx/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/packages/v1/drizzle/20250201000000_users_email_idx/migration.sql"
+    .fixture "packages/v1/drizzle/20250201000000_users_email_idx/snapshot.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/packages/v1/drizzle/20250201000000_users_email_idx/snapshot.json"
+    .fixture "db/migrations/003_events_idx.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/db/migrations/003_events_idx.sql"
+    .expect _ at "prisma/migrations/20261120093000_user_nickname/migration.sql":4
+    .expect _ at "prisma/migrations/20261122100000_swap_index/migration.sql":3
+    .expect _ at "prisma/migrations/20261122100000_swap_index/migration.sql":6
+    .expect _ at "apps/api/prisma/migrations/20261121093000_invoice_tx/migration.sql":4
+    .expect _ at "packages/db/drizzle/0007_user_email_idx.sql":1
+    .expect _ at "packages/db/drizzle/0007_user_email_idx.sql":3
+    .expect ConcurrentlyInDrizzleMigration at "packages/v1/drizzle/20250201000000_users_email_idx/migration.sql":3
+    .expect _ at "db/migrations/003_events_idx.sql":7
+.end
+
+// `cases/…/manual/`: a Prisma repository where no package.json script, Dockerfile, shell script or workflow runs
+// `prisma migrate deploy`/`migrate dev` (its migrations are applied by hand; a JS helper wrapping `migrate dev` for
+// local schema work does not count), so only the explicit BEGIN … COMMIT is reported.
+.test manual_apply exactly uses repo
+    .fixture "package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/manual/package.json"
+    .fixture "scripts/prisma-migrate-local.mjs" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/manual/scripts/prisma-migrate-local.mjs"
+    .fixture "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/manual/prisma/migrations/20261101120000_model_file_replaced_at/migration.sql"
+    .expect _ at "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql":7
+.end
+
+// The same repository deployed by its Dockerfile (`npx prisma migrate deploy` at start, no package.json script):
+// Prisma's migrator runs the mixed file as one batch, so the CONCURRENTLY beside the ALTER TABLE is reported too.
+.test deploy_script exactly uses repo
+    .fixture "package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/manual/package.json"
+    .fixture "Dockerfile" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/docker-deploy/Dockerfile"
+    .fixture "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/manual/prisma/migrations/20261101120000_model_file_replaced_at/migration.sql"
+    .expect ConcurrentlyInPrismaBatch at "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql":3
+    .expect ConcurrentlyInTransactionBlock at "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql":7
+.end

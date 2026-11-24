@@ -1,0 +1,6 @@
+{
+  "name": "@shop/api",
+  "private": true,
+  "dependencies": { "@prisma/client": "^7.4.0" },
+  "devDependencies": { "prisma": "^7.4.0" }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "gallery",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "db:migrate:empty": "node scripts/create-empty-migration.mjs",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": { "@prisma/client": "^6.3.0", "next": "15.5.4" },
+  "devDependencies": { "prisma": "^6.3.0" }
+}

@@ -1,0 +1,345 @@
+.policy "postgres-migrations-practice-dropped-column-still-used" revision 1
+.description "Don't drop a column or table in a migration while schema.prisma, a Drizzle pgTable or raw SQL in the app still uses it: remove the usage and deploy first, then drop it in a later migration."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.prisma"
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/prisma/sql/*.sql", "**/migrations/migration_lock.toml"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+.scope text "**/*.prisma", "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/prisma/sql/*.sql", "**/migrations/migration_lock.toml"
+// Rerail's own rule, not a port. Prisma Client selects every scalar field of a model by name, so when the database no
+// longer has a column that `schema.prisma` still declares, every query on that model fails with P2022 ("The column
+// does not exist in the current database"); a Drizzle `pgTable` that still declares it fails the same way, and raw SQL
+// that names it fails at run time where `tsc` cannot see it. Dropping is safe only after no code uses the column
+// (Squawk ban-drop-column: "Update your application code to no longer read or write the column"). The migrations
+// (`**/migrations/**/*.sql`, drizzle-kit's `drizzle/*.sql`) and `*.prisma` are read as text; TypeScript as a tree.
+// In the migrations, `--` and `/* */` comments and 'string literals' are skipped (a commented-out follow-up
+// `-- ALTER TABLE "x" DROP COLUMN "y"` drops nothing). Only a pending migration is read (lib/postgres-migrations'
+// pgm_pending: with a Git base, one the base lacks; without one, the newest of each migrations folder).
+//   ALTER TABLE "User" DROP COLUMN "legacyRole"; while model User still has legacyRole      reported
+//   ALTER TABLE "posts" DROP COLUMN "author_name" while a field has @map("author_name") in a model with
+//     @@map("posts")                                                                        reported
+//   DROP TABLE "Session"; while model Session (or a model with @@map("Session")) is declared reported
+//   DROP COLUMN "legacy_source" while pgTable("events", { legacySource: text("legacy_source") }) reported
+//   DROP COLUMN "plan" while pgTable("events", { plan: text() }) (the key is the name)      reported
+//   DROP COLUMN "tier" on "User" while $queryRaw`SELECT "tier" … FROM "User"` (or sql`…`, Prisma.sql`…`,
+//     $queryRawUnsafe("…"), a prisma/sql/*.sql TypedSQL file) names both, the column bare or as "User"."tier"  reported
+//   the column or table already gone from schema.prisma, every pgTable and raw SQL           not reported
+//   a column of the same name on another table ("Account"."legacyRole" while User keeps legacyRole)  not reported
+//   raw SQL that names the column but not its table                                          not reported
+//   raw SQL where the name is qualified by another table or alias (`"Envelope"."teamId"`, `filter."kind"`), an
+//     output name (`AS "locationId"`, or with no AS after a literal or `)`: `meta->>'prompt' prompt`), a
+//     'string literal' or a `-- comment`                                                      not reported
+//   a DROP COLUMN or DROP TABLE in a `--` or `/* */` comment of the migration                  not reported
+//   a model documented `/// @view` (a view that replaced the table; Prisma reads it, not the table)  not reported
+//   an applied migration (not pending), a down migration, a rollback.sql beside a migration.sql  not reported
+//   a bare name in raw SQL that also names another table declaring that column (`INSERT INTO "Team" ("tier") …
+//     FROM "Account"` while Account drops tier and model Team has tier)                       not reported
+//   a column or table that a later migration, a later statement of the same file, or the same statement adds back:
+//     ADD COLUMN (Prisma's `DROP COLUMN "c", ADD COLUMN "c" <new type>`), RENAME … TO, CREATE TABLE, RENAME TO  not reported
+//   ALTER COLUMN … DROP DEFAULT / DROP NOT NULL, DROP CONSTRAINT, DROP INDEX                   not reported
+//   a schema.prisma outside the migrations' Prisma folder (another database of a monorepo)    not reported
+//   a field marked @ignore, an @@ignore model, an Unsupported(...) field, a relation field    not reported
+// Gaps: Drizzle's `casing: "snake_case"` (key
+// `legacySource` names column legacy_source with no string argument) is not followed; a pgTable is matched in any
+// package of a monorepo. Raw SQL is read only in tagged `$queryRaw`/`$executeRaw`/`sql`/`Prisma.sql` templates and
+// the first string of `$queryRawUnsafe`/`$executeRawUnsafe`/`sql.raw`, not in `pg`'s `client.query("…")` nor across
+// interpolated fragments built elsewhere; a column qualified by an alias of its table (`u.tier`) is missed, and a bare
+// name in a query joining another table that has a column of that name is not told apart. An unquoted name is
+// folded to lower case as PostgreSQL does. Schema-qualified names are compared by their last part. A Prisma 8
+// `ops.json` migration is not read. A rename of the table in between is not followed. The SQL is read as text, as
+// the policy reads TypeScript trees: a drop inside a dollar-quoted function body counts. The commoner outage, a
+// field removed from schema.prisma and its column dropped in the same deploy (old instances still select it), is
+// out of reach: the schema no longer declares it.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation DroppedColumnStillUsed(at: loc, what: symbol, uses: symbol)
+    "This migration drops {what}, but the app still uses it: {uses}. Once it runs, every query that reads it fails with \"column does not exist\" (Prisma P2022): Prisma Client selects every scalar field schema.prisma declares, Drizzle every column of its pgTable, and tsc does not check raw SQL; while schema.prisma still declares it, the next `prisma migrate dev` also adds it back. Remove the usage first, deploy that change, and drop it in a later migration: delete the field (or model) from schema.prisma and regenerate the client, delete the column from the pgTable, rewrite the raw SQL. If the drop was not meant (a hand-written migration), delete this statement instead. Leave it only if the cited code talks to a different database that has its own table of this name."
+DroppedColumnStillUsed(sp, what, uses) :- dcsu_drop(sp, t, c, d, l), dcsu_live(d, l, t, c),
+    uses = join u by u sep "; " : { dcsu_use(d, t, c, u) }, uses != "", dcsu_what(t, c, what).
+
+.decl dcsu_what(t: symbol, c: symbol, what: symbol)
+dcsu_what(t, c, cat("column \"", c, "\" of table \"", t, "\"")) :- dcsu_drop(_, t, c, _, _), c != "".
+dcsu_what(t, "", cat("table \"", t, "\"")) :- dcsu_drop(_, t, "", _, _).
+
+// ---- the migrations, read as text ----
+// library candidate: pgm_doc (a migration file and the folder that orders it)
+// dcsu_mig(d, p, root): d is a migration file at path p, in folder root (`prisma/migrations/`, `drizzle/`), whose
+// files apply in the byte order of their paths.
+.decl dcsu_mig(d: number, p: symbol, root: symbol)
+dcsu_mig(d, p, root) :- doc(d, p, _), match("(?<root>(.*/)?migrations/).*\\.sql", p).
+dcsu_mig(d, p, root) :- doc(d, p, _), match("(?<root>(.*/)?drizzle/)(?:[^/]*\\.sql|[^/]+/migration\\.sql)", p),
+    !match("(.*/)?migrations/.*", p).
+// dcsu_read(d): d is a migration file that has not run yet (lib/postgres-migrations' pgm_pending: with a Git base, one
+// the base lacks; without one, the newest of its folder), of a PostgreSQL folder. Only these are read for drops and
+// for what brings a column back: an applied migration's drop has happened, and one that ran earlier brings nothing
+// back after a pending drop.
+.decl dcsu_read(d: number)
+dcsu_read(d) :- dcsu_mig(d, _, _), pgm_pending(d).
+// dcsu_fold(s, x): identifier text s names x as PostgreSQL resolves it: a quoted name as written, else lower case.
+.decl dcsu_idtext(s: symbol)
+dcsu_idtext(s) :- dcsu_alter_at(_, _, _, sp), text(sp, s).
+dcsu_idtext(s) :- dcsu_action(_, _, sp, _), text(sp, s).
+dcsu_idtext(s) :- dcsu_droptable(_, _, _, sp, _), text(sp, s).
+dcsu_idtext(s) :- dcsu_droptable(_, _, _, _, n), match_all("(?<s>\"[^\"]+\"|\\w+)\\s*(,|$|\\s)", n).
+dcsu_idtext(s) :- dcsu_create(_, _, sp), text(sp, s).
+.decl dcsu_fold(s: symbol, x: symbol)
+dcsu_fold(s, x) :- dcsu_idtext(s), match("\"(?<x>[^\"]+)\"", s).
+dcsu_fold(s, @lower(s)) :- dcsu_idtext(s), !prefix("\"", s).
+.decl dcsu_name(sp: span, x: symbol)
+dcsu_name(sp, x) :- (dcsu_alter_at(_, _, _, sp) ; dcsu_action(_, _, sp, _) ; dcsu_droptable(_, _, _, sp, _) ;
+    dcsu_create(_, _, sp)), text(sp, s), dcsu_fold(s, x).
+// dcsu_alter_at(d, l, e, ts): `ALTER TABLE [IF EXISTS] [ONLY] [s.]t <actions>;` spans lines l to e, table name span ts.
+// The engine finds no match inside a span another match gave, so each action is matched over the whole file and
+// given to the ALTER TABLE statement whose lines hold it.
+.decl dcsu_alter_at(d: number, l: number, e: number, ts: span)
+dcsu_alter_at(d, l, e, ts) :- dcsu_read(d), source(d, src),
+    match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)[^;]*", src, m, "t", ts),
+    line(m, l), end_line(m, e).
+// dcsu_action(d, k, sp, l): an ALTER TABLE action of kind k at line l, with the name span sp it makes or removes:
+// "drop" (DROP COLUMN c), "add" (ADD [COLUMN] c), "rencol" (RENAME [COLUMN] x TO c), "rentab" (RENAME TO t).
+.decl dcsu_action(d: number, k: symbol, sp: span, l: number)
+dcsu_action(d, "drop", sp, l) :- dcsu_read(d), source(d, src),
+    match_group("(?i)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bDROP\\s+COLUMN\\s+(?:IF\\s+EXISTS\\s+)?(?<c>\"[^\"]+\"|\\w+)", src, _, "c", sp), line(sp, l).
+dcsu_action(d, "add", sp, l) :- dcsu_read(d), source(d, src),
+    match_group("(?i)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?(?<c>\"[^\"]+\"|\\w+)", src, _, "c", sp), line(sp, l).
+dcsu_action(d, "rencol", sp, l) :- dcsu_read(d), source(d, src),
+    match_group("(?i)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bRENAME\\s+(?:COLUMN\\s+)?(?:\"[^\"]+\"|\\w+)\\s+TO\\s+(?<c>\"[^\"]+\"|\\w+)", src, _, "c", sp), line(sp, l).
+dcsu_action(d, "rentab", sp, l) :- dcsu_read(d), source(d, src),
+    match_group("(?i)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bRENAME\\s+TO\\s+(?<t>\"[^\"]+\"|\\w+)", src, _, "t", sp), line(sp, l).
+// dcsu_alter(d, l, t, k, x, sp): the ALTER TABLE t starting at line l has action k on name x, at span sp.
+.decl dcsu_alter(d: number, l: number, t: symbol, k: symbol, x: symbol, sp: span)
+dcsu_alter(d, l, t, k, x, sp) :- dcsu_action(d, k, sp, la), l = max l0 : { dcsu_alter_at(d, l0, e0, _), l0 <= la, la <= e0 },
+    dcsu_alter_at(d, l, _, ts), dcsu_name(ts, t), dcsu_name(sp, x).
+// dcsu_droptable(d, l, m, sp, names): `DROP TABLE [IF EXISTS] a, b [CASCADE];` at line l; sp is the first name's span,
+// names the text of the list.
+.decl dcsu_droptable(d: number, l: number, m: span, sp: span, names: symbol)
+dcsu_droptable(d, l, m, sp, n) :- dcsu_read(d), source(d, src),
+    match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)(?<n>(?:[^;-]|-[^-;])*)", src, m, "t", sp),
+    match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)(?<n>(?:[^;-]|-[^-;])*)", src, m, "n", ns),
+    text(ns, n), line(m, l).
+// dcsu_create(d, l, sp): `CREATE [UNLOGGED] TABLE [IF NOT EXISTS] [s.]t` at line l, name span sp.
+.decl dcsu_create(d: number, l: number, sp: span)
+dcsu_create(d, l, sp) :- dcsu_read(d), source(d, src),
+    match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bCREATE\\s+(?:UNLOGGED\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)", src, _, "t", sp),
+    line(sp, l).
+
+// dcsu_drop(sp, t, c, d, l): the migration d drops column c of table t (c = "" for the whole table), at span sp,
+// in the statement at line l.
+.decl dcsu_drop(sp: span, t: symbol, c: symbol, d: number, l: number)
+dcsu_drop(sp, t, c, d, l) :- dcsu_alter(d, l, t, "drop", c, sp).
+dcsu_drop(sp, t, "", d, l) :- dcsu_droptable(d, l, _, sp, _), dcsu_name(sp, t).
+dcsu_drop(sp, t, "", d, l) :- dcsu_droptable(d, l, _, sp, n), match_all("(?<s>\"[^\"]+\"|\\w+)\\s*(,|$|\\s)", n),
+    dcsu_fold(s, t), t != "cascade", t != "restrict".
+
+// dcsu_back(d, l, t, c): migration d, at line l, makes column c of table t exist again (c = "" for the table):
+// ADD COLUMN, RENAME … TO c, CREATE TABLE t, ALTER TABLE … RENAME TO t. A new table counts for each of its columns.
+.decl dcsu_back(d: number, l: number, t: symbol, c: symbol)
+dcsu_back(d, l, t, c) :- dcsu_alter(d, l, t, k, c, _), (k = "add" ; k = "rencol").
+dcsu_back(d, l, t, "") :- dcsu_alter(d, l, _, "rentab", t, _).
+dcsu_back(d, l, t, "") :- dcsu_create(d, l, sp), dcsu_name(sp, t).
+// dcsu_later(d, l, d2, l2): (d2, l2) applies after (d, l): a later file of the same folder, a later statement of the
+// same file, or the same statement (Prisma changes a type it cannot cast as `DROP COLUMN "c", ADD COLUMN "c" …`).
+.decl dcsu_later(d: number, l: number, d2: number, l2: number)
+dcsu_later(d, l, d2, l2) :- dcsu_drop(_, t, c, d, l), dcsu_back(d2, l2, t, c2), (c2 = c ; c2 = ""),
+    dcsu_mig(d, p, root), dcsu_mig(d2, p2, root), (p < p2 ; d = d2, l <= l2).
+// dcsu_live(d, l, t, c): nothing after the drop at (d, l) brings column c (or table t) back.
+.decl dcsu_live(d: number, l: number, t: symbol, c: symbol)
+dcsu_live(d, l, t, c) :- dcsu_drop(_, t, c, d, l),
+    count : { dcsu_back(d2, l2, t, c2), (c2 = c ; c2 = ""), dcsu_later(d, l, d2, l2) } = 0.
+
+// ---- schema.prisma, read as text ----
+// library candidate: pr_schema_model / pr_schema_field (with @map / @@map / @ignore)
+.decl dcsu_pline(d: number, l: number, t: symbol)
+dcsu_pline(d, l, t) :- doc(d, p, _), suffix(".prisma", p), split_line(d, l, t).
+.decl dcsu_open(d: number, l: number, kw: symbol, m: symbol)
+dcsu_open(d, l, kw, m) :- dcsu_pline(d, l, t),
+    match("\\s*(?<kw>model|view|type|enum|generator|datasource)\\s+(?<m>\\w+)\\s*\\{.*", t).
+.decl dcsu_close(d: number, l: number)
+dcsu_close(d, l) :- dcsu_pline(d, l, t), match("\\s*\\}\\s*(//.*)?", t).
+// dcsu_in(d, l, s, m): line l of d is inside the model block of m opened at line s.
+.decl dcsu_in(d: number, l: number, s: number, m: symbol)
+dcsu_in(d, l, s, m) :- dcsu_pline(d, l, _), s = max s0 : { dcsu_open(d, s0, _, _), s0 < l }, dcsu_open(d, s, "model", m),
+    count : { dcsu_close(d, e), e > s, e < l } = 0.
+.decl dcsu_model_name(m: symbol)
+dcsu_model_name(m) :- dcsu_open(_, _, kw, m), (kw = "model" ; kw = "view" ; kw = "type").
+// dcsu_table(d, s, m, t): the model m opened at line s of d is table t (its @@map, else its name); @@ignore and a
+// `/// @view` doc comment leave it out.
+.decl dcsu_table(d: number, s: number, m: symbol, t: symbol)
+dcsu_table(d, s, m, t) :- dcsu_open(d, s, "model", m), dcsu_in(d, l, s, m), dcsu_pline(d, l, x),
+    match("\\s*@@map\\(\\s*(name:\\s*)?\"(?<t>[^\"]+)\".*", x), !dcsu_ignored(d, s), !dcsu_view(d, s).
+dcsu_table(d, s, m, m) :- dcsu_open(d, s, "model", m), count : { dcsu_in(d, l, s, m), dcsu_pline(d, l, x), match("\\s*@@map\\(.*", x) } = 0,
+    !dcsu_ignored(d, s), !dcsu_view(d, s).
+// dcsu_view(d, s): the model opened at line s is documented `/// @view` (the doc comment lines right above it): a
+// database view that Prisma reads as a model (civitai's ModelHash replaced its table), not the table a migration drops.
+.decl dcsu_view_line(d: number, v: number)
+dcsu_view_line(d, v) :- dcsu_pline(d, v, x), match("\\s*///.*@view\\b.*", x).
+.decl dcsu_view(d: number, s: number)
+dcsu_view(d, s) :- dcsu_view_line(d, v), s = min s0 : { dcsu_open(d, s0, _, _), s0 > v }, dcsu_open(d, s, "model", _),
+    count : { dcsu_pline(d, j, y), j > v, j < s, !match("\\s*(//.*)?", y) } = 0.
+.decl dcsu_ignored(d: number, s: number)
+dcsu_ignored(d, s) :- dcsu_open(d, s, "model", m), dcsu_in(d, l, s, m), dcsu_pline(d, l, x), match("\\s*@@ignore\\b.*", x).
+// dcsu_column(d, l, m, f, c): line l of d declares scalar field f of model m, column c (its @map, else f).
+.decl dcsu_field(d: number, l: number, f: symbol, ty: symbol, rest: symbol)
+dcsu_field(d, l, f, ty, rest) :- dcsu_in(d, l, _, _), dcsu_pline(d, l, x),
+    match("\\s*(?<f>[A-Za-z_]\\w*)\\s+(?<ty>[A-Za-z_]\\w*)(?:\\?|\\[\\])?(?<rest>(\\s.*)?)", x).
+.decl dcsu_column(d: number, l: number, m: symbol, f: symbol, c: symbol)
+dcsu_column(d, l, m, f, c) :- dcsu_field(d, l, f, ty, rest), dcsu_in(d, l, _, m), !dcsu_model_name(ty),
+    ty != "Unsupported", !contains("@ignore", rest), match(".*@map\\(\\s*(name:\\s*)?\"(?<c>[^\"]+)\".*", rest).
+dcsu_column(d, l, m, f, f) :- dcsu_field(d, l, f, ty, rest), dcsu_in(d, l, _, m), !dcsu_model_name(ty),
+    ty != "Unsupported", !contains("@ignore", rest), !contains("@map(", rest).
+// dcsu_schema_for(dm, ds): schema file ds belongs to the Prisma folder of migration dm (`x/prisma/migrations/…` and
+// `x/prisma/schema.prisma` or `x/prisma/schema/*.prisma`).
+.decl dcsu_schema_for(dm: number, ds: number, sp: symbol)
+dcsu_schema_for(dm, ds, sp) :- dcsu_drop(_, _, _, dm, _), dcsu_mig(dm, _, root), match("(?<base>.*)migrations/", root),
+    doc(ds, sp, _), suffix(".prisma", sp), substr(sp, 0, strlen(base)) = base.
+
+// ---- Drizzle pgTable declarations ----
+// library candidate: dz_table / dz_column
+// dcsu_dz_col(n, t, c): column builder n (`legacySource: text("legacy_source")`) declares column c of pgTable t.
+.decl dcsu_dz_table(o: node, t: symbol)
+dcsu_dz_table(o, t) :- kind(k, "call_expression"), field(k, "function", fn), dcsu_callee(fn, "pgTable"),
+    field(k, "arguments", as), child(as, s, 0), kind(s, "string"), str(s, t), child(as, o, _), kind(o, "object").
+dcsu_dz_table(o, t) :- kind(k, "call_expression"), field(k, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", p), text(p, "table"), field(k, "arguments", as), child(as, s, 0), kind(s, "string"), str(s, t),
+    child(as, o, _), kind(o, "object").
+.decl dcsu_callee(fn: node, x: symbol)
+dcsu_callee(fn, x) :- kind(fn, "identifier"), text(fn, x).
+dcsu_callee(fn, x) :- kind(fn, "member_expression"), field(fn, "property", p), text(p, x).
+// dcsu_base(v, b): the innermost call of a builder chain `text("a").notNull().default("")`.
+.decl dcsu_base(v: node, b: node)
+dcsu_base(v, v) :- dcsu_dz_table(o, _), child(o, pr, _), kind(pr, "pair"), field(pr, "value", v), kind(v, "call_expression").
+dcsu_base(v, b) :- dcsu_base(v, x), field(x, "function", fn), kind(fn, "member_expression"), field(fn, "object", b),
+    kind(b, "call_expression").
+.decl dcsu_root_call(v: node, b: node)
+dcsu_root_call(v, b) :- dcsu_base(v, b), field(b, "function", fn), !kind(fn, "member_expression").
+dcsu_root_call(v, b) :- dcsu_base(v, b), field(b, "function", fn), kind(fn, "member_expression"), field(fn, "object", o),
+    !kind(o, "call_expression").
+.decl dcsu_dz_col(n: node, t: symbol, c: symbol)
+dcsu_dz_col(k, t, c) :- dcsu_dz_table(o, t), child(o, pr, _), kind(pr, "pair"), field(pr, "key", k),
+    field(pr, "value", v), dcsu_root_call(v, b), field(b, "arguments", as), child(as, s, 0), kind(s, "string"), str(s, c).
+dcsu_dz_col(k, t, c) :- dcsu_dz_table(o, t), child(o, pr, _), kind(pr, "pair"), field(pr, "key", k),
+    field(pr, "value", v), dcsu_root_call(v, b), field(b, "arguments", as), count : { child(as, s, 0), kind(s, "string") } = 0,
+    (kind(k, "property_identifier"), text(k, c) ; kind(k, "string"), str(k, c)).
+
+// ---- raw SQL in the app ----
+// dcsu_raw(f, q): string fragment f is part of raw SQL query q (a template or string literal sent as SQL).
+.decl dcsu_tag(x: symbol)
+dcsu_tag("$queryRaw"). dcsu_tag("$executeRaw"). dcsu_tag("sql").
+.decl dcsu_unsafe(x: symbol)
+dcsu_unsafe("$queryRawUnsafe"). dcsu_unsafe("$executeRawUnsafe").
+.decl dcsu_raw(f: node, q: node)
+dcsu_raw(f, q) :- kind(k, "call_expression"), field(k, "function", fn), dcsu_callee(fn, x), dcsu_tag(x),
+    field(k, "arguments", q), kind(q, "template_string"), child(q, f, _), kind(f, "string_fragment").
+dcsu_raw(f, q) :- kind(k, "call_expression"), field(k, "function", fn), dcsu_callee(fn, x),
+    (dcsu_unsafe(x) ; x = "raw", kind(fn, "member_expression"), field(fn, "object", o), (text(o, "sql") ; text(o, "Prisma"))),
+    field(k, "arguments", as), child(as, q, 0), (kind(q, "template_string") ; kind(q, "string")),
+    child(q, f, _), kind(f, "string_fragment").
+// dcsu_sqltext(s): a piece of raw SQL text: a template's fragment, or a line of a TypedSQL file. Comment lines
+// (`-- @param {String} $1:tier`) name parameters, not columns.
+.decl dcsu_sqltext(s: symbol)
+dcsu_sqltext(s) :- dcsu_raw(f, _), text(f, s).
+dcsu_sqltext(s) :- dcsu_fline(_, s).
+// dcsu_code(s, k): s with its `-- comments` blanked and its 'string literals' emptied to `''`, so `SET status =
+// 'closed'` and `-- … into a message queue` name no column (comments first: an apostrophe in one opens no string).
+.decl dcsu_code(s: symbol, k: symbol)
+dcsu_code(s, @replace_all(@replace_all(s, "--[^\\n]*", " "), "'(?:[^']|'')*'", "''")) :- dcsu_sqltext(s).
+dcsu_idtext(w) :- dcsu_code(_, k), match_all("(?<p>(?i:\\bAS\\s+)|\\.|''\\s*(?i:AS\\s+)?|\\)\\s*(?i:AS\\s+)?|)(?<w>\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)", k).
+// dcsu_word(s, x, p): s names x (folded as PostgreSQL folds it), after `.` (a qualified column), after `AS ` (an
+// output name, `AS "locationId"`), after a literal or `)` with or without AS (an output name: `meta->>'prompt'
+// prompt`, `count(*) n`), or bare (p = "").
+.decl dcsu_word(s: symbol, x: symbol, p: symbol)
+dcsu_word(s, x, p) :- dcsu_code(s, k), match_all("(?<p>(?i:\\bAS\\s+)|\\.|''\\s*(?i:AS\\s+)?|\\)\\s*(?i:AS\\s+)?|)(?<w>\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)", k),
+    dcsu_fold(w, x).
+// dcsu_pair(s, q, c): s names column c qualified by q: `"User"."tier"`, `u.tier`.
+.decl dcsu_pair(s: symbol, q: symbol, c: symbol)
+dcsu_pair(s, q, c) :- dcsu_code(s, k), match_all("(?<a>\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)\\.(?<b>\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)", k),
+    dcsu_fold(a, q), dcsu_fold(b, c).
+// dcsu_has_col(s, t, c, k): s names column c of a dropped t, bare (k = 0) or qualified by t (k = 1). A column
+// qualified by another name (`"Envelope"."teamId"` beside a join on "Organisation") is not t's; one qualified by an
+// alias of t is missed.
+.decl dcsu_has_table(u: symbol, t: symbol)
+dcsu_has_table(s, t) :- dcsu_word(s, t, _).
+.decl dcsu_has_col(s: symbol, t: symbol, c: symbol, k: number)
+dcsu_has_col(s, t, c, 0) :- dcsu_drop(_, t, c, _, _), c != "", dcsu_word(s, c, "").
+dcsu_has_col(s, t, c, 1) :- dcsu_drop(_, t, c, _, _), c != "", dcsu_pair(s, t, c).
+// dcsu_other_col(t, c, t2): another table t2 also has a column c (schema.prisma or a pgTable), so a bare c in a query
+// that names t2 too (`INSERT INTO "MailSplitFilter" ("kind", …) … FROM "MailSplit"`) may well be t2's.
+.decl dcsu_other_col(t: symbol, c: symbol, t2: symbol)
+dcsu_other_col(t, c, t2) :- dcsu_drop(_, t, c, _, _), c != "", dcsu_table(ds, _, m, t2), dcsu_column(ds, _, m, _, c), t2 != t.
+dcsu_other_col(t, c, t2) :- dcsu_drop(_, t, c, _, _), c != "", dcsu_dz_col(_, t2, c), t2 != t.
+.decl dcsu_raw_ambiguous(q: node, t: symbol, c: symbol)
+dcsu_raw_ambiguous(q, t, c) :- dcsu_other_col(t, c, t2), dcsu_raw(f, q), text(f, s), dcsu_has_table(s, t2).
+.decl dcsu_file_ambiguous(d: number, t: symbol, c: symbol)
+dcsu_file_ambiguous(d, t, c) :- dcsu_other_col(t, c, t2), dcsu_fline(d, s), dcsu_has_table(s, t2).
+// dcsu_typedsql(d, p): d is a TypedSQL file (prisma/sql/*.sql) at path p.
+.decl dcsu_typedsql(d: number, p: symbol)
+dcsu_typedsql(d, p) :- doc(d, p, _), match("(.*/)?prisma/sql/[^/]*\\.sql", p).
+.decl dcsu_fline(d: number, s: symbol)
+dcsu_fline(d, s) :- dcsu_typedsql(d, _), split_line(d, _, s), !match("\\s*--.*", s).
+
+// ---- dcsu_use(d, t, c, u): what still uses the column c of t (or table t, c = "") that migration d drops ----
+.decl dcsu_use(d: number, t: symbol, c: symbol, u: symbol)
+dcsu_use(dm, t, c, cat(p, ":", to_string(l), " declares ", m, ".", f)) :- dcsu_drop(_, t, c, dm, _), c != "",
+    dcsu_schema_for(dm, ds, p), dcsu_table(ds, _, m, t), dcsu_column(ds, l, m, f, c).
+dcsu_use(dm, t, "", cat(p, ":", to_string(s), " declares model ", m)) :- dcsu_drop(_, t, "", dm, _),
+    dcsu_schema_for(dm, ds, p), dcsu_table(ds, s, m, t).
+dcsu_use(dm, t, c, cat(p, ":", to_string(l), " declares it in pgTable(\"", t, "\")")) :- dcsu_drop(_, t, c, dm, _),
+    dcsu_dz_col(k, t, c0), (c0 = c ; c = ""), docof(k, d), doc(d, p, _), line(k, l).
+dcsu_use(dm, t, c, cat(p, ":", to_string(l), " names it in raw SQL")) :- dcsu_drop(_, t, c, dm, _), c != "",
+    dcsu_raw(f1, q), text(f1, s1), dcsu_has_table(s1, t), dcsu_raw(f2, q), text(f2, s2), dcsu_has_col(s2, t, c, k),
+    (k = 1 ; !dcsu_raw_ambiguous(q, t, c)), docof(q, d), doc(d, p, _), line(q, l).
+dcsu_use(dm, t, c, cat(p, " (TypedSQL) names it")) :- dcsu_drop(_, t, c, dm, _), c != "",
+    dcsu_fline(d, s1), dcsu_has_table(s1, t), dcsu_fline(d, s2), dcsu_has_col(s2, t, c, k),
+    (k = 1 ; !dcsu_file_ambiguous(d, t, c)), dcsu_typedsql(d, p).
+
+// The cases, `cases/postgres-migrations-practice-dropped-column-still-used/`, read as one repository: each line ending
+// in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as `.git`, so
+// git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration pending
+// (a run with no base would read only each folder's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+    .fixture "package.json" from "../cases/postgres-migrations-practice-dropped-column-still-used/package.json"
+    .fixture "tsconfig.json" from "../cases/postgres-migrations-practice-dropped-column-still-used/tsconfig.json"
+    .fixture "prisma/schema.prisma" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/schema.prisma"
+    .fixture "prisma/migrations/20250101000000_init/migration.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/migrations/20250101000000_init/migration.sql"
+    .fixture "prisma/migrations/20261120093000_drop_legacy/migration.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/migrations/20261120093000_drop_legacy/migration.sql"
+    .fixture "prisma/migrations/20261121080000_readd_nickname/migration.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/migrations/20261121080000_readd_nickname/migration.sql"
+    .fixture "prisma/migrations/20261122090000_cleanup/migration.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/migrations/20261122090000_cleanup/migration.sql"
+    .fixture "prisma/migrations/20261122090000_cleanup/rollback.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/migrations/20261122090000_cleanup/rollback.sql"
+    .fixture "prisma/sql/accountsByTier.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/sql/accountsByTier.sql"
+    .fixture "prisma/sql/legacyRoles.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/sql/legacyRoles.sql"
+    .fixture "src/lib/db.ts" from "../cases/postgres-migrations-practice-dropped-column-still-used/src/lib/db.ts"
+    .fixture "src/server/reports.ts" from "../cases/postgres-migrations-practice-dropped-column-still-used/src/server/reports.ts"
+    .fixture "packages/analytics/src/schema.ts" from "../cases/postgres-migrations-practice-dropped-column-still-used/packages/analytics/src/schema.ts"
+    .fixture "packages/analytics/migrations/0000_init.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/packages/analytics/migrations/0000_init.sql"
+    .fixture "packages/analytics/migrations/0001_drop_legacy.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/packages/analytics/migrations/0001_drop_legacy.sql"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":8
+    .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":11
+    .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":15
+    .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":18
+    .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":29
+    .expect _ at "prisma/migrations/20261122090000_cleanup/migration.sql":17
+    .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":1
+    .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":2
+.end
+
+// The same repository read as a repository audit reads it (no Git base, no `.given`): only the newest migration of
+// each folder is pending, so the applied 20261120093000_drop_legacy is not read.
+.test no_base exactly uses repo
+    .expect _ at "prisma/migrations/20261122090000_cleanup/migration.sql":17
+    .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":1
+    .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":2
+.end

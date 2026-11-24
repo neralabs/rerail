@@ -1,0 +1,172 @@
+.policy "postgres-migrations-practice-index-on-existing-table-blocks-writes" revision 1
+.description "In a migration, build an index on a table that already exists with CREATE INDEX CONCURRENTLY, and attach a UNIQUE or PRIMARY KEY constraint to it with USING INDEX, so the build does not block writes."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+// Rerail's own rule, not a port. A plain `CREATE INDEX` locks the table against INSERT, UPDATE and DELETE for the
+// whole build, minutes on a large table, and `ADD CONSTRAINT … UNIQUE`/`PRIMARY KEY` builds the same index under an
+// ACCESS EXCLUSIVE lock that blocks reads too. Prisma writes a plain `CREATE UNIQUE INDEX` for every new `@unique` and
+// `CREATE INDEX` for every `@@index`, so adding one to a model whose table is in production stalls the app while
+// the migration runs. Squawk (require-concurrent-index-creation, disallowed-unique-constraint) and strong_migrations
+// report the same statements and leave tables created in the same migration alone. The fix text follows the runner,
+// told from the layout (lib/postgres-migrations' pgm_runner): Prisma (`…/migrations/<dir>/migration.sql`),
+// drizzle-kit (a `meta/_journal.json` beside the file, or drizzle-kit 1.0's `snapshot.json` beside a migration.sql: it
+// runs every pending migration in one transaction, where CONCURRENTLY fails), or plain SQL. The Prisma texts say to
+// write the migration with `prisma migrate dev --create-only`, not to edit one `migrate dev` has applied.
+//   CREATE INDEX "Order_email_idx" ON "Order"("email");                        reported
+//   CREATE UNIQUE INDEX "Order_ref_key" ON "public"."Order"("ref");            reported (sqlfluff PG01 skips UNIQUE)
+//   ALTER TABLE "Order" ADD CONSTRAINT "Order_ref_uq" UNIQUE ("ref");          reported
+//   ALTER TABLE "Order" ADD PRIMARY KEY ("id");                                reported
+//   ALTER TABLE "Order" ADD COLUMN "code" TEXT UNIQUE;                         reported (builds a unique index)
+//   CREATE INDEX CONCURRENTLY "Order_email_idx" ON "Order"("email");           not reported
+//   ALTER TABLE "Order" ADD CONSTRAINT "Order_ref_uq" UNIQUE USING INDEX "Order_ref_key";   not reported
+//   ALTER TABLE "Order" ADD CONSTRAINT "Order_pkey" PRIMARY KEY USING INDEX "Order_id_key"; not reported
+//   CREATE TABLE "Invoice" (…); CREATE INDEX … ON "Invoice"(…);                not reported: the table is new
+//   ALTER TABLE "Order" ADD COLUMN "ref" TEXT NOT NULL; CREATE INDEX … ON "Order"("ref");
+//                                                                              not reported: PostgreSQL adds a NOT NULL
+//                                                                              column with no default to an empty table
+//                                                                              only
+//   CREATE MATERIALIZED VIEW "Stats" AS …; CREATE UNIQUE INDEX … ON "Stats"(…) not reported: the view is new
+//   TRUNCATE "Draft"; CREATE INDEX … ON "Draft"(…);                            not reported: emptied just before
+//   CREATE INDEX … ON ONLY "Event"(…);                                         not reported: a partitioned parent's
+//                                                                              index shell, built per partition
+//   CREATE INDEX … ON "Event"(…); "Event" created `PARTITION BY …`             reported with the per-partition fix
+//                                                                              (`ON ONLY` parent, CONCURRENTLY on each
+//                                                                              partition, ATTACH PARTITION): CONCURRENTLY
+//                                                                              is refused on a partitioned table
+//   ALTER TABLE "Event" ADD CONSTRAINT … UNIQUE (…); "Event" partitioned       not reported (see Gaps)
+//   drizzle: CREATE [UNIQUE] INDEX IF NOT EXISTS …                             not reported: the form the Drizzle fix
+//                                                                              asks for (built by hand beforehand)
+//   ALTER TABLE "Order" ADD CONSTRAINT "ex" EXCLUDE USING gist (…);            not reported (see Gaps)
+//   ALTER TABLE "C" ALTER COLUMN "id" SET DATA TYPE TEXT, ADD CONSTRAINT "C_pkey" PRIMARY KEY ("id");
+//                                                                              not reported: the type change rewrites
+//                                                                              the table under its lock anyway (the
+//                                                                              column-type-change rule's statement)
+//   prisma/sqlite/migrations/…/migration.sql: CREATE INDEX …                not reported: a folder of another
+//                                                                              database (SQLite has no CONCURRENTLY),
+//                                                                              by its name or its migration_lock.toml
+//   Only a pending migration is read (lib/postgres-migrations' pgm_pending): with a Git base, one the base lacks;
+//   without one (a repository audit), the newest of each migrations folder. With a base, an index on a table that a
+//   pending migration creates is not reported either.
+// Gaps: a table known to stay small (a lookup table indexed in milliseconds) is reported; nothing in the repository
+// says how big a table is. `ADD … EXCLUDE` also blocks, but has no USING INDEX form to steer to, so it is left alone.
+// A UNIQUE or PRIMARY KEY constraint added to a partitioned table is left alone: USING INDEX is refused there, and
+// the per-partition route has no one-message form. A Drizzle `CREATE INDEX IF NOT EXISTS` is trusted to find the
+// index built by hand. The Prisma version (before or after 7.4) is not read, so the Prisma fix is the form that
+// works on every version. The Git-base exemptions are not covered by the cases: test-rr runs with no base.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation IndexOnExistingTableBlocksWrites(at: node, what: symbol, table: symbol, fix: symbol) "{what} on `{table}`, a table that already exists, holds a lock for the whole index build that blocks every write to it (a UNIQUE or PRIMARY KEY constraint blocks reads too), so on a large table the app stalls until the migration finishes. {fix} If `{table}` is certain to stay small (a lookup table of a few thousand rows) or is empty in every environment, the plain build is fine."
+IndexOnExistingTableBlocksWrites(s, "`CREATE INDEX` without CONCURRENTLY", t, f) :- kind(s, "create_index"),
+    !iotb_kw(s, "keyword_concurrently"), !iotb_kw(s, "keyword_only"), !iotb_kw(s, "keyword_unique"), !iotb_prebuilt(s),
+    iotb_existing(s, t), iotb_index_fix(s, f).
+IndexOnExistingTableBlocksWrites(s, "`CREATE UNIQUE INDEX` without CONCURRENTLY", t, f) :- kind(s, "create_index"),
+    !iotb_kw(s, "keyword_concurrently"), !iotb_kw(s, "keyword_only"), iotb_kw(s, "keyword_unique"), !iotb_prebuilt(s),
+    iotb_existing(s, t), iotb_index_fix(s, f).
+IndexOnExistingTableBlocksWrites(c, w, t, f) :- kind(s, "alter_table"), child(s, c, _), kind(c, "add_constraint"),
+    child(c, k, _), kind(k, "constraint"), iotb_constraint(k, w), !iotb_kw(k, "keyword_index"), !iotb_retype(s),
+    iotb_existing(s, t), !iotb_partitioned(s), iotb_fix(s, "constraint", f).
+IndexOnExistingTableBlocksWrites(c, w, t, f) :- kind(s, "alter_table"), child(s, c, _), kind(c, "add_column"),
+    child(c, cd, _), kind(cd, "column_definition"), iotb_column(cd, w), !iotb_retype(s), iotb_existing(s, t),
+    !iotb_partitioned(s), iotb_fix(s, "column", f).
+
+.decl iotb_kw(n: node, k: symbol)  // n has a child of kind k
+iotb_kw(n, k) :- child(n, c, _), kind(c, k).
+.decl iotb_constraint(k: node, w: symbol)
+iotb_constraint(k, "`ADD CONSTRAINT … UNIQUE`") :- iotb_kw(k, "keyword_unique").
+iotb_constraint(k, "`ADD PRIMARY KEY`") :- iotb_kw(k, "keyword_primary").
+.decl iotb_column(cd: node, w: symbol)
+iotb_column(cd, "`ADD COLUMN … UNIQUE`") :- iotb_kw(cd, "keyword_unique").
+iotb_column(cd, "`ADD COLUMN … PRIMARY KEY`") :- iotb_kw(cd, "keyword_primary").
+// iotb_retype(s): the same ALTER TABLE changes a column's type (`ALTER COLUMN "id" SET DATA TYPE TEXT`, Prisma's
+// primary-key swap): the rewrite holds ACCESS EXCLUSIVE for the whole statement anyway, and a USING INDEX fix would
+// not shorten it; postgres-migrations-practice-column-type-change-rewrites owns that statement.
+.decl iotb_retype(s: node)
+iotb_retype(s) :- kind(s, "alter_table"), child(s, a, _), kind(a, "alter_column"), iotb_kw(a, "keyword_type").
+// iotb_prebuilt(s): `CREATE [UNIQUE] INDEX IF NOT EXISTS` in a Drizzle migration, the form the Drizzle fix asks for:
+// the index is built CONCURRENTLY by hand before the deploy and the migration only finds it there.
+.decl iotb_prebuilt(s: node)
+iotb_prebuilt(s) :- kind(s, "create_index"), iotb_kw(s, "keyword_if"), docof(s, d), pgm_runner(d, "drizzle").
+// iotb_partitioned(s): s's table is a partitioned parent, which PostgreSQL indexes CONCURRENTLY only partition by
+// partition, and on which ADD CONSTRAINT … USING INDEX is refused.
+.decl iotb_partitioned(s: node)
+iotb_partitioned(s) :- pgm_target(s, x), pgm_partitioned(x).
+.decl iotb_index_fix(s: node, f: symbol)
+iotb_index_fix(s, f) :- !iotb_partitioned(s), iotb_fix(s, "index", f).
+iotb_index_fix(s, f) :- iotb_partitioned(s), iotb_fix(s, "partition", f).
+
+// ---- which table, and whether it may hold rows ----------------------------------------------------------------------
+// iotb_existing(s, t): statement s works on table t (written as in s, quotes kept, schema dropped), and t may hold
+// rows when s runs: s's migration is a pending PostgreSQL one and t is not fresh (lib: pgm_fresh_table).
+.decl iotb_existing(s: node, t: symbol)
+iotb_existing(s, t) :- iotb_target(s, t), pgm_target(s, x), !pgm_fresh_table(s, x), docof(s, d), pgm_pending(d).
+// iotb_target(s, t): the table as the statement writes it, for the message. It is s's only object_reference
+// child: an index's own name parses as a literal, a constraint's or a RENAME's target sits deeper.
+.decl iotb_target(s: node, t: symbol)
+iotb_target(s, t) :- (kind(s, "create_index") ; kind(s, "alter_table")), child(s, o, _),
+    kind(o, "object_reference"), field(o, "name", n), text(n, t).
+.decl iotb_fix(s: node, k: symbol, f: symbol)
+iotb_fix(s, k, f) :- docof(s, d), pgm_runner(d, r), iotb_text(r, k, f).
+.decl iotb_text(r: symbol, k: symbol, f: symbol)
+iotb_text("prisma", "index", "Write the statement as `CREATE INDEX CONCURRENTLY` (or `CREATE UNIQUE INDEX CONCURRENTLY`) in a migration of its own with no other statement: Prisma before 7.4 runs a multi-statement migration.sql in one transaction, where CONCURRENTLY fails and leaves the migration failed (P3018). Create such migrations with `prisma migrate dev --create-only` and edit their SQL before `prisma migrate dev` applies them; if `migrate dev` already applied this one, don't edit it in place (the next `migrate dev` reports it modified and asks to reset the database): delete it and recreate it that way, resetting only your local development database if asked, never a shared one.").
+iotb_text("drizzle", "index", "drizzle-kit migrate runs all pending migrations in one transaction, where CONCURRENTLY fails, so build the index by hand with `CREATE INDEX CONCURRENTLY` (checking it is not left INVALID) before deploying, and write it in the migration as `CREATE INDEX IF NOT EXISTS` (`CREATE UNIQUE INDEX IF NOT EXISTS`) with the same name so the migration finds it built; written that way, this rule accepts it.").
+iotb_text("plain", "index", "Write it as `CREATE INDEX CONCURRENTLY` (or `CREATE UNIQUE INDEX CONCURRENTLY`), outside any transaction: drop a surrounding `BEGIN … COMMIT`, and run it where your migration tool does not wrap the file in one.").
+iotb_text("prisma", "constraint", "Build the index first with `CREATE UNIQUE INDEX CONCURRENTLY` in a migration of its own with no other statement (Prisma before 7.4 runs a multi-statement migration.sql in one transaction, where CONCURRENTLY fails), then attach it in the next migration with `ADD CONSTRAINT … UNIQUE USING INDEX <index>` (`PRIMARY KEY USING INDEX` for a key), which only takes a brief lock. Create such migrations with `prisma migrate dev --create-only` and edit their SQL before `prisma migrate dev` applies them; if `migrate dev` already applied this one, don't edit it in place (the next `migrate dev` reports it modified and asks to reset the database): delete it and recreate it that way, resetting only your local development database if asked, never a shared one.").
+iotb_text("drizzle", "constraint", "drizzle-kit migrate runs all pending migrations in one transaction, where CONCURRENTLY fails, so build the index by hand with `CREATE UNIQUE INDEX CONCURRENTLY` before deploying, and have the migration attach it with `ADD CONSTRAINT … UNIQUE USING INDEX <index>` (`PRIMARY KEY USING INDEX` for a key), which only takes a brief lock.").
+iotb_text("plain", "constraint", "Build the index first with `CREATE UNIQUE INDEX CONCURRENTLY`, outside any transaction, then attach it with `ADD CONSTRAINT … UNIQUE USING INDEX <index>` (`PRIMARY KEY USING INDEX` for a key), which only takes a brief lock.").
+iotb_text("prisma", "column", "Add the column without the constraint, build its index with `CREATE UNIQUE INDEX CONCURRENTLY` in a migration of its own with no other statement (Prisma before 7.4 runs a multi-statement migration.sql in one transaction, where CONCURRENTLY fails), then attach it with `ADD CONSTRAINT … UNIQUE USING INDEX <index>` (`PRIMARY KEY USING INDEX` for a key). Create such migrations with `prisma migrate dev --create-only` and edit their SQL before `prisma migrate dev` applies them; if `migrate dev` already applied this one, don't edit it in place (the next `migrate dev` reports it modified and asks to reset the database): delete it and recreate it that way, resetting only your local development database if asked, never a shared one.").
+iotb_text("drizzle", "column", "Add the column without the constraint; drizzle-kit migrate runs all pending migrations in one transaction, where CONCURRENTLY fails, so build its index by hand with `CREATE UNIQUE INDEX CONCURRENTLY` before deploying, and have the migration attach it with `ADD CONSTRAINT … UNIQUE USING INDEX <index>` (`PRIMARY KEY USING INDEX` for a key).").
+iotb_text("plain", "column", "Add the column without the constraint, build its index with `CREATE UNIQUE INDEX CONCURRENTLY` outside any transaction, then attach it with `ADD CONSTRAINT … UNIQUE USING INDEX <index>` (`PRIMARY KEY USING INDEX` for a key).").
+iotb_text("prisma", "partition", "This table is partitioned, and PostgreSQL builds no index on a partitioned table CONCURRENTLY: create the index on the parent alone with `CREATE INDEX … ON ONLY` (no build; it stays invalid), build the same index on each partition with `CREATE INDEX CONCURRENTLY`, each in a migration of its own with no other statement (Prisma before 7.4 runs a multi-statement migration.sql in one transaction, where CONCURRENTLY fails), then attach each one with `ALTER INDEX <parent index> ATTACH PARTITION <partition index>`; the parent's index turns valid once every partition has one attached. Create such migrations with `prisma migrate dev --create-only` and edit their SQL before `prisma migrate dev` applies them; if `migrate dev` already applied this one, don't edit it in place (the next `migrate dev` reports it modified and asks to reset the database): delete it and recreate it that way, resetting only your local development database if asked, never a shared one.").
+iotb_text("drizzle", "partition", "This table is partitioned, and PostgreSQL builds no index on a partitioned table CONCURRENTLY: have the migration create the index on the parent alone with `CREATE INDEX … ON ONLY` (no build; it stays invalid), build the same index on each partition by hand with `CREATE INDEX CONCURRENTLY` before deploying (drizzle-kit migrate runs all pending migrations in one transaction, where CONCURRENTLY fails), then attach each one with `ALTER INDEX <parent index> ATTACH PARTITION <partition index>`; the parent's index turns valid once every partition has one attached.").
+iotb_text("plain", "partition", "This table is partitioned, and PostgreSQL builds no index on a partitioned table CONCURRENTLY: create the index on the parent alone with `CREATE INDEX … ON ONLY` (no build; it stays invalid), build the same index on each partition with `CREATE INDEX CONCURRENTLY` outside any transaction, then attach each one with `ALTER INDEX <parent index> ATTACH PARTITION <partition index>`; the parent's index turns valid once every partition has one attached.").
+
+// The cases, `cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/`, read as one repository: each
+// line ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as
+// `.git`, so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case
+// migration pending (a run with no base would read only each folder's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "db/migrations/005_orders_status.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/db/migrations/005_orders_status.sql"
+    .fixture "db/migrations/006_audit.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/db/migrations/006_audit.sql"
+    .fixture "drizzle/0000_init.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/drizzle/0000_init.sql"
+    .fixture "drizzle/0001_tags.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/drizzle/0001_tags.sql"
+    .fixture "drizzle/meta/_journal.json" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/drizzle/meta/_journal.json"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20261120093000_order_ref/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/migrations/20261120093000_order_ref/migration.sql"
+    .fixture "prisma/migrations/20261121100000_safe_indexes/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/migrations/20261121100000_safe_indexes/migration.sql"
+    .fixture "prisma/schema.prisma" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/schema.prisma"
+    .fixture "prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/migrations/migration_lock.toml"
+    .fixture "prisma/sqlite/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/sqlite/migrations/migration_lock.toml"
+    .fixture "prisma/sqlite/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/sqlite/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/sqlite/migrations/20261120093000_order_email/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/prisma/sqlite/migrations/20261120093000_order_email/migration.sql"
+    .fixture "apps/edge/prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/apps/edge/prisma/migrations/migration_lock.toml"
+    .fixture "apps/edge/prisma/migrations/20261120093000_order_email/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/apps/edge/prisma/migrations/20261120093000_order_email/migration.sql"
+    .fixture "packages/v1/drizzle/20250101000000_init/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/packages/v1/drizzle/20250101000000_init/migration.sql"
+    .fixture "packages/v1/drizzle/20250101000000_init/snapshot.json" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/packages/v1/drizzle/20250101000000_init/snapshot.json"
+    .fixture "packages/v1/drizzle/20250201000000_idx/migration.sql" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/packages/v1/drizzle/20250201000000_idx/migration.sql"
+    .fixture "packages/v1/drizzle/20250201000000_idx/snapshot.json" from "../cases/postgres-migrations-practice-index-on-existing-table-blocks-writes/packages/v1/drizzle/20250201000000_idx/snapshot.json"
+    .expect _ at "db/migrations/005_orders_status.sql":3
+    .expect _ at "db/migrations/006_audit.sql":3
+    .expect _ at "drizzle/0001_tags.sql":2
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":5
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":8
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":10
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":12
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":14
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":17
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":20
+    .expect _ at "prisma/migrations/20261120093000_order_ref/migration.sql":23
+    .expect _ at "packages/v1/drizzle/20250201000000_idx/migration.sql":2
+.end

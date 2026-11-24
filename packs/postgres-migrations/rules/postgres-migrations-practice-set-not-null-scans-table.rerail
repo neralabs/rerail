@@ -1,0 +1,127 @@
+.policy "postgres-migrations-practice-set-not-null-scans-table" revision 1
+.description "In a Postgres migration, make an existing table's column NOT NULL only after a validated CHECK (col IS NOT NULL) exists, so SET NOT NULL does not scan the whole table under an ACCESS EXCLUSIVE lock."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+// Rerail's own rule, not a port. `ALTER TABLE t ALTER COLUMN c SET NOT NULL` takes an ACCESS EXCLUSIVE lock on t
+// (reads and writes wait) and scans every row to prove no c is NULL, unless a valid CHECK (c IS NOT NULL) already
+// proves it; on a large table that is an outage for the length of the scan, and the migration fails if a NULL is
+// left. Prisma writes exactly this statement whenever a field goes from `String?` to `String`.
+// Reported once per ALTER TABLE statement, at the statement, naming every column it sets NOT NULL:
+//   ALTER TABLE "User" ALTER COLUMN "phone" SET NOT NULL;                      table created in an earlier migration
+//   ALTER TABLE "Post" ALTER COLUMN "a" SET NOT NULL, ALTER COLUMN "b" SET NOT NULL;   one finding for both
+//   ALTER TABLE orders ALTER customer_id SET NOT NULL;                         drizzle, unquoted, COLUMN omitted
+//   … SET NOT NULL with only a NOT VALID CHECK on the column that no migration validates
+//   ADD COLUMN "views" INTEGER; UPDATE … SET "views" = 0; ALTER COLUMN "views" SET NOT NULL (one file)
+//                                                                              reported with another fix: the
+//                                                                              backfill already rewrote the table, so
+//                                                                              a constant DEFAULT on the ADD COLUMN is
+//                                                                              the one-statement fix, else NOT NULL in
+//                                                                              a later migration
+// Left alone:
+//   SET NOT NULL on a table created or emptied earlier in the same file (Prisma's and drizzle's init migrations), or
+//   given a NOT NULL column with no default earlier in it: it is empty (lib/postgres-migrations' pgm_fresh_table)
+//   SET NOT NULL when some migration adds CHECK (c IS NOT NULL) on that table, valid or later validated
+//   DROP NOT NULL, SET DEFAULT and the other ALTER COLUMN actions
+//   a statement inside a function body or DO block (it runs when called, not when the migration runs)
+//   test, fixture and node_modules folders; a migration that is not pending (lib/postgres-migrations' pgm_pending:
+//   with a Git base, one the base has; without one, any but the newest of its folder) or is another database's
+// Gaps:
+//   no table size: a small lookup table is reported too (the message says to keep the statement then).
+//   without a Git base a table created in an earlier migration of the same pending change counts as existing. With a
+//   base, a table that a migration missing from the base creates is new; the cases cannot show that (test-rr runs
+//   with no base).
+//   the CHECK is matched in any migration, not only an earlier one (no ordering of migration directories), and only
+//   in its exact form `CHECK (c IS NOT NULL)`; a CHECK added in CREATE TABLE is not looked at.
+//   Postgres 18's `ADD CONSTRAINT … NOT NULL c NOT VALID` + `VALIDATE CONSTRAINT` is not recognised as a proof.
+//   a CHECK validated in the same transaction as the SET NOT NULL is accepted here; that it holds the lock is
+//   another rule's finding (not-valid validated in the same transaction).
+//   Prisma 8 `ops.json` (`setNotNull`) is not read.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation SetNotNullScan(at: node, t: symbol, c: symbol, fix: symbol) "`SET NOT NULL` on {c} of {t}, a table that already exists, takes an ACCESS EXCLUSIVE lock on {t} (reads and writes wait) while Postgres scans every row for NULLs, and the migration fails if one is left. {fix} Keep the single statement only when {t} is known to be small, or is still empty because the migration that creates it has not been deployed yet."
+SetNotNullScan(s, t, cs, f) :- snn_cols(s, t, cs), snn_fix(s, k), snn_text(k, t, cs, f).
+.decl snn_cols(s: node, t: symbol, cs: symbol)
+snn_cols(s, t, cs) :- snn_stmt(s, t), cs = join c by c sep ", " : { snn_reported(s, _, c) }.
+// snn_reported(s, a, c): action a of statement s sets column c (as written) NOT NULL and is reported.
+.decl snn_reported(s: node, a: node, c: symbol)
+snn_reported(s, a, c) :- snn_set(a, s, d, x, _, cn), text(cn, c), pgm_pending(d), !pgm_fresh_table(s, x),
+    !snn_proved(x, a), !routine_body(s).
+.decl snn_stmt(s: node, t: symbol)
+snn_stmt(s, t) :- snn_reported(s, a, _), snn_set(a, s, _, _, t, _).
+// snn_fix(s, k): "added" when every reported column of s is added earlier in the same file (ADD COLUMN, nullable),
+// the "add nullable, backfill, SET NOT NULL" shape, where a constant DEFAULT is the one-statement fix; else "split".
+.decl snn_fix(s: node, k: symbol)
+snn_fix(s, "added") :- snn_stmt(s, _), count : { snn_reported(s, a, _), !snn_added(a) } = 0.
+snn_fix(s, "split") :- snn_stmt(s, _), snn_reported(s, a, _), !snn_added(a).
+// snn_added(a): a's column is added to its table by an ALTER TABLE earlier in the same document.
+.decl snn_added(a: node)
+snn_added(a) :- snn_set(a, s, d, x, _, cn), ident_pg(cn, col), node(d, s, _, at, _), kind(e, "alter_table"),
+    pgm_target(e, x), node(d, e, _, i, _), i < at, child(e, ac, _), kind(ac, "add_column"), child(ac, cd, _),
+    kind(cd, "column_definition"), field(cd, "name", n), pgm_ident(n, col).
+.decl snn_text(k: symbol, t: symbol, cs: symbol, f: symbol)
+snn_text("added", t, cs, cat("This file adds ", cs, " earlier, so the backfill in between (an UPDATE) rewrites every row first, under the ADD COLUMN's lock when the file runs as one transaction. If the value is a constant, add the column as `ADD COLUMN … NOT NULL DEFAULT <constant>` instead and drop the UPDATE and this statement: PostgreSQL 11 and later add it without touching the rows (with Prisma, `@default(<constant>)` on the field). Otherwise keep the nullable column and its backfill (in batches on a large table) in this migration, and make it NOT NULL in a later one through a validated CHECK: `ALTER TABLE ", t, " ADD CONSTRAINT <name> CHECK (<column> IS NOT NULL) NOT VALID;`, then `VALIDATE CONSTRAINT <name>` in a migration deployed after it, then `SET NOT NULL`, which skips the scan once that CHECK is valid.")) :- snn_cols(_, t, cs).
+snn_text("split", t, cs, cat("Split it: first a migration with `ALTER TABLE ", t, " ADD CONSTRAINT <name> CHECK (<column> IS NOT NULL) NOT VALID;` (after backfilling the NULLs), then, in a later migration deployed on its own, `ALTER TABLE ", t, " VALIDATE CONSTRAINT <name>;` (it scans without blocking reads or writes), and only then this `SET NOT NULL`, which skips the scan once that CHECK is valid; drop the CHECK afterwards. With Prisma, write them with `prisma migrate dev --create-only` and edit the SQL.")) :- snn_cols(_, t, cs).
+
+// snn_set(a, s, d, x, t, c): action a of ALTER TABLE statement s in document d is `ALTER [COLUMN] c SET NOT NULL`
+// on table x (folded, last name part); t and c are the table and column as written.
+.decl snn_set(a: node, s: node, d: number, x: symbol, t: symbol, c: node)
+snn_set(a, s, d, x, t, cn) :- kind(s, "alter_table"), child(s, o, _), pgm_ref(o, x),
+    text(o, t), child(s, a, _), kind(a, "alter_column"), snn_kw_seq(a), snn_col(a, cn), docof(s, d).
+.decl snn_kw_seq(a: node)  // a's keywords include SET NOT NULL in a row
+snn_kw_seq(a) :- child(a, k1, i), kind(k1, "keyword_set"), child(a, k2, i + 1), kind(k2, "keyword_not"),
+    child(a, k3, i + 2), kind(k3, "keyword_null").
+.decl snn_col(a: node, c: node)  // the column an ALTER COLUMN action names: its first identifier
+snn_col(a, c) :- child(a, c, i), kind(c, "identifier"), count : { child(a, c2, j), kind(c2, "identifier"), j < i } = 0.
+
+// snn_check(x, k, col, valid): some migration adds CHECK (col IS NOT NULL) named k (folded) on table x; valid = 1
+// unless it is NOT VALID.
+.decl snn_check(x: symbol, k: symbol, col: symbol, valid: number)
+snn_check(x, k, col, v) :- kind(s, "alter_table"), child(s, o, _), pgm_ref(o, x),
+    child(s, ac, _), kind(ac, "add_constraint"), child(ac, kn, _), kind(kn, "identifier"), ident_pg(kn, k),
+    child(ac, cons, _), kind(cons, "constraint"), child(cons, ck, _), kind(ck, "keyword_check"),
+    child(cons, e, _), kind(e, "binary_expression"), child(e, f, _), kind(f, "field"), field(f, "name", fn),
+    ident_pg(fn, col), child(e, isn, _), kind(isn, "is_not"), child(e, nl, _), null_lit(nl),
+    (child(ac, kv, _), kind(kv, "keyword_valid"), v = 0 ; count : { child(ac, kv2, _), kind(kv2, "keyword_valid") } = 0, v = 1).
+.decl snn_validated(x: symbol, k: symbol)
+snn_validated(x, k) :- kind(s, "alter_table"), child(s, o, _), pgm_ref(o, x),
+    child(s, vc, _), kind(vc, "validate_constraint"), child(vc, kn, _), kind(kn, "identifier"), ident_pg(kn, k).
+// snn_proved(x, a): a valid CHECK proves column a's values are not NULL, so SET NOT NULL skips the scan.
+.decl snn_proved(x: symbol, a: node)
+snn_proved(x, a) :- snn_set(a, _, _, x, _, cn), ident_pg(cn, col), snn_check(x, k, col, v),
+    (v = 1 ; snn_validated(x, k)).
+
+// The cases, `cases/postgres-migrations-practice-set-not-null-scans-table/`, read as one repository: each line ending
+// in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as `.git`, so
+// git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration pending
+// (a run with no base would read only each folder's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "drizzle/0000_init.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/drizzle/0000_init.sql"
+    .fixture "drizzle/0004_order_customer_required.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/drizzle/0004_order_customer_required.sql"
+    .fixture "packages/db/tests/migrations/0001_seed/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/packages/db/tests/migrations/0001_seed/migration.sql"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20261101000000_account_provider_check/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/prisma/migrations/20261101000000_account_provider_check/migration.sql"
+    .fixture "prisma/migrations/20261110000000_validate_account_provider/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/prisma/migrations/20261110000000_validate_account_provider/migration.sql"
+    .fixture "prisma/migrations/20261120093000_require_fields/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/prisma/migrations/20261120093000_require_fields/migration.sql"
+    .fixture "prisma/migrations/20261121000000_audit_trigger/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/prisma/migrations/20261121000000_audit_trigger/migration.sql"
+    .fixture "prisma/migrations/20261122000000_post_views/migration.sql" from "../cases/postgres-migrations-practice-set-not-null-scans-table/prisma/migrations/20261122000000_post_views/migration.sql"
+    .expect _ at "drizzle/0004_order_customer_required.sql":1
+    .expect _ at "prisma/migrations/20261120093000_require_fields/migration.sql":10
+    .expect _ at "prisma/migrations/20261120093000_require_fields/migration.sql":13
+    .expect _ at "prisma/migrations/20261120093000_require_fields/migration.sql":20
+    .expect _ at "prisma/migrations/20261122000000_post_views/migration.sql":6
+.end

@@ -1,0 +1,194 @@
+.policy "postgres-migrations-practice-column-type-change-rewrites" revision 1
+.description "Don't change a column's type on a table earlier migrations created unless the change is a no-rewrite widening: PostgreSQL rewrites the table and its indexes under an ACCESS EXCLUSIVE lock."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/node_modules/**", "**/.next/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/__tests__/**", "**/__mocks__/**", "**/test/**", "**/tests/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*"
+// Rerail's own rule, not a port. `ALTER TABLE t ALTER COLUMN c [SET DATA] TYPE …` rewrites the whole table and every
+// index on it while it holds ACCESS EXCLUSIVE (no reads, no writes), unless the old type is binary coercible to the
+// new one and no USING changes the values. On a large table that is an outage for the length of the rewrite.
+// The old type is the column's latest earlier definition among the migrations of the same migrations directory
+// (CREATE TABLE, ADD COLUMN or an earlier TYPE change), ordered by migration name (lib/postgres-migrations' pgm_mig:
+// Prisma's `YYYYMMDDHHMMSS_` folder, drizzle's `NNNN_` file), then by position in the file. A table is named by its
+// last part, folded as PostgreSQL does.
+// Reports, at the ALTER COLUMN:
+//   ALTER COLUMN "count" SET DATA TYPE BIGINT                  INTEGER before: int → bigint rewrites
+//   ALTER COLUMN "state" TYPE "State_new" USING (…::text::…)   Prisma's enum change: USING recasts every row
+//   ALTER COLUMN "title" SET DATA TYPE VARCHAR(50)             TEXT or VARCHAR(100) before: shrinking or adding a limit
+//   ALTER COLUMN "amount" SET DATA TYPE DECIMAL(10,4)          DECIMAL(10,2) before: a new scale rewrites
+//   ALTER COLUMN "role" TYPE "Role" USING "role"::"Role"       old type unknown (dropped, renamed, squashed): a USING
+//                                                              means no assignment cast exists, so values are converted
+// Leaves alone:
+//   a table created or emptied earlier in the same file, or given a NOT NULL column with no default before it
+//   (pgm_fresh_table: it is empty; Prisma's init migration, a new table and its follow-ups)
+//   VARCHAR(n) → VARCHAR(m ≥ n), VARCHAR(n) → VARCHAR or TEXT, NUMERIC(p,s) → NUMERIC(q ≥ p,s) or NUMERIC,
+//   TIMESTAMP(p) → TIMESTAMP(q ≥ p) and the same for TIMESTAMPTZ, TIME, INTERVAL, VARBIT: binary coercible, no rewrite
+//   TIMESTAMP → TIMESTAMPTZ and TIMESTAMPTZ → TIMESTAMP: no rewrite on PostgreSQL 12+ when the session's TimeZone is
+//   UTC (it may be; not known here), so both directions are left alone alike
+//   TEXT or VARCHAR → CITEXT and back: the citext extension's casts are binary (indexes on the column are still rebuilt)
+//   the same type again, with no USING or a USING that casts the column once (`USING "x"::TEXT` on a TEXT column)
+//   a column whose old type no earlier migration of its directory shows (squashed or baselined history), without USING
+//   a migration that is not pending (pgm_pending: with a Git base, one the base has; without one, any but the newest
+//   of its directory), or another database's
+//   a column dropped or renamed (DROP COLUMN, RENAME COLUMN) since its last definition, without USING: type unknown
+// Gaps: a renamed column or table is not followed back to its old definition (unknown, so reported only with USING);
+// a USING that keeps the values (`USING "x"::TEXT` on a TEXT column) is reported when the old type is unknown;
+// a schema-qualified table is matched by its last name part only; `TIMESTAMPTZ(3)` loses its precision in the
+// grammar, so a precision decrease on it reads as a removal (not reported); a domain over the new type is reported;
+// a table's size is unknown, so a small lookup table is reported too (the message says when to keep the change);
+// a table created by an earlier migration that is still pending with this one is empty, which only a Git base shows.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation ColumnTypeChangeRewrites(at: node, col: symbol, tbl: symbol, from: symbol, to: symbol) "Changing \"{col}\" on \"{tbl}\" from {from} to {to} rewrites the whole table and its indexes under an ACCESS EXCLUSIVE lock, blocking every read and write until it finishes. On a table with real data, add a new column of the new type, write both columns from the app, backfill the new one in batches, then switch reads and drop the old column in later migrations; when this recreates an enum only to drop a value, keep the value in the enum and stop using it instead. If the table is small or not yet in use in production, this migration is fine as it is."
+ColumnTypeChangeRewrites(a, x, t, f, n) :- ctc_alter(a, d, t, x), ctc_old(a, od), ctc_desc(a, n), ctc_rewrites(a, od),
+    ctc_existing(a, d), ctc_desc(od, o), (o != n, f = o ; o = n, f = "its old type").
+// With the old type unknown, any USING counts: PostgreSQL asks for one only when no assignment cast converts the values.
+ColumnTypeChangeRewrites(a, x, t, "its old type", n) :- ctc_alter(a, d, t, x), !ctc_old(a, _), ctc_using_expr(a, _),
+    ctc_desc(a, n), ctc_existing(a, d).
+// ctc_existing(a, d): a's migration d is pending and a's table may hold rows.
+.decl ctc_existing(a: node, d: number)
+ctc_existing(a, d) :- ctc_alter(a, d, t, _), child(s, a, _), !pgm_fresh_table(s, t), pgm_pending(d).
+
+// ---- order: a node's place in its migrations directory --------------------------------------------------------------
+// ctc_pos(n, root, m, off): node n stands at byte off of migration m of root.
+.decl ctc_pos(n: node, root: symbol, m: symbol, off: number)
+ctc_pos(n, r, m, o) :- ctc_at(n), docof(n, d), pgm_mig(d, r, m), node(d, n, _, o, _).
+.decl ctc_at(n: node)
+ctc_at(n) :- ctc_def(n, _, _).
+ctc_at(n) :- ctc_reset(n, _, _).
+// ctc_before(a, b): b runs before a in the same migrations directory.
+.decl ctc_before(a: node, b: node)
+ctc_before(a, b) :- ctc_alter(a, _, t, x), ctc_def(b, t, x), ctc_pos(a, r, ma, oa), ctc_pos(b, r, mb, ob),
+    (mb < ma ; mb = ma, ob < oa).
+
+// ---- column definitions ---------------------------------------------------------------------------------------------
+// Tables are lib's pgm_target (folded, the last name part), columns its pgm_ident.
+// ctc_def(p, t, x): p gives column x of table t a type: a column definition (CREATE TABLE, ADD COLUMN) or a TYPE change.
+.decl ctc_def(p: node, t: symbol, x: symbol)
+ctc_def(p, t, x) :- kind(p, "column_definition"), (within(p, s), kind(s, "create_table") ; within(p, s), kind(s, "alter_table")),
+    pgm_target(s, t), field(p, "name", n), pgm_ident(n, x).
+ctc_def(a, t, x) :- ctc_alter(a, _, t, x).
+// ctc_alter(a, d, t, x): ALTER COLUMN x [SET DATA] TYPE … on table t, in document d, outside a function body.
+.decl ctc_alter(a: node, d: number, t: symbol, x: symbol)
+ctc_alter(a, d, t, x) :- kind(a, "alter_column"), child(a, k, _), kind(k, "keyword_type"), child(s, a, _),
+    kind(s, "alter_table"), pgm_target(s, t), field(a, "name", n), pgm_ident(n, x), docof(a, d), !routine_body(a).
+// ctc_using(a): a has a USING clause that may change the values: anything but the column itself or one cast of it
+// (`USING "x"::TEXT`), which leaves the change to the types alone. Prisma's enum form casts twice (`::text::"E_new"`).
+.decl ctc_using(a: node)
+ctc_using(a) :- ctc_using_expr(a, _), !ctc_plain_using(a).
+.decl ctc_using_expr(a: node, e: node)
+ctc_using_expr(a, e) :- kind(a, "alter_column"), child(a, k, i), kind(k, "keyword_using"), child(a, e, i + 1).
+.decl ctc_unparen(e: node, x: node)
+ctc_unparen(e, e) :- ctc_using_expr(_, e), !kind(e, "parenthesized_expression").
+ctc_unparen(e, x) :- ctc_using_expr(_, e), kind(e, "parenthesized_expression"), child(e, c, 0), ctc_unparen2(c, x).
+.decl ctc_unparen2(c: node, x: node)
+ctc_unparen2(c, c) :- child(p, c, 0), kind(p, "parenthesized_expression"), !kind(c, "parenthesized_expression").
+.decl ctc_plain_using(a: node)
+ctc_plain_using(a) :- ctc_using_expr(a, e), ctc_unparen(e, f), ctc_is_col(a, f).
+ctc_plain_using(a) :- ctc_using_expr(a, e), ctc_unparen(e, c), kind(c, "cast"), child(c, f, 0), ctc_is_col(a, f).
+.decl ctc_is_col(a: node, f: node)  // f names a's own column
+ctc_is_col(a, f) :- ctc_alter(a, _, _, x), kind(f, "field"), field(f, "name", n), pgm_ident(n, x).
+// ctc_old(a, od): od is the latest definition of a's column before a, with no DROP COLUMN or RENAME COLUMN of that
+// name between them (a column dropped and re-added, or renamed into place, has a type the rule does not follow).
+.decl ctc_later(a: node, b: node)
+ctc_later(a, b) :- ctc_before(a, b), ctc_before(a, c), ctc_pos(b, r, mb, ob), ctc_pos(c, r, mc, oc),
+    (mb < mc ; mb = mc, ob < oc).
+.decl ctc_reset(r: node, t: symbol, x: symbol)
+ctc_reset(r, t, x) :- (kind(r, "drop_column") ; kind(r, "rename_column")), child(s, r, _), kind(s, "alter_table"),
+    pgm_target(s, t), child(r, n, _), kind(n, "identifier"), pgm_ident(n, x).
+.decl ctc_cut(a: node, b: node)
+ctc_cut(a, b) :- ctc_before(a, b), ctc_alter(a, _, t, x), ctc_reset(r, t, x), ctc_pos(a, g, ma, oa),
+    ctc_pos(b, g, mb, ob), ctc_pos(r, g, mr, orr), (mb < mr ; mb = mr, ob < orr), (mr < ma ; mr = ma, orr < oa).
+.decl ctc_old(a: node, od: node)
+ctc_old(a, b) :- ctc_before(a, b), !ctc_later(a, b), !ctc_cut(a, b).
+
+// ---- types ----------------------------------------------------------------------------------------------------------
+// ctc_ty(p, base, p1, p2, arr): the type p gives: base name, its first and second modifier (-1 when absent), 1 when
+// an array. INTEGER and INT are int, DECIMAL is numeric, CHARACTER VARYING is varchar, an enum or domain is "enum:Name"
+// (CITEXT, which the grammar reads as a user type, is citext).
+.decl ctc_ty(p: node, base: symbol, p1: number, p2: number, arr: number)
+ctc_ty(p, b, p1, p2, ar) :- ctc_def(p, _, _), field(p, "type", y), ctc_ty_node(y), ctc_base(y, b), ctc_mod(y, 0, p1),
+    ctc_mod(y, 1, p2), ctc_arr(p, ar).
+ctc_ty(p, b, -1, -1, ar) :- ctc_def(p, _, _), field(p, "custom_type", o), field(o, "name", n), pgm_ident(n, x),
+    (x = "citext", b = x ; x != "citext", b = cat("enum:", x)), ctc_arr(p, ar).
+// ctc_base(y, b): type node y's base name: its text before any `(`, lower-cased, synonyms merged.
+.decl ctc_base(y: node, b: symbol)
+ctc_base(y, b) :- ctc_word(y, w), ctc_syn(w, b).
+ctc_base(y, w) :- ctc_word(y, w), !ctc_syn(w, _).
+.decl ctc_word(y: node, w: symbol)
+ctc_word(y, @lower(W)) :- ctc_ty_node(y), text(y, s), match("\\s*(?<W>[^(]*[^( ])\\s*(\\(.*)?", s).
+.decl ctc_syn(w: symbol, b: symbol)
+ctc_syn("integer", "int"). ctc_syn("int4", "int"). ctc_syn("int8", "bigint"). ctc_syn("int2", "smallint").
+ctc_syn("decimal", "numeric"). ctc_syn("character varying", "varchar"). ctc_syn("float8", "double precision").
+ctc_syn("timestamp with time zone", "timestamptz"). ctc_syn("timestamp without time zone", "timestamp").
+ctc_syn("bool", "boolean"). ctc_syn("float4", "real").
+.decl ctc_mod(y: node, i: number, v: number)
+ctc_mod(y, i, to_number(s)) :- ctc_ty_node(y), child(y, l, _), kind(l, "literal"), text(l, s),
+    i = count : { child(y, l2, j), kind(l2, "literal"), child(y, l, k), j < k }.
+ctc_mod(y, i, -1) :- ctc_ty_node(y), (i = 0 ; i = 1), count : { child(y, l, _), kind(l, "literal") } <= i.
+.decl ctc_ty_node(y: node)
+ctc_ty_node(y) :- ctc_def(p, _, _), field(p, "type", y), !kind(y, "array_size_definition").
+.decl ctc_arr(p: node, ar: number)
+ctc_arr(p, 1) :- ctc_def(p, _, _), child(p, c, _), kind(c, "array_size_definition").
+ctc_arr(p, 0) :- ctc_def(p, _, _), count : { child(p, c, _), kind(c, "array_size_definition") } = 0.
+// ctc_desc(p, s): the type as the message names it, from the source text: VARCHAR(100), "State", INTEGER[].
+.decl ctc_desc(p: node, s: symbol)
+ctc_desc(p, s) :- ctc_def(p, _, _), field(p, "type", y), !kind(y, "array_size_definition"), text(y, v), ctc_arr(p, ar),
+    (ar = 1, s = cat(v, "[]") ; ar = 0, s = v).
+ctc_desc(p, s) :- ctc_def(p, _, _), field(p, "custom_type", o), text(o, v), ctc_arr(p, ar),
+    (ar = 1, s = cat(v, "[]") ; ar = 0, s = v).
+
+// ---- which changes rewrite --------------------------------------------------------------------------------------------
+// ctc_safe(od, a): from od's type to a's is binary coercible with a check PostgreSQL skips: the same type, a wider or
+// removed length or precision, VARCHAR to TEXT, TIMESTAMP to TIMESTAMPTZ and back (see above).
+.decl ctc_widen(b: symbol)  // types whose length or precision may grow or go without a rewrite
+ctc_widen("varchar"). ctc_widen("numeric"). ctc_widen("timestamp"). ctc_widen("timestamptz"). ctc_widen("time").
+ctc_widen("interval"). ctc_widen("varbit"). ctc_widen("bit_varying").
+.decl ctc_safe(od: node, a: node)
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, b, p1, p2, ar), ctc_ty(a, b, p1, p2, ar).
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, b, _, _, ar), ctc_ty(a, b, -1, _, ar), ctc_widen(b).
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, b, p1, p2, ar), ctc_ty(a, b, q1, p2, ar), ctc_widen(b), p1 >= 0, q1 >= p1.
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, "varchar", _, _, ar), ctc_ty(a, "text", _, _, ar).
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, b, _, _, ar), ctc_ty(a, c, _, _, ar), ctc_citext(b, c).
+.decl ctc_citext(b: symbol, c: symbol)  // binary casts the citext extension declares
+ctc_citext("text", "citext"). ctc_citext("varchar", "citext"). ctc_citext("citext", "text").
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, "timestamp", _, _, ar), ctc_ty(a, "timestamptz", _, _, ar).
+ctc_safe(od, a) :- ctc_old(a, od), ctc_ty(od, "timestamptz", _, _, ar), ctc_ty(a, "timestamp", _, _, ar).
+// ctc_rewrites(a, od): a's change from od's type rewrites the table: a USING clause, or a change that is not safe.
+// A type the rule cannot read on either side is not judged.
+.decl ctc_rewrites(a: node, od: node)
+ctc_rewrites(a, od) :- ctc_old(a, od), ctc_using(a).
+ctc_rewrites(a, od) :- ctc_old(a, od), ctc_ty(od, _, _, _, _), ctc_ty(a, _, _, _, _), !ctc_safe(od, a).
+
+// The cases, `cases/postgres-migrations-practice-column-type-change-rewrites/`, read as one repository: each line
+// ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as `.git`,
+// so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration
+// pending (a run with no base would read only each directory's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "drizzle/0000_init.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/drizzle/0000_init.sql"
+    .fixture "drizzle/0001_totals.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/drizzle/0001_totals.sql"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20240301000000_widen/migration.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/20240301000000_widen/migration.sql"
+    .fixture "prisma/migrations/20240401000000_bigint/migration.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/20240401000000_bigint/migration.sql"
+    .fixture "prisma/migrations/20240501000000_audit_log/migration.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/20240501000000_audit_log/migration.sql"
+    .fixture "prisma/migrations/20240701000000_swap_names/migration.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/20240701000000_swap_names/migration.sql"
+    .fixture "prisma/migrations/20240801000000_timestamps_back/migration.sql" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/20240801000000_timestamps_back/migration.sql"
+    .fixture "prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-column-type-change-rewrites/prisma/migrations/migration_lock.toml"
+    .expect _ at "drizzle/0001_totals.sql":1
+    .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":2
+    .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":3
+    .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":4
+    .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":5
+    .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":11
+.end

@@ -1,0 +1,1 @@
+ALTER TABLE "Stock" VALIDATE CONSTRAINT "Stock_qty_check";

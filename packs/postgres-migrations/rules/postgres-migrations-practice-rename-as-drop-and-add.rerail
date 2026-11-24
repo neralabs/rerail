@@ -1,0 +1,209 @@
+.policy "postgres-migrations-practice-rename-as-drop-and-add" revision 1
+.description "Don't write a column rename as DROP COLUMN plus ADD COLUMN of the same type: deploying it deletes every value in the old column; rename the column or map the new field name onto the old column."
+.language sql
+.mode log
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/node_modules/**", "**/.next/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/__tests__/**", "**/__mocks__/**", "**/test/**", "**/tests/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*"
+// Rerail's own rule, not a port. `prisma migrate dev` cannot tell a renamed field from a removed one and a new one, so
+// renaming `biograpy` to `biography` in schema.prisma generates `ALTER TABLE "Profile" DROP COLUMN "biograpy",
+// ADD COLUMN "biography" TEXT NOT NULL` (drizzle-kit writes the same when its rename prompt is answered "create
+// column"). Deployed, the migration deletes every value of the old column: silent, irreversible data loss.
+// It matches, in one migration file, a DROP COLUMN of column a on table t and an ADD COLUMN of another column b on t
+// whose type is a's type: a's latest earlier definition among the migrations of the same directory (CREATE TABLE,
+// ADD COLUMN or ALTER COLUMN TYPE), ordered by migration name (Prisma's `YYYYMMDDHHMMSS_` folder, drizzle's `NNNN_`
+// file), then by position in the file. Types compare by their source text, case-folded. Tables and columns are named
+// by their last part, folded as PostgreSQL does. Reported at the DROP COLUMN:
+//   ALTER TABLE "Profile" DROP COLUMN "biograpy", ADD COLUMN "biography" TEXT NOT NULL      reported (Prisma's form)
+//   ALTER TABLE "Post" DROP COLUMN "state"; … ALTER TABLE "Post" ADD COLUMN "status" "PostState"   reported
+//   ALTER TABLE "users" DROP COLUMN IF EXISTS "full_name"; ALTER TABLE "users" ADD COLUMN "name" varchar(255)   reported
+// Leaves alone:
+//   ALTER TABLE … RENAME COLUMN a TO b                                  the data stays
+//   a drop and an add of a different type (BOOLEAN dropped, TEXT added): a new column, not a rename
+//   a column dropped and re-added under its own name (a hand-written type change)
+//   a foreign key moved to another table: the dropped column referenced "User", the added one references "Member"
+//   (the values cannot carry over); a referenced table renamed in between (`"Item" RENAME TO "Asset"`) still counts
+//   as the same table, so itemId → assetId is reported
+//   with several drops and one add, the add pairs only with the drop named like it (profileBio, not profileURL, → bio);
+//   with no name alike, only a one-to-one match counts: five TEXT columns dropped and one added is a restructure
+//   an id replacing a name or the reverse (queueName → queueId, versionId → version): the values are of another kind
+//   a file that UPDATEs table t, or reads column a in a query: the data is copied before the drop
+//   a table created or emptied (TRUNCATE, DELETE without WHERE) earlier in the same file, or created by a migration
+//   the Git base lacks (lib/postgres-migrations' pgm_empty_table: it is empty)
+//   a column whose type no earlier migration of its directory shows (squashed or baselined history)
+//   a migration that is not pending (pgm_pending: with a Git base, one the base has; without one, any but the newest
+//   of its directory), or another database's
+// Gaps: a rename split over two migration files is not seen; a column or table renamed since its definition is not
+// followed; a schema-qualified table is matched by its last name part only; a real replacement by an unrelated column
+// of the same type is reported (enabled → disabled, token → encryptedToken, reason → name: the message says when to
+// keep it); a foreign key is read only from `ADD CONSTRAINT … FOREIGN KEY`, not from an inline REFERENCES; a pair
+// whose names are alike is reported even when the referenced table changed; schema.prisma is not read, so the
+// message cannot confirm which field was renamed. A NOT NULL column with no default added in the same file does not
+// count as proof that the table is empty (pgm_fresh_table): Prisma's rename form adds the new column exactly so
+// (`DROP COLUMN "biograpy", ADD COLUMN "biography" TEXT NOT NULL`), and that is the statement to report.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation RenameAsDropAndAdd(at: node, old: symbol, tbl: symbol, new: symbol, ty: symbol) "This migration drops \"{old}\" from \"{tbl}\" and adds \"{new}\" of the same type ({ty}): that is how `prisma migrate dev` (and drizzle-kit, answered \"create column\") writes a renamed field, and deploying it deletes every value in \"{old}\". First decide whether \"{new}\" holds the same facts as \"{old}\": a new name for the same thing (a typo fixed, a clearer name) is a rename; a different meaning (another fact, a changed unit, or the opposite, as `enabled` replaced by `disabled`) is not, and then the old values would be wrong in \"{new}\", so keep the drop and the add as written (and fill \"{new}\" in a backfill if it needs values). Only for a rename, keep the data: either rename only the schema field and keep the database name (`{new} … @map(\"{old}\")` in schema.prisma, or the old SQL name in a Drizzle `pgTable`) and delete this migration, or replace the drop and add with `ALTER TABLE \"{tbl}\" RENAME COLUMN \"{old}\" TO \"{new}\";`."
+RenameAsDropAndAdd(dc, x, t, y, ty) :- rad_first(dc, a), rad_drop(dc, d, t, x), rad_add(a, d, t, y), rad_desc(a, ty).
+
+// ---- order: a node's place in its migrations directory (lib's pgm_mig) ----------------------------------------------
+// rad_pos(n, root, m, off): node n stands at byte off of migration m of root.
+.decl rad_at(n: node)
+rad_at(n) :- rad_def(n, _, _).
+rad_at(n) :- rad_drop(n, _, _, _).
+.decl rad_pos(n: node, root: symbol, m: symbol, off: number)
+rad_pos(n, r, m, o) :- rad_at(n), docof(n, d), pgm_mig(d, r, m), node(d, n, _, o, _).
+
+// ---- definitions, drops and adds --------------------------------------------------------------------------------------
+// Tables are lib's pgm_target (folded, the last name part), columns its pgm_ident.
+// rad_def(p, t, x): p gives column x of table t a type: a column definition (CREATE TABLE, ADD COLUMN) or a TYPE change.
+.decl rad_def(p: node, t: symbol, x: symbol)
+rad_def(p, t, x) :- kind(p, "column_definition"), within(p, s), (kind(s, "create_table") ; kind(s, "alter_table")),
+    pgm_target(s, t), field(p, "name", n), pgm_ident(n, x), !routine_body(p).
+rad_def(a, t, x) :- kind(a, "alter_column"), child(a, k, _), kind(k, "keyword_type"), child(s, a, _),
+    kind(s, "alter_table"), pgm_target(s, t), field(a, "name", n), pgm_ident(n, x), !routine_body(a).
+// rad_drop(dc, d, t, x): DROP COLUMN x of table t in document d.
+.decl rad_drop(dc: node, d: number, t: symbol, x: symbol)
+rad_drop(dc, d, t, x) :- kind(dc, "drop_column"), child(s, dc, _), kind(s, "alter_table"), pgm_target(s, t),
+    child(dc, n, _), kind(n, "identifier"), pgm_ident(n, x), docof(dc, d), !routine_body(dc).
+// rad_add(p, d, t, y): ADD COLUMN y to table t in document d; p is its column definition.
+.decl rad_add(p: node, d: number, t: symbol, y: symbol)
+rad_add(p, d, t, y) :- kind(p, "column_definition"), child(ac, p, _), kind(ac, "add_column"), child(s, ac, _),
+    kind(s, "alter_table"), pgm_target(s, t), field(p, "name", n), pgm_ident(n, y), docof(p, d), !routine_body(p).
+
+// rad_old(dc, od): od is the latest definition of dc's column before dc, in the same migrations directory.
+.decl rad_before(dc: node, b: node)
+rad_before(dc, b) :- rad_drop(dc, _, t, x), rad_def(b, t, x), rad_pos(dc, r, ma, oa), rad_pos(b, r, mb, ob),
+    (mb < ma ; mb = ma, ob < oa).
+.decl rad_later(dc: node, b: node)
+rad_later(dc, b) :- rad_before(dc, b), rad_before(dc, c), rad_pos(b, r, mb, ob), rad_pos(c, r, mc, oc),
+    (mb < mc ; mb = mc, ob < oc).
+.decl rad_old(dc: node, od: node)
+rad_old(dc, b) :- rad_before(dc, b), !rad_later(dc, b).
+
+// ---- types ----------------------------------------------------------------------------------------------------------
+// rad_desc(p, s): the type p gives, from the source text: TEXT, VARCHAR(255), "PostState", INTEGER[].
+.decl rad_desc(p: node, s: symbol)
+rad_desc(p, s) :- rad_def(p, _, _), field(p, "type", y), !kind(y, "array_size_definition"), text(y, v), rad_arr(p, ar),
+    (ar = 1, s = cat(v, "[]") ; ar = 0, s = v).
+rad_desc(p, s) :- rad_def(p, _, _), field(p, "custom_type", o), text(o, v), rad_arr(p, ar),
+    (ar = 1, s = cat(v, "[]") ; ar = 0, s = v).
+.decl rad_arr(p: node, ar: number)
+rad_arr(p, 1) :- rad_def(p, _, _), child(p, c, _), kind(c, "array_size_definition").
+rad_arr(p, 0) :- rad_def(p, _, _), count : { child(p, c, _), kind(c, "array_size_definition") } = 0.
+// rad_same(a, b): definitions a and b give the same type, compared case-folded.
+.decl rad_same(a: node, b: node)
+rad_same(a, b) :- rad_desc(a, s), rad_desc(b, v), @lower(s) = @lower(v).
+
+// ---- pairs and exemptions -------------------------------------------------------------------------------------------
+// rad_pair(dc, a): the drop dc and the add a, of another column of the same table and of the dropped column's type,
+// stand in the same file, and none of the file's exemptions holds. Which pairs count is decided over all of these,
+// before the pair's own exemptions (rad_ok), so a pair left out does not make another one look unique.
+.decl rad_pair(dc: node, a: node)
+rad_pair(dc, a) :- rad_drop(dc, d, t, x), rad_add(a, d, t, y), y != x, rad_old(dc, od), rad_same(od, a),
+    !rad_readded(dc), !rad_copied(dc), rad_existing(dc, d).
+// rad_ok(dc, a): the pair's own exemptions do not hold.
+.decl rad_ok(dc: node, a: node)
+rad_ok(dc, a) :- rad_pair(dc, a), rad_drop(dc, _, _, x), rad_add(a, _, _, y), !rad_retarget(dc, a), !rad_idkind(x, y).
+// rad_idkind(x, y): one name is an id (`queueId`, `queue_id`, `id`, `imageIdentifier`) and the other is not
+// (`queue`, `queueName`): a name or a key replaced by a reference, whose values are of another kind.
+.decl rad_id(x: symbol)
+rad_id(x) :- rad_key(x, _), match("^(id|.*[a-z0-9]Id|.*ID|.*_id|.*Identifier|.*_identifier)$", x).
+.decl rad_idkind(x: symbol, y: symbol)
+rad_idkind(x, y) :- rad_drop(_, d, t, x), rad_add(_, d, t, y), rad_id(x), !rad_id(y).
+rad_idkind(x, y) :- rad_drop(_, d, t, x), rad_add(_, d, t, y), !rad_id(x), rad_id(y).
+// rad_fk(d, t, c, r): document d adds a foreign key from column c of table t to table r (folded last name parts).
+.decl rad_fk(d: number, t: symbol, c: symbol, r: symbol)
+rad_fk(d, t, c, r) :- kind(ac, "add_constraint"), child(s, ac, _), kind(s, "alter_table"), pgm_target(s, t),
+    child(ac, k, _), kind(k, "constraint"), child(k, kf, _), kind(kf, "keyword_foreign"), child(k, oc, _),
+    kind(oc, "ordered_columns"), count : { child(oc, _, _) } = 1, child(oc, col, _), child(col, l, _), pgm_ident(l, c),
+    child(k, o, _), kind(o, "object_reference"), field(o, "name", n), ident_pg(n, r), docof(ac, d).
+// rad_renamed(a, b): some migration renames table a to b.
+.decl rad_renamed(a: symbol, b: symbol)
+rad_renamed(a, b) :- kind(ro, "rename_object"), child(s, ro, _), kind(s, "alter_table"), pgm_target(s, a),
+    child(ro, o, _), kind(o, "object_reference"), field(o, "name", n), ident_pg(n, b).
+// rad_retarget(dc, a): the dropped column was a foreign key to one table and the added one, in the same file, is a
+// foreign key to another table (not the first one renamed), and the names are unrelated: the values cannot carry
+// over, so it is no rename. userId → user_id stays a rename even when "User" was rebuilt as "users".
+.decl rad_retarget(dc: node, a: node)
+rad_retarget(dc, a) :- rad_drop(dc, d, t, x), rad_add(a, d, t, y), rad_fk(_, t, x, _), rad_fk(d, t, y, _),
+    !rad_sameref(dc, a), !rad_namelike(x, y).
+.decl rad_sameref(dc: node, a: node)
+rad_sameref(dc, a) :- rad_drop(dc, d, t, x), rad_add(a, d, t, y), rad_fk(_, t, x, r1), rad_fk(d, t, y, r2),
+    (r1 = r2 ; rad_renamed(r1, r2)).
+// rad_namelike(x, y): one name holds the other, case-folded and without underscores: expires and expiresAt,
+// profileBio and bio, updatedAt and updated_at.
+.decl rad_namelike(x: symbol, y: symbol)
+rad_namelike(x, y) :- rad_drop(_, d, t, x), rad_add(_, d, t, y), rad_key(x, kx), rad_key(y, ky),
+    (contains(kx, ky) ; contains(ky, kx)).
+.decl rad_key(x: symbol, k: symbol)
+rad_key(x, @replace_all(@lower(x), "_", "")) :- rad_drop(_, _, _, x).
+rad_key(y, @replace_all(@lower(y), "_", "")) :- rad_add(_, _, _, y).
+// rad_named(dc, a): the pair's names are alike.
+.decl rad_named(dc: node, a: node)
+rad_named(dc, a) :- rad_pair(dc, a), rad_drop(dc, _, _, x), rad_add(a, _, _, y), rad_namelike(x, y).
+// rad_cand(dc, a): the adds the message may name: the ones named like the dropped column; else, among the drops and
+// adds no named pair claims, a unique match: dc pairs with a alone and a with dc alone. `DROP COLUMN "profileBio",
+// DROP COLUMN "profileURL", ADD COLUMN "bio"` pairs bio with profileBio only; a restructure that drops five TEXT
+// columns and adds one is no rename, and is left alone.
+.decl rad_free(dc: node, a: node)
+rad_free(dc, a) :- rad_pair(dc, a), count : { rad_named(dc, _) } = 0, count : { rad_named(_, a) } = 0.
+.decl rad_cand(dc: node, a: node)
+rad_cand(dc, a) :- rad_named(dc, a), rad_ok(dc, a).
+rad_cand(dc, a) :- rad_free(dc, a), count : { rad_free(dc, _) } = 1, count : { rad_free(_, a) } = 1, rad_ok(dc, a).
+// rad_first(dc, a): a is the first candidate add in the file, so each drop is reported once.
+.decl rad_first(dc: node, a: node)
+rad_first(dc, a) :- rad_cand(dc, a), docof(a, d), node(d, a, _, o, _),
+    count : { rad_cand(dc, b), node(d, b, _, ob, _), ob < o } = 0.
+// rad_readded(dc): the same file adds the dropped column back under its own name (a type change written by hand).
+.decl rad_readded(dc: node)
+rad_readded(dc) :- rad_drop(dc, d, t, x), rad_add(_, d, t, x).
+// rad_copied(dc): the file writes to the table with UPDATE, or reads the dropped column in a query (INSERT … SELECT,
+// UPDATE … SET b = a): the values are carried over before the drop.
+.decl rad_copied(dc: node)
+rad_copied(dc) :- rad_drop(dc, d, t, _), kind(u, "update"), docof(u, d), child(u, r, _), kind(r, "relation"),
+    child(r, o, _), kind(o, "object_reference"), field(o, "name", n), ident_pg(n, t).
+rad_copied(dc) :- rad_drop(dc, d, _, x), kind(f, "field"), docof(f, d), child(f, n, _), kind(n, "identifier"),
+    pgm_ident(n, x).
+// rad_existing(dc, d): dc's migration d is pending and dc's table may hold rows.
+.decl rad_existing(dc: node, d: number)
+rad_existing(dc, d) :- rad_drop(dc, d, t, _), child(s, dc, _), !pgm_empty_table(s, t), pgm_pending(d).
+
+// The cases, `cases/postgres-migrations-practice-rename-as-drop-and-add/`, read as one repository: each line ending in
+// `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as `.git`, so git_rev
+// reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration pending (a run
+// with no base would read only each directory's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "drizzle/0000_init.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/drizzle/0000_init.sql"
+    .fixture "drizzle/0001_names.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/drizzle/0001_names.sql"
+    .fixture "prisma/migrations/migration_lock.toml" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/migration_lock.toml"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20240301000000_owner/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240301000000_owner/migration.sql"
+    .fixture "prisma/migrations/20240401000000_rename_bio/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240401000000_rename_bio/migration.sql"
+    .fixture "prisma/migrations/20240501000000_post_status/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240501000000_post_status/migration.sql"
+    .fixture "prisma/migrations/20240601000000_reviewed_changes/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240601000000_reviewed_changes/migration.sql"
+    .fixture "prisma/migrations/20240701000000_audit_log/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240701000000_audit_log/migration.sql"
+    .fixture "prisma/migrations/20240801000000_session_fields/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240801000000_session_fields/migration.sql"
+    .fixture "prisma/migrations/20240901000000_rework_profiles/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20240901000000_rework_profiles/migration.sql"
+    .fixture "prisma/migrations/20241001000000_comment_member/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20241001000000_comment_member/migration.sql"
+    .fixture "prisma/migrations/20241101000000_item_to_asset/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20241101000000_item_to_asset/migration.sql"
+    .fixture "prisma/migrations/20241201000000_restructure_jobs/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20241201000000_restructure_jobs/migration.sql"
+    .fixture "prisma/migrations/20250101000000_run_queue/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20250101000000_run_queue/migration.sql"
+    .expect _ at "drizzle/0001_names.sql":1
+    .expect _ at "prisma/migrations/20240401000000_rename_bio/migration.sql":9
+    .expect _ at "prisma/migrations/20240501000000_post_status/migration.sql":5
+    .expect _ at "prisma/migrations/20240501000000_post_status/migration.sql":8
+    .expect _ at "prisma/migrations/20240801000000_session_fields/migration.sql":2
+    .expect _ at "prisma/migrations/20240901000000_rework_profiles/migration.sql":2
+    .expect _ at "prisma/migrations/20241101000000_item_to_asset/migration.sql":8
+.end

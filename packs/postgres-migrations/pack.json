@@ -1,0 +1,239 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "postgres-migrations",
+  "name": "Postgres migrations",
+  "category": "framework",
+  "covers": "Rerail's own rules for SQL migrations run on PostgreSQL (Prisma, Drizzle and plain SQL), from the PostgreSQL docs and migration linters' advice, for migrations that take no long locks, rewrite no large table and lose no data.",
+  "reason": "matches Postgres migrations",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/migrations/**/*.sql",
+          "**/drizzle/**/*.sql"
+        ],
+        "label": "SQL migration files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "postgres-migrations-practice-index-on-existing-table-blocks-writes",
+      "document": "rules/postgres-migrations-practice-index-on-existing-table-blocks-writes.rerail",
+      "title": "Postgres migrations practice: build an index on an existing table CONCURRENTLY, and attach a UNIQUE or PRIMARY KEY constraint to it with USING INDEX",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_order_email/migration.sql",
+          "text": "-- CreateIndex\nCREATE INDEX \"Order_email_idx\" ON \"Order\"(\"email\");\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20261120093000_order_email/migration.sql",
+          "text": "-- CreateIndex\nCREATE INDEX CONCURRENTLY \"Order_email_idx\" ON \"Order\"(\"email\");\n"
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-concurrently-inside-transaction",
+      "document": "rules/postgres-migrations-practice-concurrently-inside-transaction.rerail",
+      "title": "Postgres migrations practice: run CONCURRENTLY index builds and drops only where the migration runner adds no transaction",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_user_nickname/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"User\" ADD COLUMN \"nickname\" TEXT;\n-- CreateIndex\nCREATE INDEX CONCURRENTLY \"User_nickname_idx\" ON \"User\"(\"nickname\");\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{\n  \"scripts\": { \"db:deploy\": \"prisma migrate deploy\" },\n  \"dependencies\": { \"@prisma/client\": \"^6.19.0\" },\n  \"devDependencies\": { \"prisma\": \"^6.19.0\" }\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "prisma/migrations/20261121100000_user_nickname_idx/migration.sql",
+          "text": "-- CreateIndex: alone in its migration, so no transaction surrounds it\nCREATE INDEX CONCURRENTLY \"User_nickname_idx\" ON \"User\"(\"nickname\");\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{\n  \"scripts\": { \"db:deploy\": \"prisma migrate deploy\" },\n  \"dependencies\": { \"@prisma/client\": \"^6.19.0\" },\n  \"devDependencies\": { \"prisma\": \"^6.19.0\" }\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-constraint-on-existing-table-not-valid",
+      "document": "rules/postgres-migrations-practice-constraint-on-existing-table-not-valid.rerail",
+      "title": "Postgres migrations practice: add a foreign key or CHECK constraint to an existing table with NOT VALID, and validate it in a later migration",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20240301000000_comment_post_fk/migration.sql",
+          "text": "-- AddForeignKey\nALTER TABLE \"Comment\" ADD CONSTRAINT \"Comment_postId_fkey\" FOREIGN KEY (\"postId\") REFERENCES \"Post\"(\"id\") ON DELETE CASCADE ON UPDATE CASCADE;\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20240301000000_comment_post_fk/migration.sql",
+          "text": "-- AddForeignKey\nALTER TABLE \"Comment\" ADD CONSTRAINT \"Comment_postId_fkey\" FOREIGN KEY (\"postId\") REFERENCES \"Post\"(\"id\") ON DELETE CASCADE ON UPDATE CASCADE NOT VALID;\n"
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-set-not-null-scans-table",
+      "document": "rules/postgres-migrations-practice-set-not-null-scans-table.rerail",
+      "title": "Postgres migrations practice: make an existing column NOT NULL only after a validated CHECK (col IS NOT NULL), so SET NOT NULL does not scan the table under lock",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_require_phone/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"User\" ALTER COLUMN \"phone\" SET NOT NULL;\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20240101000000_init/migration.sql",
+          "text": "-- CreateTable\nCREATE TABLE \"User\" (\n    \"id\" TEXT NOT NULL,\n    \"phone\" TEXT,\n    CONSTRAINT \"User_pkey\" PRIMARY KEY (\"id\")\n);\n\nALTER TABLE \"User\" ALTER COLUMN \"phone\" SET NOT NULL;\n"
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-required-column-without-default",
+      "document": "rules/postgres-migrations-practice-required-column-without-default.rerail",
+      "title": "Postgres migrations practice: add a NOT NULL column to an existing table only with a constant DEFAULT, or nullable first, backfilled, then made required",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_post_slug/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Post\" ADD COLUMN     \"slug\" TEXT NOT NULL;\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20261120093000_post_slug/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Post\" ADD COLUMN     \"slug\" TEXT;\n"
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-volatile-default-rewrites",
+      "document": "rules/postgres-migrations-practice-volatile-default-rewrites.rerail",
+      "title": "Postgres migrations practice: add a column to an existing table without a volatile default, serial type, identity or stored generated expression",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_order_public_id/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Order\" ADD COLUMN \"publicId\" UUID NOT NULL DEFAULT gen_random_uuid();\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20261120093000_order_public_id/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Order\" ADD COLUMN \"publicId\" UUID;\nALTER TABLE \"Order\" ALTER COLUMN \"publicId\" SET DEFAULT gen_random_uuid();\n"
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-column-type-change-rewrites",
+      "document": "rules/postgres-migrations-practice-column-type-change-rewrites.rerail",
+      "title": "Postgres migrations practice: don't change a column's type on an existing table unless the change is a no-rewrite widening",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20240401000000_bigint/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Event\" ALTER COLUMN \"count\" SET DATA TYPE BIGINT;\n",
+          "with": [
+            {
+              "path": "prisma/migrations/20240101000000_init/migration.sql",
+              "text": "-- CreateTable\nCREATE TABLE \"Event\" (\n    \"id\" SERIAL NOT NULL,\n    \"count\" INTEGER NOT NULL,\n\n    CONSTRAINT \"Event_pkey\" PRIMARY KEY (\"id\")\n);\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "prisma/migrations/20240301000000_widen/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Event\" ALTER COLUMN \"name\" SET DATA TYPE VARCHAR(255);\n",
+          "with": [
+            {
+              "path": "prisma/migrations/20240101000000_init/migration.sql",
+              "text": "-- CreateTable\nCREATE TABLE \"Event\" (\n    \"id\" SERIAL NOT NULL,\n    \"name\" VARCHAR(100),\n\n    CONSTRAINT \"Event_pkey\" PRIMARY KEY (\"id\")\n);\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-lock-timeout",
+      "document": "rules/postgres-migrations-practice-lock-timeout.rerail",
+      "title": "Postgres migrations practice: start a migration that locks an existing table with SET lock_timeout",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_add_flag/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"User\" ADD COLUMN \"flag\" BOOLEAN;\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20261120093000_add_flag/migration.sql",
+          "text": "SET lock_timeout = '5s';\n\n-- AlterTable\nALTER TABLE \"User\" ADD COLUMN \"flag\" BOOLEAN;\n"
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-rename-as-drop-and-add",
+      "document": "rules/postgres-migrations-practice-rename-as-drop-and-add.rerail",
+      "title": "Postgres migrations practice: rename a column, don't drop it and add a new one of the same type",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20240401000000_rename_bio/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Profile\" DROP COLUMN \"biograpy\",\nADD COLUMN     \"biography\" TEXT NOT NULL;\n",
+          "with": [
+            {
+              "path": "prisma/migrations/20240101000000_init/migration.sql",
+              "text": "CREATE TABLE \"Profile\" (\n    \"id\" SERIAL NOT NULL,\n    \"biograpy\" TEXT NOT NULL,\n    CONSTRAINT \"Profile_pkey\" PRIMARY KEY (\"id\")\n);\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "prisma/migrations/20240401000000_rename_bio/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"Profile\" RENAME COLUMN \"biograpy\" TO \"biography\";\n",
+          "with": [
+            {
+              "path": "prisma/migrations/20240101000000_init/migration.sql",
+              "text": "CREATE TABLE \"Profile\" (\n    \"id\" SERIAL NOT NULL,\n    \"biograpy\" TEXT NOT NULL,\n    CONSTRAINT \"Profile_pkey\" PRIMARY KEY (\"id\")\n);\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "postgres-migrations-practice-dropped-column-still-used",
+      "document": "rules/postgres-migrations-practice-dropped-column-still-used.rerail",
+      "title": "Postgres migrations practice: drop a column or table only after no schema.prisma field, Drizzle pgTable or raw SQL still uses it",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_drop_legacy/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"User\" DROP COLUMN \"legacyRole\";\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "model User {\n  id         String  @id @default(cuid())\n  email      String  @unique\n  legacyRole String?\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "prisma/migrations/20261120093000_drop_legacy/migration.sql",
+          "text": "-- AlterTable\nALTER TABLE \"User\" DROP COLUMN \"legacyRole\";\n",
+          "with": [
+            {
+              "path": "prisma/schema.prisma",
+              "text": "model User {\n  id    String @id @default(cuid())\n  email String @unique\n}\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

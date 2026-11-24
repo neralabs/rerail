@@ -1,0 +1,89 @@
+.policy "postgres-migrations-practice-volatile-default-rewrites" revision 1
+.description "In a migration, add a column to an existing table without a volatile default, serial type, identity or stored generated expression: each rewrites the whole table under an exclusive lock."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+// Rerail's own rule, not a port. Since PostgreSQL 11, `ADD COLUMN … DEFAULT <constant or stable expression>` only
+// records the default in the catalog. A volatile default is different: PostgreSQL must compute a value for each
+// existing row, so it rewrites the whole table and every index under an ACCESS EXCLUSIVE lock, and every read and
+// write to the table waits until it is done. A serial type (a `nextval` default), an identity column and a stored
+// generated column rewrite the table the same way. Prisma writes these for a new field with
+// `@default(dbgenerated("gen_random_uuid()"))`, `@default(autoincrement())` or a changed `@id` type.
+//   ALTER TABLE "Order" ADD COLUMN "publicId" UUID NOT NULL DEFAULT gen_random_uuid();     reported
+//   ALTER TABLE "Order" ADD COLUMN "token" TEXT DEFAULT md5(random()::text);               reported (nested call)
+//   ALTER TABLE "Order" ADD COLUMN "seq" SERIAL NOT NULL;                                  reported (also BIGSERIAL,
+//                                                                                          SMALLSERIAL, serial2/4/8)
+//   ALTER TABLE "Order" ADD COLUMN "n" INTEGER DEFAULT nextval('order_n_seq');             reported
+//   ALTER TABLE "Order" ADD COLUMN "no" BIGINT GENERATED ALWAYS AS IDENTITY;               reported
+//   ALTER TABLE "Order" ADD COLUMN "q" TEXT GENERATED ALWAYS AS (lower("name")) STORED;    reported
+//   ALTER TABLE "Order" ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;  not reported:
+//                                                                                          now() is stable
+//   ALTER TABLE "Order" ADD COLUMN "active" BOOLEAN NOT NULL DEFAULT true;                 not reported: a constant
+//   ALTER TABLE "Order" ADD COLUMN "q" TEXT GENERATED ALWAYS AS (lower("name")) VIRTUAL;   not reported: computed
+//                                                                                          on read (PostgreSQL 18)
+//   ALTER TABLE "Order" ALTER COLUMN "publicId" SET DEFAULT gen_random_uuid();             not reported: applies to
+//                                                                                          new rows only
+//   CREATE TABLE "Tag" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), …);                  not reported: new table
+//   CREATE TABLE "Tag" (…); ALTER TABLE "Tag" ADD COLUMN "seq" SERIAL;                     not reported: the table
+//                                                                                          is new (also after
+//                                                                                          TRUNCATE or a DELETE
+//                                                                                          with no WHERE)
+//   ALTER TABLE "Order" ADD COLUMN "x" TEXT DEFAULT my_func();                             not reported: a
+//                                                                                          function of unknown
+//                                                                                          volatility
+//   Only a pending migration is read (lib/postgres-migrations' pgm_pending): with a Git base, one the base lacks;
+//   without one (a repository audit), the newest of each migrations folder. With a base, a column added to a table
+//   that a pending migration creates is not reported either, nor one on a table the same file gives a NOT NULL
+//   column with no default first (pgm_fresh_table: PostgreSQL runs that on an empty table only).
+// Gaps: the table's size is unknown, so a small table whose rewrite takes milliseconds is reported too (the message
+// says when to keep the statement). A column of a domain type with constraints also rewrites the table and is not
+// reported. A user-defined volatile function is not known. The Git-base exemptions are not covered by the cases:
+// test-rr runs with no base.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation VolatileDefaultRewrite(at: node, col: symbol, table: symbol, what: symbol) "`ADD COLUMN {col}` on `{table}`, a table that already exists, has {what}: PostgreSQL computes a value for every existing row, so it rewrites the whole table and its indexes while holding an ACCESS EXCLUSIVE lock, and every read and write to `{table}` waits until it is done. Add the column with no default (nullable), then `ALTER COLUMN {col} SET DEFAULT …` so new rows get a value without a rewrite, backfill the existing rows in batches, and only then add NOT NULL (or the identity, or the primary key) in a later migration; for a stored generated column, fill a plain column the same way (or use a VIRTUAL generated column on PostgreSQL 18). Keep it as it is only if `{table}` is small or empty in every environment, so the rewrite takes well under a second."
+VolatileDefaultRewrite(a, c, t, w) :- kind(s, "alter_table"), child(s, a, _), kind(a, "add_column"),
+    child(a, cd, _), kind(cd, "column_definition"), vdr_rewrites(cd, w), pgm_colname(cd, c),
+    pgm_target(s, t), !pgm_fresh_table(s, t), docof(s, d), pgm_pending(d).
+
+// vdr_rewrites(cd, w): adding column cd fills every existing row with a value computed per row; w names why.
+.decl vdr_rewrites(cd: node, w: symbol)
+vdr_rewrites(cd, cat("a volatile default (`", f, "()`)")) :- kind(cd, "column_definition"),
+    child(cd, k, _), kind(k, "keyword_default"), within(i, cd), kind(i, "invocation"), child(i, o, _),
+    kind(o, "object_reference"), field(o, "name", n), text(n, f), pgm_volatile(p), iglob(p, n).
+vdr_rewrites(cd, "a serial type (a `nextval` default)") :- pgm_serial(cd).
+vdr_rewrites(cd, "an identity (`GENERATED … AS IDENTITY`)") :- kind(cd, "column_definition"), child(cd, k, _),
+    kind(k, "keyword_identity").
+vdr_rewrites(cd, "a stored generated expression (`GENERATED ALWAYS AS (…) STORED`)") :-
+    kind(cd, "column_definition"), child(cd, k, _), kind(k, "keyword_stored").
+
+// The cases, `cases/postgres-migrations-practice-volatile-default-rewrites/`, read as one repository: each line
+// ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as `.git`,
+// so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration
+// pending (a run with no base would read only each folder's newest).
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.test cases exactly uses repo
+    .given pgm_applied
+    .fixture "prisma/schema.prisma" from "../cases/postgres-migrations-practice-volatile-default-rewrites/prisma/schema.prisma"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-volatile-default-rewrites/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20261120093000_order_public_id/migration.sql" from "../cases/postgres-migrations-practice-volatile-default-rewrites/prisma/migrations/20261120093000_order_public_id/migration.sql"
+    .fixture "prisma/migrations/20261121100000_safe_columns/migration.sql" from "../cases/postgres-migrations-practice-volatile-default-rewrites/prisma/migrations/20261121100000_safe_columns/migration.sql"
+    .fixture "drizzle/0007_invoice_number.sql" from "../cases/postgres-migrations-practice-volatile-default-rewrites/drizzle/0007_invoice_number.sql"
+    .expect _ at "prisma/migrations/20261120093000_order_public_id/migration.sql":2
+    .expect _ at "prisma/migrations/20261120093000_order_public_id/migration.sql":5
+    .expect _ at "prisma/migrations/20261120093000_order_public_id/migration.sql":8
+    .expect _ at "prisma/migrations/20261120093000_order_public_id/migration.sql":9
+    .expect _ at "prisma/migrations/20261120093000_order_public_id/migration.sql":12
+    .expect _ at "drizzle/0007_invoice_number.sql":1
+    .expect _ at "drizzle/0007_invoice_number.sql":3
+.end

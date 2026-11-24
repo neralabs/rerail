@@ -1,0 +1,7 @@
+{
+  "name": "web",
+  "private": true,
+  "scripts": { "migrate:deploy": "prisma migrate deploy" },
+  "dependencies": { "@prisma/client": "^6.19.0" },
+  "devDependencies": { "prisma": "^6.19.0" }
+}

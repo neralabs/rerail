@@ -1,0 +1,78 @@
+.policy "postgres-migrations-practice-required-column-without-default" revision 1
+.description "In a migration, add a NOT NULL column to an existing table only with a constant DEFAULT, or add it nullable, backfill it, then make it required."
+.language sql
+.mode steer
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
+.scope text "**/migrations/migration_lock.toml"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+// Rerail's own rule, not a port. `ALTER TABLE t ADD COLUMN c … NOT NULL` with no DEFAULT has no value to put in the
+// rows t already has, so PostgreSQL refuses it on any table that is not empty ("column c contains null values"):
+// the deploy fails, and a Prisma migration that failed blocks every later one (P3018, then P3009) until someone
+// resolves it by hand. A dev database is usually empty, so `prisma migrate dev` applies it and it reaches
+// production; Prisma even writes "This is not possible if the table is not empty." above the statement. App
+// instances still running the old code also fail to insert while the deploy rolls out.
+//   ALTER TABLE "Post" ADD COLUMN "slug" TEXT NOT NULL;                        reported
+//   ALTER TABLE "Post" ADD COLUMN "a" TEXT NOT NULL, ADD COLUMN "b" INT NOT NULL;   reported, once per column
+//   ALTER TABLE "Post" ADD COLUMN "updatedAt" TIMESTAMP(3) NOT NULL;           reported (Prisma's @updatedAt has
+//                                                                               no database default)
+//   ALTER TABLE "Post" ADD COLUMN "code" TEXT PRIMARY KEY;                     not reported here: index-on-existing-
+//                                                                               table-blocks-writes reports it
+//   ALTER TABLE "Post" ADD COLUMN "n" INTEGER NOT NULL DEFAULT 0;              not reported: a default fills the rows
+//   ALTER TABLE "Post" ADD COLUMN "slug" TEXT;                                 not reported: nullable
+//   ADD COLUMN "total" INT GENERATED ALWAYS AS (a + b) STORED NOT NULL         not reported: computed for every row
+//   ADD COLUMN "id2" BIGINT GENERATED ALWAYS AS IDENTITY NOT NULL              not reported: filled from a sequence
+//   ADD COLUMN "seq" BIGSERIAL NOT NULL                                        not reported: serial has a default
+//   CREATE TABLE "Tag" (…); ALTER TABLE "Tag" ADD COLUMN "x" TEXT NOT NULL;    not reported: the table is new
+//   TRUNCATE "Draft"; ALTER TABLE "Draft" ADD COLUMN "x" TEXT NOT NULL;        not reported: emptied just before
+//   DELETE FROM "Draft"; ALTER TABLE "Draft" ADD COLUMN "x" TEXT NOT NULL;     not reported (a DELETE with a WHERE is)
+//   Only a pending migration is read (lib/postgres-migrations' pgm_pending): with a Git base, one the base lacks;
+//   without one (a repository audit), the newest of each migrations folder (the no_base test). With a base, a column
+//   added to a table that a pending migration creates is not reported either. Unlike the pack's other rules, an
+//   earlier required column in the same file does not count as proof that the table is empty
+//   (pgm_empty_table, not pgm_fresh_table): that column is this rule's own finding.
+// Gaps: a table known to be empty in production for another reason (a feature shipped dark) is reported. The
+// Git-base exemptions are not covered by the cases: test-rr runs with no base. `schema.prisma` is not read, so the
+// message names Prisma-level defaults (@updatedAt, @default(cuid())) generally, not per field.
+
+#include "lib/postgres-migrations.rerail"
+
+.violation RequiredColumnWithoutDefault(at: node, col: symbol, table: symbol) "`ADD COLUMN {col}` makes a required column on `{table}`, a table that already exists, with no database DEFAULT: PostgreSQL cannot fill it in the rows the table already has, so the migration fails on any non-empty table (and a failed Prisma migration blocks every later deploy), and app instances still running the old code fail to insert. Give it a constant `DEFAULT`, or add it nullable, backfill it, and make it `NOT NULL` in a later migration (in Prisma: make the field optional, migrate, backfill, then make it required; `@updatedAt`, `@default(cuid())` and `@default(uuid())` put no default in the database). If `{table}` is certain to be empty in every environment, for example created by a migration that has not been deployed yet, this is safe as written."
+RequiredColumnWithoutDefault(a, c, t) :- kind(s, "alter_table"), child(s, a, _), kind(a, "add_column"),
+    child(a, cd, _), pgm_required(cd), pgm_colname(cd, c), pgm_target(s, t), !pgm_empty_table(s, t), docof(s, d),
+    pgm_pending(d).
+
+// The cases, `cases/postgres-migrations-practice-required-column-without-default/`, read as one repository: each
+// line ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as
+// `.git`, so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case
+// migration pending.
+.fixtures repo
+    .fixture ".git/HEAD" from "../cases/_git/HEAD"
+    .fixture ".git/config" from "../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.fixtures migrations
+    .fixture "prisma/schema.prisma" from "../cases/postgres-migrations-practice-required-column-without-default/prisma/schema.prisma"
+    .fixture "prisma/migrations/20240101000000_init/migration.sql" from "../cases/postgres-migrations-practice-required-column-without-default/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "prisma/migrations/20261120093000_post_slug/migration.sql" from "../cases/postgres-migrations-practice-required-column-without-default/prisma/migrations/20261120093000_post_slug/migration.sql"
+    .fixture "prisma/migrations/20261121100000_safe_columns/migration.sql" from "../cases/postgres-migrations-practice-required-column-without-default/prisma/migrations/20261121100000_safe_columns/migration.sql"
+    .fixture "prisma/migrations/20261121100000_safe_columns/rollback.sql" from "../cases/postgres-migrations-practice-required-column-without-default/prisma/migrations/20261121100000_safe_columns/rollback.sql"
+    .fixture "drizzle/0007_audit.sql" from "../cases/postgres-migrations-practice-required-column-without-default/drizzle/0007_audit.sql"
+.end
+
+.test cases exactly uses repo, migrations
+    .given pgm_applied
+    .expect _ at "prisma/migrations/20261120093000_post_slug/migration.sql":2
+    .expect _ at "prisma/migrations/20261120093000_post_slug/migration.sql":3
+    .expect _ at "prisma/migrations/20261120093000_post_slug/migration.sql":6
+    .expect _ at "drizzle/0007_audit.sql":1
+.end
+
+// The same repository read as a repository audit reads it (no Git base, no `.given`): only the newest migration of
+// each folder is pending, so the older 20261120093000_post_slug, whose three columns the cases test reports, is not
+// read; drizzle/0007_audit.sql is its folder's newest.
+.test no_base exactly uses repo, migrations
+    .expect _ at "drizzle/0007_audit.sql":1
+.end
