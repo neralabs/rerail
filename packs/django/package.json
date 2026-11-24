@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-django",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Rerail rule pack: Django practice rules for models, querysets, transactions, views and settings.",
   "keywords": [
     "rerail",
@@ -24,7 +24,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@neralabs/rerail": ">=0.1.0-0"
+    "@neralabs/rerail": ">=0.2.1-0"
   },
   "peerDependenciesMeta": {
     "@neralabs/rerail": {

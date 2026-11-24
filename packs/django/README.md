@@ -1,5 +1,7 @@
 # Rerail rule pack: Django
 
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add django`, then add it to a repository in the dashboard. It needs Rerail 0.2.1 or newer.
+
 The 27 `django-practice-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that the Django docs
 give, or that Django maintainers give again and again in code review, and that no linter checks. A rule was kept when
 at least two independent sources gave the advice, one of them the Django docs or a Django core developer or Fellow;
@@ -83,7 +85,7 @@ repository or a checkout ([rule scoping](../../docs/rule-scoping.md#management-s
 or changes its mode.
 
 The rules are written in `.rerail`, so they run apart from JSON rules: in the background, once the coding agent's
-writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan`. Each run reads
+writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan` (internal testing). Each run reads
 every Python file of the checkout, so an edit costs a whole run. Measured with all 27 rules on, the 2 that start off
 included (get-handler-writes is one of the four call-graph rules), on a 32-core machine, 16 threads:
 
@@ -93,8 +95,8 @@ included (get-handler-writes is one of the four call-graph rules), on a 32-core 
 | netbox | 1,298 | 123 s | 4.7 GB |
 | edx-platform | 4,459 | 251 s | 7.7 GB |
 
-With fewer threads a run takes longer: by default a run gets half the machine's cores, half its memory and 10
-minutes. So on a machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at the
+With fewer threads a run takes longer: by default a run gets half the machine's cores and half its memory, and
+5 minutes after an edit or 10 minutes in a scan. So on a machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at the
 memory limit, and below about 16 GB a run over a large one like edx-platform; so is a run past its time limit. A
 stopped run reports each of its rules as not run (`budget-exceeded`, naming the
 setting to raise); other rules' results stand. To raise the limits, set `RERAIL_RR_MEMORY_MB`,

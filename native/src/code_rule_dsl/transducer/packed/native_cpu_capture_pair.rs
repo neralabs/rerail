@@ -323,7 +323,7 @@ pub(super) fn define(
     signature.params.push(AbiParam::new(pointer_type));
     signature.returns.push(AbiParam::new(types::I32));
     let id = module.declare_function(
-        &format!("tempo_capture_{index}"),
+        &format!("rerail_capture_{index}"),
         Linkage::Local,
         &signature,
     )?;

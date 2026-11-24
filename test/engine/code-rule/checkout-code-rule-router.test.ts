@@ -1453,7 +1453,7 @@ describe("rules as they are at a scan and at a session's start", () => {
     await runtime.codeRulesOpened("scan");
     // A scan the runtime's timer picks up, as `rerail scan` asks for one: the violations it records.
     const scan = async () => {
-      const { id } = controls.requestAudit("scan", { scope: "repository" });
+      const { id } = await controls.requestAudit("scan", { scope: "repository" });
       const request = () => controls.listAuditRequests("scan").find(item => item.id === id)!;
       await expect.poll(() => request().status, { timeout: 30_000 }).toBe("completed");
       return request().auditIds.flatMap(auditId => reader.get(auditId)!.violations.map(violation => `${violation.path} ${violation.code}`));

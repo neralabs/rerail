@@ -10,7 +10,7 @@ import { keepFolderPrivate, keepFoundFolderPrivate, makeRerailHome, openToOthers
 import {
   icaclsInherits, insideProfile, sddlInheritedWriters, sddlOtherReaders, sddlWriters, whoamiUserSid, WINDOWS_ACL, type WindowsAcl,
 } from "../../../src/engine/storage/windows-acl.js";
-import { cmdletsWithoutModule, commandScript } from "../../support/platform/powershell-commands.js";
+import { cmdletsWithoutModule, commandScript, MODULE_QUALIFIED_ONLY, withCommandPrefix } from "../../support/platform/powershell-commands.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const USER = "S-1-5-21-1-2-3-1001";
@@ -169,6 +169,23 @@ describe("the read of who may read a file", () => {
     expect(scripts[0]).toMatch(/\\Get-Acl /u);
     expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual([]);
   });
+
+  // The case above reads the script's text: a wrong module (Microsoft.PowerShell.Utility\Get-Acl) passes it. The real
+  // PowerShell finds no cmdlet under a wrong module, and under this setting none named alone either.
+  it.runIf(process.platform === "win32")("reads who may read a folder while PowerShell loads only the modules a command names", async () => {
+    const folder = await temporaryRoot();
+    WINDOWS_ACL.restrictToOwner(folder, true);
+    const scripts: Array<string | undefined> = [];
+    const { execFileSync: realExecFileSync } = await vi.importActual<{ execFileSync: typeof execFileSync }>("node:child_process");
+    vi.mocked(execFileSync).mockImplementation(((file: string, args: readonly string[], options: Parameters<typeof realExecFileSync>[2]) => {
+      if (!/powershell\.exe$/iu.test(file)) return realExecFileSync(file, args, options);
+      scripts.push(commandScript(args));
+      return realExecFileSync(file, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options);
+    }) as unknown as typeof execFileSync);
+    expect(WINDOWS_ACL.otherReaders(folder)).toEqual([]);
+    expect(scripts).toHaveLength(1);
+    // Windows PowerShell can take seconds to start on a cold machine.
+  }, 60_000);
 });
 
 describe("an owner-only ACL on Windows", () => {
@@ -215,7 +232,7 @@ describe("an owner-only ACL on Windows", () => {
     const lock = {
       name: "work",
       busy: () => new Error("busy"),
-      engine: () => ({ tryLockExclusive: () => ({ release: () => undefined }) }),
+      engine: () => ({ lockExclusive: async () => ({ release: () => undefined }) }),
       machine: { acl, platform: "win32" as const, profile: ELSEWHERE },
     };
     await withHomeLock(home, lock, async () => undefined);

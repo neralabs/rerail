@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-javascript",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "description": "Rerail rule pack: ESLint core and eslint-plugin-unicorn rules ported to Rerail code rules.",
   "keywords": [
     "rerail",
@@ -26,7 +26,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@neralabs/rerail": ">=0.2.0-0"
+    "@neralabs/rerail": ">=0.2.1-0"
   },
   "peerDependenciesMeta": {
     "@neralabs/rerail": {

@@ -78,7 +78,7 @@ Who interacts with Rerail, and how far each is trusted.
 | **The person** (OS user who installed Rerail) | Yes | Everything. The `person` caller on `/api`. |
 | **The coding agent** | **Partly.** Well-behaved MCP client, but may be prompt-injected and usually has a same-user shell | `agent` caller on `/mcp`, scoped to its checkout. With a shell, anything a same-user process can do (T1). |
 | **Repository content**: source, config, `.git`, committed `.rerail/`, `.npmrc`, `.claude/settings.json` | **No** | Parsed by the engine, quoted in steer text, decides where some files are written. |
-| **Rule-pack authors** (`@neralabs/rerail-pack-*` on npm) | For content, not code | Packs are JSON; their `message` and `fix` text reaches the agent. |
+| **Rule-pack authors** (`@neralabs/rerail-pack-*` on npm) | For content, not code | Packs are JSON and `.rerail` rule files; their `message` and `fix` text reaches the agent. |
 | **npm registry and Rerail's release pipeline** | Yes, with no extra integrity check | Supplies the code Rerail runs. |
 | **Another OS user on the same machine** | No | Reaches loopback ports, reads world-readable files, sees process arguments (`ps`). |
 | **A sandboxed process allowed to reach localhost** | No | Reaches `127.0.0.1:4737`; cannot read `~/.rerail`. |
@@ -148,7 +148,8 @@ a secret token sent as `x-rerail-access`, on every request.
   - Compared by SHA-256 of both values with `timingSafeEqual` (`sameSecret` in `src/runtime/daemon-control.ts`).
   - 32 random bytes, written 0600 via a temp file and rename.
   - Kept across restarts by a loopback daemon; minted at each start by a remote or public-host daemon.
-- **Engine socket.** Hooks send events to `POST /events` on a Unix socket in a per-user 0700 folder (T14).
+- **Engine socket.** Hooks send events to `POST /events`, and, while another process holds the database's write lock,
+  the receipt of a steer their answer carried to `POST /receipts`, on a Unix socket in a per-user 0700 folder (T14).
   - The engine service (`startEngineService`, `src/runtime/engine-service.ts`) requires the capability as
     `x-rerail-access` and answers `401` before reading the body.
   - Reason: a request names where its runtime writes (`storageRoot`, `databasePath`), and the daemon runs outside every
@@ -235,9 +236,41 @@ without hooks or network.
   - Skips relative `PATH` entries, entries in a `node_modules` folder, and entries in the repository it runs in (the
     nearest folder above its working folder with a `.git`). This stops a repository's `bin/` or `node_modules/.bin`
     going first, but not every route (T11).
-  - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, `GIT_TERMINAL_PROMPT=0` and
-    `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
-  - No network commands; `cat-file --batch` runs no textconv.
+  - Every call sets `core.fsmonitor=false`, `core.hooksPath=/dev/null` and `log.showSignature=false` (a `git reflog`
+    or `git log` then starts no `gpg.program`), `GIT_TERMINAL_PROMPT=0` and `GIT_NO_LAZY_FETCH=1` where relevant, and
+    a 10 s time limit, which every Git process a guarded call or a read that does not block starts shares: one asked
+    once it is spent is not started, and the call fails as a Git that ran out of time.
+  - A call through `runGit`, or a read that does not block, that reads worktree files (the audit's and the scan's
+    `git diff`, the session walk's `git ls-files --modified`) first reads the repository's `config` and
+    `config.worktree` in process: where each is absent or holds neither `filter` nor `include` in any case, the
+    repository defines no driver, and the call runs as it is. Else it lists the config with its scopes, and sets each
+    filter driver a repository's own config defines (its `config`, `config.worktree` and the files they include) as
+    the person's own config (system, global, command line) defines it, or to no program
+    (`src/engine/git-guard/filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
+    driver only a repository defines is compared as it is on disk: its stat changing alone lists it as changed where
+    that program would have mapped it to the index's bytes. The audit's and the scan's `git diff --name-only` run
+    through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git starts no Git in a submodule for it,
+    and Rerail asks each checked-out submodule Git's diff looks into (none marked assume-unchanged or skip-worktree)
+    through the same guard, all of them at once (at most one Git per processor in each call; a limit shared between
+    calls would let one call's queue spend another's time limit), in the Git folder its `.git` named
+    when Rerail read it. Another `runGit` call that would look into
+    submodules runs as it is, Git looking into them with their own drivers; Rerail makes none. Rerail
+    first reads that folder in process as Git does before it starts a status there (a `HEAD` Git takes, `objects`
+    and `refs` in its common directory): a `.git` that names no repository, or a `.git` file that holds more than
+    Git's 1 MiB or no path, fails the diff with Git's message, as Git's own diff fails; one Git cannot open fails
+    Rerail's diff in Git, before Rerail reads it, as it fails Git's own; and one that is neither a folder nor a regular
+    file is a submodule not checked out, as Git takes it, and is never opened, as Git opens none.
+    When the listing shows no config of the repository's own, Rerail reads the folder again in process and lists that
+    one config file with Git (`git config --list --file`): a repository whose config file is absent or holds no entry
+    to Git is asked, and any other submodule is listed as changed with no Git started in it, so a Git folder that held
+    no config at the listing and holds some by then is never opened (`src/engine/git-guard/submodule-state.ts`).
+    A call whose config Git cannot list is not made. With a Git older than 2.31 every call runs as it would without
+    these overrides, and the process says so once. `runGitAsync` and `streamGit` set no filter drivers: of their calls,
+    only two of Merge Assist's ([internal testing](internal-testing.md), off by default) read worktree files, and each
+    can start a clean filter a repository's config names: its diff of its base against the working files, and its
+    `git blame --contents` of a working file. The listing and the call are two Git processes (T11).
+  - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
+    diff.
 - **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
   It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
@@ -285,21 +318,30 @@ Steer text carries repository content into the agent's context, so it is built f
 
 ### B5: npm to installed code
 
-Code from npm installs without install scripts and is checked before it runs. Packs are JSON, never code.
+Code from npm installs without install scripts and is checked before it runs. Packs are JSON and `.rerail` rule files, never
+JavaScript: the engine runs a pack's `.rerail` rules in a short-lived process, within a deadline and a memory budget;
+reading them for the catalog has the deadline and a thread cap but no memory watch (`runChildSync`). The native engine is code from npm too: a package of its own for each platform, pinned by the core that loads it.
 
 <details>
 <summary>Packs, updates, releases and customer profiles</summary>
 
-- **Packs** install with `--ignore-scripts` (`src/setup/rule-pack-store.ts`). `packAddSpec` accepts only
-  `@neralabs/rerail-pack-<id>` at an exact version, or an existing absolute tarball or folder; Git, URL, `npm:` and
-  `file:` specs are refused. Pack files are parsed as JSON through zod, never `require`d.
+- **Packs** install with `--ignore-scripts` (`src/setup/rule-pack-store.ts`). `packAddSpec` accepts a pack id
+  (Rerail's own pack), a `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` package name, each optionally at a version,
+  range or tag, or an existing tarball or folder, given to npm as its absolute path; npm options, Git, URL, `npm:` and
+  `file:` specs are refused. Pack JSON is parsed through zod, never `require`d; a pack's `.rerail` files are read and
+  run by the engine in a child process (`src/engine/rr/rr-child-process.ts`).
 - **Core updates** are staged (`src/setup/updater.ts`); no silent update runs:
-  1. npm installs into a staging prefix with `--ignore-scripts` and the package's shrinkwrap.
+  1. npm installs core and this machine's engine package into a staging prefix with `--ignore-scripts`, core's
+     dependencies from its shrinkwrap. The engine package must have the integrity that shrinkwrap pins for it.
   2. `npm audit signatures` checks registry signatures and provenance before any staged code runs.
   3. A health check runs in a scratch `HOME`.
   4. An atomic rename installs the new version; the previous one is kept for rollback.
+- **The engine** is a native addon in `@neralabs/rerail-engine-<suffix>`, one package per operating system and
+  processor, with no install script and no dependency. Core names the six at its own exact version, and its
+  shrinkwrap pins each one's sha512 integrity (T7).
 - **Releases** use npm trusted publishing (OIDC) and `--provenance`, behind the `release` environment
-  (`.github/workflows/release.yml`). Every workflow action is pinned by commit SHA.
+  (`.github/workflows/release.yml`). One run publishes a version's six engine packages, reads each back from npm, and
+  only then publishes the core that pins them. Every workflow action is pinned by commit SHA.
 - **Signed customer profiles** (internal testing) are Ed25519 JWS. `kid`, issuer, audience, device thumbprint,
   validity window and monotonic sequence are checked. A non-loopback activation URL must be HTTPS
   (`src/activation/customer-profile.ts`).
@@ -319,6 +361,9 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
+- A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
+  beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
+  (`keepReceipt` in `src/runtime/session-store.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
@@ -654,12 +699,28 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
 **Mitigated** (`src/setup/updater.ts`, `src/runtime/npm.ts`, `scripts/release/shrinkwrap*.mjs`):
 
 - **No install scripts.** The core install runs with `--ignore-scripts`; every production dependency ships prebuilt.
+  The engine packages have no scripts: the engine is a file Rerail loads, never something an install builds or fetches.
 - **Pinned dependencies.** The tarball ships an `npm-shrinkwrap.json` generated from `package-lock.json` at pack time.
   The release workflow fails if it is missing or stale.
+- **Pinned engine.** The same shrinkwrap pins the six engine packages, each by exact version and by the sha512
+  integrity of the tarball the release packed. The release workflow fails unless the tarball pins all six that way
+  (`scripts/release/shrinkwrap-pack.mjs check`).
+  - **The managed install** names its engine package in the install, which npm then resolves without core's
+    shrinkwrap. So the updater compares the integrity npm recorded for the installed engine package with core's pin
+    and discards the install when they differ. Where npm recorded no SHA-512, because its registry gave only a SHA-1,
+    npm hashes the tarball it installed, and an install it cannot hash is discarded too.
+  - **Plain npm** (the npx copy, `npm install -g`, an update run by Rerail 0.1.5), on npm 10 and 11, installs the
+    engine packages from core's shrinkwrap entries and checks each tarball against its pinned integrity. One that does
+    not match is left out, with exit code 0: Rerail then has no engine and says so, and no other bytes are loaded in
+    its place.
+- **Published before core.** A release publishes the six engine packages, reads each one's integrity back from the
+  registry, and publishes core only when all six equal what it pins. A version of an engine package that someone else
+  published first fails that comparison, and its core is never published.
 - **Repository `.npmrc` ignored.** `npm view` runs from an empty temporary folder, so that file cannot pick the
   registry.
 - **Signatures before code.** Before the health check runs staged code, `npm audit signatures` checks registry
-  signatures and provenance attestations of everything installed. Failure aborts the update and leaves nothing staged.
+  signatures and provenance attestations of everything installed, the engine package among them. Failure aborts the
+  update and leaves nothing staged.
 
 </details>
 
@@ -667,7 +728,13 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
 <summary>What remains</summary>
 
 - A registry without signing keys, such as a private mirror, gets a warning and the update proceeds.
-- The trust anchor is npm's provenance from the release workflow.
+- The trust anchor is npm's provenance from the release workflow, for the engine packages as for core. Their
+  integrity pins tie an engine to its core; they do not vouch for the core.
+- An install of core by plain npm (the npx copy, `npm install -g`) is not audited: only the managed install runs
+  `npm audit signatures`.
+- [INFERENCE: npm 12 no longer reads a dependency's `npm-shrinkwrap.json` (npm's changelog; not run here). Under it,
+  plain npm resolves core's dependencies afresh and applies none of the shrinkwrap's pins, the engine packages'
+  integrity among them. The managed install's own comparison still reads them.]
 - Packs fall back to the `next` dist-tag (`PACK_FALLBACK_TAG`) when the channel has no matching version.
 - `ensureSqlite` may run `npm rebuild better-sqlite3`.
 - The model manifest sits beside the weights, so whatever can replace the package can replace both.
@@ -798,6 +865,11 @@ should not widen it.
 <summary>Inputs that redirect Rerail</summary>
 
 - `RERAIL_ENGINE_PATH` is `require`d as a native addon (`src/engine/native/native.ts`).
+- Without it, and outside a checkout, the engine is the `.node` file of this system's engine package, looked for in
+  two places only: the `node_modules` of Rerail's own package, and beside Rerail's package in the scope folder it is
+  installed in. It is loaded only at Rerail's exact version. Rerail does not use Node's own lookup, which goes on
+  through every `node_modules` folder above an install: an install left without its engine (T7) fails to load, and
+  takes no engine from a folder above it.
 - `RERAIL_ENGINE_SOCKET` names where hooks send full events.
 - `RERAIL_HOME`, `RERAIL_STORAGE_ROOT`, `RERAIL_DATABASE` and `RERAIL_CONTENT_STORE_PATH` move data.
 - `RERAIL_EXPERIMENTAL` and `RERAIL_EXPERIMENTAL_<FEATURE>` turn on [internal-testing](internal-testing.md) features
@@ -814,6 +886,11 @@ should not widen it.
   call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
   `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
   hook's or a command's Git gets both homes' `bin`, the share's first.
+- A Git call that reads worktree files reads or lists the repository's config, then runs as a Git process that reads
+  the config again: a writer that changes the config, or a file it includes, between the two can have its filter
+  driver started, as the person's own `git status` would start it (`src/engine/git.ts`). The person's own Git LFS
+  runs the programs a repository's config names under `lfs.extension`. A Git older than 2.31 runs a repository's
+  filter drivers in Rerail's calls, as it runs them for the person.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
@@ -911,6 +988,9 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
 - `scripts/host/host-auth.ts` (developer smoke runs) copies an access-only OAuth token (no refresh token) into a
   sandbox, 0600 in a 0700 folder, and deletes it and its SQLite journal files when the run ends, failures included.
 - The `.node` binaries ship without a separate signature and rely on provenance.
+- Seven npm packages publish from the release workflow, not one. Each has its own trusted publisher and publishing
+  access setting on npmjs, set by hand ([runbook](publishing-the-engine-packages.md)); one left open to tokens, or to
+  another workflow, is a way to publish under that name.
 
 </details>
 
@@ -943,7 +1023,9 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - The enforcer's spool in `tmpdir()` survives a crash.
 - On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
   names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
-  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  the capability, on another, then the receipt of a steer the event's answer carried (`POST /receipts`), with the
+  capability too, on that connection after the answer, or on a new one once that connection has been idle 5 s. The
+  time between the two is not short. A Claude Code or Codex hook checks before it
   waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
   then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
   12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free

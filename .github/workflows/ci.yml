@@ -371,8 +371,9 @@ jobs:
               - 'packs/python/**'
               - 'packs/typescript/**'
             # The integration tests and the rule packs from npm: the suites, the test support they import, the vitest
-            # config, the OMP host they provision, the built package. The packs come from the registry, not packs/,
-            # except the complexity pack claude-hook-rules.test.ts adds from this checkout.
+            # config, the OMP host they provision, the built package, the scripts updater-cli.test.ts packs this checkout
+            # and its engine package with. The packs come from the registry, not packs/, except the complexity pack
+            # claude-hook-rules.test.ts adds from this checkout.
             integration:
               - *common
               - *package
@@ -381,6 +382,8 @@ jobs:
               - 'vitest.config.ts'
               - 'packs/complexity/**'
               - 'scripts/host/**'
+              - 'scripts/release/engine/**'
+              - 'scripts/release/shrinkwrap*.mjs'
             # The real-session runs: the host scripts and the built package, loaded by each host as its plugin. They set
             # repositories up with library rules only, so no pack.
             sessions:
@@ -1321,9 +1324,10 @@ jobs:
   # which a token with the Backup privilege on, as this runner's administrator holds it, lists all the same (run on
   # Windows 11 with that privilege kept, it fails, and the restore's, the walk's and the warm index's cases pass). The
   # `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths
-  # broke: its test runs here too. A debug build, as in the rust job, through its own compile cache. Its own job, beside
-  # build-windows and the shards rather than on one of them. Gated as the rust job is, and only when the change selects
-  # the engine's tests (`rust-engine`).
+  # broke: its test runs here too. The main instance's lock tests run here as well: the wait for a held lock is Windows
+  # code (an overlapped LockFileEx cancelled at its bound) that the same tests run as Unix code on Linux. A debug
+  # build, as in the rust job, through its own compile cache. Its own job, beside build-windows and the shards rather
+  # than on one of them. Gated as the rust job is, and only when the change selects the engine's tests (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1380,7 +1384,7 @@ jobs:
       - name: Engine Windows tests
         run: >-
           cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch -p rerail-store
-          --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: pipe_server::
+          --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: main_instance:: pipe_server::
           code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it
           git_workspace:: code_rule_dsl::module_graph::
           code_rule_dsl::workspace::context_tests::a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery

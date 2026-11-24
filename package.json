@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -66,7 +66,6 @@
   ],
   "files": [
     "dist",
-    "native/*.node",
     "model",
     "native/src/code_rule_dsl/capabilities.json",
     "native/src/code_rule_dsl/typing/programs/*.rerail",

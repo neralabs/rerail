@@ -1,0 +1,1 @@
+A daemon that runs but stops answering, for example while it opens a large checkout, now costs only the hooks that start in its first 12 s their wait. Later hooks answer at once, and the daemon checks their events, in order, once it reads again; what it finds reaches the agent with its next answer. They were lost before.

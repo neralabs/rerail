@@ -1,4 +1,4 @@
-import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost, type SteerRule } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost, type SessionNoteRules, type SteerRule } from "../adapter-contract.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 /**
@@ -382,8 +382,7 @@ export function sessionPageUrl(origin: string, host: string, sessionId: string):
 /** The `customType` OMP and Pi record the hidden session-start note under. */
 export const SESSION_NOTE_MESSAGE_TYPE = "rerail.session-note";
 
-/** What the session-start note says about the repository's rules: how many are on, or that it is not set up yet. */
-export type SessionNoteRules = { setUp: true; ruleCount: number | null } | { setUp: false };
+export type { SessionNoteRules } from "../adapter-contract.js";
 
 const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" : "rules are"} on`;
 

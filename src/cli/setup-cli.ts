@@ -26,6 +26,7 @@ import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.
 import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
+import { UNTAKEN_EVENTS_DIR } from "../engine/storage/untaken-events.js";
 import { contentStoreFiles, contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
   AUTOSTART_CLAIM_FILE,
@@ -40,8 +41,10 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
+  startingDaemonNoticeTo,
   STOP_ANSWERS,
   stopDaemon,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonState,
   type StopDaemonResult,
@@ -477,6 +480,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_STATE_FILE,
   DAEMON_PORT_FILE,
   DAEMON_ACCESS_TOKEN_FILE,
+  UNTAKEN_EVENTS_DIR,
   LOCKS_DIR,
   START_LOCK_DIR,
   AUTOSTART_CLAIM_FILE,
@@ -1013,13 +1017,25 @@ async function activeDaemon(context: SetupContext, port: number | undefined): Pr
   // The version directory, not the current link: the daemon and its SQLite binding belong to this install.
   const packageRoot = await realpath(registrationRoot(context));
   const lookup = await lookupDaemon(context.home);
-  if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, packageRoot) && (port === undefined || lookup.state.port === port)) {
-    return lookup.state;
-  }
+  const kept = await keptDaemon(lookup, packageRoot, port);
+  if (kept !== undefined) return kept;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   if (lookup.status === "running") await stopDaemon(context.home);
-  const listen = port ?? (lookup.status === "running" ? lookup.state.port : undefined);
-  return (await startDaemon({ home: context.home, packageRoot }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
+  return await startActiveDaemon(context.home, packageRoot, port ?? (lookup.status === "running" ? lookup.state.port : undefined));
+}
+
+/** The daemon `lookup` found, when set-up keeps it: running from `packageRoot`, and on `port` when one is named. */
+async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: number | undefined): Promise<DaemonState | undefined> {
+  if (lookup.status !== "running" || (port !== undefined && lookup.state.port !== port)) return undefined;
+  return await daemonUsesPackageRoot(lookup.state, packageRoot) ? lookup.state : undefined;
+}
+
+/**
+ * Starts the daemon of `packageRoot` in `home`, on `port` when one is named, saying so while it waits for one another
+ * process launched, still in its start.
+ */
+async function startActiveDaemon(home: string, packageRoot: string, port: number | undefined): Promise<DaemonState> {
+  return (await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */
