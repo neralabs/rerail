@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -12,14 +12,19 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
  * Every thread this file's modules start, and what each start in a starter thread runs first: `preload`, which makes a
  * start wait where its environment asks (RERAIL_TEST_START_MARK, a file written as the start begins;
  * RERAIL_TEST_START_WAIT, files of which one must exist before Node makes the process), and `failing`, which throws
- * before the thread runs, in each of the next `failNext` threads made.
+ * before the thread runs, in each of the next `failNext` threads made. Each of the next `refuseNext` threads asked for
+ * is not made: its constructor throws, as Node's does when it cannot start a thread, and `refused` counts them.
  */
-const threads = vi.hoisted(() => ({ made: [] as { worker: Worker; entry: string }[], preload: "", failing: "", failNext: 0 }));
+const threads = vi.hoisted(() => ({ made: [] as { worker: Worker; entry: string }[], preload: "", failing: "", failNext: 0, refuseNext: 0, refused: 0 }));
 
 vi.mock("node:worker_threads", async importOriginal => {
   const actual = await importOriginal<typeof import("node:worker_threads")>();
   class Recorded extends actual.Worker {
     constructor(entry: string | URL, options: WorkerOptions = {}) {
+      if (threads.refuseNext > 0) {
+        [threads.refuseNext, threads.refused] = [threads.refuseNext - 1, threads.refused + 1];
+        throw new Error("no thread can start now");
+      }
       const fails = threads.failNext > 0;
       threads.failNext -= fails ? 1 : 0;
       const preloads = [threads.preload, fails ? threads.failing : ""].filter(path => path !== "").flatMap(path => ["--require", path]);
@@ -57,6 +62,28 @@ cp.spawn = function spawn(file, args, options) {
 require("node:module").syncBuiltinESMExports();
 `;
 
+const MIB = 1024 * 1024;
+
+/**
+ * A program that prints 64 MiB in 64 KiB writes, each once the one before it was taken, and after each write notes in
+ * the file its first argument names how much it has printed; it ends once its output is closed.
+ */
+const PRINTER = String.raw`const { writeFileSync } = require("node:fs");
+const noted = process.argv[2];
+const chunk = Buffer.alloc(64 * 1024, 120);
+let printed = 0;
+function print() {
+  while (printed < 64 * 1024 * 1024) {
+    const more = process.stdout.write(chunk);
+    printed += chunk.length;
+    writeFileSync(noted, String(printed));
+    if (!more) return void process.stdout.once("drain", print);
+  }
+}
+process.stdout.on("error", () => process.exit(0));
+print();
+`;
+
 const folders: string[] = [];
 
 beforeAll(async () => {
@@ -69,6 +96,7 @@ beforeAll(async () => {
 afterEach(() => {
   startGitThroughNode();
   threads.failNext = 0;
+  threads.refuseNext = 0;
   vi.mocked(spawn).mockClear();
   vi.mocked(endProcessTree).mockClear();
   vi.unstubAllEnvs();
@@ -142,6 +170,17 @@ async function endStarters(): Promise<void> {
   await Promise.all(starters().map(async worker => await worker.terminate()));
 }
 
+/** What `run` writes to stderr about starter threads, the daemon's log, line by line; stderr is left as it was. */
+async function loggedWhile<T>(run: () => Promise<T>): Promise<{ result: T; logged: string[] }> {
+  const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    const result = await run();
+    return { result, logged: written.mock.calls.map(([line]) => String(line)).filter(line => line.includes("starter thread")) };
+  } finally {
+    written.mockRestore();
+  }
+}
+
 describe("Git started in starter threads, when a read ends or a thread does", () => {
   it("never starts the Git of a read ended while its start waits behind another's, so no process that Git would start runs", async () => {
     const { root } = await repository();
@@ -188,13 +227,19 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
     const read = runGitAsync(root, waitingFor(done));
     await lastStarted();
     const made = starters().length;
-    await endStarters();
+    // Every starter thread still running from this file's earlier cases ends too, each with the same line.
+    const { logged } = await loggedWhile(endStarters);
     const answer = await Promise.race([read, new Promise<"pending">(resolve => setTimeout(() => resolve("pending"), 15_000))]);
     // That Git is held by no handle of this process now; it ends by itself.
     await writeFile(done, "");
     const next = await runGitAsync(root, ["rev-parse", "HEAD"]);
-    expect({ answer: answer === "pending" ? answer : { status: answer.status, error: answer.error?.message }, next: next.stdout.trim(), startedHere: vi.mocked(spawn).mock.calls.length, newThreads: starters().length - made })
-      .toEqual({ answer: { status: null, error: "Rerail's Git starter thread ended (exit 1)" }, next: head, startedHere: 0, newThreads: 1 });
+    expect({ answer: answer === "pending" ? answer : { status: answer.status, error: answer.error?.message }, next: next.stdout.trim(), startedHere: vi.mocked(spawn).mock.calls.length, newThreads: starters().length - made, logged: [...new Set(logged)] }).toEqual({
+      answer: { status: null, error: "Rerail's Git starter thread ended (exit 1)" },
+      next: head,
+      startedHere: 0,
+      newThreads: 1,
+      logged: ["rerail: lost a Git starter thread: Rerail's Git starter thread ended (exit 1)\n"],
+    });
   }, 60_000);
 
   it("replaces a starter thread that failed before it ran, and the new one starts the read it held", async () => {
@@ -216,10 +261,43 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
     threads.failNext = Number.POSITIVE_INFINITY;
     expect(startGitInThread("win32")).toBe(true);
     const made = starters().length;
-    const first = await runGitAsync(root, ["hash-object", "--stdin"], { input: "some text\n" });
-    const second = await runGitAsync(root, ["hash-object", "--stdin"], { input: "some text\n" });
-    expect({ first: first.stdout, second: second.stdout, startedHere: vi.mocked(spawn).mock.calls.length, newThreads: starters().length - made })
-      .toEqual({ first: expected, second: expected, startedHere: 2, newThreads: 2 });
+    const { result: [first, second], logged } = await loggedWhile(async () => [
+      await runGitAsync(root, ["hash-object", "--stdin"], { input: "some text\n" }),
+      await runGitAsync(root, ["hash-object", "--stdin"], { input: "some text\n" }),
+    ]);
+    expect({ first: first?.stdout, second: second?.stdout, startedHere: vi.mocked(spawn).mock.calls.length, newThreads: starters().length - made, logged }).toEqual({
+      first: expected,
+      second: expected,
+      startedHere: 2,
+      newThreads: 2,
+      logged: [
+        "rerail: a Git starter thread failed before it ran: this starter thread cannot run\n",
+        "rerail: a Git starter thread failed before it ran: this starter thread cannot run\n",
+        "rerail: no Git starter thread is made again: 2 in a row failed before they ran, so Git starts on the asking thread while none runs\n",
+      ],
+    });
+  }, 60_000);
+
+  it("counts a starter thread that cannot be made as one that failed before it ran, and says so in the log", async () => {
+    const { root, head } = await repository();
+    await endStarters();
+    threads.refused = 0;
+    threads.refuseNext = Number.POSITIVE_INFINITY;
+    expect(startGitInThread("win32")).toBe(true);
+    const { result: heads, logged } = await loggedWhile(async () => {
+      const read = async (): Promise<string> => (await runGitAsync(root, ["rev-parse", "HEAD"])).stdout.trim();
+      return [await read(), await read(), await read()];
+    });
+    expect({ heads, startedHere: vi.mocked(spawn).mock.calls.length, asked: threads.refused, logged }).toEqual({
+      heads: [head, head, head],
+      startedHere: 3,
+      asked: 2,
+      logged: [
+        "rerail: a Git starter thread failed before it ran: no thread can start now\n",
+        "rerail: a Git starter thread failed before it ran: no thread can start now\n",
+        "rerail: no Git starter thread is made again: 2 in a row failed before they ran, so Git starts on the asking thread while none runs\n",
+      ],
+    });
   }, 60_000);
 
   it("counts only the threads that failed in a row: once one has run, a thread that fails is replaced again", async () => {
@@ -372,6 +450,27 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
     ]);
     expect({ heads: reads.map(read => read.stdout.trim()), gaveUp: readdirSync(at).filter(name => name.endsWith(".gave-up")) }).toEqual({ heads: [head, head], gaveUp: [] });
   }, 60_000);
+
+  it("reads Git's output no further ahead of a busy reader than a window, so a read cut at its cap leaves Git near the cap", async () => {
+    const { root } = await repository();
+    const at = await folder("cap");
+    const [printer, noted] = [join(at, "print.cjs"), join(at, "printed")];
+    await writeFile(printer, PRINTER);
+    expect(startGitInThread("win32")).toBe(true);
+    const print = `alias.print=!"${slashed(process.execPath)}" "${slashed(printer)}" "${slashed(noted)}"`;
+    const read = runGitAsync(root, ["-c", print, "print"], { maxBuffer: MIB });
+    const child = await lastStarted();
+    // A busy daemon: 1 ms of other work on this thread for each 4 KiB the read is handed, with no turn of its loop.
+    const nap = new Int32Array(new SharedArrayBuffer(4));
+    child.stdout.on("data", (chunk: string) => {
+      Atomics.wait(nap, 0, 0, Math.ceil(Buffer.byteLength(chunk) / 4096));
+    });
+    const answer = await read;
+    // Its reader took 1 MiB and a chunk; past that, the window, the thread's own buffer and the pipe's hold under 2 MiB.
+    const printed = Number(readFileSync(noted, "utf8"));
+    expect({ status: answer.status, code: (answer.error as NodeJS.ErrnoException | undefined)?.code, printed: printed <= 4 * MIB ? "at most 4 MiB" : `${printed} bytes` })
+      .toEqual({ status: null, code: "ENOBUFS", printed: "at most 4 MiB" });
+  }, 60_000);
 });
 
 /** How a run of `run` with Node's `-e script` and `timeoutMs` ended: its output, or the fields of its error. */
@@ -396,12 +495,16 @@ describe("a program run to its end in a starter thread", () => {
     const node = async (file: string, args: string[], timeoutMs?: number) => await byNode(file, args, { encoding: "utf8", ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }) });
     const asNodeRuns = await Promise.all(scripts.map(async ([script, timeoutMs]) => await ranAs(node, script, timeoutMs)));
     expect(startGitInThread("win32")).toBe(true);
-    // A starter thread's preload writes this file as it makes a start whose environment names it; this thread has none.
-    const mark = join(await folder("exec"), "started");
-    vi.stubEnv("RERAIL_TEST_START_MARK", mark);
-    const inThread = await Promise.all(scripts.map(async ([script, timeoutMs]) => await ranAs(execFileInThread, script, timeoutMs)));
+    // A starter thread's preload writes the file a start's environment names as it makes that start; this thread has no
+    // preload. Each run takes the environment as it starts, so each names a file of its own.
+    const at = await folder("exec");
+    const marks = scripts.map((_, index) => join(at, `started-${index}`));
+    const inThread = await Promise.all(scripts.map(async ([script, timeoutMs], index) => {
+      vi.stubEnv("RERAIL_TEST_START_MARK", marks[index]);
+      return await ranAs(execFileInThread, script, timeoutMs);
+    }));
     vi.unstubAllEnvs();
-    expect({ inThread, inAThread: existsSync(mark) }).toEqual({ inThread: asNodeRuns, inAThread: true });
+    expect({ inThread, inAThread: marks.map(mark => existsSync(mark)) }).toEqual({ inThread: asNodeRuns, inAThread: [true, true, true] });
     expect(inThread[2]).toMatchObject({ killed: true, code: null, stdout: "waits" });
   }, 60_000);
 });

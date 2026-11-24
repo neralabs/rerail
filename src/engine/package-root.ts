@@ -41,6 +41,8 @@ export const ENTRY_POINTS = {
   cursorHook: "dist/hosts/cursor/cursor-hook.js",
   /** The `.rerail` runner's child process (`src/engine/rr/rr-child.ts`). */
   rrChild: "dist/engine/rr/rr-child.js",
+  /** The daemon's Git starter thread on Windows (`src/engine/git-starter/git-starter-thread.ts`). */
+  gitStarter: "dist/engine/git-starter/git-starter-thread.js",
 } as const;
 
 /** `<package>/model`: the bundled embedding model. */

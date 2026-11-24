@@ -17,7 +17,7 @@ import type { ChildProcess } from "node:child_process";
 import { assertProgramPath } from "./child-process.js";
 import type { GitProcess } from "./git-start.js";
 import { applyAsked, type ChildAsked, type ChildRelayed, claimed, DROPPED, type DescribedError, type Relayed, startAsked, type StartAsked } from "./git-starter/git-starter.js";
-import { PACKAGE_ROOT } from "./package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
 
 /** A starter thread, the children it holds for this thread by id, how many it is still starting, and whether it runs. */
 interface Starter {
@@ -36,13 +36,11 @@ interface Starter {
  */
 const STARTER_THREADS = 4;
 
-/** The starter thread's entry as the package ships it, found from the package's root as the daemon's entry is. */
-const STARTER_ENTRY = "dist/engine/git-starter/git-starter-thread.js";
-
 /**
- * How many starter threads in a row may fail before they run: one that fails is replaced, as its failure may pass (a
- * moment short of memory); once this many have failed with none run between them, no thread is made again until
- * threads are turned on again, and starts go to the threads that run, or to the asking thread while none runs.
+ * How many starter threads in a row may fail before they run: one that fails, or that cannot be made, is replaced, as
+ * its failure may pass (a moment short of memory); once this many have failed with none run between them, no thread is
+ * made again until threads are turned on again, and starts go to the threads that run, or to the asking thread while
+ * none runs.
  */
 const MOST_FAILED_IN_A_ROW = 2;
 
@@ -131,16 +129,20 @@ function starterFor(): Starter | undefined {
  * tests run it, that source through tsx.
  */
 function starterWorker(): Worker {
-  if (!import.meta.url.endsWith(".ts")) return new Worker(join(PACKAGE_ROOT, STARTER_ENTRY));
+  if (!import.meta.url.endsWith(".ts")) return new Worker(join(PACKAGE_ROOT, ENTRY_POINTS.gitStarter));
   return new Worker(new URL("./git-starter/git-starter-thread.ts", import.meta.url), { execArgv: ["--import", "tsx"] });
 }
 
-/** A starter thread, started now; undefined when this process cannot start a thread, and Git starts as before. */
+/**
+ * A starter thread, started now; undefined when this process cannot start a thread, which counts as a thread that
+ * failed before it ran, and Git starts as before.
+ */
 function startStarter(): Starter | undefined {
   let worker: Worker;
   try {
     worker = starterWorker();
-  } catch {
+  } catch (error) {
+    failedBeforeRunning(error instanceof Error ? error : new Error(String(error)));
     return undefined;
   }
   const made: Starter = { worker, children: new Map(), next: 1, starting: 0, ready: false };
@@ -165,16 +167,30 @@ function startStarter(): Starter | undefined {
  * `thread` failed or ended, as its `error` and then its `exit` say: at the first of the two no start goes to it again,
  * and each child it held ends as Node's child does when its process is gone, or, when the thread never took its start,
  * starts in another thread or on this one ({@link ThreadGit.lost}). A thread that failed before it ran counts toward
- * {@link MOST_FAILED_IN_A_ROW} first, so the start it held makes no new thread past that.
+ * {@link MOST_FAILED_IN_A_ROW} first, so the start it held makes no new thread past that. Each loss is a line on
+ * stderr, the daemon's log, with its error.
  */
 function threadLost(thread: Starter, error: Error): void {
   const at = starters.indexOf(thread);
   if (at < 0) return;
   starters.splice(at, 1);
-  if (!thread.ready) failedInARow += 1;
+  if (thread.ready) process.stderr.write(`rerail: lost a Git starter thread: ${error.message}\n`);
+  else failedBeforeRunning(error);
   const children = [...thread.children.values()];
   thread.children.clear();
   for (const child of children) child.lost(error);
+}
+
+/**
+ * Counts a starter thread that failed before it ran toward {@link MOST_FAILED_IN_A_ROW}, and says so on stderr, the
+ * daemon's log, with its error; at the count that gives threads up, it says that too, so a log shows why Git starts on
+ * the asking thread again.
+ */
+function failedBeforeRunning(error: Error): void {
+  failedInARow += 1;
+  process.stderr.write(`rerail: a Git starter thread failed before it ran: ${error.message}\n`);
+  if (failedInARow !== MOST_FAILED_IN_A_ROW) return;
+  process.stderr.write(`rerail: no Git starter thread is made again: ${MOST_FAILED_IN_A_ROW} in a row failed before they ran, so Git starts on the asking thread while none runs\n`);
 }
 
 /** A Node error as the starter thread described it. */
@@ -212,6 +228,8 @@ class ThreadGit extends EventEmitter implements GitProcess {
   #replay: ChildAsked[] = [];
   /** The child started on this thread, once its thread ended before it took the start and no other could take it. */
   #here: ChildProcess | undefined;
+  /** Bytes of each output handed to its stream that the thread has not been told were taken (`#took`). */
+  #untaken: Record<1 | 2, number> = { 1: 0, 2: 0 };
   #closesNeeded = 1;
   #closesGot = 0;
   #done = false;
@@ -342,13 +360,28 @@ class ThreadGit extends EventEmitter implements GitProcess {
   /** Hands `chunk` (null: the end) to output `fd`, unless its reader destroyed it. */
   #feed(fd: 1 | 2, chunk: Buffer | null): void {
     const output = fd === 1 ? this.stdout : this.stderr;
-    if (output !== null && !output.destroyed) output.push(chunk);
+    if (output === null || output.destroyed) return;
+    this.#untaken[fd] += chunk?.byteLength ?? 0;
+    output.push(chunk);
+  }
+
+  /**
+   * Tells the thread that the reader took what output `fd` was handed so far: Node asks a stream for more (`read`) once
+   * its reader has taken what it held, and the thread reads that output no further ahead than `RELAY_WINDOW`.
+   */
+  #took(fd: 1 | 2): void {
+    const bytes = this.#untaken[fd];
+    if (bytes === 0 || this.#done) return;
+    this.#untaken[fd] = 0;
+    this.#post({ id: this.#asked.id, op: "took", fd, bytes });
   }
 
   /** An output stream fed by the thread; destroyed unread, it closes the thread's end too, as Node's pipe closes. */
   #output(fd: 1 | 2): Readable {
     const output = new Readable({
-      read: () => undefined,
+      read: () => {
+        this.#took(fd);
+      },
       destroy: (error: Error | null, destroyed: (error: Error | null) => void) => {
         if (!this.#done) this.#post({ id: this.#asked.id, op: "unread", fd });
         destroyed(error);
