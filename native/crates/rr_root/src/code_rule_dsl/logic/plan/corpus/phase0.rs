@@ -1088,6 +1088,10 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&bootstrap_spelling(&dir.to_string_lossy()))));
     }
     // The library is already a permitted input root. Phase zero only loads the files its seeds request.
+    // The module images the store holds, read before the run's first wave: its lowering requests are answered
+    // inside the waves, where no statement is sent (decision 0104), and a module the store holds is read, not
+    // lowered again (0639 §3).
+    crate::code_rule_dsl::logic::rr::read_held_modules();
     let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
     let mut image = Vec::new();
     let phase_0 = in_phase_0();
