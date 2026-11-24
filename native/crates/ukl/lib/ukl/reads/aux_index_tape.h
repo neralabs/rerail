@@ -10,6 +10,21 @@
 #endif
 #include <ukl/reads/aux_index.h>
 
+// Where the tape's auxiliary index lies in a home that holds one (decision 0656 step 3), counted as its presence's
+// offset is (from `t`): after the presence (the view's `presence`), its bytes rounded up to 16 from it;
+// `f16::presence::aux_at` in Rust. 0 where the tape has no presence. Whether the home holds one is the host's to know
+// (`Tape16::aux_bytes`; every home the engine writes since layout 8 does): past a presence that is its home's last
+// part lie no bytes of the home to read.
+UKL_INLINE uint32_t ukl_aux_in_home(CLIF_T_ARGS)
+{
+    uint32_t at = clif_view(v, CLIF_T_PRESENCE);
+    if (at == 0u)
+        return 0u;
+    uint32_t words = (uint32_t)clif_t_ld(t, at, 0u, 4u) + (uint32_t)clif_t_ld(t, at, 4u, 4u);
+    uint32_t len = 16u + 8u * words * (uint32_t)clif_t_ld(t, at, 8u, 4u) + 4u * (uint32_t)clif_t_ld(t, at, 12u, 4u);
+    return at + ((len + 15u) & ~15u);
+}
+
 // `node`'s place among its siblings (0 for a first child, and for the root).
 UKL_INLINE uint32_t ukl_aux_place(CLIF_T_ARGS, UKL_AUX_ARGS, uint32_t node)
 {

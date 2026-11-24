@@ -260,9 +260,13 @@ impl Tape16 {
     pub fn extent(&self) -> &[u8] {
         &self.buf
     }
-    /// Its presence's bytes in its home (`presence`), if it has one.
+    /// Its presence's bytes in its home (`presence`), if it has one: up to its auxiliary index, where it has one.
     pub fn presence_bytes(&self) -> Option<&[u8]> {
-        (self.p.presence != 0).then(|| &self.buf[self.p.presence..])
+        self.p.presence_in(&self.buf)
+    }
+    /// Its auxiliary index's bytes in its home (decision 0656), if it has one: read in place (`AuxIndex::read`).
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        (self.p.aux != 0).then(|| &self.buf[self.p.aux..])
     }
     /// Its ERROR and MISSING nodes, in preorder, as its writer listed them (`presence::faults`), read in its home;
     /// `None` where its home holds no presence.
@@ -352,14 +356,23 @@ pub struct Placement {
     /// Where the tape's presence lies in its home, after the tape (`presence::at`); 0 where the home holds the tape
     /// alone. Not the tape's layout: `fits` compares the layout without it.
     pub presence: usize,
+    /// Where the tape's auxiliary index lies in its home, after its presence (`presence::aux_at`, decision 0656); 0
+    /// where the home holds none. Not the tape's layout either.
+    pub aux: usize,
 }
 
 impl Placement {
+    /// The presence's bytes in the home `buf` this places, if it holds one: up to its auxiliary index, where it holds
+    /// one (the padding before it included).
+    fn presence_in<'a>(&self, buf: &'a [u8]) -> Option<&'a [u8]> {
+        (self.presence != 0).then(|| &buf[self.presence..if self.aux == 0 { buf.len() } else { self.aux }])
+    }
+
     /// The placement of a tape of `n` nodes whose block 0 starts at `blocks`, with these widths, side lists `sides`
     /// bytes long and a newline index `lines` bytes long of `newlines`, of a source `source_len` long.
     #[allow(clippy::too_many_arguments)]
     fn of(blocks: usize, n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4], lines: usize, newlines: u32, source_len: u64) -> Self {
-        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0, presence: 0 };
+        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0, presence: 0, aux: 0 };
         let count = p.block_count();
         let mut at = p.blocks_end() + 8;
         for (k, len) in sides.iter().enumerate() {
@@ -508,6 +521,7 @@ fn header(buf: &[u8]) -> Result<Placement, String> {
         lines: tail[8],
         end: tail[9],
         presence: 0,
+        aux: 0,
     };
     if p.blocks != HEAD16 || p.stride != stride_of(widths, cw) || p.end < p.lines + 8 {
         return Err("a format 16 header that does not fit itself".into());
@@ -536,7 +550,7 @@ fn side_lengths(buf: &[u8], parts: [usize; 4], count: usize) -> Result<[usize; 4
 fn fits(p: &Placement, buf: &[u8], parts: [usize; 4]) -> Result<[usize; 4], String> {
     let sides = side_lengths(buf, parts, p.block_count())?;
     let mut laid = Placement::of(p.blocks, p.n, p.cw, p.widths, p.vw, sides, p.end - 8 - p.lines, p.newlines, p.source_len);
-    laid.presence = p.presence;
+    (laid.presence, laid.aux) = (p.presence, p.aux);
     if laid != *p {
         return Err("a format 16 header that does not fit its parts".into());
     }
@@ -553,7 +567,7 @@ pub fn placement(buf: &[u8]) -> Result<Placement, String> {
     if buf.len() < p.end {
         return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), p.end));
     }
-    p.presence = presence::find(buf, p.end, p.block_count())?;
+    (p.presence, p.aux) = presence::find(buf, p.end, p.block_count())?;
     if buf[head::Z..HEAD16].iter().any(|&b| b != 0) {
         return Err("a format 16 tape with a 16z tape's fields".into());
     }
@@ -725,7 +739,7 @@ impl<'a> StoredPresence<'a> {
         if end > buf.len() {
             return None;
         }
-        let at = presence::find(buf, end, p.block_count()).ok().filter(|&at| at != 0)?;
+        let at = presence::find(buf, end, p.block_count()).ok().map(|(at, _)| at).filter(|&at| at != 0)?;
         presence::of_lang(Some(&buf[at..]), lang).ok()?;
         Some(StoredPresence { buf, view: TapeView { presence: u32::try_from(at).ok()?, ..Default::default() } })
     }
@@ -771,6 +785,32 @@ impl Written {
     #[cfg(any(test, feature = "reference"))]
     pub fn presence(&self) -> Presence {
         self.presence_bytes().map(presence::read).unwrap_or_default()
+    }
+    /// Its auxiliary index's bytes in its home (decision 0656), if it has one.
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Written::F16(t) => t.aux_bytes(),
+            Written::F16Z(t) => t.aux_bytes(),
+        }
+    }
+    /// Lays the auxiliary index `aux` (`aux_index::build`'s bytes of this tape) in its home, after its presence
+    /// (`presence::aux_at`): written once where it is computed, stored, placed and loaded with the tape (decision 0656
+    /// step 3). A home without a presence, or with an auxiliary index already, or placed, is refused.
+    pub fn lay_aux(&mut self, aux: &[u8]) -> Result<(), String> {
+        let (buf, p) = match self {
+            Written::F16(t) => (&mut t.buf, &mut t.p),
+            Written::F16Z(t) => (&mut t.buf, &mut t.p),
+        };
+        if p.presence == 0 || p.aux != 0 || buf.placed() {
+            return Err("an auxiliary index is laid once, after a presence, in a tape's own home".into());
+        }
+        crate::aux_index::AuxIndex::read(aux)?;
+        let v = buf.own_mut();
+        let at = presence::aux_at(p.presence, v.len());
+        v.resize(at, 0);
+        v.extend_from_slice(aux);
+        p.aux = at;
+        Ok(())
     }
 }
 
@@ -848,12 +888,26 @@ pub mod presence {
         (head.is_empty() && tail.is_empty()).then_some(ids)
     }
 
-    /// Where the presence in the home `buf` of a tape `end` bytes long and of `blocks` blocks lies, checked to fill
-    /// the home past the tape: 0 where the home holds the tape alone. One presence, the document's, or one more than
-    /// the blocks.
-    pub(super) fn find(buf: &[u8], end: usize, blocks: usize) -> Result<usize, String> {
+    /// The bytes of the presence at `at` in the home `buf`, from its header (`HEAD`, its words, its faults).
+    fn len_at(buf: &[u8], at: usize) -> u64 {
+        let w = |k: usize| u64::from(u32_at(buf, at + 4 * k));
+        HEAD as u64 + 8 * (w(0) + w(1)) * w(2) + 4 * w(3)
+    }
+
+    /// Where a home's auxiliary index lies after the presence at `at` that ends at `end` (decision 0656): its bytes
+    /// rounded up to 16, counted from the presence (a view's presence counts from its batch's block, not its home), as
+    /// `<ukl/reads/aux_index_tape.h>`'s `ukl_aux_in_home` finds it.
+    pub fn aux_at(at: usize, end: usize) -> usize {
+        at + (end - at).next_multiple_of(16)
+    }
+
+    /// Where the presence and the auxiliary index in the home `buf` of a tape `end` bytes long and of `blocks` blocks
+    /// lie, checked to fill the home past the tape: 0 for each the home does not hold. One presence, the document's,
+    /// or one more than the blocks, then, where the home holds one, its auxiliary index (`aux_at`), whose header and
+    /// directory are checked (`AuxIndex::read`). An auxiliary index is laid only after a presence.
+    pub(super) fn find(buf: &[u8], end: usize, blocks: usize) -> Result<(usize, usize), String> {
         if buf.len() == end {
-            return Ok(0);
+            return Ok((0, 0));
         }
         let at = at(end);
         let bad = || "a tape's presence does not fit its home".to_owned();
@@ -861,11 +915,21 @@ pub mod presence {
             return Err(bad());
         }
         let w = |k: usize| u32_at(buf, at + 4 * k) as usize;
-        let (words, count, faults) = (w(0) + w(1), w(2), w(3));
-        if words == 0 || (count != 1 && count != 1 + blocks) || (buf.len() - at - HEAD) as u64 != 8 * words as u64 * count as u64 + 4 * faults as u64 {
+        let (words, count) = (w(0) + w(1), w(2));
+        let past = at as u64 + len_at(buf, at);
+        if words == 0 || (count != 1 && count != 1 + blocks) || past > buf.len() as u64 {
             return Err(bad());
         }
-        Ok(at)
+        let past = past as usize;
+        if past == buf.len() {
+            return Ok((at, 0));
+        }
+        let aux = aux_at(at, past);
+        if aux >= buf.len() || buf[past..aux].iter().any(|&b| b != 0) {
+            return Err(bad());
+        }
+        crate::aux_index::AuxIndex::read(&buf[aux..]).map_err(|e| format!("a tape's auxiliary index in its home: {e}"))?;
+        Ok((at, aux))
     }
 
     /// The presence `bytes` (`find`'s) holds `lang`'s kinds' and fields' words (`Lang::presence_words`).
@@ -1374,9 +1438,13 @@ impl Tape16Z {
     pub fn extent(&self) -> &[u8] {
         &self.buf
     }
-    /// Its presence's bytes in its home, if it has one.
+    /// Its presence's bytes in its home, if it has one: up to its auxiliary index, where it has one.
     pub fn presence_bytes(&self) -> Option<&[u8]> {
-        (self.p.presence != 0).then(|| &self.buf[self.p.presence..])
+        self.p.presence_in(&self.buf)
+    }
+    /// Its auxiliary index's bytes in its home (decision 0656), if it has one: read in place (`AuxIndex::read`).
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        (self.p.aux != 0).then(|| &self.buf[self.p.aux..])
     }
     /// Its ERROR and MISSING nodes, in preorder, as its writer listed them (`presence::faults`), read in its home;
     /// `None` where its home holds no presence.
@@ -1424,7 +1492,7 @@ impl Tape16Z {
         }
         // Its presence, after it in its home, where it has one.
         let mut p = p;
-        p.presence = presence::find(&buf, zat[ZEND], count)?;
+        (p.presence, p.aux) = presence::find(&buf, zat[ZEND], count)?;
         fits(&p, &buf, std::array::from_fn(|k| at_parts + 4 * k * (count + 1)))?;
         let source_len = u64_at(&buf, head::SOURCE_LEN)?;
         check_lines(&buf[zat[ZLINES]..zat[ZLINES] + lines], &p, source_len)?;

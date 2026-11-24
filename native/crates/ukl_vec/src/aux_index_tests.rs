@@ -21,7 +21,6 @@ UKL_REFLECT_STRUCT(ScArgs, n, threads, rare, pad)
 
 DEFINE_KERNEL2(tests, t_aux_index,
                ARGS,     ScArgs,   args, ,
-               ROBUFFER, uint8_t,  aux,   "[bytes]",
                ROBUFFER, uint8_t,  tape, "[bytes]",
                ROBUFFER, uint32_t, view, "[32]",
                ROBUFFER, uint8_t,  src,  "[bytes]",
@@ -30,6 +29,8 @@ DEFINE_KERNEL2(tests, t_aux_index,
 {
     if (i >= args.threads)
         return;
+    // The index where the tape's home holds it, after its presence (decision 0656 step 3).
+    UKL_GLOBAL const uint8_t* aux = tape + ukl_aux_in_home(tape, view);
     RWBUFFER(uint32_t) o = out + i * 24u;
     o[0] = ukl_aux_leaf_rank(aux, i);
     o[1] = ukl_aux_leaf_node(aux, i);
@@ -83,13 +84,14 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
     let d = aux_index::sample::Doc::new();
     let lang = rerail_tape_format::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
     let number = rerail_tape_format::f16::numbers(&lang, &d.table).unwrap();
-    let Ok(rerail_tape_format::f16::Written::F16(t16)) =
-        rerail_tape_format::f16::write_from(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false)
-    else {
-        panic!("format 16")
-    };
+    // A format 16 tape's home: the tape, its presence, and its auxiliary index laid after it, as the engine stores it.
+    let mut w = rerail_tape_format::f16::write_from_with_presence(&lang, &d, &number, &d.source, rerail_tape_format::newlines::Terminators::Lf, 0, false).unwrap().tape;
+    let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
+    let bytes = aux_index::build(&t16.reader(&lang).unwrap(), &d.source, 3, Sections::ALL).unwrap();
+    w.lay_aux(&bytes).unwrap();
+    let rerail_tape_format::f16::Written::F16(t16) = &w else { panic!("format 16") };
     let t = t16.reader(&lang).unwrap();
-    let bytes = aux_index::build(&t, &d.source, 3, Sections::ALL).unwrap();
+    assert_eq!(t16.aux_bytes(), Some(&bytes[..]));
     let aux = AuxIndex::read(&bytes).unwrap();
     let n = t.len() as u32;
     let rare_total = (0..64).filter_map(|c| aux.rare_range(c)).map(|r| r.1).max().unwrap_or(0);
@@ -135,16 +137,15 @@ fn the_aux_indexes_ukl_reads_are_its_rust_reads() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("t_aux_index").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let view = rerail_tape_format::f16::placement(t16.as_bytes()).unwrap().view(&lang, 0).unwrap();
+    let view = rerail_tape_format::f16::placement(t16.extent()).unwrap().view(&lang, 0).unwrap();
     // SAFETY: the view is plain u32s (`repr(C)`).
     let view_words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&view).cast::<u8>(), size_of_val(&view)) };
-    let (auxb, tb, vb, sb) = (padded(&bytes), padded(t16.as_bytes()), padded(view_words), padded(&d.source));
+    let (tb, vb, sb) = (padded(t16.extent()), padded(view_words), padded(&d.source));
     for exec in [super::run::Exec::Interpret, super::run::Exec::Jit] {
         let mut out = vec![0u32; threads as usize * W];
         let ptr = |p: *const u128| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
         let args = [
             super::run::Arg::Bytes([n, threads, rare_total, 0].iter().flat_map(|x| x.to_le_bytes()).collect()),
-            ptr(auxb.as_ptr()),
             ptr(tb.as_ptr()),
             ptr(vb.as_ptr()),
             ptr(sb.as_ptr()),

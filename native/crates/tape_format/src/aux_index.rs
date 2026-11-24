@@ -849,6 +849,42 @@ mod tests {
         }
     }
 
+    /// Decision 0656 step 3: a tape's auxiliary index is laid in its home after its presence, and a home read back
+    /// (format 16 and 16z) holds the same tape, the same presence and the same auxiliary index, read in place. One
+    /// is laid once, after a presence; a home whose index does not read is refused.
+    #[test]
+    fn a_tapes_home_holds_its_aux_index_after_its_presence() {
+        use crate::f16::{Tape16, Tape16Z, Written};
+        let d = sample::Doc::new();
+        let lang = crate::f16::Lang::new(d.table.clone(), [1, 1, 1], 1).unwrap();
+        let number: Vec<u32> = crate::f16::numbers(&lang, &d.table).unwrap();
+        for z in [false, true] {
+            let mut w = crate::f16::write_from_with_presence(&lang, &d, &number, &d.source, crate::newlines::Terminators::Lf, 0, z).unwrap().tape;
+            let (tape, presence) = (match &w { Written::F16(t) => t.as_bytes().to_vec(), Written::F16Z(t) => t.as_bytes().to_vec() }, w.presence_bytes().unwrap().to_vec());
+            assert!(w.aux_bytes().is_none());
+            let aux = build(&d, &d.source, 7, Sections::ALL).unwrap();
+            w.lay_aux(&aux).unwrap();
+            assert!(w.lay_aux(&aux).is_err(), "laid once");
+            let home = w.extent().to_vec();
+            let held: Box<dyn Fn(&[u8]) -> Result<(Vec<u8>, Vec<u8>, Option<Vec<u8>>), String>> = if z {
+                Box::new(|b| Tape16Z::from_bytes(crate::Vector::from(b)).map(|t| (t.as_bytes().to_vec(), t.presence_bytes().unwrap().to_vec(), t.aux_bytes().map(<[u8]>::to_vec))))
+            } else {
+                Box::new(|b| Tape16::from_bytes(crate::Vector::from(b)).map(|t| (t.as_bytes().to_vec(), t.presence_bytes().unwrap().to_vec(), t.aux_bytes().map(<[u8]>::to_vec))))
+            };
+            let (t, p, a) = held(&home).unwrap();
+            assert_eq!(t, tape, "z {z}: the tape");
+            assert_eq!(p[..presence.len()], presence[..], "z {z}: the presence");
+            assert!(p[presence.len()..].iter().all(|&b| b == 0) && p.len() - presence.len() < 16 && p.len() % 16 == 0);
+            assert_eq!(a.as_deref(), Some(&aux[..]), "z {z}: the auxiliary index");
+            // The presence alone reads as before; a broken index is refused.
+            let at = home.len() - aux.len();
+            assert!(held(&home[..at - (p.len() - presence.len())]).is_ok());
+            let mut bad = home.clone();
+            bad[at] ^= 1;
+            assert!(held(&bad).is_err(), "z {z}: a home whose index does not read");
+        }
+    }
+
     /// Sections are chosen: one made without others reads `NONE` for theirs; names bring their vocabulary and leaves.
     #[test]
     fn an_aux_index_without_a_section_answers_none_for_it() {

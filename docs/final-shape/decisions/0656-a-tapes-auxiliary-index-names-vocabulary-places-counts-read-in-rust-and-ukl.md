@@ -80,6 +80,23 @@ prototype's rule, "never key postings to known rules".
    and read a word through an unaligned base as it lay; the M1 Max read the wrong bytes. The offset is now the
    address's own on every backend, as CUDA's was, and is unchanged for an aligned base.
 3. The store keeps the auxiliary index beside the tape, keyed by the tape's content and the sections' versions, and makes a
-   missing section on demand.
+   missing section on demand. Done, as presence is kept (0434 §4): in the tape's home.
+   - **Where.** After the presence, at its bytes rounded up to 16 from it (`f16::presence::aux_at`). A home is the
+     tape, its presence, then its auxiliary index; it is stored, placed in a slab, admitted and loaded as one frame,
+     so the host and the device read the one copy where it lies. The view the kernels read is full (32 words), so
+     nothing in it names the index: `ukl_aux_in_home` finds it from the view's presence, as Rust does.
+   - **Written once, where the tape is.** `TapeImage::written_16`, which every producer's tape passes through, builds
+     every section (`lay_aux`) and lays them (`Written::lay_aux`). A tape without a presence gets none.
+   - **Keyed by content.** The store keys a home by its source, language, grammar version and layout; the layout is
+     8 (`F16_LAYOUT`), so a store of layout 7 reads cold, not without an index. The index's header holds the source
+     digest's first eight bytes; each section's version is in its directory entry.
+   - **Read.** `Tape16::aux_bytes`, `Tape16Z::aux_bytes`, `TapeImage::aux_bytes`; `presence::find` checks the index's
+     header and directory where it loads the home, and `presence_bytes` ends where the index starts.
+   - **A missing section.** A home without one, or without a section a read needs, is the reads' abstraction's to
+     make (step 4), once a document, where it is read.
+   - **Tests:** `a_tapes_home_holds_its_aux_index_after_its_presence` (16 and 16z: the same tape, presence and index
+     read back; laid once; a broken index refused), `a_stored_tape_holds_the_presence_its_writer_made` (a parse's
+     index read back from the store), and `the_aux_indexes_ukl_reads_are_its_rust_reads`, whose kernel now reads the
+     index in the tape's home through `ukl_aux_in_home`.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows
    these replace are removed, and so is the work that made them.
