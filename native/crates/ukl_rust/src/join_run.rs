@@ -25,7 +25,6 @@ const TG: u32 = 256;
 /// A text row's SIMD group (`SGW`): its rows and their counts are laid out by it.
 const SGW: u32 = 32;
 const KEY_SEED: u64 = 0x243F_6A88_85A3_08D3;
-const TURNS: u32 = 100_000_000;
 /// A scan's tile: `UKL_SCAN_ITEMS` values a thread of the group.
 const SCAN_ITEMS: u32 = 4;
 /// A sort's tile (`UKL_RADIX_TILE`) and its digits.
@@ -2822,54 +2821,6 @@ impl Prog {
         need.min(g.items as u64) as u32
     }
 
-    unsafe fn push(&self, item: u32) -> bool {
-        self.ctl(2).fetch_add(1, SeqCst);
-        let end = self.a.capacity;
-        for _ in 0..=self.a.capacity {
-            let tail = self.ctl(1).fetch_add(1, SeqCst);
-            if tail >= end {
-                break;
-            }
-            if at(self.slots.add(tail as usize)).swap(item + 1, SeqCst) != NONE {
-                return true;
-            }
-        }
-        self.ctl(3).store(1, SeqCst);
-        self.ctl(2).fetch_sub(1, SeqCst);
-        false
-    }
-
-    unsafe fn take(&self) -> Option<u32> {
-        let mut head = self.ctl(0).load(SeqCst);
-        let mut claimed = false;
-        for _ in 0..TURNS {
-            let tail = self.ctl(1).load(SeqCst).min(self.a.capacity);
-            if head >= tail {
-                return None;
-            }
-            match self.ctl(0).compare_exchange(head, head + 1, SeqCst, SeqCst) {
-                Ok(_) => {
-                    claimed = true;
-                    break;
-                }
-                Err(seen) => head = seen,
-            }
-        }
-        if !claimed {
-            return None;
-        }
-        match at(self.slots.add(head as usize)).swap(NONE, SeqCst) {
-            0 => None,
-            v => Some(v - 1),
-        }
-    }
-
-    unsafe fn push_or_flag(&self, item: u32) {
-        if !self.push(item) {
-            self.ctl(6).fetch_or(1, SeqCst);
-        }
-    }
-
     unsafe fn phase(&self, q: u32) -> [u32; 4] {
         core::array::from_fn(|k| *self.phases.add(4 * q as usize + k))
     }
@@ -2882,26 +2833,24 @@ impl Prog {
         (ns != 0 && m == 0) as u32
     }
 
-    unsafe fn phase_push(&self, next: u32, none: u32) {
+    /// Phase `next - 1`'s items onto the work (none: no phase), its segments' (`none`: its first segment's first
+    /// alone, a phase of no items').
+    unsafe fn phase_push(&self, work: &mut Work, next: u32, none: u32) {
         if next == 0 {
             return;
         }
         let [first, count, s0, ns] = self.phase(next - 1);
         if ns == 0 {
-            for i in 0..count {
-                self.push_or_flag(first + i);
-            }
+            work.push(self, first, count);
         }
         for g in 0..ns {
             let seg = self.segs.add((s0 + g) as usize);
             let m = if none != 0 && g == 0 { 1 } else { self.seg_items(seg) };
-            for i in 0..m {
-                self.push_or_flag((*seg).first + i);
-            }
+            work.push(self, (*seg).first, m);
         }
     }
 
-    unsafe fn phase_texts(&self, p: u32) {
+    unsafe fn phase_texts(&self, work: &mut Work, p: u32) {
         let [first, count, s0, ns] = self.phase(p);
         for pass in 0..2 {
             let mut m = 0u32;
@@ -2913,7 +2862,7 @@ impl Prog {
                     }
                     m += 1;
                     if pass == 1 {
-                        self.push_or_flag(a + i);
+                        work.push(self, a + i, 1);
                     }
                 }
             }
@@ -3066,15 +3015,18 @@ impl Prog {
         }
     }
 
-    /// A group's turns: items taken and run until none is left or the launch's budget is spent.
-    unsafe fn run(&self) {
+    /// The launch's items, phase by phase (decision 0567): the items a last launch left (`Work::carried`), the seeds,
+    /// then each phase's items in order as its phase before ends, until none is left or the launch's budget is spent;
+    /// the items left then are the next launch's (`Work::spill`).
+    unsafe fn drive(&self) {
+        let mut work = Work::carried(self);
         let (mut next, mut none) = (0u32, 0u32);
-        for turn in 0..TURNS {
+        for turn in 0.. {
             if turn == 0 {
                 // A phase parked as its texts found the arena full (bit 30), or after a gate's room (bit 29).
                 let pp = self.ctl(9).load(SeqCst);
                 if pp >> 30 == 1 && self.ctl(9).compare_exchange(pp, 0, SeqCst, SeqCst).is_ok() {
-                    self.phase_texts(pp & 0x3fff_ffff);
+                    self.phase_texts(&mut work, pp & 0x3fff_ffff);
                 }
                 if pp >> 29 == 1 && self.ctl(9).compare_exchange(pp, 0, SeqCst, SeqCst).is_ok() {
                     let p = pp & 0x1fff_ffff;
@@ -3093,7 +3045,7 @@ impl Prog {
                         none = self.phase_reset(next - 1);
                     }
                 }
-                self.phase_push(next, none);
+                self.phase_push(&mut work, next, none);
             }
             // A ticket of the launch's budget, then a seed while any are left, else a continuation.
             let (mut got, mut item) = (0u32, 0u32);
@@ -3104,11 +3056,15 @@ impl Prog {
                     item = item.wrapping_add(*self.phases);
                 }
                 if got == 0
-                    && let Some(i) = self.take()
+                    && let Some(i) = work.pop()
                 {
                     item = i;
                     got = 2;
                 }
+            } else {
+                self.ctl(8).fetch_sub(1, SeqCst);
+                work.spill(self);
+                return;
             }
             if got == 0 {
                 self.ctl(8).fetch_sub(1, SeqCst);
@@ -3155,10 +3111,69 @@ impl Prog {
                     }
                 }
             }
-            self.phase_push(next, none);
+            self.phase_push(&mut work, next, none);
             if got == 2 {
                 self.ctl(2).fetch_sub(1, SeqCst);
             }
+        }
+    }
+}
+
+/// A launch's items not yet run, in their order: ranges of items (a phase's segment each). The host's count of them is
+/// `ctl[2]`, as a queue's pushes counted it; they reach the slots (the host's) only when a launch's budget ends with
+/// items left (`spill`), and a launch's first takes them back (`carried`).
+struct Work {
+    ranges: Vec<(u32, u32)>,
+    at: usize,
+}
+
+impl Work {
+    /// The items a last launch left in the slots (spilled, or put back by the host), the slots emptied.
+    unsafe fn carried(p: &Prog) -> Work {
+        let (head, tail) = (p.ctl(0).load(SeqCst), p.ctl(1).load(SeqCst).min(p.a.capacity));
+        let mut ranges = Vec::new();
+        for i in head..tail {
+            match at(p.slots.add(i as usize)).swap(NONE, SeqCst) {
+                0 | NONE => {}
+                v => ranges.push((v - 1, 1)),
+            }
+        }
+        p.ctl(0).store(tail, SeqCst);
+        Work { ranges, at: 0 }
+    }
+
+    /// Items `first..first + n` after the others, counted as the host counts its pending items (`ctl[2]`).
+    unsafe fn push(&mut self, p: &Prog, first: u32, n: u32) {
+        if n > 0 {
+            p.ctl(2).fetch_add(n, SeqCst);
+            self.ranges.push((first, n));
+        }
+    }
+
+    fn pop(&mut self) -> Option<u32> {
+        while let Some(r) = self.ranges.get_mut(self.at) {
+            if r.1 > 0 {
+                r.1 -= 1;
+                r.0 += 1;
+                return Some(r.0 - 1);
+            }
+            self.at += 1;
+        }
+        None
+    }
+
+    /// The items left into the slots past their tail, for the next launch: past their room, the program's overflow
+    /// (`ctl[3]`, `ctl[6]` bit 0), its items uncounted, as a queue's push past its room.
+    unsafe fn spill(&mut self, p: &Prog) {
+        while let Some(item) = self.pop() {
+            let tail = p.ctl(1).fetch_add(1, SeqCst);
+            if tail >= p.a.capacity {
+                p.ctl(3).store(1, SeqCst);
+                p.ctl(2).fetch_sub(1, SeqCst);
+                p.ctl(6).fetch_or(1, SeqCst);
+                continue;
+            }
+            at(p.slots.add(tail as usize)).store(item + 1, SeqCst);
         }
     }
 }
@@ -3189,7 +3204,10 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
         a,
         rd: Reads(l.reads),
     };
-    prog.run();
+    // Its groups run one after another on one thread (the CPU device's): the first runs the launch's items.
+    if l.group == [0, 0, 0] {
+        prog.drive();
+    }
 }
 
 #[cfg(test)]

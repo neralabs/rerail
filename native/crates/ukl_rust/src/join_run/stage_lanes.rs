@@ -22,7 +22,7 @@ type W<const N: usize> = Mask<i64, N>;
 /// Whether stage `s` runs at lanes: a join, a semi-join or an anti-join of a relation in its block, probed by its keys
 /// through its index (or every row), with no view, text, aggregate or text test.
 pub(super) fn runs_at_lanes(s: &Stage) -> bool {
-    s.v_has == 0 && s.r_view == 0 && s.v_parent == 0 && matches!(s.mode, 0 | 1 | 2) && s.nkeys <= 8
+    s.v_has == 0 && s.r_view == 0 && s.v_parent == 0 && s.mode <= 2 && s.nkeys <= 8
 }
 
 /// Bindings `t..t + n` of a stage (`n` at most `N`): its reads at `N` lanes.
