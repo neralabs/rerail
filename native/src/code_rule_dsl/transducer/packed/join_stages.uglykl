@@ -230,20 +230,27 @@ UKL_INLINE UKL_GLOBAL const ViewDoc* vdoc(UKL_GLOBAL const ViewDir* d, uint32_t 
     return (UKL_GLOBAL const ViewDoc*)(d->chunk + d->rows[m].entry);
 }
 
-// A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
-// key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
+// The directory's row of the document of key `k`, or `NONE`: a bisection of its order by key (`ViewDir::by_key`;
+// the rows are in row order, the chunk's batch's documents then each values batch's, which is not key order).
+UKL_INLINE uint32_t doc_of_key(UKL_GLOBAL const ViewDir* d, uint32_t k) {
+    UKL_GLOBAL const uint32_t* order = d->by_key;
+    uint32_t a = 0u, b = d->ndocs;
+    while (b - a > 1u) {
+        uint32_t m = (a + b) / 2u;
+        if (vdoc(d, order[m])->key <= k) a = m; else b = m;
+    }
+    uint32_t at = order[a];
+    return vdoc(d, at)->key == k ? at : NONE;
+}
+
+// A parent `key`'s children: its document by its key (`doc_of_key`), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
 // under unnumbered ones (a narrowed projection): its probe walks its document's rows, which `matches` tests.
 UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
     if (key < 0 || d->ndocs == 0u) return;
-    uint32_t k = (uint32_t)((uint64_t)key >> 32);
-    uint32_t a = 0u, b = d->ndocs;
-    while (b - a > 1u) {
-        uint32_t m = (a + b) / 2u;
-        if (vdoc(d, m)->key <= k) a = m; else b = m;
-    }
-    if (vdoc(d, a)->key != k) return;
+    uint32_t a = doc_of_key(d, (uint32_t)((uint64_t)key >> 32));
+    if (a == NONE) return;
     UKL_GLOBAL const ViewRow* e = &d->rows[a];
     uint32_t l = clif_view_number(d->chunk, e->entry, e->tape, e->view, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
@@ -285,18 +292,13 @@ UKL_INLINE bool has_member(StageP s, uint32_t q) {
     return lo < s->v_nset && s->v_set[lo] == k;
 }
 
-// The candidates of node `key`: its document by bisection of the directory on its key, its number, then its walk.
+// The candidates of node `key`: its document by its key (`doc_of_key`), its number, then its walk.
 UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
     if (key < 0 || d->ndocs == 0u) return;
-    uint32_t k = (uint32_t)((uint64_t)key >> 32);
-    uint32_t a = 0u, b = d->ndocs;
-    while (b - a > 1u) {
-        uint32_t m = (a + b) / 2u;
-        if (vdoc(d, m)->key <= k) a = m; else b = m;
-    }
-    if (vdoc(d, a)->key != k) return;
+    uint32_t a = doc_of_key(d, (uint32_t)((uint64_t)key >> 32));
+    if (a == NONE) return;
     UKL_GLOBAL const ViewRow* e = &d->rows[a];
     uint32_t l = clif_view_number(d->chunk, e->entry, e->tape, e->view, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;

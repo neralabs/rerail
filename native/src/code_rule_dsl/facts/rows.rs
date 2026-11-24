@@ -81,12 +81,18 @@ pub const AXIS_KEYS: usize = 4;
 /// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
 /// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
 /// the device failed fails its takers' batches too). `taken`: a taker took it (set under the block's index lock), so
-/// its builder never gives its room back.
+/// its builder never gives its room back. `misread`: whether its builder's reads went wrong, asked once `done` is
+/// (a view's read that found no room in its batch's cache: the index's buckets are of wrong keys), which fails a
+/// taker's batch as a builder the device failed does. `buffer`: the buffer its builder wrote it through, which a taker
+/// binds too (a wrap of the block made later, the block grown, is another buffer over the same memory: the device
+/// orders a taker's reads after the builder's writes only through the one buffer both bind).
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
     pub done: rerail_accel::gpu::join::Submitted,
     pub taken: Arc<std::sync::atomic::AtomicBool>,
+    pub misread: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub buffer: Option<rerail_device::device::Buffer>,
 }
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.

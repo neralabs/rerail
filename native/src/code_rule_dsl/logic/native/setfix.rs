@@ -1392,6 +1392,10 @@ impl Fresh {
         self.place(placed, rounds);
         self.map = Some(map);
     }
+    /// The lots other writers wrote (`place`) and the relation has not taken yet, in order.
+    pub fn lots(&self) -> impl Iterator<Item = &Placed> {
+        self.placed.iter().map(|(p, _)| p)
+    }
     /// The last lot another writer wrote (`place`): where a next one for the same relation goes on (decision 0384 step 3).
     pub fn last_placed(&self) -> Option<&Placed> {
         self.placed.last().map(|(p, _)| p)
@@ -4193,6 +4197,17 @@ impl View {
         }
         self.find(cols[lead], key[lead])
     }
+    /// `find_keyed`'s rows read by position, in its order: one lookup's as the source holds them
+    /// (`Source::lookup_seq`), none listed; a document-kept lookup's or a filtered one's listed.
+    fn find_seq(&self, cols: &[usize], key: &[i64], lead: usize) -> crate::code_rule_dsl::facts::vtab::Seq<'_> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        let kept = self.src.doc_column().is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k]));
+        if self.eqs.is_empty() && !kept {
+            // No such lookup: `find`'s none.
+            return self.src.lookup_seq(self.cols[cols[lead]], key[lead]).unwrap_or_else(|| Seq::rows(Vec::new()));
+        }
+        Seq::rows(self.find_keyed(cols, key, lead).into_iter().map(|r| r as usize).collect())
+    }
     /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
     /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
     fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Found> {
@@ -5729,7 +5744,7 @@ impl InRel {
     /// Decision 0236: `probe_each`, sampled where the index gives more than `limit` candidates: `limit` of them are
     /// drawn by position (with replacement, from `draw`), and `f` sees those that match. The matches, estimated as the
     /// candidates times the share drawn that match; exact, with `f` on every match, where there are `limit` or fewer
-    /// candidates, or the index cannot be read by position (a source's lookups: those are read whole).
+    /// candidates. A source's lookup is drawn from by position too: its candidate rows, as `probe_each` finds them.
     pub fn probe_sample<'s>(&'s self, cols: &[usize], key: &[i64], limit: usize, draw: &mut dyn FnMut() -> u64, f: &mut dyn FnMut(&dyn Fn(usize) -> i64)) -> f64 {
         let ix = self.index(cols);
         let mut buf = [0i64; MAX_KEY];
@@ -5771,9 +5786,17 @@ impl InRel {
             let ids = ix.get(self, ikey);
             run(ids.len(), &|i| live(ids[i]))
         } else {
-            let mut m = 0u64;
-            self.probe_each(cols, key, &mut |r| { m += 1; f(r) });
-            m as f64
+            // A source's lookup: its candidates, as `probe_each` finds them, drawn by position where the source holds
+            // them (`View::find_seq`) as an index's are. Read whole, each match read and kept by the walk, one search at
+            // a run's end took 36 s and 14 GB (t50 step 9).
+            let v = self.view.as_ref().expect("a relation with no view is answered above");
+            let seq = if ix.composite {
+                let eq: Vec<(usize, i64)> = icols.iter().zip(ikey).map(|(&c, &k)| (v.cols[c], k)).collect();
+                crate::code_rule_dsl::facts::vtab::Seq::rows(v.src.lookup_all(&eq).unwrap_or_default())
+            } else {
+                v.find_seq(icols, ikey, ix.lead)
+            };
+            run(seq.len(), &|i| Some(RowRef::Source(v, seq.nth(i)).read()))
         }
     }
 
@@ -5805,9 +5828,16 @@ impl InRel {
         } else if !ix.composite && !ix.source || self.view.is_none() {
             ix.get(self, ikey).len() as f64
         } else {
-            let mut m = 0.0;
-            self.probe_each(cols, key, &mut |_| m += 1.0);
-            m
+            // A source's lookup: its candidates, as `probe_each` finds them, counted where the source holds them
+            // (`View::find_seq`), none listed or read. Reading each one to test it (`Viewed::row_at`) cost a run's end
+            // 195 s of a search's walk, and listing them (a file's every node, a kind's) 15 s more (t50 step 9).
+            let v = self.view.as_ref().expect("a relation with no view is answered above");
+            if ix.composite {
+                let eq: Vec<(usize, i64)> = icols.iter().zip(ikey).map(|(&c, &k)| (v.cols[c], k)).collect();
+                v.src.lookup_all(&eq).map_or(0, |r| r.len()) as f64
+            } else {
+                v.find_seq(icols, ikey, ix.lead).len() as f64
+            }
         }
     }
 
@@ -6949,8 +6979,11 @@ impl JoinRule {
     /// The CPU's indexes of its inputs, on the relations its steps hold: what `join_rule` gives a rule parsed with
     /// them, for one parsed without (a seed placed on the device, which then refused it).
     fn indexed(&mut self) {
+        // Every step that reads an input by its key: an atom, and an aggregate or a string join over one. Left as
+        // parsed, an aggregate's index was the device's unindexed one, whose `get` holds no rows: a refused
+        // stratum's `min` found nothing, and its head lost a whole chunk's rows (t50 step 9, Metal at 512 MB).
         for (st, r) in self.steps.iter_mut().zip(&self.ranges) {
-            if let Step::Atom { src: Src::In(rel, ix), .. } = st {
+            if let Step::Atom { src: Src::In(rel, ix), .. } | Step::Scalar { src: Src::In(rel, ix), .. } | Step::StrJoin { src: Src::In(rel, ix), .. } = st {
                 *ix = rel.index(&ix.cols);
                 if let Some(r) = r && ix.ordered.is_some() && ix.then.is_none() {
                     *ix = rel.index_then(&ix.cols, r.col);

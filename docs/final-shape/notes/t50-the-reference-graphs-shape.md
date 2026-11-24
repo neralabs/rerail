@@ -1030,6 +1030,29 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   made by `expand_view` walk the chunk's root instead, and those were right. Every document's offsets were checked
   against its projection's own counts where the directory is made (7,210 documents at 512 MB): none differs.
 
+### Step 9, done (2026-11-23, decision 0660)
+
+There was no single cause: ten defects, most in the hand-off between batches that share the device. Each was found
+by comparing, stage by stage, what the device made against a CPU run of the same seeds and relations. The fixes,
+from decision 0660:
+
+- An index is found again by each batch that encodes a stage. A rerun read a slot given back as a duplicate.
+- A taker binds the buffer its builder wrote through. A grown block's new wrap is another `MTLBuffer`.
+- An index whose 16z reads found no cache room is not marked built, and its takers fail.
+- A batch that lost a submission fails whole.
+- A view is read in place only with its home.
+- A head's new rows exclude every lot placed for it.
+- A refused seed's aggregates get the CPU's index.
+- The views' directory holds its documents' order by key (`ViewDir::by_key`): a value admitted with a key below
+  the chunk's was never found by `by_parent`, giving `tp_ident`/`tp_list`'s −9 at every budget.
+- A search's walk counts and draws a source's candidates where the source holds them (`Source::lookup_seq`). This
+  was the slow mode: 195 s, 36 s at 18 GB, or 15 s after the run, in the end-of-run drain.
+- A phase counted in a thread's teardown is dropped: the abort at exit.
+
+Measured (M3, `--metal --metal-mb 512`, ten runs of the final head): every run's exports equal the CPU run's,
+`finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367, `mn_dec_fn` 116,511; 0.7 s after the run; peak about
+3.5 GB; wall about 33 s; exit 0.
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.

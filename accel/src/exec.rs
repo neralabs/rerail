@@ -211,7 +211,8 @@ pub fn command_opened() {
 
 /// A command buffer [`command_opened`] counted, committed or dropped unencoded.
 pub fn command_committed() {
-    UNCOMMITTED.with(|c| c.set(c.get().saturating_sub(1)));
+    // In the thread's teardown (a batch held in a thread-local, dropped there), nothing is left to count.
+    let _ = UNCOMMITTED.try_with(|c| c.set(c.get().saturating_sub(1)));
 }
 
 /// The command buffers this thread holds uncommitted.

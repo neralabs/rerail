@@ -636,6 +636,25 @@ pub use rerail_logic::threads;
 /// `.rr` text is read too (the parity cases' programs, on the CPU pool's workers): registered by the first test that
 /// asked, a worker of another test panicked, now and then, by which test ran first (work queue Q23).
 #[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
+mod test_load {
+    /// This crate's own test binary, which no program composes: as the engine's boot and the logic's tests register
+    /// them, strict mode on every connection, what a job carries of its run (`logic::CARRIERS`), the core relations'
+    /// names, and the language packs. With no carriers, a device test whose run carried its context to a job panicked
+    /// ("nothing is registered at all: was the program booted?"), by which test of the process ran first.
+    extern "C" fn load() {
+        rerail_logic::code_rule_dsl::logic::profile::strict_on_every_connection();
+        rerail_logic::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::CARRIERS);
+        rerail_logic::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::rr::core_names);
+        super::test_languages();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn test_languages() {
     use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
     use crate::code_rule_dsl::language::adapter::rr::Rr;

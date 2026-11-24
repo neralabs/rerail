@@ -107,6 +107,55 @@ impl ViewInPlace {
     }
 }
 
+/// A lookup's rows read by position (`Source::lookup_seq`): how many, and the `i`th, where they lie (a list the source
+/// holds, its runs of rows), or a list made of them.
+pub struct Seq<'a> {
+    len: usize,
+    nth: Box<dyn Fn(usize) -> usize + 'a>,
+}
+
+impl<'a> Seq<'a> {
+    /// `len` rows, the `i`th `nth(i)`.
+    pub fn new(len: usize, nth: impl Fn(usize) -> usize + 'a) -> Self {
+        Seq { len, nth: Box::new(nth) }
+    }
+    /// The rows `rows`, in order.
+    pub fn rows(rows: Vec<usize>) -> Self {
+        Seq::new(rows.len(), move |i| rows[i])
+    }
+    /// The rows of `runs`, in order: the `i`th's run by bisection of their starts.
+    pub fn runs(runs: Vec<std::ops::Range<usize>>) -> Self {
+        let mut starts = Vec::with_capacity(runs.len());
+        let len = runs.iter().fold(0, |at, r| {
+            starts.push(at);
+            at + r.len()
+        });
+        Seq::new(len, move |i| {
+            let j = starts.partition_point(|&s| s <= i) - 1;
+            runs[j].start + (i - starts[j])
+        })
+    }
+    /// `self`'s rows, then `more`'s.
+    pub fn then(self, more: Seq<'a>) -> Self {
+        let at = self.len;
+        Seq::new(self.len + more.len, move |i| if i < at { self.nth(i) } else { more.nth(i - at) })
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    /// The `i`th row (`i < len`).
+    pub fn nth(&self, i: usize) -> usize {
+        (self.nth)(i)
+    }
+    /// Its rows, in order.
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.len).map(|i| self.nth(i))
+    }
+}
+
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
@@ -339,6 +388,13 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// `lookup`'s rows for `value`, read by position (`Seq`), in its order; `None` where it scans. A source whose
+    /// lookups are runs of rows (a view's document) or a list it holds (a kind's nodes) gives them made into no list
+    /// of its own: what a probe's candidates number (`setfix::InRel::probe_size`) and are drawn from (`probe_sample`)
+    /// is read there. By default, `lookup`'s rows.
+    fn lookup_seq(&self, column: usize, value: i64) -> Option<Seq<'_>> {
+        self.lookup(column, &[value]).map(Seq::rows)
+    }
     /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
     /// column): a view of the source's columns held in place probes by it (`setfix::hold_view_in_place`).
     fn keys_rows(&self, _column: usize) -> bool {

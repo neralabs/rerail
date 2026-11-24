@@ -532,6 +532,31 @@ impl Source for Layered {
         });
         Some(out)
     }
+    /// `lookup`'s rows by position: the base's, then the parts' that may hold `value` (a value's rows are few), at
+    /// their place past the base's. A base made on lookup numbers its values' rows as they are made (`MADE_AT`):
+    /// `lookup`'s rows.
+    fn lookup_seq(&self, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::Seq<'_>> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        if !self.has_parts() {
+            return self.base.lookup_seq(column, value);
+        }
+        if self.made.is_some() {
+            return self.lookup(column, &[value]).map(Seq::rows);
+        }
+        let base = self.base.lookup_seq(column, value)?;
+        let mut more = Vec::new();
+        self.parts(|p| {
+            p.of(value, &mut |part| {
+                let at = self.base_len() + part.start;
+                match part.src.lookup(column, &[value]) {
+                    Some(rows) => more.extend(rows.into_iter().map(|r| at + r)),
+                    // A part that keeps no index of `column` is read whole: a value's rows are few.
+                    None => more.extend((0..part.src.len()).filter(|&r| part.src.value(r, column) == value).map(|r| at + r)),
+                }
+            });
+        });
+        Some(base.then(Seq::rows(more)))
+    }
     /// The base's read, then each part that may hold `value` (`Parts::of`: its own nodes' key, or the host node its
     /// rows name), at its rows' place past the base's. Refused with parts made on lookup, and where the base has no
     /// such read (nothing given then). Refused whenever the chunk had parts, every probe of a chunk with a parsed string

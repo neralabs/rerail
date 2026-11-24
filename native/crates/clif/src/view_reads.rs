@@ -79,7 +79,9 @@ pub struct ViewRow {
 const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 4 * VIEWS.len() + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
 /// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
-/// documents' rows (their GPU address), how many.
+/// documents' rows (their GPU address), how many, and their order by key (`by_key`, the GPU address of `ndocs`
+/// indices into `rows`). The rows are in the views' row order, which is key order within each batch but not across a
+/// chunk's batch and the values' batches after it: a lookup by key bisects `by_key`.
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct ViewDir {
@@ -87,8 +89,9 @@ pub struct ViewDir {
     pub ndocs: u32,
     pub pad: u32,
     pub rows: u64,
+    pub by_key: u64,
 }
-const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
+const _: () = assert!(std::mem::size_of::<ViewDir>() == 32);
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
@@ -161,7 +164,7 @@ pub fn ukl() -> String {
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
-         typedef struct ViewDir {{\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n}} ViewDir;\n",
+         typedef struct ViewDir {{\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n    UKL_GLOBAL const uint32_t* by_key;\n}} ViewDir;\n",
         VIEWS.len(),
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
@@ -169,6 +172,7 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == {}, \"ViewDir.by_key\");\n", std::mem::offset_of!(ViewDir, by_key));
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");

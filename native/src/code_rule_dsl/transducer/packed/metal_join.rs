@@ -904,6 +904,9 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
     /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 0 an index.
     walk: u32,
+    /// Its key: the relation's columns it is by (`Batch::index`'s `cols`), by which a later batch finds it again
+    /// (`Batch::index_again`).
+    cols: Vec<usize>,
     /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
     /// slab of its own is bound by a wrap of its used extent (`Block::device_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
@@ -936,6 +939,17 @@ impl DevIndex {
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))
+}
+
+/// The buffer an index in flight was built through (`Building::buffer`, `InFlight::buffer`), for a probe of it, `home`
+/// kept with it; `bound` where none is known. A wrap of the block made since (the block outgrew the last,
+/// `Block::device_buffer`) is another buffer over the same memory, through which the device does not order the
+/// probe's reads after the builder's writes: a taker's probe in a later submission could read the buckets unwritten.
+fn as_built(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, buffer: Option<&Buffer>) -> Result<Held, Error> {
+    match buffer {
+        Some(b) => Ok(Held::of_block(b.clone(), rerail_blocks::region::whole(&home.block), Box::new(home.clone()))),
+        None => bound(home),
+    }
 }
 
 /// The buffer of `facts`' block as it is now, `keep` kept with it, and the block held by its own region (decision
@@ -989,6 +1003,13 @@ struct Building {
     queued: bool,
     /// Another batch's probe took it (`InFlight::taken`): its room is never given back (`lent`).
     taken: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The view its builder reads its keys through, when the relation is a view's home (decision 0478 step 3): a 16z
+    /// view's reads go through its batch's cache, and one that found no room there read the dead entry, so the index
+    /// holds wrong keys (`misread`).
+    view: Option<crate::code_rule_dsl::facts::vtab::ViewInPlace>,
+    /// The buffer its builder binds (`bound` once its room is had): what a probe of it binds while it is in flight
+    /// (`as_built`), this batch's or a taker's.
+    buffer: Option<Buffer>,
 }
 
 impl Building {
@@ -1006,6 +1027,14 @@ impl Building {
     /// lock, so no taker comes after.
     fn lent(&self) -> bool {
         self.taken.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether its builder's reads of its view found no room in their batch's cache (read once its work is done): its
+    /// buckets then hold the dead entry's keys, and the index is never marked built. Marked, it stayed in the view's
+    /// home, which every stratum's batch shares, and their probes by its key found nothing (t50 step 9, Metal at
+    /// 512 MB: `param`'s probe of a `child` view lost half a chunk's rows, every run).
+    fn misread(&self) -> bool {
+        self.view.as_ref().is_some_and(|v| v.cache_failed() > v.failed)
     }
 
     /// No longer in flight: its block's list forgets it (under the block's index lock, `held`).
@@ -1259,8 +1288,14 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// The indexes its work builds, marked built when it is done.
     building: Vec<Building>,
     /// The submissions of indexes other batches build that this one's stages read (`InFlight`): waited for at its finish,
-    /// and one the device failed fails this batch too.
-    borrowed: Vec<Submitted>,
+    /// and one the device failed, or whose builder misread its view (`InFlight::misread`), fails this batch too.
+    borrowed: Vec<(Submitted, Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>)>,
+    /// A submission it lost: one whose launches failed to encode (a lease past the device's budget, say), dropped
+    /// uncommitted at its commit with every stage encoded in it, not only the one whose launch failed. The batch then
+    /// fails at its finish, so all its strata run on the CPU: the stratum whose encoding met the error was refused
+    /// alone before, and the others in that submission finished with the counts of work never run (t50 step 9, Metal
+    /// at 512 MB: `param`'s probe after an index built in the lost submission found no rows).
+    lost: Option<String>,
     /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
@@ -1311,7 +1346,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), borrowed: Vec::new(), atoms: None, kept: None, written: Vec::new() })
+        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), borrowed: Vec::new(), lost: None, atoms: None, kept: None, written: Vec::new() })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -1393,12 +1428,19 @@ impl Batch {
         let Some(pass) = self.pass.take() else { return Ok(()) };
         self.done.dispatches += pass.dispatches() as u32;
         rerail_accel::exec::command_committed();
-        let s = pass.commit()?;
+        let s = match pass.commit() {
+            Ok(s) => s,
+            Err(e) => {
+                self.lost.get_or_insert_with(|| e.clone());
+                return Err(e.into());
+            }
+        };
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`).
         for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued) {
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), taken: b.taken.clone() });
+            let misread = b.view.clone().map(|v| std::sync::Arc::new(move || v.cache_failed() > v.failed) as std::sync::Arc<dyn Fn() -> bool + Send + Sync>);
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), taken: b.taken.clone(), misread, buffer: b.buffer.clone() });
             b.queued = true;
         }
         self.committed.push(s);
@@ -1424,8 +1466,14 @@ impl Batch {
             failed += usize::from(!ok);
         }
         // The indexes of other batches its stages read: one whose builder the device failed is half written.
-        for s in self.borrowed.drain(..) {
-            failed += usize::from(!s.wait_ok().1);
+        for (s, misread) in self.borrowed.drain(..) {
+            let ok = s.wait_ok().1;
+            failed += usize::from(!ok || misread.is_some_and(|m| m()));
+        }
+        // A submission lost uncommitted: the stages encoded in it never ran.
+        if self.lost.is_some() {
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch that lost a submission its launches failed to encode (its strata on the CPU)", 1);
+            failed += 1;
         }
         let overran = self.overran();
         self.written.clear();
@@ -1463,7 +1511,11 @@ impl Batch {
             // or this batch's builder was not all encoded: it goes back, its room the block's again, and a later
             // probe finds the one built.
             let other = r.find_index_from(&room.key[..room.ncols], room.from, room.rows_n).is_some_and(|i| i != room.index);
-            if other || !b.encoded {
+            let misread = b.misread();
+            if misread {
+                crate::code_rule_dsl::prof::count_named("device.index whose view's reads found no room in the cache, not marked built".into(), 4 * room.rows_n as usize);
+            }
+            if other || !b.encoded || misread {
                 if b.lent() {
                     crate::code_rule_dsl::prof::count_named("device.index built twice, kept (another batch may read it)".into(), 4 * room.rows_n as usize);
                     continue;
@@ -1491,7 +1543,7 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, cols: cols.to_vec(), buffer: bound(&home)? }))
     }
 
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
@@ -1507,7 +1559,25 @@ impl Batch {
             _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, cols: cols.to_vec(), buffer: bound(&home)? }))
+    }
+
+    /// `ix`, an index of `rel` an earlier batch found or built, for this batch's stages: found again here, as
+    /// `index` finds it (`None` when it is a walk on the tape, which no batch holds: `ix` serves). An index is its batch's: the
+    /// batch's finish gives back one that another batch built meanwhile (each found none), or one whose builder misread
+    /// its view, and its slot is then dead, its buckets gone; a stage encoded again in a later batch (`complete`'s
+    /// rerun of a stage that overflowed) that read it through the first batch's slot found no rows (t50 step 9, Metal
+    /// at 512 MB: `dm_rf_param_site_1`'s probe of the index another batch also built, 0 rows of the CPU's 7,683).
+    pub(in crate::code_rule_dsl) fn index_again(&mut self, rel: &DevRel, ix: &DevIndex) -> Result<Option<DevIndex>, Error> {
+        if ix.index == NONE {
+            return Ok(None);
+        }
+        let mut again = self.index(ix.of(rel), &ix.cols)?;
+        // Found in the relation `ix` moved its rows to, it is of that copy, unless it moved them again.
+        if again.moved.is_none() {
+            again.moved = ix.moved.clone();
+        }
+        Ok(Some(again))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -1533,10 +1603,10 @@ impl Batch {
             let held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows.
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, cols: cols.to_vec(), buffer: bound(&home)? });
             }
             if let Some(b) = self.building.iter().find(|b| b.encoded && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, cols: cols.to_vec(), buffer: as_built(&home, b.buffer.as_ref())? });
             }
             // Another batch's, its work committed: this batch's, committed after, runs after it on the one queue, and
             // waits for it at its finish (a builder the device failed fails this batch). Building it again here took
@@ -1546,9 +1616,9 @@ impl Batch {
             if let Some(f) = held.iter().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows) {
                 let index = f.room.index as u32;
                 f.taken.store(true, std::sync::atomic::Ordering::Relaxed);
-                self.borrowed.push(f.done.watch());
+                self.borrowed.push((f.done.watch(), f.misread.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
-                return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, cols: cols.to_vec(), buffer: as_built(&home, f.buffer.as_ref())? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -1609,8 +1679,9 @@ impl Batch {
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, taken: Default::default() });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, taken: Default::default(), view: rel.view.clone(), buffer: None });
         let buffer = bound(&home)?;
+        self.building[held].buffer = Some(buffer.buffer.clone());
         assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
         if n > 0 {
             let bucket = view_pipe("ix_bucket", views_format([rel]))?;
@@ -1642,7 +1713,7 @@ impl Batch {
                      &[room.offs as i64, room.rows as i64], groups(n));
         }
         self.building[held].encoded = true;
-        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer })
+        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, cols: cols.to_vec(), buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
@@ -2649,3 +2720,4 @@ fn lat_bytes(p: &LatParams) -> &[u8] {
     // SAFETY: `LatParams` is `repr(C)`: an i64, eight u32s, two u64s, no padding (its size asserted).
     unsafe { std::slice::from_raw_parts((p as *const LatParams).cast::<u8>(), std::mem::size_of::<LatParams>()) }
 }
+

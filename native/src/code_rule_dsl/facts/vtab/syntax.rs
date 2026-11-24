@@ -3948,6 +3948,20 @@ impl Source for Viewed {
             });
         #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let in_place: Option<()> = None;
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| {
+            // Room for an index of each key the strata probe a view by, found again by every later binding: with room
+            // for one, each binding probing it by another key made a fresh home of its own, never found again (133 of
+            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138).
+            crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok()
+        }).clone());
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+        let home = None;
+        // A view read in place keeps its indexes in its home: with none (the device's budget refused it) it is not read
+        // in place, and its rows are made from the chunk, whose places and lines are filled first (below). Left in
+        // place, a reader made its rows from a chunk never filled: every `Loc` document's first row 0, each row the
+        // last document's (t50 step 9, Metal at 512 MB: `docof`'s 326,776 rows of one document of 100).
+        let in_place = in_place.filter(|_| home.is_some());
         // `tape`, `ast_depth` and `node_order` are read in place or not at all: no device code makes their rows.
         if read_only && in_place.is_none() {
             return None;
@@ -3958,15 +3972,6 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| {
-            // Room for an index of each key the strata probe a view by, found again by every later binding: with room
-            // for one, each binding probing it by another key made a fresh home of its own, never found again (133 of
-            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138).
-            crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok()
-        }).clone());
-        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-        let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,
@@ -4041,6 +4046,18 @@ impl Source for Viewed {
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
+    }
+    /// A kind's nodes read in their list (`Batch::by_kind`), not one run each; the other lookups' runs (a document's
+    /// rows are one) listed.
+    fn lookup_seq(&self, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::Seq<'_>> {
+        use crate::code_rule_dsl::facts::vtab::Seq;
+        let b = &*self.batch;
+        if matches!(self.view, View::Node) && column == 2 {
+            let (list, nodes) = (b.by_kind(value), b.nodes());
+            return Some(Seq::new(list.len(), move |i| nodes[list[i].0 as usize] + list[i].1 as usize));
+        }
+        let mut runs = Vec::new();
+        self.lookup_runs(column, value, None, &mut |r| runs.push(r)).then(|| Seq::runs(runs))
     }
     fn keys_rows(&self, column: usize) -> bool {
         column == self.own()
@@ -4243,50 +4260,60 @@ impl Viewed {
     /// The rows whose `column` is one of `values`, in document `only` (by index) where the column spans the
     /// documents (a kind, a tape node), else in every document.
     fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<Vec<usize>> {
-        let b = &*self.batch;
-        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
-        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.file(*doc) == b.docs.key(o));
         let mut rows = Vec::new();
         for &v in values {
-            if column == self.own() {
-                let found = if matches!(self.view, View::Loc(_)) { b.loc(v) } else { b.node(v) };
-                rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
-            } else if Some(column) == self.parent() {
-                if v == -1 && matches!(self.view, View::Tape) {
-                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes()[doc]));
-                } else if let Some((doc, local)) = b.node(v) {
-                    b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
-                }
-            } else if matches!(self.view, View::Order) && column == 1 {
-                // An order key: its document, and the node with that key (`Projected::local_of_order`).
-                let key = (v & 0xffff_ffff) as u32;
-                rows.extend(b.doc(v >> 32).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
-            } else if matches!(self.view, View::Sibling) && column == 0 {
-                // The row of `a`'s next sibling: a hop along the tape's siblings.
-                rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
-            } else if matches!(self.view, View::Core) && column == 0 {
-                rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes()[doc]..b.nodes()[doc + 1]));
-            } else if matches!(self.view, View::Node) && column == 0 {
-                // A file's rows, then its programs' (decision 0431 §4).
-                let Ok(file) = u32::try_from(v) else { continue };
-                for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
-                    rows.extend(b.nodes()[doc]..b.nodes()[doc + 1]);
-                }
-            } else if matches!(self.view, View::Core) && column == 1 {
-                // A tape node of each document that has it as a node; the statement filters `d`.
-                let Ok(t) = u32::try_from(v) else { continue };
-                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
-                    if let Some(local) = p.ranks().local(Item::Node, t) {
-                        rows.push(b.nodes()[doc] + local as usize);
-                    }
-                }
-            } else if matches!(self.view, View::Node) && column == 2 {
-                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes()[doc as usize] + local as usize));
-            } else {
+            if !self.lookup_runs(column, v, only, &mut |r| rows.extend(r)) {
                 return None;
             }
         }
         Some(rows)
+    }
+    /// `lookup_docs`' rows for one value, given to `each` as runs of rows, in their order; `false` where it has no
+    /// such lookup. A document's rows (a file's nodes, its programs') are one run each: counted or drawn from with
+    /// none listed (`Source::lookup_seq`).
+    fn lookup_runs(&self, column: usize, v: i64, only: Option<usize>, each: &mut dyn FnMut(std::ops::Range<usize>)) -> bool {
+        let b = &*self.batch;
+        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
+        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.file(*doc) == b.docs.key(o));
+        let mut one = |r: Option<usize>| if let Some(r) = r { each(r..r + 1) };
+        if column == self.own() {
+            let found = if matches!(self.view, View::Loc(_)) { b.loc(v) } else { b.node(v) };
+            one(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
+        } else if Some(column) == self.parent() {
+            if v == -1 && matches!(self.view, View::Tape) {
+                (0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).for_each(|doc| one(Some(b.nodes()[doc])));
+            } else if let Some((doc, local)) = b.node(v) {
+                b.docs[doc].each_child(local, |c| one(b.row(self.view, doc, c)));
+            }
+        } else if matches!(self.view, View::Order) && column == 1 {
+            // An order key: its document, and the node with that key (`Projected::local_of_order`).
+            let key = (v & 0xffff_ffff) as u32;
+            one(b.doc(v >> 32).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
+        } else if matches!(self.view, View::Sibling) && column == 0 {
+            // The row of `a`'s next sibling: a hop along the tape's siblings.
+            one(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
+        } else if matches!(self.view, View::Core) && column == 0 {
+            each(b.doc(v).map_or(0..0, |doc| b.nodes()[doc]..b.nodes()[doc + 1]));
+        } else if matches!(self.view, View::Node) && column == 0 {
+            // A file's rows, then its programs' (decision 0431 §4).
+            let Ok(file) = u32::try_from(v) else { return true };
+            for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
+                each(b.nodes()[doc]..b.nodes()[doc + 1]);
+            }
+        } else if matches!(self.view, View::Core) && column == 1 {
+            // A tape node of each document that has it as a node; the statement filters `d`.
+            let Ok(t) = u32::try_from(v) else { return true };
+            for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
+                if let Some(local) = p.ranks().local(Item::Node, t) {
+                    one(Some(b.nodes()[doc] + local as usize));
+                }
+            }
+        } else if matches!(self.view, View::Node) && column == 2 {
+            b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).for_each(|&(doc, local, _)| one(Some(b.nodes()[doc as usize] + local as usize)));
+        } else {
+            return false;
+        }
+        true
     }
     /// `Source::lookup_read`: `lookup_docs`'s matches for one value, each row's `columns` read from what found it.
     /// A lookup by a node's id knows the row's id; by its parent, the parent's id and each child's tape node; by a

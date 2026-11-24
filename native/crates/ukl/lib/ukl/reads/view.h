@@ -18,11 +18,13 @@ typedef struct ViewDir {
     uint32_t ndocs;
     uint32_t pad;
     UKL_GLOBAL const ViewRow* rows;
+    UKL_GLOBAL const uint32_t* by_key;
 } ViewDir;
 UKL_STATIC_ASSERT(sizeof(ViewRow) == 200, "ViewRow: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 72, "ViewRow.view");
-UKL_STATIC_ASSERT(sizeof(ViewDir) == 24, "ViewDir: size");
+UKL_STATIC_ASSERT(sizeof(ViewDir) == 32, "ViewDir: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == 16, "ViewDir.rows");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == 24, "ViewDir.by_key");
 typedef struct ViewDoc {
     uint32_t key;
     uint32_t tag;

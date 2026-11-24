@@ -268,6 +268,15 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     let n = docs.len();
     let rows: *mut ViewRow = b.alloc_t(n.max(1));
     let dir: *mut ViewDir = b.alloc_t(1);
+    // The documents' order by key, which a lookup by key bisects: the rows are in row order, the chunk's batch's
+    // documents then each values batch's, each in key order but not all together.
+    let by_key: *mut u32 = b.alloc_t(n.max(1));
+    {
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        order.sort_by_key(|&i| docs[i as usize].p.key);
+        // SAFETY: `n` entries, just allocated in `b`.
+        unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), by_key, n) };
+    }
     let mut slabs: Vec<rerail_device::device::Buffer> = Vec::new();
     let mut entries = Vec::with_capacity(n);
     let mut lines = true;
@@ -384,7 +393,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     let buffer = b.device_buffer(device).ok()?;
     let base = buffer.device_address()?;
     // SAFETY: the directory just allocated in `b`.
-    unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
+    unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64, by_key: base + b.offset_of(by_key) as u64 }) };
     let mut buffers = vec![buffer];
     buffers.extend(slabs);
     Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, cache, format: format.unwrap_or(0), _entries: entries })
