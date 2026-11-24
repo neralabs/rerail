@@ -4,8 +4,8 @@ import { availableParallelism, homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { getSystemErrorMap, promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
-import { endProcessTree, execFile, spawnSync } from "./child-process.js";
-import { runGitSync, startGit, type GitProcess } from "./git-start.js";
+import { execFile, spawnSync } from "./child-process.js";
+import { endGitTree, runGitSync, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
 import { CallGuard, OLDER_GIT, READS_NO_WORKTREE, stdoutOrFailure, unanswered, type AskLater, type GitVariables } from "./git-guard/call-guard.js";
 import { guardedCall, inTurn, type StartLater } from "./git-guard/guarded-diff.js";
@@ -1822,6 +1822,24 @@ function lookPastTimeLimit(child: GitProcess, limitMs: number, end: () => void):
   return stop;
 }
 
+/**
+ * {@link lookPastTimeLimit} from the moment `child` exists: at once for a child that has its pid, else at its `spawn`.
+ * A start on the asking thread returns only once Windows has made the process, so a read's limit has always counted
+ * Git's run; a child the starter thread makes (`git-thread.ts`) may first wait there behind the starts asked before it,
+ * and that wait is not its run.
+ */
+function lookOnceStarted(child: GitProcess, limitMs: number, end: () => void): () => void {
+  if (child.pid !== undefined) return lookPastTimeLimit(child, limitMs, end);
+  const started = (): void => {
+    stop = lookPastTimeLimit(child, limitMs, end);
+  };
+  let stop = (): void => {
+    child.off("spawn", started);
+  };
+  child.once("spawn", started);
+  return () => stop();
+}
+
 /** What ends a Git read before its Git is done: its time limit, and the signal that stops the reads it belongs to. */
 interface ReadLimits {
   readonly timeoutMs: number;
@@ -1830,7 +1848,7 @@ interface ReadLimits {
 
 /**
  * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after it exits once ended,
- * whichever comes first. `timeoutMs`, or `signal` once aborted, ends the whole process tree (`endProcessTree`), never
+ * whichever comes first. `timeoutMs`, or `signal` once aborted, ends the whole process tree (`endGitTree`), never
  * the child alone: on Windows the process Rerail starts can still be a launcher that runs the real Git as its own child
  * (a scoop shim, or Git for Windows' `cmd\git.exe` without its own git.exe beside it; {@link gitBehindLauncher}), and
  * killing only the launcher left the real Git running in the repository. Node's own `signal` option kills the child
@@ -1857,10 +1875,10 @@ function settleWhenDone(child: GitProcess, settle: (ended: boolean) => void, { t
     stopLooking();
     ended = true;
     // A child that has exited has no tree left to reach, and its pid may name another process by now.
-    if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
+    if (child.exitCode === null && child.signalCode === null) endGitTree(child);
     else drain();
   };
-  const stopLooking = lookPastTimeLimit(child, timeoutMs, end);
+  const stopLooking = lookOnceStarted(child, timeoutMs, end);
   signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
     forget();

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { startGitWithoutCopying } from "../engine/git-start.js";
+import { startGitInThread } from "../engine/git-thread.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
@@ -33,8 +34,11 @@ if (!node.ok) {
 }
 
 // On Linux Node starts a child by copying the whole daemon, which holds its event loop longer the larger it grows; the
-// daemon starts its Git through the engine, which copies nothing (`git-start.ts`).
+// daemon starts its Git through the engine, which copies nothing (`git-start.ts`). On Windows a process start can take
+// seconds on a busy machine, and Node waits for it on the asking thread: the daemon starts a read's Git in starter
+// threads (`git-thread.ts`), so its own thread goes on answering hooks meanwhile.
 startGitWithoutCopying(loadNativeBinding);
+startGitInThread();
 
 // A home runs one daemon, whatever starts it (`runHomeDaemon`). A TLS key other accounts can read keeps the daemon from
 // other machines only: it then serves this one (`serveRerailDaemon`). Claude Code's status line on Windows still starts

@@ -7,8 +7,9 @@
  * that turns it on ({@link startGitWithoutCopying}, the daemon on Linux), Git starts through the engine's `posix_spawn`,
  * which runs the child in this process's memory until `exec` and copies nothing (`native/src/git_start.rs`). Git gets
  * the same program, arguments, environment, working folder, stdio, signal state and descriptors as Node gives it, and
- * the reader gets a child with the events, streams and kill of Node's. Elsewhere, and for any start the engine cannot
- * make, Git starts through `child-process.ts` as before.
+ * the reader gets a child with the events, streams and kill of Node's. On Windows the daemon starts a read's Git in a
+ * starter thread (`git-thread.ts`), where a slow process start holds no hook's answer. Elsewhere, and for any start
+ * the engine cannot make, Git starts through `child-process.ts` as before.
  */
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -17,9 +18,10 @@ import { Socket } from "node:net";
 import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
 import { getSystemErrorName } from "node:util";
-import { spawn, spawnSync } from "./child-process.js";
+import { endProcessTree, spawn, spawnSync } from "./child-process.js";
+import { endInThread, startGitOnCallingThread, threadStart } from "./git-thread.js";
 
-/** A Git process as its readers use it: Node's child, or one the engine started. */
+/** A Git process as its readers use it: Node's child, or one the engine or the starter thread started. */
 export interface GitProcess<Stderr extends Readable | null = Readable | null> extends EventEmitter {
   readonly pid: number | undefined;
   readonly exitCode: number | null;
@@ -87,9 +89,13 @@ export function startGitWithoutCopying(load: () => EngineGitStarts, platform: No
   return engine !== undefined;
 }
 
-/** Starts Git through Node from now on in this process, as {@link startGitWithoutCopying} never ran. */
+/**
+ * Starts Git through Node on the asking thread from now on in this process, as neither {@link startGitWithoutCopying}
+ * nor `startGitInThread` ran.
+ */
 export function startGitThroughNode(): void {
   engine = undefined;
+  startGitOnCallingThread();
 }
 
 /**
@@ -101,9 +107,19 @@ export function startGit(executable: string, args: readonly string[], env: NodeJ
 export function startGit(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, stderr: "pipe" | "ignore"): GitProcess {
   const started = engine === undefined ? undefined : startedByEngine(engine, executable, args, env, stderr === "pipe");
   if (started !== undefined && engine !== undefined) return engineGit(started, engine.reapGit);
+  const threaded = threadStart(executable, args, env, stderr);
+  if (threaded !== undefined) return threaded;
   const child: ChildProcess = spawn(executable, [...args], { env, stdio: ["pipe", "pipe", stderr] });
   // spawn with these stdio options always gives stdin and stdout, and stderr exactly when it is "pipe".
   return child as GitProcess;
+}
+
+/**
+ * Ends `child`, a Git {@link startGit} started, with every process it started (`endProcessTree`), where it still runs.
+ * A child a starter thread holds is ended there, the one thread that knows whether it still runs (`git-thread.ts`).
+ */
+export function endGitTree(child: GitProcess): void {
+  if (!endInThread(child)) endProcessTree(child);
 }
 
 /**

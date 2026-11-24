@@ -23,6 +23,7 @@ import {
   type GitRunLimits,
   type GitRunResult,
 } from "../../src/engine/git-start.js";
+import { startGitInThread } from "../../src/engine/git-thread.js";
 import { readGitInstallation } from "../../src/engine/native/git-access.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -30,6 +31,7 @@ import { blockingRuns, blockingRunsThroughEngine, lacksPrlimit } from "./support
 import { daemonProcess, packageRoot, until, watchedEnvironment } from "../support/processes/daemon-home.js";
 
 const LINUX = process.platform === "linux";
+const WINDOWS = process.platform === "win32";
 const folders: string[] = [];
 
 afterEach(() => {
@@ -489,6 +491,64 @@ describe("Git started through Node, off Linux or without the engine", () => {
   });
 });
 
+/** What a Node script started by {@link startGit} with `input` did: its output, its end, and its events in order. */
+async function scriptRun(script: string, input: string, kill = false): Promise<unknown> {
+  const child = startGit(process.execPath, ["-e", script], process.env, "pipe");
+  const events: string[] = [];
+  for (const event of ["spawn", "exit"]) child.on(event, () => events.push(event));
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+  child.stdin.on("error", () => undefined);
+  if (kill) expect(child.kill("SIGKILL")).toBe(true);
+  child.stdin.end(input);
+  const answer = await ended(child);
+  return { ...answer, stderr, events, pid: typeof child.pid, exit: [child.exitCode, child.signalCode] };
+}
+
+/** How a start of a program that is not there ends: its error, its pid, and its close. */
+async function missingStart(): Promise<unknown> {
+  const child = startGit(join(tmpdir(), "rerail-no-such-folder", "git"), ["--version"], process.env, "pipe");
+  // events.once would reject its wait for close at the error; a listener of each takes both.
+  const errored = new Promise<NodeJS.ErrnoException>(resolve => child.once("error", resolve));
+  const closed = new Promise<unknown[]>(resolve => child.once("close", (...args: unknown[]) => resolve(args)));
+  const [error, args] = await Promise.all([errored, closed]);
+  return { code: error.code, syscall: error.syscall, pid: child.pid, closed: args };
+}
+
+describe("Git started in a thread of its own", () => {
+  it("answers every read a walk and a boundary make as Git started on the asking thread answers it, and that thread starts none of them", async () => {
+    const root = await repository();
+    const onThisThread = await answers(root);
+    vi.mocked(spawn).mockClear();
+    expect(startGitInThread("win32")).toBe(true);
+    const inThread = await answers(root);
+    expect(inThread).toEqual(onThisThread);
+    // The blocking runs still start here, as their caller waits for their end; no read that does not block does.
+    expect(vi.mocked(spawn).mock.calls.length).toBe(0);
+  }, 30_000);
+
+  it("gives a reader Node's child: its input, output, stderr and end with its events in Node's order, and a kill", async () => {
+    const script = "let n = 0; process.stdin.on('data', c => { n += c.length; }); process.stdin.on('end', () => { process.stdout.write(String(n)); process.stderr.write('warned'); process.exitCode = 3; });";
+    const waiting = "setInterval(() => undefined, 1000);";
+    const onThisThread = [await scriptRun(script, "x".repeat(300_000)), await scriptRun(waiting, "", true)];
+    expect(startGitInThread("win32")).toBe(true);
+    const inThread = [await scriptRun(script, "x".repeat(300_000)), await scriptRun(waiting, "", true)];
+    expect(inThread).toEqual(onThisThread);
+    expect(inThread[0]).toMatchObject({ stdout: "300000", stderr: "warned", code: 3, events: ["spawn", "exit"], pid: "number" });
+  }, 30_000);
+
+  it("answers a start that finds no program as Node's child does: ENOENT, no pid, then close", async () => {
+    const onThisThread = await missingStart();
+    expect(startGitInThread("win32")).toBe(true);
+    expect(await missingStart()).toEqual(onThisThread);
+    expect(onThisThread).toMatchObject({ code: "ENOENT", syscall: "spawn " + join(tmpdir(), "rerail-no-such-folder", "git"), pid: undefined });
+  });
+
+  it("is on where it is turned on on Windows, and nowhere else", () => {
+    expect([startGitInThread("linux"), startGitInThread("darwin"), startGitInThread("win32")]).toEqual([false, false, true]);
+  });
+});
+
 /**
  * Has the daemon, started from its built entry as `rerail daemon start` starts it, read HEAD 20 times through its own
  * Git module once it listens: the head it read, how many Git processes Node started meanwhile, and the system time
@@ -623,5 +683,16 @@ describe.runIf(LINUX)("the daemon's process entry", () => {
       streamed: { head, kept: machineGit },
       nodeStarts: [first, second],
     });
+  }, 90_000);
+});
+
+describe.runIf(WINDOWS)("the daemon's process entry, on Windows", () => {
+  // A process start there can take seconds on a busy machine, and Node makes it on the thread that asks: a read's Git
+  // started on the daemon's own thread holds every hook's answer for that long.
+  it("starts the Git of the daemon's reads off the daemon's own thread: that thread starts none, and the head read is Git's", async () => {
+    const root = await repository();
+    const reads = await daemonReads(root);
+    const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    expect({ head: reads.head, nodeStarts: reads.nodeStarts }, JSON.stringify(reads)).toEqual({ head, nodeStarts: 0 });
   }, 90_000);
 });
