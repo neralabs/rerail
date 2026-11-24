@@ -614,6 +614,7 @@ async function daemonReadsAfterMoves(root: string, copies: readonly string[]): P
   const out = join(home, "moved.json");
   const preload = join(home, "moved.cjs");
   const gitModule = pathToFileURL(join(packageRoot, "dist", "engine", "git.js")).href;
+  const gitAccessModule = pathToFileURL(join(packageRoot, "dist", "engine", "native", "git-access.js")).href;
   await writeFile(preload, `const cp = require("node:child_process");
 const fs = require("node:fs");
 const nodeStarts = [];
@@ -632,6 +633,12 @@ require("node:net").Server.prototype.listen = function (...args) {
 };
 async function reads() {
   const git = await import(${JSON.stringify(gitModule)});
+  // The daemon's engine asks Git about its config files as it starts (this waits at most 30 s for the asks to begin):
+  // once those asks have ended, every Git start counted below is one of these reads'.
+  const access = await import(${JSON.stringify(gitAccessModule)});
+  const askedBy = Date.now() + 30_000;
+  while (!access.askingGitWithoutBlocking() && Date.now() < askedBy) await new Promise(next => setTimeout(next, 10));
+  await access.gitAsksEnded();
   const root = ${JSON.stringify(root)};
   const [first, second] = ${JSON.stringify(copies)};
   const before = { head: await git.gitHead(root), kept: git.gitExecutable() };
