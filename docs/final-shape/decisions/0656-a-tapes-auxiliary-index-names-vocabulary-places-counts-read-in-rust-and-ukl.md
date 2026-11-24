@@ -216,5 +216,8 @@ f31f7cae0e retired 3,645–3,651 G instructions against base's 3,876 G (−6%), 
   interns a document's texts together (`Projected::text_atoms`, `Atoms::intern_all`) and tests them where they lie
   (fedd76a1a8). A first change that interned only the texts passing a test was slower (the lookups then interned the
   rest, and the scan tested a common text again in every document) and was not kept.
-- **Not measured yet:** fedd76a1a8 on PostHog. Its runs on the M3 were killed by the farm's GPU watchdog (the GPU
-  stalled from 11:20, with no farm program on it); the engine holds a Metal device in a CPU run too.
+- **fedd76a1a8 on PostHog** (the M3 rebooted after its GPU stalled under no farm program; base, head, head, base):
+  findings the same; instructions 3,870 and 3,860 G for base, 3,649 and 3,652 G for head (−5.6%); CPU 300.2 and
+  316.5 s for base, 340.4 and 308.6 s for head, at loads that fell from 62 to 7 across the four. `literal_str` as a
+  whole costs what it did (26.7–26.9 s base, 26.4–29.6 s head): its join's own time grew by what its node rows no
+  longer cost. The identity maps are +0.9–1.6 s, the index's build +2.2 s, the parse the same.
