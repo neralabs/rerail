@@ -180,6 +180,331 @@ pub(crate) fn sorted_union(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
     out.extend_from_slice(&b[j..]);
 }
 
+/// `new` (sorted, distinct) less the rows of `run` (sorted): each searched for by galloping from where the last was
+/// found, so a run many times longer than `new` costs about `new`'s length times the log of their ratio, not the
+/// run's length. In place.
+pub(crate) fn minus_gallop(new: &mut Vec<u64>, run: &[u64]) {
+    let (mut j, mut w) = (0usize, 0usize);
+    for r in 0..new.len() {
+        let k = new[r];
+        // The first place of `run` from `j` holding `k` or more.
+        if j < run.len() && run[j] < k {
+            let mut step = 1usize;
+            let mut lo = j;
+            while lo + step < run.len() && run[lo + step] < k {
+                lo += step;
+                step *= 2;
+            }
+            let hi = (lo + step).min(run.len());
+            j = lo + 1 + run[lo + 1..hi].partition_point(|&v| v < k);
+        }
+        new[w] = k;
+        w += usize::from(j >= run.len() || run[j] != k);
+    }
+    new.truncate(w);
+}
+
+/// `new` (sorted, distinct) less the rows of `run` (sorted), by one walk of both, with no branch on whether a row is
+/// kept. In place.
+pub(crate) fn minus_linear(new: &mut Vec<u64>, run: &[u64]) {
+    let (n, m) = (new.len(), run.len());
+    let (mut r, mut j, mut w) = (0usize, 0usize, 0usize);
+    let p = new.as_mut_ptr();
+    // SAFETY: `w <= r < n`, `j < m` in the loop. Each step: the lesser side steps, both where equal; `new`'s row is
+    // written always and kept where it is below the run's.
+    unsafe {
+        while r < n && j < m {
+            let (a, b) = (*p.add(r), *run.get_unchecked(j));
+            *p.add(w) = a;
+            w += usize::from(a < b);
+            r += usize::from(a <= b);
+            j += usize::from(a >= b);
+        }
+        while r < n {
+            *p.add(w) = *p.add(r);
+            w += 1;
+            r += 1;
+        }
+    }
+    new.truncate(w);
+}
+
+/// A relation's rows as sorted runs (decision 0112's orders, here of the rows themselves): a round's new rows are one
+/// run; two runs merge where the older is at most twice the newer, so there are about log2 of the rows of them and
+/// each row is merged about that many times in all.
+pub(crate) struct Runs {
+    pub runs: Vec<Vec<u64>>,
+}
+
+impl Runs {
+    /// `new` (sorted, distinct) less every run's rows: the rows the relation lacks.
+    pub(crate) fn minus(&self, new: &mut Vec<u64>) {
+        for run in self.runs.iter().rev() {
+            if new.is_empty() {
+                return;
+            }
+            // A run at most a few times `new`'s length: one linear merge walks it for less than a search a row.
+            if run.len() <= 4 * new.len() {
+                minus_linear(new, run);
+            } else {
+                minus_gallop(new, run);
+            }
+        }
+    }
+
+    /// `fresh` (sorted, distinct, none held) as the newest run, the runs merged as their sizes say.
+    pub(crate) fn add(&mut self, fresh: Vec<u64>, simd: bool) {
+        if fresh.is_empty() {
+            return;
+        }
+        self.runs.push(fresh);
+        while self.runs.len() >= 2 && self.runs[self.runs.len() - 2].len() <= 2 * self.runs[self.runs.len() - 1].len() {
+            let b = self.runs.pop().unwrap();
+            let a = self.runs.pop().unwrap();
+            let mut out = Vec::new();
+            if simd { union_branchless(&a, &b, &mut out) } else { sorted_union(&a, &b, &mut out) }
+            self.runs.push(out);
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.runs.iter().map(Vec::len).sum()
+    }
+}
+
+/// `a` and `b` (sorted, disjoint) merged, with no branch on the data: each step writes the lesser and steps that side.
+pub(crate) fn union_branchless(a: &[u64], b: &[u64], out: &mut Vec<u64>) {
+    out.clear();
+    out.reserve(a.len() + b.len());
+    let (mut i, mut j, mut w) = (0usize, 0usize, 0usize);
+    let p = out.as_mut_ptr();
+    // SAFETY: `w` is `i + j`, below `a.len() + b.len()`, reserved; `i`, `j` within their slices in the loop.
+    unsafe {
+        while i < a.len() && j < b.len() {
+            let (x, y) = (*a.get_unchecked(i), *b.get_unchecked(j));
+            let t = y < x;
+            *p.add(w) = if t { y } else { x };
+            w += 1;
+            i += usize::from(!t);
+            j += usize::from(t);
+        }
+        out.set_len(w);
+    }
+    out.extend_from_slice(&a[i..]);
+    out.extend_from_slice(&b[j..]);
+}
+
+/// The vector kit: 8 lanes of `u64` (four NEON registers).
+pub(crate) mod vk {
+    use rerail_simd::prelude::*;
+
+    pub type V = Simd<u64, 8>;
+
+    /// For each 8 lanes' bits, the bytes of 8 64-bit lanes that move the lanes of the bits to the front.
+    pub const PACK64: [[u8; 64]; 256] = {
+        let mut t = [[0u8; 64]; 256];
+        let mut bits = 0;
+        while bits < 256 {
+            let (mut k, mut i) = (0, 0);
+            while i < 8 {
+                if bits >> i & 1 != 0 {
+                    let mut b = 0;
+                    while b < 8 {
+                        t[bits][8 * k + b] = (8 * i + b) as u8;
+                        b += 1;
+                    }
+                    k += 1;
+                }
+                i += 1;
+            }
+            bits += 1;
+        }
+        t
+    };
+
+    /// The lanes of `v` whose bits are in `bits` (8 of them), in order, at `p`; `p..p + 8` written. Their count.
+    ///
+    /// # Safety
+    /// `p..p + 8` is writable.
+    #[inline(always)]
+    pub unsafe fn pack(v: V, bits: u64, p: *mut u64) -> usize {
+        // Every lane kept: the vector as it is, one store.
+        if bits == 0xff {
+            p.cast::<[u64; 8]>().write_unaligned(v.to_array());
+            return 8;
+        }
+        let bytes = Simd::<u8, 64>::from_array(core::mem::transmute::<[u64; 8], [u8; 64]>(v.to_array()));
+        let ix = Simd::<u8, 64>::from_array(PACK64[bits as usize]);
+        p.cast::<[u8; 64]>().write_unaligned(bytes.swizzle_dyn(ix).to_array());
+        bits.count_ones() as usize
+    }
+
+    /// 8 values at `p`.
+    ///
+    /// # Safety
+    /// `p..p + 8` is readable.
+    #[inline(always)]
+    pub unsafe fn load(p: *const u64) -> V {
+        V::from_array(p.cast::<[u64; 8]>().read_unaligned())
+    }
+
+    /// The first place from `i` of `s` (sorted by `k >> sh`) whose `k >> sh` is past `t`: 8 compares a step.
+    #[inline(always)]
+    pub fn past(s: &[u64], mut i: usize, t: u64, sh: u32) -> usize {
+        let ts = V::splat(t);
+        let shv = V::splat(u64::from(sh));
+        while i + 8 <= s.len() {
+            // SAFETY: `i + 8` within `s`.
+            let v = unsafe { load(s.as_ptr().add(i)) };
+            let le = (v >> shv).simd_le(ts).to_bitmask();
+            if le != 0xff {
+                return i + le.trailing_ones() as usize;
+            }
+            i += 8;
+        }
+        while i < s.len() && s[i] >> sh <= t {
+            i += 1;
+        }
+        i
+    }
+}
+
+/// `keys` (sorted) with each key equal to the one before dropped, 8 a step: each compared with its neighbour, the
+/// kept packed to the front. Into `out`.
+pub(crate) fn dedup_simd(keys: &[u64], out: &mut Vec<u64>) {
+    use rerail_simd::prelude::*;
+    out.clear();
+    if keys.is_empty() {
+        return;
+    }
+    out.reserve(keys.len() + 8);
+    let p = out.as_mut_ptr();
+    // SAFETY: `w` at most the keys read; 8 more reserved past them.
+    unsafe {
+        *p = keys[0];
+        let mut w = 1usize;
+        let mut i = 1usize;
+        while i + 8 <= keys.len() {
+            let cur = vk::load(keys.as_ptr().add(i));
+            let prev = vk::load(keys.as_ptr().add(i - 1));
+            w += vk::pack(cur, cur.simd_ne(prev).to_bitmask(), p.add(w));
+            i += 8;
+        }
+        while i < keys.len() {
+            *p.add(w) = keys[i];
+            w += usize::from(keys[i] != keys[i - 1]);
+            i += 1;
+        }
+        out.set_len(w);
+    }
+}
+
+/// Radix sort with write-combining: each digit's keys gathered in a 64-byte line of their own (in L1) and written
+/// out a line at a time, so a pass writes whole lines, not one key into each of `2^d` places. Digits of `d` bits.
+pub(crate) fn radix_sort_wc(keys: &mut Vec<u64>, tmp: &mut Vec<u64>, shift: u32, width: u32, d: u32) {
+    let n = keys.len();
+    if n < 2 || width == 0 {
+        return;
+    }
+    let passes = width.div_ceil(d);
+    let d = width.div_ceil(passes);
+    let nb = 1usize << d;
+    let mask = (nb - 1) as u64;
+    let mut hist = vec![0u32; nb * passes as usize];
+    for &k in keys.iter() {
+        for p in 0..passes as usize {
+            // SAFETY: a digit is below `nb`.
+            unsafe { *hist.get_unchecked_mut(p * nb + ((k >> (shift + p as u32 * d)) & mask) as usize) += 1 };
+        }
+    }
+    tmp.clear();
+    tmp.resize(n, 0);
+    let mut lines = vec![[0u64; 8]; nb];
+    let mut fill = vec![0u8; nb];
+    for p in 0..passes as usize {
+        let h = &mut hist[p * nb..(p + 1) * nb];
+        if h.iter().any(|&c| c as usize == n) {
+            continue;
+        }
+        let mut sum = 0u32;
+        for c in h.iter_mut() {
+            let v = *c;
+            *c = sum;
+            sum += v;
+        }
+        let sh = shift + p as u32 * d;
+        let out = tmp.as_mut_ptr();
+        // SAFETY: a digit's line holds at most 8 keys, written out at its next place when full; its places are
+        // its count's, below `n`.
+        unsafe {
+            for &k in keys.iter() {
+                let b = ((k >> sh) & mask) as usize;
+                let f = *fill.get_unchecked(b) as usize;
+                *lines.get_unchecked_mut(b).get_unchecked_mut(f) = k;
+                if f == 7 {
+                    let at = *h.get_unchecked(b) as usize;
+                    out.add(at).cast::<[u64; 8]>().write_unaligned(*lines.get_unchecked(b));
+                    *h.get_unchecked_mut(b) += 8;
+                    *fill.get_unchecked_mut(b) = 0;
+                } else {
+                    *fill.get_unchecked_mut(b) = (f + 1) as u8;
+                }
+            }
+            for b in 0..nb {
+                let f = fill[b] as usize;
+                core::ptr::copy_nonoverlapping(lines[b].as_ptr(), out.add(h[b] as usize), f);
+                fill[b] = 0;
+            }
+        }
+        std::mem::swap(keys, tmp);
+    }
+}
+
+/// The keyed join's merge at 8 lanes: each key's range found by 8 compares a step (`vk::past`), and each `a` row's
+/// pass over its key's `b` range 8 rows a step, `z < x` a compare, the passing rows packed to the front.
+fn merge_keyed_simd(a: &[u64], xw: u32, b: &[u64], zw: u32, out: &mut Vec<u64>) {
+    use rerail_simd::prelude::*;
+    out.clear();
+    let (xm, zm) = ((1u64 << xw) - 1, (1u64 << zw) - 1);
+    let zmv = vk::V::splat(zm);
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < a.len() && j < b.len() {
+        let (ya, yb) = (a[i] >> xw, b[j] >> zw);
+        if ya < yb {
+            i = vk::past(a, i, yb - 1, xw);
+            continue;
+        }
+        if ya > yb {
+            j = vk::past(b, j, ya - 1, zw);
+            continue;
+        }
+        let i1 = vk::past(a, i, ya, xw);
+        let j1 = vk::past(b, j, yb, zw);
+        let bz = &b[j..j1];
+        out.reserve((i1 - i) * bz.len() + 8);
+        for &ak in &a[i..i1] {
+            let x = ak & xm;
+            let (xs, xv) = (vk::V::splat(x), vk::V::splat(x << zw));
+            let mut w = out.len();
+            // SAFETY: reserved for every pair of the key's ranges and 8 past them.
+            unsafe {
+                let p = out.as_mut_ptr();
+                let mut q = 0usize;
+                while q < bz.len() {
+                    let n = (bz.len() - q).min(8);
+                    let v = if n == 8 { vk::load(bz.as_ptr().add(q)) } else { vk::V::load_or_default(&bz[q..]) };
+                    let z = v & zmv;
+                    let bits = z.simd_lt(xs).to_bitmask() & ((1u64 << n) - 1);
+                    w += vk::pack(xv | z, bits, p.add(w));
+                    q += 8;
+                }
+                out.set_len(w);
+            }
+        }
+        (i, j) = (i1, j1);
+    }
+}
+
 /// The keyed join's times (ms) and rows: `b` sorted by `y` (once, as a relation sorted in place would be), then `a`
 /// sorted, the merge, the output's sort and dedup.
 pub(crate) struct Keyed {
@@ -193,32 +518,54 @@ pub(crate) struct Keyed {
 }
 
 fn keyed(d: &Data) -> Keyed {
+    keyed_with(d, false, &mut Scratch::default())
+}
+
+/// Buffers a run reuses from the last (as a program's are, kept across its launches): none faulted in again.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    tmp: Vec<u64>,
+    a: Vec<u64>,
+    b: Vec<u64>,
+    out: Vec<u64>,
+    kept: Vec<u64>,
+}
+
+fn keyed_with(d: &Data, simd: bool, sc: &mut Scratch) -> Keyed {
     let t = std::time::Instant::now;
     let ms = |s: std::time::Instant| s.elapsed().as_secs_f64() * 1e3;
     // Column widths from the relations' maxima.
     let (xw, yw) = (bits(d.a.iter().map(|r| r.0).max().unwrap()), bits(d.a.iter().map(|r| r.1).max().unwrap()));
     let zw = bits(d.b.iter().map(|r| r.1).max().unwrap());
-    let mut tmp = Vec::new();
+    let Scratch { tmp, a, b, out, kept } = sc;
+    let sort = |k: &mut Vec<u64>, t: &mut Vec<u64>, sh: u32, w: u32| if simd { radix_sort_wc(k, t, sh, w, 10) } else { radix_sort(k, t, sh, w) };
     let s = t();
-    let mut b: Vec<u64> = d.b.iter().map(|&(y, z)| y << zw | z).collect();
-    radix_sort(&mut b, &mut tmp, zw, yw);
+    b.clear();
+    b.extend(d.b.iter().map(|&(y, z)| y << zw | z));
+    sort(b, tmp, zw, yw);
     let sort_b = ms(s);
     let s = t();
-    let mut a: Vec<u64> = d.a.iter().map(|&(x, y)| y << xw | x).collect();
-    radix_sort(&mut a, &mut tmp, xw, yw);
+    a.clear();
+    a.extend(d.a.iter().map(|&(x, y)| y << xw | x));
+    sort(a, tmp, xw, yw);
     let sort_a = ms(s);
     let s = t();
-    let mut out = Vec::new();
-    merge_keyed(&a, xw, &b, zw, &mut out);
+    if simd { merge_keyed_simd(a, xw, b, zw, out) } else { merge_keyed(a, xw, b, zw, out) }
     let merge = ms(s);
     let pairs = out.len();
     let s = t();
-    radix_sort(&mut out, &mut tmp, 0, xw + zw);
+    sort(out, tmp, 0, xw + zw);
     let sort_out = ms(s);
     let s = t();
-    dedup_sorted(&mut out);
+    let rows = if simd {
+        dedup_simd(out, kept);
+        kept.len()
+    } else {
+        dedup_sorted(out);
+        out.len()
+    };
     let dedup = ms(s);
-    Keyed { sort_b, sort_a, merge, sort_out, dedup, rows: out.len(), pairs }
+    Keyed { sort_b, sort_a, merge, sort_out, dedup, rows, pairs }
 }
 
 /// The closure's times (ms) and rows: `e` sorted once, then the rounds; each round's parts summed over the rounds.
@@ -231,15 +578,41 @@ pub(crate) struct Closure {
     pub union: f64,
     pub rounds: usize,
     pub rows: usize,
+    /// Rows into the minus (each round's new rows, distinct), and run rows it walked or searched past.
+    pub minus_in: usize,
+    pub runs_seen: usize,
 }
 
 fn closure(d: &Data) -> Closure {
+    closure_with(d, false, false)
+}
+
+/// `runs`: h0 as sorted runs (`Runs`), new rows searched for by galloping; else one sorted h0 merged whole each round.
+/// `simd`: the vector kit's sort, scans, dedup and branchless merges.
+fn closure_with(d: &Data, runs: bool, simd: bool) -> Closure {
+    closure_held(d, if runs { Held::Runs } else { Held::Whole }, simd)
+}
+
+/// How a closure keeps h0's rows for the minus.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Held {
+    /// One sorted vector, merged whole each round.
+    Whole,
+    /// Sorted runs (`Runs`).
+    Runs,
+    /// A bit a possible row, where the rows' packed width is small (its columns' statistics say so): a row's test and
+    /// insert are one bit; h0's sorted rows are the bits' places, read once at the end.
+    Dense,
+}
+
+fn closure_held(d: &Data, how: Held, simd: bool) -> Closure {
+    let runs = how == Held::Runs;
     let t = std::time::Instant::now;
     let ms = |s: std::time::Instant| s.elapsed().as_secs_f64() * 1e3;
     let w = bits(d.e.iter().map(|r| r.0.max(r.1)).max().unwrap());
     let m = (1u64 << w) - 1;
     let mut tmp = Vec::new();
-    let mut c = Closure { sort_e: 0.0, sort_delta: 0.0, merge: 0.0, sort_new: 0.0, minus: 0.0, union: 0.0, rounds: 0, rows: 0 };
+    let mut c = Closure { sort_e: 0.0, sort_delta: 0.0, merge: 0.0, sort_new: 0.0, minus: 0.0, union: 0.0, rounds: 0, rows: 0, minus_in: 0, runs_seen: 0 };
     // `e` by its row (`src << w | dst`): its first column leads, so it is sorted by the join key too.
     let s = t();
     let mut e: Vec<u64> = d.e.iter().map(|&(s, t)| s << w | t).collect();
@@ -247,8 +620,17 @@ fn closure(d: &Data) -> Closure {
     dedup_sorted(&mut e);
     c.sort_e = ms(s);
     // The seed: h0 = e. Rows `x << w | y`, sorted.
+    let sort = |k: &mut Vec<u64>, t: &mut Vec<u64>, sh: u32, w: u32| if simd { radix_sort_wc(k, t, sh, w, 8) } else { radix_sort(k, t, sh, w) };
     let mut h0 = e.clone();
+    let mut held = Runs { runs: vec![e.clone()] };
     let mut delta = h0.clone();
+    let mut kept = Vec::new();
+    let mut dense = if how == Held::Dense { vec![0u64; (1usize << (2 * w)).div_ceil(64)] } else { Vec::new() };
+    for &k in &e {
+        if how == Held::Dense {
+            dense[(k >> 6) as usize] |= 1u64 << (k & 63);
+        }
+    }
     let (mut by_y, mut new, mut fresh, mut merged) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     while !delta.is_empty() {
         c.rounds += 1;
@@ -256,7 +638,7 @@ fn closure(d: &Data) -> Closure {
         let s = t();
         by_y.clear();
         by_y.extend(delta.iter().map(|&k| (k & m) << w | k >> w));
-        radix_sort(&mut by_y, &mut tmp, w, w);
+        sort(&mut by_y, &mut tmp, w, w);
         c.sort_delta += ms(s);
         // Merged with e: each y's delta rows crossed with its edges, rows `x << w | z`.
         let s = t();
@@ -272,8 +654,11 @@ fn closure(d: &Data) -> Closure {
                 j += 1;
                 continue;
             }
-            let i1 = i + by_y[i..].iter().take_while(|&&k| k >> w == ya).count();
-            let j1 = j + e[j..].iter().take_while(|&&k| k >> w == yb).count();
+            let (i1, j1) = if simd {
+                (vk::past(&by_y, i, ya, w), vk::past(&e, j, yb, w))
+            } else {
+                (i + by_y[i..].iter().take_while(|&&k| k >> w == ya).count(), j + e[j..].iter().take_while(|&&k| k >> w == yb).count())
+            };
             for &dk in &by_y[i..i1] {
                 let x = dk & m;
                 new.extend(e[j..j1].iter().map(|&ek| x << w | (ek & m)));
@@ -282,19 +667,72 @@ fn closure(d: &Data) -> Closure {
         }
         c.merge += ms(s);
         let s = t();
-        radix_sort(&mut new, &mut tmp, 0, 2 * w);
-        dedup_sorted(&mut new);
+        // A dense h0 drops repeats as it takes them, and the next round sorts its delta by y: no sort here.
+        if how != Held::Dense {
+        sort(&mut new, &mut tmp, 0, 2 * w);
+        if simd {
+            dedup_simd(&new, &mut kept);
+            std::mem::swap(&mut new, &mut kept);
+        } else {
+            dedup_sorted(&mut new);
+        }
+        }
         c.sort_new += ms(s);
+        c.minus_in += new.len();
+        if how == Held::Dense {
+            let s = t();
+            let mut w = 0usize;
+            for r in 0..new.len() {
+                let k = new[r];
+                let (word, bit) = ((k >> 6) as usize, 1u64 << (k & 63));
+                let had = dense[word] & bit != 0;
+                dense[word] |= bit;
+                new[w] = k;
+                w += usize::from(!had);
+            }
+            new.truncate(w);
+            c.minus += ms(s);
+            std::mem::swap(&mut delta, &mut new);
+            continue;
+        }
+        if runs {
+            c.runs_seen += held.runs.iter().map(Vec::len).sum::<usize>();
+            let s = t();
+            held.minus(&mut new);
+            c.minus += ms(s);
+            let s = t();
+            held.add(new.clone(), simd);
+            c.union += ms(s);
+            std::mem::swap(&mut delta, &mut new);
+            continue;
+        }
         let s = t();
         sorted_minus(&new, &h0, &mut fresh);
         c.minus += ms(s);
         let s = t();
-        sorted_union(&h0, &fresh, &mut merged);
+        if simd { union_branchless(&h0, &fresh, &mut merged) } else { sorted_union(&h0, &fresh, &mut merged) }
         std::mem::swap(&mut h0, &mut merged);
         c.union += ms(s);
         std::mem::swap(&mut delta, &mut fresh);
     }
-    c.rows = h0.len();
+    c.rows = match how {
+        Held::Runs => held.len(),
+        Held::Whole => h0.len(),
+        Held::Dense => {
+            // h0's rows in order: each set bit's place.
+            let s = t();
+            let mut rows = Vec::with_capacity(c.minus_in);
+            for (i, &word) in dense.iter().enumerate() {
+                let mut b = word;
+                while b != 0 {
+                    rows.push((i as u64) << 6 | u64::from(b.trailing_zeros()));
+                    b &= b - 1;
+                }
+            }
+            c.union += ms(s);
+            rows.len()
+        }
+    };
     c
 }
 
@@ -322,6 +760,7 @@ mod tests {
         }
         assert_eq!(want.len(), 249_484);
         assert_eq!(keyed(&d).rows, want.len());
+        assert_eq!(keyed_with(&d, true, &mut Scratch::default()).rows, want.len());
         let mut h: HashSet<(u64, u64)> = d.e.iter().copied().collect();
         let mut delta: Vec<(u64, u64)> = h.iter().copied().collect();
         while !delta.is_empty() {
@@ -336,39 +775,90 @@ mod tests {
             delta = next;
         }
         assert_eq!(h.len(), 157_228);
-        assert_eq!(closure(&d).rows, h.len());
+        for (runs, simd) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert_eq!(closure_with(&d, runs, simd).rows, h.len(), "runs {runs}, simd {simd}");
+        }
+        assert_eq!(closure_held(&d, Held::Dense, false).rows, h.len());
     }
 
-    /// The spike's times, the best of 20 runs each (a measure: `--ignored`, at opt-level 3, pinned to one core).
+    /// The spike's times, the best of 20 runs each, scalar and vector, part by part (a measure: `--ignored`, at
+    /// opt-level 3, pinned to one core).
     #[test]
     #[ignore]
     fn the_spike_timed() {
         let d = data();
-        let mut best_k: Option<Keyed> = None;
         let total_k = |k: &Keyed| k.sort_a + k.merge + k.sort_out + k.dedup;
-        for _ in 0..20 {
-            let k = keyed(&d);
-            if best_k.as_ref().is_none_or(|b| total_k(&k) < total_k(b)) {
-                best_k = Some(k);
+        for simd in [false, true] {
+            let mut best: Option<Keyed> = None;
+            let mut sc = Scratch::default();
+            for _ in 0..20 {
+                let k = keyed_with(&d, simd, &mut sc);
+                if best.as_ref().is_none_or(|b| total_k(&k) < total_k(b)) {
+                    best = Some(k);
+                }
             }
+            let k = best.unwrap();
+            eprintln!(
+                "keyed {}: {} pairs, {} rows; sort b {:.2} ms (once), sort a {:.2}, merge {:.2}, sort out {:.2}, dedup {:.2}: {:.2} ms",
+                if simd { "simd  " } else { "scalar" }, k.pairs, k.rows, k.sort_b, k.sort_a, k.merge, k.sort_out, k.dedup, total_k(&k)
+            );
         }
-        let k = best_k.unwrap();
-        eprintln!(
-            "keyed: {} pairs, {} rows; sort b {:.2} ms (once), sort a {:.2}, merge {:.2}, sort out {:.2}, dedup {:.2}: {:.2} ms",
-            k.pairs, k.rows, k.sort_b, k.sort_a, k.merge, k.sort_out, k.dedup, total_k(&k)
-        );
-        let mut best_c: Option<Closure> = None;
         let total_c = |c: &Closure| c.sort_delta + c.merge + c.sort_new + c.minus + c.union;
+        for (runs, simd) in [(false, false), (true, false), (true, true)] {
+            let mut best: Option<Closure> = None;
+            for _ in 0..20 {
+                let c = closure_with(&d, runs, simd);
+                if best.as_ref().is_none_or(|b| total_c(&c) < total_c(b)) {
+                    best = Some(c);
+                }
+            }
+            let c = best.unwrap();
+            eprintln!(
+                "closure {} {}: {} rounds, {} rows; sort delta {:.2}, merge {:.2}, sort new {:.2}, minus {:.2}, union {:.2}: {:.2} ms; {} rows into the minus, {} run rows",
+                if runs { "runs " } else { "whole" }, if simd { "simd  " } else { "scalar" }, c.rounds, c.rows, c.sort_delta, c.merge, c.sort_new, c.minus, c.union, total_c(&c), c.minus_in, c.runs_seen
+            );
+        }
+        let mut best: Option<Closure> = None;
         for _ in 0..20 {
-            let c = closure(&d);
-            if best_c.as_ref().is_none_or(|b| total_c(&c) < total_c(b)) {
-                best_c = Some(c);
+            let c = closure_held(&d, Held::Dense, false);
+            if best.as_ref().is_none_or(|b| total_c(&c) < total_c(b)) {
+                best = Some(c);
             }
         }
-        let c = best_c.unwrap();
+        let c = best.unwrap();
         eprintln!(
-            "closure: {} rounds, {} rows; sort e {:.3} ms (once), sort delta {:.2}, merge {:.2}, sort new {:.2}, minus {:.2}, union {:.2}: {:.2} ms",
-            c.rounds, c.rows, c.sort_e, c.sort_delta, c.merge, c.sort_new, c.minus, c.union, total_c(&c)
+            "closure dense scalar: {} rounds, {} rows; sort delta {:.2}, merge {:.2}, sort new {:.2}, minus {:.2}, rows read out {:.2}: {:.2} ms",
+            c.rounds, c.rows, c.sort_delta, c.merge, c.sort_new, c.minus, c.union, total_c(&c)
+        );
+        // The radix sorts alone, on the keyed join's output (its largest): 11-bit digits, then write-combined lines.
+        let mut out = Vec::new();
+        {
+            let (xw, zw) = (20, 20);
+            let mut a: Vec<u64> = d.a.iter().map(|&(x, y)| y << xw | x).collect();
+            let mut b: Vec<u64> = d.b.iter().map(|&(y, z)| y << zw | z).collect();
+            let mut tmp = Vec::new();
+            radix_sort(&mut a, &mut tmp, xw, 15);
+            radix_sort(&mut b, &mut tmp, zw, 15);
+            merge_keyed(&a, xw, &b, zw, &mut out);
+        }
+        let time = |f: &dyn Fn(&mut Vec<u64>, &mut Vec<u64>)| {
+            let mut best = f64::MAX;
+            for _ in 0..20 {
+                let mut k = out.clone();
+                let mut t = Vec::new();
+                let s = std::time::Instant::now();
+                f(&mut k, &mut t);
+                best = best.min(s.elapsed().as_secs_f64() * 1e3);
+            }
+            best
+        };
+        eprintln!(
+            "radix of {} keys, 40 bits: 11-bit digits {:.2} ms; write-combined 8-bit {:.2}, 10-bit {:.2}, 11-bit {:.2}",
+            out.len(),
+            time(&|k, t| radix_sort(k, t, 0, 40)),
+            time(&|k, t| radix_sort_wc(k, t, 0, 40, 8)),
+            time(&|k, t| radix_sort_wc(k, t, 0, 40, 10)),
+            time(&|k, t| radix_sort_wc(k, t, 0, 40, 11)),
         );
     }
 }
