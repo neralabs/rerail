@@ -2620,6 +2620,46 @@ mod pack_split_tests {
         assert!(errors.is_empty(), "{dir}: {} policies, {} distinct errors:\n{}", policies.len(), errors.len(), errors.join("\n\n"));
     }
 
+    /// The policies reading pyflakes-format's `str.format` family (F521, F522, F524, UP030, UP032) as one pack, with a
+    /// policy of another scope (PYI021, stubs only: each rule then tests its documents' scope, `s_rr_scope_not`), through
+    /// the whole preparation (their counts below a bound made ranks, decision 0361 step 7): no relation is cross-file
+    /// through the family, a view of the format string's values each call holds in its own node (decision 0672). Read
+    /// off the split's causes (`RERAIL_SPLIT_DUMP`).
+    #[test]
+    fn a_format_strings_ranked_fields_are_per_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pack = crate::source_tree::native().join("../docs/rule-syntax/packs/python");
+        let policies: Vec<std::path::PathBuf> = ["ruff-f521-string-dot-format-invalid-format", "ruff-f522-string-dot-format-extra-named-arguments", "ruff-f524-string-dot-format-missing-arguments", "ruff-up030-format-literals", "ruff-up032-f-string", "ruff-pyi021-docstring-in-stub"]
+            .iter()
+            .map(|p| pack.join(format!("{p}.rerail")))
+            .collect();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "x = \"{} {}\".format(a, b)\n").unwrap();
+        let dump = tmp.path().join("split.txt");
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe {
+            std::env::set_var("RERAIL_BATCH_PACK", "strict");
+            std::env::set_var("RERAIL_SPLIT_DUMP", &dump);
+        }
+        let report = super::run_policies(&policies, &root, &tmp.path().join("out"), &serde_json::Value::Null).unwrap();
+        let errors: Vec<&str> = report["runs"].as_array().unwrap().iter().filter_map(|r| r["error"].as_str()).collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        // Every split the run made (the batch's, and each split again on the way: `split-N`).
+        let causes: String = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().ends_with(".causes.txt"))
+            .map(|p| {
+                let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                std::fs::read_to_string(&p).unwrap().lines().map(|l| format!("{name}: {l}\n")).collect::<String>()
+            })
+            .collect();
+        assert!(!causes.is_empty(), "no split dumped");
+        let through: Vec<&str> = causes.lines().filter(|l| l.contains("brace_")).collect();
+        assert!(through.is_empty(), "cross-file through the format family:\n{}\nall causes:\n{causes}", through.join("\n"));
+    }
+
     macro_rules! packs {
         ($($name:ident: $dir:expr),* $(,)?) => {
             $(#[test] fn $name() { pack_runs($dir) })*

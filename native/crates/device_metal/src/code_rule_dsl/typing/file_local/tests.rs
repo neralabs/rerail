@@ -34,6 +34,44 @@ fn moved(v: &Version) -> Vec<String> {
     ProgramFields::qualifiers(v).into_iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r).collect()
 }
 
+/// `v` with each string written as a branded atom's tag (`"#k12"`, `"#n0"`) made that atom (decision 0270), as a
+/// run's program writes its kinds, fields and names: the rule text cannot write one.
+fn branded(v: Arc<Version>) -> Arc<Version> {
+    use crate::code_rule_dsl::logic::front::Branded;
+    use crate::code_rule_dsl::logic::program_image::{Rewrite, Site, T};
+    struct Brand<'a>(&'a Version);
+    impl Rewrite for Brand<'_> {
+        fn term(&mut self, _site: Site<'_>, t: TermRef<'_>) -> Option<T<'static>> {
+            let TermRef::Str(a) = t else { return None };
+            let text = self.0.text(a).strip_prefix('#')?;
+            let mut chars = text.chars();
+            let tag = chars.next()?;
+            Branded::of_tag(tag, chars.as_str().parse().ok()?).map(T::Branded)
+        }
+    }
+    let mut b = Builder::derive(&v);
+    b.rewrite_all(&v, &mut Brand(&v)).unwrap();
+    b.finish().unwrap().0
+}
+
+/// `v` with the qualifiers `words` (relation, word) added, as the passes add them (`strategy`): the rule text cannot
+/// write one.
+fn qualified(v: Arc<Version>, words: &[(&str, &str)]) -> Arc<Version> {
+    use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+    struct Qualify(Vec<(String, String)>);
+    impl ProgramPass for Qualify {
+        const NAME: &'static str = "qualify";
+        fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+            let words: Vec<(&str, &str)> = self.0.iter().map(|(r, q)| (r.as_str(), q.as_str())).collect();
+            w.on()?.fields().add_qualifiers(&words);
+            Ok(())
+        }
+    }
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut Qualify(words.iter().map(|(r, q)| ((*r).to_owned(), (*q).to_owned())).collect()));
+    p.finish().unwrap().0
+}
+
 /// `v`'s rules for `head`.
 fn rules_of<'v>(v: &'v Version, head: &str) -> Vec<RuleRef<'v>> {
     v.rules().filter(|r| v.rel_name(r.head().rel()) == head).collect()
@@ -225,6 +263,384 @@ fn a_rule_reading_a_setting_stays_per_file_and_one_reading_another_files_rows_do
     assert!(!split.local.contains("elsewhere"), "{:?}", split.local);
     assert!(!split.local.contains("listed"), "the tree's files are no setting: {:?}", split.local);
     assert_eq!(split.causes["listed"], "reads file with no location");
+}
+
+/// A nullable location tested set places its row (decision 0672): `sig_param`'s default is a node of the parameter's
+/// document or -1, and a rule keeping only `d != -1` (Ruff's PYI011, PYI014: the default node itself) has a node of
+/// that document in its head. `locate` names the row's document through it, and nothing moves to the cross-file part.
+#[test]
+fn a_nullable_location_tested_set_places_its_head() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl docof(n: node, d: number)
+.input node, child, docof
+.decl param(f: node, d: loc)
+param(f, d) :- node(_, f, "param", _, _), child(f, d, 0).
+param(f, d) :- node(_, f, "param", _, _), !child(f, _, 0), unset(d).
+.decl simple(d: node)
+simple(d) :- node(_, d, "number", _, _).
+.decl bad(d: node)
+bad(d) :- param(f, d), !unset(d), !simple(d).
+.output bad
+"#;
+    let v = read(text);
+    let split = split_of(&v);
+    assert!(split.local.contains("bad"), "{:?} {:?}", split.local, split.causes);
+    assert_eq!(split.locations["bad"], [0], "the default, tested set, is a location: {:?}", split.locations);
+    let (v, found) = located(v);
+    found.unwrap();
+    assert!(moved(&v).is_empty(), "nothing moves: {:?}", moved(&v));
+}
+
+/// A pair cache's guard chooses how its readers are evaluated, not their rows (decision 0652's `strategy`): a chunk's
+/// guard is the chunk's choice. A cross-file reader of it (`far`, declared) does not make it an export, which `locate`
+/// could not place and would move with every reader (Ruff's `local_class`: RUF049, ctypes): the cross-file part
+/// derives its own guard, and its own pairs, from the factors it reads (decision 0672).
+#[test]
+fn a_guard_read_across_files_is_each_parts_own() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl fa(e: node, m: node)
+fa(e, m) :- node(_, e, "name", _, _), child(e, m, 0).
+.decl fb(k: node, m: node)
+fb(k, m) :- node(_, k, "class", _, _), child(k, m, 1).
+.decl small(u: number)
+small(1) :- a = count : { fa(_, _) }, b = count : { fb(_, _) }, a * b < 100.
+.decl pairs(e: node, k: node)
+pairs(e, k) :- small(1), fa(e, m), fb(k, m).
+.decl lc(e: node, k: node)
+lc(e, k) :- fa(e, m), fb(k, m), !small(1).
+lc(e, k) :- pairs(e, k).
+.decl used(e: node)
+used(e) :- lc(e, _).
+.decl far(f: node, k: node) cross_file
+far(f, k) :- node(_, f, "call", _, _), text(f, x), node(_, k, "class", _, _), text(k, x), fa(f, m), fb(k, m), !small(1).
+far(f, k) :- node(_, f, "call", _, _), text(f, x), node(_, k, "class", _, _), text(k, x), pairs(f, k).
+.output used, far
+"#;
+    let v = qualified(read(text), &[("small", STRATEGY)]);
+    let (v, found) = located(v);
+    found.unwrap();
+    let moved_by_locate: Vec<String> = ProgramFields::qualifiers(&*v).into_iter().filter(|(_, w)| w.contains(MOVED_CROSS_FILE)).map(|(r, _)| r).collect();
+    assert!(moved_by_locate.is_empty(), "the guard is not moved: {moved_by_locate:?}");
+    let split = split_of(&v);
+    for rel in ["small", "lc", "used"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    let p = programs_of(v).unwrap();
+    assert!(!p.exports.iter().any(|x| x == "small"), "the cross-file part's guard is its own: {:?}", p.exports);
+    crossings_checked(&p).unwrap();
+}
+
+/// A view of values read by a cross-file rule as well as a file-local one is each part's own (decision 0672): its
+/// rows name no document, so no part can hand them on, and the cross-file part derives its own over every file's
+/// rows, as the whole program does, while each chunk keeps its own for its readers. UP032 is cross-file through
+/// Python's resolution (`translated`) and reads the format family (`brace_ok`, `mixed`); its `refers` stays per-file.
+#[test]
+fn a_view_of_values_a_cross_file_rule_reads_is_each_parts_own() {
+    let text = r##"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl strs(c: node, v: symbol)
+strs(c, v) :- node(_, c, "#k20", _, _), text(c, v).
+.decl fval(v: symbol)
+fval(v) :- strs(_, v).
+.decl vok(v: symbol)
+vok(v) :- fval(v), v != "#n0".
+.decl here(c: node)
+here(c) :- strs(c, v), vok(v).
+.decl far(c: node, k: node) cross_file
+far(c, k) :- strs(c, v), vok(v), node(_, k, "#k21", _, _), text(k, v).
+.output here, far
+"##;
+    let v = branded(read(text));
+    let (v, found) = located(v);
+    found.unwrap();
+    let moved_by_locate: Vec<String> = ProgramFields::qualifiers(&*v).into_iter().filter(|(_, w)| w.contains(MOVED_CROSS_FILE)).map(|(r, _)| r).collect();
+    assert!(moved_by_locate.is_empty(), "nothing moves: {moved_by_locate:?}");
+    let split = split_of(&v);
+    for rel in ["fval", "vok", "here"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    assert!(split.views().contains("vok") && split.views().contains("fval"), "{:?}", split.views());
+    let p = programs_of(v).unwrap();
+    for rel in ["fval", "vok"] {
+        assert!(!p.exports.iter().any(|x| x == rel), "{rel} is not handed on: {:?}", p.exports);
+        let cross = &p.versions.cross;
+        assert!(cross.rules().any(|r| cross.rel_name(r.head().rel()) == rel), "the cross-file part derives its own {rel}");
+    }
+    assert!(p.exports.iter().any(|x| x == "strs"), "what the view reads is handed on: {:?}", p.exports);
+    crossings_checked(&p).unwrap();
+}
+
+/// A view of values gathered from every file and read by a rule holding the value in its own document is per-file
+/// (decision 0672): each of `parts`' rules reads one row of `item` and tests or splits its value, and its reader reads
+/// that row of its own document, so derived per chunk it answers the reader as over every file (ESLint's globals
+/// comment, `item_parts`). A view whose rules differ only in the node kinds they read and test the value alike
+/// (`zero`: an integer's or a float's text) is answered by its reader's own node through the rule of its kind
+/// (Ruff's SIM113 `zero_number`), its node's id range bounded as the lowering bounds it. A value built from the row's
+/// key (`spelled`'s `cat("'", v)`) is the key's. A family of views over one value (a format string's fields,
+/// pyflakes-format's `brace_…`: `farg` reads `fname`, which reads `ffield`, which reads `frest`, which reads `fvalue`
+/// and itself) is answered at the values its outer reader holds, each view passed through at those values, plain,
+/// negated or counted, also where the reader holds the value through a rule of its own (`named` reads `braced`, every
+/// row of which is a `call_str` row). The constants are branded as a run's are (decision 0270: `#n0` is "", `#k12` a kind).
+#[test]
+fn a_view_of_a_value_its_reader_holds_is_per_file() {
+    let text = r##"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.input node, text, line
+.decl list(c: node, s: symbol, k: number)
+list(c, B, 0) :- node(_, c, "#k11", _, _), text(c, v), match("globals?(?<B>\\s[\\s\\S]*)", v).
+list(c, T, k + @count_matches("\n", W)) :- list(c, s, k), match("(?<W>[\\s,]*)[^\\s,]+(?<T>[\\s\\S]*)", s).
+.decl item(c: node, i: symbol, k: number)
+item(c, I, k + @count_matches("\n", W)) :- list(c, s, k), match("(?<W>[\\s,]*)(?<I>[^\\s,]+)[\\s\\S]*", s).
+.decl parts(i: symbol, x: symbol, v: symbol)
+parts(i, N, V) :- item(_, i, _), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i).
+parts(i, i, "#n0") :- item(_, i, _), !contains(":", i).
+.decl global(c: node, x: symbol, v: symbol, l: number)
+global(c, x, v, l + k) :- item(c, i, k), parts(i, x, v), line(c, l).
+.output global
+.decl zero(t: symbol)
+zero(t) :- node(_, n, "#k12", _, _), text(n, t), match("0+", t), n < 6917529027641081856.
+zero(t) :- node(_, n, "#k13", _, _), text(n, t), match("0+", t), n < 6917529027641081856.
+.decl start(z: node)
+start(z) :- node(_, z, "#k12", _, _), text(z, t), zero(t).
+.output start
+.decl str(s: node, v: symbol)
+str(s, v) :- node(_, s, "#k15", _, _), text(s, v).
+.decl spelled(v: symbol, k: symbol)
+spelled(v, v) :- str(_, v), !match("#.*", v).
+spelled(v, cat("'", v)) :- str(_, v), match("#.*", v).
+.decl key(at: node, k: symbol)
+key(at, k) :- node(_, at, "#k15", _, _), str(at, v), spelled(v, k).
+.output key
+.decl call_str(c: node, v: symbol)
+call_str(c, v) :- node(_, c, "#k20", _, _), text(c, v).
+.decl fvalue(v: symbol)
+fvalue(v) :- call_str(_, v).
+.decl frest(v: symbol, r: symbol, i: number)
+frest(v, v, 0) :- fvalue(v).
+frest(v, rest, i + 1) :- ffield(v, i, _, rest).
+.decl ffield(v: symbol, i: number, f: symbol, rest: symbol)
+ffield(v, i, f, rest) :- frest(v, r, i), match("[^{}]*\\{(?<f>[^{}]*)\\}(?<rest>[\\s\\S]*)", r).
+.decl fname(v: symbol, k: number, f: symbol)
+fname(v, i * 1000, f) :- ffield(v, i, f, _).
+.decl farg(v: symbol, k: number, a: symbol)
+farg(v, k, a) :- fname(v, k, f), match("(?<a>[^.\\[]*)[\\s\\S]*", f).
+.decl fbad(v: symbol)
+fbad(v) :- fvalue(v), !ffield(v, 0, _, _).
+.decl refers(c: node, k: number)
+refers(c, k) :- call_str(c, v), farg(v, k, ""), !fbad(v), r = count : { farg(v, k2, ""), k2 < k }, r >= 0.
+.output refers
+.decl braced(c: node, v: symbol)
+braced(c, v) :- call_str(c, v), contains("{", v).
+.decl named(c: node, k: number)
+named(c, k) :- node(_, c, "#k20", _, _), braced(c, v), farg(v, k, _).
+.output named
+"##;
+    let v = branded(read(text));
+    let split = split_of(&v);
+    for rel in ["parts", "global", "zero", "start", "spelled", "key", "fvalue", "frest", "ffield", "fname", "farg", "fbad", "refers", "named"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    let p = programs_of(v.clone()).unwrap();
+    crossings_checked(&p).unwrap();
+    let (v, found) = located(v);
+    found.unwrap();
+    assert!(moved(&v).is_empty(), "{:?}", moved(&v));
+    // A reader holding a value of another kind than any rule reads is not answered by its own file.
+    let other = text.replace(r##"start(z) :- node(_, z, "#k12", _, _)"##, r##"start(z) :- node(_, z, "#k14", _, _)"##);
+    assert_ne!(other, text);
+    assert!(!split_of(&branded(read(&other))).local.contains("start"), "a string's text is answered by another file's number");
+    // A count of a view's rows at a column its reader leaves open counts every file's: a format string's pairs with
+    // any file's strings are not one file's.
+    let pairs = text.replace(".output refers\n", ".output refers\n.decl pairs(v: symbol, w: symbol)\npairs(v, w) :- call_str(_, v), str(_, w).\n\
+                                                   .decl many(c: node, n: number)\nmany(c, n) :- call_str(c, v), n = count : { pairs(v, _) }.\n.output many\n");
+    assert_ne!(pairs, text);
+    let split = split_of(&branded(read(&pairs)));
+    assert!(split.local.contains("refers") && !split.local.contains("many"), "{:?} {:?}", split.local, split.causes);
+}
+
+/// A family of views over an identifier's text, decoded piece by piece (ESLint's `id_value`: `unescape` joins the
+/// pieces `escape_piece` splits, each decoded by `hex_piece`), is per-file (decision 0672): its reader holds the text
+/// in its own node, and each view is passed through at it, its pieces counted (the join) at the text the reader
+/// holds. The text's view is bounded by its node's id range as the lowering writes it.
+#[test]
+fn a_decoded_name_is_per_file() {
+    let text = r##"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl id_kind(n: node)
+id_kind(n) :- node(_, n, "#k30", _, _).
+id_kind(n) :- node(_, n, "#k31", _, _).
+.decl escaped_id(s: symbol)
+escaped_id(s) :- id_kind(n), text(n, s), contains("\\", s), n < 6917529027641081856.
+.decl escape_piece(s: symbol, o: number, p: symbol)
+escape_piece(s, o, p) :- escaped_id(s), match_all("(?<p>\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\)", s, o, _, _).
+.decl hex_char(h: symbol, c: symbol)
+hex_char("0061", "a"). hex_char("0062", "b").
+.decl hex_piece(p: symbol, d: symbol)
+hex_piece(p, d) :- escape_piece(_, _, p), match("\\\\u(?<H>[0-9a-fA-F]{4})", p), hex_char(@lower(H), d).
+.decl hex_decodes(p: symbol)
+hex_decodes(p) :- hex_piece(p, _).
+.decl unescape_piece(s: symbol, o: number, d: symbol)
+unescape_piece(s, o, p) :- escape_piece(s, o, p), !contains("\\", p).
+unescape_piece(s, o, d) :- escape_piece(s, o, p), hex_piece(p, d).
+unescape_piece(s, o, p) :- escape_piece(s, o, p), contains("\\", p), !hex_decodes(p).
+.decl unescape(s: symbol, t: symbol)
+unescape(s, t) :- escaped_id(s), t = join d by o : { unescape_piece(s, o, d) }.
+.decl id_value(n: node, x: symbol)
+id_value(n, x) :- id_kind(n), text(n, x), !contains("\\", x).
+id_value(n, x) :- id_kind(n), text(n, s), contains("\\", s), unescape(s, x), !contains("\\", x).
+.output id_value
+"##;
+    let v = branded(read(text));
+    let split = split_of(&v);
+    for rel in ["escaped_id", "escape_piece", "hex_piece", "hex_decodes", "unescape_piece", "unescape", "id_value"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    let p = programs_of(v.clone()).unwrap();
+    crossings_checked(&p).unwrap();
+    let (v, found) = located(v);
+    found.unwrap();
+    assert!(moved(&v).is_empty(), "{:?}", moved(&v));
+}
+
+/// pyflakes-format's `str.format` family as the library writes it (decision 0672): a format string's tokens, fields,
+/// nested fields, names, arguments, its faults and whether it is well formed, each a view of the string's values,
+/// read by a call holding the string in its own node, plain (F522's keywords), negated (F521), counted (the
+/// automatic numbering) and ranked (UP032's `refers`: a field's position among the automatic ones, a rank over the
+/// string's fields joined to the call's arguments), is per-file.
+#[test]
+fn a_format_strings_fields_are_per_file() {
+    let text = r##"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl call_str(c: node, v: symbol)
+call_str(c, v) :- node(_, c, "#k20", _, _), text(c, v).
+.decl kw(c: node, x: symbol)
+kw(c, x) :- node(d, c, "#k20", _, _), node(d, a, "#k21", _, _), text(a, x), a > c.
+.decl brace_value(v: symbol)
+brace_value(v) :- call_str(_, v).
+// brace_rest(v, r, i): after i tokens (literal braces and fields), the rest of v is r.
+.decl brace_rest(v: symbol, r: symbol, i: number)
+brace_rest(v, v, 0) :- brace_value(v).
+brace_rest(v, rest, i + 1) :- brace_rest(v, r, i), match("[^{}]*(\\{\\{|\\}\\})(?<rest>[\\s\\S]*)", r).
+brace_rest(v, rest, i + 1) :- brace_field(v, i, _, _, _, rest).
+// brace_field(v, i, name, conv, spec, rest): token i is a field. conv keeps its `!`, spec its `:`.
+.decl brace_field(v: symbol, i: number, name: symbol, conv: symbol, spec: symbol, rest: symbol)
+brace_field(v, i, f, cv, sp, rest) :- brace_rest(v, r, i),
+    match("[^{}]*\\{(?<f>[^{}!:]*)(?<cv>(![^{}:]*)?)(?<sp>(:([^{}]|\\{[^{}]*\\})*)?)\\}(?<rest>[\\s\\S]*)", r).
+// brace_nested(v, i, j, name, conv, rest): nested field j in the spec of field i (`{:{width}}`); rest follows it.
+.decl spec_rest(v: symbol, i: number, r: symbol, j: number)
+spec_rest(v, i, sp, 0) :- brace_field(v, i, _, _, sp, _).
+spec_rest(v, i, rest, j + 1) :- brace_nested(v, i, j, _, _, rest).
+.decl brace_nested(v: symbol, i: number, j: number, name: symbol, conv: symbol, rest: symbol)
+brace_nested(v, i, j, f, cv, rest) :- spec_rest(v, i, r, j),
+    match("[^{}]*\\{(?<f>[^{}!:]*)(?<cv>(![^{}:]*)?)(:[^{}]*)?\\}(?<rest>[\\s\\S]*)", r).
+// brace_name(v, k, name, conv): every field, top-level and nested; k orders them (Ruff numbers `{}` in this order).
+.decl brace_name(v: symbol, k: number, name: symbol, conv: symbol)
+brace_name(v, i * 1000, f, cv) :- brace_field(v, i, f, cv, _, _).
+brace_name(v, i * 1000 + j + 1, f, cv) :- brace_nested(v, i, j, f, cv, _).
+// brace_arg(v, k, a): field k's argument part (before any `.attr` or `[key]`).
+.decl brace_arg(v: symbol, k: number, a: symbol)
+brace_arg(v, k, a) :- brace_name(v, k, f, _), match("(?<a>[^.\\[]*)[\\s\\S]*", f).
+.decl brace_bad(v: symbol)
+// A brace that starts no token: a lone `}`, an unclosed `{`, a spec nested two deep.
+brace_bad(v) :- brace_rest(v, r, i), (contains("{", r) ; contains("}", r)), !match("[^{}]*(\\{\\{|\\}\\})[\\s\\S]*", r),
+    !brace_field(v, i, _, _, _, _).
+// A field whose name has an empty `.` part or an unclosed or empty `[ ]`, or a conversion other than r, s, a.
+brace_bad(v) :- brace_name(v, _, f, _), !match("[^.\\[]*([.][^.\\[\\]]+|\\[[^\\]]+\\])*", f).
+brace_bad(v) :- brace_name(v, _, _, cv), cv != "", cv != "!r", cv != "!s", cv != "!a".
+.decl brace_ok(v: symbol)
+brace_ok(v) :- brace_value(v), !brace_bad(v).
+.decl brace_auto(v: symbol, n: number)
+brace_auto(v, n) :- brace_ok(v), n = count : { brace_arg(v, k, "") }.
+.decl brace_index(v: symbol, i: number)
+brace_index(v, to_number(a)) :- brace_ok(v), brace_arg(v, _, a), match("[0-9]+", a).
+.decl brace_keyword(v: symbol, x: symbol)
+brace_keyword(v, a) :- brace_ok(v), brace_arg(v, _, a), a != "", !match("[0-9]+", a).
+
+.decl f521(c: node)
+f521(c) :- call_str(c, v), !brace_ok(v).
+.output f521
+.decl f522(c: node, x: symbol)
+f522(c, x) :- call_str(c, v), brace_ok(v), kw(c, x), !brace_keyword(v, x).
+.output f522
+.decl autos(c: node, n: number)
+autos(c, n) :- call_str(c, v), brace_auto(v, n).
+.output autos
+.decl indexed(c: node, i: number)
+indexed(c, i) :- call_str(c, v), brace_index(v, i).
+.output indexed
+.decl call_pos(c: node, i: number, e: node)
+call_pos(c, i, e) :- node(d, c, "#k20", _, _), node(d, e, "#k22", i, _).
+.decl refers(c: node, k: number, e: node)
+refers(c, k, e) :- call_str(c, v), brace_arg(v, k, "#n0"), r = count : { brace_arg(v, k2, "#n0"), k2 < k }, call_pos(c, r, e).
+// A batch's scope tests (decision 0091) on each document a rule reads, and a demand carrying them, read through a view
+// by a reader carrying them too (the rank's query of UP032's `refers` in a pack of several scopes).
+.decl doc(d: number, p: symbol, x: number)
+.input doc
+.decl scope_in(d: number)
+scope_in(d) :- doc(d, p, _), p != "#n1".
+.decl scope_not(d: number)
+scope_not(d) :- doc(d, _, _), !scope_in(d).
+.decl want(k: number, v: symbol)
+want(k, v) :- call_str(c, v), s0 = @doc(c), !scope_not(s0), brace_arg(v, k, "#n0"), call_pos(c, _, e), s1 = @doc(e), !scope_not(s1).
+.decl wanted(v: symbol)
+wanted(v) :- want(_, v).
+.decl scoped(c: node, k: number, e: node)
+scoped(c, k, e) :- call_str(c, v), s0 = @doc(c), !scope_not(s0), brace_arg(v, k, "#n0"), wanted(v), call_pos(c, r, e), s1 = @doc(e), !scope_not(s1), r = k.
+.output scoped
+.output refers
+"##;
+    let v = branded(read(text));
+    let split = split_of(&v);
+    for rel in ["brace_value", "brace_rest", "brace_field", "spec_rest", "brace_nested", "brace_name", "brace_arg", "brace_bad", "brace_ok", "brace_auto", "brace_keyword", "brace_index", "f521", "f522", "autos", "indexed", "refers", "want", "wanted", "scoped"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    let (v, found) = located(v);
+    found.unwrap();
+    assert!(moved(&v).is_empty(), "{:?}", moved(&v));
+}
+
+/// A view of one document's text read by every file (plan-optimizer-v2's `pv2_doc_text`: the design doc's codes,
+/// tested by each call site) is cross-file with its readers, and located (decision 0672): the row a function of strings
+/// reads (`match_all`'s demand, `rr_ctx…`) is the view's own, never a ground for finding it in the reader's file.
+#[test]
+fn one_documents_text_read_by_every_file_is_cross_file() {
+    let text = r##"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl call_str(c: node, v: symbol)
+call_str(c, v) :- node(_, c, "#k20", _, _), text(c, v).
+.decl design(s: symbol)
+design(s) :- node(_, n, "#k40", _, _), text(n, s).
+.decl codes(v: symbol)
+codes(v) :- design(s), match_all("`(?<v>[a-z]+)`", s).
+.decl missing(c: node, v: symbol)
+missing(c, v) :- call_str(c, v), design(_), !codes(v).
+.output missing
+"##;
+    let v = branded(read(text));
+    let split = split_of(&v);
+    for rel in ["codes", "missing"] {
+        assert!(!split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    let (v, found) = located(v);
+    found.unwrap();
+    assert!(moved(&v).is_empty(), "{:?}", moved(&v));
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
 }
 
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):

@@ -128,7 +128,7 @@ impl ProgramPass for Locate {
         let split = cx.get::<FileLocal>()?;
         let (file_local, constants) = split.found();
         let locations = &split.locations;
-        let super::on_version::Crossing { exports, .. } = super::on_version::crossing(v, f, &file_local);
+        let super::on_version::Crossing { exports, .. } = super::on_version::crossing(v, f, &file_local, &split.views());
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
         let head = |r: &RuleRef<'_>| v.rel_name(r.head().rel());
         let local: BTreeSet<&str> = rules.iter().map(head).filter(|h| file_local.contains(*h) || constants.contains(*h)).collect();

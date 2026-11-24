@@ -325,6 +325,8 @@ pub struct Programs {
     /// rules, a part of them, so the parts are made from the program again when it is read.
     pub file_local: std::collections::BTreeSet<String>,
     pub constants: std::collections::BTreeSet<String>,
+    /// The covered views of values, derived in each chunk and, those the cross part reads, there too (`assemble`).
+    pub views: std::collections::BTreeSet<String>,
     /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid. No part has a
     /// tree (decision 0281's path, step 4).
     pub versions: Parts,
@@ -402,25 +404,27 @@ pub struct Parts {
 pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
     let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&version)?;
     let (local, constants) = split.found();
-    let mut programs = assemble(version, local, constants, split.locations.clone(), split.same_doc.clone())?;
+    let mut programs = assemble(version, local, constants, split.views(), split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
     Ok(programs)
 }
 
-/// `prog` split at its file-local relations `local` (`programs_of`), deriving the relations of `constants` in both parts:
-/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs_of`
+/// `prog` split at its file-local relations `local` (`programs_of`), deriving the relations of `constants` in both parts,
+/// and the covered views of values `views` the cross part reads in it too (`FileLocal::views`): the parts and what passes
+/// between them. What is costly to find is the arguments; this only selects (`programs_of`
 /// finds them, a prepared program keeps them).
 pub fn assemble(
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     local: std::collections::BTreeSet<String>,
     constants: std::collections::BTreeSet<String>,
+    views: std::collections::BTreeSet<String>,
     locations: std::collections::BTreeMap<String, Vec<usize>>,
     same_doc: std::collections::BTreeMap<String, Vec<usize>>,
 ) -> Result<Programs, String> {
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(version.clone());
     let f = placed.fields().map_err(|e| e.to_string())?;
-    let on_version::Crossing { exports, base_read, base, projected } = on_version::crossing(&version, f, &local);
+    let on_version::Crossing { exports, base_read, base, projected } = on_version::crossing(&version, f, &local, &views);
     let is_local = |rel: &str| local.contains(rel);
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
     // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
@@ -454,7 +458,7 @@ pub fn assemble(
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
     positions_checked(&positions, strict_positions())?;
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions, crossings: Default::default() })
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default() })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option

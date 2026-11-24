@@ -85,6 +85,7 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_split", &["ok:int"]),
         ("prepared_file_local", &["k:int", "rel:sym"]),
         ("prepared_constant", &["k:int", "rel:sym"]),
+        ("prepared_view", &["k:int", "rel:sym"]),
         ("prepared_location", &["rel:sym", "i:int", "col:int"]),
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
         // The decisions preparing made (decision 0269): a run that reuses the program states them.
@@ -186,6 +187,9 @@ fn rest_of(prepared: &Prepared) -> Facts {
     }
     for (k, rel) in prepared.split.constants.iter().enumerate() {
         row("prepared_constant", vec![n(k), s(rel)]);
+    }
+    for (k, rel) in prepared.split.views.iter().enumerate() {
+        row("prepared_view", vec![n(k), s(rel)]);
     }
     for (which, map) in [("prepared_location", &prepared.split.locations), ("prepared_same_doc", &prepared.split.same_doc)] {
         for (rel, cols) in map {
@@ -348,7 +352,7 @@ pub fn prepared_of(
                 }).collect())
             };
             let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
-            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
+            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), set("prepared_file_local")?, set("prepared_constant")?, set("prepared_view")?, columns("prepared_location")?, columns("prepared_same_doc")?)?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());

@@ -2236,6 +2236,8 @@ fn run_observed_within(
         let mut hash = sha2::Sha256::new();
         hash.update(b"rerail.prepared/v2\0");
         hash.update(b"deferred-binary-joins-v1\0");
+        // The split's covered views of values are kept (`prepared_view`): the cross part derives those it reads.
+        hash.update(b"split-views-v1\0");
         // The linked program as the run prepares it (0276 §2): its version's identity, which holds its rules (in
         // order), declarations, facts, inputs and outputs. Its messages are not in it (the combine is kept under the
         // masked texts, decision 0225 §3), so an edit of a message's words finds it prepared.
