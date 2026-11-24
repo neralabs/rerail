@@ -147,7 +147,10 @@ prototype's rule, "never key postings to known rules".
      says which read a node's place is).
    - **Not yet removed.**
      - *The `text` rows*: still made a row a node, now with a leaf's string by its term. Removing them makes `text` a
-       view of the tape and the index, which a node's text longer than one leaf does not fit as it stands.
+       view, and how its `s` is valued decides that view for every node, leaves included: a span (compared by its
+       bytes through the vocabulary's hash, interned only where a rule outputs it), an interned string (multi-leaf
+       texts, which have no term, interned into a table by node: the row again), or a term for every node with text
+       (an index of about 20 bytes a node). The user's to choose.
    - **The reads take the home.** `DocTape::in_place` hands the reads the home's bytes (`extent`): the tape, its
      presence and its index, which the view names (`presence`). A home ends where its index ends
      (`AuxIndex::extent`; `presence::find` refuses bytes past it).
