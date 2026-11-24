@@ -115,7 +115,7 @@ impl SolverDevice for Metal {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<rerail_blocks::vector::Vector<u64>, String> {
+    ) -> Result<(rerail_blocks::vector::Vector<u64>, bool), String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
     }
 

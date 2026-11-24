@@ -11023,3 +11023,30 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - tests-rr T9 and the library link 2;
   - tests-corpus phase 0 (with `a_modules_key_names_its_scopes_interfaces`) and r5 11;
   - logic's `logical_line_predicates_and_aliases_use_the_vocabulary_batch` 1.
+
+### Q530. Roll-up 103 (django-bugs 7af8278144 onto Pulling-it-all-together): what the merge chose
+
+- django-bugs:
+  - 0657: a device stratum too narrow for its rounds hands itself back to the CPU (flag 8; `fixpoint` returns whether the device reached the fixpoint; `gpu_handed`);
+  - 0658: a solved relation's column is priced by the column its values come from (`column_sources`, `Stats::sources`).
+- `fixpoint` and the solver's trait return `(Vector<u64>, bool)`: django's reached flag with the hub's block rows.
+- One give-back for an index whose program stopped before its build. Both sides had a mechanism, and each covered stops the other missed:
+  - the hub's `whole` (`Built`, 0603 step 5: an arena passed, a push past its room, a park; flags 1 and 32, ctl[3]);
+  - django's `behind` (the round ends a build lies behind; a stop at one: no new rows, bit 16, or handed back, bit 8).
+  - One site now gives back where `!b.ran() || !whole`, under one counter.
+  - The told filter excludes a build behind a round end, as django's message says ("not told to other batches while in flight"; its filter did not).
+  - The hub's `again_on_rewrap` and django's `ends` are both kept on the batch.
+- planner `lent` takes the hub's `TextSet` and django's `sources`.
+- search.rs `Stats`: the hub's `TextSet` solving with django's `sources`, reset in `solve`.
+- `column_sources` takes the hub's `front::Comp`, as `solving_of` does.
+- placement.tsv: the hub's columns and django's `gpu_handed`. The upload columns stay gone (0353 step 6).
+- `RERAIL_DEVICE_NARROW` and `RERAIL_ONE_LAUNCH_CHECK` are read through `profile::var` and listed as scoped, since django's tests set them through `switches::set`.
+- join_stages comments: django's text (bit 8), with 0648's number.
+- Decisions README: rows for 0657 and 0658, which the branch did not add.
+- The 0658 test is ported to `Components::of_names` and `TextSet`.
+- Checked with Relax, RERAIL_GPU=cpu: device-metal and logic, 0 errors. Tests:
+  - setfix device: django's three hand-back tests and the 0648 stack test, 4;
+  - tests-logic plan, 105 with the 0658 test.
+- Red before this merge (at 92a5c8ce55 too), for the green pass:
+  - `typed_corpus_reads_declarations_and_dependency_summaries` ("a lattice relation in a gate's place");
+  - parity_aggregates and parity_random_integers.

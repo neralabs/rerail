@@ -3022,6 +3022,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         let tried = !resuming && !seeded && comp.device.is_some() && dev.is_some();
         // The component's fixpoint ran on the device (a recursive one): its rows are all of them, and it is done.
         let mut device_fixed = false;
+        // Or the device handed it back after a round too narrow for it (decision 0657): its rows so far are this
+        // wave's, and the CPU's waves go on from them.
+        let mut handed_back = false;
         let on_device = resumed_on_device || tried && {
             let dev = dev.expect("a device");
             let plans = comp.device.as_ref().expect("device plans");
@@ -3039,7 +3042,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 heads.sort_unstable();
                 heads.dedup();
                 // Each rule's rows in `plans`' order, from the fixpoint's seeds-then-deltas order.
-                dev.fixpoint(&seeds, &deltas, &heads, store, syms, &mut dev_fresh).map(|made| {
+                dev.fixpoint(&seeds, &deltas, &heads, store, syms, &mut dev_fresh).map(|(made, fixed)| {
+                    handed_back = !fixed;
                     let (mut s, mut d) = (made[..seeds.len()].iter(), made[seeds.len()..].iter());
                     rules.iter().map(|r| *if dev.reads_own(r.0) { d.next() } else { s.next() }.expect("a count per rule")).collect::<Vector<u64>>()
                 })
@@ -3084,6 +3088,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 }
             }
         };
+        if handed_back {
+            device_fixed = false;
+        }
         if tried && !on_device {
             // The seeds were parsed without the CPU's indexes: each input step gets its index now, on the relation
             // the seed was parsed with. Parsed again from its spec, it looked each relation up by name on the

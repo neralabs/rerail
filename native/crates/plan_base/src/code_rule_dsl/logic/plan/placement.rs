@@ -195,6 +195,17 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
+/// A device round's own cost, in seconds: a recursive component's round's phases, each a few microseconds in one
+/// group, whatever its rows (decision 0647). Measured on the M3 (0647, "A real run's recursive strata"): 1.0 ms a
+/// round for `py_minor`'s 44 rounds of a row or none, 1 to 3 ms for the deep strata's.
+const DEVICE_ROUND: f64 = 1.0e-3;
+
+/// The work (rows its stages make) under which a recursive component's round costs the CPU less than a device round
+/// (decision 0657): the device hands such a component back to the CPU at that round's end.
+pub fn narrow_round_work() -> f64 {
+    DEVICE_ROUND / CPU_PER_WORK
+}
+
 /// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
 /// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
 /// negative.
