@@ -138,6 +138,28 @@ describe("gitHead and headMovedOnlyByCommits", () => {
     await expect(gitHead(root)).resolves.toBeUndefined();
   });
 
+  it("reads HEAD's reflog without starting the signing program the repository's config names", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const marker = join(root, ".git", "signer-ran");
+    const from = git(root, "rev-parse", "HEAD").trim();
+    // A commit with a signature header, which `git reflog` checks under log.showSignature by starting gpg.program.
+    const commit = [
+      `tree ${git(root, "rev-parse", "HEAD^{tree}").trim()}`, `parent ${from}`, "author Rerail <rerail@local> 1700000000 +0000",
+      "committer Rerail <rerail@local> 1700000000 +0000", "gpgsig -----BEGIN PGP SIGNATURE-----", " ", " unsigned", " -----END PGP SIGNATURE-----", "",
+      "signed", "",
+    ].join("\n");
+    const id = execFileSync("git", ["hash-object", "-t", "commit", "-w", "--stdin"], { cwd: root, input: commit, encoding: "utf8" }).trim();
+    git(root, "update-ref", "-m", "commit: signed", "HEAD", id);
+    // A stand-in for the program: it writes a line to a file of the test's own, and fails.
+    const program = join(root, ".git", "signer");
+    await writeFile(program, `#!/bin/sh\necho ran >> '${marker.replaceAll("\\", "/")}'; exit 1\n`, { mode: 0o755 });
+    git(root, "config", "log.showSignature", "true");
+    git(root, "config", "gpg.program", program.replaceAll("\\", "/"));
+
+    await expect(headMovedOnlyByCommits(root, from)).resolves.toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("tells commits from anything else that moved HEAD since a commit", async () => {
     const root = await repository({ "a.py": "1\n" });
     const seed = (await gitHead(root))!;
@@ -318,7 +340,10 @@ async function heldListing({ pastLimit = false } = {}): Promise<{ answer: unknow
   const waitForFile = `while [ -e '${shellPath(held)}' ]; do sleep 0.02; done`;
   const write = `(head -c ${LEFTOVER_BYTES} /dev/zero >&2); echo "wrote $?" >> '${shellPath(wrote)}'`;
   const leftover = `echo + >> '${shellPath(started)}'; ${waitForFile}; ${write}; echo - >> '${shellPath(loops)}'`;
-  git(root, "config", "filter.held.clean", `echo + >> '${shellPath(loops)}'; ((cd / && ${leftover}) </dev/null >/dev/null &); cat`);
+  // The drivers are the person's own, in a global config of this test's: Rerail's Git calls run no driver that only the
+  // repository's config defines.
+  vi.stubEnv("GIT_CONFIG_GLOBAL", inGit("person.gitconfig"));
+  git(root, "config", "--global", "filter.held.clean", `echo + >> '${shellPath(loops)}'; ((cd / && ${leftover}) </dev/null >/dev/null &); cat`);
   // Without a command for filter.hang, Git takes b.py as it is, and b.py is unchanged unless `pastLimit`.
   if (pastLimit) await hangAfterHeld(root, held, hung);
   await writeFile(held, "");
@@ -334,6 +359,7 @@ async function heldListing({ pastLimit = false } = {}): Promise<{ answer: unknow
     answer = await Promise.race([read, new Promise(settle => { late = setTimeout(settle, 5_000, "still waiting at 5 s"); })]);
   } finally {
     clearTimeout(late);
+    vi.unstubAllEnvs();
     await rm(held, { force: true });
     await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 10 });
     await hungGone(hung);
@@ -356,7 +382,7 @@ async function hangAfterHeld(root: string, held: string, hung: string): Promise<
   const script = join(root, ".git", "hang.js");
   await writeFile(script, HANGS_UNTIL_GONE);
   const command = [process.execPath, script, held, hung].map(part => `'${shellPath(part)}'`).join(" ");
-  git(root, "config", "filter.hang.clean", `exec ${command}`);
+  git(root, "config", "--global", "filter.hang.clean", `exec ${command}`);
   await writeFile(join(root, "b.py"), "print(2)\n");
 }
 
@@ -442,6 +468,23 @@ function gitInPlace(script: string): Promise<ChildProcess> {
   return started.promise;
 }
 
+/**
+ * {@link gitInPlace} for the Git that lists changed files (`ls-files --modified`). Its read first asks Git for the
+ * repository's config, and once in each process for Git's version (the guard on Rerail's Git calls): those Gits, and any
+ * other started before the listing, run as themselves.
+ */
+function listingInPlace(script: string): Promise<ChildProcess> {
+  const started = Promise.withResolvers<ChildProcess>();
+  vi.mocked(spawn).mockImplementation((git, args, options) => {
+    if (!args.includes("--modified")) return actualChildProcess.spawn(git, args, options);
+    vi.mocked(spawn).mockImplementation(actualChildProcess.spawn);
+    const child = actualChildProcess.spawn(process.execPath, ["-e", script, "--", ...args], options);
+    started.resolve(child);
+    return child;
+  });
+  return started.promise;
+}
+
 /** In Git's place: prints a path and stays until its input ends (the test's, or the test process's). */
 const PRINTS_AND_WAITS = "require('node:fs').writeSync(1, 'a.py\\0'); process.stdin.on('end', () => process.exit(0)).resume()";
 
@@ -482,7 +525,10 @@ describe("Git reads and their time limit", () => {
     const head = git(root, "rev-parse", "HEAD").trim();
     vi.mocked(endProcessTree).mockClear();
     fakeReadTimers({ limitTimer: true });
+    const before = vi.mocked(spawn).mock.calls.length;
     const reads = Promise.all([gitModifiedOrUntrackedPaths(root), gitHead(root)]);
+    // The listing of changed files starts its Git once the guard has listed the config.
+    while (!vi.mocked(spawn).mock.calls.slice(before).some(([, args]) => args.includes("--modified"))) await new Promise(settle => setImmediate(settle));
     // Both Gits finish during the stall, and the event loop handles their exits only once it ends, past the 10 s limit.
     stallUntilExited(lastGits(2), 10_500);
     await expect(reads).resolves.toEqual([["a.py"], head]);
@@ -513,7 +559,7 @@ describe("Git reads and their time limit", () => {
     const root = await repository({ "a.py": "print(1)\n" });
     fakeReadTimers();
     // In Git's place, a program that prints nothing and stays until it is ended, as a Git kept waiting does.
-    const started = gitInPlace("process.stdin.resume()");
+    const started = listingInPlace("process.stdin.resume()");
     const read = gitModifiedOrUntrackedPaths(root);
     await started;
     // As if the event loop had stalled for 11 s as the read started: its first look, 1 s in by its timer, is 12 s in on
@@ -541,7 +587,7 @@ describe("Git reads and their time limit", () => {
     const root = await repository({ "a.py": "print(1)\n" });
     fakeReadTimers();
     // In Git's place, a program that prints a path every 20 ms until it is ended, as a Git listing a large checkout does.
-    const printing = gitInPlace("setInterval(() => process.stdout.write('a.py\\0'), 20)");
+    const printing = listingInPlace("setInterval(() => process.stdout.write('a.py\\0'), 20)");
     const read = gitModifiedOrUntrackedPaths(root);
     await firstOutput(await printing);
     clockAhead(10_000);
@@ -556,7 +602,7 @@ describe("Git reads and their time limit", () => {
     const root = await repository({ "a.py": "print(1)\n" });
     vi.mocked(endProcessTree).mockClear();
     fakeReadTimers();
-    const started = gitInPlace(PRINTS_AND_WAITS);
+    const started = listingInPlace(PRINTS_AND_WAITS);
     const read = gitModifiedOrUntrackedPaths(root);
     const child = await started;
     await outputEnds(child);
@@ -573,7 +619,7 @@ describe("Git reads and their time limit", () => {
   it("ends a read whose Git's output ended before one look past the time limit, and which has not exited by the next", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
     fakeReadTimers();
-    const started = gitInPlace(PRINTS_AND_WAITS);
+    const started = listingInPlace(PRINTS_AND_WAITS);
     const read = gitModifiedOrUntrackedPaths(root);
     await outputEnds(await started);
     clockAhead(10_000);
@@ -605,6 +651,13 @@ describe("runGitAsync", () => {
     const result = await runGitAsync(root, ["cat-file", "blob", "HEAD:a.py"], { maxBuffer: 1_000 });
     expect(result.status).toBeNull();
     expect(result.error?.message).toMatch(/maxBuffer/u);
+  });
+
+  it("caps stderr at maxBuffer too, and says which stream Git printed past it", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    // Git names the object it cannot find on stderr, and prints nothing on stdout.
+    const result = await runGitAsync(root, ["cat-file", "-t", "x".repeat(2_000)], { maxBuffer: 1_000 });
+    expect([result.status, result.stdout, result.error && { ...result.error }]).toEqual([null, "", { code: "ENOBUFS", stream: "stderr" }]);
   });
 
   it("ends a Git that hangs at its timeout, with every process it started, and answers a null status once it has exited", async () => {
@@ -1674,7 +1727,7 @@ describe("Git reads and their output limit", () => {
   it("lists no file when Git lists past the 64 MiB a listing takes, and ends that Git at once with SIGTERM", async () => {
     const root = await repository({ "a.py": "1\n" });
     vi.mocked(endProcessTree).mockClear();
-    const started = gitInPlace(printsAndStays(LISTING_LIMIT + 1, "a.py\0"));
+    const started = listingInPlace(printsAndStays(LISTING_LIMIT + 1, "a.py\0"));
     const read = gitModifiedOrUntrackedPaths(root);
     const child = await started;
     await expect(Promise.race([read, stillWaiting(PAST_LIMIT_WAIT_MS)])).resolves.toEqual([]);
@@ -1741,7 +1794,7 @@ describe("Git reads and their output limit", () => {
     // A timer made before the read's timers are faked runs on the real clock.
     const late = stillWaiting(PAST_LIMIT_WAIT_MS);
     fakeReadTimers({ limitTimer: true });
-    const started = gitInPlace(`process.on('SIGTERM', () => {}); ${printsAndStays(LISTING_LIMIT + 1, "a.py\0")}`);
+    const started = listingInPlace(`process.on('SIGTERM', () => {}); ${printsAndStays(LISTING_LIMIT + 1, "a.py\0")}`);
     const read = gitModifiedOrUntrackedPaths(root);
     const child = await started;
     // Once the read has sent SIGTERM, the clock and the timers move past its time limit of 10 s.
