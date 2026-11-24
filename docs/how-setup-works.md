@@ -634,7 +634,7 @@ Development builds never take the main-instance lock and never open that store.
 
 Updates hand over without overlap. `rerail update` activates the new version and ends with a step the new version
 runs (`rerail install --refresh`), which stops a daemon still running the old one, waits until that process has exited
-and the OS has released its lock, then starts the new daemon on the same port, which takes the lock. It leaves the old
+and the OS has released its lock, then starts the new daemon on the same address and port, which takes the lock. It leaves the old
 daemon running, and says how to restart it, under `RERAIL_AUTOSTART=0`, when it does not answer or refuses its
 capability, or when it was started with `--dev`, TLS, `--allow-remote` or `--public-host`, which it cannot start the
 new one with. A coding agent's next hook or session from the new version replaces a daemon still running the old one,
