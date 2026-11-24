@@ -42,7 +42,11 @@ pub fn region_of(mut m: Mutable<u8>, keep: Keep) -> Region {
 /// Where a room's region lies: its block and its first byte's offset there (none for a region not in a block, a
 /// crate's own test's on the heap).
 pub fn place_of(r: &Region) -> Option<(&Arc<Block>, usize)> {
-    r.owner().downcast_ref::<Held>().map(|h| (h.0.region().block(), h.0.region().at()))
+    let owner = r.owner();
+    if let Some(h) = owner.downcast_ref::<Held>() {
+        return Some((h.0.region().block(), h.0.region().at()));
+    }
+    owner.downcast_ref::<crate::scratch::OnStack>().map(|s| s.place())
 }
 
 /// Where a vector lies (`rerail_vector::vector::Vector`): its block and its first `T`'s offset there.
@@ -96,7 +100,7 @@ impl Room for AnonRoom {
         if let Some(b) = &*open
             && let Some(r) = Mutable::alloc_aligned(b, bytes, align, name)
         {
-            return region_of(r, None);
+            return region_of(r, crate::census::counted(name, bytes));
         }
         // Room for the chunk the free list takes for `bytes` (its class, a power of two), aligned to its size up to
         // `ALIGN_MAX` past the block's first byte, and a page.
@@ -105,7 +109,7 @@ impl Room for AnonRoom {
         let b = Arc::new(Block::anon(crate::block::kind::FACTS, ANON_BLOCK.max(need)).with_free_list());
         let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
         *open = Some(b);
-        region_of(r, None)
+        region_of(r, crate::census::counted(name, bytes))
     }
 }
 

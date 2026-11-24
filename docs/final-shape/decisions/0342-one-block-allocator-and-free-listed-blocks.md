@@ -158,3 +158,64 @@ Tests: `free_buddies_merge_and_a_larger_chunk_splits`, `a_page_goes_back_once_no
 `a_large_chunk_fits_a_block_made_for_it`, and
 `a_page_with_a_live_byte_is_never_given_back` (R6, now through the frees themselves); Q337's freeze test with a
 chunk under a page, which is the case that shares a page now.
+
+## Amended (2026-11-24, user): a run's small structures on a stack a thread, long-lived ones in their owners' rooms
+
+Decision 0628 put every structure of a run in blocks: what no life places takes the run's anonymous room
+(`maps::AnonRoom`), free-listed blocks sharded by thread. Against the run before that merge (its arrays on the heap),
+an edit spent much of its time in the room: each region is a free list's class taken and given back through the
+ledger's sets, with a buddy merge, pages given back and marked in use again, and two heap objects of its own. The
+free list was not made for this. This record's own words (2026-11-17): it is held "to big pieces, not millions of
+small ones", and 0494 step 6 chose its lists for footprint, never for speed. An edit hands the room millions of
+small regions.
+
+### The census
+
+`RERAIL_ANON_CENSUS=path` (a measuring build) recorded each region the room gave over one edit of the data layer's
+store: its element type, bytes, the stack that asked for it, its thread, and when it went, in regions handed out
+since and in time.
+
+- 99.2% of regions go within the run, 97% on the thread that made them.
+- By regions handed out while a region lived: half live through under 16, 91% under about 65 thousand.
+- `Layouts::infer` cloned its whole map of facts for each union or recursive component: a quarter of the regions.
+  It now reads the component's supposition beside the facts (`Known`, f30917becd); the regions fell by a quarter.
+- After that, the largest sites are a few percent each (`Section::of`, `Keys::add`, `granules::number`,
+  `StoredPlan::of_row`); 64% of regions go within 16 more.
+
+### What the census says the room should be
+
+The event log was replayed through allocators, footprint at its peak against the live bytes at theirs:
+
+| Placement | Footprint peak / live peak |
+|---|---|
+| Today's free-listed blocks (buddy classes) | 1.37 |
+| One stack a thread, every region on it | 5.9 |
+| A stack a thread; regions living past 1,024 more elsewhere (oracle) | 1.00 |
+| The same, by the asking site (owned if over 1% of its regions live past 1,024) | 1.00 |
+
+A stack alone is pinned by the few regions that outlive what was made after them. Sent to their owners, those leave
+the stack at its live size. By site, the owned regions are about 40% of the regions and 37% of the bytes, from
+about 290 sites in about 15 modules (the tape writer, the syntax tables' keys, the stored plans, the plan tables,
+sections, the program image, the corpus memo, setfix, the planner); 257 sites only ever make short-lived regions.
+
+### Decided
+
+1. **A stack a thread** (`scratch::Stack`): one anonymous block, reserved once a thread. A region is a 16-byte
+   header (the previous header's offset, a state word) and its bytes, bumped from the top. Its going sets the state
+   free, one atomic store, from any thread; the owning thread pops freed headers off the top at its next take
+   (`settle`) and moves the top back. Past `KEEP` bytes above the top, pages go back to the OS, and a take that
+   reaches them marks them in use again. A region is not zeroed: a vector writes before it reads, and a map
+   zeroes its own (`Mem::new`), as the heap's `Vec` was.
+2. **The thread's scratch is that stack** (`scratch::with`): a use's takes are its regions, tagged with the use, and
+   its end frees them, so a freeze's temporaries and the room's regions are one memory, and a use may nest. Its
+   ledger is the block's: a use's end with GPU work that binds its bytes queued fails, as before.
+3. **Where a region lies is still a block and an offset** (`place_of`), so a kernel and the JIT read a stack's
+   structure in place.
+4. **Long-lived structures go in their owners' rooms**, family by family, the census finding them: what lives with a
+   tape, a plan store, a syntax table, a program image, takes a room that goes with it.
+5. **Then the stack is the run's default room** (`default_room`), and `AnonRoom` is removed. The census of an edit
+   then finds no region left long on a stack.
+
+Tests: a use's takes go back at its end; a region outliving the use is kept, the stack held under it until it goes;
+a free from another thread is settled by the owner; pages past `KEEP` go back and are taken again; the census of a
+run shows no long-lived region on a stack. Measured: an edit against the pre-merge engine's.

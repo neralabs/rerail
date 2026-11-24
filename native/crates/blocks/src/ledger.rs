@@ -80,6 +80,9 @@ pub struct Ledger {
     /// GPU uses of chunks queued now (`State::chunks`' length): with none, a CPU access is checked without the lock
     /// (a block's arrays are read and written at every value, `cpu_read`, `cpu_write`).
     chunk_uses: std::sync::atomic::AtomicUsize,
+    /// GPU uses queued now, of the block or a chunk (`State::open`'s counts): whether it is quiet, without the lock (a
+    /// thread's stack asks at each pop, `scratch::Stack::settle`).
+    uses: std::sync::atomic::AtomicUsize,
     /// The block's own region while a handle holds it (`region::whole`, decision 0491 step 3): what a kernel's bind
     /// of the block, found by address, pins (`region::bind_address`).
     pub(crate) root: Mutex<std::sync::Weak<crate::region::Region>>,
@@ -149,7 +152,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
-        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
+        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
         let mut live = blocks();
         // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
         // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
@@ -423,7 +426,7 @@ impl Ledger {
 
     /// Whether no GPU use of the block is queued.
     pub fn quiet(&self) -> bool {
-        self.lock().open.is_empty()
+        self.uses.load(std::sync::atomic::Ordering::Acquire) == 0
     }
 
     /// Chunks freed but held by queued GPU work.
@@ -439,6 +442,7 @@ impl Ledger {
             Some((e, n)) if *e == epoch => *n += 1,
             _ => s.open.push((epoch, 1)),
         }
+        self.uses.fetch_add(1, std::sync::atomic::Ordering::Release);
         let id = s.next_id;
         s.next_id += 1;
         if let Some((at, len)) = chunk {
@@ -456,6 +460,7 @@ impl Ledger {
             self.chunk_uses.store(s.chunks.len(), std::sync::atomic::Ordering::Release);
             if let Some(i) = s.open.iter().position(|(e, _)| *e == epoch) {
                 s.open[i].1 -= 1;
+                self.uses.fetch_sub(1, std::sync::atomic::Ordering::Release);
                 if s.open[i].1 == 0 {
                     s.open.remove(i);
                 }
