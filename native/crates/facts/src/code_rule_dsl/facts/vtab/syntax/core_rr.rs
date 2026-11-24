@@ -564,6 +564,33 @@ pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::Span
 /// Texts past this are scanned where they are, not kept in `Extra::rx_memo`.
 pub(super) const RX_MEMO_TEXT: usize = 4096;
 
+/// A document's leaf texts as the batch's strings, each interned once a document (decision 0656 step 4, `text` by
+/// node): a leaf's term in its tape's index (`DocIndex::term`) names its text, so a second leaf of the same text takes
+/// the first's string, with no hash of its text. `atoms` is the batch's vector, reset for each document.
+pub(super) struct Terms<'a, 'v> {
+    index: Option<rerail_tape_format::doc_index::DocIndex<'a>>,
+    atoms: &'v mut Vec<u32>,
+}
+
+impl<'a, 'v> Terms<'a, 'v> {
+    /// The terms of `p`'s document, where its tape's home holds an index (`FactsIn::stored_index`).
+    pub(super) fn of(p: &'a Projected, wanted: bool, atoms: &'v mut Vec<u32>) -> Self {
+        let index = wanted.then(|| p.f().stored_index()).flatten();
+        atoms.clear();
+        atoms.resize(index.map_or(0, |x| x.terms() as usize), u32::MAX);
+        Terms { index, atoms }
+    }
+    /// Node `id`'s text `text` as a string: its term's, interned at its first leaf.
+    fn string(&mut self, id: u32, text: &str, string: &mut dyn FnMut(&str) -> usize) -> usize {
+        let Some(term) = self.index.and_then(|x| x.term(id)) else { return string(text) };
+        let atom = &mut self.atoms[term as usize];
+        if *atom == u32::MAX {
+            *atom = u32::try_from(string(text)).expect("a batch's strings fit u32");
+        }
+        *atom as usize
+    }
+}
+
 impl CoreRows {
     /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
     fn reads_text(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
@@ -618,7 +645,8 @@ impl CoreRows {
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
     /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, terms: &mut Terms<'_, '_>, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = p.f();
         let kind = dialect.name(f, id);
         let text = f.text(id);
@@ -740,7 +768,7 @@ impl CoreRows {
             }
         }
         if wants_text && self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
-            self.text.push([n, string(text) as i64]);
+            self.text.push([n, terms.string(id, text, string) as i64]);
         }
     }
 

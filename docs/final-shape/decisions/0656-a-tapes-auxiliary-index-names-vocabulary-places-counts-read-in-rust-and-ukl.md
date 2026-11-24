@@ -105,11 +105,11 @@ prototype's rule, "never key postings to known rules".
      index read back from the store), and `the_aux_indexes_ukl_reads_are_its_rust_reads`, whose kernel now reads the
      index in the tape's home through `ukl_aux_in_home`.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows
-   these replace are removed, and so is the work that made them. In progress.
+   these replace are removed, and so is the work that made them. Done.
    - **One interface: `tape_format::doc_index::DocIndex`** (the user, 2026-11-23: "please put the calls behind an
      abstraction so that it's easier to switch out the design later"). The engine calls it and nothing under it:
      counts (`count`, `holds`, `counts`, `distinct`, `named_all_rooted`), listed codes (`listed`), text
-     (`may_have_text`), places (`place`, `child`). Today every answer is the auxiliary index's; another design is a
+     (`may_have_text`), terms (`term`, `terms`), places (`place`, `child`). Today every answer is the auxiliary index's; another design is a
      change to this file alone.
    - **A missing index is built once, where it is read.** `FactsIn::index` reads the home's index in place; a home
      without one (a format 15 tape, a home stored before layout 8), or without a section the facade needs, gets one
@@ -125,6 +125,10 @@ prototype's rule, "never key postings to known rules".
    - **`text` by its string.** A read of `text(n, s)` by `s` is routed (`MadeRows::route`, `keys_with_texts`) to
      the documents whose index says a node or span can have the text: a name of its vocabulary, else text its source
      holds. It made every document of the batch before.
+   - **`text` by node.** A leaf's `text` row takes its string by its term in its tape's index (`DocIndex::term`,
+     `core_rr::Terms`): the first leaf of a term interns its text, and every other leaf of the same text takes that
+     string, with no hash of its text. Only where the home holds an index (`FactsIn::stored_index`): for a home
+     without one, building it would cost what interning saves. A node that is no leaf interns its text as before.
    - **A child's place** (`child`'s `i`). A projection whose numbered nodes are every named node under the root
      (core.rerail's shape, one range, not withheld) over a home that holds an index reads a place in it
      (`Projected::places_by_index`, `FactsIn::place`), and its view entry says so (`ViewDoc::places_by_index`), so the

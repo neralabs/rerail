@@ -977,7 +977,7 @@ impl<'a> FactsIn<'a> {
     pub fn index(&self) -> rerail_tape_format::doc_index::DocIndex<'a> {
         use rerail_tape_format::doc_index::DocIndex;
         let facts: &'a Facts = self.facts;
-        if let Some(x) = facts.tape.as_deref().and_then(|t| t.image().aux_bytes()).and_then(|b| DocIndex::read(b).ok()) {
+        if let Some(x) = self.stored_index() {
             return x;
         }
         let bytes = facts.index.get_or_init(|| {
@@ -989,6 +989,12 @@ impl<'a> FactsIn<'a> {
             })
         });
         DocIndex::read(bytes).expect("the index built")
+    }
+    /// The document's index where its tape's home holds it (`index`), or `None`: a reader whose other route costs no
+    /// more than building one (a leaf's text, interned) reads it only there.
+    pub fn stored_index(&self) -> Option<rerail_tape_format::doc_index::DocIndex<'a>> {
+        let facts: &'a Facts = self.facts;
+        facts.tape.as_deref().and_then(|t| t.image().aux_bytes()).and_then(|b| rerail_tape_format::doc_index::DocIndex::read(b).ok())
     }
     /// Named node `id`'s place among its parent's named children (0 for the first, and the root's), read in the
     /// document's index (`DocIndex::place`).

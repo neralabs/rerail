@@ -3681,6 +3681,8 @@ impl Batch {
         let mut g = GuestRows::default();
         // The documents W reads no values of (`Dialect::values`).
         let mut unvalued: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        // Each document's leaf texts' strings, by term (`core_rr::Terms`): one vector for the batch, reset each document.
+        let mut term_atoms: Vec<u32> = Vec::new();
         for (j, (&i, d)) in group.iter().zip(&documents).enumerate() {
             let made::MadeDoc { p, withheld, error } = self.docs.made(i);
             let (withheld, tag) = (*withheld, self.docs.tag(i));
@@ -3756,13 +3758,14 @@ impl Batch {
                     }
                     c.for_dialect(dialect);
                     let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
+                    let mut terms = core_rr::Terms::of(p, core_nodes && wants_text, &mut term_atoms);
                     for (local, id, n) in p.node_ids() {
                         if wants_long_text_nodes && (p.f().end(id) - p.f().start(id)) as usize > core_rr::TEXT_INLINE {
                             long_text_nodes.push(n);
                         }
                         if core_nodes && c.visited(visits, p, dialect, id) {
                             visited += 1;
-                            c.node(p, dialect, local, id, n, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
+                            c.node(p, dialect, local, id, n, &mut string, &mut terms, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
                     (c.skip.literal_rows, c.skip.literal_value) = kept;

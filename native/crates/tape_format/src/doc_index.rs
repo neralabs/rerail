@@ -10,14 +10,16 @@
 //! - **rare codes**: the nodes of a code that few nodes have, listed, so finding them is no scan of the tape;
 //! - **text**: whether a node or span of the document can have a given text (a read of `text` by its string reads only
 //!   the documents that can);
-//! - **places**: a named node's place among its named siblings, and a parent's i-th named child.
+//! - **places**: a named node's place among its named siblings, and a parent's i-th named child;
+//! - **terms**: a leaf's text as a number of the document's (equal texts, equal terms), so a reader turns each distinct
+//!   text into its own value once, not once a leaf.
 
 use crate::aux_index::{self, AuxIndex, Kind, NONE, Sections};
 use crate::tape::Tape;
 
 /// The sections the reads below need: a home whose index lacks one is read as having none (`DocIndex::read` fails),
 /// and its owner builds them (`DocIndex::build`).
-const NEEDS: [Kind; 5] = [Kind::Vocab, Kind::Siblings, Kind::Counts, Kind::Rare, Kind::Named];
+const NEEDS: [Kind; 7] = [Kind::Leaves, Kind::Names, Kind::Vocab, Kind::Siblings, Kind::Counts, Kind::Rare, Kind::Named];
 
 /// A document's index, read where its bytes lie.
 #[derive(Clone, Copy)]
@@ -93,6 +95,17 @@ impl<'a> DocIndex<'a> {
         self.aux.term_of_text(text, source) != NONE || memchr::memmem::find(source, text).is_some()
     }
 
+    // Terms.
+
+    /// The document's distinct leaf texts: a term is below this.
+    pub fn terms(&self) -> u32 {
+        self.aux.terms()
+    }
+    /// Leaf `node`'s term, the same for every leaf of the same text; `None` for a node that is no leaf.
+    pub fn term(&self, node: u32) -> Option<u32> {
+        Some(self.aux.term_of_node(node)).filter(|&t| t != NONE)
+    }
+
     // Places.
 
     /// Named node `node`'s place among its parent's named children (0 for the first, and for the root).
@@ -145,6 +158,19 @@ mod tests {
             let across = &d.source[d.start(5) as usize..d.end(7) as usize];
             assert!(x.may_have_text(across, &d.source));
             assert!(!x.may_have_text(b"no such text", &d.source));
+            // Terms: a leaf's is its text's, the same for equal texts; no other node has one.
+            let mut texts = std::collections::HashMap::<&[u8], u32>::new();
+            for i in 0..d.len() {
+                let leaf = crate::tape::children(&d, i).next().is_none();
+                match x.term(i as u32) {
+                    Some(t) => {
+                        assert!(leaf && t < x.terms());
+                        assert_eq!(*texts.entry(&d.source[d.start(i) as usize..d.end(i) as usize]).or_insert(t), t, "node {i}");
+                    }
+                    None => assert!(!leaf, "leaf {i}"),
+                }
+            }
+            assert_eq!(texts.len() as u32, x.terms());
             // Places among named siblings.
             for p in 0..d.len() as u32 {
                 let mut k = 0;
