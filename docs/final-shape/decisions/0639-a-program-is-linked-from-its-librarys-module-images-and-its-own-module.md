@@ -434,7 +434,7 @@ Each tail step is one of four kinds, and each kind has its place:
 
 ### 6a. The tail by module, spiked (E12–E16)
 
-The tail is a list of named steps (`rr::TailStep`; `rr::TAIL` is its order, `rr::DOWNWARD` the two downward steps,
+The tail is a list of named steps (`rr::TailStep`; `rr::TAIL` is its order, `rr::downward_steps()` the downward steps,
 `rr::tail_steps` runs any list), so its parts run apart. Spike `spike_0639_tail_by_module` (ignored), on spark2, over
 all 17 packs' libraries and the phase programs, and up to 6 programs a pack (96 programs):
 
@@ -634,5 +634,36 @@ silently. Each place a digest stands for content, what can collide, and what is 
    T10. **Spiked** (§6a, E12–E16) and specified: the module steps at module time under a tail key
    (`p0_module_tailed`), the program's downward steps over the union and the steps after them on their edit, kind
    sets as rules over decision 0662's view, the steps' places declared. T10–T14.
+   **Built (2026-11-24), T10–T14 passing:**
+   - Each module's tail at module time, under `p0_tail_key` / `p0_tail_req -> p0_module_tailed`; a program links the
+     tails and runs `program_steps` (T11, T12, T14).
+   - Module-time decisions that a reader decides moved to program time (`Place::Across`), each at its `TAIL`
+     position before the downward steps: core.rerail's fallback declarations and inputs (`CoreDecls`, stripped from
+     the kept image), `within` where read (`WithinRead`, split from `BuiltinsOut`), a made context's `.pass` rows as
+     one (`PassesOnce`), and a host's copies a reader's instance holds (`HostCopiesOut`). Run after the downward steps,
+     `SourcesOnRequest` widened a dead host's copy (Vue's no-dupe-keys).
+   - T13 restated: each non-across step after the downward ones changes only its edit (the downward changes, the own
+     module's heads, and what earlier across steps changed). `AggregateDemand` reads across modules.
+   - Tests that plan on pool threads bind the test's store on the test thread first: two phase-0 runs at once in one
+     process store wait on its atoms lease and corrupted kept facts.
+   - `DOWNWARD` is `downward_steps()`, the steps that declare `Place::Downward`.
+   - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0662's view, names
+     `img_`) takes out the same sets, undeclarations and facts as `KindSets` in every pack.
+   - The program's checks are of its own components (`cycles::check_within`) where every step's changes are read off
+     its overlays and views (`rr::changed_since`). `cycles::check` is 15.0 of django's 15.5 ms of checks. A step
+     that makes a new base (`KindSets` rewriting rules, `AggregateDemand` placing demand) leaves its changes unread,
+     and the program is checked whole: in the packs most programs still are.
+
+   **Left of step 6:**
+   - A derivation's changes, read off it: the pass manager records, for a derived base, the heads of the rules it
+     wrote rather than kept, so `Delta::of` gives them and the checks narrow for every program. Writing `KindSets`
+     and `AggregateDemand` as edits instead was tried and dropped: stating read-through fields on an overlay repeats
+     list settings (`.cache` named twice), and the deeper overlay chains broke the `program_image` tests' forms.
+   - The steps after the downward ones over their edit alone (`Pipeline::again`): the program has no kept run of
+     those steps to be again of (its modules ran them apart), so the last run is the union as its own output, which
+     the local steps leave as it is (T11's second half).
+   - `KindSets` as a rules pass in the Pipeline (decision 0662 §5.1): the view read into a run in place and the
+     pass's plan kept with its image. No in-process evaluator exists apart from a corpus run (50–90 ms fixed, E5,
+     against `KindSets`' 2 ms), and a second one would break S003. The view as an engine input is the work.
 7. §5 checked by T4 on the template, and the template's fill time measured.
 8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
