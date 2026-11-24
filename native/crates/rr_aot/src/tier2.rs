@@ -536,6 +536,12 @@ impl<'a, L: Layout> P<'a, L> {
         self.top.1 = at;
     }
 
+    /// An identifier, a leaf given `field` (the lean parser's `id` and `field`).
+    #[inline(always)]
+    fn id(&mut self, field: u16) -> R {
+        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, field)
+    }
+
     /// The token, a leaf of `kind` (the lean parser's `bump_as`).
     #[inline(always)]
     fn bump_as(&mut self, kind: u16) -> R {
@@ -564,12 +570,18 @@ impl<'a, L: Layout> P<'a, L> {
     /// The token, which must be word `w`: one the grammar implies, no leaf.
     #[inline(always)]
     fn p(&mut self, w: u32) -> R {
-        self.implied(self.word() == w)
+        self.implied_if(self.word() == w)
+    }
+
+    /// A token the grammar implies, no leaf (the lean parser's `implied`).
+    #[inline(always)]
+    fn implied(&mut self) -> R {
+        self.implied_if(true)
     }
 
     /// The token, which must pass `ok`: one the grammar implies, no leaf.
     #[inline(always)]
-    fn implied(&mut self, ok: bool) -> R {
+    fn implied_if(&mut self, ok: bool) -> R {
         if !ok {
             return self.refuse();
         }
@@ -830,7 +842,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::SETTING);
         self.p_stored(w::DOT_13, k::DOT)?;
         if self.i >= self.n || self.bit_at(self.i, 1) {
-            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+            self.id(f::NAME)?;
         } else if self.kind() == t::IDENTIFIER {
             self.tk_as(true, k::IDENTIFIER, f::NAME)?;
             while !((self.i >= self.n || self.bit_at(self.i, 2)) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::COMMA_12 }) {
@@ -874,16 +886,16 @@ impl<L: Layout> P<'_, L> {
         self.open(k::TEST_BLOCK);
         self.p(w::DOT_13)?;
         self.p(w::TEST_53)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         if self.word() == w::EXACTLY_54 {
             self.tk_as(true, k::IDENTIFIER, f::MODIFIER)?;
         }
         if self.word() == w::USES_55 {
-            self.implied(true)?;
-            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+            self.implied()?;
+            self.id(f::ARGUMENT)?;
             while self.word() == w::COMMA_12 {
-                self.implied(true)?;
-                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+                self.implied()?;
+                self.id(f::ARGUMENT)?;
             }
         }
         self.block_body()?;
@@ -896,7 +908,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::FIXTURES_BLOCK);
         self.p(w::DOT_13)?;
         self.p(w::FIXTURES_57)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.block_body()?;
         self.close()?;
         Ok(())
@@ -961,7 +973,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::EDIT_DECLARATION);
         self.p(w::DOT_13)?;
         self.p(w::EDIT_69)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
         self.close()?;
@@ -973,7 +985,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::FUNCTOR_DECLARATION);
         self.p_stored(w::DOT_13, k::DOT)?;
         self.p(w::FUNCTOR_70)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
         self.p_stored(w::COLON_15, k::COLON)?;
@@ -1004,7 +1016,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::DECLARATION);
         self.p_stored(w::DOT_13, k::DOT)?;
         self.p(w::DECL_67)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
         while !(self.i >= self.n || self.bit_at(self.i, 1)) {
@@ -1032,7 +1044,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::TYPE_DECLARATION);
         self.p(w::DOT_13)?;
         self.p(w::TYPE_2)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         if self.i >= self.n || self.bit_at(self.i, 1) {
             self.relabel_field(f::DEFINITION)?;
             if !((self.i >= self.n || self.bit_at(self.i, 1))) {
@@ -1068,7 +1080,7 @@ impl<L: Layout> P<'_, L> {
             self.io_relation()?;
             self.field_made(f::RELATION);
             while self.word() == w::COMMA_12 {
-                self.implied(true)?;
+                self.implied()?;
                 self.io_relation()?;
                 self.field_made(f::RELATION);
             }
@@ -1096,7 +1108,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::LATTICE_DECLARATION);
         self.p(w::DOT_13)?;
         self.p(w::LATTICE_71)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.p(w::LT_17)?;
         if self.kind() == t::IDENTIFIER {
             self.tk_as(true, k::IDENTIFIER, f::BASE)?;
@@ -1107,7 +1119,7 @@ impl<L: Layout> P<'_, L> {
             self.lattice_operation()?;
             self.field_made(f::OPERATION);
             while self.word() == w::COMMA_12 {
-                self.implied(true)?;
+                self.implied()?;
                 self.lattice_operation()?;
                 self.field_made(f::OPERATION);
             }
@@ -1135,7 +1147,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::VIOLATION_DECLARATION);
         self.p(w::DOT_13)?;
         self.p(w::VIOLATION_68)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
         loop {
@@ -1176,14 +1188,14 @@ impl<L: Layout> P<'_, L> {
     fn functor_type(&mut self) -> R {
         self.open(UNSET);
         self.retag(k::TYPE);
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         if self.word() == w::LT_17 && self.word_at(self.i + 1) == w::GT_18 {
             self.p_stored(w::LT_17, k::LT)?;
             self.p_stored(w::GT_18, k::GT)?;
         } else {
             if self.word() == w::LT_17 {
-                self.implied(true)?;
-                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+                self.implied()?;
+                self.id(f::ARGUMENT)?;
                 self.p(w::GT_18)?;
             }
         }
@@ -1238,13 +1250,13 @@ impl<L: Layout> P<'_, L> {
     /// `io_relation`.
     fn io_relation(&mut self) -> R {
         self.open(k::IO_RELATION);
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         if self.word() == w::LPAREN_10 && self.word_at(self.i + 1) == w::RPAREN_11 {
             self.tk_as(self.word() == w::LPAREN_10, k::LPAREN, f::PARAMETERS)?;
             self.p_stored(w::RPAREN_11, k::RPAREN)?;
         } else {
             if self.word() == w::LPAREN_10 {
-                self.implied(true)?;
+                self.implied()?;
                 self.io_parameters()?;
                 self.field_made(f::PARAMETERS);
                 self.p(w::RPAREN_11)?;
@@ -1337,7 +1349,7 @@ impl<L: Layout> P<'_, L> {
     /// `lattice_operation`.
     fn lattice_operation(&mut self) -> R {
         self.open(k::LATTICE_OPERATION);
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.p(w::MINUS_GT_9)?;
         if self.word() == w::AT_23 && self.kind_at(self.i + 1) == t::IDENTIFIER && (self.i + 2 < self.n && self.word_at(self.i + 2) != w::LPAREN_10) {
             self.lattice_functor()?;
@@ -1357,7 +1369,7 @@ impl<L: Layout> P<'_, L> {
         self.open(UNSET);
         self.retag(k::FUNCTOR_CALL);
         self.p(w::AT_23)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::FUNCTION)?;
+        self.id(f::FUNCTION)?;
         self.close()?;
         Ok(())
     }
@@ -1450,7 +1462,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::CODE_37)?;
         self.braced_column()?;
         if self.word() == w::IN_38 {
-            self.implied(true)?;
+            self.implied()?;
             self.tk_as(self.kind() == t::STRING, k::STRING, f::CODES)?;
         }
         self.close()?;
@@ -1470,7 +1482,7 @@ impl<L: Layout> P<'_, L> {
     fn braced_column(&mut self) -> R {
         if self.word() == w::LBRACE_20 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.word_at(self.i + 2) == w::RBRACE_21 {
             self.p(w::LBRACE_20)?;
-            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::COLUMN)?;
+            self.id(f::COLUMN)?;
             self.p(w::RBRACE_21)?;
         } else {
             match self.word() {
@@ -1500,7 +1512,7 @@ impl<L: Layout> P<'_, L> {
         if self.word() == w::SAFE_41 && self.kind_at(self.i + 1) == t::IDENTIFIER {
             self.p_stored(w::SAFE_41, k::SAFE)?;
         }
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::RELATION)?;
+        self.id(f::RELATION)?;
         self.tk_as(self.kind() == t::STRING, k::STRING, f::DESCRIPTION)?;
         self.close()?;
         Ok(())
@@ -1510,7 +1522,7 @@ impl<L: Layout> P<'_, L> {
     fn suppress_line(&mut self) -> R {
         self.open(k::SUPPRESS_LINE);
         self.p(w::SUPPRESS_42)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::TOOL)?;
+        self.id(f::TOOL)?;
         self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
         while self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
             self.p(w::COMMA_12)?;
@@ -1520,7 +1532,7 @@ impl<L: Layout> P<'_, L> {
             self.p(w::OVER_43)?;
             if self.word() == w::LBRACE_20 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.word_at(self.i + 2) == w::RBRACE_21 {
                 self.p(w::LBRACE_20)?;
-                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::OVER)?;
+                self.id(f::OVER)?;
                 self.p(w::RBRACE_21)?;
             } else {
                 match self.word() {
@@ -1553,7 +1565,7 @@ impl<L: Layout> P<'_, L> {
             self.column()?;
             self.field_made(f::COLUMN);
             while self.word() == w::COMMA_12 {
-                self.implied(true)?;
+                self.implied()?;
                 self.column()?;
                 self.field_made(f::COLUMN);
             }
@@ -1566,7 +1578,7 @@ impl<L: Layout> P<'_, L> {
     /// `column`.
     fn column(&mut self) -> R {
         self.open(k::COLUMN);
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         self.p(w::COLON_15)?;
         self.r_type()?;
         self.field_made(f::TYPE);
@@ -1577,14 +1589,14 @@ impl<L: Layout> P<'_, L> {
     /// `type`.
     fn r_type(&mut self) -> R {
         self.open(k::TYPE);
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
+        self.id(f::NAME)?;
         if self.word() == w::LT_17 && self.word_at(self.i + 1) == w::GT_18 {
             self.p_stored(w::LT_17, k::LT)?;
             self.p_stored(w::GT_18, k::GT)?;
         } else {
             if self.word() == w::LT_17 {
-                self.implied(true)?;
-                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+                self.implied()?;
+                self.id(f::ARGUMENT)?;
                 self.p(w::GT_18)?;
             }
         }
@@ -1612,21 +1624,21 @@ impl<L: Layout> P<'_, L> {
         self.head()?;
         self.field_made(f::HEAD);
         while self.word() == w::COMMA_12 {
-            self.implied(true)?;
+            self.implied()?;
             self.head()?;
             self.field_made(f::HEAD);
         }
         if self.word() == w::COLON_MINUS_3 {
-            self.implied(true)?;
+            self.implied()?;
             self.body()?;
             self.field_made(f::BODY);
         }
         if self.word() == w::EQ_GT_4 {
-            self.implied(true)?;
+            self.implied()?;
             self.term()?;
             self.field_made(f::EDIT);
             while self.word() == w::COMMA_12 {
-                self.implied(true)?;
+                self.implied()?;
                 self.term()?;
                 self.field_made(f::EDIT);
             }
@@ -1642,7 +1654,7 @@ impl<L: Layout> P<'_, L> {
         if (self.word() == w::MUST_35 || self.word() == w::MAY_36) && self.kind_at(self.i + 1) == t::IDENTIFIER {
             self.tk_as(matches!(self.word(), w::MUST_35 | w::MAY_36), ANON[self.word() as usize], f::MODAL)?;
         }
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::RELATION)?;
+        self.id(f::RELATION)?;
         self.argument_list()?;
         self.field_made(f::ARGUMENTS);
         self.close()?;
@@ -1658,7 +1670,7 @@ impl<L: Layout> P<'_, L> {
             self.term()?;
             self.field_made(f::ARGUMENT);
             while self.word() == w::COMMA_12 {
-                self.implied(true)?;
+                self.implied()?;
                 self.term()?;
                 self.field_made(f::ARGUMENT);
             }
@@ -1678,7 +1690,7 @@ impl<L: Layout> P<'_, L> {
             self.conjunction()?;
             self.field_made(f::ALTERNATIVE);
             while self.word() == w::SEMI_14 {
-                self.implied(true)?;
+                self.implied()?;
                 self.conjunction()?;
                 self.field_made(f::ALTERNATIVE);
             }
@@ -1694,7 +1706,7 @@ impl<L: Layout> P<'_, L> {
         self.literal()?;
         self.field_made(f::LITERAL);
         while self.word() == w::COMMA_12 {
-            self.implied(true)?;
+            self.implied()?;
             self.literal()?;
             self.field_made(f::LITERAL);
         }
@@ -2026,7 +2038,7 @@ impl<L: Layout> P<'_, L> {
     fn functor_call(&mut self) -> R {
         self.open(k::FUNCTOR_CALL);
         self.p(w::AT_23)?;
-        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::FUNCTION)?;
+        self.id(f::FUNCTION)?;
         self.argument_list()?;
         self.field_made(f::ARGUMENTS);
         self.close()?;
@@ -2038,7 +2050,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::AGGREGATE);
         match self.word() {
             w::COUNT_47 => {
-                self.implied(true)?;
+                self.implied()?;
                 self.p_stored(w::COLON_15, k::COLON)?;
                 self.p(w::LBRACE_20)?;
             }
@@ -2055,7 +2067,7 @@ impl<L: Layout> P<'_, L> {
                     self.term()?;
                     self.field_made(f::KEY);
                     while self.word() == w::COMMA_12 {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.term()?;
                         self.field_made(f::KEY);
                     }

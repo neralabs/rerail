@@ -3433,17 +3433,52 @@ fn no_field(code: &str, f: &str) -> String {
 }
 
 /// `code` with the takes named as the lean parser names them: `p` (a punctuation the grammar implies, no leaf),
-/// `p_stored` (one stored, a leaf), `implied` (a token the grammar implies) and `bump_as` (the token, a leaf of a kind,
-/// no field). A name a rule's function has already is left as it is.
+/// `p_stored` (one stored, a leaf), `implied` (a token the grammar implies, `implied_if` one tested), `id` (an
+/// identifier) and `bump_as` (the token, a leaf of a kind, no field). A name a rule's function has already is left
+/// as it is.
 fn lean_names(code: &str) -> String {
     let mut out = code.to_owned();
-    for (old, new) in [("word_skip_as", "p"), ("word_leaf_as", "p_stored"), ("skip_as", "implied")] {
+    for (old, new) in [("word_skip_as", "p"), ("word_leaf_as", "p_stored"), ("skip_as", "implied_if")] {
         if out.contains(&format!("fn {new}(")) || out.contains(&format!("fn {new}<")) {
             continue;
         }
         for (a, b) in [("self.", "("), ("self.", "::<"), ("fn ", "("), ("fn ", "<"), ("`", "`")] {
             out = out.replace(&format!("{a}{old}{b}"), &format!("{a}{new}{b}"));
         }
+    }
+    // The forms the lean parser has a helper of: each call, the helper's name and code, and the definition it goes before.
+    let forms: [(&str, &str, &str, &str); 2] = [
+        (
+            "self.implied_if(true)?;",
+            "implied",
+            "    /// A token the grammar implies, no leaf (the lean parser's `implied`).\n    #[inline(always)]\n    fn implied(&mut self) -> R {\n        self.implied_if(true)\n    }\n",
+            "    fn implied_if(&mut self, ok: bool) -> R {",
+        ),
+        (
+            "self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, ",
+            "id",
+            "    /// An identifier, a leaf given `field` (the lean parser's `id` and `field`).\n    #[inline(always)]\n    fn id(&mut self, field: u16) -> R {\n        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, field)\n    }\n",
+            "    fn tk_as(&mut self, ok: bool, kind: u16, field: u16) -> R {",
+        ),
+    ];
+    for (call, name, code, before) in forms {
+        if !out.contains(call) || !out.contains(before) || out.contains(&format!("fn {name}(")) {
+            continue;
+        }
+        let mut lines: Vec<String> = Vec::new();
+        for l in out.lines() {
+            let t = l.trim_start();
+            let pad = &l[..l.len() - t.len()];
+            match t.strip_prefix(call) {
+                Some("") => lines.push(format!("{pad}self.{name}()?;")),
+                Some(r) if r.ends_with(")?;") && !r[..r.len() - 3].contains([' ', '(']) => lines.push(format!("{pad}self.{name}({r}")),
+                _ => lines.push(l.to_owned()),
+            }
+        }
+        let at = lines.iter().position(|l| l == before).unwrap_or(0);
+        let doc = (0..at).rev().take_while(|&j| lines[j].trim_start().starts_with("///") || lines[j].trim_start().starts_with("#[")).last().unwrap_or(at);
+        lines.insert(doc, code.to_owned());
+        out = lines.join("\n") + "\n";
     }
     // The token, a leaf of a kind and no field: `bump_as`, as the lean parser's.
     let def = "    fn tk_as(&mut self, ok: bool, kind: u16, field: u16) -> R {";

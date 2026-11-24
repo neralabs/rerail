@@ -1051,12 +1051,18 @@ impl<'a, L: Layout> P<'a, L> {
     /// The token, which must be word `w`: one the grammar implies, no leaf.
     #[inline(always)]
     fn p(&mut self, w: u32) -> R {
-        self.implied(self.word() == w)
+        self.implied_if(self.word() == w)
+    }
+
+    /// A token the grammar implies, no leaf (the lean parser's `implied`).
+    #[inline(always)]
+    fn implied(&mut self) -> R {
+        self.implied_if(true)
     }
 
     /// The token, which must pass `ok`: one the grammar implies, no leaf.
     #[inline(always)]
-    fn implied(&mut self, ok: bool) -> R {
+    fn implied_if(&mut self, ok: bool) -> R {
         if !ok {
             return self.refuse();
         }
@@ -1275,7 +1281,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::SEMI_33 => {
-                        self.implied(true)?;
+                        self.implied()?;
                     }
                     _ => {
                         return self.refuse();
@@ -1363,7 +1369,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::SEMI_33 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -1440,7 +1446,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::SEMI_33 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -1464,7 +1470,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::DOT_32 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.name()?;
                     }
                     _ => {
@@ -1566,7 +1572,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::SEMI_33 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.ask_semi(false)?;
                         if self.m_semi() || self.m_semi_close() {
                         } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) && self.word_at(self.i + 1) == w::COLON_COLON_63 || (self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) && (self.word_at(self.i + 1) == w::EQ_12 || self.word_at(self.i + 1) == w::PLUS_EQ_64 || self.word_at(self.i + 1) == w::MINUS_EQ_65 || self.word_at(self.i + 1) == w::STAR_EQ_66 || self.word_at(self.i + 1) == w::SLASH_EQ_67 || self.word_at(self.i + 1) == w::PERCENT_EQ_68 || self.word_at(self.i + 1) == w::COLON_4)) || (self.pat_named_1_0(self.i, self.n)) || self.m_acc() || matches!(self.word(), w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_42 | w::WHILE_44 | w::DO_45 | w::BANG_49 | w::MINUS_77 | w::PLUS_76 | w::PLUS_PLUS_80 | w::MINUS_MINUS_81 | w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 | w::TRUE_116 | w::FALSE_117 | w::NULL_118 | w::THIS_37 | w::LPAREN_19 | w::RETURN_60 | w::THROW_59 | w::BREAK_62 | w::CONTINUE_61 | w::IF_53 | w::WHEN_55 | w::TRY_56 | w::COLON_COLON_63 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5) || self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
@@ -1956,7 +1962,7 @@ impl<L: Layout> P<'_, L> {
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else {
                 if self.word() == w::COLON_4 {
-                    self.implied(true)?;
+                    self.implied()?;
                     self.delegation_specifier()?;
                     loop {
                         self.ask_semi(false)?;
@@ -1965,7 +1971,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::COMMA_20 => {
-                                    self.implied(true)?;
+                                    self.implied()?;
                                     self.delegation_specifier()?;
                                 }
                                 _ => {
@@ -2014,7 +2020,7 @@ impl<L: Layout> P<'_, L> {
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else {
                 if self.word() == w::COLON_4 {
-                    self.implied(true)?;
+                    self.implied()?;
                     self.delegation_specifier()?;
                     loop {
                         self.ask_semi(false)?;
@@ -2023,7 +2029,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::COMMA_20 => {
-                                    self.implied(true)?;
+                                    self.implied()?;
                                     self.delegation_specifier()?;
                                 }
                                 _ => {
@@ -2073,7 +2079,7 @@ impl<L: Layout> P<'_, L> {
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                     } else {
                         if self.word() == w::COLON_4 {
-                            self.implied(true)?;
+                            self.implied()?;
                             self.delegation_specifier()?;
                             loop {
                                 self.ask_semi(false)?;
@@ -2082,7 +2088,7 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::COMMA_20 => {
-                                            self.implied(true)?;
+                                            self.implied()?;
                                             self.delegation_specifier()?;
                                         }
                                         _ => {
@@ -2127,7 +2133,7 @@ impl<L: Layout> P<'_, L> {
             while !(self.m_semi_close() || self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.ask_semi(false)?;
                         if self.m_semi() {
                             self.mark_semi()?;
@@ -2145,7 +2151,7 @@ impl<L: Layout> P<'_, L> {
                 self.mark_semi_close()?;
             }
             if self.word() == w::SEMI_33 {
-                self.implied(true)?;
+                self.implied()?;
                 self.ask_semi(false)?;
                 if self.m_semi() {
                     self.mark_semi()?;
@@ -2164,7 +2170,7 @@ impl<L: Layout> P<'_, L> {
                             } else {
                                 match self.word() {
                                     w::SEMI_33 => {
-                                        self.implied(true)?;
+                                        self.implied()?;
                                     }
                                     _ => {
                                         return self.refuse();
@@ -2226,7 +2232,7 @@ impl<L: Layout> P<'_, L> {
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
             if self.word() == w::COLON_4 {
-                self.implied(true)?;
+                self.implied()?;
                 self.delegation_specifier()?;
                 loop {
                     self.ask_semi(false)?;
@@ -2235,7 +2241,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.implied(true)?;
+                                self.implied()?;
                                 self.delegation_specifier()?;
                             }
                             _ => {
@@ -2292,7 +2298,7 @@ impl<L: Layout> P<'_, L> {
         self.p_stored(w::LPAREN_19, k::LPAREN)?;
         self.variable_declaration()?;
         while self.word() == w::COMMA_20 {
-            self.implied(true)?;
+            self.implied()?;
             self.variable_declaration()?;
         }
         self.p(w::RPAREN_21)?;
@@ -2310,7 +2316,7 @@ impl<L: Layout> P<'_, L> {
             while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.function_value_parameter()?;
                     }
                     _ => {
@@ -2324,7 +2330,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -2343,7 +2349,7 @@ impl<L: Layout> P<'_, L> {
         }
         self.parameter()?;
         if self.word() == w::EQ_12 {
-            self.implied(true)?;
+            self.implied()?;
             let asks = self.asks;
             self.asks = asks & 0x0 | 0x0;
             self.r_expression()?;
@@ -2413,7 +2419,7 @@ impl<L: Layout> P<'_, L> {
                 self.r_block()?;
             }
             w::EQ_12 => {
-                self.implied(true)?;
+                self.implied()?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x8;
                 self.r_expression()?;
@@ -2447,7 +2453,7 @@ impl<L: Layout> P<'_, L> {
             while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.class_parameter()?;
                     }
                     _ => {
@@ -2461,7 +2467,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -2493,7 +2499,7 @@ impl<L: Layout> P<'_, L> {
         self.r_type()?;
         self.asks = asks;
         if self.word() == w::EQ_12 {
-            self.implied(true)?;
+            self.implied()?;
             let asks = self.asks;
             self.asks = asks & 0x0 | 0x0;
             self.r_expression()?;
@@ -2609,7 +2615,7 @@ impl<L: Layout> P<'_, L> {
                 } else {
                     match self.word() {
                         w::SEMI_33 => {
-                            self.implied(true)?;
+                            self.implied()?;
                             self.ask_semi(false)?;
                             if self.m_semi() || self.m_semi_close() {
                             } else if (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) || self.word() == w::ENUM_16 && self.word_at(self.i + 1) == w::CLASS_13 || self.m_acc() || matches!(self.word(), w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36) {
@@ -2724,7 +2730,7 @@ impl<L: Layout> P<'_, L> {
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
             if self.word() == w::LPAREN_19 {
-                self.implied(true)?;
+                self.implied()?;
                 self.p(w::RPAREN_21)?;
                 if self.word() == w::COLON_4 {
                     self.bump_as(k::COLON)?;
@@ -2747,7 +2753,7 @@ impl<L: Layout> P<'_, L> {
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
             if self.word() == w::LPAREN_19 {
-                self.implied(true)?;
+                self.implied()?;
                 self.parameter_with_optional_type()?;
                 self.p(w::RPAREN_21)?;
                 if self.word() == w::COLON_4 {
@@ -2803,7 +2809,7 @@ impl<L: Layout> P<'_, L> {
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
             if self.word() == w::COLON_4 {
-                self.implied(true)?;
+                self.implied()?;
                 self.delegation_specifier()?;
                 loop {
                     self.ask_semi(false)?;
@@ -2812,7 +2818,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.implied(true)?;
+                                self.implied()?;
                                 self.delegation_specifier()?;
                             }
                             _ => {
@@ -2850,7 +2856,7 @@ impl<L: Layout> P<'_, L> {
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else {
             if self.word() == w::COLON_4 {
-                self.implied(true)?;
+                self.implied()?;
                 self.constructor_delegation_call()?;
             }
         }
@@ -2891,7 +2897,7 @@ impl<L: Layout> P<'_, L> {
         while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
             match self.word() {
                 w::COMMA_20 => {
-                    self.implied(true)?;
+                    self.implied()?;
                     self.type_parameter()?;
                 }
                 _ => {
@@ -2904,7 +2910,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::GT_27 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -2947,7 +2953,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.type_constraint()?;
                     }
                     _ => {
@@ -3400,7 +3406,7 @@ impl<L: Layout> P<'_, L> {
         while !(self.word() == w::DOT_32 && self.word_at(self.i + 1) == w::LPAREN_19) {
             match self.word() {
                 w::DOT_32 => {
-                    self.implied(true)?;
+                    self.implied()?;
                     self.type_name()?;
                     if self.m_generic() {
                         self.type_arguments()?;
@@ -3564,7 +3570,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::DOT_32 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.type_name()?;
                         self.ask_semi(false)?;
                         if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -3598,7 +3604,7 @@ impl<L: Layout> P<'_, L> {
         while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
             match self.word() {
                 w::COMMA_20 => {
-                    self.implied(true)?;
+                    self.implied()?;
                     self.type_projection()?;
                 }
                 _ => {
@@ -3611,7 +3617,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::GT_27 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -3699,7 +3705,7 @@ impl<L: Layout> P<'_, L> {
             while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.ft_parameter()?;
                     }
                     _ => {
@@ -3713,7 +3719,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -3970,7 +3976,7 @@ impl<L: Layout> P<'_, L> {
                 } else {
                     match self.word() {
                         w::DOT_32 => {
-                            self.implied(true)?;
+                            self.implied()?;
                             self.type_name()?;
                         }
                         _ => {
@@ -3994,7 +4000,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::DOT_32 => {
-                                    self.implied(true)?;
+                                    self.implied()?;
                                     self.type_name()?;
                                 }
                                 _ => {
@@ -4012,7 +4018,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::DOT_32 => {
-                                    self.implied(true)?;
+                                    self.implied()?;
                                     self.type_name()?;
                                 }
                                 _ => {
@@ -4782,7 +4788,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::LBRACE_17 => {
-                    self.implied(true)?;
+                    self.implied()?;
                     if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || (self.i == 0 || (self.i - 1 < self.n && !((self.word_at(self.i - 1) == w::DOT_32 || self.word_at(self.i - 1) == w::COLON_COLON_63)))) && (self.word() == w::PUBLIC_89 || self.word() == w::PRIVATE_90 || self.word() == w::INTERNAL_91 || self.word() == w::PROTECTED_92 || self.word() == w::ABSTRACT_100 || self.word() == w::FINAL_101 || self.word() == w::OPEN_102 || self.word() == w::OVERRIDE_87 || self.word() == w::LATEINIT_88 || self.word() == w::CONST_99 || self.word() == w::SEALED_84 || self.word() == w::ANNOTATION_1 || self.word() == w::DATA_52 || self.word() == w::INNER_85 || self.word() == w::VALUE_86 || self.word() == w::TAILREC_94 || self.word() == w::OPERATOR_95 || self.word() == w::INFIX_96 || self.word() == w::INLINE_97 || self.word() == w::EXTERNAL_98 || self.word() == w::SUSPEND_24 || self.word() == w::VARARG_103 || self.word() == w::NOINLINE_104 || self.word() == w::CROSSINLINE_105 || self.word() == w::EXPECT_107 || self.word() == w::ACTUAL_108) && (self.word_at(self.i + 1) == w::PUBLIC_89 || self.word_at(self.i + 1) == w::PRIVATE_90 || self.word_at(self.i + 1) == w::INTERNAL_91 || self.word_at(self.i + 1) == w::PROTECTED_92 || self.word_at(self.i + 1) == w::ABSTRACT_100 || self.word_at(self.i + 1) == w::FINAL_101 || self.word_at(self.i + 1) == w::OPEN_102 || self.word_at(self.i + 1) == w::OVERRIDE_87 || self.word_at(self.i + 1) == w::LATEINIT_88 || self.word_at(self.i + 1) == w::CONST_99 || self.word_at(self.i + 1) == w::SEALED_84 || self.word_at(self.i + 1) == w::ANNOTATION_1 || self.word_at(self.i + 1) == w::DATA_52 || self.word_at(self.i + 1) == w::INNER_85 || self.word_at(self.i + 1) == w::VALUE_86 || self.word_at(self.i + 1) == w::TAILREC_94 || self.word_at(self.i + 1) == w::OPERATOR_95 || self.word_at(self.i + 1) == w::INFIX_96 || self.word_at(self.i + 1) == w::INLINE_97 || self.word_at(self.i + 1) == w::EXTERNAL_98 || self.word_at(self.i + 1) == w::SUSPEND_24 || self.word_at(self.i + 1) == w::VARARG_103 || self.word_at(self.i + 1) == w::NOINLINE_104 || self.word_at(self.i + 1) == w::CROSSINLINE_105 || self.word_at(self.i + 1) == w::EXPECT_107 || self.word_at(self.i + 1) == w::ACTUAL_108 || self.word_at(self.i + 1) == w::FUN_14 || self.word_at(self.i + 1) == w::VAL_22 || self.word_at(self.i + 1) == w::VAR_23 || self.word_at(self.i + 1) == w::CLASS_13 || self.word_at(self.i + 1) == w::INTERFACE_15 || self.word_at(self.i + 1) == w::OBJECT_31 || self.word_at(self.i + 1) == w::GET_34 || self.word_at(self.i + 1) == w::SET_35 || self.word_at(self.i + 1) == w::COMPANION_30 || self.word_at(self.i + 1) == w::CONSTRUCTOR_36 || self.word_at(self.i + 1) == w::ENUM_16 || self.word_at(self.i + 1) == w::TYPEALIAS_11 || self.word_at(self.i + 1) == w::AT_2) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) && self.word_at(self.i + 1) == w::COLON_COLON_63 || (self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) && (self.word_at(self.i + 1) == w::EQ_12 || self.word_at(self.i + 1) == w::PLUS_EQ_64 || self.word_at(self.i + 1) == w::MINUS_EQ_65 || self.word_at(self.i + 1) == w::STAR_EQ_66 || self.word_at(self.i + 1) == w::SLASH_EQ_67 || self.word_at(self.i + 1) == w::PERCENT_EQ_68 || self.word_at(self.i + 1) == w::COLON_4)) || (self.pat_named_1_0(self.i, self.n)) || self.m_acc() || matches!(self.word(), w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_42 | w::WHILE_44 | w::DO_45 | w::BANG_49 | w::MINUS_77 | w::PLUS_76 | w::PLUS_PLUS_80 | w::MINUS_MINUS_81 | w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 | w::TRUE_116 | w::FALSE_117 | w::NULL_118 | w::THIS_37 | w::LPAREN_19 | w::RETURN_60 | w::THROW_59 | w::BREAK_62 | w::CONTINUE_61 | w::IF_53 | w::WHEN_55 | w::TRY_56 | w::COLON_COLON_63 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5) || self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                         let asks = self.asks;
                         self.asks = asks & 0x0 | 0x0;
@@ -4814,7 +4820,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::LAMBDA_PARAMETERS);
         self.lambda_parameter()?;
         while self.word() == w::COMMA_20 {
-            self.implied(true)?;
+            self.implied()?;
             self.lambda_parameter()?;
         }
         self.close()?;
@@ -4898,7 +4904,7 @@ impl<L: Layout> P<'_, L> {
         while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
             match self.word() {
                 w::COMMA_20 => {
-                    self.implied(true)?;
+                    self.implied()?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x0;
                     self.r_expression()?;
@@ -4914,7 +4920,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RBRACK_6 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -4938,7 +4944,7 @@ impl<L: Layout> P<'_, L> {
             while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         let flags = self.flags;
                         self.flags = self.flags & !FLAG_NO_LAMBDA;
                         self.value_argument()?;
@@ -4956,7 +4962,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -5072,7 +5078,7 @@ impl<L: Layout> P<'_, L> {
         while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
             match self.word() {
                 w::COMMA_20 => {
-                    self.implied(true)?;
+                    self.implied()?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x0;
                     self.r_expression()?;
@@ -5088,7 +5094,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RBRACK_6 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -5109,7 +5115,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::COLON_COLON_63)?;
         match self.word() {
             w::CLASS_13 => {
-                self.implied(true)?;
+                self.implied()?;
             }
             w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 => {
                 self.name()?;
@@ -5168,15 +5174,15 @@ impl<L: Layout> P<'_, L> {
     /// `character_literal`.
     fn character_literal(&mut self) -> R {
         self.open(k::CHARACTER_LITERAL);
-        self.implied(matches!(self.kind(), t::TICK | t::TICK__CLOSE))?;
+        self.implied_if(matches!(self.kind(), t::TICK | t::TICK__CLOSE))?;
         if self.kind() == t::CHARACTER_ESCAPE_SEQ {
             self.bump_as(k::CHARACTER_ESCAPE_SEQ)?;
         } else if self.kind() == t::BACKSLASH_U {
             self.uni_escape()?;
         } else if self.kind() == t::CHAR_CONTENT {
-            self.implied(true)?;
+            self.implied()?;
         }
-        self.implied(matches!(self.kind(), t::TICK | t::TICK__CLOSE))?;
+        self.implied_if(matches!(self.kind(), t::TICK | t::TICK__CLOSE))?;
         self.close()?;
         self.marked = false;
         Ok(())
@@ -5187,7 +5193,7 @@ impl<L: Layout> P<'_, L> {
         self.open(UNSET);
         self.retag(k::CHARACTER_ESCAPE_SEQ);
         self.tk_as(self.kind() == t::BACKSLASH_U, k::BACKSLASH_U, 0)?;
-        self.implied(self.kind() == t::UNI_DIGITS)?;
+        self.implied_if(self.kind() == t::UNI_DIGITS)?;
         self.close()?;
         self.marked = false;
         Ok(())
@@ -5217,7 +5223,7 @@ impl<L: Layout> P<'_, L> {
                     self.wrap(k::UNSIGNED_LITERAL, 0)?;
                     match self.word() {
                         w::U_119 | w::U_120 | w::UL_121 | w::UL_122 => {
-                            self.implied(true)?;
+                            self.implied()?;
                         }
                         _ => {
                             return self.refuse();
@@ -5274,9 +5280,9 @@ impl<L: Layout> P<'_, L> {
     /// `string_literal`.
     fn string_literal(&mut self) -> R {
         self.open(k::STRING_LITERAL);
-        self.implied(matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE))?;
+        self.implied_if(matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE))?;
         if self.kind() == t::QUOTE_QUOTE {
-            self.implied(true)?;
+            self.implied()?;
         }
         loop {
             if self.kind() == t::STRING_CONTENT {
@@ -5292,7 +5298,7 @@ impl<L: Layout> P<'_, L> {
                 break;
             }
         }
-        self.implied(matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE))?;
+        self.implied_if(matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE))?;
         self.close()?;
         self.marked = false;
         Ok(())
@@ -5318,7 +5324,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::THIS_37 => {
-                    self.implied(true)?;
+                    self.implied()?;
                 }
                 _ => {
                     return self.refuse();
@@ -5362,7 +5368,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.implied(true)?;
+                                self.implied()?;
                                 let flags = self.flags;
                                 self.flags = self.flags | FLAG_NO_LAMBDA;
                                 self.delegation_specifier()?;
@@ -5613,7 +5619,7 @@ impl<L: Layout> P<'_, L> {
         if self.bit_at(self.i, 6) || self.m_label_at() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) && self.word_at(self.i + 1) == w::COLON_COLON_63 {
         } else {
             if self.word() == w::VAL_22 {
-                self.implied(true)?;
+                self.implied()?;
                 self.variable_declaration()?;
                 self.p(w::EQ_12)?;
             }
@@ -5636,7 +5642,7 @@ impl<L: Layout> P<'_, L> {
             while !(self.word() == w::COMMA_20 && (self.word_at(self.i + 1) == w::RPAREN_21 || self.word_at(self.i + 1) == w::GT_27 || self.word_at(self.i + 1) == w::RBRACK_6 || self.word_at(self.i + 1) == w::RBRACE_18 || self.word_at(self.i + 1) == w::MINUS_GT_41)) {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.implied(true)?;
+                        self.implied()?;
                         self.when_condition()?;
                     }
                     _ => {

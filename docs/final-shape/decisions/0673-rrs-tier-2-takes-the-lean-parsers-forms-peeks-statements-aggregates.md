@@ -387,9 +387,12 @@ The user asked again for every gap to be closed. This step closes the ones still
   `if P { match self.word_at(self.i + 1) { … } }` (`shared_test_as_match`), as the lean parser's `statement` matches
   the directive's word after its `.`.
 - **The takes have lean's names.** `p(w)` (a punctuation the grammar implies), `p_stored(w, k)` (one stored),
-  `implied(ok)`, and `bump_as(k)` (the token, a leaf of a kind, no field) (`lean_names`), in rr's and Kotlin's code.
+  `implied()` (a token the grammar implies; `implied_if(ok)` one tested), `id(f)` (an identifier, given its field),
+  and `bump_as(k)` (the token, a leaf of a kind, no field) (`lean_names`), in rr's and Kotlin's code, both forms. The
+  loop form keeps its one loop and stack, the device's shape, which the lean parser has no counterpart of; its
+  places' code is the calls form's, these takes included.
 
-rr's `tier2.rs` is 2,468 lines, from 2,791, and `tier2_loop.rs` is 3,009, from 3,330. Kotlin's `tier2.rs` is 7,261,
+rr's `tier2.rs` is 2,480 lines, from 2,791, and `tier2_loop.rs` is 3,021, from 3,330. Kotlin's `tier2.rs` is 7,267,
 from 7,552. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
 
 ## Where the ten gaps stand
@@ -403,7 +406,7 @@ from 7,552. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 9
 7. Tokens: a kind is `self.kind() == t::K`, a choice of tokens is one take, `punctuation` and the aggregate's words are
    `anon()`, and a tested token is taken with no test (steps 2, 9, 12).
 8. Numbered arms: none in rr, in either form, or in Kotlin (steps 3, 5, 8, 11).
-9. Helpers: lean's names (`p`, `p_stored`, `implied`, `bump_as`), one take, a leaf's refusal checked once, depth
+9. Helpers: lean's names (`p`, `p_stored`, `implied`, `id`, `bump_as`), one take, a leaf's refusal checked once, depth
    counted where the grammar recurses, and no unused helper or field (steps 7, 12).
 10. The loop form: its places are in the calls form's shapes, and none only jumps (steps 8, 11). A repetition is a
     `while` (steps 9, 11).
