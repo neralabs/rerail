@@ -1490,23 +1490,55 @@ fn only_the_main_checkout_reads(name: &str, damage: fn(&Path) -> bool) {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// The repository's config includes a file with no condition, and `damage` then makes that file
+/// one Git cannot read, returning whether this process cannot read it either. Git refuses the
+/// linked worktree, and so does the opener: its open with no include followed succeeds there, and
+/// the includes it then follows read the damaged file.
+fn the_linked_worktree_reads_too(name: &str, damage: fn(&Path) -> bool) {
+    let (root, main, linked) = linked_fixture(name);
+    let damaged = root.join("damaged.gitconfig");
+    std::fs::write(&damaged, "").unwrap();
+    git(&main, &["config", "include.path", &config_path(&damaged)]);
+    if damage(&damaged) {
+        let listed = git_output(&linked, &["config", "--list"], &[]).status;
+        assert!(!listed.success(), "Git reads the damaged file in the linked worktree");
+        let message = refusal(&linked);
+        assert!(message.starts_with("cannot read the Git config's includes"), "{message}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Makes `file` include itself.
+fn include_itself(file: &Path) -> bool {
+    let text = format!("[include]\n\tpath = {}\n", config_path(file));
+    std::fs::write(file, text).unwrap();
+    true
+}
+
+/// Makes `file` one Git cannot parse.
+fn unparsable(file: &Path) -> bool {
+    std::fs::write(file, "[test\n").unwrap();
+    true
+}
+
+/// Makes `file` mode 000, returning whether this process then cannot read it: a superuser can.
+#[cfg(unix)]
+fn unreadable(file: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::read(file).is_err()
+}
+
 /// A file that includes itself, under a condition only the main checkout meets.
 #[test]
 fn a_main_checkout_include_loop_leaves_the_linked_worktree_open_as_git_does() {
-    only_the_main_checkout_reads("main-loop", |file| {
-        let text = format!("[include]\n\tpath = {}\n", config_path(file));
-        std::fs::write(file, text).unwrap();
-        true
-    });
+    only_the_main_checkout_reads("main-loop", include_itself);
 }
 
 /// A file Git cannot parse, under a condition only the main checkout meets.
 #[test]
 fn an_unparsable_main_checkout_include_leaves_the_linked_worktree_open_as_git_does() {
-    only_the_main_checkout_reads("main-unparsable", |file| {
-        std::fs::write(file, "[test\n").unwrap();
-        true
-    });
+    only_the_main_checkout_reads("main-unparsable", unparsable);
 }
 
 /// A file of mode 000, under a condition only the main checkout meets. Unix only; a superuser
@@ -1514,11 +1546,27 @@ fn an_unparsable_main_checkout_include_leaves_the_linked_worktree_open_as_git_do
 #[cfg(unix)]
 #[test]
 fn an_unreadable_main_checkout_include_leaves_the_linked_worktree_open_as_git_does() {
-    only_the_main_checkout_reads("main-unreadable", |file| {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o000)).unwrap();
-        std::fs::read(file).is_err()
-    });
+    only_the_main_checkout_reads("main-unreadable", unreadable);
+}
+
+/// A file that includes itself, with no condition.
+#[test]
+fn a_plain_include_loop_refuses_the_linked_worktree_as_git_does() {
+    the_linked_worktree_reads_too("plain-loop", include_itself);
+}
+
+/// A file Git cannot parse, with no condition.
+#[test]
+fn an_unparsable_plain_include_refuses_the_linked_worktree_as_git_does() {
+    the_linked_worktree_reads_too("plain-unparsable", unparsable);
+}
+
+/// A file of mode 000, with no condition. Unix only; a superuser reads the file anyway, and the
+/// case then checks nothing.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_plain_include_refuses_the_linked_worktree_as_git_does() {
+    the_linked_worktree_reads_too("plain-unreadable", unreadable);
 }
 
 /// In a linked worktree of a repository another user owns, an include only the main checkout's
