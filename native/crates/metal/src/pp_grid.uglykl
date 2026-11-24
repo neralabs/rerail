@@ -95,6 +95,8 @@
 // which Metal keeps in device memory); in the `#if` lines' evaluation, each SIMD group's window of a long line
 // (`p1_if_line`, `IfWin`).
 #define PP_TG_BIG UKL_SORT_WORDS
+// A power of two: a SIMD group's run is its slot masked by a constant (the M3's back end, G15, computes an address in
+// group memory from a computed index wrong otherwise: decision 0588).
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
     // The item taken and whether one was; the next phase's tiles to push and its unit.
@@ -351,7 +353,7 @@ UKL_INLINE uint32_t pp_lib_tiles(ROBUFFER(uint32_t) lay, uint32_t n, uint32_t ls
     lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),       \
            AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),                                           \
            AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG),                \
-           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS)
+           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u)] __UKL_ARGS)
 // The loop's phase (`PH_LP_RUN`), a function of its own apart from the program's step (`pp_step`), as it was before
 // decision 0653 (`lp_loop`, `lp_help`). Inlined into the step with every other phase, the M3's Metal back end
 // miscompiled it (2026-11-23): a piece read again wrote half its output entries, their words exchanged (`src` and
@@ -875,7 +877,7 @@ UKL_ONCE uint32_t pp_step(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUF
                                AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), AT(const uint32_t, IF_OPS), AT(const uint32_t, STATE), AT(const uint32_t, OUT), AT(const uint32_t, OBASE),
                                AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), defined_key, true_key, W(IF_TRUE), AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP),
                                AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w,
-                               g.lid & (UKL_SIMD_WIDTH - 1u), &tg->ifw[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
+                               g.lid & (UKL_SIMD_WIDTH - 1u), &tg->ifw[(g.lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u)] __UKL_ARGS);
         // The `#line` rows (§6), for the next iteration's lines and the text.
         EACH(w, nd) p1_line_row(u, AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, N_DIRS),
                                 AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), W(OUT_CAP),

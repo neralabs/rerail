@@ -1385,7 +1385,8 @@ fn expansion_keys(rows: &[(Vec<u8>, u32, u32)]) -> Vec<String> {
 /// Decision 0613 §6, stage 5: provenance. The device's expansions are the serial pass's `Expansion` rows, each
 /// with its macro, its root call's place and its parent: through calls read inline, a top call's request, an
 /// argument's expansion and its request, a memoized result used at several places (its rows each place's), a
-/// name a body makes and one an argument brings, and an empty expansion.
+/// name a body makes and one an argument brings, and an empty expansion; a memo hit's rows in a piece read again,
+/// and calls read in arguments' expansions.
 #[test]
 fn expansions_are_the_serial_passes() {
     let shapes: &[&str] = &[
@@ -1406,7 +1407,12 @@ fn expansions_are_the_serial_passes() {
     for i in 0..8 {
         args += &format!("F(C8({i}), C8(ID(a{i})), C8(ID(a{i}) b), ID(ID({i})))\n");
     }
-    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str()]).collect();
+    // A piece read again inline (a pragma in a request), its second line's calls the memo's hits (a hit's rows are
+    // its template's, decision 0613 §6); calls read in arguments' expansions, each a request (§4).
+    let defs = args.lines().filter(|l| l.starts_with("#define")).collect::<Vec<_>>().join("\n");
+    let again = format!("{defs}\nID(C8(0) _Pragma(\"x\"))\nID(C8(1))\n");
+    let in_args = format!("{defs}\nID(C8(0))\nID(C8(1))\nID(C8(2))\nF(ID(C4(0)) ID(1), C2(ID(2)), ID(C1(3)), 4)\n");
+    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str(), again.as_str(), in_args.as_str()]).collect();
     for main in &shapes {
         for cpp in [false, true] {
             let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
@@ -2817,6 +2823,56 @@ fn the_output_is_pieces_that_refer_to_the_text() {
     let got = got.unwrap_or_else(|why| panic!("refused {why}"));
     same(show(&got), show(&want), "the text");
     assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
+}
+
+/// Decision 0613's calls read in an argument's expansion: each shape the serial pass's, in C and C++. A call in
+/// an argument a hole in the argument's list, passed through the caller's rescan; at an edge the run read again:
+/// a function-like name before the hole whose `(` the result begins, a result ending in a function-like name with
+/// a `(` after the parameter, two holes side by side (the first's tail, the second's `(`). The parameter
+/// stringized and pasted (its raw tokens), read twice, `__COUNTER__` in the call, a live name inside its result
+/// (`DEFER(A)()`'s `A ( )`: the rescan acts on it), inside a call's argument inside a request, and a piece's.
+#[test]
+fn calls_in_an_argument_are_the_serial_passes() {
+    let defs = "#define ID(x) x\n#define G(y) [y]\n#define F(x) <x>\n#define L(y) (y)\n#define H(a) a+1\n#define FH(x) H x\n\
+                #define N(y) H\n#define FN(x) x(7)\n#define T(y) H\n#define P(y) (y)\n#define S(x) #x x\n#define C(x) x ## _end x\n\
+                #define TW(x) x x\n#define K(y) y __COUNTER__\n#define EMPTY()\n#define DEFER(id) id EMPTY()\n#define A() 123\n\
+                #define EX(...) __VA_ARGS__\n";
+    let shapes: &[(&str, &str)] = &[
+        ("passed through", "F(G(1) G(2))\nID(ID(G(3)))\nint v = ID(G(8));\n"),
+        ("a name before it whose ( it begins", "FH(L(5))\nID(FH(L(6)))\n"),
+        ("its tail with a ( after the parameter", "FN(N(0))\nID(FN(N(1)))\n"),
+        ("two holes side by side", "F(T(0) P(9))\nID(F(T(0) P(8)))\n"),
+        ("stringized and pasted", "S(G(4))\nC(G(5))\nID(S(G(6)) C(G(7)))\n"),
+        ("read twice", "TW(G(6))\nID(TW(G(7)))\n"),
+        ("__COUNTER__", "F(K(1) K(2))\nID(F(K(3)))\n__COUNTER__\n"),
+        ("a live name in it", "EX(EX(DEFER(A)()))\nID(EX(DEFER(A)()))\nF(EX(DEFER(A)()) 1)\n"),
+    ];
+    for (what, text) in shapes {
+        let main = format!("{defs}{text}");
+        for cpp in [false, true] {
+            let (got, want, _, launches) = expanded_in(&[("main.c", main.as_str())], rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
+            same(launches, LAUNCHES, format!("{what}: launches"));
+        }
+    }
+}
+
+/// Decision 0613 §4: a call read in an argument's expansion is a request of its own. `ID(G(1) G(2) G(3))`: the
+/// top call and each `G` posted (the CPU backend's one group posts no argument, so only the argument's calls
+/// make them), and the output the serial pass's.
+#[test]
+fn a_call_in_an_argument_is_a_request() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::expand_from;
+    let text = "#define ID(x) x\n#define G(y) [y]\nID(G(1) G(2) G(3))\n";
+    let (got, want, _, _) = expanded(&[("main.c", text)], false);
+    same(got.map(|g| show(&g)), Ok(show(&want)), "the output");
+    let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.as_bytes().to_vec())].into_iter().collect();
+    let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+    let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+    let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+    same(x.refused, 0, "refused");
+    assert!(x.posted >= 4, "{} requests posted, not the top call and its argument's 3", x.posted);
 }
 
 /// A run's frames are as deep as its input nests: past the group's `LP_DEPTH` they are the run's region 6

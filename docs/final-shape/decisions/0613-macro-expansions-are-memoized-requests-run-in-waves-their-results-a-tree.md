@@ -652,6 +652,44 @@ So:
      `(` after the parameter; two holes side by side; the parameter stringized and pasted; the argument read
      twice in the body; `__COUNTER__` in it. Each the serial pass's, on the CPU backend and Metal, and Boost's
      `seq.c` under the work bound.
+
+   **Calls read in an argument's expansion, built** (2026-11-23). The design above holds, with these additions.
+   - **Posted with its arguments referred to.** `lp_rq_post` posts a call read in an argument's expansion (`arg`:
+     a call below the run's first) as a request that owns its raw entries, as a request's own call does. Its record
+     is keyed, its key's place the first of its raw tokens that is the text's (`open`), so two calls spelled alike
+     at different places are one result moved by the difference. `RQ_ARGREF` marks it: its run refers to its raw
+     entries by index (`XP_ARG`, `lp_rq_begin`), and its uses rank where its holder reads (`lp_counter`).
+   - **A result's live names.** A hole passed through a rescan is right unless a name in the result acts there:
+     `EX(EX(DEFER(A)()))`'s inner result is `A ( )`, whose `A` the outer rescan calls. A request's record counts
+     its result's live names (row 6): its own at its end (`lp_rq_end`), its holes' and nodes' added when it is
+     done (`lp_rq_finish`). A rescan passing a hole through marks the record (`RQ_RESCAN`, an atomic or); if the
+     record is done (`RQ_FIN`) with live names, the run stops and is read again (`LP_AGAIN`); if it is not yet
+     done, `lp_rq_finish` sees the mark with its `FIN` (one atomic or orders them) and reads the holder and its
+     waiters again. A count is written before the mark that publishes it.
+   - **A memo hit's rows are its template's.** `lp_memo_end` keeps the rows logged under the capture as the
+     entry's template (`LpMemo.lg`), relative to its call's row; a hit writes them into its run's log. A result
+     whose rows name parents outside it (a name its arguments brought, an occurrence) keeps no template and is
+     not reused. Before this a hit in a piece read again lost its rows.
+   - The device reports the requests it posted (`Expanded::posted`, `LPQ` 5).
+   - Tests: `calls_in_an_argument_are_the_serial_passes` (the shapes above and a live name, C and C++),
+     `a_call_in_an_argument_is_a_request` (`ID(G(1) G(2) G(3))` posts the argument's three calls),
+     `expansions_are_the_serial_passes`' `again` and `in_args` shapes, and `__COUNTER__`'s live-name shape.
+     Every eval test passes on the CPU backend (with clang's trapping UB and bounds checks too) and on CUDA,
+     run one at a time.
+   - **On Metal.** Every eval test passes on the M3 Max. Before, this build failed there: it hung, faulted, or read
+     a call's arguments two tokens late, because right after `lp_alloc` grew region 1 in `lp_collect_open` the
+     run read that region as zeros. `lp_lex` and `lp_alloc` are now inline at every use (`always_inline`), and they
+     reach the run's frames and regions by masked index, with no pointer into the run kept.
+   - **The M1 (G13) refuses or miscounts every function-like call, at HEAD too** (900b0171ad, before this work).
+     `F(1) q` is refused `X_ACROSS`: at the first argument step the top frame's `at` is still on the `(` that
+     `lp_collect_open` read, so the call reads its own `(` again. The window's delimiters were right. One group
+     fails as eight do, so this is no race between groups. The AIR is right. These still fail:
+     - a group-memory fence after the call;
+     - the library compiled for size;
+     - the two functions inlined, with indexed frames.
+
+     A probe that reads the run after the call makes every shape pass: a G13 miscompile that follows the code's
+     shape, as `clif_view_field`'s did. Still open.
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
@@ -696,5 +734,12 @@ So:
    run one after another. Now the lanes' tokens go through a window in threadgroup memory (a barrier each side), lane
    0 alone feeds, and its end flags are shared once a window (`sy_share`). The test takes 0.63 s; its largest run 67
    ms, from 1.7 s. (At the hub's roll-up 104 this window is 0588's `IfWin`, which the hub had built for the same
-   test: lane 0 alone evaluates, the other lanes only fill its slots, and an early stop tells them through `at`.) The eval tests pass (47, profile `second`), with `a_definition_changed_between_uses_is_expanded_again`
-   counting the `A`s' hits in each expansion of `F` too.
+   test: lane 0 alone evaluates, the other lanes only fill its slots, and an early stop tells them through `at`.) The
+   eval tests pass (47, profile `second`), with `a_definition_changed_between_uses_is_expanded_again` counting the
+   `A`s' hits in each expansion of `F` too.
+
+   At the hub's roll-up 107 (this, with "calls read in an argument's expansion are requests"): a request posts an
+   object-like macro only where the request it makes is below the levels' bound (`LP_RQ_LEVELS`), as its body's calls
+   then are requests too. One at the bound read them with none, and the call holding it shared nothing:
+   `an_argument_spelled_alike_is_a_hole`'s `P(x, 1)`, read in an argument at four places, had no hit, against 11
+   on the Go/C branch alone (and the test passed on the hub before the merge). Every eval test passes on the CPU backend (67).

@@ -11098,3 +11098,20 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - `with_consts` stays the hub's: the key bound is checked where a view's constants are taken.
   - The interned texts and the witness counts are the hub's `Vector`s; the 0661 test's doc named 0659, now 0661.
 - Checked with Relax, RERAIL_GPU=cpu: device-metal, plan-base, planner, run, setfix, 0 errors. Tests: setfix device 44 of 46, the 0661 tests included; red before too: parity_aggregates and parity_random_integers.
+
+### Q534. Roll-up 107 (Go-C-and-C-support ae1d181275 onto Pulling-it-all-together): what the merge chose
+
+- Go-C-and-C-support ae1d181275 (0613 §4): calls read in an argument's expansion are requests (`RQ_ARGREF`); a result's live names make its holder read again; a memo hit's rows are its capture's template; `Expanded::posted`.
+- The branch sits on the grid's preprocessor; its commit is replayed onto the hub's 0653 files. 0653's names are kept (`lp_loop_run`, no `lp_help`, no `groups`); its slot masked by a constant (G15) is taken, the `IfWin` slot too.
+- Met dc71ebe625's 0613 work (a line's requests, object-like macros as requests) in five places, each both:
+  - `__COUNTER__` inline for an argument's request, an `#if` line's, and one posted in a request or an argument;
+  - the key's places from `open` wherever the entries are the record's own (`own`), and an object-like one's disabled macros mixed in;
+  - a call's reads given back only for a function-like call (`call`);
+  - the stop check before a post at the call's end, with `call` true;
+  - the argref flag reset, with lines posting.
+- The two together lost a sharing: `an_argument_spelled_alike_is_a_hole` (`P(x, 1)` in an argument at four places) had no hit, where Go/C alone has 11.
+  - The cause: an object-like request posted at the levels' bound reads its body's calls with no requests of their own.
+  - A request now posts an object-like macro only where the request it makes is below the bound. 0613 says so.
+- Checked with Relax, RERAIL_GPU=cpu: metal, c-directives, 0 errors. Tests:
+  - c-directives 67 (eval, Go/C's new tests and dc71's `A` hits included);
+  - metal `pp_` 9.
