@@ -68,9 +68,11 @@ impl RulesProgram {
             .map_err(Clone::clone)
     }
 
-    /// The atom the program's constant `name` is.
+    /// The atom the program's constant `name` is; for a word its rules never name, one no constant of it is (an input
+    /// states the word, and no rule of the pass reads it).
     pub fn constant(&self, name: &str) -> Result<i64, String> {
-        self.planned()?.constants.get(name).copied().ok_or_else(|| format!("the rules pass's program has no constant {name:?}"))
+        let p = self.planned()?;
+        Ok(p.constants.get(name).copied().unwrap_or(i64::from(CONSTANTS) + p.constants.len() as i64))
     }
 
     /// The program run over `inputs` (each bound by its relation's name): the live rows of each of `outputs`.
@@ -104,9 +106,10 @@ impl RulesProgram {
                 modules.bind(db, name, source).map_err(|e| e.to_string())?;
             }
             let kept: BTreeSet<String> = outputs.iter().map(|o| (*o).to_owned()).collect();
+            // On this thread (`here`): a pass runs inside a pipeline's step, which is already one of the pool's jobs.
             let ran = {
                 let _s = span(|| "the engine's run".into());
-                plan::run_atoms_native_over(&p.lowered, db, "main", stats, kept, "program").map_err(|e| e.to_string())
+                plan::run_atoms_native_over(&p.lowered, db, "main", stats, kept, "program,here").map_err(|e| e.to_string())
             };
             let _s = span(|| "outputs read, the run forgotten".into());
             let read = ran.map(|_| {

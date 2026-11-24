@@ -2978,24 +2978,27 @@ pub fn kind_set_rules() -> &'static super::plan::corpus::preparation::rules_pass
 /// A rules pass's program (decision 0662 §5.1): library file `file` after the files it includes, each once, as one
 /// text without `core.rerail` and without its `#include`s, so the program is lowered alone.
 fn rules_pass_text(file: &str) -> Result<String, String> {
-    fn add(file: &str, seen: &mut BTreeSet<String>, out: &mut String) -> Result<(), String> {
+    // Each file after those it includes, each once: its path and statements, less its `#include`s.
+    fn add(file: &str, seen: &mut BTreeSet<String>, out: &mut Files) -> Result<(), String> {
         if !seen.insert(file.to_owned()) {
             return Ok(());
         }
-        let text = std::fs::read_to_string(library().join(file)).map_err(|e| format!("{file}: {e}"))?;
+        let path = library().join(file);
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
         let statements = RrFile::read(text.as_str()).map_err(|e| format!("{file}: {e}"))?.statements();
         for (name, _) in include_names(&statements) {
             add(&name, seen, out)?;
         }
-        for line in text.lines().filter(|l| !l.trim_start().starts_with("#include")) {
-            out.push_str(line);
-            out.push('\n');
-        }
+        out.push((path, statements.filtered(|s| !is_include(s))));
         Ok(())
     }
-    let mut out = String::new();
-    add(file, &mut BTreeSet::new(), &mut out)?;
-    Ok(out)
+    let mut files = Files::new();
+    add(file, &mut BTreeSet::new(), &mut files)?;
+    // The included files' clauses no output of the pass reaches are dropped, as a program file's are when it is read
+    // (`unreached_dropped`): the view's rules a pass does not read derive nothing in its every run.
+    let own = library().join(file);
+    let kept = unreached_dropped(&own, files);
+    Ok(kept.iter().flat_map(|(_, statements)| statements.iter().map(|s| s.text().to_owned()).collect::<Vec<_>>()).collect::<Vec<_>>().join("\n"))
 }
 
 /// Whether a statement is an `#include`.

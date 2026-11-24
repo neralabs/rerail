@@ -6977,12 +6977,23 @@ fn spike_0662_a_rules_pass_run_profiled() {
         let kindsets: BTreeSet<String> = input.kindset_map().unwrap().into_keys().collect();
         let given: Vec<AtomId> = kindsets.iter().filter_map(|s| input.find(s)).collect();
         let what = [rules.constant("atom").unwrap(), rules.constant("agg").unwrap()];
+        // Bare, outside any run's scope (as T16 times them), after one run made the version's view.
+        rules.run(view::sources(&input, &given, what).unwrap(), &outputs).unwrap();
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            rules.run(view::sources(&input, &given, what).unwrap(), &outputs).unwrap();
+        }
+        let unscoped = t.elapsed().as_secs_f64() * 1e6 / f64::from(runs);
         // The runs in one run's scope; `RERAIL_SPIKE_KEEP`: with plans kept across them, as a corpus run keeps its
         // plans (decision 0301).
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _keep = std::env::var_os("RERAIL_SPIKE_KEEP").is_some().then(crate::code_rule_dsl::logic::plan::KeepPlans::start);
-        // Warm: the program lowered, the thread's engine opened.
+        // Warm: the program lowered, the thread's engine opened. Then the first run over the version, which makes its
+        // view (`ImageView`), timed alone.
+        rules.run(view::sources(&lower::link_library(Vec::new()).unwrap().with(None).unwrap().version, &[], what).unwrap(), &outputs).unwrap();
+        let t = std::time::Instant::now();
         rules.run(view::sources(&input, &given, what).unwrap(), &outputs).unwrap();
+        let first = t.elapsed().as_secs_f64() * 1e6;
         let t = std::time::Instant::now();
         for _ in 0..runs {
             rules.run(view::sources(&input, &given, what).unwrap(), &outputs).unwrap();
@@ -7003,7 +7014,7 @@ fn spike_0662_a_rules_pass_run_profiled() {
         profile::set(false);
         spans.sort_by(|a, b| b.1.own.total_cmp(&a.1.own));
         let own: f64 = spans.iter().map(|(_, t)| t.own).sum::<f64>() * 1e6 / f64::from(runs);
-        println!("P1 {pack}: {} rules, {} inputs given; µs a run: bare {bare:.1}, profiled {profiled:.1}, the spans' own CPU {own:.1}", input.rules().count(), given.len());
+        println!("P1 {pack}: {} rules, {} inputs given; µs: the first run (its view made) {first:.1}; a run: outside a run's scope {unscoped:.1}, bare {bare:.1}, profiled {profiled:.1}, the spans' own CPU {own:.1}", input.rules().count(), given.len());
         for (path, t) in spans.iter().take(40) {
             println!("P1 {pack}:   {:>8.1} µs own {:>8.1} µs in all {:>7.2} calls a run  {path}", t.own * 1e6 / f64::from(runs), t.total * 1e6 / f64::from(runs), t.calls as f64 / f64::from(runs));
         }
