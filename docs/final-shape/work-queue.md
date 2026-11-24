@@ -11462,3 +11462,11 @@ Checked under Relax (RERAIL_GPU=cpu): check of accel-gpu, device, ukl and
 metal, 0 errors. rerail-metal 22/22, rerail-ukl 16/16, rerail-c-directives
 module by module (eval 50, expand 11, pp 1, tokens 3, root 4; the whole crate
 is past the 12 GB cap). Metal not run (farm Mac, later).
+
+### Q549. Roll-up 121 (build-and-test-loop-time fc6f59656f onto Pulling-it-all-together): what the merge chose
+
+Clean merge: Relax's patch (a guard run once per or-alternative keeps its
+locals; a pub(in ...) re-export keeps its visibility; per-compile proc-macro
+statics; more NEON intrinsics) and the farm's test slots first come, first
+served. No engine source changes; nothing to run here beyond the hub's own
+Relax, which is installed apart from this record.
